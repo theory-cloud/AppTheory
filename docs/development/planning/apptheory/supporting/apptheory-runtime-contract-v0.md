@@ -140,6 +140,31 @@ If size guardrails are enabled/configured:
 - The runtime MUST make a `remaining_ms` value available to handler code (portable subset; derived from the invocation
   runtime when supported).
 
+## Observability envelope (P2)
+
+Portable observability is expressed as **hooks** with a minimum schema so apps can integrate their preferred providers.
+
+Minimum structured log schema (P2):
+
+- `event` (string): stable event name (e.g. `request.completed`)
+- `level` (string): `info` / `warn` / `error`
+- `request_id` (string)
+- `tenant_id` (string)
+- `method` (string)
+- `path` (string)
+- `status` (number)
+- `error_code` (string; empty when not applicable)
+
+If metrics/tracing hooks are provided, they MUST use stable naming and tagging rules (fixture-backed). Provider-specific
+integrations are non-portable and may be Go-only until explicitly ported.
+
+## Rate limiting + load shedding semantics (P2)
+
+- Rate limiting MUST map to `app.rate_limited` (429). Implementations SHOULD include a `Retry-After` header when a
+  deterministic retry hint exists.
+- Load shedding MUST map to `app.overloaded` (503). Implementations SHOULD include a `Retry-After` header when a
+  deterministic retry hint exists.
+
 ## Error taxonomy (portable)
 
 Errors returned by AppTheory SHOULD be categorized by stable error codes:
@@ -153,6 +178,7 @@ Errors returned by AppTheory SHOULD be categorized by stable error codes:
 - `app.conflict` (409)
 - `app.too_large` (413) (if guardrails enabled)
 - `app.rate_limited` (429) (if enabled)
+- `app.overloaded` (503) (if enabled)
 - `app.internal` (500)
 
 Error response envelope (v0) MUST include:
@@ -176,6 +202,7 @@ Status mapping (v0):
 | `app.conflict` | 409 |
 | `app.too_large` | 413 |
 | `app.rate_limited` | 429 |
+| `app.overloaded` | 503 |
 | `app.internal` | 500 |
 
 ## Middleware ordering (v0)

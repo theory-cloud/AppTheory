@@ -194,6 +194,8 @@ function statusForError(code) {
       return 413;
     case "app.rate_limited":
       return 429;
+    case "app.overloaded":
+      return 503;
     case "app.internal":
       return 500;
     default:
@@ -382,7 +384,9 @@ function finalizeResponse(resp, enableP1, requestId, origin) {
 
 function newFixtureApp(routes, opts) {
   const enableP1 = Boolean(opts?.enableP1);
+  const enableP2 = Boolean(opts?.enableP2);
   const limits = opts?.limits ?? {};
+  const effects = { logs: [], metrics: [], spans: [] };
 
   const compiled = (routes ?? []).map((r) => ({
     method: String(r.method).trim().toUpperCase(),
@@ -393,9 +397,64 @@ function newFixtureApp(routes, opts) {
   }));
 
   return {
+    effects,
     handle(req) {
       let requestId = "";
       let origin = "";
+      let errorCode = "";
+
+      effects.logs = [];
+      effects.metrics = [];
+      effects.spans = [];
+
+      const recordEffects = (resp, errCode) => {
+        if (!enableP2) return;
+        const status = Number(resp.status ?? 0);
+        let level = "info";
+        if (status >= 500) level = "error";
+        else if (status >= 400) level = "warn";
+
+        effects.logs.push({
+          level,
+          event: "request.completed",
+          request_id: req.request_id,
+          tenant_id: req.tenant_id,
+          method: req.method,
+          path: req.path,
+          status,
+          error_code: errCode ?? "",
+        });
+
+        effects.metrics.push({
+          name: "apptheory.request",
+          value: 1,
+          tags: {
+            method: req.method,
+            path: req.path,
+            status: String(status),
+            error_code: errCode ?? "",
+            tenant_id: req.tenant_id,
+          },
+        });
+
+        effects.spans.push({
+          name: `http ${req.method} ${req.path}`,
+          attributes: {
+            "http.method": req.method,
+            "http.route": req.path,
+            "http.status_code": String(status),
+            "request.id": req.request_id,
+            "tenant.id": req.tenant_id,
+            "error.code": errCode ?? "",
+          },
+        });
+      };
+
+      const finish = (resp, errCode) => {
+        const out = finalizeResponse(resp, enableP1, requestId, origin);
+        recordEffects(out, errCode);
+        return out;
+      };
 
       if (enableP1) {
         requestId = firstHeaderValue(req.headers, "x-request-id") || "req_test_123";
@@ -409,7 +468,7 @@ function newFixtureApp(routes, opts) {
 
         if (origin && isCorsPreflight(req.method, req.headers)) {
           const allow = firstHeaderValue(req.headers, "access-control-request-method");
-          return finalizeResponse(
+          return finish(
             {
               status: 204,
               headers: { "access-control-allow-methods": [allow] },
@@ -417,19 +476,40 @@ function newFixtureApp(routes, opts) {
               body: Buffer.alloc(0),
               is_base64: false,
             },
-            enableP1,
-            requestId,
-            origin,
+            errorCode,
           );
         }
 
         if (limits.max_request_bytes && req.body.length > limits.max_request_bytes) {
-          return finalizeResponse(
-            appErrorResponse("app.too_large", "request too large", {}, requestId),
-            enableP1,
-            requestId,
-            origin,
-          );
+          errorCode = "app.too_large";
+          return finish(appErrorResponse("app.too_large", "request too large", {}, requestId), errorCode);
+        }
+
+        if (enableP2) {
+          if (firstHeaderValue(req.headers, "x-force-rate-limit")) {
+            errorCode = "app.rate_limited";
+            return finish(
+              appErrorResponse(
+                "app.rate_limited",
+                "rate limited",
+                { "retry-after": ["1"] },
+                requestId,
+              ),
+              errorCode,
+            );
+          }
+          if (firstHeaderValue(req.headers, "x-force-shed")) {
+            errorCode = "app.overloaded";
+            return finish(
+              appErrorResponse(
+                "app.overloaded",
+                "overloaded",
+                { "retry-after": ["1"] },
+                requestId,
+              ),
+              errorCode,
+            );
+          }
         }
       }
 
@@ -447,36 +527,27 @@ function newFixtureApp(routes, opts) {
 
       if (!match) {
         if (allowed.length > 0) {
-          return finalizeResponse(
+          errorCode = "app.method_not_allowed";
+          return finish(
             appErrorResponse(
               "app.method_not_allowed",
               "method not allowed",
               { allow: [formatAllowHeader(allowed)] },
               requestId,
             ),
-            enableP1,
-            requestId,
-            origin,
+            errorCode,
           );
         }
-        return finalizeResponse(
-          appErrorResponse("app.not_found", "not found", {}, requestId),
-          enableP1,
-          requestId,
-          origin,
-        );
+        errorCode = "app.not_found";
+        return finish(appErrorResponse("app.not_found", "not found", {}, requestId), errorCode);
       }
 
       if (enableP1 && match.route.auth_required) {
         req.middleware_trace.push("auth");
         const authz = firstHeaderValue(req.headers, "authorization");
         if (!authz.trim()) {
-          return finalizeResponse(
-            appErrorResponse("app.unauthorized", "unauthorized", {}, requestId),
-            enableP1,
-            requestId,
-            origin,
-          );
+          errorCode = "app.unauthorized";
+          return finish(appErrorResponse("app.unauthorized", "unauthorized", {}, requestId), errorCode);
         }
         req.auth_identity = "authorized";
       }
@@ -484,12 +555,8 @@ function newFixtureApp(routes, opts) {
 
       const handler = builtInHandler(match.route.handler);
       if (!handler) {
-        return finalizeResponse(
-          appErrorResponse("app.internal", "internal error", {}, requestId),
-          enableP1,
-          requestId,
-          origin,
-        );
+        errorCode = "app.internal";
+        return finish(appErrorResponse("app.internal", "internal error", {}, requestId), errorCode);
       }
 
       let resp;
@@ -498,18 +565,21 @@ function newFixtureApp(routes, opts) {
         resp = handler(enriched);
       } catch (err) {
         if (err && typeof err === "object" && "code" in err && "message" in err) {
+          errorCode = err.code;
           resp = appErrorResponse(err.code, err.message, {}, requestId);
         } else {
+          errorCode = "app.internal";
           resp = appErrorResponse("app.internal", "internal error", {}, requestId);
         }
-        return finalizeResponse(resp, enableP1, requestId, origin);
+        return finish(resp, errorCode);
       }
 
       if (enableP1 && limits.max_response_bytes && resp.body.length > limits.max_response_bytes) {
+        errorCode = "app.too_large";
         resp = appErrorResponse("app.too_large", "response too large", {}, requestId);
       }
 
-      return finalizeResponse(resp, enableP1, requestId, origin);
+      return finish(resp, errorCode);
     },
   };
 }
@@ -521,8 +591,10 @@ function compareHeaders(expectedHeaders, actualHeaders) {
 }
 
 function runFixture(fixture) {
-  const enableP1 = ["p1", "p2"].includes(String(fixture.tier ?? "").trim().toLowerCase());
-  const app = newFixtureApp(fixture.setup?.routes ?? [], { enableP1, limits: fixture.setup?.limits ?? {} });
+  const tier = String(fixture.tier ?? "").trim().toLowerCase();
+  const enableP1 = ["p1", "p2"].includes(tier);
+  const enableP2 = tier === "p2";
+  const app = newFixtureApp(fixture.setup?.routes ?? [], { enableP1, enableP2, limits: fixture.setup?.limits ?? {} });
   const req = canonicalizeRequest(fixture.input?.request ?? {}, fixture.input?.context ?? {});
   const actual = app.handle(req);
   const expected = fixture.expect?.response ?? {};
@@ -556,6 +628,39 @@ function runFixture(fixture) {
     if (!deepEqual(expected.body_json, actualJson)) {
       return { ok: false, reason: "body_json mismatch", actual, expected };
     }
+    const expectedLogs = fixture.expect?.logs ?? [];
+    const expectedMetrics = fixture.expect?.metrics ?? [];
+    const expectedSpans = fixture.expect?.spans ?? [];
+    if (!deepEqual(expectedLogs, app.effects.logs ?? [])) {
+      return {
+        ok: false,
+        reason: "logs mismatch",
+        actual,
+        expected,
+        expected_logs: expectedLogs,
+        actual_logs: app.effects.logs ?? [],
+      };
+    }
+    if (!deepEqual(expectedMetrics, app.effects.metrics ?? [])) {
+      return {
+        ok: false,
+        reason: "metrics mismatch",
+        actual,
+        expected,
+        expected_metrics: expectedMetrics,
+        actual_metrics: app.effects.metrics ?? [],
+      };
+    }
+    if (!deepEqual(expectedSpans, app.effects.spans ?? [])) {
+      return {
+        ok: false,
+        reason: "spans mismatch",
+        actual,
+        expected,
+        expected_spans: expectedSpans,
+        actual_spans: app.effects.spans ?? [],
+      };
+    }
     return { ok: true };
   }
 
@@ -564,11 +669,77 @@ function runFixture(fixture) {
     if (!expectedBytes.equals(actual.body)) {
       return { ok: false, reason: "body mismatch", actual, expected };
     }
+    const expectedLogs = fixture.expect?.logs ?? [];
+    const expectedMetrics = fixture.expect?.metrics ?? [];
+    const expectedSpans = fixture.expect?.spans ?? [];
+    if (!deepEqual(expectedLogs, app.effects.logs ?? [])) {
+      return {
+        ok: false,
+        reason: "logs mismatch",
+        actual,
+        expected,
+        expected_logs: expectedLogs,
+        actual_logs: app.effects.logs ?? [],
+      };
+    }
+    if (!deepEqual(expectedMetrics, app.effects.metrics ?? [])) {
+      return {
+        ok: false,
+        reason: "metrics mismatch",
+        actual,
+        expected,
+        expected_metrics: expectedMetrics,
+        actual_metrics: app.effects.metrics ?? [],
+      };
+    }
+    if (!deepEqual(expectedSpans, app.effects.spans ?? [])) {
+      return {
+        ok: false,
+        reason: "spans mismatch",
+        actual,
+        expected,
+        expected_spans: expectedSpans,
+        actual_spans: app.effects.spans ?? [],
+      };
+    }
     return { ok: true };
   }
 
   if (!Buffer.alloc(0).equals(actual.body)) {
     return { ok: false, reason: "body mismatch", actual, expected };
+  }
+  const expectedLogs = fixture.expect?.logs ?? [];
+  const expectedMetrics = fixture.expect?.metrics ?? [];
+  const expectedSpans = fixture.expect?.spans ?? [];
+  if (!deepEqual(expectedLogs, app.effects.logs ?? [])) {
+    return {
+      ok: false,
+      reason: "logs mismatch",
+      actual,
+      expected,
+      expected_logs: expectedLogs,
+      actual_logs: app.effects.logs ?? [],
+    };
+  }
+  if (!deepEqual(expectedMetrics, app.effects.metrics ?? [])) {
+    return {
+      ok: false,
+      reason: "metrics mismatch",
+      actual,
+      expected,
+      expected_metrics: expectedMetrics,
+      actual_metrics: app.effects.metrics ?? [],
+    };
+  }
+  if (!deepEqual(expectedSpans, app.effects.spans ?? [])) {
+    return {
+      ok: false,
+      reason: "spans mismatch",
+      actual,
+      expected,
+      expected_spans: expectedSpans,
+      actual_spans: app.effects.spans ?? [],
+    };
   }
   return { ok: true };
 }
@@ -605,6 +776,18 @@ function main() {
       console.error(`  ${result.reason}`);
       console.error(`  expected: ${stableStringify(result.expected)}`);
       console.error(`  got: ${stableStringify(debugActualForExpected(result.actual, result.expected))}`);
+      if ("expected_logs" in result) {
+        console.error(`  expected.logs: ${stableStringify(result.expected_logs)}`);
+        console.error(`  got.logs: ${stableStringify(result.actual_logs)}`);
+      }
+      if ("expected_metrics" in result) {
+        console.error(`  expected.metrics: ${stableStringify(result.expected_metrics)}`);
+        console.error(`  got.metrics: ${stableStringify(result.actual_metrics)}`);
+      }
+      if ("expected_spans" in result) {
+        console.error(`  expected.spans: ${stableStringify(result.expected_spans)}`);
+        console.error(`  got.spans: ${stableStringify(result.actual_spans)}`);
+      }
       failed.push(fixture);
     }
   }

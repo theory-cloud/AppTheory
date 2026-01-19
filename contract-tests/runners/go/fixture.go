@@ -50,7 +50,10 @@ type FixtureRequest struct {
 }
 
 type FixtureExpect struct {
-	Response FixtureResponse `json:"response"`
+	Response FixtureResponse       `json:"response"`
+	Logs     []FixtureLogRecord    `json:"logs,omitempty"`
+	Metrics  []FixtureMetricRecord `json:"metrics,omitempty"`
+	Spans    []FixtureSpanRecord   `json:"spans,omitempty"`
 }
 
 type FixtureResponse struct {
@@ -70,6 +73,28 @@ type FixtureBody struct {
 type FixtureLimits struct {
 	MaxRequestBytes  int `json:"max_request_bytes,omitempty"`
 	MaxResponseBytes int `json:"max_response_bytes,omitempty"`
+}
+
+type FixtureLogRecord struct {
+	Level     string `json:"level"`
+	Event     string `json:"event"`
+	RequestID string `json:"request_id"`
+	TenantID  string `json:"tenant_id"`
+	Method    string `json:"method"`
+	Path      string `json:"path"`
+	Status    int    `json:"status"`
+	ErrorCode string `json:"error_code"`
+}
+
+type FixtureMetricRecord struct {
+	Name  string            `json:"name"`
+	Value int               `json:"value"`
+	Tags  map[string]string `json:"tags"`
+}
+
+type FixtureSpanRecord struct {
+	Name       string            `json:"name"`
+	Attributes map[string]string `json:"attributes"`
 }
 
 func loadFixtures(fixturesRoot string) ([]Fixture, error) {

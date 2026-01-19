@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"sort"
 )
 
@@ -60,6 +61,15 @@ func runFixture(f Fixture) error {
 		if !jsonEqual(expectedJSON, actualJSON) {
 			return fmt.Errorf("body_json mismatch")
 		}
+		if !reflect.DeepEqual(f.Expect.Logs, app.logs) {
+			return fmt.Errorf("logs mismatch")
+		}
+		if !reflect.DeepEqual(f.Expect.Metrics, app.metrics) {
+			return fmt.Errorf("metrics mismatch")
+		}
+		if !reflect.DeepEqual(f.Expect.Spans, app.spans) {
+			return fmt.Errorf("spans mismatch")
+		}
 		return nil
 	}
 
@@ -74,6 +84,16 @@ func runFixture(f Fixture) error {
 	}
 	if !equalBytes(expectedBodyBytes, actual.Body) {
 		return fmt.Errorf("body mismatch")
+	}
+
+	if !reflect.DeepEqual(f.Expect.Logs, app.logs) {
+		return fmt.Errorf("logs mismatch")
+	}
+	if !reflect.DeepEqual(f.Expect.Metrics, app.metrics) {
+		return fmt.Errorf("metrics mismatch")
+	}
+	if !reflect.DeepEqual(f.Expect.Spans, app.spans) {
+		return fmt.Errorf("spans mismatch")
 	}
 	return nil
 }
@@ -121,6 +141,13 @@ func printFailure(f Fixture, err error) {
 
 		b, _ := json.MarshalIndent(debug, "", "  ")
 		fmt.Fprintf(os.Stderr, "  got: %s\n", string(b))
+
+		logs, _ := json.MarshalIndent(app.logs, "", "  ")
+		metrics, _ := json.MarshalIndent(app.metrics, "", "  ")
+		spans, _ := json.MarshalIndent(app.spans, "", "  ")
+		fmt.Fprintf(os.Stderr, "  got.logs: %s\n", string(logs))
+		fmt.Fprintf(os.Stderr, "  got.metrics: %s\n", string(metrics))
+		fmt.Fprintf(os.Stderr, "  got.spans: %s\n", string(spans))
 	} else {
 		fmt.Fprintf(os.Stderr, "  got: <unavailable>\n")
 	}
@@ -129,6 +156,13 @@ func printFailure(f Fixture, err error) {
 	expected.Headers = canonicalizeHeaders(expected.Headers)
 	b, _ := json.MarshalIndent(expected, "", "  ")
 	fmt.Fprintf(os.Stderr, "  expected: %s\n", string(b))
+
+	logs, _ := json.MarshalIndent(f.Expect.Logs, "", "  ")
+	metrics, _ := json.MarshalIndent(f.Expect.Metrics, "", "  ")
+	spans, _ := json.MarshalIndent(f.Expect.Spans, "", "  ")
+	fmt.Fprintf(os.Stderr, "  expected.logs: %s\n", string(logs))
+	fmt.Fprintf(os.Stderr, "  expected.metrics: %s\n", string(metrics))
+	fmt.Fprintf(os.Stderr, "  expected.spans: %s\n", string(spans))
 }
 
 func summarizeFailures(failed []Fixture) {
