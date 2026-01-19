@@ -39,3 +39,35 @@ func TestEnvDeterministicTime(t *testing.T) {
 	}
 }
 
+func TestEnvDeterministicIDs(t *testing.T) {
+	env := testkit.New()
+
+	app := env.App()
+	app.Get("/ids", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.MustJSON(200, map[string]any{
+			"a": ctx.NewID(),
+			"b": ctx.NewID(),
+		}), nil
+	})
+
+	resp := env.Invoke(context.Background(), app, apptheory.Request{
+		Method: "GET",
+		Path:   "/ids",
+	})
+
+	if resp.Status != 200 {
+		t.Fatalf("expected status 200, got %d", resp.Status)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(resp.Body, &body); err != nil {
+		t.Fatalf("parse response json: %v", err)
+	}
+
+	if body["a"] != "test-id-1" {
+		t.Fatalf("expected a test-id-1, got %#v", body["a"])
+	}
+	if body["b"] != "test-id-2" {
+		t.Fatalf("expected b test-id-2, got %#v", body["b"])
+	}
+}

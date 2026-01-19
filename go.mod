@@ -5,6 +5,7 @@ go 1.25.0
 toolchain go1.25.6
 
 require (
+	github.com/aws/aws-lambda-go v1.52.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.7
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.7
 	github.com/stretchr/testify v1.11.1
@@ -12,7 +13,6 @@ require (
 )
 
 require (
-	github.com/aws/aws-lambda-go v1.52.0 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.41.1 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.17 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.17 // indirect

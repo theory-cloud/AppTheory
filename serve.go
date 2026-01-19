@@ -61,6 +61,7 @@ func (a *App) Serve(ctx context.Context, req Request) (resp Response) {
 		Request: normalized,
 		Params:  match.Params,
 		clock:   a.clock,
+		ids:     a.ids,
 	}
 
 	defer func() {
@@ -80,4 +81,3 @@ func (a *App) Serve(ctx context.Context, req Request) (resp Response) {
 
 	return normalizeResponse(out)
 }
-
