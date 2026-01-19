@@ -1,9 +1,33 @@
-# AppTheory Multi-language Parity Matrix (Template)
+# AppTheory Multi-language Parity Matrix
 
 This matrix tracks which features are implemented in Go/TypeScript/Python and which are fixture-backed by the runtime
 contract tests.
 
-Status: structure frozen for milestone `M0` (implementation statuses will evolve).
+Status: structure frozen for milestone `M0` (implementation statuses evolve as milestones land).
+
+## Portable boundaries (P1/P2)
+
+These are the P1/P2 capabilities that MUST remain portable across Go/TypeScript/Python (fixture-backed).
+
+- **P1 portable core**
+  - request-id creation/propagation and response header (`x-request-id`)
+  - tenant extraction (`x-tenant-id` header, then `tenant` query param)
+  - auth as a hook/interface (no hard-coded provider)
+  - CORS origin echo + preflight handling
+  - middleware ordering invariants (deterministic)
+  - size/timeout guardrails (when configured)
+  - `remaining_ms` surfaced to handlers (portable subset)
+- **P2 portable core**
+  - observability envelope via hooks (minimum log schema + stable metric/span naming rules where provided)
+  - rate limiting semantics (portable subset; must map to `app.rate_limited` + deterministic `Retry-After` when known)
+  - load shedding semantics (portable subset; must map to `app.overloaded` + deterministic `Retry-After` when known)
+
+## Go-only boundaries (explicit)
+
+These capabilities are explicitly allowed to be Go-only until they have a cross-language design + fixtures:
+
+- provider-specific observability integrations (exporters, SDK wiring, OpenTelemetry SDK configuration)
+- storage-backed rate limiting backends (DynamoDB/Redis/etc) beyond the portable contract (hook/middleware is portable)
 
 ## Tier definitions (portable surface area)
 
@@ -46,13 +70,13 @@ Legend:
 
 | Feature | Fixtures | Go | TS | Py | Notes |
 | --- | --- | --- | --- | --- | --- |
-| HTTP adapter: Lambda URL | P0 | ⬜ | ⬜ | ⬜ | |
-| HTTP adapter: APIGW v2 | P0 | ⬜ | ⬜ | ⬜ | |
-| Router: path + method dispatch | P0 | ⬜ | ⬜ | ⬜ | |
-| JSON parsing + content-type rules | P0 | ⬜ | ⬜ | ⬜ | |
-| Headers normalization | P0 | ⬜ | ⬜ | ⬜ | case-insensitive lookups |
-| Cookies normalization | P0 | ⬜ | ⬜ | ⬜ | |
-| Error envelope + taxonomy | P0 | ⬜ | ⬜ | ⬜ | stable error codes |
+| HTTP adapter: Lambda URL | P0 | 🟨 | 🟨 | 🟨 | implemented (M7); not fixture-backed yet |
+| HTTP adapter: APIGW v2 | P0 | 🟨 | 🟨 | 🟨 | implemented (M7); not fixture-backed yet |
+| Router: path + method dispatch | P0 | ✅ | ✅ | ✅ | |
+| JSON parsing + content-type rules | P0 | ✅ | ✅ | ✅ | |
+| Headers normalization | P0 | ✅ | ✅ | ✅ | case-insensitive lookups |
+| Cookies normalization | P0 | ✅ | ✅ | ✅ | |
+| Error envelope + taxonomy | P0 | ✅ | ✅ | ✅ | stable error codes |
 
 ## P1 — Context + middleware
 
