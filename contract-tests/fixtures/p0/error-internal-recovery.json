@@ -1,0 +1,30 @@
+{
+  "id": "p0.error.internal_recovery",
+  "tier": "p0",
+  "name": "Unhandled exceptions map to app.internal",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/panic", "handler": "panic" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/panic",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 500,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": { "error": { "code": "app.internal", "message": "internal error" } },
+      "is_base64": false
+    }
+  }
+}
+

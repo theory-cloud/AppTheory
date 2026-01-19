@@ -1,0 +1,30 @@
+{
+  "id": "p0.json.invalid_json",
+  "tier": "p0",
+  "name": "Invalid JSON maps to app.bad_request",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/json", "handler": "parse_json_echo" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/json",
+      "query": {},
+      "headers": { "content-type": ["application/json"] },
+      "body": { "encoding": "utf8", "value": "{not json" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": { "error": { "code": "app.bad_request", "message": "invalid json" } },
+      "is_base64": false
+    }
+  }
+}
+
