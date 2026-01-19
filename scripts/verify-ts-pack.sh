@@ -10,7 +10,27 @@ mkdir -p dist
 
 rm -f "dist/${expected_tgz}"
 
-(cd ts && npm pack --silent --pack-destination ../dist >/dev/null)
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "${tmp_dir}"' EXIT
+
+tmp_ts_dir="${tmp_dir}/ts"
+dist_dir="$(pwd)/dist"
+
+cp -a ts "${tmp_ts_dir}"
+
+if [[ -n "${SOURCE_DATE_EPOCH:-}" ]]; then
+  TMP_TS_DIR="${tmp_ts_dir}" python3 - <<'PY'
+import os
+from pathlib import Path
+
+epoch = int(os.environ["SOURCE_DATE_EPOCH"])
+for file_path in Path(os.environ["TMP_TS_DIR"]).rglob("*"):
+  if file_path.is_file():
+    os.utime(file_path, (epoch, epoch))
+PY
+fi
+
+(cd "${tmp_ts_dir}" && npm pack --silent --pack-destination "${dist_dir}" >/dev/null)
 
 if [[ ! -f "dist/${expected_tgz}" ]]; then
   echo "ts-pack: FAIL (missing dist/${expected_tgz})"

@@ -118,10 +118,12 @@ if [[ "${py_version}" != "${expected_version}" ]]; then
   exit 1
 fi
 
-vtag="$(git tag --points-at HEAD | grep -E '^v' | head -n 1 || true)"
-if [[ -n "${vtag}" && "${vtag}" != "v${expected_version}" ]]; then
-  echo "version-alignment: FAIL (tag ${vtag} != v${expected_version})"
-  exit 1
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  vtag="$(git tag --points-at HEAD | grep -E '^v' | head -n 1 || true)"
+  if [[ -n "${vtag}" && "${vtag}" != "v${expected_version}" ]]; then
+    echo "version-alignment: FAIL (tag ${vtag} != v${expected_version})"
+    exit 1
+  fi
 fi
 
 echo "version-alignment: PASS (${expected_version})"
