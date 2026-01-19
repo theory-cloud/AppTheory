@@ -608,6 +608,10 @@ async function runFixture(fixture) {
     const { actual, effects } = await runFixtureP0(fixture);
     return compareFixture(fixture, actual, effects);
   }
+  if (tier === "p1") {
+    const { actual, effects } = await runFixtureP1(fixture);
+    return compareFixture(fixture, actual, effects);
+  }
 
   const enableP1 = ["p1", "p2"].includes(tier);
   const enableP2 = tier === "p2";
@@ -801,6 +805,61 @@ async function runFixtureP0(fixture) {
   return { actual, effects: { logs: [], metrics: [], spans: [] } };
 }
 
+async function runFixtureP1(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+
+  const ids = new runtime.ManualIdGenerator();
+  ids.queue("req_test_123");
+
+  const limits = fixture.setup?.limits ?? {};
+  const app = runtime.createApp({
+    tier: "p1",
+    ids,
+    limits: {
+      maxRequestBytes: Number(limits.max_request_bytes ?? 0),
+      maxResponseBytes: Number(limits.max_response_bytes ?? 0),
+    },
+    authHook: (ctx) => {
+      const authz = firstHeaderValue(ctx.request.headers ?? {}, "authorization").trim();
+      if (!authz) {
+        throw new runtime.AppError("app.unauthorized", "unauthorized");
+      }
+      return "authorized";
+    },
+  });
+
+  for (const route of fixture.setup?.routes ?? []) {
+    const handler = builtInAppTheoryHandler(runtime, route.handler);
+    if (!handler) {
+      throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
+    }
+    app.handle(route.method, route.path, handler, { authRequired: Boolean(route.auth_required) });
+  }
+
+  const input = fixture.input?.request ?? {};
+  const body = decodeFixtureBody(input.body);
+  const req = {
+    method: input.method,
+    path: input.path,
+    query: input.query ?? {},
+    headers: input.headers ?? {},
+    body,
+    isBase64: input.is_base64 ?? false,
+  };
+
+  const runtimeCtx = { remaining_ms: Number(fixture.input?.context?.remaining_ms ?? 0) };
+  const resp = await app.serve(req, runtimeCtx);
+  const actual = {
+    status: resp.status,
+    headers: resp.headers ?? {},
+    cookies: resp.cookies ?? [],
+    body: Buffer.from(resp.body ?? []),
+    is_base64: resp.isBase64 ?? false,
+  };
+
+  return { actual, effects: { logs: [], metrics: [], spans: [] } };
+}
+
 function builtInAppTheoryHandler(runtime, name) {
   switch (name) {
     case "static_pong":
@@ -834,6 +893,18 @@ function builtInAppTheoryHandler(runtime, name) {
       return () => {
         throw new runtime.AppError("app.validation_failed", "validation failed");
       };
+    case "echo_context":
+      return (ctx) =>
+        runtime.json(200, {
+          request_id: ctx.requestId ?? "",
+          tenant_id: ctx.tenantId ?? "",
+          auth_identity: ctx.authIdentity ?? "",
+          remaining_ms: Number(ctx.remainingMs ?? 0),
+        });
+    case "echo_middleware_trace":
+      return (ctx) => runtime.json(200, { trace: ctx.middlewareTrace ?? [] });
+    case "large_response":
+      return () => runtime.text(200, "12345");
     default:
       return null;
   }

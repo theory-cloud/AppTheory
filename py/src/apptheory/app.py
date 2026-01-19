@@ -11,13 +11,27 @@ from apptheory.aws_http import (
 )
 from apptheory.clock import Clock, RealClock
 from apptheory.context import Context
-from apptheory.errors import AppError, error_response, response_for_error
+from apptheory.errors import (
+    AppError,
+    error_response,
+    error_response_with_request_id,
+    response_for_error,
+    response_for_error_with_request_id,
+)
 from apptheory.ids import IdGenerator, RealIdGenerator
 from apptheory.request import Request, normalize_request
 from apptheory.response import Response, normalize_response
 from apptheory.router import Router
+from apptheory.util import canonicalize_headers, clone_query
 
 Handler = Callable[[Context], Response]
+AuthHook = Callable[[Context], str]
+
+
+@dataclass(slots=True)
+class Limits:
+    max_request_bytes: int = 0
+    max_response_bytes: int = 0
 
 
 @dataclass(slots=True)
@@ -25,19 +39,28 @@ class App:
     _router: Router
     _clock: Clock
     _id_generator: IdGenerator
+    _tier: str
+    _limits: Limits
+    _auth_hook: AuthHook | None
 
     def __init__(
         self,
         *,
         clock: Clock | None = None,
         id_generator: IdGenerator | None = None,
+        tier: str = "p0",
+        limits: Limits | None = None,
+        auth_hook: AuthHook | None = None,
     ) -> None:
         self._router = Router()
         self._clock = clock or RealClock()
         self._id_generator = id_generator or RealIdGenerator()
+        self._tier = str(tier or "p0").strip().lower()
+        self._limits = limits or Limits()
+        self._auth_hook = auth_hook
 
-    def handle(self, method: str, pattern: str, handler: Handler) -> App:
-        self._router.add(method, pattern, handler)
+    def handle(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
+        self._router.add(method, pattern, handler, auth_required=auth_required)
         return self
 
     def get(self, pattern: str, handler: Handler) -> App:
@@ -53,6 +76,9 @@ class App:
         return self.handle("DELETE", pattern, handler)
 
     def serve(self, request: Request, ctx: Any | None = None) -> Response:
+        if self._tier in ("p1", "p2"):
+            return self._serve_p1(request, ctx)
+
         try:
             normalized = normalize_request(request)
         except Exception as exc:  # noqa: BLE001
@@ -85,6 +111,99 @@ class App:
 
         return normalize_response(resp)
 
+    def _serve_p1(self, request: Request, ctx: Any | None) -> Response:
+        pre_headers = canonicalize_headers(request.headers)
+        pre_query = clone_query(request.query)
+
+        request_id = _first_header_value(pre_headers, "x-request-id") or self._id_generator.new_id()
+        origin = _first_header_value(pre_headers, "origin")
+
+        trace = ["request_id", "recovery", "logging"]
+        if origin:
+            trace.append("cors")
+
+        if _is_cors_preflight(request.method, pre_headers):
+            allow = _first_header_value(pre_headers, "access-control-request-method")
+            resp = Response(
+                status=204,
+                headers={"access-control-allow-methods": [allow]},
+                cookies=[],
+                body=b"",
+                is_base64=False,
+            )
+            return _finalize_p1_response(normalize_response(resp), request_id, origin)
+
+        try:
+            normalized = normalize_request(request)
+        except Exception as exc:  # noqa: BLE001
+            resp = response_for_error_with_request_id(exc, request_id)
+            return _finalize_p1_response(resp, request_id, origin)
+
+        if self._limits.max_request_bytes > 0 and len(normalized.body) > self._limits.max_request_bytes:
+            resp = error_response_with_request_id("app.too_large", "request too large", request_id=request_id)
+            return _finalize_p1_response(resp, request_id, origin)
+
+        match, allowed = self._router.match(normalized.method, normalized.path)
+        if match is None:
+            if allowed:
+                resp = error_response_with_request_id(
+                    "app.method_not_allowed",
+                    "method not allowed",
+                    headers={"allow": [self._router.format_allow_header(allowed)]},
+                    request_id=request_id,
+                )
+                return _finalize_p1_response(resp, request_id, origin)
+            resp = error_response_with_request_id("app.not_found", "not found", request_id=request_id)
+            return _finalize_p1_response(resp, request_id, origin)
+
+        tenant_id = _extract_tenant_id(pre_headers, pre_query)
+        remaining_ms = _remaining_ms(ctx)
+
+        request_ctx = Context(
+            request=normalized,
+            params=match.params,
+            clock=self._clock,
+            id_generator=self._id_generator,
+            ctx=ctx,
+            request_id=request_id,
+            tenant_id=tenant_id,
+            auth_identity="",
+            remaining_ms=remaining_ms,
+            middleware_trace=trace,
+        )
+
+        if match.auth_required:
+            trace.append("auth")
+            if self._auth_hook is None:
+                resp = error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id)
+                return _finalize_p1_response(resp, request_id, origin)
+            try:
+                identity = self._auth_hook(request_ctx)
+            except Exception as exc:  # noqa: BLE001
+                resp = response_for_error_with_request_id(exc, request_id)
+                return _finalize_p1_response(resp, request_id, origin)
+            if not str(identity or "").strip():
+                resp = error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id)
+                return _finalize_p1_response(resp, request_id, origin)
+            request_ctx.auth_identity = str(identity)
+
+        trace.append("handler")
+
+        try:
+            resp = match.handler(request_ctx)
+        except AppError as exc:
+            resp = error_response_with_request_id(exc.code, exc.message, request_id=request_id)
+            return _finalize_p1_response(resp, request_id, origin)
+        except Exception as exc:  # noqa: BLE001
+            resp = response_for_error_with_request_id(exc, request_id)
+            return _finalize_p1_response(resp, request_id, origin)
+
+        resp = normalize_response(resp)
+        if self._limits.max_response_bytes > 0 and len(resp.body) > self._limits.max_response_bytes:
+            resp = error_response_with_request_id("app.too_large", "response too large", request_id=request_id)
+
+        return _finalize_p1_response(resp, request_id, origin)
+
     def serve_apigw_v2(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
         try:
             request = request_from_apigw_v2(event)
@@ -104,5 +223,77 @@ class App:
         return lambda_function_url_response_from_response(resp)
 
 
-def create_app(*, clock: Clock | None = None, id_generator: IdGenerator | None = None) -> App:
-    return App(clock=clock, id_generator=id_generator)
+def create_app(
+    *,
+    clock: Clock | None = None,
+    id_generator: IdGenerator | None = None,
+    tier: str = "p0",
+    limits: Limits | None = None,
+    auth_hook: AuthHook | None = None,
+) -> App:
+    return App(clock=clock, id_generator=id_generator, tier=tier, limits=limits, auth_hook=auth_hook)
+
+
+def _first_header_value(headers: dict[str, list[str]], key: str) -> str:
+    values = headers.get(str(key or "").strip().lower(), [])
+    return values[0] if values else ""
+
+
+def _extract_tenant_id(headers: dict[str, list[str]], query: dict[str, list[str]]) -> str:
+    tenant = _first_header_value(headers, "x-tenant-id")
+    if tenant:
+        return tenant
+    values = query.get("tenant", [])
+    return values[0] if values else ""
+
+
+def _is_cors_preflight(method: str, headers: dict[str, list[str]]) -> bool:
+    return str(method or "").strip().upper() == "OPTIONS" and bool(
+        _first_header_value(headers, "access-control-request-method")
+    )
+
+
+def _finalize_p1_response(resp: Response, request_id: str, origin: str) -> Response:
+    headers = canonicalize_headers(resp.headers)
+    if request_id:
+        headers["x-request-id"] = [str(request_id)]
+    if origin:
+        headers["access-control-allow-origin"] = [str(origin)]
+        headers["vary"] = ["origin"]
+    return normalize_response(
+        Response(
+            status=resp.status,
+            headers=headers,
+            cookies=resp.cookies,
+            body=resp.body,
+            is_base64=resp.is_base64,
+        )
+    )
+
+
+def _remaining_ms(ctx: Any | None) -> int:
+    if ctx is None:
+        return 0
+    get_remaining = getattr(ctx, "get_remaining_time_in_millis", None)
+    if callable(get_remaining):
+        try:
+            value = int(get_remaining())
+        except Exception:  # noqa: BLE001
+            return 0
+        return value if value > 0 else 0
+
+    if isinstance(ctx, dict) and "remaining_ms" in ctx:
+        try:
+            value = int(ctx.get("remaining_ms") or 0)
+        except Exception:  # noqa: BLE001
+            return 0
+        return value if value > 0 else 0
+
+    value = getattr(ctx, "remaining_ms", None)
+    if value is None:
+        return 0
+    try:
+        value_int = int(value)
+    except Exception:  # noqa: BLE001
+        return 0
+    return value_int if value_int > 0 else 0

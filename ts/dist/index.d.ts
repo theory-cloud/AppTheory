@@ -108,6 +108,11 @@ export declare class Context {
     isBase64: boolean;
   };
   readonly params: Record<string, string>;
+  requestId: string;
+  tenantId: string;
+  authIdentity: string;
+  remainingMs: number;
+  middlewareTrace: string[];
   now(): Date;
   newId(): string;
   param(name: string): string;
@@ -116,9 +121,22 @@ export declare class Context {
 
 export type Handler = (ctx: Context) => Response | Promise<Response>;
 
+export type Tier = "p0" | "p1" | "p2";
+
+export interface Limits {
+  maxRequestBytes?: number;
+  maxResponseBytes?: number;
+}
+
+export interface RouteOptions {
+  authRequired?: boolean;
+}
+
+export type AuthHook = (ctx: Context) => string | Promise<string>;
+
 export declare class App {
-  constructor(options?: { clock?: Clock; ids?: IdGenerator });
-  handle(method: string, pattern: string, handler: Handler): this;
+  constructor(options?: { clock?: Clock; ids?: IdGenerator; tier?: Tier; limits?: Limits; authHook?: AuthHook });
+  handle(method: string, pattern: string, handler: Handler, options?: RouteOptions): this;
   get(pattern: string, handler: Handler): this;
   post(pattern: string, handler: Handler): this;
   put(pattern: string, handler: Handler): this;
@@ -128,7 +146,7 @@ export declare class App {
   serveLambdaFunctionURL(event: LambdaFunctionURLRequest, ctx?: unknown): Promise<LambdaFunctionURLResponse>;
 }
 
-export declare function createApp(options?: { clock?: Clock; ids?: IdGenerator }): App;
+export declare function createApp(options?: { clock?: Clock; ids?: IdGenerator; tier?: Tier; limits?: Limits; authHook?: AuthHook }): App;
 
 export declare function text(status: number, body: string): Response;
 export declare function json(status: number, value: unknown): Response;
@@ -138,7 +156,7 @@ export declare class TestEnv {
   readonly clock: ManualClock;
   readonly ids: ManualIdGenerator;
   constructor(options?: { now?: Date });
-  app(options?: { clock?: Clock; ids?: IdGenerator }): App;
+  app(options?: { clock?: Clock; ids?: IdGenerator; tier?: Tier; limits?: Limits; authHook?: AuthHook }): App;
   invoke(app: App, request: Request, ctx?: unknown): Promise<Response>;
   invokeAPIGatewayV2(app: App, event: APIGatewayV2HTTPRequest, ctx?: unknown): Promise<APIGatewayV2HTTPResponse>;
   invokeLambdaFunctionURL(app: App, event: LambdaFunctionURLRequest, ctx?: unknown): Promise<LambdaFunctionURLResponse>;

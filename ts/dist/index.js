@@ -67,12 +67,28 @@ export class ManualIdGenerator {
 }
 
 export class Context {
-  constructor({ request, params, clock, ids, ctx }) {
+  constructor({
+    request,
+    params,
+    clock,
+    ids,
+    ctx,
+    requestId,
+    tenantId,
+    authIdentity,
+    remainingMs,
+    middlewareTrace,
+  }) {
     this.ctx = ctx ?? null;
     this.request = request;
     this.params = params ?? {};
     this._clock = clock ?? new RealClock();
     this._ids = ids ?? new RandomIdGenerator();
+    this.requestId = requestId ?? "";
+    this.tenantId = tenantId ?? "";
+    this.authIdentity = authIdentity ?? "";
+    this.remainingMs = Number(remainingMs ?? 0);
+    this.middlewareTrace = Array.isArray(middlewareTrace) ? middlewareTrace : [];
   }
 
   now() {
@@ -144,14 +160,20 @@ export function binary(status, body, contentType) {
 }
 
 export class App {
-  constructor({ clock, ids } = {}) {
+  constructor({ clock, ids, tier, limits, authHook } = {}) {
     this._router = new Router();
     this._clock = clock ?? new RealClock();
     this._ids = ids ?? new RandomIdGenerator();
+    this._tier = tier === "p1" || tier === "p2" ? tier : "p0";
+    this._limits = {
+      maxRequestBytes: Number(limits?.maxRequestBytes ?? 0),
+      maxResponseBytes: Number(limits?.maxResponseBytes ?? 0),
+    };
+    this._authHook = authHook ?? null;
   }
 
-  handle(method, pattern, handler) {
-    this._router.add(method, pattern, handler);
+  handle(method, pattern, handler, options = {}) {
+    this._router.add(method, pattern, handler, options);
     return this;
   }
 
@@ -172,6 +194,7 @@ export class App {
   }
 
   async serve(request, ctx) {
+    if (this._tier === "p0") {
     let normalized;
     try {
       normalized = normalizeRequest(request);
@@ -203,6 +226,113 @@ export class App {
     } catch (err) {
       return responseForError(err);
     }
+    }
+
+    const preHeaders = canonicalizeHeaders(request?.headers);
+    const preQuery = cloneQuery(request?.query);
+    const method = normalizeMethod(request?.method);
+
+    let requestId = firstHeaderValue(preHeaders, "x-request-id");
+    if (!requestId) {
+      requestId = this._ids.newId();
+    }
+    const origin = firstHeaderValue(preHeaders, "origin");
+
+    const middlewareTrace = ["request_id", "recovery", "logging"];
+    if (origin) middlewareTrace.push("cors");
+
+    if (isCorsPreflight(method, preHeaders)) {
+      const allow = firstHeaderValue(preHeaders, "access-control-request-method");
+      const resp = normalizeResponse({
+        status: 204,
+        headers: { "access-control-allow-methods": [allow] },
+        cookies: [],
+        body: Buffer.alloc(0),
+        isBase64: false,
+      });
+      return finalizeP1Response(resp, requestId, origin);
+    }
+
+    let normalized;
+    try {
+      normalized = normalizeRequest(request);
+    } catch (err) {
+      return finalizeP1Response(responseForErrorWithRequestId(err, requestId), requestId, origin);
+    }
+
+    if (this._limits.maxRequestBytes > 0 && normalized.body.length > this._limits.maxRequestBytes) {
+      const resp = errorResponseWithRequestId("app.too_large", "request too large", {}, requestId);
+      return finalizeP1Response(resp, requestId, origin);
+    }
+
+    const { match, allowed } = this._router.match(normalized.method, normalized.path);
+    if (!match) {
+      if (allowed.length > 0) {
+        const resp = errorResponseWithRequestId(
+          "app.method_not_allowed",
+          "method not allowed",
+          { allow: [formatAllowHeader(allowed)] },
+          requestId,
+        );
+        return finalizeP1Response(resp, requestId, origin);
+      }
+      const resp = errorResponseWithRequestId("app.not_found", "not found", {}, requestId);
+      return finalizeP1Response(resp, requestId, origin);
+    }
+
+    const tenantId = extractTenantId(preHeaders, preQuery);
+    const remainingMs = extractRemainingMs(ctx);
+
+    const requestCtx = new Context({
+      request: normalized,
+      params: match.params,
+      clock: this._clock,
+      ids: this._ids,
+      ctx,
+      requestId,
+      tenantId,
+      authIdentity: "",
+      remainingMs,
+      middlewareTrace,
+    });
+
+    if (match.route.authRequired) {
+      middlewareTrace.push("auth");
+      try {
+        if (!this._authHook) {
+          throw new AppError("app.unauthorized", "unauthorized");
+        }
+        const identity = await this._authHook(requestCtx);
+        if (!String(identity ?? "").trim()) {
+          throw new AppError("app.unauthorized", "unauthorized");
+        }
+        requestCtx.authIdentity = String(identity);
+      } catch (err) {
+        return finalizeP1Response(responseForErrorWithRequestId(err, requestId), requestId, origin);
+      }
+    }
+
+    middlewareTrace.push("handler");
+
+    let out;
+    try {
+      out = await match.route.handler(requestCtx);
+    } catch (err) {
+      return finalizeP1Response(responseForErrorWithRequestId(err, requestId), requestId, origin);
+    }
+
+    let resp;
+    if (out === null || out === undefined) {
+      resp = errorResponseWithRequestId("app.internal", "internal error", {}, requestId);
+    } else {
+      resp = normalizeResponse(out);
+    }
+
+    if (this._limits.maxResponseBytes > 0 && resp.body.length > this._limits.maxResponseBytes) {
+      resp = errorResponseWithRequestId("app.too_large", "response too large", {}, requestId);
+    }
+
+    return finalizeP1Response(resp, requestId, origin);
   }
 
   async serveAPIGatewayV2(event, ctx) {
@@ -313,7 +443,7 @@ class Router {
     this._routes = [];
   }
 
-  add(method, pattern, handler) {
+  add(method, pattern, handler, options = {}) {
     const normalizedMethod = normalizeMethod(method);
     const normalizedPattern = normalizePath(pattern);
     this._routes.push({
@@ -321,6 +451,7 @@ class Router {
       pattern: normalizedPattern,
       segments: splitPath(normalizedPattern),
       handler,
+      authRequired: Boolean(options?.authRequired),
     });
   }
 
@@ -518,6 +649,24 @@ function errorResponse(code, message, headers = {}) {
   });
 }
 
+function errorResponseWithRequestId(code, message, headers = {}, requestId = "") {
+  const outHeaders = { ...canonicalizeHeaders(headers) };
+  outHeaders["content-type"] = ["application/json; charset=utf-8"];
+
+  const error = { code, message };
+  if (requestId) {
+    error.request_id = String(requestId);
+  }
+
+  return normalizeResponse({
+    status: statusForErrorCode(code),
+    headers: outHeaders,
+    cookies: [],
+    body: Buffer.from(JSON.stringify({ error }), "utf8"),
+    isBase64: false,
+  });
+}
+
 function responseForError(err) {
   if (err instanceof AppError) {
     return errorResponse(err.code, err.message);
@@ -525,6 +674,60 @@ function responseForError(err) {
   return errorResponse("app.internal", "internal error");
 }
 
+function responseForErrorWithRequestId(err, requestId) {
+  if (err instanceof AppError) {
+    return errorResponseWithRequestId(err.code, err.message, {}, requestId);
+  }
+  return errorResponseWithRequestId("app.internal", "internal error", {}, requestId);
+}
+
+function firstHeaderValue(headers, key) {
+  const values = headers?.[String(key).trim().toLowerCase()] ?? [];
+  return values.length > 0 ? String(values[0]) : "";
+}
+
+function extractTenantId(headers, query) {
+  const headerTenant = firstHeaderValue(headers, "x-tenant-id");
+  if (headerTenant) return headerTenant;
+  const values = query?.tenant ?? [];
+  return values.length > 0 ? String(values[0]) : "";
+}
+
+function isCorsPreflight(method, headers) {
+  return normalizeMethod(method) === "OPTIONS" && firstHeaderValue(headers, "access-control-request-method");
+}
+
+function finalizeP1Response(resp, requestId, origin) {
+  const headers = canonicalizeHeaders(resp.headers ?? {});
+  if (requestId) {
+    headers["x-request-id"] = [String(requestId)];
+  }
+  if (origin) {
+    headers["access-control-allow-origin"] = [String(origin)];
+    headers.vary = ["origin"];
+  }
+  return { ...resp, headers };
+}
+
+function extractRemainingMs(ctx) {
+  if (ctx && typeof ctx === "object") {
+    if (typeof ctx.getRemainingTimeInMillis === "function") {
+      const value = Number(ctx.getRemainingTimeInMillis());
+      if (Number.isFinite(value) && value > 0) {
+        return Math.floor(value);
+      }
+      return 0;
+    }
+    if ("remaining_ms" in ctx) {
+      const value = Number(ctx.remaining_ms);
+      if (Number.isFinite(value) && value > 0) {
+        return Math.floor(value);
+      }
+      return 0;
+    }
+  }
+  return 0;
+}
 function formatAllowHeader(methods) {
   const unique = new Set();
   for (const m of methods ?? []) {
