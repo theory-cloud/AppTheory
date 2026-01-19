@@ -612,7 +612,7 @@ async function runFixture(fixture) {
     const { actual, effects } = await runFixtureP1(fixture);
     return compareFixture(fixture, actual, effects);
   }
-  if (tier === "p2" && fixture.id === "p2.observability.basic") {
+  if (tier === "p2") {
     const { actual, effects } = await runFixtureP2(fixture);
     return compareFixture(fixture, actual, effects);
   }
@@ -889,6 +889,15 @@ async function runFixtureP2(fixture) {
         throw new runtime.AppError("app.unauthorized", "unauthorized");
       }
       return "authorized";
+    },
+    policyHook: (ctx) => {
+      if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-rate-limit")) {
+        return { code: "app.rate_limited", message: "rate limited", headers: { "retry-after": ["1"] } };
+      }
+      if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-shed")) {
+        return { code: "app.overloaded", message: "overloaded", headers: { "retry-after": ["1"] } };
+      }
+      return null;
     },
     observability: {
       log: (r) => {

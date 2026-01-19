@@ -165,6 +165,9 @@ integrations are non-portable and may be Go-only until explicitly ported.
   deterministic retry hint exists.
 - Load shedding MUST map to `app.overloaded` (503). Implementations SHOULD include a `Retry-After` header when a
   deterministic retry hint exists.
+- Portable surface: implementations SHOULD expose a hook/middleware that can reject a request with one of the above
+  codes plus optional headers. Storage-backed limiters (DynamoDB/Redis/etc) are explicitly out-of-scope for portability
+  until fixture-backed.
 
 ## Error taxonomy (portable)
 

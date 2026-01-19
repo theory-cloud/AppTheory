@@ -26,10 +26,7 @@ func runFixture(f Fixture) error {
 	case "p1":
 		return runFixtureP1(f)
 	case "p2":
-		if strings.EqualFold(strings.TrimSpace(f.ID), "p2.observability.basic") {
-			return runFixtureP2(f)
-		}
-		return runFixtureLegacy(f)
+		return runFixtureP2(f)
 	default:
 		return runFixtureLegacy(f)
 	}

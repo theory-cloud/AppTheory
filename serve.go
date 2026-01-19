@@ -207,6 +207,27 @@ func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool) (re
 	}
 	requestCtx.Params = match.Params
 
+	if enableP2 && a.policy != nil {
+		decision, err := a.policy(requestCtx)
+		if err != nil {
+			errorCode = "app.internal"
+			resp = errorResponseWithRequestID("app.internal", "internal error", nil, requestID)
+			return resp
+		}
+		if decision != nil {
+			code := strings.TrimSpace(decision.Code)
+			if code != "" {
+				message := strings.TrimSpace(decision.Message)
+				if message == "" {
+					message = defaultPolicyMessage(code)
+				}
+				errorCode = code
+				resp = errorResponseWithRequestID(code, message, decision.Headers, requestID)
+				return resp
+			}
+		}
+	}
+
 	if match.Route.AuthRequired {
 		requestCtx.MiddlewareTrace = append(requestCtx.MiddlewareTrace, "auth")
 		if a.auth == nil {
@@ -262,6 +283,17 @@ func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool) (re
 	}
 
 	return resp
+}
+
+func defaultPolicyMessage(code string) string {
+	switch code {
+	case "app.rate_limited":
+		return "rate limited"
+	case "app.overloaded":
+		return "overloaded"
+	default:
+		return "internal error"
+	}
 }
 
 func (a *App) newRequestID() string {

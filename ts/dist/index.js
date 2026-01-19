@@ -160,7 +160,7 @@ export function binary(status, body, contentType) {
 }
 
 export class App {
-  constructor({ clock, ids, tier, limits, authHook, observability } = {}) {
+  constructor({ clock, ids, tier, limits, authHook, policyHook, observability } = {}) {
     this._router = new Router();
     this._clock = clock ?? new RealClock();
     this._ids = ids ?? new RandomIdGenerator();
@@ -170,6 +170,7 @@ export class App {
       maxResponseBytes: Number(limits?.maxResponseBytes ?? 0),
     };
     this._authHook = authHook ?? null;
+    this._policyHook = policyHook ?? null;
     this._observability = observability ?? null;
   }
 
@@ -316,6 +317,21 @@ export class App {
       remainingMs,
       middlewareTrace,
     });
+
+    if (enableP2 && typeof this._policyHook === "function") {
+      let decision;
+      try {
+        decision = await this._policyHook(requestCtx);
+      } catch (err) {
+        return finish(responseForErrorWithRequestId(err, requestId), err instanceof AppError ? err.code : "app.internal");
+      }
+
+      const code = String(decision?.code ?? "").trim();
+      if (code) {
+        const message = String(decision?.message ?? "").trim() || defaultPolicyMessage(code);
+        return finish(errorResponseWithRequestId(code, message, decision?.headers ?? {}, requestId), code);
+      }
+    }
 
     if (match.route.authRequired) {
       middlewareTrace.push("auth");
@@ -728,6 +744,17 @@ function finalizeP1Response(resp, requestId, origin) {
     headers.vary = ["origin"];
   }
   return { ...resp, headers };
+}
+
+function defaultPolicyMessage(code) {
+  switch (String(code ?? "").trim()) {
+    case "app.rate_limited":
+      return "rate limited";
+    case "app.overloaded":
+      return "overloaded";
+    default:
+      return "internal error";
+  }
 }
 
 function extractRemainingMs(ctx) {
