@@ -47,6 +47,10 @@ Inventory doc (baseline):
   - what is automated vs manual
 - Includes a mapping table from Lift symbols/patterns → AppTheory equivalents.
 
+Guide (skeleton):
+
+- `docs/migration/from-lift.md`
+
 ---
 
 ### G2 — Compatibility shims (only where high-leverage)
