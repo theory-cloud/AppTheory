@@ -27,7 +27,7 @@ Non-goals:
 **Acceptance criteria**
 - Single version policy is written (repo tag is the shared version).
 - Pre-release naming is chosen and documented (`vX.Y.Z-rc.N` recommended).
-- Branch model is chosen (example: `main` + optional `premain` for pre-release automation).
+- Branch model is chosen (`main` + `premain` for RC releases and pre-release automation).
 
 **Deliverables**
 - `docs/development/planning/apptheory/supporting/apptheory-versioning-and-release-policy.md`
@@ -91,4 +91,3 @@ Non-goals:
 - **Supply-chain regressions:** keep workflows minimal and deterministic; prefer pinned tools; fail closed.
 - **Version drift:** enforce version alignment with a single script gate.
 - **Asset confusion:** use consistent naming conventions and checksums; document install-from-release procedures for TS/Py.
-
