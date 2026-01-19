@@ -61,6 +61,12 @@ Inventory doc:
   - call counts
   - deterministic ordering where relevant
 
+Status (today):
+
+- AppTheory currently wraps **no AWS SDK clients** (see `docs/development/planning/apptheory/supporting/apptheory-aws-touchpoints.md`),
+  so there are no shipped AWS-client fakes yet.
+- For data access, use **TableTheory** (companion framework) and its language-specific test/mocks utilities.
+
 ---
 
 ### K4 — Documentation + canonical examples

@@ -12,7 +12,7 @@ Status: seed draft; refine as part of milestone `M2` and `SR-MIGRATION`.
 - “Easy migration” means predictable steps + automation helpers, not full API compatibility.
 - Pay Theory requires **100% of Lift’s current functionality** to remain available for Go users (portable + Go-only where
   necessary), even if APIs change.
-- TableTheory (`theory-cloud/TableTheory`) replaces DynamORM for AppTheory.
+- TableTheory is AppTheory’s companion **data** framework (Go/TypeScript/Python) and replaces DynamORM for new work.
 
 Related inventory (Pay Theory baseline):
 

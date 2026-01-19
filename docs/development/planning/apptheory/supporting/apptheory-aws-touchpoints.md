@@ -28,6 +28,7 @@ These are **event shapes**, not AWS SDK clients.
 
 All AWS SDK usage (DynamoDB, SQS, SNS, EventBridge, etc.) is currently **user-space**.
 
+Data access should use **TableTheory** as the companion framework for AppTheory across Go/TypeScript/Python.
+
 If AppTheory starts wrapping any AWS clients in the future (for example, portable rate limiting backed by DynamoDB via
 TableTheory), this file must be updated and strict fakes must be added to all testkits.
-
