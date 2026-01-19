@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strings"
 )
 
 type actualResponseForCompare struct {
@@ -19,6 +20,13 @@ type actualResponseForCompare struct {
 }
 
 func runFixture(f Fixture) error {
+	if strings.EqualFold(strings.TrimSpace(f.Tier), "p0") {
+		return runFixtureP0(f)
+	}
+	return runFixtureLegacy(f)
+}
+
+func runFixtureLegacy(f Fixture) error {
 	app, err := newFixtureApp(f.Setup, f.Tier)
 	if err != nil {
 		return fmt.Errorf("setup app: %w", err)
@@ -113,6 +121,11 @@ func jsonEqual(a, b any) bool {
 func printFailure(f Fixture, err error) {
 	fmt.Fprintf(os.Stderr, "FAIL %s — %s\n", f.ID, f.Name)
 	fmt.Fprintf(os.Stderr, "  %v\n", err)
+
+	if strings.EqualFold(strings.TrimSpace(f.Tier), "p0") {
+		printFailureP0(f)
+		return
+	}
 
 	app, appErr := newFixtureApp(f.Setup, f.Tier)
 	req, reqErr := canonicalizeRequest(f.Input.Request)
