@@ -54,6 +54,13 @@ Automatable (planned):
 - Import path rewrites (`github.com/pay-theory/lift/pkg/...` → `github.com/theory-cloud/apptheory/...`).
 - Mechanical symbol renames where AppTheory intentionally diverges (captured in the mapping table below).
 
+Available now:
+
+- Go import rewrite for `pay-theory/limited`:
+  - Dry-run (prints unified diffs): `./scripts/migrate-from-lift-go.sh -root path/to/service`
+  - Apply: `./scripts/migrate-from-lift-go.sh -root path/to/service -apply`
+  - Scope: rewrites `github.com/pay-theory/limited` → `github.com/theory-cloud/apptheory/pkg/limited` (and subpackages).
+
 Manual (expected):
 
 - Reviewing middleware config knobs for safe defaults (timeouts, size limits, fail-open/fail-closed policy).
