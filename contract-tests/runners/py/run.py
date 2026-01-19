@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+_APPTHEORY_RUNTIME: Any | None = None
+
 
 @dataclass
 class CanonicalRequest:
@@ -686,6 +688,10 @@ def compare_headers(expected: dict[str, Any] | None, actual: dict[str, Any] | No
 
 
 def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+    tier = str(fixture.get("tier", "")).strip().lower()
+    if tier == "p0":
+        return run_fixture_p0(fixture)
+
     setup = fixture.get("setup", {})
     input_ = fixture.get("input", {})
     app = new_fixture_app(setup.get("routes", []), fixture.get("tier", ""), setup.get("limits", {}) or {})
@@ -698,6 +704,176 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
 
     if bool(expected.get("is_base64")) != actual.is_base64:
         return False, f"is_base64 mismatch", actual, expected, app
+
+    if (expected.get("cookies") or []) != actual.cookies:
+        return False, "cookies mismatch", actual, expected, app
+
+    if not compare_headers(expected.get("headers"), actual.headers):
+        return False, "headers mismatch", actual, expected, app
+
+    if "body_json" in expected:
+        try:
+            actual_json = json.loads(actual.body.decode("utf-8"))
+        except Exception:  # noqa: BLE001
+            return False, "body_json mismatch", actual, expected, app
+        if expected["body_json"] != actual_json:
+            return False, "body_json mismatch", actual, expected, app
+
+        if (fixture.get("expect", {}).get("logs") or []) != app.logs:
+            return False, "logs mismatch", actual, expected, app
+        if (fixture.get("expect", {}).get("metrics") or []) != app.metrics:
+            return False, "metrics mismatch", actual, expected, app
+        if (fixture.get("expect", {}).get("spans") or []) != app.spans:
+            return False, "spans mismatch", actual, expected, app
+
+        return True, "", actual, expected, app
+
+    if expected.get("body") is not None:
+        expected_bytes = decode_fixture_body(expected.get("body"))
+        if expected_bytes != actual.body:
+            return False, "body mismatch", actual, expected, app
+
+        if (fixture.get("expect", {}).get("logs") or []) != app.logs:
+            return False, "logs mismatch", actual, expected, app
+        if (fixture.get("expect", {}).get("metrics") or []) != app.metrics:
+            return False, "metrics mismatch", actual, expected, app
+        if (fixture.get("expect", {}).get("spans") or []) != app.spans:
+            return False, "spans mismatch", actual, expected, app
+
+        return True, "", actual, expected, app
+
+    if actual.body != b"":
+        return False, "body mismatch", actual, expected, app
+
+    if (fixture.get("expect", {}).get("logs") or []) != app.logs:
+        return False, "logs mismatch", actual, expected, app
+    if (fixture.get("expect", {}).get("metrics") or []) != app.metrics:
+        return False, "metrics mismatch", actual, expected, app
+    if (fixture.get("expect", {}).get("spans") or []) != app.spans:
+        return False, "spans mismatch", actual, expected, app
+
+    return True, "", actual, expected, app
+
+
+class _DummyEffectsApp:
+    def __init__(self) -> None:
+        self.logs: list[Any] = []
+        self.metrics: list[Any] = []
+        self.spans: list[Any] = []
+
+
+def _load_apptheory_runtime():
+    global _APPTHEORY_RUNTIME
+    if _APPTHEORY_RUNTIME is not None:
+        return _APPTHEORY_RUNTIME
+
+    repo_root = Path(__file__).resolve().parents[3]
+    sys.path.insert(0, str(repo_root / "py" / "src"))
+
+    import apptheory  # type: ignore
+
+    _APPTHEORY_RUNTIME = apptheory
+    return apptheory
+
+
+def _built_in_apptheory_handler(runtime: Any, name: str):
+    if name == "static_pong":
+        return lambda _ctx: runtime.text(200, "pong")
+
+    if name == "echo_path_params":
+        return lambda ctx: runtime.json(200, {"params": ctx.params})
+
+    if name == "echo_request":
+        def handler(ctx):
+            return runtime.json(
+                200,
+                {
+                    "method": ctx.request.method,
+                    "path": ctx.request.path,
+                    "query": ctx.request.query,
+                    "headers": ctx.request.headers,
+                    "cookies": ctx.request.cookies,
+                    "body_b64": base64.b64encode(ctx.request.body).decode("ascii"),
+                    "is_base64": ctx.request.is_base64,
+                },
+            )
+
+        return handler
+
+    if name == "parse_json_echo":
+        return lambda ctx: runtime.json(200, ctx.json_value())
+
+    if name == "panic":
+        def handler(_ctx):
+            raise RuntimeError("boom")
+
+        return handler
+
+    if name == "binary_body":
+        return lambda _ctx: runtime.binary(200, bytes([0, 1, 2]), content_type="application/octet-stream")
+
+    if name == "unauthorized":
+        def handler(_ctx):
+            raise runtime.AppError("app.unauthorized", "unauthorized")
+
+        return handler
+
+    if name == "validation_failed":
+        def handler(_ctx):
+            raise runtime.AppError("app.validation_failed", "validation failed")
+
+        return handler
+
+    return None
+
+
+def run_fixture_p0(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+    runtime = _load_apptheory_runtime()
+    app = runtime.create_app()
+
+    setup = fixture.get("setup", {})
+    for route in setup.get("routes", []) or []:
+        name = str(route.get("handler", ""))
+        handler = _built_in_apptheory_handler(runtime, name)
+        if handler is None:
+            raise RuntimeError(f"unknown handler {name!r}")
+        app.handle(route.get("method", ""), route.get("path", ""), handler)
+
+    input_ = fixture.get("input", {}).get("request", {})
+    req_body = decode_fixture_body(input_.get("body"))
+    req = runtime.Request(
+        method=input_.get("method", ""),
+        path=input_.get("path", ""),
+        query=input_.get("query") or {},
+        headers=input_.get("headers") or {},
+        body=req_body,
+        is_base64=bool(input_.get("is_base64")),
+    )
+
+    resp = app.serve(req)
+    actual = CanonicalResponse(
+        status=resp.status,
+        headers=resp.headers,
+        cookies=resp.cookies,
+        body=resp.body,
+        is_base64=resp.is_base64,
+    )
+
+    expected = fixture.get("expect", {}).get("response", {})
+    return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
+
+
+def run_fixture_compare(
+    fixture: dict[str, Any],
+    actual: CanonicalResponse,
+    expected: dict[str, Any],
+    app: FixtureApp,
+) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+    if expected.get("status") != actual.status:
+        return False, f"status: expected {expected.get('status')}, got {actual.status}", actual, expected, app
+
+    if bool(expected.get("is_base64")) != actual.is_base64:
+        return False, "is_base64 mismatch", actual, expected, app
 
     if (expected.get("cookies") or []) != actual.cookies:
         return False, "cookies mismatch", actual, expected, app
