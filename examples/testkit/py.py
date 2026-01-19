@@ -16,10 +16,11 @@ def main() -> None:
     app = env.app()
     app.get("/hello", lambda ctx: json(200, {"now": ctx.now().isoformat(), "id": ctx.new_id()}))
 
-    event = build_apigw_v2_request("GET", "/hello")
+    event = build_apigw_v2_request("GET", "/hello", headers={"x-request-id": "request-1"})
     resp = env.invoke_apigw_v2(app, event)
 
     assert resp["statusCode"] == 200
+    assert resp["headers"]["x-request-id"] == "request-1"
     body = jsonlib.loads(resp["body"])
     assert body["id"] == "req-1"
     assert body["now"] == "2026-01-01T00:00:00+00:00"
@@ -29,4 +30,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

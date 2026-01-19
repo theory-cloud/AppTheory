@@ -20,10 +20,16 @@ type actualResponseForCompare struct {
 }
 
 func runFixture(f Fixture) error {
-	if strings.EqualFold(strings.TrimSpace(f.Tier), "p0") {
+	switch strings.ToLower(strings.TrimSpace(f.Tier)) {
+	case "p0":
 		return runFixtureP0(f)
+	case "p1":
+		return runFixtureP1(f)
+	case "p2":
+		return runFixtureP2(f)
+	default:
+		return runFixtureLegacy(f)
 	}
-	return runFixtureLegacy(f)
 }
 
 func runFixtureLegacy(f Fixture) error {

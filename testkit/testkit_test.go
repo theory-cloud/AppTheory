@@ -53,10 +53,16 @@ func TestEnvDeterministicIDs(t *testing.T) {
 	resp := env.Invoke(context.Background(), app, apptheory.Request{
 		Method: "GET",
 		Path:   "/ids",
+		Headers: map[string][]string{
+			"x-request-id": {"req-1"},
+		},
 	})
 
 	if resp.Status != 200 {
 		t.Fatalf("expected status 200, got %d", resp.Status)
+	}
+	if got := resp.Headers["x-request-id"]; len(got) != 1 || got[0] != "req-1" {
+		t.Fatalf("expected x-request-id req-1, got %#v", got)
 	}
 
 	var body map[string]any

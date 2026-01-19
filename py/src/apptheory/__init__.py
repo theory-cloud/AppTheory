@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from apptheory.app import App, create_app
+from apptheory.app import App, Limits, ObservabilityHooks, PolicyDecision, create_app
 from apptheory.aws_http import build_apigw_v2_request, build_lambda_function_url_request
 from apptheory.clock import Clock, ManualClock, RealClock
 from apptheory.context import Context
@@ -17,6 +17,9 @@ __all__ = [
     "AppError",
     "Clock",
     "Context",
+    "Limits",
+    "ObservabilityHooks",
+    "PolicyDecision",
     "IdGenerator",
     "ManualClock",
     "ManualIdGenerator",

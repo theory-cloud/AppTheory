@@ -67,12 +67,28 @@ export class ManualIdGenerator {
 }
 
 export class Context {
-  constructor({ request, params, clock, ids, ctx }) {
+  constructor({
+    request,
+    params,
+    clock,
+    ids,
+    ctx,
+    requestId,
+    tenantId,
+    authIdentity,
+    remainingMs,
+    middlewareTrace,
+  }) {
     this.ctx = ctx ?? null;
     this.request = request;
     this.params = params ?? {};
     this._clock = clock ?? new RealClock();
     this._ids = ids ?? new RandomIdGenerator();
+    this.requestId = requestId ?? "";
+    this.tenantId = tenantId ?? "";
+    this.authIdentity = authIdentity ?? "";
+    this.remainingMs = Number(remainingMs ?? 0);
+    this.middlewareTrace = Array.isArray(middlewareTrace) ? middlewareTrace : [];
   }
 
   now() {
@@ -144,14 +160,22 @@ export function binary(status, body, contentType) {
 }
 
 export class App {
-  constructor({ clock, ids } = {}) {
+  constructor({ clock, ids, tier, limits, authHook, policyHook, observability } = {}) {
     this._router = new Router();
     this._clock = clock ?? new RealClock();
     this._ids = ids ?? new RandomIdGenerator();
+    this._tier = tier === "p0" || tier === "p1" || tier === "p2" ? tier : "p2";
+    this._limits = {
+      maxRequestBytes: Number(limits?.maxRequestBytes ?? 0),
+      maxResponseBytes: Number(limits?.maxResponseBytes ?? 0),
+    };
+    this._authHook = authHook ?? null;
+    this._policyHook = policyHook ?? null;
+    this._observability = observability ?? null;
   }
 
-  handle(method, pattern, handler) {
-    this._router.add(method, pattern, handler);
+  handle(method, pattern, handler, options = {}) {
+    this._router.add(method, pattern, handler, options);
     return this;
   }
 
@@ -172,6 +196,7 @@ export class App {
   }
 
   async serve(request, ctx) {
+    if (this._tier === "p0") {
     let normalized;
     try {
       normalized = normalizeRequest(request);
@@ -203,6 +228,148 @@ export class App {
     } catch (err) {
       return responseForError(err);
     }
+    }
+
+    const preHeaders = canonicalizeHeaders(request?.headers);
+    const preQuery = cloneQuery(request?.query);
+    let method = normalizeMethod(request?.method);
+    let path = normalizePath(request?.path);
+
+    let requestId = firstHeaderValue(preHeaders, "x-request-id");
+    if (!requestId) {
+      requestId = this._ids.newId();
+    }
+    const origin = firstHeaderValue(preHeaders, "origin");
+
+    const middlewareTrace = ["request_id", "recovery", "logging"];
+    if (origin) middlewareTrace.push("cors");
+
+    const tenantId = extractTenantId(preHeaders, preQuery);
+    const remainingMs = extractRemainingMs(ctx);
+    const enableP2 = this._tier === "p2";
+
+    const finish = (resp, errCode) => {
+      const out = finalizeP1Response(resp, requestId, origin);
+      if (enableP2) {
+        recordObservability(this._observability, {
+          method,
+          path,
+          requestId,
+          tenantId,
+          status: out.status,
+          errorCode: errCode ?? "",
+        });
+      }
+      return out;
+    };
+
+    if (isCorsPreflight(method, preHeaders)) {
+      const allow = firstHeaderValue(preHeaders, "access-control-request-method");
+      const resp = normalizeResponse({
+        status: 204,
+        headers: { "access-control-allow-methods": [allow] },
+        cookies: [],
+        body: Buffer.alloc(0),
+        isBase64: false,
+      });
+      return finish(resp, "");
+    }
+
+    let normalized;
+    try {
+      normalized = normalizeRequest(request);
+    } catch (err) {
+      return finish(responseForErrorWithRequestId(err, requestId), err instanceof AppError ? err.code : "app.internal");
+    }
+
+    method = normalized.method;
+    path = normalized.path;
+
+    if (this._limits.maxRequestBytes > 0 && normalized.body.length > this._limits.maxRequestBytes) {
+      return finish(errorResponseWithRequestId("app.too_large", "request too large", {}, requestId), "app.too_large");
+    }
+
+    const { match, allowed } = this._router.match(normalized.method, normalized.path);
+    if (!match) {
+      if (allowed.length > 0) {
+        return finish(
+          errorResponseWithRequestId(
+          "app.method_not_allowed",
+          "method not allowed",
+          { allow: [formatAllowHeader(allowed)] },
+          requestId,
+          ),
+          "app.method_not_allowed",
+        );
+      }
+      return finish(errorResponseWithRequestId("app.not_found", "not found", {}, requestId), "app.not_found");
+    }
+
+    const requestCtx = new Context({
+      request: normalized,
+      params: match.params,
+      clock: this._clock,
+      ids: this._ids,
+      ctx,
+      requestId,
+      tenantId,
+      authIdentity: "",
+      remainingMs,
+      middlewareTrace,
+    });
+
+    if (enableP2 && typeof this._policyHook === "function") {
+      let decision;
+      try {
+        decision = await this._policyHook(requestCtx);
+      } catch (err) {
+        return finish(responseForErrorWithRequestId(err, requestId), err instanceof AppError ? err.code : "app.internal");
+      }
+
+      const code = String(decision?.code ?? "").trim();
+      if (code) {
+        const message = String(decision?.message ?? "").trim() || defaultPolicyMessage(code);
+        return finish(errorResponseWithRequestId(code, message, decision?.headers ?? {}, requestId), code);
+      }
+    }
+
+    if (match.route.authRequired) {
+      middlewareTrace.push("auth");
+      try {
+        if (!this._authHook) {
+          throw new AppError("app.unauthorized", "unauthorized");
+        }
+        const identity = await this._authHook(requestCtx);
+        if (!String(identity ?? "").trim()) {
+          throw new AppError("app.unauthorized", "unauthorized");
+        }
+        requestCtx.authIdentity = String(identity);
+      } catch (err) {
+        return finish(responseForErrorWithRequestId(err, requestId), err instanceof AppError ? err.code : "app.internal");
+      }
+    }
+
+    middlewareTrace.push("handler");
+
+    let out;
+    try {
+      out = await match.route.handler(requestCtx);
+    } catch (err) {
+      return finish(responseForErrorWithRequestId(err, requestId), err instanceof AppError ? err.code : "app.internal");
+    }
+
+    let resp;
+    if (out === null || out === undefined) {
+      return finish(errorResponseWithRequestId("app.internal", "internal error", {}, requestId), "app.internal");
+    } else {
+      resp = normalizeResponse(out);
+    }
+
+    if (this._limits.maxResponseBytes > 0 && resp.body.length > this._limits.maxResponseBytes) {
+      return finish(errorResponseWithRequestId("app.too_large", "response too large", {}, requestId), "app.too_large");
+    }
+
+    return finish(resp, "");
   }
 
   async serveAPIGatewayV2(event, ctx) {
@@ -313,7 +480,7 @@ class Router {
     this._routes = [];
   }
 
-  add(method, pattern, handler) {
+  add(method, pattern, handler, options = {}) {
     const normalizedMethod = normalizeMethod(method);
     const normalizedPattern = normalizePath(pattern);
     this._routes.push({
@@ -321,6 +488,7 @@ class Router {
       pattern: normalizedPattern,
       segments: splitPath(normalizedPattern),
       handler,
+      authRequired: Boolean(options?.authRequired),
     });
   }
 
@@ -518,6 +686,24 @@ function errorResponse(code, message, headers = {}) {
   });
 }
 
+function errorResponseWithRequestId(code, message, headers = {}, requestId = "") {
+  const outHeaders = { ...canonicalizeHeaders(headers) };
+  outHeaders["content-type"] = ["application/json; charset=utf-8"];
+
+  const error = { code, message };
+  if (requestId) {
+    error.request_id = String(requestId);
+  }
+
+  return normalizeResponse({
+    status: statusForErrorCode(code),
+    headers: outHeaders,
+    cookies: [],
+    body: Buffer.from(JSON.stringify({ error }), "utf8"),
+    isBase64: false,
+  });
+}
+
 function responseForError(err) {
   if (err instanceof AppError) {
     return errorResponse(err.code, err.message);
@@ -525,6 +711,123 @@ function responseForError(err) {
   return errorResponse("app.internal", "internal error");
 }
 
+function responseForErrorWithRequestId(err, requestId) {
+  if (err instanceof AppError) {
+    return errorResponseWithRequestId(err.code, err.message, {}, requestId);
+  }
+  return errorResponseWithRequestId("app.internal", "internal error", {}, requestId);
+}
+
+function firstHeaderValue(headers, key) {
+  const values = headers?.[String(key).trim().toLowerCase()] ?? [];
+  return values.length > 0 ? String(values[0]) : "";
+}
+
+function extractTenantId(headers, query) {
+  const headerTenant = firstHeaderValue(headers, "x-tenant-id");
+  if (headerTenant) return headerTenant;
+  const values = query?.tenant ?? [];
+  return values.length > 0 ? String(values[0]) : "";
+}
+
+function isCorsPreflight(method, headers) {
+  return normalizeMethod(method) === "OPTIONS" && firstHeaderValue(headers, "access-control-request-method");
+}
+
+function finalizeP1Response(resp, requestId, origin) {
+  const headers = canonicalizeHeaders(resp.headers ?? {});
+  if (requestId) {
+    headers["x-request-id"] = [String(requestId)];
+  }
+  if (origin) {
+    headers["access-control-allow-origin"] = [String(origin)];
+    headers.vary = ["origin"];
+  }
+  return { ...resp, headers };
+}
+
+function defaultPolicyMessage(code) {
+  switch (String(code ?? "").trim()) {
+    case "app.rate_limited":
+      return "rate limited";
+    case "app.overloaded":
+      return "overloaded";
+    default:
+      return "internal error";
+  }
+}
+
+function extractRemainingMs(ctx) {
+  if (ctx && typeof ctx === "object") {
+    if (typeof ctx.getRemainingTimeInMillis === "function") {
+      const value = Number(ctx.getRemainingTimeInMillis());
+      if (Number.isFinite(value) && value > 0) {
+        return Math.floor(value);
+      }
+      return 0;
+    }
+    if ("remaining_ms" in ctx) {
+      const value = Number(ctx.remaining_ms);
+      if (Number.isFinite(value) && value > 0) {
+        return Math.floor(value);
+      }
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function recordObservability(hooks, { method, path, requestId, tenantId, status, errorCode }) {
+  if (!hooks) return;
+
+  let level = "info";
+  if (status >= 500) {
+    level = "error";
+  } else if (status >= 400) {
+    level = "warn";
+  }
+
+  if (typeof hooks.log === "function") {
+    hooks.log({
+      level,
+      event: "request.completed",
+      requestId,
+      tenantId,
+      method,
+      path,
+      status,
+      errorCode,
+    });
+  }
+
+  if (typeof hooks.metric === "function") {
+    hooks.metric({
+      name: "apptheory.request",
+      value: 1,
+      tags: {
+        method,
+        path,
+        status: String(status),
+        error_code: errorCode,
+        tenant_id: tenantId,
+      },
+    });
+  }
+
+  if (typeof hooks.span === "function") {
+    hooks.span({
+      name: `http ${method} ${path}`,
+      attributes: {
+        "http.method": method,
+        "http.route": path,
+        "http.status_code": String(status),
+        "request.id": requestId,
+        "tenant.id": tenantId,
+        "error.code": errorCode,
+      },
+    });
+  }
+}
 function formatAllowHeader(methods) {
   const unique = new Set();
   for (const m of methods ?? []) {

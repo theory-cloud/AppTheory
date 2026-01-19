@@ -14,6 +14,12 @@ type Context struct {
 	Params  map[string]string
 	clock   Clock
 	ids     IDGenerator
+
+	RequestID      string
+	TenantID       string
+	AuthIdentity   string
+	RemainingMS    int
+	MiddlewareTrace []string
 }
 
 func (c *Context) Context() context.Context {

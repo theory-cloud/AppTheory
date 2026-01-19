@@ -34,9 +34,15 @@ Non-goals (near-term):
 - Node.js: `24`
 - Python: `3.14`
 
-## Go runtime (P0)
+## Runtime tiers (P0/P1/P2)
 
-The Go runtime implements the fixture-backed P0 contract (routing + request/response normalization + error envelope).
+- **P0:** routing + request/response normalization + error envelope
+- **P1:** request-id, tenant extraction, auth hooks, CORS, size/time guardrails, middleware ordering
+- **P2 (default):** P1 + observability hooks + rate limiting / load shedding policy hooks
+
+## Go runtime (P2 default)
+
+The Go runtime implements the fixture-backed contract across P0/P1/P2 tiers (default: P2).
 
 Minimal local invocation:
 
@@ -51,6 +57,8 @@ app.Get("/ping", func(ctx *apptheory.Context) (*apptheory.Response, error) {
 resp := env.Invoke(context.Background(), app, apptheory.Request{Method: "GET", Path: "/ping"})
 _ = resp
 ```
+
+To force the P0 core (minimal surface area), pass `apptheory.WithTier(apptheory.TierP0)` when creating the app.
 
 Unit test without AWS (deterministic time + IDs + HTTP event builder):
 
@@ -67,11 +75,16 @@ func TestHello(t *testing.T) {
 		}), nil
 	})
 
-	event := testkit.APIGatewayV2Request("GET", "/hello", testkit.HTTPEventOptions{})
+	event := testkit.APIGatewayV2Request("GET", "/hello", testkit.HTTPEventOptions{
+		Headers: map[string]string{"x-request-id": "request-1"},
+	})
 	resp := env.InvokeAPIGatewayV2(context.Background(), app, event)
 
 	if resp.StatusCode != 200 {
 		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+	if resp.Headers["x-request-id"] != "request-1" {
+		t.Fatalf("expected x-request-id request-1, got %#v", resp.Headers["x-request-id"])
 	}
 
 	var body map[string]any

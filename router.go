@@ -8,11 +8,24 @@ import (
 // Handler is the request handler signature for AppTheory apps.
 type Handler func(*Context) (*Response, error)
 
+type RouteOption func(*routeOptions)
+
+type routeOptions struct {
+	authRequired bool
+}
+
+func RequireAuth() RouteOption {
+	return func(opts *routeOptions) {
+		opts.authRequired = true
+	}
+}
+
 type route struct {
-	Method   string
-	Pattern  string
-	Segments []string
-	Handler  Handler
+	Method       string
+	Pattern      string
+	Segments     []string
+	Handler      Handler
+	AuthRequired bool
 }
 
 type router struct {
@@ -23,14 +36,15 @@ func newRouter() *router {
 	return &router{}
 }
 
-func (r *router) add(method, pattern string, handler Handler) {
+func (r *router) add(method, pattern string, handler Handler, opts routeOptions) {
 	method = strings.ToUpper(strings.TrimSpace(method))
 	pattern = normalizePath(pattern)
 	r.routes = append(r.routes, route{
-		Method:   method,
-		Pattern:  pattern,
-		Segments: splitPath(pattern),
-		Handler:  handler,
+		Method:       method,
+		Pattern:      pattern,
+		Segments:     splitPath(pattern),
+		Handler:      handler,
+		AuthRequired: opts.authRequired,
 	})
 }
 
