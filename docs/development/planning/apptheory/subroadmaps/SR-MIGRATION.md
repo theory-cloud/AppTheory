@@ -100,6 +100,11 @@ Representative migration (rate limiting):
 - `pay-theory/lift` deprecation posture is documented (what stays supported and for how long internally).
 - AppTheory release notes link to the migration guide and highlight breaking differences.
 
+Artifacts:
+
+- Deprecation posture: `docs/migration/lift-deprecation.md`
+- Release notes template: `scripts/render-release-notes.sh`
+
 ## Risks and mitigation
 
 - **Hidden Lift coupling:** start with the Pay Theory inventory to avoid surprises.
