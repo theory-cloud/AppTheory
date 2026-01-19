@@ -42,8 +42,8 @@ Lift historically used `github.com/pay-theory/limited`. AppTheory will provide a
 replicates the **full** `limited` feature set (strategies, fail-open behavior, usage stats) so migrations do not require a
 feature cut.
 
-In AppTheory, DynamoDB access is standardized on **TableTheory** (`theory-cloud/TableTheory`), which replaces DynamORM for
-new work.
+In AppTheory, DynamoDB access is standardized on **TableTheory** (AppTheory’s companion data framework for
+Go/TypeScript/Python), which replaces DynamORM for new work.
 
 Why: rate limiting is a production requirement and must be available as a first-class capability without depending on
 DynamORM.
