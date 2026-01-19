@@ -1,0 +1,34 @@
+{
+  "id": "p1.cors.preflight",
+  "tier": "p1",
+  "name": "CORS preflight requests are handled before routing",
+  "setup": { "routes": [] },
+  "input": {
+    "request": {
+      "method": "OPTIONS",
+      "path": "/anything",
+      "query": {},
+      "headers": {
+        "access-control-request-method": ["GET"],
+        "origin": ["https://example.com"]
+      },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 204,
+      "headers": {
+        "access-control-allow-methods": ["GET"],
+        "access-control-allow-origin": ["https://example.com"],
+        "vary": ["origin"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  }
+}
+

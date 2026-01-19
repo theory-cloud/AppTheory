@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 
-@dataclass(frozen=True)
+@dataclass
 class CanonicalRequest:
     method: str
     path: str
@@ -21,6 +21,11 @@ class CanonicalRequest:
     body: bytes
     is_base64: bool
     path_params: dict[str, str]
+    request_id: str
+    tenant_id: str
+    auth_identity: str
+    remaining_ms: int
+    middleware_trace: list[str]
 
 
 @dataclass(frozen=True)
@@ -110,7 +115,7 @@ def parse_cookies(cookie_headers: list[str]) -> dict[str, str]:
     return out
 
 
-def canonicalize_request(req: dict[str, Any]) -> CanonicalRequest:
+def canonicalize_request(req: dict[str, Any], ctx: dict[str, Any] | None) -> CanonicalRequest:
     method = str(req.get("method", "")).strip().upper()
     path = str(req.get("path", "")).strip() or "/"
     if not path.startswith("/"):
@@ -134,6 +139,11 @@ def canonicalize_request(req: dict[str, Any]) -> CanonicalRequest:
         body=body_bytes,
         is_base64=is_base64,
         path_params={},
+        request_id="",
+        tenant_id="",
+        auth_identity="",
+        remaining_ms=int((ctx or {}).get("remaining_ms") or 0),
+        middleware_trace=[],
     )
 
 
@@ -179,10 +189,18 @@ def status_for_error(code: str) -> int:
     }.get(code, 500)
 
 
-def app_error_response(code: str, message: str, extra_headers: dict[str, list[str]] | None = None) -> CanonicalResponse:
+def app_error_response(
+    code: str,
+    message: str,
+    extra_headers: dict[str, list[str]] | None = None,
+    request_id: str = "",
+) -> CanonicalResponse:
     headers = canonicalize_headers(extra_headers or {})
     headers["content-type"] = ["application/json; charset=utf-8"]
-    body = json.dumps({"error": {"code": code, "message": message}}, separators=(",", ":")).encode("utf-8")
+    error: dict[str, Any] = {"code": code, "message": message}
+    if request_id:
+        error["request_id"] = request_id
+    body = json.dumps({"error": error}, separators=(",", ":")).encode("utf-8")
     return CanonicalResponse(
         status=status_for_error(code),
         headers=headers,
@@ -249,6 +267,40 @@ def built_in_handler(name: str):
 
         return handler
 
+    if name == "echo_context":
+        def handler(req: CanonicalRequest) -> CanonicalResponse:
+            body = json.dumps(
+                {
+                    "request_id": req.request_id,
+                    "tenant_id": req.tenant_id,
+                    "auth_identity": req.auth_identity,
+                    "remaining_ms": req.remaining_ms,
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+            return CanonicalResponse(
+                status=200,
+                headers={"content-type": ["application/json; charset=utf-8"]},
+                cookies=[],
+                body=body,
+                is_base64=False,
+            )
+
+        return handler
+
+    if name == "echo_middleware_trace":
+        def handler(req: CanonicalRequest) -> CanonicalResponse:
+            body = json.dumps({"trace": req.middleware_trace}, separators=(",", ":")).encode("utf-8")
+            return CanonicalResponse(
+                status=200,
+                headers={"content-type": ["application/json; charset=utf-8"]},
+                cookies=[],
+                body=body,
+                is_base64=False,
+            )
+
+        return handler
+
     if name == "parse_json_echo":
         def handler(req: CanonicalRequest) -> CanonicalResponse:
             if not is_json_content_type(req.headers):
@@ -302,10 +354,65 @@ def built_in_handler(name: str):
 
         return handler
 
+    if name == "large_response":
+        def handler(_req: CanonicalRequest) -> CanonicalResponse:
+            return CanonicalResponse(
+                status=200,
+                headers={"content-type": ["text/plain; charset=utf-8"]},
+                cookies=[],
+                body=b"12345",
+                is_base64=False,
+            )
+
+        return handler
+
     return None
 
 
-def new_fixture_app(routes: list[dict[str, Any]]):
+def enable_p1_for_tier(tier: str) -> bool:
+    return tier.strip().lower() in ("p1", "p2")
+
+
+def first_header_value(headers: dict[str, list[str]], key: str) -> str:
+    values = headers.get(key.strip().lower(), [])
+    return values[0] if values else ""
+
+
+def extract_tenant_id(headers: dict[str, list[str]], query: dict[str, list[str]]) -> str:
+    tenant = first_header_value(headers, "x-tenant-id")
+    if tenant:
+        return tenant
+    values = query.get("tenant", [])
+    return values[0] if values else ""
+
+
+def is_cors_preflight(method: str, headers: dict[str, list[str]]) -> bool:
+    return method.strip().upper() == "OPTIONS" and first_header_value(headers, "access-control-request-method") != ""
+
+
+def finalize_response(
+    resp: CanonicalResponse,
+    enable_p1: bool,
+    request_id: str,
+    origin: str,
+) -> CanonicalResponse:
+    headers = canonicalize_headers(resp.headers)
+    if enable_p1:
+        if request_id:
+            headers["x-request-id"] = [request_id]
+        if origin:
+            headers["access-control-allow-origin"] = [origin]
+            headers["vary"] = ["origin"]
+    return CanonicalResponse(
+        status=resp.status,
+        headers=headers,
+        cookies=resp.cookies,
+        body=resp.body,
+        is_base64=resp.is_base64,
+    )
+
+
+def new_fixture_app(routes: list[dict[str, Any]], tier: str, limits: dict[str, Any]):
     compiled = []
     for r in routes:
         compiled.append(
@@ -314,10 +421,52 @@ def new_fixture_app(routes: list[dict[str, Any]]):
                 "path": str(r.get("path", "")).strip(),
                 "segments": split_path(str(r.get("path", ""))),
                 "handler": str(r.get("handler", "")).strip(),
+                "auth_required": bool(r.get("auth_required")),
             }
         )
 
+    enable_p1 = enable_p1_for_tier(tier)
+    max_request_bytes = int(limits.get("max_request_bytes") or 0)
+    max_response_bytes = int(limits.get("max_response_bytes") or 0)
+
     def handle(req: CanonicalRequest) -> CanonicalResponse:
+        request_id = ""
+        origin = ""
+
+        if enable_p1:
+            request_id = first_header_value(req.headers, "x-request-id") or "req_test_123"
+            req.request_id = request_id
+
+            origin = first_header_value(req.headers, "origin")
+            req.tenant_id = extract_tenant_id(req.headers, req.query)
+
+            req.middleware_trace.extend(["request_id", "recovery", "logging"])
+            if origin:
+                req.middleware_trace.append("cors")
+
+            if origin and is_cors_preflight(req.method, req.headers):
+                allow = first_header_value(req.headers, "access-control-request-method")
+                return finalize_response(
+                    CanonicalResponse(
+                        status=204,
+                        headers={"access-control-allow-methods": [allow]},
+                        cookies=[],
+                        body=b"",
+                        is_base64=False,
+                    ),
+                    enable_p1,
+                    request_id,
+                    origin,
+                )
+
+            if max_request_bytes > 0 and len(req.body) > max_request_bytes:
+                return finalize_response(
+                    app_error_response("app.too_large", "request too large", request_id=request_id),
+                    enable_p1,
+                    request_id,
+                    origin,
+                )
+
         match = None
         allowed: list[str] = []
         for route in compiled:
@@ -331,31 +480,52 @@ def new_fixture_app(routes: list[dict[str, Any]]):
 
         if match is None:
             if allowed:
-                return app_error_response(
-                    "app.method_not_allowed",
-                    "method not allowed",
-                    {"allow": [format_allow_header(allowed)]},
+                return finalize_response(
+                    app_error_response(
+                        "app.method_not_allowed",
+                        "method not allowed",
+                        {"allow": [format_allow_header(allowed)]},
+                        request_id=request_id,
+                    ),
+                    enable_p1,
+                    request_id,
+                    origin,
                 )
-            return app_error_response("app.not_found", "not found")
+            return finalize_response(
+                app_error_response("app.not_found", "not found", request_id=request_id),
+                enable_p1,
+                request_id,
+                origin,
+            )
 
         route, params = match
+        if enable_p1 and route.get("auth_required"):
+            req.middleware_trace.append("auth")
+            authz = first_header_value(req.headers, "authorization")
+            if not authz.strip():
+                return finalize_response(
+                    app_error_response("app.unauthorized", "unauthorized", request_id=request_id),
+                    enable_p1,
+                    request_id,
+                    origin,
+                )
+            req.auth_identity = "authorized"
+        if enable_p1:
+            req.middleware_trace.append("handler")
+
         handler = built_in_handler(route["handler"])
         if handler is None:
-            return app_error_response("app.internal", "internal error")
+            return finalize_response(
+                app_error_response("app.internal", "internal error", request_id=request_id),
+                enable_p1,
+                request_id,
+                origin,
+            )
 
         try:
-            enriched = CanonicalRequest(
-                method=req.method,
-                path=req.path,
-                query=req.query,
-                headers=req.headers,
-                cookies=req.cookies,
-                body=req.body,
-                is_base64=req.is_base64,
-                path_params=params,
-            )
-            resp = handler(enriched)
-            return CanonicalResponse(
+            req.path_params = params
+            resp = handler(req)
+            resp = CanonicalResponse(
                 status=resp.status,
                 headers=canonicalize_headers(resp.headers),
                 cookies=resp.cookies,
@@ -363,9 +533,24 @@ def new_fixture_app(routes: list[dict[str, Any]]):
                 is_base64=resp.is_base64,
             )
         except AppError as exc:
-            return app_error_response(exc.code, exc.message)
+            return finalize_response(
+                app_error_response(exc.code, exc.message, request_id=request_id),
+                enable_p1,
+                request_id,
+                origin,
+            )
         except Exception:  # noqa: BLE001
-            return app_error_response("app.internal", "internal error")
+            return finalize_response(
+                app_error_response("app.internal", "internal error", request_id=request_id),
+                enable_p1,
+                request_id,
+                origin,
+            )
+
+        if enable_p1 and max_response_bytes > 0 and len(resp.body) > max_response_bytes:
+            resp = app_error_response("app.too_large", "response too large", request_id=request_id)
+
+        return finalize_response(resp, enable_p1, request_id, origin)
 
     return handle
 
@@ -375,8 +560,10 @@ def compare_headers(expected: dict[str, Any] | None, actual: dict[str, Any] | No
 
 
 def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any]]:
-    app = new_fixture_app(fixture.get("setup", {}).get("routes", []))
-    req = canonicalize_request(fixture.get("input", {}).get("request", {}))
+    setup = fixture.get("setup", {})
+    input_ = fixture.get("input", {})
+    app = new_fixture_app(setup.get("routes", []), fixture.get("tier", ""), setup.get("limits", {}) or {})
+    req = canonicalize_request(input_.get("request", {}), input_.get("context", {}))
     actual = app(req)
     expected = fixture.get("expect", {}).get("response", {})
 
@@ -466,4 +653,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

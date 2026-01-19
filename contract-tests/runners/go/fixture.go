@@ -11,26 +11,33 @@ import (
 )
 
 type Fixture struct {
-	ID     string       `json:"id"`
-	Tier   string       `json:"tier"`
-	Name   string       `json:"name"`
-	Setup  FixtureSetup `json:"setup"`
-	Input  FixtureInput `json:"input"`
+	ID     string        `json:"id"`
+	Tier   string        `json:"tier"`
+	Name   string        `json:"name"`
+	Setup  FixtureSetup  `json:"setup"`
+	Input  FixtureInput  `json:"input"`
 	Expect FixtureExpect `json:"expect"`
 }
 
 type FixtureSetup struct {
+	Limits FixtureLimits  `json:"limits,omitempty"`
 	Routes []FixtureRoute `json:"routes"`
 }
 
 type FixtureRoute struct {
-	Method  string `json:"method"`
-	Path    string `json:"path"`
-	Handler string `json:"handler"`
+	Method       string `json:"method"`
+	Path         string `json:"path"`
+	Handler      string `json:"handler"`
+	AuthRequired bool   `json:"auth_required,omitempty"`
 }
 
 type FixtureInput struct {
+	Context FixtureContext `json:"context,omitempty"`
 	Request FixtureRequest `json:"request"`
+}
+
+type FixtureContext struct {
+	RemainingMS int `json:"remaining_ms,omitempty"`
 }
 
 type FixtureRequest struct {
@@ -58,6 +65,11 @@ type FixtureResponse struct {
 type FixtureBody struct {
 	Encoding string `json:"encoding"`
 	Value    string `json:"value"`
+}
+
+type FixtureLimits struct {
+	MaxRequestBytes  int `json:"max_request_bytes,omitempty"`
+	MaxResponseBytes int `json:"max_response_bytes,omitempty"`
 }
 
 func loadFixtures(fixturesRoot string) ([]Fixture, error) {
@@ -94,4 +106,3 @@ func loadFixtures(fixturesRoot string) ([]Fixture, error) {
 
 	return fixtures, nil
 }
-
