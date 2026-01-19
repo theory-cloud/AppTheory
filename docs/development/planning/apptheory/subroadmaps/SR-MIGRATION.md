@@ -3,7 +3,9 @@
 Goal: enable Pay Theory (and any other Lift users) to migrate to AppTheory with minimal friction, even if the migration is
 not drop-in identical.
 
-This workstream is about **reducing migration time**, not preserving every old API.
+This workstream is about **reducing migration time** while preserving **Lift-equivalent capabilities** for Pay Theory.
+AppTheory is not required to be API-identical to Lift, but it must keep **100% of Lift’s current functionality** available
+to Go users (portable subset + documented Go-only extensions) so migrations don’t require feature cuts.
 
 ## Scope
 
@@ -29,6 +31,10 @@ Non-goals:
   - “direct replacement in AppTheory”
   - “replacement with behavior change”
   - “Go-only, keep using Lift” (temporary) or “drop”
+
+Inventory doc (baseline):
+
+- `docs/development/planning/apptheory/supporting/apptheory-lift-usage-inventory.md`
 
 ---
 
@@ -80,4 +86,3 @@ Non-goals:
 
 - **Hidden Lift coupling:** start with the Pay Theory inventory to avoid surprises.
 - **Shim creep:** make shims time-bound and minimal; prefer teaching the new model.
-
