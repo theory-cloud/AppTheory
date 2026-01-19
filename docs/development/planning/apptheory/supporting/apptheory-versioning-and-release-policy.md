@@ -15,10 +15,12 @@ Status: frozen for milestone `M0`; implementation tracked in `SR-RELEASE`.
 ## Branch model
 
 - `main` is the default branch and is kept releasable (green).
-- All work lands via feature branches and PRs into `main`.
-- Releases are cut by tagging a commit on `main`:
-  - stable: `vX.Y.Z`
+- `premain` is used for release-candidate hardening and pre-release automation.
+- Day-to-day work lands via feature branches and PRs into `main`.
+- RC releases are cut by tagging a commit on `premain`:
   - pre-release: `vX.Y.Z-rc.N`
+- Stable releases are cut by tagging a commit on `main`:
+  - stable: `vX.Y.Z`
 - If/when needed for backports, use short-lived `release/vX.Y` branches; otherwise prefer forward-only on `main`.
 
 ## Version scheme
