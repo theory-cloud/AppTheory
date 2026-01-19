@@ -63,8 +63,44 @@ def error_response(code: str, message: str, *, headers: dict[str, Any] | None = 
     )
 
 
+def error_response_with_request_id(
+    code: str,
+    message: str,
+    *,
+    headers: dict[str, Any] | None = None,
+    request_id: str = "",
+) -> Response:
+    headers_out: dict[str, Any] = dict(headers or {})
+    headers_out["content-type"] = ["application/json; charset=utf-8"]
+
+    error: dict[str, Any] = {"code": code, "message": message}
+    if request_id:
+        error["request_id"] = str(request_id)
+
+    body = json.dumps(
+        {"error": error},
+        ensure_ascii=False,
+        sort_keys=True,
+    ).encode("utf-8")
+
+    return normalize_response(
+        Response(
+            status=status_for_error_code(code),
+            headers=headers_out,
+            cookies=[],
+            body=body,
+            is_base64=False,
+        )
+    )
+
+
 def response_for_error(exc: Exception) -> Response:
     if isinstance(exc, AppError):
         return error_response(exc.code, exc.message)
     return error_response("app.internal", "internal error")
 
+
+def response_for_error_with_request_id(exc: Exception, request_id: str) -> Response:
+    if isinstance(exc, AppError):
+        return error_response_with_request_id(exc.code, exc.message, request_id=request_id)
+    return error_response_with_request_id("app.internal", "internal error", request_id=request_id)

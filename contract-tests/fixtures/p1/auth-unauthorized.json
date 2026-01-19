@@ -1,0 +1,45 @@
+{
+  "id": "p1.auth.unauthorized",
+  "tier": "p1",
+  "name": "Auth failures map to app.unauthorized and preserve CORS headers",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/secure",
+        "handler": "echo_context",
+        "auth_required": true
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/secure",
+      "query": {},
+      "headers": { "origin": ["https://example.com"] },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 401,
+      "headers": {
+        "access-control-allow-origin": ["https://example.com"],
+        "content-type": ["application/json; charset=utf-8"],
+        "vary": ["origin"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.unauthorized",
+          "message": "unauthorized",
+          "request_id": "req_test_123"
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

@@ -8,9 +8,29 @@ type App struct {
 	router *router
 	clock  Clock
 	ids    IDGenerator
+	tier   Tier
+	limits Limits
+	auth   AuthHook
+	obs    ObservabilityHooks
+	policy PolicyHook
 }
 
 type Option func(*App)
+
+type Tier string
+
+const (
+	TierP0 Tier = "p0"
+	TierP1 Tier = "p1"
+	TierP2 Tier = "p2"
+)
+
+type Limits struct {
+	MaxRequestBytes  int
+	MaxResponseBytes int
+}
+
+type AuthHook func(*Context) (identity string, err error)
 
 // New creates a new AppTheory application container.
 func New(opts ...Option) *App {
@@ -18,6 +38,11 @@ func New(opts ...Option) *App {
 		router: newRouter(),
 		clock:  RealClock{},
 		ids:    RandomIDGenerator{},
+		tier:   TierP2,
+		limits: Limits{},
+		auth:   nil,
+		obs:    ObservabilityHooks{},
+		policy: nil,
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -45,5 +70,35 @@ func WithIDGenerator(ids IDGenerator) Option {
 			return
 		}
 		app.ids = ids
+	}
+}
+
+func WithTier(tier Tier) Option {
+	return func(app *App) {
+		app.tier = tier
+	}
+}
+
+func WithLimits(limits Limits) Option {
+	return func(app *App) {
+		app.limits = limits
+	}
+}
+
+func WithAuthHook(hook AuthHook) Option {
+	return func(app *App) {
+		app.auth = hook
+	}
+}
+
+func WithObservability(hooks ObservabilityHooks) Option {
+	return func(app *App) {
+		app.obs = hooks
+	}
+}
+
+func WithPolicyHook(hook PolicyHook) Option {
+	return func(app *App) {
+		app.policy = hook
 	}
 }

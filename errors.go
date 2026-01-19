@@ -66,10 +66,45 @@ func errorResponse(code, message string, headers map[string][]string) Response {
 	}
 }
 
+func errorResponseWithRequestID(code, message string, headers map[string][]string, requestID string) Response {
+	if headers == nil {
+		headers = map[string][]string{}
+	}
+	headers = cloneHeaders(headers)
+	headers["content-type"] = []string{"application/json; charset=utf-8"}
+
+	errBody := map[string]any{
+		"code":    code,
+		"message": message,
+	}
+	if requestID != "" {
+		errBody["request_id"] = requestID
+	}
+	body, _ := json.Marshal(map[string]any{
+		"error": errBody,
+	})
+
+	return Response{
+		Status:   statusForErrorCode(code),
+		Headers:  headers,
+		Cookies:  nil,
+		Body:     body,
+		IsBase64: false,
+	}
+}
+
 func responseForError(err error) Response {
 	var appErr *AppError
 	if errors.As(err, &appErr) {
 		return errorResponse(appErr.Code, appErr.Message, nil)
 	}
 	return errorResponse("app.internal", "internal error", nil)
+}
+
+func responseForErrorWithRequestID(err error, requestID string) Response {
+	var appErr *AppError
+	if errors.As(err, &appErr) {
+		return errorResponseWithRequestID(appErr.Code, appErr.Message, nil, requestID)
+	}
+	return errorResponseWithRequestID("app.internal", "internal error", nil, requestID)
 }
