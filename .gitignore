@@ -1,0 +1,11 @@
+.DS_Store
+.idea/
+.vscode/
+
+# Codex / PAI local artifacts
+.pai/
+
+# OS/editor temp
+*.swp
+*~
+
