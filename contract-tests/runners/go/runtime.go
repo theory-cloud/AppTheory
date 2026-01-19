@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -89,6 +90,8 @@ func statusForError(code string) int {
 		return 413
 	case "app.rate_limited":
 		return 429
+	case "app.overloaded":
+		return 503
 	case "app.internal":
 		return 500
 	default:
@@ -107,12 +110,26 @@ type compiledRoute struct {
 type fixtureApp struct {
 	routes   []compiledRoute
 	enableP1 bool
+	enableP2 bool
 	limits   FixtureLimits
+
+	logs    []FixtureLogRecord
+	metrics []FixtureMetricRecord
+	spans   []FixtureSpanRecord
 }
 
 func enableP1ForTier(tier string) bool {
 	switch strings.ToLower(strings.TrimSpace(tier)) {
 	case "p1", "p2":
+		return true
+	default:
+		return false
+	}
+}
+
+func enableP2ForTier(tier string) bool {
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case "p2":
 		return true
 	default:
 		return false
@@ -140,6 +157,7 @@ func newFixtureApp(setup FixtureSetup, tier string) (*fixtureApp, error) {
 	return &fixtureApp{
 		routes:   compiled,
 		enableP1: enableP1ForTier(tier),
+		enableP2: enableP2ForTier(tier),
 		limits:   setup.Limits,
 	}, nil
 }
@@ -201,11 +219,17 @@ func matchPath(patternSegments, pathSegments []string) (map[string]string, bool)
 func (a *fixtureApp) handle(req CanonicalRequest) (resp CanonicalResponse) {
 	requestID := ""
 	origin := ""
+	errorCode := ""
+
+	a.logs = nil
+	a.metrics = nil
+	a.spans = nil
 
 	defer func() {
 		if r := recover(); r != nil {
+			errorCode = "app.internal"
 			resp = appErrorResponse("app.internal", "internal error", nil, requestID)
-			resp = a.finalizeResponse(resp, requestID, origin)
+			resp = a.finish(req, resp, requestID, origin, errorCode)
 		}
 	}()
 
@@ -237,14 +261,32 @@ func (a *fixtureApp) handle(req CanonicalRequest) (resp CanonicalResponse) {
 				Body:     nil,
 				IsBase64: false,
 			}
-			resp = a.finalizeResponse(preflight, requestID, origin)
+			resp = a.finish(req, preflight, requestID, origin, errorCode)
 			return resp
 		}
 
 		if a.limits.MaxRequestBytes > 0 && len(req.Body) > a.limits.MaxRequestBytes {
+			errorCode = "app.too_large"
 			resp = appErrorResponse("app.too_large", "request too large", nil, requestID)
-			resp = a.finalizeResponse(resp, requestID, origin)
+			resp = a.finish(req, resp, requestID, origin, errorCode)
 			return resp
+		}
+
+		if a.enableP2 {
+			if firstHeaderValue(req.Headers, "x-force-rate-limit") != "" {
+				errorCode = "app.rate_limited"
+				resp = appErrorResponse("app.rate_limited", "rate limited", map[string][]string{
+					"retry-after": []string{"1"},
+				}, requestID)
+				return a.finish(req, resp, requestID, origin, errorCode)
+			}
+			if firstHeaderValue(req.Headers, "x-force-shed") != "" {
+				errorCode = "app.overloaded"
+				resp = appErrorResponse("app.overloaded", "overloaded", map[string][]string{
+					"retry-after": []string{"1"},
+				}, requestID)
+				return a.finish(req, resp, requestID, origin, errorCode)
+			}
 		}
 	}
 
@@ -254,11 +296,13 @@ func (a *fixtureApp) handle(req CanonicalRequest) (resp CanonicalResponse) {
 			headers := map[string][]string{
 				"allow": []string{formatAllowHeader(allowed)},
 			}
+			errorCode = "app.method_not_allowed"
 			resp = appErrorResponse("app.method_not_allowed", "method not allowed", headers, requestID)
-			return a.finalizeResponse(resp, requestID, origin)
+			return a.finish(req, resp, requestID, origin, errorCode)
 		}
+		errorCode = "app.not_found"
 		resp = appErrorResponse("app.not_found", "not found", nil, requestID)
-		return a.finalizeResponse(resp, requestID, origin)
+		return a.finish(req, resp, requestID, origin, errorCode)
 	}
 
 	req.PathParams = match.PathParams
@@ -266,8 +310,9 @@ func (a *fixtureApp) handle(req CanonicalRequest) (resp CanonicalResponse) {
 		req.MiddlewareTrace = append(req.MiddlewareTrace, "auth")
 		authz := firstHeaderValue(req.Headers, "authorization")
 		if strings.TrimSpace(authz) == "" {
+			errorCode = "app.unauthorized"
 			resp = appErrorResponse("app.unauthorized", "unauthorized", nil, requestID)
-			return a.finalizeResponse(resp, requestID, origin)
+			return a.finish(req, resp, requestID, origin, errorCode)
 		}
 		req.AuthIdentity = "authorized"
 	}
@@ -277,27 +322,31 @@ func (a *fixtureApp) handle(req CanonicalRequest) (resp CanonicalResponse) {
 
 	handler := builtInHandler(match.Route.Handler)
 	if handler == nil {
+		errorCode = "app.internal"
 		resp = appErrorResponse("app.internal", "internal error", nil, requestID)
-		return a.finalizeResponse(resp, requestID, origin)
+		return a.finish(req, resp, requestID, origin, errorCode)
 	}
 
 	r, err := handler(req)
 	if err != nil {
 		var appErr *AppError
 		if errors.As(err, &appErr) {
+			errorCode = appErr.Code
 			resp = appErrorResponse(appErr.Code, appErr.Message, nil, requestID)
-			return a.finalizeResponse(resp, requestID, origin)
+			return a.finish(req, resp, requestID, origin, errorCode)
 		}
+		errorCode = "app.internal"
 		resp = appErrorResponse("app.internal", "internal error", nil, requestID)
-		return a.finalizeResponse(resp, requestID, origin)
+		return a.finish(req, resp, requestID, origin, errorCode)
 	}
 
 	if a.enableP1 && a.limits.MaxResponseBytes > 0 && len(r.Body) > a.limits.MaxResponseBytes {
+		errorCode = "app.too_large"
 		resp = appErrorResponse("app.too_large", "response too large", nil, requestID)
-		return a.finalizeResponse(resp, requestID, origin)
+		return a.finish(req, resp, requestID, origin, errorCode)
 	}
 
-	return a.finalizeResponse(r, requestID, origin)
+	return a.finish(req, r, requestID, origin, errorCode)
 }
 
 func (a *fixtureApp) finalizeResponse(resp CanonicalResponse, requestID, origin string) CanonicalResponse {
@@ -312,6 +361,64 @@ func (a *fixtureApp) finalizeResponse(resp CanonicalResponse, requestID, origin 
 		}
 	}
 	return resp
+}
+
+func (a *fixtureApp) finish(req CanonicalRequest, resp CanonicalResponse, requestID, origin, errorCode string) CanonicalResponse {
+	out := a.finalizeResponse(resp, requestID, origin)
+	if a.enableP2 {
+		a.recordP2(req, out, errorCode)
+	}
+	return out
+}
+
+func (a *fixtureApp) recordP2(req CanonicalRequest, resp CanonicalResponse, errorCode string) {
+	level := "info"
+	if resp.Status >= 500 {
+		level = "error"
+	} else if resp.Status >= 400 {
+		level = "warn"
+	}
+
+	a.logs = []FixtureLogRecord{
+		{
+			Level:     level,
+			Event:     "request.completed",
+			RequestID: req.RequestID,
+			TenantID:  req.TenantID,
+			Method:    req.Method,
+			Path:      req.Path,
+			Status:    resp.Status,
+			ErrorCode: errorCode,
+		},
+	}
+
+	a.metrics = []FixtureMetricRecord{
+		{
+			Name:  "apptheory.request",
+			Value: 1,
+			Tags: map[string]string{
+				"method":     req.Method,
+				"path":       req.Path,
+				"status":     strconv.Itoa(resp.Status),
+				"error_code": errorCode,
+				"tenant_id":  req.TenantID,
+			},
+		},
+	}
+
+	a.spans = []FixtureSpanRecord{
+		{
+			Name: fmt.Sprintf("http %s %s", req.Method, req.Path),
+			Attributes: map[string]string{
+				"http.method":      req.Method,
+				"http.route":       req.Path,
+				"http.status_code": strconv.Itoa(resp.Status),
+				"request.id":       req.RequestID,
+				"tenant.id":        req.TenantID,
+				"error.code":       errorCode,
+			},
+		},
+	}
 }
 
 func isCorsPreflight(method string, headers map[string][]string) bool {

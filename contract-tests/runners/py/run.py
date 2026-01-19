@@ -185,6 +185,7 @@ def status_for_error(code: str) -> int:
         "app.conflict": 409,
         "app.too_large": 413,
         "app.rate_limited": 429,
+        "app.overloaded": 503,
         "app.internal": 500,
     }.get(code, 500)
 
@@ -373,6 +374,10 @@ def enable_p1_for_tier(tier: str) -> bool:
     return tier.strip().lower() in ("p1", "p2")
 
 
+def enable_p2_for_tier(tier: str) -> bool:
+    return tier.strip().lower() == "p2"
+
+
 def first_header_value(headers: dict[str, list[str]], key: str) -> str:
     values = headers.get(key.strip().lower(), [])
     return values[0] if values else ""
@@ -411,11 +416,9 @@ def finalize_response(
         is_base64=resp.is_base64,
     )
 
-
-def new_fixture_app(routes: list[dict[str, Any]], tier: str, limits: dict[str, Any]):
-    compiled = []
-    for r in routes:
-        compiled.append(
+class FixtureApp:
+    def __init__(self, routes: list[dict[str, Any]], tier: str, limits: dict[str, Any]) -> None:
+        self.compiled = [
             {
                 "method": str(r.get("method", "")).strip().upper(),
                 "path": str(r.get("path", "")).strip(),
@@ -423,17 +426,92 @@ def new_fixture_app(routes: list[dict[str, Any]], tier: str, limits: dict[str, A
                 "handler": str(r.get("handler", "")).strip(),
                 "auth_required": bool(r.get("auth_required")),
             }
-        )
+            for r in routes
+        ]
 
-    enable_p1 = enable_p1_for_tier(tier)
-    max_request_bytes = int(limits.get("max_request_bytes") or 0)
-    max_response_bytes = int(limits.get("max_response_bytes") or 0)
+        self.enable_p1 = enable_p1_for_tier(tier)
+        self.enable_p2 = enable_p2_for_tier(tier)
 
-    def handle(req: CanonicalRequest) -> CanonicalResponse:
+        self.max_request_bytes = int(limits.get("max_request_bytes") or 0)
+        self.max_response_bytes = int(limits.get("max_response_bytes") or 0)
+
+        self.logs: list[dict[str, Any]] = []
+        self.metrics: list[dict[str, Any]] = []
+        self.spans: list[dict[str, Any]] = []
+
+    def record_p2(self, req: CanonicalRequest, resp: CanonicalResponse, error_code: str) -> None:
+        if not self.enable_p2:
+            return
+
+        level = "info"
+        if resp.status >= 500:
+            level = "error"
+        elif resp.status >= 400:
+            level = "warn"
+
+        self.logs = [
+            {
+                "level": level,
+                "event": "request.completed",
+                "request_id": req.request_id,
+                "tenant_id": req.tenant_id,
+                "method": req.method,
+                "path": req.path,
+                "status": resp.status,
+                "error_code": error_code,
+            }
+        ]
+
+        self.metrics = [
+            {
+                "name": "apptheory.request",
+                "value": 1,
+                "tags": {
+                    "method": req.method,
+                    "path": req.path,
+                    "status": str(resp.status),
+                    "error_code": error_code,
+                    "tenant_id": req.tenant_id,
+                },
+            }
+        ]
+
+        self.spans = [
+            {
+                "name": f"http {req.method} {req.path}",
+                "attributes": {
+                    "http.method": req.method,
+                    "http.route": req.path,
+                    "http.status_code": str(resp.status),
+                    "request.id": req.request_id,
+                    "tenant.id": req.tenant_id,
+                    "error.code": error_code,
+                },
+            }
+        ]
+
+    def finish(
+        self,
+        req: CanonicalRequest,
+        resp: CanonicalResponse,
+        request_id: str,
+        origin: str,
+        error_code: str,
+    ) -> CanonicalResponse:
+        out = finalize_response(resp, self.enable_p1, request_id, origin)
+        self.record_p2(req, out, error_code)
+        return out
+
+    def handle(self, req: CanonicalRequest) -> CanonicalResponse:
+        self.logs = []
+        self.metrics = []
+        self.spans = []
+
         request_id = ""
         origin = ""
+        error_code = ""
 
-        if enable_p1:
+        if self.enable_p1:
             request_id = first_header_value(req.headers, "x-request-id") or "req_test_123"
             req.request_id = request_id
 
@@ -446,7 +524,8 @@ def new_fixture_app(routes: list[dict[str, Any]], tier: str, limits: dict[str, A
 
             if origin and is_cors_preflight(req.method, req.headers):
                 allow = first_header_value(req.headers, "access-control-request-method")
-                return finalize_response(
+                return self.finish(
+                    req,
                     CanonicalResponse(
                         status=204,
                         headers={"access-control-allow-methods": [allow]},
@@ -454,22 +533,54 @@ def new_fixture_app(routes: list[dict[str, Any]], tier: str, limits: dict[str, A
                         body=b"",
                         is_base64=False,
                     ),
-                    enable_p1,
                     request_id,
                     origin,
+                    error_code,
                 )
 
-            if max_request_bytes > 0 and len(req.body) > max_request_bytes:
-                return finalize_response(
+            if self.max_request_bytes > 0 and len(req.body) > self.max_request_bytes:
+                error_code = "app.too_large"
+                return self.finish(
+                    req,
                     app_error_response("app.too_large", "request too large", request_id=request_id),
-                    enable_p1,
                     request_id,
                     origin,
+                    error_code,
                 )
+
+            if self.enable_p2:
+                if first_header_value(req.headers, "x-force-rate-limit"):
+                    error_code = "app.rate_limited"
+                    return self.finish(
+                        req,
+                        app_error_response(
+                            "app.rate_limited",
+                            "rate limited",
+                            {"retry-after": ["1"]},
+                            request_id=request_id,
+                        ),
+                        request_id,
+                        origin,
+                        error_code,
+                    )
+                if first_header_value(req.headers, "x-force-shed"):
+                    error_code = "app.overloaded"
+                    return self.finish(
+                        req,
+                        app_error_response(
+                            "app.overloaded",
+                            "overloaded",
+                            {"retry-after": ["1"]},
+                            request_id=request_id,
+                        ),
+                        request_id,
+                        origin,
+                        error_code,
+                    )
 
         match = None
         allowed: list[str] = []
-        for route in compiled:
+        for route in self.compiled:
             ok, params = match_path(route["segments"], split_path(req.path))
             if not ok:
                 continue
@@ -480,46 +591,54 @@ def new_fixture_app(routes: list[dict[str, Any]], tier: str, limits: dict[str, A
 
         if match is None:
             if allowed:
-                return finalize_response(
+                error_code = "app.method_not_allowed"
+                return self.finish(
+                    req,
                     app_error_response(
                         "app.method_not_allowed",
                         "method not allowed",
                         {"allow": [format_allow_header(allowed)]},
                         request_id=request_id,
                     ),
-                    enable_p1,
                     request_id,
                     origin,
+                    error_code,
                 )
-            return finalize_response(
+            error_code = "app.not_found"
+            return self.finish(
+                req,
                 app_error_response("app.not_found", "not found", request_id=request_id),
-                enable_p1,
                 request_id,
                 origin,
+                error_code,
             )
 
         route, params = match
-        if enable_p1 and route.get("auth_required"):
+        if self.enable_p1 and route.get("auth_required"):
             req.middleware_trace.append("auth")
             authz = first_header_value(req.headers, "authorization")
             if not authz.strip():
-                return finalize_response(
+                error_code = "app.unauthorized"
+                return self.finish(
+                    req,
                     app_error_response("app.unauthorized", "unauthorized", request_id=request_id),
-                    enable_p1,
                     request_id,
                     origin,
+                    error_code,
                 )
             req.auth_identity = "authorized"
-        if enable_p1:
+        if self.enable_p1:
             req.middleware_trace.append("handler")
 
         handler = built_in_handler(route["handler"])
         if handler is None:
-            return finalize_response(
+            error_code = "app.internal"
+            return self.finish(
+                req,
                 app_error_response("app.internal", "internal error", request_id=request_id),
-                enable_p1,
                 request_id,
                 origin,
+                error_code,
             )
 
         try:
@@ -533,70 +652,101 @@ def new_fixture_app(routes: list[dict[str, Any]], tier: str, limits: dict[str, A
                 is_base64=resp.is_base64,
             )
         except AppError as exc:
-            return finalize_response(
+            error_code = exc.code
+            return self.finish(
+                req,
                 app_error_response(exc.code, exc.message, request_id=request_id),
-                enable_p1,
                 request_id,
                 origin,
+                error_code,
             )
         except Exception:  # noqa: BLE001
-            return finalize_response(
+            error_code = "app.internal"
+            return self.finish(
+                req,
                 app_error_response("app.internal", "internal error", request_id=request_id),
-                enable_p1,
                 request_id,
                 origin,
+                error_code,
             )
 
-        if enable_p1 and max_response_bytes > 0 and len(resp.body) > max_response_bytes:
+        if self.enable_p1 and self.max_response_bytes > 0 and len(resp.body) > self.max_response_bytes:
+            error_code = "app.too_large"
             resp = app_error_response("app.too_large", "response too large", request_id=request_id)
 
-        return finalize_response(resp, enable_p1, request_id, origin)
+        return self.finish(req, resp, request_id, origin, error_code)
 
-    return handle
+
+def new_fixture_app(routes: list[dict[str, Any]], tier: str, limits: dict[str, Any]) -> FixtureApp:
+    return FixtureApp(routes, tier, limits)
 
 
 def compare_headers(expected: dict[str, Any] | None, actual: dict[str, Any] | None) -> bool:
     return canonicalize_headers(expected) == canonicalize_headers(actual)
 
 
-def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any]]:
+def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     setup = fixture.get("setup", {})
     input_ = fixture.get("input", {})
     app = new_fixture_app(setup.get("routes", []), fixture.get("tier", ""), setup.get("limits", {}) or {})
     req = canonicalize_request(input_.get("request", {}), input_.get("context", {}))
-    actual = app(req)
+    actual = app.handle(req)
     expected = fixture.get("expect", {}).get("response", {})
 
     if expected.get("status") != actual.status:
-        return False, f"status: expected {expected.get('status')}, got {actual.status}", actual, expected
+        return False, f"status: expected {expected.get('status')}, got {actual.status}", actual, expected, app
 
     if bool(expected.get("is_base64")) != actual.is_base64:
-        return False, f"is_base64 mismatch", actual, expected
+        return False, f"is_base64 mismatch", actual, expected, app
 
     if (expected.get("cookies") or []) != actual.cookies:
-        return False, "cookies mismatch", actual, expected
+        return False, "cookies mismatch", actual, expected, app
 
     if not compare_headers(expected.get("headers"), actual.headers):
-        return False, "headers mismatch", actual, expected
+        return False, "headers mismatch", actual, expected, app
 
     if "body_json" in expected:
         try:
             actual_json = json.loads(actual.body.decode("utf-8"))
         except Exception:  # noqa: BLE001
-            return False, "body_json mismatch", actual, expected
+            return False, "body_json mismatch", actual, expected, app
         if expected["body_json"] != actual_json:
-            return False, "body_json mismatch", actual, expected
-        return True, "", actual, expected
+            return False, "body_json mismatch", actual, expected, app
+
+        if (fixture.get("expect", {}).get("logs") or []) != app.logs:
+            return False, "logs mismatch", actual, expected, app
+        if (fixture.get("expect", {}).get("metrics") or []) != app.metrics:
+            return False, "metrics mismatch", actual, expected, app
+        if (fixture.get("expect", {}).get("spans") or []) != app.spans:
+            return False, "spans mismatch", actual, expected, app
+
+        return True, "", actual, expected, app
 
     if expected.get("body") is not None:
         expected_bytes = decode_fixture_body(expected.get("body"))
         if expected_bytes != actual.body:
-            return False, "body mismatch", actual, expected
-        return True, "", actual, expected
+            return False, "body mismatch", actual, expected, app
+
+        if (fixture.get("expect", {}).get("logs") or []) != app.logs:
+            return False, "logs mismatch", actual, expected, app
+        if (fixture.get("expect", {}).get("metrics") or []) != app.metrics:
+            return False, "metrics mismatch", actual, expected, app
+        if (fixture.get("expect", {}).get("spans") or []) != app.spans:
+            return False, "spans mismatch", actual, expected, app
+
+        return True, "", actual, expected, app
 
     if actual.body != b"":
-        return False, "body mismatch", actual, expected
-    return True, "", actual, expected
+        return False, "body mismatch", actual, expected, app
+
+    if (fixture.get("expect", {}).get("logs") or []) != app.logs:
+        return False, "logs mismatch", actual, expected, app
+    if (fixture.get("expect", {}).get("metrics") or []) != app.metrics:
+        return False, "metrics mismatch", actual, expected, app
+    if (fixture.get("expect", {}).get("spans") or []) != app.spans:
+        return False, "spans mismatch", actual, expected, app
+
+    return True, "", actual, expected, app
 
 
 def debug_actual_for_expected(actual: CanonicalResponse, expected: dict[str, Any]) -> dict[str, Any]:
@@ -632,13 +782,19 @@ def main() -> int:
 
     failed: list[dict[str, Any]] = []
     for fixture in fixtures:
-        ok, reason, actual, expected = run_fixture(fixture)
+        ok, reason, actual, expected, app = run_fixture(fixture)
         if ok:
             continue
         print(f"FAIL {fixture['id']} — {fixture.get('name', '')}", file=sys.stderr)
         print(f"  {reason}", file=sys.stderr)
         print(f"  expected: {stable_json(expected)}", file=sys.stderr)
         print(f"  got: {stable_json(debug_actual_for_expected(actual, expected))}", file=sys.stderr)
+        print(f"  expected.logs: {stable_json(fixture.get('expect', {}).get('logs') or [])}", file=sys.stderr)
+        print(f"  got.logs: {stable_json(app.logs)}", file=sys.stderr)
+        print(f"  expected.metrics: {stable_json(fixture.get('expect', {}).get('metrics') or [])}", file=sys.stderr)
+        print(f"  got.metrics: {stable_json(app.metrics)}", file=sys.stderr)
+        print(f"  expected.spans: {stable_json(fixture.get('expect', {}).get('spans') or [])}", file=sys.stderr)
+        print(f"  got.spans: {stable_json(app.spans)}", file=sys.stderr)
         failed.append(fixture)
 
     if failed:

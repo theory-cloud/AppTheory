@@ -26,6 +26,9 @@ Each fixture is a single JSON object.
 - `input.context` (object, optional): synthetic invocation context (portable subset).
 - `setup.routes[].auth_required` (boolean, optional): whether the route requires auth.
 - `expect.response` (object): expected canonical response.
+- `expect.logs` (array, optional): expected structured log records (P2 portable envelope).
+- `expect.metrics` (array, optional): expected metric emissions (portable subset).
+- `expect.spans` (array, optional): expected trace span emissions (portable subset).
 
 ## Bytes in JSON
 
