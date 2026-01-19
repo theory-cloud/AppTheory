@@ -75,6 +75,10 @@ High-leverage port (rate limiting):
 - At least one automation helper exists and is documented (example: rewrite import paths and a small set of renamed APIs).
 - The helper is safe by default (dry-run mode; clear diff output).
 
+Automation helper (Go):
+
+- `scripts/migrate-from-lift-go.sh` (rewrites `pay-theory/limited` imports to AppTheory)
+
 ---
 
 ### G4 — Migrate one representative service end-to-end
