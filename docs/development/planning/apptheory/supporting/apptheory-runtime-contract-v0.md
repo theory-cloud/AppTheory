@@ -68,9 +68,36 @@ Implementations MUST normalize handler output to a canonical response model:
 
 Response rules (v0):
 
+- Header lookup MUST be case-insensitive.
+- Canonical header keys MUST be normalized to lowercase for determinism.
 - For textual bodies, `is_base64` SHOULD be false.
 - For binary bodies, `is_base64` MUST be true and `body` is base64-encoded in the event response.
 - Implementations MUST have deterministic header/cookie behavior (ordering rules must be specified by fixtures).
+
+## Routing semantics (P0)
+
+Route patterns (v0):
+
+- Route matching is segment-based over the URL path (split on `/`).
+- Static path segments MUST match exactly.
+- Parameter segments are written as `{name}` and match exactly one non-empty segment.
+
+404 / 405 rules (v0):
+
+- If **no** route patterns match the request path, the runtime MUST return `app.not_found` (404).
+- If **at least one** route pattern matches the request path, but **no** route matches the request method, the runtime
+  MUST return `app.method_not_allowed` (405).
+  - The response MUST include an `Allow` header listing allowed methods for the matched path.
+  - `Allow` header formatting: methods are uppercase, sorted, and joined with `, ` (comma + space).
+
+## JSON parsing semantics (P0)
+
+When a handler requests JSON parsing:
+
+- A request is considered JSON if its `Content-Type` header (case-insensitive) starts with `application/json`
+  (parameters like `charset=utf-8` are allowed).
+- If the request body is empty, it MUST be treated as JSON `null` (not an error).
+- If the request body is non-empty and invalid JSON, it MUST map to `app.bad_request` (400).
 
 ## Error taxonomy (portable)
 

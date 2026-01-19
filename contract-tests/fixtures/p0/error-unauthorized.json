@@ -1,0 +1,30 @@
+{
+  "id": "p0.error.unauthorized",
+  "tier": "p0",
+  "name": "Unauthorized error mapping",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/auth", "handler": "unauthorized" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/auth",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 401,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": { "error": { "code": "app.unauthorized", "message": "unauthorized" } },
+      "is_base64": false
+    }
+  }
+}
+

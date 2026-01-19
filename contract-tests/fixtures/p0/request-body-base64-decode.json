@@ -1,0 +1,38 @@
+{
+  "id": "p0.request.body_base64_decode",
+  "tier": "p0",
+  "name": "Base64 request bodies are decoded before handler code sees bytes",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/echo", "handler": "echo_request" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/echo",
+      "query": {},
+      "headers": { "content-type": ["text/plain"] },
+      "body": { "encoding": "utf8", "value": "aGk=" },
+      "is_base64": true
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "method": "POST",
+        "path": "/echo",
+        "query": {},
+        "headers": { "content-type": ["text/plain"] },
+        "cookies": {},
+        "body_b64": "aGk=",
+        "is_base64": true
+      },
+      "is_base64": false
+    }
+  }
+}
+

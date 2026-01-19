@@ -1,0 +1,30 @@
+{
+  "id": "p0.routing.exact_match",
+  "tier": "p0",
+  "name": "Route exact path match",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/ping", "handler": "static_pong" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/ping",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["text/plain; charset=utf-8"] },
+      "cookies": [],
+      "body": { "encoding": "utf8", "value": "pong" },
+      "is_base64": false
+    }
+  }
+}
+
