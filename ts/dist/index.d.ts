@@ -134,8 +134,43 @@ export interface RouteOptions {
 
 export type AuthHook = (ctx: Context) => string | Promise<string>;
 
+export interface LogRecord {
+  level: string;
+  event: string;
+  requestId: string;
+  tenantId: string;
+  method: string;
+  path: string;
+  status: number;
+  errorCode: string;
+}
+
+export interface MetricRecord {
+  name: string;
+  value: number;
+  tags: Record<string, string>;
+}
+
+export interface SpanRecord {
+  name: string;
+  attributes: Record<string, string>;
+}
+
+export interface ObservabilityHooks {
+  log?: (record: LogRecord) => void;
+  metric?: (record: MetricRecord) => void;
+  span?: (record: SpanRecord) => void;
+}
+
 export declare class App {
-  constructor(options?: { clock?: Clock; ids?: IdGenerator; tier?: Tier; limits?: Limits; authHook?: AuthHook });
+  constructor(options?: {
+    clock?: Clock;
+    ids?: IdGenerator;
+    tier?: Tier;
+    limits?: Limits;
+    authHook?: AuthHook;
+    observability?: ObservabilityHooks;
+  });
   handle(method: string, pattern: string, handler: Handler, options?: RouteOptions): this;
   get(pattern: string, handler: Handler): this;
   post(pattern: string, handler: Handler): this;
@@ -146,7 +181,14 @@ export declare class App {
   serveLambdaFunctionURL(event: LambdaFunctionURLRequest, ctx?: unknown): Promise<LambdaFunctionURLResponse>;
 }
 
-export declare function createApp(options?: { clock?: Clock; ids?: IdGenerator; tier?: Tier; limits?: Limits; authHook?: AuthHook }): App;
+export declare function createApp(options?: {
+  clock?: Clock;
+  ids?: IdGenerator;
+  tier?: Tier;
+  limits?: Limits;
+  authHook?: AuthHook;
+  observability?: ObservabilityHooks;
+}): App;
 
 export declare function text(status: number, body: string): Response;
 export declare function json(status: number, value: unknown): Response;
@@ -156,7 +198,14 @@ export declare class TestEnv {
   readonly clock: ManualClock;
   readonly ids: ManualIdGenerator;
   constructor(options?: { now?: Date });
-  app(options?: { clock?: Clock; ids?: IdGenerator; tier?: Tier; limits?: Limits; authHook?: AuthHook }): App;
+  app(options?: {
+    clock?: Clock;
+    ids?: IdGenerator;
+    tier?: Tier;
+    limits?: Limits;
+    authHook?: AuthHook;
+    observability?: ObservabilityHooks;
+  }): App;
   invoke(app: App, request: Request, ctx?: unknown): Promise<Response>;
   invokeAPIGatewayV2(app: App, event: APIGatewayV2HTTPRequest, ctx?: unknown): Promise<APIGatewayV2HTTPResponse>;
   invokeLambdaFunctionURL(app: App, event: LambdaFunctionURLRequest, ctx?: unknown): Promise<LambdaFunctionURLResponse>;
