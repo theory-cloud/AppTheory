@@ -12,6 +12,15 @@ Status: frozen for milestone `M0`; implementation tracked in `SR-RELEASE`.
 - **Version alignment is enforced:** CI fails if Go/TS/Py disagree on version.
 - **Prefer deterministic builds:** pinned tools where possible; reproducible artifacts; checksums for release assets.
 
+## Branch model
+
+- `main` is the default branch and is kept releasable (green).
+- All work lands via feature branches and PRs into `main`.
+- Releases are cut by tagging a commit on `main`:
+  - stable: `vX.Y.Z`
+  - pre-release: `vX.Y.Z-rc.N`
+- If/when needed for backports, use short-lived `release/vX.Y` branches; otherwise prefer forward-only on `main`.
+
 ## Version scheme
 
 - Stable releases: `vX.Y.Z`
