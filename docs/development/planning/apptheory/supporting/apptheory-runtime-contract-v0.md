@@ -99,6 +99,47 @@ When a handler requests JSON parsing:
 - If the request body is empty, it MUST be treated as JSON `null` (not an error).
 - If the request body is non-empty and invalid JSON, it MUST map to `app.bad_request` (400).
 
+## Request ID semantics (P1)
+
+- The canonical request-id header is `X-Request-Id` (normalized as `x-request-id`).
+- If the incoming request includes `x-request-id`, the runtime MUST propagate it.
+- If the incoming request does not include `x-request-id`, the runtime MUST generate one.
+- The runtime MUST include `x-request-id` on the response (success and error).
+- For P1+ error responses, the runtime MUST include `error.request_id` in the error envelope.
+
+## Tenant semantics (P1)
+
+- Tenant ID MUST be extracted deterministically:
+  1. `x-tenant-id` request header
+  2. `tenant` query parameter (first value)
+- The extracted tenant ID MUST be available to handlers and middleware as `tenant_id` (empty string when absent).
+
+## Auth hook semantics (P1)
+
+- Auth MUST be expressed as a hook/interface (not hard-coded to a provider).
+- When auth is required for a route and the runtime cannot establish identity, it MUST map to `app.unauthorized` (401).
+- Auth hook invocation order MUST match the middleware ordering (CORS headers must still be applied to auth failures).
+
+## CORS semantics (P1)
+
+- If the request includes an `Origin` header, responses MUST include:
+  - `Access-Control-Allow-Origin` echoing the request origin
+  - `Vary: Origin`
+- Preflight handling: `OPTIONS` requests with `Access-Control-Request-Method` MUST be handled before routing and return
+  a 204 response including `Access-Control-Allow-Methods` echoing the requested method.
+
+## Size guardrails (P1)
+
+If size guardrails are enabled/configured:
+
+- Request bodies over the configured limit MUST map to `app.too_large` (413).
+- Response bodies over the configured limit MUST map to `app.too_large` (413).
+
+## Remaining time (P1)
+
+- The runtime MUST make a `remaining_ms` value available to handler code (portable subset; derived from the invocation
+  runtime when supported).
+
 ## Error taxonomy (portable)
 
 Errors returned by AppTheory SHOULD be categorized by stable error codes:

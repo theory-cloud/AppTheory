@@ -18,7 +18,7 @@ type actualResponseForCompare struct {
 }
 
 func runFixture(f Fixture) error {
-	app, err := newFixtureApp(f.Setup.Routes)
+	app, err := newFixtureApp(f.Setup, f.Tier)
 	if err != nil {
 		return fmt.Errorf("setup app: %w", err)
 	}
@@ -27,6 +27,7 @@ func runFixture(f Fixture) error {
 	if err != nil {
 		return fmt.Errorf("canonicalize request: %w", err)
 	}
+	req.RemainingMS = f.Input.Context.RemainingMS
 
 	actual := app.handle(req)
 	expected := f.Expect.Response
@@ -93,8 +94,9 @@ func printFailure(f Fixture, err error) {
 	fmt.Fprintf(os.Stderr, "FAIL %s — %s\n", f.ID, f.Name)
 	fmt.Fprintf(os.Stderr, "  %v\n", err)
 
-	app, appErr := newFixtureApp(f.Setup.Routes)
+	app, appErr := newFixtureApp(f.Setup, f.Tier)
 	req, reqErr := canonicalizeRequest(f.Input.Request)
+	req.RemainingMS = f.Input.Context.RemainingMS
 	if appErr == nil && reqErr == nil {
 		actual := app.handle(req)
 		actual.Headers = canonicalizeHeaders(actual.Headers)
@@ -139,4 +141,3 @@ func summarizeFailures(failed []Fixture) {
 		fmt.Fprintf(os.Stderr, "- %s\n", f.ID)
 	}
 }
-

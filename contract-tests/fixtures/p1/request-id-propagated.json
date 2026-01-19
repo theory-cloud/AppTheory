@@ -1,0 +1,38 @@
+{
+  "id": "p1.request_id.propagated",
+  "tier": "p1",
+  "name": "Request ID is propagated when provided",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/context", "handler": "echo_context" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/context",
+      "query": {},
+      "headers": { "x-request-id": ["req_incoming_456"] },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-request-id": ["req_incoming_456"]
+      },
+      "cookies": [],
+      "body_json": {
+        "request_id": "req_incoming_456",
+        "tenant_id": "",
+        "auth_identity": "",
+        "remaining_ms": 0
+      },
+      "is_base64": false
+    }
+  }
+}
+

@@ -1,0 +1,40 @@
+{
+  "id": "p1.guardrails.request_too_large",
+  "tier": "p1",
+  "name": "Request size guardrail maps to app.too_large",
+  "setup": {
+    "limits": { "max_request_bytes": 4 },
+    "routes": [
+      { "method": "POST", "path": "/context", "handler": "echo_context" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/context",
+      "query": {},
+      "headers": { "content-type": ["text/plain"] },
+      "body": { "encoding": "utf8", "value": "12345" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 413,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.too_large",
+          "message": "request too large",
+          "request_id": "req_test_123"
+        }
+      },
+      "is_base64": false
+    }
+  }
+}
+

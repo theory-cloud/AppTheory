@@ -11,14 +11,19 @@ import (
 )
 
 type CanonicalRequest struct {
-	Method     string
-	Path       string
-	Query      map[string][]string
-	Headers    map[string][]string
-	Cookies    map[string]string
-	Body       []byte
-	IsBase64   bool
-	PathParams map[string]string
+	Method          string
+	Path            string
+	Query           map[string][]string
+	Headers         map[string][]string
+	Cookies         map[string]string
+	Body            []byte
+	IsBase64        bool
+	PathParams      map[string]string
+	RequestID       string
+	TenantID        string
+	AuthIdentity    string
+	RemainingMS     int
+	MiddlewareTrace []string
 }
 
 type CanonicalResponse struct {
@@ -38,25 +43,30 @@ func (e *AppError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
-func appErrorResponse(code, message string, headers map[string][]string) CanonicalResponse {
+func appErrorResponse(code, message string, headers map[string][]string, requestID string) CanonicalResponse {
 	if headers == nil {
 		headers = map[string][]string{}
 	}
 	headers = cloneHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
+	errBody := map[string]any{
+		"code":    code,
+		"message": message,
+	}
+	if requestID != "" {
+		errBody["request_id"] = requestID
+	}
+
 	body, _ := json.Marshal(map[string]any{
-		"error": map[string]any{
-			"code":    code,
-			"message": message,
-		},
+		"error": errBody,
 	})
 
 	return CanonicalResponse{
 		Status:   statusForError(code),
-		Headers: headers,
-		Cookies: nil,
-		Body:    body,
+		Headers:  headers,
+		Cookies:  nil,
+		Body:     body,
 		IsBase64: false,
 	}
 }
@@ -87,20 +97,31 @@ func statusForError(code string) int {
 }
 
 type compiledRoute struct {
-	Method    string
-	Pattern   string
-	Segments  []string
-	ParamKeys []string
-	Handler   string
+	Method       string
+	Pattern      string
+	Segments     []string
+	Handler      string
+	AuthRequired bool
 }
 
 type fixtureApp struct {
-	routes []compiledRoute
+	routes   []compiledRoute
+	enableP1 bool
+	limits   FixtureLimits
 }
 
-func newFixtureApp(routes []FixtureRoute) (*fixtureApp, error) {
+func enableP1ForTier(tier string) bool {
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case "p1", "p2":
+		return true
+	default:
+		return false
+	}
+}
+
+func newFixtureApp(setup FixtureSetup, tier string) (*fixtureApp, error) {
 	var compiled []compiledRoute
-	for _, r := range routes {
+	for _, r := range setup.Routes {
 		if strings.TrimSpace(r.Method) == "" || strings.TrimSpace(r.Path) == "" || strings.TrimSpace(r.Handler) == "" {
 			return nil, errors.New("route entries must have method, path, and handler")
 		}
@@ -108,14 +129,19 @@ func newFixtureApp(routes []FixtureRoute) (*fixtureApp, error) {
 		pattern := strings.TrimSpace(r.Path)
 		segments := splitPath(pattern)
 		compiled = append(compiled, compiledRoute{
-			Method:  method,
-			Pattern: pattern,
-			Segments: segments,
-			Handler: r.Handler,
+			Method:       method,
+			Pattern:      pattern,
+			Segments:     segments,
+			Handler:      r.Handler,
+			AuthRequired: r.AuthRequired,
 		})
 	}
 
-	return &fixtureApp{routes: compiled}, nil
+	return &fixtureApp{
+		routes:   compiled,
+		enableP1: enableP1ForTier(tier),
+		limits:   setup.Limits,
+	}, nil
 }
 
 func splitPath(path string) []string {
@@ -173,11 +199,54 @@ func matchPath(patternSegments, pathSegments []string) (map[string]string, bool)
 }
 
 func (a *fixtureApp) handle(req CanonicalRequest) (resp CanonicalResponse) {
+	requestID := ""
+	origin := ""
+
 	defer func() {
 		if r := recover(); r != nil {
-			resp = appErrorResponse("app.internal", "internal error", nil)
+			resp = appErrorResponse("app.internal", "internal error", nil, requestID)
+			resp = a.finalizeResponse(resp, requestID, origin)
 		}
 	}()
+
+	if a.enableP1 {
+		requestID = firstHeaderValue(req.Headers, "x-request-id")
+		if requestID == "" {
+			requestID = "req_test_123"
+		}
+		req.RequestID = requestID
+
+		origin = firstHeaderValue(req.Headers, "origin")
+		req.TenantID = extractTenantID(req.Headers, req.Query)
+
+		req.MiddlewareTrace = append(req.MiddlewareTrace,
+			"request_id",
+			"recovery",
+			"logging",
+		)
+		if origin != "" {
+			req.MiddlewareTrace = append(req.MiddlewareTrace, "cors")
+		}
+
+		if isCorsPreflight(req.Method, req.Headers) && origin != "" {
+			preflight := CanonicalResponse{
+				Status: 204,
+				Headers: map[string][]string{
+					"access-control-allow-methods": []string{firstHeaderValue(req.Headers, "access-control-request-method")},
+				},
+				Body:     nil,
+				IsBase64: false,
+			}
+			resp = a.finalizeResponse(preflight, requestID, origin)
+			return resp
+		}
+
+		if a.limits.MaxRequestBytes > 0 && len(req.Body) > a.limits.MaxRequestBytes {
+			resp = appErrorResponse("app.too_large", "request too large", nil, requestID)
+			resp = a.finalizeResponse(resp, requestID, origin)
+			return resp
+		}
+	}
 
 	match, allowed := a.match(req.Method, req.Path)
 	if match == nil {
@@ -185,29 +254,93 @@ func (a *fixtureApp) handle(req CanonicalRequest) (resp CanonicalResponse) {
 			headers := map[string][]string{
 				"allow": []string{formatAllowHeader(allowed)},
 			}
-			return appErrorResponse("app.method_not_allowed", "method not allowed", headers)
+			resp = appErrorResponse("app.method_not_allowed", "method not allowed", headers, requestID)
+			return a.finalizeResponse(resp, requestID, origin)
 		}
-		return appErrorResponse("app.not_found", "not found", nil)
+		resp = appErrorResponse("app.not_found", "not found", nil, requestID)
+		return a.finalizeResponse(resp, requestID, origin)
 	}
 
 	req.PathParams = match.PathParams
+	if match.Route.AuthRequired && a.enableP1 {
+		req.MiddlewareTrace = append(req.MiddlewareTrace, "auth")
+		authz := firstHeaderValue(req.Headers, "authorization")
+		if strings.TrimSpace(authz) == "" {
+			resp = appErrorResponse("app.unauthorized", "unauthorized", nil, requestID)
+			return a.finalizeResponse(resp, requestID, origin)
+		}
+		req.AuthIdentity = "authorized"
+	}
+	if a.enableP1 {
+		req.MiddlewareTrace = append(req.MiddlewareTrace, "handler")
+	}
 
 	handler := builtInHandler(match.Route.Handler)
 	if handler == nil {
-		return appErrorResponse("app.internal", "internal error", nil)
+		resp = appErrorResponse("app.internal", "internal error", nil, requestID)
+		return a.finalizeResponse(resp, requestID, origin)
 	}
 
 	r, err := handler(req)
 	if err != nil {
 		var appErr *AppError
 		if errors.As(err, &appErr) {
-			return appErrorResponse(appErr.Code, appErr.Message, nil)
+			resp = appErrorResponse(appErr.Code, appErr.Message, nil, requestID)
+			return a.finalizeResponse(resp, requestID, origin)
 		}
-		return appErrorResponse("app.internal", "internal error", nil)
+		resp = appErrorResponse("app.internal", "internal error", nil, requestID)
+		return a.finalizeResponse(resp, requestID, origin)
 	}
 
-	r.Headers = canonicalizeHeaders(r.Headers)
-	return r
+	if a.enableP1 && a.limits.MaxResponseBytes > 0 && len(r.Body) > a.limits.MaxResponseBytes {
+		resp = appErrorResponse("app.too_large", "response too large", nil, requestID)
+		return a.finalizeResponse(resp, requestID, origin)
+	}
+
+	return a.finalizeResponse(r, requestID, origin)
+}
+
+func (a *fixtureApp) finalizeResponse(resp CanonicalResponse, requestID, origin string) CanonicalResponse {
+	resp.Headers = canonicalizeHeaders(resp.Headers)
+	if a.enableP1 {
+		if requestID != "" {
+			resp.Headers["x-request-id"] = []string{requestID}
+		}
+		if origin != "" {
+			resp.Headers["access-control-allow-origin"] = []string{origin}
+			resp.Headers["vary"] = []string{"origin"}
+		}
+	}
+	return resp
+}
+
+func isCorsPreflight(method string, headers map[string][]string) bool {
+	if strings.ToUpper(strings.TrimSpace(method)) != "OPTIONS" {
+		return false
+	}
+	return firstHeaderValue(headers, "access-control-request-method") != ""
+}
+
+func firstHeaderValue(headers map[string][]string, key string) string {
+	values := headers[strings.ToLower(strings.TrimSpace(key))]
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func extractTenantID(headers map[string][]string, query map[string][]string) string {
+	tenant := firstHeaderValue(headers, "x-tenant-id")
+	if tenant != "" {
+		return tenant
+	}
+	if query == nil {
+		return ""
+	}
+	if values := query["tenant"]; len(values) > 0 {
+		return values[0]
+	}
+	return ""
 }
 
 func formatAllowHeader(methods []string) string {
@@ -400,6 +533,37 @@ func builtInHandler(name string) handlerFunc {
 				IsBase64: false,
 			}, nil
 		}
+	case "echo_context":
+		return func(req CanonicalRequest) (CanonicalResponse, error) {
+			body, _ := json.Marshal(map[string]any{
+				"request_id":    req.RequestID,
+				"tenant_id":     req.TenantID,
+				"auth_identity": req.AuthIdentity,
+				"remaining_ms":  req.RemainingMS,
+			})
+			return CanonicalResponse{
+				Status: 200,
+				Headers: map[string][]string{
+					"content-type": []string{"application/json; charset=utf-8"},
+				},
+				Body:     body,
+				IsBase64: false,
+			}, nil
+		}
+	case "echo_middleware_trace":
+		return func(req CanonicalRequest) (CanonicalResponse, error) {
+			body, _ := json.Marshal(map[string]any{
+				"trace": req.MiddlewareTrace,
+			})
+			return CanonicalResponse{
+				Status: 200,
+				Headers: map[string][]string{
+					"content-type": []string{"application/json; charset=utf-8"},
+				},
+				Body:     body,
+				IsBase64: false,
+			}, nil
+		}
 	case "parse_json_echo":
 		return func(req CanonicalRequest) (CanonicalResponse, error) {
 			if !jsonContentType(req.Headers) {
@@ -446,6 +610,17 @@ func builtInHandler(name string) handlerFunc {
 		return func(_ CanonicalRequest) (CanonicalResponse, error) {
 			return CanonicalResponse{}, &AppError{Code: "app.validation_failed", Message: "validation failed"}
 		}
+	case "large_response":
+		return func(_ CanonicalRequest) (CanonicalResponse, error) {
+			return CanonicalResponse{
+				Status: 200,
+				Headers: map[string][]string{
+					"content-type": []string{"text/plain; charset=utf-8"},
+				},
+				Body:     []byte("12345"),
+				IsBase64: false,
+			}, nil
+		}
 	default:
 		return nil
 	}
@@ -482,4 +657,3 @@ func equalHeaders(a, b map[string][]string) bool {
 func equalBytes(a, b []byte) bool {
 	return bytes.Equal(a, b)
 }
-

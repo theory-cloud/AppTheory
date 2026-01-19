@@ -19,7 +19,12 @@ Each fixture is a single JSON object.
   - `method` (string): HTTP method (e.g. `GET`).
   - `path` (string): route pattern (supports `{param}` segments).
   - `handler` (string): built-in handler name provided by each language runner.
+- `setup.limits` (object, optional): guardrails configuration.
+  - `max_request_bytes` (number): reject requests over this size with `app.too_large`.
+  - `max_response_bytes` (number): reject responses over this size with `app.too_large`.
 - `input.request` (object): request presented to the runtime under test.
+- `input.context` (object, optional): synthetic invocation context (portable subset).
+- `setup.routes[].auth_required` (boolean, optional): whether the route requires auth.
 - `expect.response` (object): expected canonical response.
 
 ## Bytes in JSON
@@ -31,4 +36,3 @@ Because JSON cannot carry raw bytes, fixtures encode request/response bodies as:
 
 For convenience, expected responses may specify `body_json` (object). When present, runners compare JSON semantics
 (ignoring key order) and do not require a specific JSON byte formatting.
-

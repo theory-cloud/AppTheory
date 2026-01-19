@@ -32,4 +32,3 @@ func main() {
 
 	fmt.Printf("contract-tests(go): PASS (%d fixtures)\n", len(fixtures))
 }
-

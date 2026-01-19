@@ -109,7 +109,7 @@ function parseCookies(cookieHeaders) {
   return out;
 }
 
-function canonicalizeRequest(inReq) {
+function canonicalizeRequest(inReq, ctx) {
   const method = String(inReq.method ?? "").trim().toUpperCase();
   let pathValue = String(inReq.path ?? "").trim();
   if (!pathValue) pathValue = "/";
@@ -134,6 +134,11 @@ function canonicalizeRequest(inReq) {
     body: bodyBytes,
     is_base64: inReq.is_base64 === true,
     path_params: {},
+    request_id: "",
+    tenant_id: "",
+    auth_identity: "",
+    remaining_ms: Number(ctx?.remaining_ms ?? 0),
+    middleware_trace: [],
   };
 }
 
@@ -196,10 +201,14 @@ function statusForError(code) {
   }
 }
 
-function appErrorResponse(code, message, extraHeaders) {
+function appErrorResponse(code, message, extraHeaders, requestId) {
   const headers = canonicalizeHeaders(extraHeaders ?? {});
   headers["content-type"] = ["application/json; charset=utf-8"];
-  const bodyJson = { error: { code, message } };
+  const error = { code, message };
+  if (requestId) {
+    error.request_id = requestId;
+  }
+  const bodyJson = { error };
   return {
     status: statusForError(code),
     headers,
@@ -255,6 +264,30 @@ function builtInHandler(name) {
         ),
         is_base64: false,
       });
+    case "echo_context":
+      return (req) => ({
+        status: 200,
+        headers: { "content-type": ["application/json; charset=utf-8"] },
+        cookies: [],
+        body: Buffer.from(
+          JSON.stringify({
+            request_id: req.request_id,
+            tenant_id: req.tenant_id,
+            auth_identity: req.auth_identity,
+            remaining_ms: req.remaining_ms,
+          }),
+          "utf8",
+        ),
+        is_base64: false,
+      });
+    case "echo_middleware_trace":
+      return (req) => ({
+        status: 200,
+        headers: { "content-type": ["application/json; charset=utf-8"] },
+        cookies: [],
+        body: Buffer.from(JSON.stringify({ trace: req.middleware_trace }), "utf8"),
+        is_base64: false,
+      });
     case "parse_json_echo":
       return (req) => {
         if (!isJsonContentType(req.headers)) {
@@ -302,21 +335,104 @@ function builtInHandler(name) {
       return () => {
         throw { code: "app.validation_failed", message: "validation failed" };
       };
+    case "large_response":
+      return () => ({
+        status: 200,
+        headers: { "content-type": ["text/plain; charset=utf-8"] },
+        cookies: [],
+        body: Buffer.from("12345", "utf8"),
+        is_base64: false,
+      });
     default:
       return null;
   }
 }
 
-function newFixtureApp(routes) {
+function firstHeaderValue(headers, key) {
+  const values = headers[String(key).trim().toLowerCase()] ?? [];
+  return values.length > 0 ? String(values[0]) : "";
+}
+
+function extractTenantId(headers, query) {
+  const headerTenant = firstHeaderValue(headers, "x-tenant-id");
+  if (headerTenant) return headerTenant;
+  const values = query?.tenant ?? [];
+  return values.length > 0 ? String(values[0]) : "";
+}
+
+function isCorsPreflight(method, headers) {
+  return String(method).toUpperCase() === "OPTIONS" && firstHeaderValue(headers, "access-control-request-method");
+}
+
+function finalizeResponse(resp, enableP1, requestId, origin) {
+  const headers = canonicalizeHeaders(resp.headers ?? {});
+  if (enableP1) {
+    if (requestId) headers["x-request-id"] = [requestId];
+    if (origin) {
+      headers["access-control-allow-origin"] = [origin];
+      headers.vary = ["origin"];
+    }
+  }
+  return {
+    ...resp,
+    headers,
+    cookies: resp.cookies ?? [],
+  };
+}
+
+function newFixtureApp(routes, opts) {
+  const enableP1 = Boolean(opts?.enableP1);
+  const limits = opts?.limits ?? {};
+
   const compiled = (routes ?? []).map((r) => ({
     method: String(r.method).trim().toUpperCase(),
     path: String(r.path).trim(),
     segments: splitPath(r.path),
     handler: String(r.handler).trim(),
+    auth_required: Boolean(r.auth_required),
   }));
 
   return {
     handle(req) {
+      let requestId = "";
+      let origin = "";
+
+      if (enableP1) {
+        requestId = firstHeaderValue(req.headers, "x-request-id") || "req_test_123";
+        req.request_id = requestId;
+
+        origin = firstHeaderValue(req.headers, "origin");
+        req.tenant_id = extractTenantId(req.headers, req.query);
+
+        req.middleware_trace.push("request_id", "recovery", "logging");
+        if (origin) req.middleware_trace.push("cors");
+
+        if (origin && isCorsPreflight(req.method, req.headers)) {
+          const allow = firstHeaderValue(req.headers, "access-control-request-method");
+          return finalizeResponse(
+            {
+              status: 204,
+              headers: { "access-control-allow-methods": [allow] },
+              cookies: [],
+              body: Buffer.alloc(0),
+              is_base64: false,
+            },
+            enableP1,
+            requestId,
+            origin,
+          );
+        }
+
+        if (limits.max_request_bytes && req.body.length > limits.max_request_bytes) {
+          return finalizeResponse(
+            appErrorResponse("app.too_large", "request too large", {}, requestId),
+            enableP1,
+            requestId,
+            origin,
+          );
+        }
+      }
+
       let match = null;
       const allowed = [];
       for (const route of compiled) {
@@ -331,30 +447,69 @@ function newFixtureApp(routes) {
 
       if (!match) {
         if (allowed.length > 0) {
-          return appErrorResponse("app.method_not_allowed", "method not allowed", {
-            allow: [formatAllowHeader(allowed)],
-          });
+          return finalizeResponse(
+            appErrorResponse(
+              "app.method_not_allowed",
+              "method not allowed",
+              { allow: [formatAllowHeader(allowed)] },
+              requestId,
+            ),
+            enableP1,
+            requestId,
+            origin,
+          );
         }
-        return appErrorResponse("app.not_found", "not found", {});
+        return finalizeResponse(
+          appErrorResponse("app.not_found", "not found", {}, requestId),
+          enableP1,
+          requestId,
+          origin,
+        );
       }
+
+      if (enableP1 && match.route.auth_required) {
+        req.middleware_trace.push("auth");
+        const authz = firstHeaderValue(req.headers, "authorization");
+        if (!authz.trim()) {
+          return finalizeResponse(
+            appErrorResponse("app.unauthorized", "unauthorized", {}, requestId),
+            enableP1,
+            requestId,
+            origin,
+          );
+        }
+        req.auth_identity = "authorized";
+      }
+      if (enableP1) req.middleware_trace.push("handler");
 
       const handler = builtInHandler(match.route.handler);
-      if (!handler) return appErrorResponse("app.internal", "internal error", {});
+      if (!handler) {
+        return finalizeResponse(
+          appErrorResponse("app.internal", "internal error", {}, requestId),
+          enableP1,
+          requestId,
+          origin,
+        );
+      }
 
+      let resp;
       try {
         const enriched = { ...req, path_params: match.params };
-        const resp = handler(enriched);
-        return {
-          ...resp,
-          headers: canonicalizeHeaders(resp.headers ?? {}),
-          cookies: resp.cookies ?? [],
-        };
+        resp = handler(enriched);
       } catch (err) {
         if (err && typeof err === "object" && "code" in err && "message" in err) {
-          return appErrorResponse(err.code, err.message, {});
+          resp = appErrorResponse(err.code, err.message, {}, requestId);
+        } else {
+          resp = appErrorResponse("app.internal", "internal error", {}, requestId);
         }
-        return appErrorResponse("app.internal", "internal error", {});
+        return finalizeResponse(resp, enableP1, requestId, origin);
       }
+
+      if (enableP1 && limits.max_response_bytes && resp.body.length > limits.max_response_bytes) {
+        resp = appErrorResponse("app.too_large", "response too large", {}, requestId);
+      }
+
+      return finalizeResponse(resp, enableP1, requestId, origin);
     },
   };
 }
@@ -366,8 +521,9 @@ function compareHeaders(expectedHeaders, actualHeaders) {
 }
 
 function runFixture(fixture) {
-  const app = newFixtureApp(fixture.setup?.routes ?? []);
-  const req = canonicalizeRequest(fixture.input?.request ?? {});
+  const enableP1 = ["p1", "p2"].includes(String(fixture.tier ?? "").trim().toLowerCase());
+  const app = newFixtureApp(fixture.setup?.routes ?? [], { enableP1, limits: fixture.setup?.limits ?? {} });
+  const req = canonicalizeRequest(fixture.input?.request ?? {}, fixture.input?.context ?? {});
   const actual = app.handle(req);
   const expected = fixture.expect?.response ?? {};
 
@@ -465,4 +621,3 @@ function main() {
 }
 
 main();
-
