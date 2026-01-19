@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
 
 export class AppError extends Error {
   constructor(code, message) {
@@ -33,16 +34,53 @@ export class ManualClock {
   }
 }
 
+export class RandomIdGenerator {
+  newId() {
+    return randomUUID();
+  }
+}
+
+export class ManualIdGenerator {
+  constructor({ prefix = "test-id", start = 1 } = {}) {
+    this._prefix = String(prefix);
+    this._next = Number(start) || 1;
+    this._queue = [];
+  }
+
+  queue(...ids) {
+    this._queue.push(...ids.map((v) => String(v)));
+  }
+
+  reset() {
+    this._next = 1;
+    this._queue = [];
+  }
+
+  newId() {
+    if (this._queue.length > 0) {
+      return this._queue.shift();
+    }
+    const out = `${this._prefix}-${this._next}`;
+    this._next += 1;
+    return out;
+  }
+}
+
 export class Context {
-  constructor({ request, params, clock, ctx }) {
+  constructor({ request, params, clock, ids, ctx }) {
     this.ctx = ctx ?? null;
     this.request = request;
     this.params = params ?? {};
     this._clock = clock ?? new RealClock();
+    this._ids = ids ?? new RandomIdGenerator();
   }
 
   now() {
     return this._clock.now();
+  }
+
+  newId() {
+    return this._ids.newId();
   }
 
   param(name) {
@@ -106,9 +144,10 @@ export function binary(status, body, contentType) {
 }
 
 export class App {
-  constructor({ clock } = {}) {
+  constructor({ clock, ids } = {}) {
     this._router = new Router();
     this._clock = clock ?? new RealClock();
+    this._ids = ids ?? new RandomIdGenerator();
   }
 
   handle(method, pattern, handler) {
@@ -154,6 +193,7 @@ export class App {
       request: normalized,
       params: match.params,
       clock: this._clock,
+      ids: this._ids,
       ctx,
     });
 
@@ -164,6 +204,28 @@ export class App {
       return responseForError(err);
     }
   }
+
+  async serveAPIGatewayV2(event, ctx) {
+    let request;
+    try {
+      request = requestFromAPIGatewayV2(event);
+    } catch (err) {
+      return apigatewayV2ResponseFromResponse(responseForError(err));
+    }
+    const resp = await this.serve(request, ctx);
+    return apigatewayV2ResponseFromResponse(resp);
+  }
+
+  async serveLambdaFunctionURL(event, ctx) {
+    let request;
+    try {
+      request = requestFromLambdaFunctionURL(event);
+    } catch (err) {
+      return lambdaFunctionURLResponseFromResponse(responseForError(err));
+    }
+    const resp = await this.serve(request, ctx);
+    return lambdaFunctionURLResponseFromResponse(resp);
+  }
 }
 
 export function createApp(options = {}) {
@@ -173,19 +235,77 @@ export function createApp(options = {}) {
 export class TestEnv {
   constructor({ now } = {}) {
     this.clock = new ManualClock(now ?? new Date(0));
+    this.ids = new ManualIdGenerator();
   }
 
   app(options = {}) {
-    return createApp({ ...options, clock: this.clock });
+    return createApp({ clock: this.clock, ids: this.ids, ...options });
   }
 
   invoke(app, request, ctx) {
     return app.serve(request, ctx);
   }
+
+  invokeAPIGatewayV2(app, event, ctx) {
+    return app.serveAPIGatewayV2(event, ctx);
+  }
+
+  invokeLambdaFunctionURL(app, event, ctx) {
+    return app.serveLambdaFunctionURL(event, ctx);
+  }
 }
 
 export function createTestEnv(options = {}) {
   return new TestEnv(options);
+}
+
+export function buildAPIGatewayV2Request(method, path, options = {}) {
+  const normalizedMethod = normalizeMethod(method);
+  const { rawPath, rawQueryString } = splitPathAndQuery(path, options.query);
+  const bodyBytes = toBuffer(options.body);
+  const isBase64Encoded = Boolean(options.isBase64);
+
+  return {
+    version: "2.0",
+    routeKey: "$default",
+    rawPath,
+    rawQueryString,
+    cookies: Array.isArray(options.cookies) ? [...options.cookies] : [],
+    headers: { ...(options.headers ?? {}) },
+    queryStringParameters: firstQueryValues(options.query),
+    requestContext: {
+      http: {
+        method: normalizedMethod,
+        path: rawPath,
+      },
+    },
+    body: isBase64Encoded ? bodyBytes.toString("base64") : bodyBytes.toString("utf8"),
+    isBase64Encoded,
+  };
+}
+
+export function buildLambdaFunctionURLRequest(method, path, options = {}) {
+  const normalizedMethod = normalizeMethod(method);
+  const { rawPath, rawQueryString } = splitPathAndQuery(path, options.query);
+  const bodyBytes = toBuffer(options.body);
+  const isBase64Encoded = Boolean(options.isBase64);
+
+  return {
+    version: "2.0",
+    rawPath,
+    rawQueryString,
+    cookies: Array.isArray(options.cookies) ? [...options.cookies] : [],
+    headers: { ...(options.headers ?? {}) },
+    queryStringParameters: firstQueryValues(options.query),
+    requestContext: {
+      http: {
+        method: normalizedMethod,
+        path: rawPath,
+      },
+    },
+    body: isBase64Encoded ? bodyBytes.toString("base64") : bodyBytes.toString("utf8"),
+    isBase64Encoded,
+  };
 }
 
 class Router {
@@ -412,4 +532,176 @@ function formatAllowHeader(methods) {
     if (normalized) unique.add(normalized);
   }
   return [...unique].sort().join(", ");
+}
+
+function requestFromAPIGatewayV2(event) {
+  const cookies = Array.isArray(event?.cookies) ? event.cookies.map((v) => String(v)) : [];
+  const headers = headersFromSingle(event?.headers, cookies.length > 0);
+  if (cookies.length > 0) {
+    headers.cookie = cookies;
+  }
+
+  const rawQueryString = String(event?.rawQueryString ?? "").replace(/^\?/, "");
+  const query = rawQueryString
+    ? parseRawQueryString(rawQueryString)
+    : queryFromSingle(event?.queryStringParameters);
+
+  return {
+    method: String(event?.requestContext?.http?.method ?? ""),
+    path: String(event?.rawPath ?? event?.requestContext?.http?.path ?? "/"),
+    query,
+    headers,
+    body: String(event?.body ?? ""),
+    isBase64: Boolean(event?.isBase64Encoded),
+  };
+}
+
+function requestFromLambdaFunctionURL(event) {
+  const cookies = Array.isArray(event?.cookies) ? event.cookies.map((v) => String(v)) : [];
+  const headers = headersFromSingle(event?.headers, cookies.length > 0);
+  if (cookies.length > 0) {
+    headers.cookie = cookies;
+  }
+
+  const rawQueryString = String(event?.rawQueryString ?? "").replace(/^\?/, "");
+  const query = rawQueryString
+    ? parseRawQueryString(rawQueryString)
+    : queryFromSingle(event?.queryStringParameters);
+
+  return {
+    method: String(event?.requestContext?.http?.method ?? ""),
+    path: String(event?.rawPath ?? event?.requestContext?.http?.path ?? "/"),
+    query,
+    headers,
+    body: String(event?.body ?? ""),
+    isBase64: Boolean(event?.isBase64Encoded),
+  };
+}
+
+function apigatewayV2ResponseFromResponse(resp) {
+  const normalized = normalizeResponse(resp);
+  const headers = {};
+  const multiValueHeaders = {};
+  for (const [key, values] of Object.entries(normalized.headers ?? {})) {
+    if (!values || values.length === 0) continue;
+    headers[key] = String(values[0]);
+    multiValueHeaders[key] = [...values].map((v) => String(v));
+  }
+
+  const bodyBytes = toBuffer(normalized.body);
+  const isBase64Encoded = Boolean(normalized.isBase64);
+
+  return {
+    statusCode: normalized.status,
+    headers,
+    multiValueHeaders,
+    body: isBase64Encoded ? bodyBytes.toString("base64") : bodyBytes.toString("utf8"),
+    isBase64Encoded,
+    cookies: [...normalized.cookies],
+  };
+}
+
+function lambdaFunctionURLResponseFromResponse(resp) {
+  const normalized = normalizeResponse(resp);
+  const headers = {};
+  for (const [key, values] of Object.entries(normalized.headers ?? {})) {
+    if (!values || values.length === 0) continue;
+    headers[key] = [...values].map((v) => String(v)).join(",");
+  }
+
+  const bodyBytes = toBuffer(normalized.body);
+  const isBase64Encoded = Boolean(normalized.isBase64);
+
+  return {
+    statusCode: normalized.status,
+    headers,
+    body: isBase64Encoded ? bodyBytes.toString("base64") : bodyBytes.toString("utf8"),
+    isBase64Encoded,
+    cookies: [...normalized.cookies],
+  };
+}
+
+function headersFromSingle(headers, ignoreCookieHeader) {
+  const out = {};
+  if (!headers) return out;
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (ignoreCookieHeader && String(key).trim().toLowerCase() === "cookie") {
+      continue;
+    }
+    out[key] = [String(value)];
+  }
+  return out;
+}
+
+function queryFromSingle(params) {
+  const out = {};
+  if (!params) return out;
+  for (const [key, value] of Object.entries(params)) {
+    out[String(key)] = [String(value)];
+  }
+  return out;
+}
+
+function decodeFormComponent(value) {
+  try {
+    return decodeURIComponent(String(value).replace(/\+/g, " "));
+  } catch {
+    throw new AppError("app.bad_request", "invalid query string");
+  }
+}
+
+function parseRawQueryString(raw) {
+  const out = {};
+  if (!raw) return out;
+
+  for (const part of String(raw).split("&")) {
+    if (!part) continue;
+    const idx = part.indexOf("=");
+    const rawKey = idx >= 0 ? part.slice(0, idx) : part;
+    const rawValue = idx >= 0 ? part.slice(idx + 1) : "";
+    const key = decodeFormComponent(rawKey);
+    const value = decodeFormComponent(rawValue);
+    if (!out[key]) out[key] = [];
+    out[key].push(value);
+  }
+  return out;
+}
+
+function encodeFormComponent(value) {
+  return encodeURIComponent(String(value)).replace(/%20/g, "+");
+}
+
+function encodeRawQueryString(query) {
+  if (!query) return "";
+  const keys = Object.keys(query).sort();
+  const parts = [];
+  for (const key of keys) {
+    const values = Array.isArray(query[key]) ? query[key] : [String(query[key])];
+    for (const value of values) {
+      parts.push(`${encodeFormComponent(key)}=${encodeFormComponent(value)}`);
+    }
+  }
+  return parts.join("&");
+}
+
+function firstQueryValues(query) {
+  if (!query) return undefined;
+  const out = {};
+  let hasAny = false;
+  for (const [key, values] of Object.entries(query)) {
+    const list = Array.isArray(values) ? values : [String(values)];
+    if (list.length === 0) continue;
+    out[key] = String(list[0]);
+    hasAny = true;
+  }
+  return hasAny ? out : undefined;
+}
+
+function splitPathAndQuery(path, query) {
+  const value = String(path ?? "").trim();
+  const idx = value.indexOf("?");
+  const rawPath = normalizePath(idx >= 0 ? value.slice(0, idx) : value);
+  const rawQueryString = query && Object.keys(query).length > 0 ? encodeRawQueryString(query) : idx >= 0 ? value.slice(idx + 1) : "";
+  return { rawPath, rawQueryString };
 }

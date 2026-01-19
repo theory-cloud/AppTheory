@@ -13,6 +13,7 @@ type Context struct {
 	Request Request
 	Params  map[string]string
 	clock   Clock
+	ids     IDGenerator
 }
 
 func (c *Context) Context() context.Context {
@@ -27,6 +28,13 @@ func (c *Context) Now() time.Time {
 		return time.Now()
 	}
 	return c.clock.Now()
+}
+
+func (c *Context) NewID() string {
+	if c == nil || c.ids == nil {
+		return RandomIDGenerator{}.NewID()
+	}
+	return c.ids.NewID()
 }
 
 func (c *Context) Param(name string) string {
@@ -63,4 +71,3 @@ func hasJSONContentType(headers map[string][]string) bool {
 	}
 	return false
 }
-

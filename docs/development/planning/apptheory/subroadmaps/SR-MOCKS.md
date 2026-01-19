@@ -27,6 +27,10 @@ Non-goals:
 - A list exists of AWS clients AppTheory will wrap directly (if any) per language.
 - Anything not wrapped is documented as user-space (and not part of AppTheory’s mocks).
 
+Inventory doc:
+
+- `docs/development/planning/apptheory/supporting/apptheory-aws-touchpoints.md`
+
 ---
 
 ### K1 — Determinism primitives (clock + randomness)
@@ -57,6 +61,12 @@ Non-goals:
   - call counts
   - deterministic ordering where relevant
 
+Status (today):
+
+- AppTheory currently wraps **no AWS SDK clients** (see `docs/development/planning/apptheory/supporting/apptheory-aws-touchpoints.md`),
+  so there are no shipped AWS-client fakes yet.
+- For data access, use **TableTheory** (companion framework) and its language-specific test/mocks utilities.
+
 ---
 
 ### K4 — Documentation + canonical examples
@@ -69,4 +79,3 @@ Non-goals:
 
 - **Mock drift:** keep mocks small and strict; only mock what AppTheory owns.
 - **Non-deterministic tests:** make determinism injectable by default; no hidden global time/entropy use in core code.
-
