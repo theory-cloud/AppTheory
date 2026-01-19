@@ -1,0 +1,49 @@
+{
+  "id": "p1.auth.forbidden",
+  "tier": "p1",
+  "name": "Auth hooks can map to app.forbidden and preserve CORS headers",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/secure",
+        "handler": "echo_context",
+        "auth_required": true
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/secure",
+      "query": {},
+      "headers": {
+        "authorization": ["Bearer test"],
+        "origin": ["https://example.com"],
+        "x-force-forbidden": ["true"]
+      },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 403,
+      "headers": {
+        "access-control-allow-origin": ["https://example.com"],
+        "content-type": ["application/json; charset=utf-8"],
+        "vary": ["origin"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.forbidden",
+          "message": "forbidden",
+          "request_id": "req_test_123"
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

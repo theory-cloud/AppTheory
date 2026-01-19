@@ -948,6 +948,8 @@ def _fixture_auth_hook(runtime, ctx):
     authz = str(values[0]) if values else ""
     if not authz.strip():
         raise runtime.AppError("app.unauthorized", "unauthorized")
+    if str((headers.get("x-force-forbidden") or [""])[0]).strip():
+        raise runtime.AppError("app.forbidden", "forbidden")
     return "authorized"
 
 

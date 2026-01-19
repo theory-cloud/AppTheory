@@ -118,6 +118,7 @@ When a handler requests JSON parsing:
 
 - Auth MUST be expressed as a hook/interface (not hard-coded to a provider).
 - When auth is required for a route and the runtime cannot establish identity, it MUST map to `app.unauthorized` (401).
+- When identity is established but access is denied, it MUST map to `app.forbidden` (403).
 - Auth hook invocation order MUST match the middleware ordering (CORS headers must still be applied to auth failures).
 
 ## CORS semantics (P1)
