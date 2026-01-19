@@ -11,6 +11,7 @@ type App struct {
 	tier   Tier
 	limits Limits
 	auth   AuthHook
+	obs    ObservabilityHooks
 }
 
 type Option func(*App)
@@ -39,6 +40,7 @@ func New(opts ...Option) *App {
 		tier:   TierP0,
 		limits: Limits{},
 		auth:   nil,
+		obs:    ObservabilityHooks{},
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -84,5 +86,11 @@ func WithLimits(limits Limits) Option {
 func WithAuthHook(hook AuthHook) Option {
 	return func(app *App) {
 		app.auth = hook
+	}
+}
+
+func WithObservability(hooks ObservabilityHooks) Option {
+	return func(app *App) {
+		app.obs = hooks
 	}
 }

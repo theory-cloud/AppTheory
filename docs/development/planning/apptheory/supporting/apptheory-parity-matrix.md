@@ -92,9 +92,9 @@ Legend:
 
 | Feature | Fixtures | Go | TS | Py | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Structured logging minimum schema | P2 | ⬜ | ⬜ | ⬜ | |
-| Metrics hooks (portable) | P2 | ⬜ | ⬜ | ⬜ | optional |
-| Tracing hooks (portable) | P2 | ⬜ | ⬜ | ⬜ | optional |
+| Structured logging minimum schema | P2 | ✅ | ✅ | ✅ | |
+| Metrics hooks (portable) | P2 | ✅ | ✅ | ✅ | optional |
+| Tracing hooks (portable) | P2 | ✅ | ✅ | ✅ | optional |
 | Rate limiting semantics (portable) | P2 | ⬜ | ⬜ | ⬜ | target: match `limited` feature set (strategies, fail-open, stats) |
 | Load shedding semantics (portable) | P2 | ⬜ | ⬜ | ⬜ | |
 

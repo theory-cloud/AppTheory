@@ -35,6 +35,38 @@ class Limits:
 
 
 @dataclass(slots=True)
+class LogRecord:
+    level: str
+    event: str
+    request_id: str
+    tenant_id: str
+    method: str
+    path: str
+    status: int
+    error_code: str
+
+
+@dataclass(slots=True)
+class MetricRecord:
+    name: str
+    value: int
+    tags: dict[str, str]
+
+
+@dataclass(slots=True)
+class SpanRecord:
+    name: str
+    attributes: dict[str, str]
+
+
+@dataclass(slots=True)
+class ObservabilityHooks:
+    log: Callable[[LogRecord], None] | None = None
+    metric: Callable[[MetricRecord], None] | None = None
+    span: Callable[[SpanRecord], None] | None = None
+
+
+@dataclass(slots=True)
 class App:
     _router: Router
     _clock: Clock
@@ -42,6 +74,7 @@ class App:
     _tier: str
     _limits: Limits
     _auth_hook: AuthHook | None
+    _observability: ObservabilityHooks
 
     def __init__(
         self,
@@ -51,6 +84,7 @@ class App:
         tier: str = "p0",
         limits: Limits | None = None,
         auth_hook: AuthHook | None = None,
+        observability: ObservabilityHooks | None = None,
     ) -> None:
         self._router = Router()
         self._clock = clock or RealClock()
@@ -58,6 +92,7 @@ class App:
         self._tier = str(tier or "p0").strip().lower()
         self._limits = limits or Limits()
         self._auth_hook = auth_hook
+        self._observability = observability or ObservabilityHooks()
 
     def handle(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
         self._router.add(method, pattern, handler, auth_required=auth_required)
@@ -76,8 +111,10 @@ class App:
         return self.handle("DELETE", pattern, handler)
 
     def serve(self, request: Request, ctx: Any | None = None) -> Response:
-        if self._tier in ("p1", "p2"):
-            return self._serve_p1(request, ctx)
+        if self._tier == "p1":
+            return self._serve_portable(request, ctx, enable_p2=False)
+        if self._tier == "p2":
+            return self._serve_portable(request, ctx, enable_p2=True)
 
         try:
             normalized = normalize_request(request)
@@ -111,16 +148,27 @@ class App:
 
         return normalize_response(resp)
 
-    def _serve_p1(self, request: Request, ctx: Any | None) -> Response:
+    def _serve_portable(self, request: Request, ctx: Any | None, *, enable_p2: bool) -> Response:
         pre_headers = canonicalize_headers(request.headers)
         pre_query = clone_query(request.query)
 
+        method = str(request.method or "").strip().upper()
+        path = str(request.path or "").strip() or "/"
+
         request_id = _first_header_value(pre_headers, "x-request-id") or self._id_generator.new_id()
         origin = _first_header_value(pre_headers, "origin")
+        tenant_id = _extract_tenant_id(pre_headers, pre_query)
+        remaining_ms = _remaining_ms(ctx)
 
         trace = ["request_id", "recovery", "logging"]
         if origin:
             trace.append("cors")
+
+        def finish(resp: Response, error_code: str = "") -> Response:
+            out = _finalize_p1_response(resp, request_id, origin)
+            if enable_p2:
+                self._record_observability(method, path, request_id, tenant_id, out.status, error_code)
+            return out
 
         if _is_cors_preflight(request.method, pre_headers):
             allow = _first_header_value(pre_headers, "access-control-request-method")
@@ -131,33 +179,37 @@ class App:
                 body=b"",
                 is_base64=False,
             )
-            return _finalize_p1_response(normalize_response(resp), request_id, origin)
+            return finish(normalize_response(resp))
 
         try:
             normalized = normalize_request(request)
         except Exception as exc:  # noqa: BLE001
-            resp = response_for_error_with_request_id(exc, request_id)
-            return _finalize_p1_response(resp, request_id, origin)
+            error_code = exc.code if isinstance(exc, AppError) else "app.internal"
+            return finish(response_for_error_with_request_id(exc, request_id), error_code)
+
+        method = normalized.method
+        path = normalized.path
+        tenant_id = _extract_tenant_id(normalized.headers, normalized.query)
 
         if self._limits.max_request_bytes > 0 and len(normalized.body) > self._limits.max_request_bytes:
-            resp = error_response_with_request_id("app.too_large", "request too large", request_id=request_id)
-            return _finalize_p1_response(resp, request_id, origin)
+            return finish(
+                error_response_with_request_id("app.too_large", "request too large", request_id=request_id),
+                "app.too_large",
+            )
 
         match, allowed = self._router.match(normalized.method, normalized.path)
         if match is None:
             if allowed:
-                resp = error_response_with_request_id(
+                return finish(
+                    error_response_with_request_id(
+                        "app.method_not_allowed",
+                        "method not allowed",
+                        headers={"allow": [self._router.format_allow_header(allowed)]},
+                        request_id=request_id,
+                    ),
                     "app.method_not_allowed",
-                    "method not allowed",
-                    headers={"allow": [self._router.format_allow_header(allowed)]},
-                    request_id=request_id,
                 )
-                return _finalize_p1_response(resp, request_id, origin)
-            resp = error_response_with_request_id("app.not_found", "not found", request_id=request_id)
-            return _finalize_p1_response(resp, request_id, origin)
-
-        tenant_id = _extract_tenant_id(pre_headers, pre_query)
-        remaining_ms = _remaining_ms(ctx)
+            return finish(error_response_with_request_id("app.not_found", "not found", request_id=request_id), "app.not_found")
 
         request_ctx = Context(
             request=normalized,
@@ -175,16 +227,20 @@ class App:
         if match.auth_required:
             trace.append("auth")
             if self._auth_hook is None:
-                resp = error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id)
-                return _finalize_p1_response(resp, request_id, origin)
+                return finish(
+                    error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id),
+                    "app.unauthorized",
+                )
             try:
                 identity = self._auth_hook(request_ctx)
             except Exception as exc:  # noqa: BLE001
-                resp = response_for_error_with_request_id(exc, request_id)
-                return _finalize_p1_response(resp, request_id, origin)
+                error_code = exc.code if isinstance(exc, AppError) else "app.internal"
+                return finish(response_for_error_with_request_id(exc, request_id), error_code)
             if not str(identity or "").strip():
-                resp = error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id)
-                return _finalize_p1_response(resp, request_id, origin)
+                return finish(
+                    error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id),
+                    "app.unauthorized",
+                )
             request_ctx.auth_identity = str(identity)
 
         trace.append("handler")
@@ -192,17 +248,77 @@ class App:
         try:
             resp = match.handler(request_ctx)
         except AppError as exc:
-            resp = error_response_with_request_id(exc.code, exc.message, request_id=request_id)
-            return _finalize_p1_response(resp, request_id, origin)
+            return finish(error_response_with_request_id(exc.code, exc.message, request_id=request_id), exc.code)
         except Exception as exc:  # noqa: BLE001
-            resp = response_for_error_with_request_id(exc, request_id)
-            return _finalize_p1_response(resp, request_id, origin)
+            return finish(response_for_error_with_request_id(exc, request_id), "app.internal")
 
         resp = normalize_response(resp)
         if self._limits.max_response_bytes > 0 and len(resp.body) > self._limits.max_response_bytes:
-            resp = error_response_with_request_id("app.too_large", "response too large", request_id=request_id)
+            return finish(
+                error_response_with_request_id("app.too_large", "response too large", request_id=request_id),
+                "app.too_large",
+            )
 
-        return _finalize_p1_response(resp, request_id, origin)
+        return finish(resp)
+
+    def _record_observability(
+        self,
+        method: str,
+        path: str,
+        request_id: str,
+        tenant_id: str,
+        status: int,
+        error_code: str,
+    ) -> None:
+        level = "info"
+        if status >= 500:
+            level = "error"
+        elif status >= 400:
+            level = "warn"
+
+        if self._observability.log is not None:
+            self._observability.log(
+                LogRecord(
+                    level=level,
+                    event="request.completed",
+                    request_id=request_id,
+                    tenant_id=tenant_id,
+                    method=method,
+                    path=path,
+                    status=int(status),
+                    error_code=error_code,
+                )
+            )
+
+        if self._observability.metric is not None:
+            self._observability.metric(
+                MetricRecord(
+                    name="apptheory.request",
+                    value=1,
+                    tags={
+                        "method": method,
+                        "path": path,
+                        "status": str(int(status)),
+                        "error_code": error_code,
+                        "tenant_id": tenant_id,
+                    },
+                )
+            )
+
+        if self._observability.span is not None:
+            self._observability.span(
+                SpanRecord(
+                    name=f"http {method} {path}",
+                    attributes={
+                        "http.method": method,
+                        "http.route": path,
+                        "http.status_code": str(int(status)),
+                        "request.id": request_id,
+                        "tenant.id": tenant_id,
+                        "error.code": error_code,
+                    },
+                )
+            )
 
     def serve_apigw_v2(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
         try:
@@ -230,8 +346,16 @@ def create_app(
     tier: str = "p0",
     limits: Limits | None = None,
     auth_hook: AuthHook | None = None,
+    observability: ObservabilityHooks | None = None,
 ) -> App:
-    return App(clock=clock, id_generator=id_generator, tier=tier, limits=limits, auth_hook=auth_hook)
+    return App(
+        clock=clock,
+        id_generator=id_generator,
+        tier=tier,
+        limits=limits,
+        auth_hook=auth_hook,
+        observability=observability,
+    )
 
 
 def _first_header_value(headers: dict[str, list[str]], key: str) -> str:

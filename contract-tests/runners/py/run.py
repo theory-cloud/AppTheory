@@ -693,6 +693,8 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
         return run_fixture_p0(fixture)
     if tier == "p1":
         return run_fixture_p1(fixture)
+    if tier == "p2" and str(fixture.get("id", "")).strip() == "p2.observability.basic":
+        return run_fixture_p2(fixture)
 
     setup = fixture.get("setup", {})
     input_ = fixture.get("input", {})
@@ -940,6 +942,78 @@ def run_fixture_p1(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
 
     expected = fixture.get("expect", {}).get("response", {})
     return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
+
+
+def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+    runtime = _load_apptheory_runtime()
+    ids = runtime.ManualIdGenerator()
+    ids.push("req_test_123")
+
+    effects = _DummyEffectsApp()
+
+    setup = fixture.get("setup", {})
+    limits = setup.get("limits", {}) or {}
+    app = runtime.create_app(
+        tier="p2",
+        id_generator=ids,
+        limits=runtime.Limits(
+            max_request_bytes=int(limits.get("max_request_bytes") or 0),
+            max_response_bytes=int(limits.get("max_response_bytes") or 0),
+        ),
+        auth_hook=lambda ctx: _fixture_auth_hook(runtime, ctx),
+        observability=runtime.ObservabilityHooks(
+            log=lambda r: effects.logs.append(
+                {
+                    "level": r.level,
+                    "event": r.event,
+                    "request_id": r.request_id,
+                    "tenant_id": r.tenant_id,
+                    "method": r.method,
+                    "path": r.path,
+                    "status": r.status,
+                    "error_code": r.error_code,
+                }
+            ),
+            metric=lambda r: effects.metrics.append({"name": r.name, "value": r.value, "tags": r.tags}),
+            span=lambda r: effects.spans.append({"name": r.name, "attributes": r.attributes}),
+        ),
+    )
+
+    for route in setup.get("routes", []) or []:
+        name = str(route.get("handler", ""))
+        handler = _built_in_apptheory_handler(runtime, name)
+        if handler is None:
+            raise RuntimeError(f"unknown handler {name!r}")
+        app.handle(
+            route.get("method", ""),
+            route.get("path", ""),
+            handler,
+            auth_required=bool(route.get("auth_required")),
+        )
+
+    input_ = fixture.get("input", {}).get("request", {})
+    req_body = decode_fixture_body(input_.get("body"))
+    req = runtime.Request(
+        method=input_.get("method", ""),
+        path=input_.get("path", ""),
+        query=input_.get("query") or {},
+        headers=input_.get("headers") or {},
+        body=req_body,
+        is_base64=bool(input_.get("is_base64")),
+    )
+
+    runtime_ctx = {"remaining_ms": int((fixture.get("input", {}).get("context", {}) or {}).get("remaining_ms") or 0)}
+    resp = app.serve(req, runtime_ctx)
+    actual = CanonicalResponse(
+        status=resp.status,
+        headers=resp.headers,
+        cookies=resp.cookies,
+        body=resp.body,
+        is_base64=resp.is_base64,
+    )
+
+    expected = fixture.get("expect", {}).get("response", {})
+    return run_fixture_compare(fixture, actual, expected, effects)
 
 
 def _fixture_auth_hook(runtime, ctx):

@@ -50,7 +50,9 @@ func (a *App) Serve(ctx context.Context, req Request) (resp Response) {
 	}
 
 	switch a.tier {
-	case TierP1, TierP2:
+	case TierP2:
+		return a.serveP2(ctx, req)
+	case TierP1:
 		return a.serveP1(ctx, req)
 	case TierP0, "":
 		fallthrough
@@ -103,8 +105,19 @@ func (a *App) serveP0(ctx context.Context, req Request) (resp Response) {
 }
 
 func (a *App) serveP1(ctx context.Context, req Request) (resp Response) {
+	return a.servePortable(ctx, req, false)
+}
+
+func (a *App) serveP2(ctx context.Context, req Request) (resp Response) {
+	return a.servePortable(ctx, req, true)
+}
+
+func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool) (resp Response) {
 	headers := canonicalizeHeaders(req.Headers)
 	query := cloneQuery(req.Query)
+
+	method := strings.ToUpper(strings.TrimSpace(req.Method))
+	path := normalizePath(req.Path)
 
 	requestID := firstHeaderValue(headers, "x-request-id")
 	if requestID == "" {
@@ -112,6 +125,7 @@ func (a *App) serveP1(ctx context.Context, req Request) (resp Response) {
 	}
 
 	origin := firstHeaderValue(headers, "origin")
+	tenantID := extractTenantID(headers, query)
 	remainingMS := remainingMSFromContext(ctx, a.clock)
 
 	trace := []string{"request_id", "recovery", "logging"}
@@ -119,23 +133,44 @@ func (a *App) serveP1(ctx context.Context, req Request) (resp Response) {
 		trace = append(trace, "cors")
 	}
 
+	errorCode := ""
+	defer func() {
+		if r := recover(); r != nil {
+			errorCode = "app.internal"
+			resp = errorResponseWithRequestID("app.internal", "internal error", nil, requestID)
+		}
+		resp = finalizeP1Response(resp, requestID, origin)
+		if enableP2 {
+			a.recordObservability(method, path, requestID, tenantID, resp.Status, errorCode)
+		}
+	}()
+
 	if isCorsPreflight(req.Method, headers) {
 		allow := firstHeaderValue(headers, "access-control-request-method")
-		out := Response{
+		resp = Response{
 			Status: 204,
 			Headers: map[string][]string{
 				"access-control-allow-methods": []string{allow},
 			},
 		}
-		return finalizeP1Response(out, requestID, origin)
+		return resp
 	}
 
 	normalized, err := normalizeRequest(req)
 	if err != nil {
-		return finalizeP1Response(responseForErrorWithRequestID(err, requestID), requestID, origin)
+		var appErr *AppError
+		if errors.As(err, &appErr) {
+			errorCode = appErr.Code
+		} else {
+			errorCode = "app.internal"
+		}
+		resp = responseForErrorWithRequestID(err, requestID)
+		return resp
 	}
 
-	tenantID := extractTenantID(headers, query)
+	method = normalized.Method
+	path = normalized.Path
+	tenantID = extractTenantID(normalized.Headers, normalized.Query)
 
 	requestCtx := &Context{
 		ctx:            ctx,
@@ -150,64 +185,51 @@ func (a *App) serveP1(ctx context.Context, req Request) (resp Response) {
 		MiddlewareTrace: trace,
 	}
 
-	defer func() {
-		if r := recover(); r != nil {
-			resp = finalizeP1Response(
-				errorResponseWithRequestID("app.internal", "internal error", nil, requestID),
-				requestID,
-				origin,
-			)
-		}
-	}()
-
 	if max := a.limits.MaxRequestBytes; max > 0 && len(normalized.Body) > max {
-		return finalizeP1Response(
-			errorResponseWithRequestID("app.too_large", "request too large", nil, requestID),
-			requestID,
-			origin,
-		)
+		errorCode = "app.too_large"
+		resp = errorResponseWithRequestID("app.too_large", "request too large", nil, requestID)
+		return resp
 	}
 
-	match, allowed := a.router.match(normalized.Method, normalized.Path)
+	match, allowed := a.router.match(method, path)
 	if match == nil {
 		if len(allowed) > 0 {
+			errorCode = "app.method_not_allowed"
 			headers := map[string][]string{
 				"allow": []string{formatAllowHeader(allowed)},
 			}
-			return finalizeP1Response(
-				errorResponseWithRequestID("app.method_not_allowed", "method not allowed", headers, requestID),
-				requestID,
-				origin,
-			)
+			resp = errorResponseWithRequestID("app.method_not_allowed", "method not allowed", headers, requestID)
+			return resp
 		}
-		return finalizeP1Response(
-			errorResponseWithRequestID("app.not_found", "not found", nil, requestID),
-			requestID,
-			origin,
-		)
+		errorCode = "app.not_found"
+		resp = errorResponseWithRequestID("app.not_found", "not found", nil, requestID)
+		return resp
 	}
 	requestCtx.Params = match.Params
 
 	if match.Route.AuthRequired {
 		requestCtx.MiddlewareTrace = append(requestCtx.MiddlewareTrace, "auth")
 		if a.auth == nil {
-			return finalizeP1Response(
-				errorResponseWithRequestID("app.unauthorized", "unauthorized", nil, requestID),
-				requestID,
-				origin,
-			)
+			errorCode = "app.unauthorized"
+			resp = errorResponseWithRequestID("app.unauthorized", "unauthorized", nil, requestID)
+			return resp
 		}
 		identity, err := a.auth(requestCtx)
 		if err != nil {
-			return finalizeP1Response(responseForErrorWithRequestID(err, requestID), requestID, origin)
+			var appErr *AppError
+			if errors.As(err, &appErr) {
+				errorCode = appErr.Code
+			} else {
+				errorCode = "app.internal"
+			}
+			resp = responseForErrorWithRequestID(err, requestID)
+			return resp
 		}
 		identity = strings.TrimSpace(identity)
 		if identity == "" {
-			return finalizeP1Response(
-				errorResponseWithRequestID("app.unauthorized", "unauthorized", nil, requestID),
-				requestID,
-				origin,
-			)
+			errorCode = "app.unauthorized"
+			resp = errorResponseWithRequestID("app.unauthorized", "unauthorized", nil, requestID)
+			return resp
 		}
 		requestCtx.AuthIdentity = identity
 	}
@@ -218,33 +240,28 @@ func (a *App) serveP1(ctx context.Context, req Request) (resp Response) {
 	if handlerErr != nil {
 		var appErr *AppError
 		if errors.As(handlerErr, &appErr) {
-			return finalizeP1Response(
-				errorResponseWithRequestID(appErr.Code, appErr.Message, nil, requestID),
-				requestID,
-				origin,
-			)
+			errorCode = appErr.Code
+			resp = errorResponseWithRequestID(appErr.Code, appErr.Message, nil, requestID)
+			return resp
 		}
-		return finalizeP1Response(
-			errorResponseWithRequestID("app.internal", "internal error", nil, requestID),
-			requestID,
-			origin,
-		)
+		errorCode = "app.internal"
+		resp = errorResponseWithRequestID("app.internal", "internal error", nil, requestID)
+		return resp
 	}
 
 	if out == nil {
-		return finalizeP1Response(
-			errorResponseWithRequestID("app.internal", "internal error", nil, requestID),
-			requestID,
-			origin,
-		)
+		errorCode = "app.internal"
+		resp = errorResponseWithRequestID("app.internal", "internal error", nil, requestID)
+		return resp
 	}
 
 	resp = normalizeResponse(out)
 	if max := a.limits.MaxResponseBytes; max > 0 && len(resp.Body) > max {
+		errorCode = "app.too_large"
 		resp = errorResponseWithRequestID("app.too_large", "response too large", nil, requestID)
 	}
 
-	return finalizeP1Response(resp, requestID, origin)
+	return resp
 }
 
 func (a *App) newRequestID() string {

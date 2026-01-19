@@ -612,6 +612,10 @@ async function runFixture(fixture) {
     const { actual, effects } = await runFixtureP1(fixture);
     return compareFixture(fixture, actual, effects);
   }
+  if (tier === "p2" && fixture.id === "p2.observability.basic") {
+    const { actual, effects } = await runFixtureP2(fixture);
+    return compareFixture(fixture, actual, effects);
+  }
 
   const enableP1 = ["p1", "p2"].includes(tier);
   const enableP2 = tier === "p2";
@@ -861,6 +865,83 @@ async function runFixtureP1(fixture) {
   };
 
   return { actual, effects: { logs: [], metrics: [], spans: [] } };
+}
+
+async function runFixtureP2(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+
+  const ids = new runtime.ManualIdGenerator();
+  ids.queue("req_test_123");
+
+  const effects = { logs: [], metrics: [], spans: [] };
+
+  const limits = fixture.setup?.limits ?? {};
+  const app = runtime.createApp({
+    tier: "p2",
+    ids,
+    limits: {
+      maxRequestBytes: Number(limits.max_request_bytes ?? 0),
+      maxResponseBytes: Number(limits.max_response_bytes ?? 0),
+    },
+    authHook: (ctx) => {
+      const authz = firstHeaderValue(ctx.request.headers ?? {}, "authorization").trim();
+      if (!authz) {
+        throw new runtime.AppError("app.unauthorized", "unauthorized");
+      }
+      return "authorized";
+    },
+    observability: {
+      log: (r) => {
+        effects.logs.push({
+          level: r.level,
+          event: r.event,
+          request_id: r.requestId,
+          tenant_id: r.tenantId,
+          method: r.method,
+          path: r.path,
+          status: r.status,
+          error_code: r.errorCode,
+        });
+      },
+      metric: (r) => {
+        effects.metrics.push({ name: r.name, value: r.value, tags: r.tags });
+      },
+      span: (r) => {
+        effects.spans.push({ name: r.name, attributes: r.attributes });
+      },
+    },
+  });
+
+  for (const route of fixture.setup?.routes ?? []) {
+    const handler = builtInAppTheoryHandler(runtime, route.handler);
+    if (!handler) {
+      throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
+    }
+    app.handle(route.method, route.path, handler, { authRequired: Boolean(route.auth_required) });
+  }
+
+  const input = fixture.input?.request ?? {};
+  const body = decodeFixtureBody(input.body);
+  const req = {
+    method: input.method,
+    path: input.path,
+    query: input.query ?? {},
+    headers: input.headers ?? {},
+    body,
+    isBase64: input.is_base64 ?? false,
+  };
+
+  const runtimeCtx = { remaining_ms: Number(fixture.input?.context?.remaining_ms ?? 0) };
+  const resp = await app.serve(req, runtimeCtx);
+  const actual = {
+    status: resp.status,
+    headers: resp.headers ?? {},
+    cookies: resp.cookies ?? [],
+    body: Buffer.from(resp.body ?? []),
+    is_base64: resp.isBase64 ?? false,
+  };
+
+  return { actual, effects };
 }
 
 function builtInAppTheoryHandler(runtime, name) {
