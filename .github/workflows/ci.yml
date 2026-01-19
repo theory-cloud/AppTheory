@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - premain
+
+jobs:
+  version-alignment:
+    name: Version alignment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify versions match VERSION
+        run: scripts/verify-version-alignment.sh
+
+  go:
+    name: Go (test + vet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.6"
+      - name: Test and vet
+        run: scripts/verify-go.sh
+
+  ts:
+    name: TypeScript (npm pack)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Build tarball
+        run: scripts/verify-ts-pack.sh
+
+  py:
+    name: Python (build wheel + sdist)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Build wheel + sdist
+        run: scripts/verify-python-build.sh
+
+  builds:
+    name: Verify deterministic builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.6"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Build twice and compare checksums
+        run: scripts/verify-builds.sh

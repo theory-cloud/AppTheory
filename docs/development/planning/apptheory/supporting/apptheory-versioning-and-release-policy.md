@@ -12,6 +12,17 @@ Status: frozen for milestone `M0`; implementation tracked in `SR-RELEASE`.
 - **Version alignment is enforced:** CI fails if Go/TS/Py disagree on version.
 - **Prefer deterministic builds:** pinned tools where possible; reproducible artifacts; checksums for release assets.
 
+## Branch model
+
+- `main` is the default branch and is kept releasable (green).
+- `premain` is used for release-candidate hardening and pre-release automation.
+- Day-to-day work lands via feature branches and PRs into `main`.
+- RC releases are cut by tagging a commit on `premain`:
+  - pre-release: `vX.Y.Z-rc.N`
+- Stable releases are cut by tagging a commit on `main`:
+  - stable: `vX.Y.Z`
+- If/when needed for backports, use short-lived `release/vX.Y` branches; otherwise prefer forward-only on `main`.
+
 ## Version scheme
 
 - Stable releases: `vX.Y.Z`
@@ -51,3 +62,13 @@ Go:
 - No npm publish tokens or PyPI tokens.
 - Use `GITHUB_TOKEN` with minimal permissions required to create releases and attach assets.
 - Default to “fail closed” when a verifier cannot run due to missing pinned tooling.
+
+## Reproducing release artifacts (local)
+
+To reproduce release assets from a tag:
+
+- Checkout the tag: `git checkout vX.Y.Z` (or `vX.Y.Z-rc.N`).
+- Run `make rubric` to build the TS tarball + Python wheel/sdist and run verification.
+- Run `scripts/generate-checksums.sh` to produce `dist/SHA256SUMS.txt`.
+
+Artifacts are written to `dist/`.
