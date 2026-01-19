@@ -1,0 +1,42 @@
+{
+  "id": "p0.request.cookie_parsing",
+  "tier": "p0",
+  "name": "Cookies are parsed from Cookie headers (last value wins)",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/echo", "handler": "echo_request" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/echo",
+      "query": {},
+      "headers": {
+        "Cookie": ["a=1; b=two", "b=three"]
+      },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "method": "GET",
+        "path": "/echo",
+        "query": {},
+        "headers": {
+          "cookie": ["a=1; b=two", "b=three"]
+        },
+        "cookies": { "a": "1", "b": "three" },
+        "body_b64": "",
+        "is_base64": false
+      },
+      "is_base64": false
+    }
+  }
+}
+

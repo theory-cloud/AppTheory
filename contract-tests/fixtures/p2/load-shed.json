@@ -1,0 +1,81 @@
+{
+  "id": "p2.load_shed.rejected",
+  "tier": "p2",
+  "name": "Load shedding maps to app.overloaded + Retry-After",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/shed", "handler": "echo_context" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/shed",
+      "query": {},
+      "headers": {
+        "x-force-shed": ["true"],
+        "x-tenant-id": ["tenant_abc"]
+      },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 503,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "retry-after": ["1"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.overloaded",
+          "message": "overloaded",
+          "request_id": "req_test_123"
+        }
+      },
+      "is_base64": false
+    },
+    "logs": [
+      {
+        "level": "error",
+        "event": "request.completed",
+        "request_id": "req_test_123",
+        "tenant_id": "tenant_abc",
+        "method": "GET",
+        "path": "/shed",
+        "status": 503,
+        "error_code": "app.overloaded"
+      }
+    ],
+    "metrics": [
+      {
+        "name": "apptheory.request",
+        "value": 1,
+        "tags": {
+          "method": "GET",
+          "path": "/shed",
+          "status": "503",
+          "error_code": "app.overloaded",
+          "tenant_id": "tenant_abc"
+        }
+      }
+    ],
+    "spans": [
+      {
+        "name": "http GET /shed",
+        "attributes": {
+          "http.method": "GET",
+          "http.route": "/shed",
+          "http.status_code": "503",
+          "request.id": "req_test_123",
+          "tenant.id": "tenant_abc",
+          "error.code": "app.overloaded"
+        }
+      }
+    ]
+  }
+}
+

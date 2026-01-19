@@ -1,0 +1,38 @@
+{
+  "id": "p1.request_id.generated",
+  "tier": "p1",
+  "name": "Request ID is generated and returned in response headers",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/context", "handler": "echo_context" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/context",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "request_id": "req_test_123",
+        "tenant_id": "",
+        "auth_identity": "",
+        "remaining_ms": 0
+      },
+      "is_base64": false
+    }
+  }
+}
+

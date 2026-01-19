@@ -1,0 +1,39 @@
+{
+  "id": "p1.context.remaining_time",
+  "tier": "p1",
+  "name": "Remaining time is present in handler context",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/context", "handler": "echo_context" }
+    ]
+  },
+  "input": {
+    "context": { "remaining_ms": 1234 },
+    "request": {
+      "method": "GET",
+      "path": "/context",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "request_id": "req_test_123",
+        "tenant_id": "",
+        "auth_identity": "",
+        "remaining_ms": 1234
+      },
+      "is_base64": false
+    }
+  }
+}
+

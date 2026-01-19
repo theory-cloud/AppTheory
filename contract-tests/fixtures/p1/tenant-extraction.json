@@ -1,0 +1,38 @@
+{
+  "id": "p1.tenant.extraction",
+  "tier": "p1",
+  "name": "Tenant is extracted from x-tenant-id header",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/context", "handler": "echo_context" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/context",
+      "query": {},
+      "headers": { "x-tenant-id": ["tenant_abc"] },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "request_id": "req_test_123",
+        "tenant_id": "tenant_abc",
+        "auth_identity": "",
+        "remaining_ms": 0
+      },
+      "is_base64": false
+    }
+  }
+}
+

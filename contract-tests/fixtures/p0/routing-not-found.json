@@ -1,0 +1,30 @@
+{
+  "id": "p0.routing.not_found",
+  "tier": "p0",
+  "name": "Not found when no route matches",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/ping", "handler": "static_pong" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/missing",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 404,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": { "error": { "code": "app.not_found", "message": "not found" } },
+      "is_base64": false
+    }
+  }
+}
+

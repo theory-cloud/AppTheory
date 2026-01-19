@@ -1,0 +1,44 @@
+{
+  "id": "p0.request.header_normalization",
+  "tier": "p0",
+  "name": "Header keys are normalized and multi-value preserved",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/echo", "handler": "echo_request" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/echo",
+      "query": { "a": ["1", "2"] },
+      "headers": {
+        "Content-Type": ["application/json"],
+        "X-Foo": ["A", "B"]
+      },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "method": "GET",
+        "path": "/echo",
+        "query": { "a": ["1", "2"] },
+        "headers": {
+          "content-type": ["application/json"],
+          "x-foo": ["A", "B"]
+        },
+        "cookies": {},
+        "body_b64": "",
+        "is_base64": false
+      },
+      "is_base64": false
+    }
+  }
+}
+
