@@ -5,7 +5,6 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 expected_version="$(tr -d ' \t\r\n' < VERSION)"
 
-rm -rf dist
 mkdir -p dist
 
 if [[ ! -d "py/.venv" ]]; then
@@ -19,6 +18,9 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
 cp -a py "${tmp_dir}/py"
+
+rm -f "dist/apptheory-${expected_version}-"*.whl
+rm -f "dist/apptheory-${expected_version}.tar.gz"
 
 py/.venv/bin/python -m build "${tmp_dir}/py" --outdir dist >/dev/null
 
