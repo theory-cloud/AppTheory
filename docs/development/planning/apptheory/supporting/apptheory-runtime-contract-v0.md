@@ -1,8 +1,13 @@
-# AppTheory Runtime Contract v0 (Draft)
+# AppTheory Runtime Contract v0
 
 This document defines the **portable runtime contract** for AppTheory across Go/TypeScript/Python.
 
-Status: draft; enforced via `contract-tests/` as part of `SR-CONTRACT`.
+Status: contract v0 is enforced via `contract-tests/` as part of `SR-CONTRACT`.
+
+## Normative language
+
+The key words “MUST”, “MUST NOT”, “SHOULD”, “SHOULD NOT”, and “MAY” in this document are to be interpreted as described
+in RFC 2119.
 
 ## Goals
 
@@ -19,25 +24,37 @@ Contract v0 covers **HTTP** events only:
 
 Other event sources (SQS, EventBridge, DynamoDB Streams, etc.) are out-of-scope until fixture-backed.
 
-## Canonical request model
+## Canonical request model (v0)
 
 Implementations MUST normalize incoming events into a canonical request model:
 
-- `method`: uppercase HTTP method
-- `path`: URL path (leading slash)
-- `raw_query`: raw query string (without leading `?`) when available
-- `query`: map of key → list of values (decision: multi-value supported at canonical level)
+- `method`: uppercase HTTP method (e.g. `GET`)
+- `path`: URL path, MUST start with `/` and MUST NOT include a query string
+- `query`: map of key → list of values (multi-value is supported at canonical level)
 - `headers`: case-insensitive map of key → list of values
-- `cookies`: list of cookie header values (post-normalization)
-- `body`: bytes
+- `cookies`: map of cookie name → cookie value
+- `body`: raw bytes
 - `is_base64`: boolean indicating whether the original event body was base64-encoded
 
 Normalization rules (v0):
 
-- Header lookup is case-insensitive.
-- If the event format only provides single header values, implementations MUST preserve the provided value.
-- If the event format provides cookies as a list, implementations MUST use it; otherwise parse the `Cookie` header.
-- If `isBase64Encoded` is true, body MUST be decoded to bytes before handler code sees it.
+- **Methods:** MUST be normalized to uppercase.
+- **Headers:**
+  - Header lookup MUST be case-insensitive.
+  - Canonical header keys MUST be normalized to lowercase for determinism.
+  - If an event format only provides single header values, implementations MUST preserve the provided value as a
+    1-element list.
+- **Query:**
+  - Canonical query supports multi-value keys.
+  - When parsing a raw query string, implementations MUST use `application/x-www-form-urlencoded` decoding rules
+    (percent-decoding plus `+` to space).
+- **Cookies:**
+  - Implementations MUST parse cookies into a name→value map.
+  - If the event format provides cookies as a list, implementations MUST use it as the input cookie source; otherwise
+    parse the `Cookie` header.
+  - If multiple cookies with the same name are provided, the **last** value wins.
+- **Body:** if `isBase64Encoded` is true in the source event, the body MUST be decoded to bytes before handler code sees
+  it.
 
 ## Canonical response model
 
@@ -45,8 +62,8 @@ Implementations MUST normalize handler output to a canonical response model:
 
 - `status`: integer HTTP status
 - `headers`: case-insensitive map of key → list of values
-- `cookies`: list of `Set-Cookie` strings (if supported by the event source)
-- `body`: bytes
+- `cookies`: list of `Set-Cookie` values (without the `Set-Cookie:` prefix)
+- `body`: raw bytes
 - `is_base64`: boolean controlling whether the outgoing event response body is base64-encoded
 
 Response rules (v0):
@@ -78,6 +95,21 @@ Error response envelope (v0) MUST include:
 
 Internal errors MUST NOT leak stack traces by default.
 
+Status mapping (v0):
+
+| Error code | HTTP status |
+| --- | --- |
+| `app.bad_request` | 400 |
+| `app.validation_failed` | 400 |
+| `app.unauthorized` | 401 |
+| `app.forbidden` | 403 |
+| `app.not_found` | 404 |
+| `app.method_not_allowed` | 405 |
+| `app.conflict` | 409 |
+| `app.too_large` | 413 |
+| `app.rate_limited` | 429 |
+| `app.internal` | 500 |
+
 ## Middleware ordering (v0)
 
 Middleware MUST run in a consistent order across languages. The recommended default stack:
@@ -101,4 +133,3 @@ Fixtures in `contract-tests/` define:
 - expected logs/fields where relevant (P2)
 
 Fixture schema and file layout are owned by `SR-CONTRACT` and must remain stable once v1.0 ships.
-
