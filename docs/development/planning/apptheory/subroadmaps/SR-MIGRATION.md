@@ -3,7 +3,9 @@
 Goal: enable Pay Theory (and any other Lift users) to migrate to AppTheory with minimal friction, even if the migration is
 not drop-in identical.
 
-This workstream is about **reducing migration time**, not preserving every old API.
+This workstream is about **reducing migration time** while preserving **Lift-equivalent capabilities** for Pay Theory.
+AppTheory is not required to be API-identical to Lift, but it must keep **100% of Lift’s current functionality** available
+to Go users (portable subset + documented Go-only extensions) so migrations don’t require feature cuts.
 
 ## Scope
 
@@ -30,6 +32,10 @@ Non-goals:
   - “replacement with behavior change”
   - “Go-only, keep using Lift” (temporary) or “drop”
 
+Inventory doc (baseline):
+
+- `docs/development/planning/apptheory/supporting/apptheory-lift-usage-inventory.md`
+
 ---
 
 ### G1 — Migration guide skeleton + mapping table
@@ -40,6 +46,10 @@ Non-goals:
   - why changes exist (contract parity, language portability)
   - what is automated vs manual
 - Includes a mapping table from Lift symbols/patterns → AppTheory equivalents.
+
+Guide (skeleton):
+
+- `docs/migration/from-lift.md`
 
 ---
 
@@ -52,6 +62,11 @@ Non-goals:
   - covered by tests
 - Shims exist only for the highest-leverage migration pain points.
 
+High-leverage port (rate limiting):
+
+- `pkg/limited` (TableTheory-backed port of `pay-theory/limited`)
+- `pkg/limited/middleware` (net/http middleware)
+
 ---
 
 ### G3 — Automated helpers (codemods/scripts)
@@ -59,6 +74,10 @@ Non-goals:
 **Acceptance criteria**
 - At least one automation helper exists and is documented (example: rewrite import paths and a small set of renamed APIs).
 - The helper is safe by default (dry-run mode; clear diff output).
+
+Automation helper (Go):
+
+- `scripts/migrate-from-lift-go.sh` (rewrites `pay-theory/limited` imports to AppTheory)
 
 ---
 
@@ -68,6 +87,11 @@ Non-goals:
 - A representative service is migrated using the playbook and helpers.
 - The migration produces a short “lessons learned” and updates the guide.
 
+Representative migration (rate limiting):
+
+- Example: `examples/migration/rate-limited-http/README.md`
+- Lessons learned: `docs/migration/g4-representative-migration.md`
+
 ---
 
 ### G5 — Deprecation and communication plan
@@ -76,8 +100,12 @@ Non-goals:
 - `pay-theory/lift` deprecation posture is documented (what stays supported and for how long internally).
 - AppTheory release notes link to the migration guide and highlight breaking differences.
 
+Artifacts:
+
+- Deprecation posture: `docs/migration/lift-deprecation.md`
+- Release notes template: `scripts/render-release-notes.sh`
+
 ## Risks and mitigation
 
 - **Hidden Lift coupling:** start with the Pay Theory inventory to avoid surprises.
 - **Shim creep:** make shims time-bound and minimal; prefer teaching the new model.
-
