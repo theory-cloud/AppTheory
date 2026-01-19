@@ -156,6 +156,21 @@ func builtInAppTheoryHandler(name string) apptheory.Handler {
 		return func(_ *apptheory.Context) (*apptheory.Response, error) {
 			return apptheory.Binary(200, []byte{0x00, 0x01, 0x02}, "application/octet-stream"), nil
 		}
+	case "echo_context":
+		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+			return apptheory.JSON(200, map[string]any{
+				"request_id":     ctx.RequestID,
+				"tenant_id":      ctx.TenantID,
+				"auth_identity":  ctx.AuthIdentity,
+				"remaining_ms":   ctx.RemainingMS,
+			})
+		}
+	case "echo_middleware_trace":
+		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+			return apptheory.JSON(200, map[string]any{
+				"trace": ctx.MiddlewareTrace,
+			})
+		}
 	case "unauthorized":
 		return func(_ *apptheory.Context) (*apptheory.Response, error) {
 			return nil, &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
@@ -163,6 +178,10 @@ func builtInAppTheoryHandler(name string) apptheory.Handler {
 	case "validation_failed":
 		return func(_ *apptheory.Context) (*apptheory.Response, error) {
 			return nil, &apptheory.AppError{Code: "app.validation_failed", Message: "validation failed"}
+		}
+	case "large_response":
+		return func(_ *apptheory.Context) (*apptheory.Response, error) {
+			return apptheory.Text(200, "12345"), nil
 		}
 	default:
 		return nil

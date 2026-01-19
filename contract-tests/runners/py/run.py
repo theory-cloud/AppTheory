@@ -691,6 +691,8 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
     tier = str(fixture.get("tier", "")).strip().lower()
     if tier == "p0":
         return run_fixture_p0(fixture)
+    if tier == "p1":
+        return run_fixture_p1(fixture)
 
     setup = fixture.get("setup", {})
     input_ = fixture.get("input", {})
@@ -824,6 +826,29 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
 
         return handler
 
+    if name == "echo_context":
+        def handler(ctx):
+            return runtime.json(
+                200,
+                {
+                    "request_id": getattr(ctx, "request_id", ""),
+                    "tenant_id": getattr(ctx, "tenant_id", ""),
+                    "auth_identity": getattr(ctx, "auth_identity", ""),
+                    "remaining_ms": int(getattr(ctx, "remaining_ms", 0) or 0),
+                },
+            )
+
+        return handler
+
+    if name == "echo_middleware_trace":
+        def handler(ctx):
+            return runtime.json(200, {"trace": getattr(ctx, "middleware_trace", [])})
+
+        return handler
+
+    if name == "large_response":
+        return lambda _ctx: runtime.text(200, "12345")
+
     return None
 
 
@@ -861,6 +886,69 @@ def run_fixture_p0(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
 
     expected = fixture.get("expect", {}).get("response", {})
     return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
+
+
+def run_fixture_p1(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+    runtime = _load_apptheory_runtime()
+    ids = runtime.ManualIdGenerator()
+    ids.push("req_test_123")
+
+    setup = fixture.get("setup", {})
+    limits = setup.get("limits", {}) or {}
+    app = runtime.create_app(
+        tier="p1",
+        id_generator=ids,
+        limits=runtime.Limits(
+            max_request_bytes=int(limits.get("max_request_bytes") or 0),
+            max_response_bytes=int(limits.get("max_response_bytes") or 0),
+        ),
+        auth_hook=lambda ctx: _fixture_auth_hook(runtime, ctx),
+    )
+
+    for route in setup.get("routes", []) or []:
+        name = str(route.get("handler", ""))
+        handler = _built_in_apptheory_handler(runtime, name)
+        if handler is None:
+            raise RuntimeError(f"unknown handler {name!r}")
+        app.handle(
+            route.get("method", ""),
+            route.get("path", ""),
+            handler,
+            auth_required=bool(route.get("auth_required")),
+        )
+
+    input_ = fixture.get("input", {}).get("request", {})
+    req_body = decode_fixture_body(input_.get("body"))
+    req = runtime.Request(
+        method=input_.get("method", ""),
+        path=input_.get("path", ""),
+        query=input_.get("query") or {},
+        headers=input_.get("headers") or {},
+        body=req_body,
+        is_base64=bool(input_.get("is_base64")),
+    )
+
+    runtime_ctx = {"remaining_ms": int((fixture.get("input", {}).get("context", {}) or {}).get("remaining_ms") or 0)}
+    resp = app.serve(req, runtime_ctx)
+    actual = CanonicalResponse(
+        status=resp.status,
+        headers=resp.headers,
+        cookies=resp.cookies,
+        body=resp.body,
+        is_base64=resp.is_base64,
+    )
+
+    expected = fixture.get("expect", {}).get("response", {})
+    return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
+
+
+def _fixture_auth_hook(runtime, ctx):
+    headers = getattr(getattr(ctx, "request", None), "headers", {}) or {}
+    values = headers.get("authorization", [])
+    authz = str(values[0]) if values else ""
+    if not authz.strip():
+        raise runtime.AppError("app.unauthorized", "unauthorized")
+    return "authorized"
 
 
 def run_fixture_compare(

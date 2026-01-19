@@ -9,6 +9,7 @@ from apptheory.util import normalize_path
 class Match:
     handler: object
     params: dict[str, str]
+    auth_required: bool
 
 
 @dataclass(slots=True)
@@ -17,13 +18,14 @@ class _Route:
     pattern: str
     segments: list[str]
     handler: object
+    auth_required: bool
 
 
 class Router:
     def __init__(self) -> None:
         self._routes: list[_Route] = []
 
-    def add(self, method: str, pattern: str, handler: object) -> None:
+    def add(self, method: str, pattern: str, handler: object, *, auth_required: bool = False) -> None:
         method_value = str(method or "").strip().upper()
         pattern_value = normalize_path(pattern)
         self._routes.append(
@@ -32,6 +34,7 @@ class Router:
                 pattern=pattern_value,
                 segments=_split_path(pattern_value),
                 handler=handler,
+                auth_required=bool(auth_required),
             )
         )
 
@@ -46,7 +49,7 @@ class Router:
                 continue
             allowed.append(route.method)
             if route.method == method_value:
-                return Match(handler=route.handler, params=params), allowed
+                return Match(handler=route.handler, params=params, auth_required=route.auth_required), allowed
 
         return None, allowed
 

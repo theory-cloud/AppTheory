@@ -17,6 +17,11 @@ class Context:
     clock: Clock
     id_generator: IdGenerator
     ctx: Any | None
+    request_id: str
+    tenant_id: str
+    auth_identity: str
+    remaining_ms: int
+    middleware_trace: list[str]
 
     def __init__(
         self,
@@ -26,12 +31,22 @@ class Context:
         clock: Clock | None = None,
         id_generator: IdGenerator | None = None,
         ctx: Any | None = None,
+        request_id: str = "",
+        tenant_id: str = "",
+        auth_identity: str = "",
+        remaining_ms: int = 0,
+        middleware_trace: list[str] | None = None,
     ) -> None:
         self.request = request
         self.params = params or {}
         self.clock = clock or RealClock()
         self.id_generator = id_generator or RealIdGenerator()
         self.ctx = ctx
+        self.request_id = str(request_id)
+        self.tenant_id = str(tenant_id)
+        self.auth_identity = str(auth_identity)
+        self.remaining_ms = int(remaining_ms or 0)
+        self.middleware_trace = middleware_trace if middleware_trace is not None else []
 
     def now(self):
         return self.clock.now()
