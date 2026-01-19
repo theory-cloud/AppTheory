@@ -824,6 +824,9 @@ async function runFixtureP1(fixture) {
       if (!authz) {
         throw new runtime.AppError("app.unauthorized", "unauthorized");
       }
+      if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-forbidden")) {
+        throw new runtime.AppError("app.forbidden", "forbidden");
+      }
       return "authorized";
     },
   });

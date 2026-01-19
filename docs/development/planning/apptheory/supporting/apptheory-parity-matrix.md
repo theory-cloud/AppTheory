@@ -82,11 +82,11 @@ Legend:
 
 | Feature | Fixtures | Go | TS | Py | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Request ID middleware | P1 | ⬜ | ⬜ | ⬜ | |
-| Auth hook interface | P1 | ⬜ | ⬜ | ⬜ | |
-| Tenant extraction | P1 | ⬜ | ⬜ | ⬜ | |
-| CORS middleware | P1 | ⬜ | ⬜ | ⬜ | |
-| Size/time guardrails | P1 | ⬜ | ⬜ | ⬜ | |
+| Request ID middleware | P1 | ✅ | ✅ | ✅ | |
+| Auth hook interface | P1 | ✅ | ✅ | ✅ | |
+| Tenant extraction | P1 | ✅ | ✅ | ✅ | |
+| CORS middleware | P1 | ✅ | ✅ | ✅ | |
+| Size/time guardrails | P1 | ✅ | ✅ | ✅ | |
 
 ## P2 — Prod features (portable subset only)
 

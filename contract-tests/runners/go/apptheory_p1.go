@@ -47,6 +47,9 @@ func runFixtureP1(f Fixture) error {
 			if authz == "" {
 				return "", &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
 			}
+			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-forbidden")) != "" {
+				return "", &apptheory.AppError{Code: "app.forbidden", Message: "forbidden"}
+			}
 			return "authorized", nil
 		}),
 	)
