@@ -87,6 +87,11 @@ Automation helper (Go):
 - A representative service is migrated using the playbook and helpers.
 - The migration produces a short “lessons learned” and updates the guide.
 
+Representative migration (rate limiting):
+
+- Example: `examples/migration/rate-limited-http/README.md`
+- Lessons learned: `docs/migration/g4-representative-migration.md`
+
 ---
 
 ### G5 — Deprecation and communication plan
