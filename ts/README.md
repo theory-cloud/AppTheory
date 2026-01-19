@@ -5,7 +5,9 @@ This folder contains the TypeScript SDK/runtime for AppTheory.
 The portable runtime behavior is defined by the fixture-backed contract:
 `docs/development/planning/apptheory/supporting/apptheory-runtime-contract-v0.md`.
 
-## Minimal local invocation (P0)
+## Minimal local invocation (P2 default)
+
+To force the P0 core (minimal surface area), pass `tier: "p0"` when creating the app.
 
 ```ts
 import { createTestEnv, text } from "@theory-cloud/apptheory";
@@ -36,11 +38,12 @@ test("unit test without AWS", async () => {
   const app = env.app();
   app.get("/hello", (ctx) => json(200, { now: ctx.now().toISOString(), id: ctx.newId() }));
 
-  const event = buildAPIGatewayV2Request("GET", "/hello");
+  const event = buildAPIGatewayV2Request("GET", "/hello", { headers: { "x-request-id": "request-1" } });
   const resp = await env.invokeAPIGatewayV2(app, event);
 
   assert.equal(resp.statusCode, 200);
   assert.equal(resp.headers["content-type"], "application/json; charset=utf-8");
+  assert.equal(resp.headers["x-request-id"], "request-1");
 
   const body = JSON.parse(resp.body);
   assert.equal(body.id, "req-1");

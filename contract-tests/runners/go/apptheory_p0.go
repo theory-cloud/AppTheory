@@ -12,7 +12,7 @@ import (
 )
 
 func runFixtureP0(f Fixture) error {
-	app := apptheory.New()
+	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
 
 	for _, r := range f.Setup.Routes {
 		handler := builtInAppTheoryHandler(r.Handler)
@@ -41,7 +41,7 @@ func runFixtureP0(f Fixture) error {
 }
 
 func printFailureP0(f Fixture) {
-	app := apptheory.New()
+	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
 	for _, r := range f.Setup.Routes {
 		handler := builtInAppTheoryHandler(r.Handler)
 		if handler == nil {

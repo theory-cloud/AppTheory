@@ -776,7 +776,7 @@ function compareFixture(fixture, actual, effects) {
 
 async function runFixtureP0(fixture) {
   const runtime = await loadAppTheoryRuntime();
-  const app = runtime.createApp();
+  const app = runtime.createApp({ tier: "p0" });
 
   for (const route of fixture.setup?.routes ?? []) {
     const handler = builtInAppTheoryHandler(runtime, route.handler);

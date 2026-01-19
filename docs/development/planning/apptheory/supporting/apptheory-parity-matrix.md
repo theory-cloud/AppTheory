@@ -48,6 +48,11 @@ P0 / P1 / P2 tier definitions (frozen in `M0`, summarized here for quick referen
 
 Source: `docs/development/planning/apptheory/apptheory-multilang-roadmap.md`
 
+Default behavior:
+
+- Default tier is **P2** across Go/TypeScript/Python. Use an explicit `p0` / `p1` tier when you want the minimal surface
+  area.
+
 ## Allowed divergence (rare, explicit)
 
 Portable semantics are the goal; “allowed to diverge” is intentionally narrow:
