@@ -38,7 +38,7 @@ func New(opts ...Option) *App {
 		router: newRouter(),
 		clock:  RealClock{},
 		ids:    RandomIDGenerator{},
-		tier:   TierP0,
+		tier:   TierP2,
 		limits: Limits{},
 		auth:   nil,
 		obs:    ObservabilityHooks{},

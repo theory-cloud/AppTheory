@@ -856,7 +856,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
 
 def run_fixture_p0(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     runtime = _load_apptheory_runtime()
-    app = runtime.create_app()
+    app = runtime.create_app(tier="p0")
 
     setup = fixture.get("setup", {})
     for route in setup.get("routes", []) or []:

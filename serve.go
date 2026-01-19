@@ -50,14 +50,14 @@ func (a *App) Serve(ctx context.Context, req Request) (resp Response) {
 	}
 
 	switch a.tier {
-	case TierP2:
-		return a.serveP2(ctx, req)
+	case TierP0:
+		return a.serveP0(ctx, req)
 	case TierP1:
 		return a.serveP1(ctx, req)
-	case TierP0, "":
-		fallthrough
+	case TierP2:
+		return a.serveP2(ctx, req)
 	default:
-		return a.serveP0(ctx, req)
+		return a.serveP2(ctx, req)
 	}
 }
 

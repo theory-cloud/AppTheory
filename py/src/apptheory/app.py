@@ -95,7 +95,7 @@ class App:
         *,
         clock: Clock | None = None,
         id_generator: IdGenerator | None = None,
-        tier: str = "p0",
+        tier: str = "p2",
         limits: Limits | None = None,
         auth_hook: AuthHook | None = None,
         observability: ObservabilityHooks | None = None,
@@ -104,7 +104,10 @@ class App:
         self._router = Router()
         self._clock = clock or RealClock()
         self._id_generator = id_generator or RealIdGenerator()
-        self._tier = str(tier or "p0").strip().lower()
+        tier_value = str(tier or "").strip().lower()
+        if tier_value not in {"p0", "p1", "p2"}:
+            tier_value = "p2"
+        self._tier = tier_value
         self._limits = limits or Limits()
         self._auth_hook = auth_hook
         self._observability = observability or ObservabilityHooks()
@@ -374,7 +377,7 @@ def create_app(
     *,
     clock: Clock | None = None,
     id_generator: IdGenerator | None = None,
-    tier: str = "p0",
+    tier: str = "p2",
     limits: Limits | None = None,
     auth_hook: AuthHook | None = None,
     observability: ObservabilityHooks | None = None,

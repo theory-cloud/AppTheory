@@ -164,7 +164,7 @@ export class App {
     this._router = new Router();
     this._clock = clock ?? new RealClock();
     this._ids = ids ?? new RandomIdGenerator();
-    this._tier = tier === "p1" || tier === "p2" ? tier : "p0";
+    this._tier = tier === "p0" || tier === "p1" || tier === "p2" ? tier : "p2";
     this._limits = {
       maxRequestBytes: Number(limits?.maxRequestBytes ?? 0),
       maxResponseBytes: Number(limits?.maxResponseBytes ?? 0),
