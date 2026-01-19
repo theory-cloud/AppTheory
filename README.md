@@ -52,6 +52,38 @@ resp := env.Invoke(context.Background(), app, apptheory.Request{Method: "GET", P
 _ = resp
 ```
 
+Unit test without AWS (deterministic time + IDs + HTTP event builder):
+
+```go
+func TestHello(t *testing.T) {
+	env := testkit.NewWithTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	env.IDs.Queue("req-1")
+
+	app := env.App()
+	app.Get("/hello", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.MustJSON(200, map[string]any{
+			"now_unix": ctx.Now().Unix(),
+			"id":       ctx.NewID(),
+		}), nil
+	})
+
+	event := testkit.APIGatewayV2Request("GET", "/hello", testkit.HTTPEventOptions{})
+	resp := env.InvokeAPIGatewayV2(context.Background(), app, event)
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal([]byte(resp.Body), &body); err != nil {
+		t.Fatalf("parse response json: %v", err)
+	}
+	if body["id"] != "req-1" {
+		t.Fatalf("expected id req-1, got %#v", body["id"])
+	}
+}
+```
+
 Start here:
 
 - Planning index: `docs/development/planning/apptheory/README.md`
