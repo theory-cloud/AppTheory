@@ -1,0 +1,30 @@
+{
+  "id": "p0.error.validation_failed",
+  "tier": "p0",
+  "name": "Validation failed error mapping",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/validate", "handler": "validation_failed" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/validate",
+      "query": {},
+      "headers": { "content-type": ["application/json"] },
+      "body": { "encoding": "utf8", "value": "{\"name\": \"\"}" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": { "error": { "code": "app.validation_failed", "message": "validation failed" } },
+      "is_base64": false
+    }
+  }
+}
+

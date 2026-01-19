@@ -1,0 +1,30 @@
+{
+  "id": "p0.json.empty_body",
+  "tier": "p0",
+  "name": "Empty JSON body parses as null",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/json", "handler": "parse_json_echo" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/json",
+      "query": {},
+      "headers": { "content-type": ["application/json"] },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": null,
+      "is_base64": false
+    }
+  }
+}
+

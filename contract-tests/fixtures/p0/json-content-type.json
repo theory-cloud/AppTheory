@@ -1,0 +1,30 @@
+{
+  "id": "p0.json.content_type",
+  "tier": "p0",
+  "name": "application/json content-type is recognized (including parameters)",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/json", "handler": "parse_json_echo" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/json",
+      "query": {},
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "body": { "encoding": "utf8", "value": "{\"ok\":true}" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": { "ok": true },
+      "is_base64": false
+    }
+  }
+}
+

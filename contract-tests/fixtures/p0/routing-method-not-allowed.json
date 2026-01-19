@@ -1,0 +1,34 @@
+{
+  "id": "p0.routing.method_not_allowed",
+  "tier": "p0",
+  "name": "Method not allowed when path matches but method does not",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/ping", "handler": "static_pong" },
+      { "method": "POST", "path": "/ping", "handler": "static_pong" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "PUT",
+      "path": "/ping",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 405,
+      "headers": {
+        "allow": ["GET, POST"],
+        "content-type": ["application/json; charset=utf-8"]
+      },
+      "cookies": [],
+      "body_json": { "error": { "code": "app.method_not_allowed", "message": "method not allowed" } },
+      "is_base64": false
+    }
+  }
+}
+

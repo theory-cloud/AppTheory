@@ -1,0 +1,30 @@
+{
+  "id": "p0.response.binary_base64",
+  "tier": "p0",
+  "name": "Binary response bodies are base64 encoded",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/binary", "handler": "binary_body" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/binary",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/octet-stream"] },
+      "cookies": [],
+      "body": { "encoding": "base64", "value": "AAEC" },
+      "is_base64": true
+    }
+  }
+}
+

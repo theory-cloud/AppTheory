@@ -1,0 +1,76 @@
+{
+  "id": "p2.observability.basic",
+  "tier": "p2",
+  "name": "Portable logs/metrics/tracing envelope",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/context", "handler": "echo_context" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/context",
+      "query": {},
+      "headers": { "x-tenant-id": ["tenant_abc"] },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "request_id": "req_test_123",
+        "tenant_id": "tenant_abc",
+        "auth_identity": "",
+        "remaining_ms": 0
+      },
+      "is_base64": false
+    },
+    "logs": [
+      {
+        "level": "info",
+        "event": "request.completed",
+        "request_id": "req_test_123",
+        "tenant_id": "tenant_abc",
+        "method": "GET",
+        "path": "/context",
+        "status": 200,
+        "error_code": ""
+      }
+    ],
+    "metrics": [
+      {
+        "name": "apptheory.request",
+        "value": 1,
+        "tags": {
+          "method": "GET",
+          "path": "/context",
+          "status": "200",
+          "error_code": "",
+          "tenant_id": "tenant_abc"
+        }
+      }
+    ],
+    "spans": [
+      {
+        "name": "http GET /context",
+        "attributes": {
+          "http.method": "GET",
+          "http.route": "/context",
+          "http.status_code": "200",
+          "request.id": "req_test_123",
+          "tenant.id": "tenant_abc",
+          "error.code": ""
+        }
+      }
+    ]
+  }
+}
+
