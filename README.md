@@ -42,3 +42,7 @@ Start here:
 Migration:
 
 - Lift → AppTheory (draft): `docs/migration/from-lift.md`
+
+License:
+
+- Apache 2.0 (see `LICENSE`)

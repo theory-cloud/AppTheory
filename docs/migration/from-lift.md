@@ -41,7 +41,11 @@ Lift historically used `github.com/pay-theory/limited`. AppTheory will provide a
 replicates the **full** `limited` feature set (strategies, fail-open behavior, usage stats) so migrations do not require a
 feature cut.
 
-Why: rate limiting is a production requirement and must be available as a first-class capability.
+In AppTheory, DynamoDB access is standardized on **TableTheory** (`theory-cloud/TableTheory`), which replaces DynamORM for
+new work.
+
+Why: rate limiting is a production requirement and must be available as a first-class capability without depending on
+DynamORM.
 
 ## What can be automated vs manual (initial intent)
 
@@ -74,7 +78,7 @@ This table is a starting point for G1 and will evolve as AppTheory’s P0/P1 con
 | `app.Use(middleware.X())` | `app.Use(middleware.X())` (planned) | portable subset is contract-defined; advanced middleware may be Go-only initially |
 | `lift.SimpleHandler(fn)` | `apptheory.Handler(fn)` (TBD) | exact shape depends on contract + language parity |
 | `ctx.ParseRequest(&v)` | `ctx.Bind(&v)` (TBD) | portable parsing + validation semantics must match fixtures |
-| `limited`-backed rate limiting | `middleware/ratelimit` (planned) | replicate full `limited` functionality inside AppTheory |
+| `github.com/pay-theory/limited` | `github.com/theory-cloud/apptheory/pkg/limited` | ported to TableTheory; keep `limited` semantics |
 | Lift CDK constructs | AppTheory examples/templates (TBD) | preserve behavior even if authoring model changes |
 
 ## What’s missing (tracked work)
