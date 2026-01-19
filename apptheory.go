@@ -12,6 +12,7 @@ type App struct {
 	limits Limits
 	auth   AuthHook
 	obs    ObservabilityHooks
+	policy PolicyHook
 }
 
 type Option func(*App)
@@ -41,6 +42,7 @@ func New(opts ...Option) *App {
 		limits: Limits{},
 		auth:   nil,
 		obs:    ObservabilityHooks{},
+		policy: nil,
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -92,5 +94,11 @@ func WithAuthHook(hook AuthHook) Option {
 func WithObservability(hooks ObservabilityHooks) Option {
 	return func(app *App) {
 		app.obs = hooks
+	}
+}
+
+func WithPolicyHook(hook PolicyHook) Option {
+	return func(app *App) {
+		app.policy = hook
 	}
 }

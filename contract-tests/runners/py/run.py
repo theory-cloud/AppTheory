@@ -693,7 +693,7 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
         return run_fixture_p0(fixture)
     if tier == "p1":
         return run_fixture_p1(fixture)
-    if tier == "p2" and str(fixture.get("id", "")).strip() == "p2.observability.basic":
+    if tier == "p2":
         return run_fixture_p2(fixture)
 
     setup = fixture.get("setup", {})
@@ -961,6 +961,7 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
             max_response_bytes=int(limits.get("max_response_bytes") or 0),
         ),
         auth_hook=lambda ctx: _fixture_auth_hook(runtime, ctx),
+        policy_hook=lambda ctx: _fixture_policy_hook(runtime, ctx),
         observability=runtime.ObservabilityHooks(
             log=lambda r: effects.logs.append(
                 {
@@ -1014,6 +1015,23 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
 
     expected = fixture.get("expect", {}).get("response", {})
     return run_fixture_compare(fixture, actual, expected, effects)
+
+
+def _fixture_policy_hook(runtime, ctx):
+    headers = getattr(getattr(ctx, "request", None), "headers", {}) or {}
+    if str((headers.get("x-force-rate-limit") or [""])[0]).strip():
+        return runtime.PolicyDecision(
+            code="app.rate_limited",
+            message="rate limited",
+            headers={"retry-after": ["1"]},
+        )
+    if str((headers.get("x-force-shed") or [""])[0]).strip():
+        return runtime.PolicyDecision(
+            code="app.overloaded",
+            message="overloaded",
+            headers={"retry-after": ["1"]},
+        )
+    return None
 
 
 def _fixture_auth_hook(runtime, ctx):

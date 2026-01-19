@@ -26,6 +26,7 @@ from apptheory.util import canonicalize_headers, clone_query
 
 Handler = Callable[[Context], Response]
 AuthHook = Callable[[Context], str]
+PolicyHook = Callable[[Context], "PolicyDecision | None"]
 
 
 @dataclass(slots=True)
@@ -67,6 +68,18 @@ class ObservabilityHooks:
 
 
 @dataclass(slots=True)
+class PolicyDecision:
+    code: str
+    message: str
+    headers: dict[str, Any]
+
+    def __init__(self, *, code: str, message: str, headers: dict[str, Any] | None = None) -> None:
+        self.code = str(code)
+        self.message = str(message)
+        self.headers = dict(headers or {})
+
+
+@dataclass(slots=True)
 class App:
     _router: Router
     _clock: Clock
@@ -75,6 +88,7 @@ class App:
     _limits: Limits
     _auth_hook: AuthHook | None
     _observability: ObservabilityHooks
+    _policy_hook: PolicyHook | None
 
     def __init__(
         self,
@@ -85,6 +99,7 @@ class App:
         limits: Limits | None = None,
         auth_hook: AuthHook | None = None,
         observability: ObservabilityHooks | None = None,
+        policy_hook: PolicyHook | None = None,
     ) -> None:
         self._router = Router()
         self._clock = clock or RealClock()
@@ -93,6 +108,7 @@ class App:
         self._limits = limits or Limits()
         self._auth_hook = auth_hook
         self._observability = observability or ObservabilityHooks()
+        self._policy_hook = policy_hook
 
     def handle(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
         self._router.add(method, pattern, handler, auth_required=auth_required)
@@ -224,6 +240,21 @@ class App:
             middleware_trace=trace,
         )
 
+        if enable_p2 and self._policy_hook is not None:
+            try:
+                decision = self._policy_hook(request_ctx)
+            except Exception as exc:  # noqa: BLE001
+                error_code = exc.code if isinstance(exc, AppError) else "app.internal"
+                return finish(response_for_error_with_request_id(exc, request_id), error_code)
+
+            if decision is not None and str(getattr(decision, "code", "")).strip():
+                code = str(decision.code).strip()
+                message = str(getattr(decision, "message", "")).strip() or _default_policy_message(code)
+                return finish(
+                    error_response_with_request_id(code, message, headers=decision.headers, request_id=request_id),
+                    code,
+                )
+
         if match.auth_required:
             trace.append("auth")
             if self._auth_hook is None:
@@ -347,6 +378,7 @@ def create_app(
     limits: Limits | None = None,
     auth_hook: AuthHook | None = None,
     observability: ObservabilityHooks | None = None,
+    policy_hook: PolicyHook | None = None,
 ) -> App:
     return App(
         clock=clock,
@@ -355,6 +387,7 @@ def create_app(
         limits=limits,
         auth_hook=auth_hook,
         observability=observability,
+        policy_hook=policy_hook,
     )
 
 
@@ -421,3 +454,13 @@ def _remaining_ms(ctx: Any | None) -> int:
     except Exception:  # noqa: BLE001
         return 0
     return value_int if value_int > 0 else 0
+
+
+def _default_policy_message(code: str) -> str:
+    match str(code or "").strip():
+        case "app.rate_limited":
+            return "rate limited"
+        case "app.overloaded":
+            return "overloaded"
+        case _:
+            return "internal error"

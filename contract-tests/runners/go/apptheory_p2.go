@@ -57,6 +57,23 @@ func runFixtureP2(f Fixture) error {
 				})
 			},
 		}),
+		apptheory.WithPolicyHook(func(ctx *apptheory.Context) (*apptheory.PolicyDecision, error) {
+			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-rate-limit")) != "" {
+				return &apptheory.PolicyDecision{
+					Code:    "app.rate_limited",
+					Message: "rate limited",
+					Headers: map[string][]string{"retry-after": []string{"1"}},
+				}, nil
+			}
+			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-shed")) != "" {
+				return &apptheory.PolicyDecision{
+					Code:    "app.overloaded",
+					Message: "overloaded",
+					Headers: map[string][]string{"retry-after": []string{"1"}},
+				}, nil
+			}
+			return nil, nil
+		}),
 	)
 
 	for _, r := range f.Setup.Routes {
@@ -95,4 +112,3 @@ func runFixtureP2(f Fixture) error {
 	actual := app.Serve(ctx, req)
 	return compareFixtureResponse(f, actual, logs, metrics, spans)
 }
-

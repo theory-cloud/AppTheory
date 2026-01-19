@@ -134,6 +134,14 @@ export interface RouteOptions {
 
 export type AuthHook = (ctx: Context) => string | Promise<string>;
 
+export interface PolicyDecision {
+  code: string;
+  message?: string;
+  headers?: Headers;
+}
+
+export type PolicyHook = (ctx: Context) => PolicyDecision | null | undefined | Promise<PolicyDecision | null | undefined>;
+
 export interface LogRecord {
   level: string;
   event: string;
@@ -169,6 +177,7 @@ export declare class App {
     tier?: Tier;
     limits?: Limits;
     authHook?: AuthHook;
+    policyHook?: PolicyHook;
     observability?: ObservabilityHooks;
   });
   handle(method: string, pattern: string, handler: Handler, options?: RouteOptions): this;
@@ -187,6 +196,7 @@ export declare function createApp(options?: {
   tier?: Tier;
   limits?: Limits;
   authHook?: AuthHook;
+  policyHook?: PolicyHook;
   observability?: ObservabilityHooks;
 }): App;
 
@@ -204,6 +214,7 @@ export declare class TestEnv {
     tier?: Tier;
     limits?: Limits;
     authHook?: AuthHook;
+    policyHook?: PolicyHook;
     observability?: ObservabilityHooks;
   }): App;
   invoke(app: App, request: Request, ctx?: unknown): Promise<Response>;
