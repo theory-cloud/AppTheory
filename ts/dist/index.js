@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
 
 export class AppError extends Error {
   constructor(code, message) {
@@ -33,16 +34,53 @@ export class ManualClock {
   }
 }
 
+export class RandomIdGenerator {
+  newId() {
+    return randomUUID();
+  }
+}
+
+export class ManualIdGenerator {
+  constructor({ prefix = "test-id", start = 1 } = {}) {
+    this._prefix = String(prefix);
+    this._next = Number(start) || 1;
+    this._queue = [];
+  }
+
+  queue(...ids) {
+    this._queue.push(...ids.map((v) => String(v)));
+  }
+
+  reset() {
+    this._next = 1;
+    this._queue = [];
+  }
+
+  newId() {
+    if (this._queue.length > 0) {
+      return this._queue.shift();
+    }
+    const out = `${this._prefix}-${this._next}`;
+    this._next += 1;
+    return out;
+  }
+}
+
 export class Context {
-  constructor({ request, params, clock, ctx }) {
+  constructor({ request, params, clock, ids, ctx }) {
     this.ctx = ctx ?? null;
     this.request = request;
     this.params = params ?? {};
     this._clock = clock ?? new RealClock();
+    this._ids = ids ?? new RandomIdGenerator();
   }
 
   now() {
     return this._clock.now();
+  }
+
+  newId() {
+    return this._ids.newId();
   }
 
   param(name) {
@@ -106,9 +144,10 @@ export function binary(status, body, contentType) {
 }
 
 export class App {
-  constructor({ clock } = {}) {
+  constructor({ clock, ids } = {}) {
     this._router = new Router();
     this._clock = clock ?? new RealClock();
+    this._ids = ids ?? new RandomIdGenerator();
   }
 
   handle(method, pattern, handler) {
@@ -154,6 +193,7 @@ export class App {
       request: normalized,
       params: match.params,
       clock: this._clock,
+      ids: this._ids,
       ctx,
     });
 
@@ -173,10 +213,11 @@ export function createApp(options = {}) {
 export class TestEnv {
   constructor({ now } = {}) {
     this.clock = new ManualClock(now ?? new Date(0));
+    this.ids = new ManualIdGenerator();
   }
 
   app(options = {}) {
-    return createApp({ ...options, clock: this.clock });
+    return createApp({ clock: this.clock, ids: this.ids, ...options });
   }
 
   invoke(app, request, ctx) {

@@ -7,6 +7,7 @@ package apptheory
 type App struct {
 	router *router
 	clock  Clock
+	ids    IDGenerator
 }
 
 type Option func(*App)
@@ -16,6 +17,7 @@ func New(opts ...Option) *App {
 	app := &App{
 		router: newRouter(),
 		clock:  RealClock{},
+		ids:    RandomIDGenerator{},
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -33,5 +35,15 @@ func WithClock(clock Clock) Option {
 			return
 		}
 		app.clock = clock
+	}
+}
+
+func WithIDGenerator(ids IDGenerator) Option {
+	return func(app *App) {
+		if ids == nil {
+			app.ids = RandomIDGenerator{}
+			return
+		}
+		app.ids = ids
 	}
 }
