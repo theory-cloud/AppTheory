@@ -26,10 +26,10 @@ cat > dist/RELEASE_NOTES.md <<EOF
 ## Lift migration
 - Draft guide: docs/migration/from-lift.md
 - Migration roadmap: docs/development/planning/apptheory/subroadmaps/SR-MIGRATION.md
+- Deprecation posture (Pay Theory): docs/migration/lift-deprecation.md
 
 ## Verification
 - \`make rubric\`
 EOF
 
 echo "release-notes: PASS (dist/RELEASE_NOTES.md)"
-

@@ -9,6 +9,7 @@ This is intentionally **not** a drop-in compatibility promise. The posture is â€
 - Pay Theory usage inventory (baseline): `docs/development/planning/apptheory/supporting/apptheory-lift-usage-inventory.md`
 - Lift â†’ AppTheory mapping (planning): `docs/development/planning/apptheory/supporting/apptheory-lift-to-apptheory-mapping.md`
 - Migration workstream roadmap: `docs/development/planning/apptheory/subroadmaps/SR-MIGRATION.md`
+- Lift deprecation posture (Pay Theory): `docs/migration/lift-deprecation.md`
 
 ## What changes (and why)
 
