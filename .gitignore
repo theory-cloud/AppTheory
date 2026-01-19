@@ -5,7 +5,17 @@
 # Codex / PAI local artifacts
 .pai/
 
+# Build artifacts
+/dist/
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+py/.venv/
+
 # OS/editor temp
 *.swp
 *~
-

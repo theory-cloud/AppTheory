@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: apptheory
+Version: 0.0.0
+Summary: AppTheory — multi-language serverless application framework (Python package)
+License-Expression: LicenseRef-Proprietary
+Requires-Python: >=3.14
+Description-Content-Type: text/markdown
+
+# AppTheory (Python)
+
+This folder contains the Python SDK/runtime for AppTheory.
+
