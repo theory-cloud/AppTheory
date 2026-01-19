@@ -38,3 +38,7 @@ Start here:
 
 - Planning index: `docs/development/planning/apptheory/README.md`
 - Main roadmap: `docs/development/planning/apptheory/apptheory-multilang-roadmap.md`
+
+Migration:
+
+- Lift → AppTheory (draft): `docs/migration/from-lift.md`
