@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from apptheory.app import App, create_app
+from apptheory.aws_http import build_apigw_v2_request, build_lambda_function_url_request
 from apptheory.clock import Clock, ManualClock, RealClock
 from apptheory.context import Context
 from apptheory.errors import AppError
@@ -24,6 +25,8 @@ __all__ = [
     "Request",
     "Response",
     "TestEnv",
+    "build_apigw_v2_request",
+    "build_lambda_function_url_request",
     "binary",
     "create_app",
     "create_test_env",

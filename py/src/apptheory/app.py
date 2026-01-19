@@ -3,6 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from apptheory.aws_http import (
+    apigw_v2_response_from_response,
+    lambda_function_url_response_from_response,
+    request_from_apigw_v2,
+    request_from_lambda_function_url,
+)
 from apptheory.clock import Clock, RealClock
 from apptheory.context import Context
 from apptheory.errors import AppError, error_response, response_for_error
@@ -78,6 +84,24 @@ class App:
             return error_response("app.internal", "internal error")
 
         return normalize_response(resp)
+
+    def serve_apigw_v2(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        try:
+            request = request_from_apigw_v2(event)
+        except Exception as exc:  # noqa: BLE001
+            return apigw_v2_response_from_response(response_for_error(exc))
+
+        resp = self.serve(request, ctx)
+        return apigw_v2_response_from_response(resp)
+
+    def serve_lambda_function_url(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        try:
+            request = request_from_lambda_function_url(event)
+        except Exception as exc:  # noqa: BLE001
+            return lambda_function_url_response_from_response(response_for_error(exc))
+
+        resp = self.serve(request, ctx)
+        return lambda_function_url_response_from_response(resp)
 
 
 def create_app(*, clock: Clock | None = None, id_generator: IdGenerator | None = None) -> App:

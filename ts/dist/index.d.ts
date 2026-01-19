@@ -19,6 +19,48 @@ export interface Response {
   isBase64: boolean;
 }
 
+export interface APIGatewayV2HTTPRequest {
+  version: string;
+  routeKey?: string;
+  rawPath: string;
+  rawQueryString?: string;
+  cookies?: string[];
+  headers?: Record<string, string>;
+  queryStringParameters?: Record<string, string>;
+  requestContext: { http: { method: string; path?: string } };
+  body?: string;
+  isBase64Encoded?: boolean;
+}
+
+export interface APIGatewayV2HTTPResponse {
+  statusCode: number;
+  headers: Record<string, string>;
+  multiValueHeaders: Record<string, string[]>;
+  body: string;
+  isBase64Encoded: boolean;
+  cookies: string[];
+}
+
+export interface LambdaFunctionURLRequest {
+  version: string;
+  rawPath: string;
+  rawQueryString?: string;
+  cookies?: string[];
+  headers?: Record<string, string>;
+  queryStringParameters?: Record<string, string>;
+  requestContext: { http: { method: string; path?: string } };
+  body?: string;
+  isBase64Encoded?: boolean;
+}
+
+export interface LambdaFunctionURLResponse {
+  statusCode: number;
+  headers: Record<string, string>;
+  body: string;
+  isBase64Encoded: boolean;
+  cookies: string[];
+}
+
 export interface Clock {
   now(): Date;
 }
@@ -82,6 +124,8 @@ export declare class App {
   put(pattern: string, handler: Handler): this;
   delete(pattern: string, handler: Handler): this;
   serve(request: Request, ctx?: unknown): Promise<Response>;
+  serveAPIGatewayV2(event: APIGatewayV2HTTPRequest, ctx?: unknown): Promise<APIGatewayV2HTTPResponse>;
+  serveLambdaFunctionURL(event: LambdaFunctionURLRequest, ctx?: unknown): Promise<LambdaFunctionURLResponse>;
 }
 
 export declare function createApp(options?: { clock?: Clock; ids?: IdGenerator }): App;
@@ -96,6 +140,20 @@ export declare class TestEnv {
   constructor(options?: { now?: Date });
   app(options?: { clock?: Clock; ids?: IdGenerator }): App;
   invoke(app: App, request: Request, ctx?: unknown): Promise<Response>;
+  invokeAPIGatewayV2(app: App, event: APIGatewayV2HTTPRequest, ctx?: unknown): Promise<APIGatewayV2HTTPResponse>;
+  invokeLambdaFunctionURL(app: App, event: LambdaFunctionURLRequest, ctx?: unknown): Promise<LambdaFunctionURLResponse>;
 }
 
 export declare function createTestEnv(options?: { now?: Date }): TestEnv;
+
+export declare function buildAPIGatewayV2Request(
+  method: string,
+  path: string,
+  options?: { query?: Query; headers?: Record<string, string>; cookies?: string[]; body?: Uint8Array | string; isBase64?: boolean },
+): APIGatewayV2HTTPRequest;
+
+export declare function buildLambdaFunctionURLRequest(
+  method: string,
+  path: string,
+  options?: { query?: Query; headers?: Record<string, string>; cookies?: string[]; body?: Uint8Array | string; isBase64?: boolean },
+): LambdaFunctionURLRequest;
