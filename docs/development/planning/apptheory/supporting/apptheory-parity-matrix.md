@@ -5,9 +5,35 @@ contract tests.
 
 Status: structure frozen for milestone `M0` (implementation statuses will evolve).
 
-Tier definitions live in:
+## Tier definitions (portable surface area)
 
-- `docs/development/planning/apptheory/apptheory-multilang-roadmap.md`
+Tier definitions are the *portable* surface area. If it is in P0/P1/P2, it MUST be:
+
+- specified in the runtime contract, and
+- fixture-tested in `contract-tests/`, and
+- implemented equivalently in Go/TypeScript/Python.
+
+P0 / P1 / P2 tier definitions (frozen in `M0`, summarized here for quick reference):
+
+- **P0 (Runtime core):** HTTP event adapters + routing + request/response normalization + error envelope + validation
+  rules.
+- **P1 (Context + middleware):** request-id, auth hooks, tenant extraction, CORS, size/time guardrails, middleware
+  ordering.
+- **P2 (Prod features):** observability (logs/metrics/traces), rate limiting / load shedding semantics, policy hooks,
+  “safe by default” controls.
+
+Source: `docs/development/planning/apptheory/apptheory-multilang-roadmap.md`
+
+## Allowed divergence (rare, explicit)
+
+Portable semantics are the goal; “allowed to diverge” is intentionally narrow:
+
+- **API shape may be idiomatic per language**, but MUST provide equivalent capabilities and MUST match the contract
+  fixtures.
+- **Implementation details may diverge** (libraries, concurrency primitives, etc.) as long as externally observable
+  behavior matches fixtures.
+- **Non-portable features MUST NOT hide in P0/P1/P2**. If a feature cannot be made portable, it MUST be listed in the
+  Go-only section below with a clear boundary and doc link.
 
 Legend:
 
