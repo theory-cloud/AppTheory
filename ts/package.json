@@ -1,0 +1,10 @@
+{
+  "name": "@theory-cloud/apptheory",
+  "version": "0.0.0",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24"
+  }
+}
+
