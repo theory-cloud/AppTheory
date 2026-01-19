@@ -91,3 +91,8 @@ This table is a starting point for G1 and will evolve as AppTheory’s P0/P1 con
 ## What’s missing (tracked work)
 
 The concrete, step-by-step playbook and any automation helpers are deliverables of `SR-MIGRATION` and milestone `M2`.
+
+## Representative migration (G4)
+
+- Example: `examples/migration/rate-limited-http/README.md`
+- Lessons learned: `docs/migration/g4-representative-migration.md`
