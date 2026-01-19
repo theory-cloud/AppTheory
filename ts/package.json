@@ -1,10 +1,23 @@
 {
   "name": "@theory-cloud/apptheory",
   "version": "0.0.0",
+  "description": "AppTheory — multi-language serverless application framework (TypeScript package)",
   "type": "module",
   "license": "UNLICENSED",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "package.json"
+  ],
   "engines": {
     "node": ">=24"
   }
 }
-
