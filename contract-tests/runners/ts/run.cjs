@@ -5,7 +5,18 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const process = require("node:process");
+const { pathToFileURL } = require("node:url");
 const util = require("node:util");
+
+let cachedRuntime = null;
+
+async function loadAppTheoryRuntime() {
+  if (cachedRuntime) return cachedRuntime;
+  const runtimePath = path.join(process.cwd(), "ts", "dist", "index.js");
+  const runtimeUrl = pathToFileURL(runtimePath).href;
+  cachedRuntime = await import(runtimeUrl);
+  return cachedRuntime;
+}
 
 function parseArgs(argv) {
   const args = { fixtures: "contract-tests/fixtures" };
@@ -590,13 +601,24 @@ function compareHeaders(expectedHeaders, actualHeaders) {
   return deepEqual(e, a);
 }
 
-function runFixture(fixture) {
+async function runFixture(fixture) {
   const tier = String(fixture.tier ?? "").trim().toLowerCase();
+
+  if (tier === "p0") {
+    const { actual, effects } = await runFixtureP0(fixture);
+    return compareFixture(fixture, actual, effects);
+  }
+
   const enableP1 = ["p1", "p2"].includes(tier);
   const enableP2 = tier === "p2";
   const app = newFixtureApp(fixture.setup?.routes ?? [], { enableP1, enableP2, limits: fixture.setup?.limits ?? {} });
   const req = canonicalizeRequest(fixture.input?.request ?? {}, fixture.input?.context ?? {});
   const actual = app.handle(req);
+  const effects = app.effects ?? {};
+  return compareFixture(fixture, actual, effects);
+}
+
+function compareFixture(fixture, actual, effects) {
   const expected = fixture.expect?.response ?? {};
 
   if (expected.status !== actual.status) {
@@ -631,34 +653,34 @@ function runFixture(fixture) {
     const expectedLogs = fixture.expect?.logs ?? [];
     const expectedMetrics = fixture.expect?.metrics ?? [];
     const expectedSpans = fixture.expect?.spans ?? [];
-    if (!deepEqual(expectedLogs, app.effects.logs ?? [])) {
+    if (!deepEqual(expectedLogs, effects.logs ?? [])) {
       return {
         ok: false,
         reason: "logs mismatch",
         actual,
         expected,
         expected_logs: expectedLogs,
-        actual_logs: app.effects.logs ?? [],
+        actual_logs: effects.logs ?? [],
       };
     }
-    if (!deepEqual(expectedMetrics, app.effects.metrics ?? [])) {
+    if (!deepEqual(expectedMetrics, effects.metrics ?? [])) {
       return {
         ok: false,
         reason: "metrics mismatch",
         actual,
         expected,
         expected_metrics: expectedMetrics,
-        actual_metrics: app.effects.metrics ?? [],
+        actual_metrics: effects.metrics ?? [],
       };
     }
-    if (!deepEqual(expectedSpans, app.effects.spans ?? [])) {
+    if (!deepEqual(expectedSpans, effects.spans ?? [])) {
       return {
         ok: false,
         reason: "spans mismatch",
         actual,
         expected,
         expected_spans: expectedSpans,
-        actual_spans: app.effects.spans ?? [],
+        actual_spans: effects.spans ?? [],
       };
     }
     return { ok: true };
@@ -672,34 +694,34 @@ function runFixture(fixture) {
     const expectedLogs = fixture.expect?.logs ?? [];
     const expectedMetrics = fixture.expect?.metrics ?? [];
     const expectedSpans = fixture.expect?.spans ?? [];
-    if (!deepEqual(expectedLogs, app.effects.logs ?? [])) {
+    if (!deepEqual(expectedLogs, effects.logs ?? [])) {
       return {
         ok: false,
         reason: "logs mismatch",
         actual,
         expected,
         expected_logs: expectedLogs,
-        actual_logs: app.effects.logs ?? [],
+        actual_logs: effects.logs ?? [],
       };
     }
-    if (!deepEqual(expectedMetrics, app.effects.metrics ?? [])) {
+    if (!deepEqual(expectedMetrics, effects.metrics ?? [])) {
       return {
         ok: false,
         reason: "metrics mismatch",
         actual,
         expected,
         expected_metrics: expectedMetrics,
-        actual_metrics: app.effects.metrics ?? [],
+        actual_metrics: effects.metrics ?? [],
       };
     }
-    if (!deepEqual(expectedSpans, app.effects.spans ?? [])) {
+    if (!deepEqual(expectedSpans, effects.spans ?? [])) {
       return {
         ok: false,
         reason: "spans mismatch",
         actual,
         expected,
         expected_spans: expectedSpans,
-        actual_spans: app.effects.spans ?? [],
+        actual_spans: effects.spans ?? [],
       };
     }
     return { ok: true };
@@ -711,37 +733,110 @@ function runFixture(fixture) {
   const expectedLogs = fixture.expect?.logs ?? [];
   const expectedMetrics = fixture.expect?.metrics ?? [];
   const expectedSpans = fixture.expect?.spans ?? [];
-  if (!deepEqual(expectedLogs, app.effects.logs ?? [])) {
+  if (!deepEqual(expectedLogs, effects.logs ?? [])) {
     return {
       ok: false,
       reason: "logs mismatch",
       actual,
       expected,
       expected_logs: expectedLogs,
-      actual_logs: app.effects.logs ?? [],
+      actual_logs: effects.logs ?? [],
     };
   }
-  if (!deepEqual(expectedMetrics, app.effects.metrics ?? [])) {
+  if (!deepEqual(expectedMetrics, effects.metrics ?? [])) {
     return {
       ok: false,
       reason: "metrics mismatch",
       actual,
       expected,
       expected_metrics: expectedMetrics,
-      actual_metrics: app.effects.metrics ?? [],
+      actual_metrics: effects.metrics ?? [],
     };
   }
-  if (!deepEqual(expectedSpans, app.effects.spans ?? [])) {
+  if (!deepEqual(expectedSpans, effects.spans ?? [])) {
     return {
       ok: false,
       reason: "spans mismatch",
       actual,
       expected,
       expected_spans: expectedSpans,
-      actual_spans: app.effects.spans ?? [],
+      actual_spans: effects.spans ?? [],
     };
   }
   return { ok: true };
+}
+
+async function runFixtureP0(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const app = runtime.createApp();
+
+  for (const route of fixture.setup?.routes ?? []) {
+    const handler = builtInAppTheoryHandler(runtime, route.handler);
+    if (!handler) {
+      throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
+    }
+    app.handle(route.method, route.path, handler);
+  }
+
+  const input = fixture.input?.request ?? {};
+  const body = decodeFixtureBody(input.body);
+  const req = {
+    method: input.method,
+    path: input.path,
+    query: input.query ?? {},
+    headers: input.headers ?? {},
+    body,
+    isBase64: input.is_base64 ?? false,
+  };
+
+  const resp = await app.serve(req);
+  const actual = {
+    status: resp.status,
+    headers: resp.headers ?? {},
+    cookies: resp.cookies ?? [],
+    body: Buffer.from(resp.body ?? []),
+    is_base64: resp.isBase64 ?? false,
+  };
+
+  return { actual, effects: { logs: [], metrics: [], spans: [] } };
+}
+
+function builtInAppTheoryHandler(runtime, name) {
+  switch (name) {
+    case "static_pong":
+      return () => runtime.text(200, "pong");
+    case "echo_path_params":
+      return (ctx) => runtime.json(200, { params: ctx.params ?? {} });
+    case "echo_request":
+      return (ctx) =>
+        runtime.json(200, {
+          method: ctx.request.method,
+          path: ctx.request.path,
+          query: ctx.request.query,
+          headers: ctx.request.headers,
+          cookies: ctx.request.cookies,
+          body_b64: Buffer.from(ctx.request.body ?? []).toString("base64"),
+          is_base64: Boolean(ctx.request.isBase64),
+        });
+    case "parse_json_echo":
+      return (ctx) => runtime.json(200, ctx.jsonValue());
+    case "panic":
+      return () => {
+        throw new Error("boom");
+      };
+    case "binary_body":
+      return () => runtime.binary(200, Buffer.from([0x00, 0x01, 0x02]), "application/octet-stream");
+    case "unauthorized":
+      return () => {
+        throw new runtime.AppError("app.unauthorized", "unauthorized");
+      };
+    case "validation_failed":
+      return () => {
+        throw new runtime.AppError("app.validation_failed", "validation failed");
+      };
+    default:
+      return null;
+  }
 }
 
 function debugActualForExpected(actual, expected) {
@@ -764,13 +859,13 @@ function debugActualForExpected(actual, expected) {
   return debug;
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv);
   const fixtures = loadFixtures(args.fixtures);
 
   const failed = [];
   for (const fixture of fixtures) {
-    const result = runFixture(fixture);
+    const result = await runFixture(fixture);
     if (!result.ok) {
       console.error(`FAIL ${fixture.id} — ${fixture.name}`);
       console.error(`  ${result.reason}`);
@@ -803,4 +898,7 @@ function main() {
   console.log(`contract-tests(ts): PASS (${fixtures.length} fixtures)`);
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exit(2);
+});
