@@ -62,6 +62,11 @@ Guide (skeleton):
   - covered by tests
 - Shims exist only for the highest-leverage migration pain points.
 
+High-leverage port (rate limiting):
+
+- `pkg/limited` (TableTheory-backed port of `pay-theory/limited`)
+- `pkg/limited/middleware` (net/http middleware)
+
 ---
 
 ### G3 — Automated helpers (codemods/scripts)

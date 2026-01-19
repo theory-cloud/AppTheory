@@ -54,7 +54,7 @@ but still preserved for Go users.
 | --- | --- | --- | --- |
 | Runtime core | `pkg/lift`, adapters | Port (portable) | Becomes the P0/P1 contract surface. |
 | Middleware | `pkg/middleware` | Port (portable + Go-only extensions) | Portable subset becomes contract; advanced prod middleware may be Go-only until ported. |
-| Rate limiting | `pkg/middleware/limited.go` + `github.com/pay-theory/limited` | Port (portable API; Go impl first) | Decision: replicate **all** `limited` functionality inside AppTheory as a dedicated rate limiting middleware (no long-term dependency on `limited`). |
+| Rate limiting | `pkg/middleware/limited.go` + `github.com/pay-theory/limited` | Port (portable API; Go impl first) | Decision: replicate **all** `limited` functionality inside AppTheory (`pkg/limited`), backed by **TableTheory** (no long-term dependency on `limited` or DynamORM). |
 | Observability | `pkg/observability/*`, `pkg/logger` | Port (portable hooks + Go-only integrations) | Keep schema + hooks portable; provider integrations can be Go-only initially. |
 | Testing | `pkg/testing` | Port (portable testkit shape) | Align with SR-MOCKS; preserve deterministic harness behavior. |
 | CDK | `pkg/cdk/*` | Port (examples-first; constructs TBD) | Preserve current Lift functionality via examples; decide constructs strategy in `SR-CDK`. |
@@ -72,4 +72,3 @@ To move from package-level inventory to feature-level precision:
   constructs or only as templates/examples.
 - Confirm which “advanced” subsystems are relied upon (circuit breaker, bulkheads, adaptive load shedding, idempotency)
   and whether they must be portable or can be Go-only initially.
-

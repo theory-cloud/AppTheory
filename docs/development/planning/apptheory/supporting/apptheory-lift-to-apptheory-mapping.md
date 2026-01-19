@@ -12,6 +12,7 @@ Status: seed draft; refine as part of milestone `M2` and `SR-MIGRATION`.
 - “Easy migration” means predictable steps + automation helpers, not full API compatibility.
 - Pay Theory requires **100% of Lift’s current functionality** to remain available for Go users (portable + Go-only where
   necessary), even if APIs change.
+- TableTheory (`theory-cloud/TableTheory`) replaces DynamORM for AppTheory.
 
 Related inventory (Pay Theory baseline):
 
@@ -26,7 +27,7 @@ This is a conceptual mapping to guide repo layout and migration docs.
 | `pkg/lift` | `pkg/apptheory` (or root entrypoint) | core app/router/handler surfaces |
 | `pkg/context` | `pkg/context` | portable context shape must match contract |
 | `pkg/middleware` | `pkg/middleware` | ordering must match contract |
-| `pkg/middleware/limited.go` + `github.com/pay-theory/limited` | `pkg/middleware/ratelimit` | replicate `limited` feature set inside AppTheory (no long-term dependency on `limited`) |
+| `pkg/middleware/limited.go` + `github.com/pay-theory/limited` | `pkg/limited` (+ `pkg/limited/middleware`) | replicate `limited` feature set in-repo, backed by TableTheory |
 | `pkg/validation` | `pkg/validation` | portable validation behavior; error mapping |
 | `pkg/logger` / `pkg/observability` | `pkg/observability` | portable subset + hooks |
 | `pkg/testing` | `pkg/testkit` | deterministic testkit (align with SR-MOCKS) |
