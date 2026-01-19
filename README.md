@@ -34,6 +34,24 @@ Non-goals (near-term):
 - Node.js: `24`
 - Python: `3.14`
 
+## Go runtime (P0)
+
+The Go runtime implements the fixture-backed P0 contract (routing + request/response normalization + error envelope).
+
+Minimal local invocation:
+
+```go
+env := testkit.New()
+app := env.App()
+
+app.Get("/ping", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+	return apptheory.Text(200, "pong"), nil
+})
+
+resp := env.Invoke(context.Background(), app, apptheory.Request{Method: "GET", Path: "/ping"})
+_ = resp
+```
+
 Start here:
 
 - Planning index: `docs/development/planning/apptheory/README.md`
