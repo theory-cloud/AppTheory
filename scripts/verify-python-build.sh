@@ -15,7 +15,12 @@ fi
 py/.venv/bin/python -m pip install --upgrade pip >/dev/null
 py/.venv/bin/python -m pip install --upgrade build >/dev/null
 
-py/.venv/bin/python -m build py --outdir dist >/dev/null
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "${tmp_dir}"' EXIT
+
+cp -a py "${tmp_dir}/py"
+
+py/.venv/bin/python -m build "${tmp_dir}/py" --outdir dist >/dev/null
 
 if ! ls "dist/apptheory-${expected_version}-"*.whl >/dev/null 2>&1; then
   echo "python-build: FAIL (missing wheel for ${expected_version})"
@@ -28,4 +33,3 @@ if [[ ! -f "dist/apptheory-${expected_version}.tar.gz" ]]; then
 fi
 
 echo "python-build: PASS (${expected_version})"
-
