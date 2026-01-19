@@ -62,3 +62,13 @@ Go:
 - No npm publish tokens or PyPI tokens.
 - Use `GITHUB_TOKEN` with minimal permissions required to create releases and attach assets.
 - Default to “fail closed” when a verifier cannot run due to missing pinned tooling.
+
+## Reproducing release artifacts (local)
+
+To reproduce release assets from a tag:
+
+- Checkout the tag: `git checkout vX.Y.Z` (or `vX.Y.Z-rc.N`).
+- Run `make rubric` to build the TS tarball + Python wheel/sdist and run verification.
+- Run `scripts/generate-checksums.sh` to produce `dist/SHA256SUMS.txt`.
+
+Artifacts are written to `dist/`.
