@@ -118,7 +118,7 @@ func loadFixtures(fixturesRoot string) ([]Fixture, error) {
 		return nil, errors.New("no fixtures found")
 	}
 
-	var fixtures []Fixture
+	fixtures := make([]Fixture, 0, len(files))
 	for _, file := range files {
 		//nolint:gosec // Fixture files are discovered from the repo-owned fixtures directory.
 		raw, err := os.ReadFile(file)

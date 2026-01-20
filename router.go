@@ -57,7 +57,7 @@ func (r *router) match(method, path string) (*routeMatch, []string) {
 	method = strings.ToUpper(strings.TrimSpace(method))
 	pathSegments := splitPath(path)
 
-	var allowed []string
+	allowed := make([]string, 0, len(r.routes))
 	for _, candidate := range r.routes {
 		params, ok := matchPath(candidate.Segments, pathSegments)
 		if !ok {
