@@ -2,13 +2,19 @@ import { execSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
 import * as path from "node:path";
 
-import { AppTheoryFunction, AppTheoryFunctionAlarms, AppTheoryHttpApi, AppTheoryRestApi } from "@theory-cloud/apptheory-cdk";
+import {
+  AppTheoryDynamoDBStreamMapping,
+  AppTheoryEventBridgeHandler,
+  AppTheoryFunction,
+  AppTheoryFunctionAlarms,
+  AppTheoryHttpApi,
+  AppTheoryRestApi,
+} from "@theory-cloud/apptheory-cdk";
 import * as cdk from "aws-cdk-lib";
 import { Stack } from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as events from "aws-cdk-lib/aws-events";
-import * as targets from "aws-cdk-lib/aws-events-targets";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
 import * as sqs from "aws-cdk-lib/aws-sqs";
@@ -145,16 +151,13 @@ export class MultiLangStack extends Stack {
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
     });
     goHandler.fn.addEnvironment("APPTHEORY_DEMO_TABLE_NAME", goTable.tableName);
-    goHandler.fn.addEventSource(
-      new lambdaEventSources.DynamoEventSource(goTable, {
-        startingPosition: lambda.StartingPosition.LATEST,
-        reportBatchItemFailures: true,
-      }),
-    );
+    new AppTheoryDynamoDBStreamMapping(this, "GoStream", { consumer: goHandler.fn, table: goTable });
 
-    const goRule = new events.Rule(this, "GoRule", { schedule: events.Schedule.rate(cdk.Duration.minutes(5)) });
-    goRule.addTarget(new targets.LambdaFunction(goHandler.fn));
-    goHandler.fn.addEnvironment("APPTHEORY_DEMO_RULE_NAME", goRule.ruleName);
+    const goSchedule = new AppTheoryEventBridgeHandler(this, "GoSchedule", {
+      handler: goHandler.fn,
+      schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+    });
+    goHandler.fn.addEnvironment("APPTHEORY_DEMO_RULE_NAME", goSchedule.rule.ruleName);
 
     const tsQueue = new sqs.Queue(this, "TsQueue");
     tsHandler.fn.addEnvironment("APPTHEORY_DEMO_QUEUE_NAME", tsQueue.queueName);
@@ -166,16 +169,13 @@ export class MultiLangStack extends Stack {
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
     });
     tsHandler.fn.addEnvironment("APPTHEORY_DEMO_TABLE_NAME", tsTable.tableName);
-    tsHandler.fn.addEventSource(
-      new lambdaEventSources.DynamoEventSource(tsTable, {
-        startingPosition: lambda.StartingPosition.LATEST,
-        reportBatchItemFailures: true,
-      }),
-    );
+    new AppTheoryDynamoDBStreamMapping(this, "TsStream", { consumer: tsHandler.fn, table: tsTable });
 
-    const tsRule = new events.Rule(this, "TsRule", { schedule: events.Schedule.rate(cdk.Duration.minutes(5)) });
-    tsRule.addTarget(new targets.LambdaFunction(tsHandler.fn));
-    tsHandler.fn.addEnvironment("APPTHEORY_DEMO_RULE_NAME", tsRule.ruleName);
+    const tsSchedule = new AppTheoryEventBridgeHandler(this, "TsSchedule", {
+      handler: tsHandler.fn,
+      schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+    });
+    tsHandler.fn.addEnvironment("APPTHEORY_DEMO_RULE_NAME", tsSchedule.rule.ruleName);
 
     const pyQueue = new sqs.Queue(this, "PyQueue");
     pyHandler.fn.addEnvironment("APPTHEORY_DEMO_QUEUE_NAME", pyQueue.queueName);
@@ -187,16 +187,13 @@ export class MultiLangStack extends Stack {
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
     });
     pyHandler.fn.addEnvironment("APPTHEORY_DEMO_TABLE_NAME", pyTable.tableName);
-    pyHandler.fn.addEventSource(
-      new lambdaEventSources.DynamoEventSource(pyTable, {
-        startingPosition: lambda.StartingPosition.LATEST,
-        reportBatchItemFailures: true,
-      }),
-    );
+    new AppTheoryDynamoDBStreamMapping(this, "PyStream", { consumer: pyHandler.fn, table: pyTable });
 
-    const pyRule = new events.Rule(this, "PyRule", { schedule: events.Schedule.rate(cdk.Duration.minutes(5)) });
-    pyRule.addTarget(new targets.LambdaFunction(pyHandler.fn));
-    pyHandler.fn.addEnvironment("APPTHEORY_DEMO_RULE_NAME", pyRule.ruleName);
+    const pySchedule = new AppTheoryEventBridgeHandler(this, "PySchedule", {
+      handler: pyHandler.fn,
+      schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+    });
+    pyHandler.fn.addEnvironment("APPTHEORY_DEMO_RULE_NAME", pySchedule.rule.ruleName);
 
     const goApi = new AppTheoryHttpApi(this, "GoApi", {
       apiName: `${name}-go`,
