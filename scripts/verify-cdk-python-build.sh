@@ -62,6 +62,8 @@ PY
 
 (cd "${tmp_dir}/cdk" && npx jsii-pacmak -t python --code-only -o "${tmp_dir}/python" --force-subdirectory false --force >/dev/null)
 
+cp LICENSE "${tmp_dir}/python/LICENSE"
+
 TMP_PY_DIR="${tmp_dir}/python" python3 - <<'PY'
 import os
 from pathlib import Path
@@ -87,6 +89,24 @@ if ! ls "dist/apptheory_cdk-${expected_version}-"*.whl >/dev/null 2>&1; then
   echo "cdk-python-build: FAIL (missing wheel for ${expected_version})"
   exit 1
 fi
+
+wheel_path="$(ls "dist/apptheory_cdk-${expected_version}-"*.whl | head -n 1)"
+WHEEL_PATH="${wheel_path}" python3 - <<'PY'
+import zipfile
+from pathlib import Path
+
+wheel = Path(__import__("os").environ["WHEEL_PATH"])
+with zipfile.ZipFile(wheel) as z:
+  names = z.namelist()
+
+def is_license(name: str) -> bool:
+  upper = name.upper()
+  return upper.endswith("/LICENSE") or upper.endswith("/LICENSE.TXT") or upper.endswith("/LICENSE.MD")
+
+matches = [n for n in names if is_license(n)]
+if not matches:
+  raise SystemExit(f"cdk-python-build: FAIL (wheel missing LICENSE file: {wheel.name})")
+PY
 
 sdist=""
 if [[ -f "dist/apptheory_cdk-${expected_version}.tar.gz" ]]; then
@@ -161,5 +181,10 @@ with open(tmp_out, "wb") as file_out:
 tmp_out.replace(sdist)
 shutil.rmtree(extract_dir, ignore_errors=True)
 PY
+
+tar -tzf "${sdist}" | grep -E "^apptheory[_-]cdk-${expected_version}/LICENSE$" >/dev/null || {
+  echo "cdk-python-build: FAIL (sdist missing LICENSE for ${expected_version})"
+  exit 1
+}
 
 echo "cdk-python-build: PASS (${expected_version})"

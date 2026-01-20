@@ -1,99 +1,205 @@
-# Lift → AppTheory Migration (Guide Skeleton)
+# Lift → AppTheory Migration Guide
 
-Goal: provide a predictable migration path from `pay-theory/lift` to AppTheory across Go/TypeScript/Python.
+Goal: provide a predictable migration path from `pay-theory/lift` to AppTheory.
 
-This is intentionally **not** a drop-in compatibility promise. The posture is “easy, not identical”.
+Posture: “easy migration”, not drop-in identical. Pay Theory’s requirement is that **100% of Lift’s current
+functionality remains available for Go users** (portable subset + documented Go-only extensions).
 
-## Start here
+## Start Here
 
-- Pay Theory usage inventory (baseline): `docs/development/planning/apptheory/supporting/apptheory-lift-usage-inventory.md`
-- Lift → AppTheory mapping (planning): `docs/development/planning/apptheory/supporting/apptheory-lift-to-apptheory-mapping.md`
-- Migration workstream roadmap: `docs/development/planning/apptheory/subroadmaps/SR-MIGRATION.md`
-- Lift deprecation posture (Pay Theory): `docs/migration/lift-deprecation.md`
+- Baseline inventory (Pay Theory): `docs/development/planning/apptheory/supporting/apptheory-lift-usage-inventory.md`
+- Mapping reference (seed): `docs/development/planning/apptheory/supporting/apptheory-lift-to-apptheory-mapping.md`
+- Workstream roadmap: `docs/development/planning/apptheory/subroadmaps/SR-MIGRATION.md`
+- Lift deprecation posture: `docs/migration/lift-deprecation.md`
+- Representative migration notes: `docs/migration/g4-representative-migration.md`
 
-## What changes (and why)
+## Quick Start (Go Service)
 
-### Imports
+1. Replace `limited` imports (safe, diff-based):
+   - Dry-run: `./scripts/migrate-from-lift-go.sh -root path/to/service`
+   - Apply: `./scripts/migrate-from-lift-go.sh -root path/to/service -apply`
+2. Replace Lift runtime wiring with `apptheory.New()` + route registration.
+3. Configure AWS entrypoint(s):
+   - API Gateway v2 (HTTP API): `app.ServeAPIGatewayV2`
+   - Lambda Function URL: `app.ServeLambdaFunctionURL`
+4. Run your service tests + `make rubric` in AppTheory for contract parity expectations.
 
-- Lift imports like `github.com/pay-theory/lift/pkg/lift` become AppTheory imports rooted at
-  `github.com/theory-cloud/apptheory`.
-- Lift “subsystems” land either in the root `apptheory` package (portable runtime contract surface) or in focused
-  subpackages (example: `apptheory/testkit`, `apptheory/pkg/limited`).
+## Step-By-Step Migration (Go)
 
-Why: AppTheory is a new repo with a multi-language contract and a single shared release version. Import paths must change
-to reflect the new module/package identity.
+### 1) Update imports and dependencies
 
-### Handler signatures + routing
+Core import root:
 
-Lift today is Go-only and can afford Go-specific handler shapes and generics. AppTheory’s runtime core is defined by a
-portable contract so the same fixtures pass in Go/TypeScript/Python.
+- Lift: `github.com/pay-theory/lift/...`
+- AppTheory: `github.com/theory-cloud/apptheory`
 
-Why: contract parity prevents behavior drift across languages.
+Rate limiting:
 
-### Middleware ordering and defaults
+- Lift historically: `github.com/pay-theory/limited`
+- AppTheory: `github.com/theory-cloud/apptheory/pkg/limited` (+ `pkg/limited/middleware`)
 
-AppTheory will keep Lift’s “ship-ready” posture, but the default ordering will be contract-defined and fixture-backed.
+Data (DynamoDB):
 
-Why: ordering differences are a major source of subtle production drift.
+- Lift historically: DynamORM
+- AppTheory: **TableTheory** (`github.com/theory-cloud/tabletheory`) is the companion data framework and replaces
+  DynamORM for AppTheory work.
 
-### Rate limiting
+### 2) Replace app/router/handler surfaces
 
-Lift historically used `github.com/pay-theory/limited`. AppTheory will provide a dedicated rate limiting middleware that
-replicates the **full** `limited` feature set (strategies, fail-open behavior, usage stats) so migrations do not require a
-feature cut.
+App container:
 
-In AppTheory, DynamoDB access is standardized on **TableTheory** (AppTheory’s companion data framework for
-Go/TypeScript/Python), which replaces DynamORM for new work.
+- Lift: `lift.New(...)`
+- AppTheory: `apptheory.New(...)`
 
-Why: rate limiting is a production requirement and must be available as a first-class capability without depending on
-DynamORM.
+Tier selection:
 
-## What can be automated vs manual (initial intent)
+- Default is `TierP2` (prod features: observability hooks, policy hook, rate limiting semantics).
+- You can explicitly set: `apptheory.WithTier(apptheory.TierP0 | TierP1 | TierP2)`.
 
-Automatable (planned):
+Routes:
 
-- Import path rewrites (`github.com/pay-theory/lift/pkg/...` → `github.com/theory-cloud/apptheory/...`).
-- Mechanical symbol renames where AppTheory intentionally diverges (captured in the mapping table below).
+- Lift-style routing maps directly:
+  - `app.Get("/path", handler)`
+  - `app.Post("/path", handler)`
+  - `app.Handle(method, "/path", handler)`
 
-Available now:
+Handler signature (Go):
 
-- Go import rewrite for `pay-theory/limited`:
-  - Dry-run (prints unified diffs): `./scripts/migrate-from-lift-go.sh -root path/to/service`
-  - Apply: `./scripts/migrate-from-lift-go.sh -root path/to/service -apply`
-  - Scope: rewrites `github.com/pay-theory/limited` → `github.com/theory-cloud/apptheory/pkg/limited` (and subpackages).
+- Lift: varies across packages and middleware; may be Go-specific.
+- AppTheory: `func(*apptheory.Context) (*apptheory.Response, error)`
 
-Manual (expected):
+Response helpers:
 
-- Reviewing middleware config knobs for safe defaults (timeouts, size limits, fail-open/fail-closed policy).
-- Re-validating error mapping and client-facing behavior for critical endpoints.
-- Updating deployment templates (CDK/examples) when the constructs story changes.
+- `apptheory.Text(status, "text")`
+- `apptheory.JSON(status, value)` (returns `(*Response, error)`)
+- `apptheory.Binary(status, bytes, contentType)`
 
-## Expected migration shape (high-level)
+### 3) Middleware, ordering, and limits
 
-- **Handlers + routing:** move Lift handler/router surfaces to AppTheory’s portable P0 contract (routing, request/response normalization).
-- **Middleware ordering:** align to the runtime contract ordering (request-id → recovery → logging → CORS → auth → validation → handler).
-- **Errors:** adopt the portable error taxonomy/envelope (`app.*` codes) for consistent client behavior.
-- **CDK story:** prefer examples-first; constructs strategy is tracked in `docs/development/planning/apptheory/subroadmaps/SR-CDK.md`.
-- **Testing:** migrate to deterministic local testkits + contract fixtures as they land.
+AppTheory P1/P2 has a **contract-defined** ordering (fixture-backed):
 
-## Mapping table (seed)
+- request-id → recovery → logging → CORS → auth → handler
 
-This table is a starting point for G1 and will evolve as AppTheory’s P0/P1 contract is finalized.
+Size limits:
+
+- Configure with `apptheory.WithLimits(apptheory.Limits{ MaxRequestBytes: ..., MaxResponseBytes: ... })`
+
+Custom middleware:
+
+- AppTheory does not require a global middleware registration API to preserve ordering; wrap handlers locally when you
+  need additional behavior.
+
+### 4) Auth and protected routes
+
+Configure the auth hook:
+
+- `apptheory.WithAuthHook(func(ctx *apptheory.Context) (string, error) { ... })`
+
+Require auth per-route:
+
+- `app.Get("/path", handler, apptheory.RequireAuth())`
+
+Semantics:
+
+- If auth is required and identity cannot be established, AppTheory returns `app.unauthorized` (401).
+
+### 5) Request ID and tenant behavior
+
+Request ID:
+
+- Header: `x-request-id`
+- If provided, it is propagated; otherwise generated.
+- Available to handlers: `ctx.RequestID`
+
+Tenant:
+
+- `x-tenant-id` header, then `tenant` query parameter.
+- Available to handlers: `ctx.TenantID`
+
+### 6) Rate limiting (Lift `limited` replacement)
+
+AppTheory ports the `limited` feature set in-repo:
+
+- Package: `github.com/theory-cloud/apptheory/pkg/limited`
+- net/http middleware: `github.com/theory-cloud/apptheory/pkg/limited/middleware`
+
+Backing store:
+
+- DynamoDB via **TableTheory** (not DynamORM).
+
+Reference example:
+
+- `examples/migration/rate-limited-http/README.md`
+
+### 7) Observability (logs/metrics/traces)
+
+AppTheory’s portable observability surface is hook-based:
+
+- `apptheory.WithObservability(apptheory.ObservabilityHooks{ Log: ..., Metric: ..., Span: ... })`
+
+Portable schema is fixture-backed (see parity matrix and contract tests).
+
+### 8) AWS entrypoints (HTTP)
+
+Contract v0 covers AWS HTTP events:
+
+- Lambda Function URL
+- API Gateway v2 (HTTP API)
+
+Go entrypoints:
+
+- `app.ServeLambdaFunctionURL(ctx, events.LambdaFunctionURLRequest)`
+- `app.ServeAPIGatewayV2(ctx, events.APIGatewayV2HTTPRequest)`
+
+For local tests:
+
+- Go testkit: `apptheory/testkit` (build synthetic events; invoke adapters).
+
+## Practical Mapping Table (High-Leverage)
+
+This table is a migration-focused subset. For the broader mapping seed, see:
+`docs/development/planning/apptheory/supporting/apptheory-lift-to-apptheory-mapping.md`.
 
 | Lift symbol/pattern | AppTheory equivalent | Notes |
 | --- | --- | --- |
 | `lift.New()` | `apptheory.New()` | new app/router surface rooted at AppTheory |
-| `app.Get("/path", handler)` | `app.Get("/path", handler)` | handler signature changes (see below) |
-| Lift handler funcs | `apptheory.Handler` | Go signature: `func(*apptheory.Context) (*apptheory.Response, error)` |
-| Lift request parsing helpers | `ctx.JSONValue()` + `json.Unmarshal` | portable bind/validate helpers will be added once contract semantics are pinned |
-| `github.com/pay-theory/limited` | `github.com/theory-cloud/apptheory/pkg/limited` | ported to TableTheory; keep `limited` semantics |
-| Lift CDK constructs | AppTheory CDK (TS-first jsii) + examples | preserve behavior even if authoring model changes |
+| `app.Get("/path", handler)` | `app.Get("/path", handler)` | handler signature changes to portable `*Context` |
+| Lift handler funcs | `apptheory.Handler` | `func(*apptheory.Context) (*apptheory.Response, error)` |
+| Lift JSON helpers | `ctx.JSONValue()` + `json.Unmarshal` | portable JSON parsing semantics are contract-defined |
+| `github.com/pay-theory/limited` | `apptheory/pkg/limited` | replicated feature set; TableTheory-backed |
+| DynamORM usage | TableTheory | companion data framework for AppTheory |
 
-## What’s missing (tracked work)
+## Known Differences (Intentional)
 
-The concrete, step-by-step playbook and any automation helpers are deliverables of `SR-MIGRATION` and milestone `M10`.
+- AppTheory is **multi-language contract-first**; behavior is fixture-backed and versioned.
+- Some Lift APIs may change for portability and determinism; the guide calls out migration steps rather than promising
+  drop-in compatibility.
+- TableTheory replaces DynamORM for DynamoDB access in AppTheory work.
+- Observability is expressed via portable hooks (provider wiring may remain Go-only initially).
 
-## Representative migration (G4)
+## Automation Helpers
+
+Available now:
+
+- `./scripts/migrate-from-lift-go.sh`:
+  - Scope: rewrites `github.com/pay-theory/limited` → `github.com/theory-cloud/apptheory/pkg/limited` (and subpackages)
+  - Safe by default: dry-run prints unified diffs
+- `cmd/lift-migrate`:
+  - Programmatic import rewriting tool (used by the script above)
+
+Planned:
+
+- Additional import rewrites for common Lift package paths (opt-in, diff-based).
+- Optional helpers for DynamORM → TableTheory migration where safe.
+
+## Validation Checklist
+
+- Service builds and passes its unit/integration tests.
+- End-to-end HTTP behavior matches expected client contracts (error codes/envelopes, CORS/auth behavior).
+- Rate limiting behavior matches `limited` semantics where used.
+- Deploy templates updated (CDK/examples as needed).
+
+## Representative Migration (G4)
 
 - Example: `examples/migration/rate-limited-http/README.md`
 - Lessons learned: `docs/migration/g4-representative-migration.md`

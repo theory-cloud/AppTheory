@@ -47,4 +47,3 @@ func main() {
 		return app.ServeAPIGatewayV2(ctx, event), nil
 	})
 }
-

@@ -62,14 +62,14 @@ func runFixtureP2(f Fixture) error {
 				return &apptheory.PolicyDecision{
 					Code:    "app.rate_limited",
 					Message: "rate limited",
-					Headers: map[string][]string{"retry-after": []string{"1"}},
+					Headers: map[string][]string{"retry-after": {"1"}},
 				}, nil
 			}
 			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-shed")) != "" {
 				return &apptheory.PolicyDecision{
 					Code:    "app.overloaded",
 					Message: "overloaded",
-					Headers: map[string][]string{"retry-after": []string{"1"}},
+					Headers: map[string][]string{"retry-after": {"1"}},
 				}, nil
 			}
 			return nil, nil

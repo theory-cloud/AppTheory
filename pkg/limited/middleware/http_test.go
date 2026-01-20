@@ -26,7 +26,9 @@ func (atomicStub) CheckLimit(context.Context, limited.RateLimitKey) (*limited.Li
 	return nil, errors.New("not implemented")
 }
 
-func (atomicStub) RecordRequest(context.Context, limited.RateLimitKey) error { return errors.New("not implemented") }
+func (atomicStub) RecordRequest(context.Context, limited.RateLimitKey) error {
+	return errors.New("not implemented")
+}
 
 func (atomicStub) GetUsage(context.Context, limited.RateLimitKey) (*limited.UsageStats, error) {
 	return nil, errors.New("not implemented")
@@ -103,4 +105,3 @@ func TestMiddleware_FailsOpenOnLimiterError(t *testing.T) {
 	require.Equal(t, "0", rr.Header().Get("X-RateLimit-Remaining"))
 	require.Equal(t, "0", rr.Header().Get("X-RateLimit-Reset"))
 }
-

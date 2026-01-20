@@ -866,6 +866,22 @@ def run_fixture_p0(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
             raise RuntimeError(f"unknown handler {name!r}")
         app.handle(route.get("method", ""), route.get("path", ""), handler)
 
+    aws_event = (fixture.get("input", {}) or {}).get("aws_event")
+    if aws_event:
+        source = str((aws_event or {}).get("source") or "").strip().lower()
+        event = (aws_event or {}).get("event") or {}
+        if source == "apigw_v2":
+            out = app.serve_apigw_v2(event)
+            actual = canonical_response_from_apigw_v2(out)
+        elif source == "lambda_function_url":
+            out = app.serve_lambda_function_url(event)
+            actual = canonical_response_from_lambda_function_url(out)
+        else:
+            raise RuntimeError(f"unknown aws_event source {source!r}")
+
+        expected = fixture.get("expect", {}).get("response", {})
+        return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
+
     input_ = fixture.get("input", {}).get("request", {})
     req_body = decode_fixture_body(input_.get("body"))
     req = runtime.Request(
@@ -888,6 +904,54 @@ def run_fixture_p0(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
 
     expected = fixture.get("expect", {}).get("response", {})
     return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
+
+
+def canonical_response_from_apigw_v2(resp: dict[str, Any]) -> CanonicalResponse:
+    status = int(resp.get("statusCode") or 0)
+    is_base64 = bool(resp.get("isBase64Encoded"))
+    body_str = str(resp.get("body") or "")
+    body = base64.b64decode(body_str) if is_base64 else body_str.encode("utf-8")
+
+    headers: dict[str, list[str]] = {}
+    multi = resp.get("multiValueHeaders") or {}
+    if isinstance(multi, dict) and len(multi) > 0:
+        for key, values in multi.items():
+            headers[str(key)] = [str(v) for v in (values or [])]
+    else:
+        single = resp.get("headers") or {}
+        for key, value in (single or {}).items():
+            headers[str(key)] = [str(value)]
+
+    cookies = [str(c) for c in (resp.get("cookies") or [])]
+
+    return CanonicalResponse(
+        status=status,
+        headers=headers,
+        cookies=cookies,
+        body=body,
+        is_base64=is_base64,
+    )
+
+
+def canonical_response_from_lambda_function_url(resp: dict[str, Any]) -> CanonicalResponse:
+    status = int(resp.get("statusCode") or 0)
+    is_base64 = bool(resp.get("isBase64Encoded"))
+    body_str = str(resp.get("body") or "")
+    body = base64.b64decode(body_str) if is_base64 else body_str.encode("utf-8")
+
+    headers: dict[str, list[str]] = {}
+    for key, value in (resp.get("headers") or {}).items():
+        headers[str(key)] = [str(value)]
+
+    cookies = [str(c) for c in (resp.get("cookies") or [])]
+
+    return CanonicalResponse(
+        status=status,
+        headers=headers,
+        cookies=cookies,
+        body=body,
+        is_base64=is_base64,
+    )
 
 
 def run_fixture_p1(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:

@@ -83,4 +83,3 @@ func (a *App) recordObservability(method, path, requestID, tenantID string, stat
 		})
 	}
 }
-

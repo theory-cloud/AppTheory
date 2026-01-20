@@ -35,7 +35,8 @@ func TestDynamoRateLimiter_CheckAndIncrement_AllowsWhenUnderLimit(t *testing.T) 
 	mockUpdate.On("Set", "UpdatedAt", now).Return(mockUpdate)
 	mockUpdate.On("Condition", "Count", "<", 10).Return()
 	mockUpdate.On("ExecuteWithResult", mock.Anything).Run(func(args mock.Arguments) {
-		result := args.Get(0).(*RateLimitEntry)
+		result, ok := args.Get(0).(*RateLimitEntry)
+		require.True(t, ok)
 		result.Count = 5
 	}).Return(nil)
 
@@ -78,7 +79,8 @@ func TestDynamoRateLimiter_CheckAndIncrement_DeniesWhenOverLimit(t *testing.T) {
 	mockUpdate.On("ExecuteWithResult", mock.Anything).Return(tableerrors.ErrConditionFailed)
 
 	mockQuery.On("First", mock.Anything).Run(func(args mock.Arguments) {
-		record := args.Get(0).(*RateLimitEntry)
+		record, ok := args.Get(0).(*RateLimitEntry)
+		require.True(t, ok)
 		record.Count = 10
 	}).Return(nil)
 
@@ -160,7 +162,8 @@ func TestDynamoRateLimiter_CheckLimit_MultiWindowDeniesWhenAnyWindowExceeded(t *
 	var firstCalls int
 	mockQuery.On("First", mock.Anything).Run(func(args mock.Arguments) {
 		firstCalls++
-		record := args.Get(0).(*RateLimitEntry)
+		record, ok := args.Get(0).(*RateLimitEntry)
+		require.True(t, ok)
 		if firstCalls == 1 {
 			record.Count = 2
 			return

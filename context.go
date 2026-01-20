@@ -15,10 +15,10 @@ type Context struct {
 	clock   Clock
 	ids     IDGenerator
 
-	RequestID      string
-	TenantID       string
-	AuthIdentity   string
-	RemainingMS    int
+	RequestID       string
+	TenantID        string
+	AuthIdentity    string
+	RemainingMS     int
 	MiddlewareTrace []string
 }
 
@@ -52,10 +52,10 @@ func (c *Context) Param(name string) string {
 
 func (c *Context) JSONValue() (any, error) {
 	if c == nil {
-		return nil, &AppError{Code: "app.bad_request", Message: "invalid json"}
+		return nil, &AppError{Code: errorCodeBadRequest, Message: errorMessageInvalidJSON}
 	}
 	if !hasJSONContentType(c.Request.Headers) {
-		return nil, &AppError{Code: "app.bad_request", Message: "invalid json"}
+		return nil, &AppError{Code: errorCodeBadRequest, Message: errorMessageInvalidJSON}
 	}
 	if len(c.Request.Body) == 0 {
 		return nil, nil
@@ -63,7 +63,7 @@ func (c *Context) JSONValue() (any, error) {
 
 	var value any
 	if err := json.Unmarshal(c.Request.Body, &value); err != nil {
-		return nil, &AppError{Code: "app.bad_request", Message: "invalid json"}
+		return nil, &AppError{Code: errorCodeBadRequest, Message: errorMessageInvalidJSON}
 	}
 	return value, nil
 }

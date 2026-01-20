@@ -32,8 +32,14 @@ type FixtureRoute struct {
 }
 
 type FixtureInput struct {
-	Context FixtureContext `json:"context,omitempty"`
-	Request FixtureRequest `json:"request"`
+	Context  FixtureContext   `json:"context,omitempty"`
+	Request  FixtureRequest   `json:"request"`
+	AWSEvent *FixtureAWSEvent `json:"aws_event,omitempty"`
+}
+
+type FixtureAWSEvent struct {
+	Source string          `json:"source"`
+	Event  json.RawMessage `json:"event"`
 }
 
 type FixtureContext struct {
@@ -112,8 +118,9 @@ func loadFixtures(fixturesRoot string) ([]Fixture, error) {
 		return nil, errors.New("no fixtures found")
 	}
 
-	var fixtures []Fixture
+	fixtures := make([]Fixture, 0, len(files))
 	for _, file := range files {
+		//nolint:gosec // Fixture files are discovered from the repo-owned fixtures directory.
 		raw, err := os.ReadFile(file)
 		if err != nil {
 			return nil, fmt.Errorf("read fixture %s: %w", file, err)

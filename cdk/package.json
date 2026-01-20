@@ -8,10 +8,11 @@
     "url": "https://github.com/theory-cloud/AppTheory.git",
     "directory": "cdk"
   },
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
   "files": [
+    "LICENSE",
     "lib",
     ".jsii",
     "README.md",
