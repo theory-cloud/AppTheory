@@ -9331,8 +9331,122 @@
         }
       ],
       "symbolId": "lib/rest-api:AppTheoryRestApiRouteOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryWebSocketApi": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryWebSocketApi",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/websocket-api.ts",
+          "line": 16
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryWebSocketApiProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/websocket-api.ts",
+        "line": 12
+      },
+      "name": "AppTheoryWebSocketApi",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 13
+          },
+          "name": "api",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.WebSocketApi"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 14
+          },
+          "name": "stage",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.WebSocketStage"
+          }
+        }
+      ],
+      "symbolId": "lib/websocket-api:AppTheoryWebSocketApi"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryWebSocketApiProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryWebSocketApiProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/websocket-api.ts",
+        "line": 6
+      },
+      "name": "AppTheoryWebSocketApiProps",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 7
+          },
+          "name": "handler",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 8
+          },
+          "name": "apiName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 9
+          },
+          "name": "stageName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/websocket-api:AppTheoryWebSocketApiProps"
     }
   },
   "version": "0.2.0-rc.1",
-  "fingerprint": "i8WkniKA4I7uPJvyNvP1fR36zctVMflmw9x5yRNWc0U="
+  "fingerprint": "ALadCkOwSgPxQvj2ViZ3xGcd6X7x/vGNdVtrJyd6gbY="
 }

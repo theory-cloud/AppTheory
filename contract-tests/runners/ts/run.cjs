@@ -51,7 +51,7 @@ function deepEqual(a, b) {
 }
 
 function listFixtureFiles(fixturesRoot) {
-  const tiers = ["p0", "p1", "p2", "m1", "m2", "m3"];
+  const tiers = ["p0", "p1", "p2", "m1", "m2", "m3", "m12"];
   const files = [];
   for (const tier of tiers) {
     const dir = path.join(fixturesRoot, tier);
@@ -630,6 +630,10 @@ async function runFixture(fixture) {
     const { actual } = await runFixtureM3(fixture);
     return compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
   }
+  if (tier === "m12") {
+    const { actual } = await runFixtureM12(fixture);
+    return compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
+  }
 
   const enableP1 = ["p1", "p2"].includes(tier);
   const enableP2 = tier === "p2";
@@ -1064,6 +1068,72 @@ async function runFixtureM3(fixture) {
   return { actual };
 }
 
+async function runFixtureM12(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+
+  const ids = new runtime.ManualIdGenerator();
+  ids.queue("req_test_123");
+
+  const limits = fixture.setup?.limits ?? {};
+  const app = runtime.createApp({
+    tier: "p1",
+    ids,
+    limits: {
+      maxRequestBytes: Number(limits.max_request_bytes ?? 0),
+      maxResponseBytes: Number(limits.max_response_bytes ?? 0),
+    },
+    authHook: (ctx) => {
+      const authz = firstHeaderValue(ctx.request.headers ?? {}, "authorization").trim();
+      if (!authz) {
+        throw new runtime.AppError("app.unauthorized", "unauthorized");
+      }
+      if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-forbidden")) {
+        throw new runtime.AppError("app.forbidden", "forbidden");
+      }
+      return "authorized";
+    },
+  });
+
+  for (const name of fixture.setup?.middlewares ?? []) {
+    const mw = builtInMiddleware(runtime, name);
+    if (!mw) {
+      throw new Error(`unknown middleware ${JSON.stringify(name)}`);
+    }
+    app.use(mw);
+  }
+
+  for (const route of fixture.setup?.routes ?? []) {
+    const handler = builtInAppTheoryHandler(runtime, route.handler);
+    if (!handler) {
+      throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
+    }
+    app.handle(route.method, route.path, handler, { authRequired: Boolean(route.auth_required) });
+  }
+
+  const input = fixture.input?.request ?? {};
+  const body = decodeFixtureBody(input.body);
+  const req = {
+    method: input.method,
+    path: input.path,
+    query: input.query ?? {},
+    headers: input.headers ?? {},
+    body,
+    isBase64: input.is_base64 ?? false,
+  };
+
+  const runtimeCtx = { remaining_ms: Number(fixture.input?.context?.remaining_ms ?? 0) };
+  const resp = await app.serve(req, runtimeCtx);
+  const actual = {
+    status: resp.status,
+    headers: resp.headers ?? {},
+    cookies: resp.cookies ?? [],
+    body: Buffer.from(resp.body ?? []),
+    is_base64: resp.isBase64 ?? false,
+  };
+
+  return { actual };
+}
+
 async function runFixtureP0(fixture) {
   const runtime = await loadAppTheoryRuntime();
   const app = runtime.createApp({ tier: "p0" });
@@ -1376,10 +1446,68 @@ function builtInAppTheoryHandler(runtime, name) {
         });
     case "echo_middleware_trace":
       return (ctx) => runtime.json(200, { trace: ctx.middlewareTrace ?? [] });
+    case "echo_ctx_value_and_trace":
+      return (ctx) => runtime.json(200, { mw: ctx.get("mw") ?? null, trace: ctx.middlewareTrace ?? [] });
+    case "naming_helpers":
+      return () =>
+        runtime.json(200, {
+          normalized: {
+            prod: runtime.normalizeStage("prod"),
+            stg: runtime.normalizeStage("stg"),
+            custom: runtime.normalizeStage("  Foo_Bar  "),
+          },
+          base: runtime.baseName("Pay Theory", "prod", "Tenant_1"),
+          resource: runtime.resourceName("Pay Theory", "WS Api", "prod", "Tenant_1"),
+        });
     case "large_response":
       return () => runtime.text(200, "12345");
     case "sse_single_event":
       return () => runtime.sse(200, [{ id: "1", event: "message", data: { ok: true } }]);
+    case "sse_stream_three_events":
+      return async () => {
+        const events = [
+          { id: "1", event: "message", data: { a: 1, b: 2 } },
+          { event: "note", data: "hello\nworld" },
+          { id: "3", data: "" },
+        ];
+
+        const chunks = [];
+        for await (const chunk of runtime.sseEventStream(events)) {
+          chunks.push(Buffer.from(chunk));
+        }
+
+        return {
+          status: 200,
+          headers: {
+            "content-type": ["text/event-stream"],
+            "cache-control": ["no-cache"],
+            connection: ["keep-alive"],
+          },
+          cookies: [],
+          body: Buffer.concat(chunks),
+          isBase64: false,
+        };
+      };
+    default:
+      return null;
+  }
+}
+
+function builtInMiddleware(runtime, name) {
+  switch (String(name ?? "").trim()) {
+    case "mw_a":
+      return async (ctx, next) => {
+        ctx.set("mw", "ok");
+        ctx.middlewareTrace.push("mw_a");
+        const resp = await next(ctx);
+        resp.headers["x-middleware"] = ["1"];
+        return resp;
+      };
+    case "mw_b":
+      return async (ctx, next) => {
+        ctx.middlewareTrace.push("mw_b");
+        return next(ctx);
+      };
     default:
       return null;
   }

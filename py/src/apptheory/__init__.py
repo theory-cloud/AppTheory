@@ -18,9 +18,10 @@ from apptheory.clock import Clock, ManualClock, RealClock
 from apptheory.context import Context, EventContext, WebSocketContext
 from apptheory.errors import AppError
 from apptheory.ids import IdGenerator, ManualIdGenerator, RealIdGenerator
+from apptheory.naming import base_name, normalize_stage, resource_name
 from apptheory.request import Request
 from apptheory.response import Response, binary, json, text
-from apptheory.sse import SSEEvent, sse
+from apptheory.sse import SSEEvent, sse, sse_event_stream
 from apptheory.testkit import (
     FakeWebSocketClientFactory,
     FakeWebSocketManagementClient,
@@ -61,12 +62,16 @@ __all__ = [
     "build_sqs_event",
     "build_websocket_event",
     "binary",
+    "base_name",
     "create_app",
     "create_fake_websocket_client_factory",
     "create_test_env",
     "event_bridge_pattern",
     "event_bridge_rule",
     "json",
+    "normalize_stage",
+    "resource_name",
     "sse",
+    "sse_event_stream",
     "text",
 ]

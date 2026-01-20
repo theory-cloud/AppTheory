@@ -42,6 +42,12 @@ Non-goals:
   - region (when available)
 - Must support JSON message send helpers with deterministic behavior on failure.
 
+## Current status (AppTheory `v0.2.0-rc.1`)
+
+- Runtime support exists in Go/TS/Py (route registration, trigger routing, portable WebSocket context, management client).
+- Contract fixtures exist and are validated in CI (routing + message send via fakes): `contract-tests/fixtures/m2/`.
+- CDK support exists via `cdk/lib/websocket-api.ts` and is exercised in `examples/cdk/multilang`.
+
 ## Milestones
 
 ### W0 — WebSocket contract + portable context definition
@@ -94,4 +100,3 @@ Non-goals:
   - Lambda integrations for `$connect` / `$disconnect` / `$default`
   - required IAM permissions for management API sends
 - A multi-language example demonstrates message send behavior end-to-end.
-

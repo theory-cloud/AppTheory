@@ -37,4 +37,44 @@ app.get("/hello/{name}", (ctx) =>
 
 app.get("/sse", () => sse(200, [{ id: "1", event: "message", data: { ok: true, lang, name } }]));
 
+app.webSocket("$connect", (ctx) => {
+  const ws = ctx.asWebSocket();
+  return json(200, {
+    ok: true,
+    lang,
+    name,
+    route_key: ws?.routeKey ?? "",
+    connection_id: ws?.connectionId ?? "",
+    request_id: ws?.requestId ?? ctx.requestId,
+  });
+});
+
+app.webSocket("$disconnect", (ctx) => {
+  const ws = ctx.asWebSocket();
+  return json(200, {
+    ok: true,
+    lang,
+    name,
+    route_key: ws?.routeKey ?? "",
+    connection_id: ws?.connectionId ?? "",
+    request_id: ws?.requestId ?? ctx.requestId,
+  });
+});
+
+app.webSocket("$default", async (ctx) => {
+  const ws = ctx.asWebSocket();
+  if (ws) {
+    await ws.sendJSONMessage({ ok: true, lang, name });
+  }
+  return json(200, {
+    ok: true,
+    lang,
+    name,
+    route_key: ws?.routeKey ?? "",
+    connection_id: ws?.connectionId ?? "",
+    management_endpoint: ws?.managementEndpoint ?? "",
+    request_id: ws?.requestId ?? ctx.requestId,
+  });
+});
+
 export const handler = async (event, context) => app.handleLambda(event, context);

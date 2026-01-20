@@ -1,0 +1,34 @@
+{
+  "id": "m12.naming.helpers",
+  "tier": "m12",
+  "name": "Naming helpers: stage normalization + deterministic names",
+  "setup": {
+    "routes": [{ "method": "GET", "path": "/naming", "handler": "naming_helpers" }]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/naming",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "normalized": { "custom": "foo-bar", "prod": "live", "stg": "stage" },
+        "base": "pay-theory-tenant-1-live",
+        "resource": "pay-theory-tenant-1-ws-api-live"
+      },
+      "is_base64": false
+    }
+  }
+}

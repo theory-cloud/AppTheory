@@ -52,7 +52,7 @@ def stable_json(value: Any) -> str:
 
 def list_fixture_files(fixtures_root: Path) -> list[Path]:
     files: list[Path] = []
-    for tier in ("p0", "p1", "p2", "m1", "m2", "m3"):
+    for tier in ("p0", "p1", "p2", "m1", "m2", "m3", "m12"):
         tier_dir = fixtures_root / tier
         if not tier_dir.exists():
             continue
@@ -701,6 +701,8 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
         return run_fixture_m2(fixture)
     if tier == "m3":
         return run_fixture_m3(fixture)
+    if tier == "m12":
+        return run_fixture_m12(fixture)
 
     setup = fixture.get("setup", {})
     input_ = fixture.get("input", {})
@@ -854,6 +856,35 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
 
         return handler
 
+    if name == "echo_ctx_value_and_trace":
+        def handler(ctx):
+            return runtime.json(
+                200,
+                {
+                    "mw": ctx.get("mw"),
+                    "trace": getattr(ctx, "middleware_trace", []),
+                },
+            )
+
+        return handler
+
+    if name == "naming_helpers":
+        def handler(_ctx):
+            return runtime.json(
+                200,
+                {
+                    "normalized": {
+                        "prod": runtime.normalize_stage("prod"),
+                        "stg": runtime.normalize_stage("stg"),
+                        "custom": runtime.normalize_stage("  Foo_Bar  "),
+                    },
+                    "base": runtime.base_name("Pay Theory", "prod", "Tenant_1"),
+                    "resource": runtime.resource_name("Pay Theory", "WS Api", "prod", "Tenant_1"),
+                },
+            )
+
+        return handler
+
     if name == "large_response":
         return lambda _ctx: runtime.text(200, "12345")
 
@@ -867,6 +898,50 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
             )
 
         return handler
+
+    if name == "sse_stream_three_events":
+        def handler(_ctx):
+            events = [
+                runtime.SSEEvent(id="1", event="message", data={"a": 1, "b": 2}),
+                runtime.SSEEvent(event="note", data="hello\nworld"),
+                runtime.SSEEvent(id="3", data=""),
+            ]
+            body = b"".join(runtime.sse_event_stream(events))
+            return runtime.Response(
+                status=200,
+                headers={
+                    "content-type": ["text/event-stream"],
+                    "cache-control": ["no-cache"],
+                    "connection": ["keep-alive"],
+                },
+                cookies=[],
+                body=body,
+                is_base64=False,
+            )
+
+        return handler
+
+    return None
+
+
+def _built_in_m12_middleware(runtime: Any, name: str):
+    _ = runtime
+    if name == "mw_a":
+        def mw(ctx, next_handler):
+            ctx.set("mw", "ok")
+            getattr(ctx, "middleware_trace", []).append("mw_a")
+            resp = next_handler(ctx)
+            resp.headers["x-middleware"] = ["1"]
+            return resp
+
+        return mw
+
+    if name == "mw_b":
+        def mw(ctx, next_handler):
+            getattr(ctx, "middleware_trace", []).append("mw_b")
+            return next_handler(ctx)
+
+        return mw
 
     return None
 
@@ -1219,6 +1294,65 @@ def run_fixture_m3(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
     expected = fixture.get("expect", {}).get("response", {})
     return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
 
+
+def run_fixture_m12(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+    runtime = _load_apptheory_runtime()
+    ids = runtime.ManualIdGenerator()
+    ids.push("req_test_123")
+
+    setup = fixture.get("setup", {})
+    limits = setup.get("limits", {}) or {}
+    app = runtime.create_app(
+        tier="p1",
+        id_generator=ids,
+        limits=runtime.Limits(
+            max_request_bytes=int(limits.get("max_request_bytes") or 0),
+            max_response_bytes=int(limits.get("max_response_bytes") or 0),
+        ),
+        auth_hook=lambda ctx: _fixture_auth_hook(runtime, ctx),
+    )
+
+    for name in setup.get("middlewares", []) or []:
+        mw = _built_in_m12_middleware(runtime, str(name or "").strip())
+        if mw is None:
+            raise RuntimeError(f"unknown middleware {name!r}")
+        app.use(mw)
+
+    for route in setup.get("routes", []) or []:
+        name = str(route.get("handler", ""))
+        handler = _built_in_apptheory_handler(runtime, name)
+        if handler is None:
+            raise RuntimeError(f"unknown handler {name!r}")
+        app.handle(
+            route.get("method", ""),
+            route.get("path", ""),
+            handler,
+            auth_required=bool(route.get("auth_required")),
+        )
+
+    input_ = fixture.get("input", {}).get("request", {})
+    req_body = decode_fixture_body(input_.get("body"))
+    req = runtime.Request(
+        method=input_.get("method", ""),
+        path=input_.get("path", ""),
+        query=input_.get("query") or {},
+        headers=input_.get("headers") or {},
+        body=req_body,
+        is_base64=bool(input_.get("is_base64")),
+    )
+
+    runtime_ctx = {"remaining_ms": int((fixture.get("input", {}).get("context", {}) or {}).get("remaining_ms") or 0)}
+    resp = app.serve(req, runtime_ctx)
+    actual = CanonicalResponse(
+        status=resp.status,
+        headers=resp.headers,
+        cookies=resp.cookies,
+        body=resp.body,
+        is_base64=resp.is_base64,
+    )
+
+    expected = fixture.get("expect", {}).get("response", {})
+    return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
 
 def run_fixture_p0(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     runtime = _load_apptheory_runtime()

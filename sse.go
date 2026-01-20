@@ -2,8 +2,10 @@ package apptheory
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -97,6 +99,83 @@ func SSEResponse(status int, events ...SSEEvent) (*Response, error) {
 		Body:     buf.Bytes(),
 		IsBase64: false,
 	}, nil
+}
+
+// SSEStreamResponse builds a canonical AppTheory Response with event-by-event SSE output.
+//
+// The returned response uses response streaming when invoked through the API Gateway REST API v1 adapter
+// (`ServeAPIGatewayProxy` via `HandleLambda`).
+func SSEStreamResponse(ctx context.Context, status int, events <-chan SSEEvent) (*Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	pr, pw := io.Pipe()
+	go streamSSEEvents(ctx, pw, events)
+
+	return &Response{
+		Status: status,
+		Headers: map[string][]string{
+			"content-type":  {"text/event-stream"},
+			"cache-control": {"no-cache"},
+			"connection":    {"keep-alive"},
+		},
+		Cookies:    nil,
+		Body:       nil,
+		BodyReader: pr,
+		IsBase64:   false,
+	}, nil
+}
+
+func streamSSEEvents(ctx context.Context, pw *io.PipeWriter, events <-chan SSEEvent) {
+	defer safeClosePipeWriter(pw)
+
+	if events == nil {
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-events:
+			if !ok {
+				return
+			}
+
+			if err := writeSSEEvent(pw, ev); err != nil {
+				closePipeWriterWithError(pw, err)
+				return
+			}
+		}
+	}
+}
+
+func writeSSEEvent(pw *io.PipeWriter, ev SSEEvent) error {
+	b, err := formatSSEEvent(ev)
+	if err != nil {
+		return err
+	}
+	_, err = pw.Write(b)
+	return err
+}
+
+func closePipeWriterWithError(pw *io.PipeWriter, err error) {
+	if pw == nil {
+		return
+	}
+	if closeErr := pw.CloseWithError(err); closeErr != nil {
+		_ = closeErr
+	}
+}
+
+func safeClosePipeWriter(pw *io.PipeWriter) {
+	if pw == nil {
+		return
+	}
+	if err := pw.Close(); err != nil {
+		_ = err
+	}
 }
 
 // MustSSEResponse builds an SSE response and panics on framing/serialization errors.
