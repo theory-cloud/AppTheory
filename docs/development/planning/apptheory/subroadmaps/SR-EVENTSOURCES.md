@@ -38,6 +38,15 @@ Non-goals:
   - handler error mapping to the standard error envelope (or an explicitly different non-HTTP error policy, but consistent
     across languages)
 
+## Current status (AppTheory `v0.2.0-rc.1`)
+
+- Runtime routing exists in Go/TS/Py via `HandleLambda`/`handleLambda` (HTTP + SQS + EventBridge + DynamoDB Streams).
+- Contract fixtures exist and are validated in CI:
+  - `contract-tests/fixtures/m1/sqs-partial-batch-failure.json`
+  - `contract-tests/fixtures/m1/eventbridge-rule-routing.json`
+  - `contract-tests/fixtures/m1/dynamodb-stream-partial-batch-failure.json`
+- A deployable multi-language CDK demo wires these triggers for Go/Node/Python: `examples/cdk/multilang`.
+
 ## Milestones
 
 ### E0 — Inventory + contract shape decision
@@ -94,4 +103,3 @@ Non-goals:
   - one EventBridge-scheduled function per language
   - one DynamoDB-stream-triggered function per language
 - `make rubric` includes the new contract fixtures and example smoke tests.
-
