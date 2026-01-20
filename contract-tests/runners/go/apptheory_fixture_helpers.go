@@ -8,7 +8,7 @@ import (
 	"github.com/theory-cloud/apptheory"
 )
 
-func newAppTheoryFixtureAppP1(now time.Time, limits FixtureLimits) *apptheory.App {
+func newAppTheoryFixtureAppP1(now time.Time, limits FixtureLimits, cors FixtureCORSConfig) *apptheory.App {
 	return apptheory.New(
 		apptheory.WithTier(apptheory.TierP1),
 		apptheory.WithClock(fixedClock{now: now}),
@@ -16,6 +16,11 @@ func newAppTheoryFixtureAppP1(now time.Time, limits FixtureLimits) *apptheory.Ap
 		apptheory.WithLimits(apptheory.Limits{
 			MaxRequestBytes:  limits.MaxRequestBytes,
 			MaxResponseBytes: limits.MaxResponseBytes,
+		}),
+		apptheory.WithCORS(apptheory.CORSConfig{
+			AllowedOrigins:   cors.AllowedOrigins,
+			AllowCredentials: cors.AllowCredentials,
+			AllowHeaders:     cors.AllowHeaders,
 		}),
 		apptheory.WithAuthHook(func(ctx *apptheory.Context) (string, error) {
 			authz := strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "authorization"))

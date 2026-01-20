@@ -1,0 +1,32 @@
+{
+  "id": "p1.cors.disallowed_origin",
+  "tier": "p1",
+  "name": "CORS allow-list blocks disallowed origins",
+  "setup": {
+    "cors": { "allowed_origins": ["https://allowed.example"], "allow_credentials": true },
+    "routes": [{ "method": "GET", "path": "/pong", "handler": "static_pong" }]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/pong",
+      "query": {},
+      "headers": { "origin": ["https://example.com"] },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["text/plain; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body": { "encoding": "utf8", "value": "pong" },
+      "is_base64": false
+    }
+  }
+}
+

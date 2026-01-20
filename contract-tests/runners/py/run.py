@@ -792,6 +792,15 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
     if name == "static_pong":
         return lambda _ctx: runtime.text(200, "pong")
 
+    if name == "sleep_50ms":
+        def handler(_ctx):
+            import time
+
+            time.sleep(0.05)
+            return runtime.text(200, "done")
+
+        return handler
+
     if name == "echo_path_params":
         return lambda ctx: runtime.json(200, {"params": ctx.params})
 
@@ -925,7 +934,6 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
 
 
 def _built_in_m12_middleware(runtime: Any, name: str):
-    _ = runtime
     if name == "mw_a":
         def mw(ctx, next_handler):
             ctx.set("mw", "ok")
@@ -942,6 +950,9 @@ def _built_in_m12_middleware(runtime: Any, name: str):
             return next_handler(ctx)
 
         return mw
+
+    if name == "timeout_5ms":
+        return runtime.timeout_middleware(runtime.TimeoutConfig(default_timeout_ms=5))
 
     return None
 
@@ -1511,6 +1522,25 @@ def run_fixture_p1(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
 
     setup = fixture.get("setup", {})
     limits = setup.get("limits", {}) or {}
+    cors_setup = setup.get("cors", None)
+    cors = None
+    if isinstance(cors_setup, dict):
+        allowed_origins = None
+        if "allowed_origins" in cors_setup:
+            raw = cors_setup.get("allowed_origins")
+            allowed_origins = [str(v) for v in raw] if isinstance(raw, list) else []
+
+        allow_headers = None
+        if "allow_headers" in cors_setup:
+            raw = cors_setup.get("allow_headers")
+            allow_headers = [str(v) for v in raw] if isinstance(raw, list) else []
+
+        if allowed_origins is not None or allow_headers is not None or bool(cors_setup.get("allow_credentials")):
+            cors = runtime.CORSConfig(
+                allowed_origins=allowed_origins,
+                allow_credentials=bool(cors_setup.get("allow_credentials")),
+                allow_headers=allow_headers,
+            )
     app = runtime.create_app(
         tier="p1",
         id_generator=ids,
@@ -1518,6 +1548,7 @@ def run_fixture_p1(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
             max_response_bytes=int(limits.get("max_response_bytes") or 0),
         ),
+        cors=cors,
         auth_hook=lambda ctx: _fixture_auth_hook(runtime, ctx),
     )
 
@@ -1567,6 +1598,25 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
 
     setup = fixture.get("setup", {})
     limits = setup.get("limits", {}) or {}
+    cors_setup = setup.get("cors", None)
+    cors = None
+    if isinstance(cors_setup, dict):
+        allowed_origins = None
+        if "allowed_origins" in cors_setup:
+            raw = cors_setup.get("allowed_origins")
+            allowed_origins = [str(v) for v in raw] if isinstance(raw, list) else []
+
+        allow_headers = None
+        if "allow_headers" in cors_setup:
+            raw = cors_setup.get("allow_headers")
+            allow_headers = [str(v) for v in raw] if isinstance(raw, list) else []
+
+        if allowed_origins is not None or allow_headers is not None or bool(cors_setup.get("allow_credentials")):
+            cors = runtime.CORSConfig(
+                allowed_origins=allowed_origins,
+                allow_credentials=bool(cors_setup.get("allow_credentials")),
+                allow_headers=allow_headers,
+            )
     app = runtime.create_app(
         tier="p2",
         id_generator=ids,
@@ -1574,6 +1624,7 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
             max_response_bytes=int(limits.get("max_response_bytes") or 0),
         ),
+        cors=cors,
         auth_hook=lambda ctx: _fixture_auth_hook(runtime, ctx),
         policy_hook=lambda ctx: _fixture_policy_hook(runtime, ctx),
         observability=runtime.ObservabilityHooks(

@@ -1,0 +1,453 @@
+{
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "SecurityCloudWatchMonitoringEndpoint5424D3C2": {
+      "Properties": {
+        "PrivateDnsEnabled": false,
+        "SecurityGroupIds": [
+          {
+            "Fn::GetAtt": [
+              "SecuritySecurityGroup81AEF86F",
+              "GroupId"
+            ]
+          }
+        ],
+        "ServiceName": {
+          "Fn::Join": [
+            "",
+            [
+              "com.amazonaws.",
+              {
+                "Ref": "AWS::Region"
+              },
+              ".monitoring"
+            ]
+          ]
+        },
+        "SubnetIds": [
+          "subnet-private"
+        ],
+        "VpcEndpointType": "Interface",
+        "VpcId": "vpc-123456"
+      },
+      "Type": "AWS::EC2::VPCEndpoint"
+    },
+    "SecurityKMSEndpointD3E0C718": {
+      "Properties": {
+        "PrivateDnsEnabled": false,
+        "SecurityGroupIds": [
+          {
+            "Fn::GetAtt": [
+              "SecuritySecurityGroup81AEF86F",
+              "GroupId"
+            ]
+          }
+        ],
+        "ServiceName": {
+          "Fn::Join": [
+            "",
+            [
+              "com.amazonaws.",
+              {
+                "Ref": "AWS::Region"
+              },
+              ".kms"
+            ]
+          ]
+        },
+        "SubnetIds": [
+          "subnet-private"
+        ],
+        "VpcEndpointType": "Interface",
+        "VpcId": "vpc-123456"
+      },
+      "Type": "AWS::EC2::VPCEndpoint"
+    },
+    "SecurityRejectedConnectionsFilter818D78ED": {
+      "Properties": {
+        "FilterPattern": "[version, account, eni, source, destination, srcport, destport, protocol, packets, bytes, windowstart, windowend, action = \"REJECT\", flowlogstatus]",
+        "LogGroupName": {
+          "Ref": "SecurityVPCFlowLogsGroup03D7DBC2"
+        },
+        "MetricTransformations": [
+          {
+            "DefaultValue": 0,
+            "MetricName": "RejectedConnections",
+            "MetricNamespace": "Security/VPC",
+            "MetricValue": "1"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "SecuritySecurityGroup81AEF86F": {
+      "Properties": {
+        "GroupDescription": "Security group for apptheory-test",
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "apptheory-test"
+          },
+          {
+            "Key": "Environment",
+            "Value": "dev"
+          },
+          {
+            "Key": "SecurityLevel",
+            "Value": "Enhanced"
+          }
+        ],
+        "VpcId": "vpc-123456"
+      },
+      "Type": "AWS::EC2::SecurityGroup"
+    },
+    "SecuritySecurityGroupfrom10000164436B79C2E2": {
+      "Properties": {
+        "CidrIp": "10.0.0.0/16",
+        "Description": "from 10.0.0.0/16:443",
+        "FromPort": 443,
+        "GroupId": {
+          "Fn::GetAtt": [
+            "SecuritySecurityGroup81AEF86F",
+            "GroupId"
+          ]
+        },
+        "IpProtocol": "tcp",
+        "ToPort": 443
+      },
+      "Type": "AWS::EC2::SecurityGroupIngress"
+    },
+    "SecuritySecurityGroupto00000443C924EF80": {
+      "Properties": {
+        "CidrIp": "0.0.0.0/0",
+        "Description": "Allow HTTPS to AWS services",
+        "FromPort": 443,
+        "GroupId": {
+          "Fn::GetAtt": [
+            "SecuritySecurityGroup81AEF86F",
+            "GroupId"
+          ]
+        },
+        "IpProtocol": "tcp",
+        "ToPort": 443
+      },
+      "Type": "AWS::EC2::SecurityGroupEgress"
+    },
+    "SecuritySecurityGroupto00000UDP53E0DA3BCE": {
+      "Properties": {
+        "CidrIp": "0.0.0.0/0",
+        "Description": "Allow DNS resolution",
+        "FromPort": 53,
+        "GroupId": {
+          "Fn::GetAtt": [
+            "SecuritySecurityGroup81AEF86F",
+            "GroupId"
+          ]
+        },
+        "IpProtocol": "udp",
+        "ToPort": 53
+      },
+      "Type": "AWS::EC2::SecurityGroupEgress"
+    },
+    "SecuritySuspiciousPortsFilter76C5D757": {
+      "Properties": {
+        "FilterPattern": "?\"destport=22\" ?\"destport=23\" ?\"destport=3389\"",
+        "LogGroupName": {
+          "Ref": "SecurityVPCFlowLogsGroup03D7DBC2"
+        },
+        "MetricTransformations": [
+          {
+            "DefaultValue": 0,
+            "MetricName": "SuspiciousPortActivity",
+            "MetricNamespace": "Security/VPC",
+            "MetricValue": "1"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "SecurityVPCFlowLogsFlowLogAC585F6A": {
+      "Properties": {
+        "DeliverLogsPermissionArn": {
+          "Fn::GetAtt": [
+            "SecurityVPCFlowLogsRole939F590F",
+            "Arn"
+          ]
+        },
+        "LogDestinationType": "cloud-watch-logs",
+        "LogGroupName": {
+          "Ref": "SecurityVPCFlowLogsGroup03D7DBC2"
+        },
+        "MaxAggregationInterval": 60,
+        "ResourceId": "vpc-123456",
+        "ResourceType": "VPC",
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "TestStack/Security/VPCFlowLogs"
+          }
+        ],
+        "TrafficType": "ALL"
+      },
+      "Type": "AWS::EC2::FlowLog"
+    },
+    "SecurityVPCFlowLogsGroup03D7DBC2": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "LogGroupName": "/aws/vpc/flowlogs/apptheory-test",
+        "RetentionInDays": 7
+      },
+      "Type": "AWS::Logs::LogGroup",
+      "UpdateReplacePolicy": "Delete"
+    },
+    "SecurityVPCFlowLogsRole939F590F": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "vpc-flow-logs.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "Policies": [
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents",
+                    "logs:DescribeLogGroups",
+                    "logs:DescribeLogStreams"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "SecurityVPCFlowLogsGroup03D7DBC2",
+                      "Arn"
+                    ]
+                  }
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "PolicyName": "FlowLogsDeliveryRolePolicy"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "SecurityVPCFlowLogsRoleDefaultPolicyE1C1BCCC": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+                "logs:DescribeLogStreams"
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "SecurityVPCFlowLogsGroup03D7DBC2",
+                  "Arn"
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "PolicyName": "SecurityVPCFlowLogsRoleDefaultPolicyE1C1BCCC",
+        "Roles": [
+          {
+            "Ref": "SecurityVPCFlowLogsRole939F590F"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Policy"
+    },
+    "SecurityWebACL6902166B": {
+      "Properties": {
+        "CustomResponseBodies": {
+          "AccessDenied": {
+            "Content": "{\"error\": \"access_denied\", \"message\": \"Access denied by security policy\"}",
+            "ContentType": "APPLICATION_JSON"
+          },
+          "RateLimitExceeded": {
+            "Content": "{\"error\": \"rate_limit_exceeded\", \"message\": \"Too many requests\", \"retry_after\": 60}",
+            "ContentType": "APPLICATION_JSON"
+          }
+        },
+        "DefaultAction": {
+          "Allow": {}
+        },
+        "Rules": [
+          {
+            "Action": {
+              "Block": {
+                "CustomResponse": {
+                  "CustomResponseBodyKey": "RateLimitExceeded",
+                  "ResponseCode": 429
+                }
+              }
+            },
+            "Name": "RateLimitRule",
+            "Priority": 1,
+            "Statement": {
+              "RateBasedStatement": {
+                "AggregateKeyType": "IP",
+                "Limit": 2000
+              }
+            },
+            "VisibilityConfig": {
+              "CloudWatchMetricsEnabled": true,
+              "MetricName": "RateLimitRule",
+              "SampledRequestsEnabled": true
+            }
+          },
+          {
+            "Name": "SQLiProtection",
+            "OverrideAction": {
+              "None": {}
+            },
+            "Priority": 2,
+            "Statement": {
+              "ManagedRuleGroupStatement": {
+                "Name": "AWSManagedRulesSQLiRuleSet",
+                "VendorName": "AWS"
+              }
+            },
+            "VisibilityConfig": {
+              "CloudWatchMetricsEnabled": true,
+              "MetricName": "SQLiProtection",
+              "SampledRequestsEnabled": true
+            }
+          },
+          {
+            "Name": "XSSProtection",
+            "OverrideAction": {
+              "None": {}
+            },
+            "Priority": 3,
+            "Statement": {
+              "ManagedRuleGroupStatement": {
+                "Name": "AWSManagedRulesCommonRuleSet",
+                "VendorName": "AWS"
+              }
+            },
+            "VisibilityConfig": {
+              "CloudWatchMetricsEnabled": true,
+              "MetricName": "XSSProtection",
+              "SampledRequestsEnabled": true
+            }
+          },
+          {
+            "Name": "KnownBadInputs",
+            "OverrideAction": {
+              "None": {}
+            },
+            "Priority": 4,
+            "Statement": {
+              "ManagedRuleGroupStatement": {
+                "Name": "AWSManagedRulesKnownBadInputsRuleSet",
+                "VendorName": "AWS"
+              }
+            },
+            "VisibilityConfig": {
+              "CloudWatchMetricsEnabled": true,
+              "MetricName": "KnownBadInputs",
+              "SampledRequestsEnabled": true
+            }
+          }
+        ],
+        "Scope": "REGIONAL",
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "apptheory-test"
+          },
+          {
+            "Key": "Environment",
+            "Value": "dev"
+          }
+        ],
+        "VisibilityConfig": {
+          "CloudWatchMetricsEnabled": true,
+          "MetricName": "apptheory-testWAF",
+          "SampledRequestsEnabled": true
+        }
+      },
+      "Type": "AWS::WAFv2::WebACL"
+    },
+    "SecurityXRayEndpoint57489349": {
+      "Properties": {
+        "PrivateDnsEnabled": false,
+        "SecurityGroupIds": [
+          {
+            "Fn::GetAtt": [
+              "SecuritySecurityGroup81AEF86F",
+              "GroupId"
+            ]
+          }
+        ],
+        "ServiceName": {
+          "Fn::Join": [
+            "",
+            [
+              "com.amazonaws.",
+              {
+                "Ref": "AWS::Region"
+              },
+              ".xray"
+            ]
+          ]
+        },
+        "SubnetIds": [
+          "subnet-private"
+        ],
+        "VpcEndpointType": "Interface",
+        "VpcId": "vpc-123456"
+      },
+      "Type": "AWS::EC2::VPCEndpoint"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}

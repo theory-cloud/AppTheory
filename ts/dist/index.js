@@ -679,7 +679,7 @@ export const paymentXMLPatterns = [
 export const rapidConnectXMLPatterns = paymentXMLPatterns;
 
 export class App {
-  constructor({ clock, ids, tier, limits, authHook, policyHook, observability, webSocketClientFactory } = {}) {
+  constructor({ clock, ids, tier, limits, cors, authHook, policyHook, observability, webSocketClientFactory } = {}) {
     this._router = new Router();
     this._clock = clock ?? new RealClock();
     this._ids = ids ?? new RandomIdGenerator();
@@ -688,6 +688,7 @@ export class App {
       maxRequestBytes: Number(limits?.maxRequestBytes ?? 0),
       maxResponseBytes: Number(limits?.maxResponseBytes ?? 0),
     };
+    this._cors = normalizeCorsConfig(cors);
     this._authHook = authHook ?? null;
     this._policyHook = policyHook ?? null;
     this._observability = observability ?? null;
@@ -852,7 +853,7 @@ export class App {
     const enableP2 = this._tier === "p2";
 
     const finish = (resp, errCode) => {
-      const out = finalizeP1Response(resp, requestId, origin);
+      const out = finalizeP1Response(resp, requestId, origin, this._cors);
       if (enableP2) {
         recordObservability(this._observability, {
           method,
@@ -1255,6 +1256,83 @@ export function createApp(options = {}) {
   return new App(options);
 }
 
+export function timeoutMiddleware(config = {}) {
+  const cfg = normalizeTimeoutConfig(config);
+
+  return async (ctx, next) => {
+    const timeoutMs = timeoutForContext(ctx, cfg);
+    if (timeoutMs <= 0) {
+      return next(ctx);
+    }
+
+    let timer = null;
+    const timeoutPromise = new Promise((_resolve, reject) => {
+      timer = setTimeout(() => reject(new AppError("app.timeout", cfg.timeoutMessage)), timeoutMs);
+    });
+
+    try {
+      const run = Promise.resolve().then(() => next(ctx));
+      return await Promise.race([run, timeoutPromise]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  };
+}
+
+function normalizeTimeoutConfig(config) {
+  let defaultTimeoutMs = Number(config?.defaultTimeoutMs ?? 0);
+  if (!Number.isFinite(defaultTimeoutMs)) defaultTimeoutMs = 0;
+  defaultTimeoutMs = Math.floor(defaultTimeoutMs);
+  if (defaultTimeoutMs === 0) defaultTimeoutMs = 30_000;
+
+  const timeoutMessage = String(config?.timeoutMessage ?? "").trim() || "request timeout";
+
+  const operationTimeoutsMs =
+    config?.operationTimeoutsMs && typeof config.operationTimeoutsMs === "object" ? config.operationTimeoutsMs : null;
+  const tenantTimeoutsMs =
+    config?.tenantTimeoutsMs && typeof config.tenantTimeoutsMs === "object" ? config.tenantTimeoutsMs : null;
+
+  return {
+    defaultTimeoutMs,
+    operationTimeoutsMs,
+    tenantTimeoutsMs,
+    timeoutMessage,
+  };
+}
+
+function timeoutForContext(ctx, config) {
+  let timeoutMs = Number(config?.defaultTimeoutMs ?? 0);
+  if (!Number.isFinite(timeoutMs)) timeoutMs = 0;
+
+  const tenant = String(ctx?.tenantId ?? "").trim();
+  if (tenant && config?.tenantTimeoutsMs && tenant in config.tenantTimeoutsMs) {
+    const override = Number(config.tenantTimeoutsMs[tenant]);
+    if (Number.isFinite(override)) {
+      timeoutMs = override;
+    }
+  }
+
+  const method = String(ctx?.request?.method ?? "").trim().toUpperCase();
+  const path = String(ctx?.request?.path ?? "").trim() || "/";
+  const op = `${method}:${path}`;
+  if (config?.operationTimeoutsMs && op in config.operationTimeoutsMs) {
+    const override = Number(config.operationTimeoutsMs[op]);
+    if (Number.isFinite(override)) {
+      timeoutMs = override;
+    }
+  }
+
+  const remainingMs = Number(ctx?.remainingMs ?? 0);
+  if (Number.isFinite(remainingMs) && remainingMs > 0 && remainingMs < timeoutMs) {
+    timeoutMs = remainingMs;
+  }
+
+  timeoutMs = Math.floor(timeoutMs);
+  return timeoutMs;
+}
+
 export class TestEnv {
   constructor({ now } = {}) {
     this.clock = new ManualClock(now ?? new Date(0));
@@ -1409,10 +1487,12 @@ class Router {
   add(method, pattern, handler, options = {}) {
     const normalizedMethod = normalizeMethod(method);
     const normalizedPattern = normalizePath(pattern);
+    const segments = normalizeRouteSegments(splitPath(normalizedPattern));
+    const normalizedPatternValue = segments.length > 0 ? `/${segments.join("/")}` : "/";
     this._routes.push({
       method: normalizedMethod,
-      pattern: normalizedPattern,
-      segments: splitPath(normalizedPattern),
+      pattern: normalizedPatternValue,
+      segments,
       handler,
       authRequired: Boolean(options?.authRequired),
     });
@@ -1455,6 +1535,17 @@ function splitPath(path) {
   const value = normalizePath(path).replace(/^\//, "");
   if (!value) return [];
   return value.split("/");
+}
+
+function normalizeRouteSegments(segments) {
+  if (!segments || segments.length === 0) return [];
+  return segments.map((segment) => {
+    const value = String(segment ?? "");
+    if (value.startsWith(":") && value.length > 1) {
+      return `{${value.slice(1)}}`;
+    }
+    return value;
+  });
 }
 
 function matchPath(patternSegments, pathSegments) {
@@ -1588,6 +1679,8 @@ function statusForErrorCode(code) {
       return 409;
     case "app.too_large":
       return 413;
+    case "app.timeout":
+      return 408;
     case "app.rate_limited":
       return 429;
     case "app.overloaded":
@@ -1660,14 +1753,84 @@ function isCorsPreflight(method, headers) {
   return normalizeMethod(method) === "OPTIONS" && firstHeaderValue(headers, "access-control-request-method");
 }
 
-function finalizeP1Response(resp, requestId, origin) {
+function normalizeCorsConfig(cors) {
+  const allowCredentials = Boolean(cors?.allowCredentials);
+
+  let allowedOrigins = null;
+  if (cors && typeof cors === "object" && "allowedOrigins" in cors) {
+    if (Array.isArray(cors.allowedOrigins)) {
+      const normalized = [];
+      for (const origin of cors.allowedOrigins) {
+        const trimmed = String(origin ?? "").trim();
+        if (!trimmed) continue;
+        if (trimmed === "*") {
+          allowedOrigins = ["*"];
+          break;
+        }
+        normalized.push(trimmed);
+      }
+      if (!allowedOrigins) {
+        allowedOrigins = normalized;
+      }
+    }
+  }
+
+  let allowHeaders = null;
+  if (cors && typeof cors === "object" && "allowHeaders" in cors) {
+    if (Array.isArray(cors.allowHeaders)) {
+      const normalized = [];
+      for (const header of cors.allowHeaders) {
+        const trimmed = String(header ?? "").trim();
+        if (!trimmed) continue;
+        normalized.push(trimmed);
+      }
+      allowHeaders = normalized;
+    }
+  }
+
+  return { allowedOrigins, allowCredentials, allowHeaders };
+}
+
+function corsOriginAllowed(origin, cors) {
+  const originValue = String(origin ?? "").trim();
+  if (!originValue) return false;
+
+  const allowed = cors?.allowedOrigins ?? null;
+  if (allowed === null) {
+    return true;
+  }
+  if (!Array.isArray(allowed) || allowed.length === 0) {
+    return false;
+  }
+  return allowed.some((entry) => entry === "*" || entry === originValue);
+}
+
+function corsAllowHeadersValue(cors) {
+  const headers = Array.isArray(cors?.allowHeaders) ? cors.allowHeaders : [];
+  if (headers.length > 0) {
+    return headers.join(", ");
+  }
+  if (cors?.allowCredentials) {
+    return "Content-Type, Authorization";
+  }
+  return "";
+}
+
+function finalizeP1Response(resp, requestId, origin, cors) {
   const headers = canonicalizeHeaders(resp.headers ?? {});
   if (requestId) {
     headers["x-request-id"] = [String(requestId)];
   }
-  if (origin) {
+  if (origin && corsOriginAllowed(origin, cors)) {
     headers["access-control-allow-origin"] = [String(origin)];
     headers.vary = ["origin"];
+    if (cors?.allowCredentials) {
+      headers["access-control-allow-credentials"] = ["true"];
+    }
+    const allowHeaders = corsAllowHeadersValue(cors);
+    if (allowHeaders) {
+      headers["access-control-allow-headers"] = [allowHeaders];
+    }
   }
   return { ...resp, headers };
 }

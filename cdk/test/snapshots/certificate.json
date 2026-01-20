@@ -1,0 +1,75 @@
+{
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "CertCertificate2FA294AA": {
+      "Properties": {
+        "CertificateTransparencyLoggingPreference": "ENABLED",
+        "DomainName": "api.example.com",
+        "DomainValidationOptions": [
+          {
+            "DomainName": "api.example.com",
+            "HostedZoneId": {
+              "Ref": "ZoneA5DE4B68"
+            }
+          },
+          {
+            "DomainName": "auth.example.com",
+            "HostedZoneId": {
+              "Ref": "ZoneA5DE4B68"
+            }
+          }
+        ],
+        "SubjectAlternativeNames": [
+          "auth.example.com"
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "TestStack/Cert/Certificate"
+          }
+        ],
+        "ValidationMethod": "DNS"
+      },
+      "Type": "AWS::CertificateManager::Certificate"
+    },
+    "ZoneA5DE4B68": {
+      "Properties": {
+        "Name": "example.com."
+      },
+      "Type": "AWS::Route53::HostedZone"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}

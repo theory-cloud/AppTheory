@@ -211,6 +211,13 @@ export type Handler = (ctx: Context) => Response | Promise<Response>;
 
 export type Middleware = (ctx: Context, next: Handler) => Response | Promise<Response>;
 
+export interface TimeoutConfig {
+  defaultTimeoutMs?: number;
+  operationTimeoutsMs?: Record<string, number>;
+  tenantTimeoutsMs?: Record<string, number>;
+  timeoutMessage?: string;
+}
+
 export type EventHandler = (ctx: EventContext, event: unknown) => unknown | Promise<unknown>;
 
 export type EventMiddleware = (
@@ -298,6 +305,12 @@ export interface Limits {
   maxResponseBytes?: number;
 }
 
+export interface CORSConfig {
+  allowedOrigins?: string[];
+  allowCredentials?: boolean;
+  allowHeaders?: string[];
+}
+
 export interface RouteOptions {
   authRequired?: boolean;
 }
@@ -346,6 +359,7 @@ export declare class App {
     ids?: IdGenerator;
     tier?: Tier;
     limits?: Limits;
+    cors?: CORSConfig;
     authHook?: AuthHook;
     policyHook?: PolicyHook;
     observability?: ObservabilityHooks;
@@ -378,11 +392,14 @@ export declare function createApp(options?: {
   ids?: IdGenerator;
   tier?: Tier;
   limits?: Limits;
+  cors?: CORSConfig;
   authHook?: AuthHook;
   policyHook?: PolicyHook;
   observability?: ObservabilityHooks;
   webSocketClientFactory?: WebSocketClientFactory;
 }): App;
+
+export declare function timeoutMiddleware(config?: TimeoutConfig): Middleware;
 
 export declare function text(status: number, body: string): Response;
 export declare function json(status: number, value: unknown): Response;

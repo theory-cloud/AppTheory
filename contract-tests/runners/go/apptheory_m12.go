@@ -10,7 +10,7 @@ import (
 
 func runFixtureM12(f Fixture) error {
 	now := time.Unix(0, 0).UTC()
-	app := newAppTheoryFixtureAppP1(now, f.Setup.Limits)
+	app := newAppTheoryFixtureAppP1(now, f.Setup.Limits, f.Setup.CORS)
 
 	for _, name := range f.Setup.Middlewares {
 		mw := builtInM12Middleware(name)
@@ -95,6 +95,8 @@ func builtInM12Middleware(name string) apptheory.Middleware {
 				return next(ctx)
 			}
 		}
+	case "timeout_5ms":
+		return apptheory.TimeoutMiddleware(apptheory.TimeoutConfig{DefaultTimeout: 5 * time.Millisecond})
 	default:
 		return nil
 	}

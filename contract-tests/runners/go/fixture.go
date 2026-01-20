@@ -23,10 +23,17 @@ type FixtureSetup struct {
 	Limits      FixtureLimits             `json:"limits,omitempty"`
 	Routes      []FixtureRoute            `json:"routes,omitempty"`
 	Middlewares []string                  `json:"middlewares,omitempty"`
+	CORS        FixtureCORSConfig         `json:"cors,omitempty"`
 	WebSockets  []FixtureWebSocketRoute   `json:"websockets,omitempty"`
 	SQS         []FixtureSQSRoute         `json:"sqs,omitempty"`
 	EventBridge []FixtureEventBridgeRoute `json:"eventbridge,omitempty"`
 	DynamoDB    []FixtureDynamoDBRoute    `json:"dynamodb,omitempty"`
+}
+
+type FixtureCORSConfig struct {
+	AllowedOrigins   []string `json:"allowed_origins,omitempty"`
+	AllowCredentials bool     `json:"allow_credentials,omitempty"`
+	AllowHeaders     []string `json:"allow_headers,omitempty"`
 }
 
 type FixtureRoute struct {

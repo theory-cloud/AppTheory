@@ -1126,6 +1126,15 @@ async function runFixtureM12(fixture) {
   ids.queue("req_test_123");
 
   const limits = fixture.setup?.limits ?? {};
+  const corsSetup = fixture.setup?.cors ?? null;
+  const cors =
+    corsSetup && typeof corsSetup === "object"
+      ? {
+          allowedOrigins: corsSetup.allowed_origins,
+          allowCredentials: Boolean(corsSetup.allow_credentials),
+          allowHeaders: corsSetup.allow_headers,
+        }
+      : undefined;
   const app = runtime.createApp({
     tier: "p1",
     ids,
@@ -1133,6 +1142,7 @@ async function runFixtureM12(fixture) {
       maxRequestBytes: Number(limits.max_request_bytes ?? 0),
       maxResponseBytes: Number(limits.max_response_bytes ?? 0),
     },
+    ...(cors ? { cors } : {}),
     authHook: (ctx) => {
       const authz = firstHeaderValue(ctx.request.headers ?? {}, "authorization").trim();
       if (!authz) {
@@ -1317,6 +1327,15 @@ async function runFixtureP1(fixture) {
   ids.queue("req_test_123");
 
   const limits = fixture.setup?.limits ?? {};
+  const corsSetup = fixture.setup?.cors ?? null;
+  const cors =
+    corsSetup && typeof corsSetup === "object"
+      ? {
+          allowedOrigins: corsSetup.allowed_origins,
+          allowCredentials: Boolean(corsSetup.allow_credentials),
+          allowHeaders: corsSetup.allow_headers,
+        }
+      : undefined;
   const app = runtime.createApp({
     tier: "p1",
     ids,
@@ -1324,6 +1343,7 @@ async function runFixtureP1(fixture) {
       maxRequestBytes: Number(limits.max_request_bytes ?? 0),
       maxResponseBytes: Number(limits.max_response_bytes ?? 0),
     },
+    ...(cors ? { cors } : {}),
     authHook: (ctx) => {
       const authz = firstHeaderValue(ctx.request.headers ?? {}, "authorization").trim();
       if (!authz) {
@@ -1377,6 +1397,15 @@ async function runFixtureP2(fixture) {
   const effects = { logs: [], metrics: [], spans: [] };
 
   const limits = fixture.setup?.limits ?? {};
+  const corsSetup = fixture.setup?.cors ?? null;
+  const cors =
+    corsSetup && typeof corsSetup === "object"
+      ? {
+          allowedOrigins: corsSetup.allowed_origins,
+          allowCredentials: Boolean(corsSetup.allow_credentials),
+          allowHeaders: corsSetup.allow_headers,
+        }
+      : undefined;
   const app = runtime.createApp({
     tier: "p2",
     ids,
@@ -1384,6 +1413,7 @@ async function runFixtureP2(fixture) {
       maxRequestBytes: Number(limits.max_request_bytes ?? 0),
       maxResponseBytes: Number(limits.max_response_bytes ?? 0),
     },
+    ...(cors ? { cors } : {}),
     authHook: (ctx) => {
       const authz = firstHeaderValue(ctx.request.headers ?? {}, "authorization").trim();
       if (!authz) {
@@ -1458,6 +1488,13 @@ function builtInAppTheoryHandler(runtime, name) {
   switch (name) {
     case "static_pong":
       return () => runtime.text(200, "pong");
+    case "sleep_50ms":
+      return async () => {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 50);
+        });
+        return runtime.text(200, "done");
+      };
     case "echo_path_params":
       return (ctx) => runtime.json(200, { params: ctx.params ?? {} });
     case "echo_request":
@@ -1559,6 +1596,8 @@ function builtInMiddleware(runtime, name) {
         ctx.middlewareTrace.push("mw_b");
         return next(ctx);
       };
+    case "timeout_5ms":
+      return runtime.timeoutMiddleware({ defaultTimeoutMs: 5 });
     default:
       return null;
   }

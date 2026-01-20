@@ -8,6 +8,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 
@@ -206,6 +207,10 @@ func responseFromLambdaFunctionURL(resp events.LambdaFunctionURLResponse) (appth
 var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 	"static_pong": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		return apptheory.Text(200, "pong"), nil
+	},
+	"sleep_50ms": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		time.Sleep(50 * time.Millisecond)
+		return apptheory.Text(200, "done"), nil
 	},
 	"echo_path_params": func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		return apptheory.JSON(200, map[string]any{

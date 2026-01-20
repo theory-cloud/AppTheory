@@ -1,0 +1,30 @@
+{
+  "id": "p0.routing.param_segment_colon",
+  "tier": "p0",
+  "name": "Lift-style :param route segments are supported",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/users/:id", "handler": "echo_path_params" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/users/123",
+      "query": {},
+      "headers": { "accept": ["application/json"] },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": { "params": { "id": "123" } },
+      "is_base64": false
+    }
+  }
+}
+
