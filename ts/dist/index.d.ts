@@ -211,12 +211,22 @@ export type Handler = (ctx: Context) => Response | Promise<Response>;
 
 export type Middleware = (ctx: Context, next: Handler) => Response | Promise<Response>;
 
+export type EventHandler = (ctx: EventContext, event: unknown) => unknown | Promise<unknown>;
+
+export type EventMiddleware = (
+  ctx: EventContext,
+  event: unknown,
+  next: () => unknown | Promise<unknown>,
+) => unknown | Promise<unknown>;
+
 export declare class EventContext {
   readonly ctx: unknown | null;
   requestId: string;
   remainingMs: number;
   now(): Date;
   newId(): string;
+  set(key: string, value: unknown): void;
+  get(key: string): unknown;
 }
 
 export interface WebSocketManagementClientLike {
@@ -347,6 +357,7 @@ export declare class App {
   put(pattern: string, handler: Handler): this;
   delete(pattern: string, handler: Handler): this;
   use(middleware: Middleware): this;
+  useEvents(middleware: EventMiddleware): this;
   webSocket(routeKey: string, handler: Handler): this;
   sqs(queueName: string, handler: SQSHandler): this;
   eventBridge(selector: EventBridgeSelector, handler: EventBridgeHandler): this;
@@ -394,6 +405,24 @@ export declare function normalizeStage(stage: string): string;
 export declare function baseName(appName: string, stage: string, tenant?: string): string;
 
 export declare function resourceName(appName: string, resource: string, stage: string, tenant?: string): string;
+
+export declare function sanitizeLogString(value: string): string;
+
+export declare function sanitizeFieldValue(key: string, value: unknown): unknown;
+
+export declare function sanitizeJSON(jsonBytes: Uint8Array | string): string;
+
+export interface XMLSanitizationPattern {
+  name: string;
+  pattern: RegExp;
+  maskingFunc: (match: string) => string;
+}
+
+export declare function sanitizeXML(xmlString: string, patterns: XMLSanitizationPattern[]): string;
+
+export declare const paymentXMLPatterns: XMLSanitizationPattern[];
+
+export declare const rapidConnectXMLPatterns: XMLSanitizationPattern[];
 
 export declare class TestEnv {
   readonly clock: ManualClock;

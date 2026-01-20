@@ -27,6 +27,16 @@ Non-goals:
 - **Portable behavior:** where sanitization output affects logged payloads used across languages, keep behavior aligned
   (or explicitly document differences).
 
+## Current status (AppTheory `premain`)
+
+- Go: `pkg/sanitization` provides:
+  - `SanitizeLogString` (log forging prevention)
+  - `SanitizeJSON` (recursive JSON sanitization with common sensitive-field redaction + `body`-JSON handling)
+  - `SanitizeXML` + `PaymentXMLPatterns` (RapidConnect-friendly XML masking)
+- TypeScript: `ts/dist/index.js` exports `sanitizeLogString`, `sanitizeJSON`, `sanitizeXML`, `paymentXMLPatterns`.
+- Python: `py/src/apptheory/sanitization.py` exports `sanitize_log_string`, `sanitize_json`, `sanitize_xml`,
+  `payment_xml_patterns`.
+
 ## Milestones
 
 ### Z0 — Inventory + policy decision (K3-focused)
@@ -74,4 +84,3 @@ Non-goals:
 - **False sense of safety:** document that sanitization is a last line of defense; avoid logging secrets in the first
   place.
 - **Breaking changes:** treat sanitization behavior as stability-sensitive; add tests before expanding rules.
-

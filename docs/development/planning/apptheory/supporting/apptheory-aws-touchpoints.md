@@ -10,10 +10,12 @@ fakes/mocks shipped in the language testkits.
 Current (implemented for Lift parity):
 
 - API Gateway Management API (WebSockets): equivalent to Lift `pkg/streamer`
+- SNS (error notifications): optional replacement for Lift `observability/zap` SNS alerts
 
 | Language | Wrapped AWS clients | Notes |
 | --- | --- | --- |
 | Go | `apigatewaymanagementapi` (AWS SDK v2) | Wrapped by `pkg/streamer` with strict fakes in `testkit`. |
+| Go | `sns` (AWS SDK v2) | Used by `pkg/observability/zap` for optional error notifications; strict fake exists in `testkit`. |
 | TypeScript | HTTP+SigV4 wrapper (no AWS SDK dependency) | `WebSocketManagementClient` signs requests and uses `fetch`; strict fake exists. |
 | Python | `boto3.client("apigatewaymanagementapi")` (optional dependency) | `streamer.Client` uses boto3 when installed; strict fake exists. |
 

@@ -41,11 +41,16 @@ Non-goals:
   - TS: `app.use(mw)` where `mw(ctx, next)` can be async
   - Py: `app.use(mw)` where `mw(ctx, next)` is sync
 - Context value bag exists (portable `Set`/`Get`):
-  - Go: `ctx.Set(key, value)` / `ctx.Get(key)`
-  - TS: `ctx.set(key, value)` / `ctx.get(key)`
-  - Py: `ctx.set(key, value)` / `ctx.get(key, default=None)`
-- Middleware applies to HTTP + WebSocket handlers; non-HTTP event trigger middleware remains an explicit follow-on.
-- Contract fixture coverage exists for middleware + ctx bag: `contract-tests/fixtures/m12/middleware-ctx-bag.json`.
+  - Go: `ctx.Set(key, value)` / `ctx.Get(key)` (HTTP `Context` + non-HTTP `EventContext`)
+  - TS: `ctx.set(key, value)` / `ctx.get(key)` (HTTP `Context` + non-HTTP `EventContext`)
+  - Py: `ctx.set(key, value)` / `ctx.get(key, default=None)` (HTTP `Context` + non-HTTP `EventContext`)
+- Middleware applies to HTTP + WebSocket handlers; non-HTTP event trigger middleware is explicit opt-in:
+  - Go: `app.UseEvents(...)` wraps SQS/EventBridge/DynamoDB Streams handlers
+  - TS: `app.useEvents(...)` wraps SQS/EventBridge/DynamoDB Streams handlers
+  - Py: `app.use_events(...)` wraps SQS/EventBridge/DynamoDB Streams handlers
+- Contract fixture coverage exists for middleware + ctx bag:
+  - HTTP: `contract-tests/fixtures/m12/middleware-ctx-bag.json`
+  - Events: `contract-tests/fixtures/m1/sqs-event-middleware-ctx-bag.json` (and DynamoDB/EventBridge equivalents)
 
 ## Milestones
 

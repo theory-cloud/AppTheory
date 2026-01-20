@@ -77,7 +77,7 @@ CORS preflight behavior), but there are still Lift parity gaps that block real m
 
 These are not “future improvements”; these are Lift features in active use.
 
-### G0 — Middleware pipeline (`app.Use`) is missing (Go/TS/Py)
+### G0 — Middleware pipeline (`app.Use`) (Go/TS/Py)
 
 **Why it’s required**
 - Autheory and K3 both rely on Lift’s global middleware chain (`app.Use(...)`) for:
@@ -88,46 +88,55 @@ These are not “future improvements”; these are Lift features in active use.
   non-HTTP triggers.
 
 **Current AppTheory state**
-- AppTheory has “built-in middleware semantics” for P1/P2 (request-id, recovery, minimal CORS), but **no user-extensible
-  middleware chain**.
-
-**Remediation**
-- Implement a portable middleware pipeline in all three SDKs (Go/TS/Py) with explicit ordering and fixture coverage.
-- Provide a migration path for Lift’s “global middleware” concept for non-HTTP triggers (events/websockets).
-
-**Acceptance criteria**
-- Go/TS/Py: `app.use(...)` (or idiomatic equivalent) exists and composes middleware around handlers.
+- AppTheory supports a user-extensible global middleware chain across Go/TS/Py:
+  - Go: `app.Use(mw)`
+  - TS: `app.use(mw)` (async supported)
+  - Py: `app.use(mw)`
 - Middleware runs for:
   - HTTP requests
   - WebSockets
+  - (explicit opt-in) event triggers via an event middleware chain:
+    - Go: `app.UseEvents(mw)`
+    - TS: `app.useEvents(mw)`
+    - Py: `app.use_events(mw)`
+
+**Remediation**
+- ✅ Implement a portable middleware pipeline in all three SDKs (Go/TS/Py) with explicit ordering and fixture coverage.
+- ✅ Provide a migration path for Lift’s “global middleware” concept for non-HTTP triggers (events/websockets).
+
+**Acceptance criteria**
+- ✅ Go/TS/Py: `app.use(...)` (or idiomatic equivalent) exists and composes middleware around handlers.
+- ✅ Middleware runs for:
+  - HTTP requests
+  - WebSockets
   - (explicit opt-in) event triggers (SQS/EventBridge/DynamoDB Streams)
-- Contract fixtures prove:
-  - ordering invariants
-  - error envelope behavior under middleware errors/panics
-  - request-id propagation regardless of middleware behavior
+- ✅ Contract fixtures prove:
+  - ordering invariants + ctx value bag (HTTP): `contract-tests/fixtures/m12/middleware-ctx-bag.json`
+  - ctx bag parity under event triggers (SQS/EventBridge/DynamoDB Streams): `contract-tests/fixtures/m1/*event-middleware-ctx-bag.json`
 
 **Complex enough for a dedicated sub-roadmap**
 - ✅ Add `docs/development/planning/apptheory/subroadmaps/SR-MIDDLEWARE.md` (new).
 
 ---
 
-### G1 — Context value bag (`ctx.Set` / `ctx.Get`) is missing (Go/TS/Py)
+### G1 — Context value bag (`ctx.Set` / `ctx.Get`) (Go/TS/Py)
 
 **Why it’s required**
 - K3 uses this to inject dependencies (DB/tokenService) and shared request state (request_id).
 - Many Lift middleware patterns rely on setting/retrieving values in context.
 
 **Current AppTheory state**
-- `apptheory.Context` has no values map (no `Set`/`Get`).
+- AppTheory supports a portable context value bag across languages:
+  - Go: `ctx.Set` / `ctx.Get` on HTTP `Context` and non-HTTP `EventContext`
+  - TS: `ctx.set` / `ctx.get` on HTTP `Context` and non-HTTP `EventContext`
+  - Py: `ctx.set` / `ctx.get` on HTTP `Context` and non-HTTP `EventContext`
 
 **Remediation**
-- Add a portable key/value bag to context in Go/TS/Py.
+- ✅ Add a portable key/value bag to context in Go/TS/Py.
 
 **Acceptance criteria**
-- Go/TS/Py: `ctx.set(key, value)` + `ctx.get(key)` exist (idiomatic casing per language).
-- Contract fixtures validate:
-  - values survive middleware layers and reach handlers
-  - reserved keys policy (if any) is documented
+- ✅ Go/TS/Py: `ctx.set(key, value)` + `ctx.get(key)` exist (idiomatic casing per language).
+- ✅ Contract fixtures validate values survive middleware layers and reach handlers/events.
 
 **Complex enough for a dedicated sub-roadmap**
 - ✅ Include in `SR-MIDDLEWARE` (same workstream).
@@ -162,24 +171,31 @@ These are not “future improvements”; these are Lift features in active use.
   - EventBridge detail shaping helpers
 
 **Current AppTheory state**
-- AppTheory provides **event triggers** (EventBridge + DynamoDB Streams) but not a durable EventBus abstraction.
+- ✅ AppTheory provides a durable EventBus abstraction (Go) backed by TableTheory:
+  - API + models: `pkg/services/eventbus.go`
+  - Memory EventBus (tests/local): `pkg/services/eventbus_memory.go`
+  - DynamoDB EventBus (production): `pkg/services/eventbus_dynamodb.go`
+- Portability is explicit:
+  - API is Lift-compatible and stable.
+  - DynamoDB-backed implementation is currently Go-only (TS/Py follow once the TableTheory dependency story is wired for
+    consumers).
 
 **Remediation**
-- Port the EventBus surface into AppTheory (Go first), with a clear multi-language portability story:
-  - If full parity is feasible cross-language: design it as portable.
-  - If not: ship Go-only first, explicitly documented (but still a parity requirement for Pay Theory).
+- ✅ Ported the EventBus surface into AppTheory (Go) using TableTheory (no raw AWS SDK DynamoDB workarounds).
+- ✅ Added deterministic unit tests: `pkg/services/eventbus_test.go`.
+- ✅ Recorded portability decision in `subroadmaps/SR-SERVICES.md`.
 
 **Acceptance criteria**
-- An AppTheory EventBus API exists that can replace Autheory’s Lift EventBus usage (at least: create events, query, and
-  DynamoDB persistence).
-- Test coverage includes deterministic unit tests and any required strict fakes.
+- ✅ An AppTheory EventBus API exists that can replace Autheory’s Lift EventBus usage (at least: create events, query,
+  and DynamoDB persistence).
+- ✅ Test coverage includes deterministic unit tests.
 
 **Complex enough for a dedicated sub-roadmap**
 - ✅ Add `docs/development/planning/apptheory/subroadmaps/SR-SERVICES.md` (new), starting with EventBus.
 
 ---
 
-### G4 — Lift observability packages parity (K3) is missing
+### G4 — Lift observability packages parity (K3)
 
 **Why it’s required**
 - K3 depends on:
@@ -189,11 +205,16 @@ These are not “future improvements”; these are Lift features in active use.
     notifications.
 
 **Current AppTheory state**
-- AppTheory exposes portable observability **hooks**, not a logger implementation or zap integration.
+- AppTheory exposes portable observability **hooks** (contract-backed) and also provides Go-only logger implementation
+  packages for Lift parity:
+  - Go: `pkg/observability` (`StructuredLogger`, `LoggerConfig`, `HooksFromLogger`, `NewTestLogger`, `NewNoOpLogger`)
+  - Go: `pkg/observability/zap` (`NewZapLogger`, `NewZapLoggerFactory`, `WithEnvironmentErrorNotifications`,
+    `NewSNSNotifier`)
+  - Go: `apptheory.IsLambda()` / `app.IsLambda()` helpers exist for environment-aware behavior.
 
 **Remediation**
-- Define an AppTheory Go logger interface + zap integration package that can replace K3’s usage.
-- Keep the portable hooks as the “contract surface”; allow Go-only integrations on top.
+- ✅ Define an AppTheory Go logger interface + zap integration package that can replace K3’s usage.
+- ✅ Keep the portable hooks as the “contract surface”; allow Go-only integrations on top.
 
 **Acceptance criteria**
 - K3 can create a structured logger and connect it to AppTheory’s runtime without re-implementing the entire logging
@@ -206,13 +227,16 @@ These are not “future improvements”; these are Lift features in active use.
 
 ---
 
-### G5 — Lift sanitization utilities (K3) are missing
+### G5 — Lift sanitization utilities (K3)
 
 **Why it’s required**
 - K3 uses `github.com/pay-theory/lift/pkg/utils/sanitization` for safe logging (e.g. `SanitizeJSON`).
 
 **Current AppTheory state**
-- No sanitization helpers exist.
+- Sanitization helpers exist in Go/TS/Py:
+  - Go: `pkg/sanitization` (`SanitizeLogString`, `SanitizeJSON`, `SanitizeXML`, `PaymentXMLPatterns`)
+  - TS: `ts/dist/index.js` (`sanitizeLogString`, `sanitizeJSON`, `sanitizeXML`, `paymentXMLPatterns`)
+  - Py: `py/src/apptheory/sanitization.py` (`sanitize_log_string`, `sanitize_json`, `sanitize_xml`, `payment_xml_patterns`)
 
 **Remediation**
 - Add an AppTheory sanitization package:

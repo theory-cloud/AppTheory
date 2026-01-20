@@ -15,6 +15,14 @@ import (
 func runFixtureM1(f Fixture) error {
 	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
 
+	for _, name := range f.Setup.Middlewares {
+		mw := builtInM1EventMiddleware(name)
+		if mw == nil {
+			return fmt.Errorf("unknown event middleware %q", name)
+		}
+		app.UseEvents(mw)
+	}
+
 	for _, r := range f.Setup.SQS {
 		queue := strings.TrimSpace(r.Queue)
 		handler := builtInSQSHandler(r.Handler)
@@ -55,6 +63,35 @@ func runFixtureM1(f Fixture) error {
 		return err
 	}
 	return compareFixtureOutputJSON(f, out)
+}
+
+func builtInM1EventMiddleware(name string) apptheory.EventMiddleware {
+	switch strings.TrimSpace(name) {
+	case "evt_mw_a":
+		return func(next apptheory.EventHandler) apptheory.EventHandler {
+			return func(ctx *apptheory.EventContext, event any) (any, error) {
+				ctx.Set("mw", "ok")
+				ctx.Set("trace", []string{"evt_mw_a"})
+				return next(ctx, event)
+			}
+		}
+	case "evt_mw_b":
+		return func(next apptheory.EventHandler) apptheory.EventHandler {
+			return func(ctx *apptheory.EventContext, event any) (any, error) {
+				var trace []string
+				if existing := ctx.Get("trace"); existing != nil {
+					if values, ok := existing.([]string); ok {
+						trace = append([]string(nil), values...)
+					}
+				}
+				trace = append(trace, "evt_mw_b")
+				ctx.Set("trace", trace)
+				return next(ctx, event)
+			}
+		}
+	default:
+		return nil
+	}
 }
 
 func compareFixtureOutputJSON(f Fixture, out any) error {
@@ -111,7 +148,25 @@ func builtInRecordHandler[T any](
 	}
 }
 
+func requireEventMiddleware(ctx *apptheory.EventContext) error {
+	if ctx.Get("mw") != "ok" {
+		return errors.New("missing middleware value")
+	}
+	existing := ctx.Get("trace")
+	trace, ok := existing.([]string)
+	if !ok || strings.Join(trace, ",") != "evt_mw_a,evt_mw_b" {
+		return errors.New("bad trace")
+	}
+	return nil
+}
+
 func builtInSQSHandler(name string) apptheory.SQSHandler {
+	if strings.TrimSpace(name) == "sqs_requires_event_middleware" {
+		return func(ctx *apptheory.EventContext, _ events.SQSMessage) error {
+			return requireEventMiddleware(ctx)
+		}
+	}
+
 	handler := builtInRecordHandler[events.SQSMessage](
 		name,
 		"sqs_noop",
@@ -126,6 +181,12 @@ func builtInSQSHandler(name string) apptheory.SQSHandler {
 }
 
 func builtInDynamoDBStreamHandler(name string) apptheory.DynamoDBStreamHandler {
+	if strings.TrimSpace(name) == "ddb_requires_event_middleware" {
+		return func(ctx *apptheory.EventContext, _ events.DynamoDBEventRecord) error {
+			return requireEventMiddleware(ctx)
+		}
+	}
+
 	handler := builtInRecordHandler[events.DynamoDBEventRecord](
 		name,
 		"ddb_noop",
@@ -148,6 +209,13 @@ func builtInEventBridgeHandler(name string) apptheory.EventBridgeHandler {
 	case "eventbridge_static_b":
 		return func(_ *apptheory.EventContext, _ events.EventBridgeEvent) (any, error) {
 			return map[string]any{"handler": "b"}, nil
+		}
+	case "eventbridge_echo_event_middleware":
+		return func(ctx *apptheory.EventContext, _ events.EventBridgeEvent) (any, error) {
+			return map[string]any{
+				"mw":    ctx.Get("mw"),
+				"trace": ctx.Get("trace"),
+			}, nil
 		}
 	default:
 		return nil

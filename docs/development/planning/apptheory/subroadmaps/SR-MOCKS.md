@@ -19,6 +19,23 @@ Non-goals:
 - Full-featured local AWS emulation (LocalStack-style) unless it becomes necessary; prefer strict fakes for unit tests and
   DynamoDB Local only when required by integration semantics.
 
+## Current status (AppTheory `v0.2.0-rc.1`)
+
+- Determinism primitives exist (clock + IDs):
+  - Go: `Clock` + `IDGenerator` are injectable via app options; `testkit.New()` provides `ManualClock` and
+    `ManualIDGenerator`.
+  - TS: clock + ID generators are injectable via `new App({ clock, ids })` and used by `ctx.now()` / `ctx.newId()`.
+  - Py: clock + ID generators are injectable via `App(clock=..., id_generator=...)` and used by `ctx.now()` /
+    `ctx.new_id()`.
+- Local invocation and event builders exist per language (no AWS credentials required):
+  - Go: `apptheory/testkit` builds synthetic HTTP/WebSocket/SQS/EventBridge/DynamoDB events.
+  - TS: event builders are exported from `ts/dist/index.js`.
+  - Py: event builders live in `py/src/apptheory/testkit.py`.
+- Strict fakes exist for AppTheory-owned AWS clients:
+  - Go: WebSocket Management API client fake (`testkit/websockets.go`), SNS fake (`testkit/sns.go`)
+  - TS: WebSocket management client strict fake (no AWS SDK dependency)
+  - Py: WebSocket management client strict fake (boto3 optional)
+
 ## Milestones
 
 ### K0 — Inventory AWS touchpoints (what AppTheory wraps)

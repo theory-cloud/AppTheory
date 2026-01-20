@@ -30,6 +30,8 @@ Handler = Callable[[Context], Response]
 Middleware = Callable[[Context, Handler], Response]
 AuthHook = Callable[[Context], str]
 PolicyHook = Callable[[Context], "PolicyDecision | None"]
+EventHandler = Callable[[EventContext, dict[str, Any]], Any]
+EventMiddleware = Callable[[EventContext, dict[str, Any], Callable[[], Any]], Any]
 SQSHandler = Callable[[EventContext, dict[str, Any]], None]
 DynamoDBStreamHandler = Callable[[EventContext, dict[str, Any]], None]
 EventBridgeHandler = Callable[[EventContext, dict[str, Any]], Any]
@@ -117,6 +119,7 @@ class App:
     _ws_routes: dict[str, WebSocketHandler]
     _websocket_client_factory: WebSocketClientFactory | None
     _middlewares: list[Middleware]
+    _event_middlewares: list[EventMiddleware]
 
     def __init__(
         self,
@@ -147,6 +150,7 @@ class App:
         self._ws_routes = {}
         self._websocket_client_factory = websocket_client_factory or _default_websocket_client_factory
         self._middlewares = []
+        self._event_middlewares = []
 
     def handle(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
         self._router.add(method, pattern, handler, auth_required=auth_required)
@@ -204,6 +208,12 @@ class App:
         self._middlewares.append(middleware)
         return self
 
+    def use_events(self, middleware: EventMiddleware) -> App:
+        if middleware is None:
+            return self
+        self._event_middlewares.append(middleware)
+        return self
+
     def _apply_middlewares(self, handler: Handler) -> Handler:
         wrapped = handler
         for middleware in reversed(self._middlewares):
@@ -213,6 +223,21 @@ class App:
             def apply_one(next_handler: Handler, mw: Middleware = middleware) -> Handler:
                 def _wrapped(ctx: Context) -> Response:
                     return mw(ctx, next_handler)
+
+                return _wrapped
+
+            wrapped = apply_one(wrapped)
+        return wrapped
+
+    def _apply_event_middlewares(self, handler: EventHandler) -> EventHandler:
+        wrapped = handler
+        for middleware in reversed(self._event_middlewares):
+            if middleware is None:
+                continue
+
+            def apply_one(next_handler: EventHandler, mw: EventMiddleware = middleware) -> EventHandler:
+                def _wrapped(ctx: EventContext, event: dict[str, Any]) -> Any:
+                    return mw(ctx, event, lambda: next_handler(ctx, event))
 
                 return _wrapped
 
@@ -590,12 +615,13 @@ class App:
             return {"batchItemFailures": failures}
 
         evt_ctx = self._event_context(ctx)
+        wrapped = self._apply_event_middlewares(handler)
         failures = []
         for record in records:
             if not isinstance(record, dict):
                 continue
             try:
-                handler(evt_ctx, record)
+                wrapped(evt_ctx, record)
             except Exception:  # noqa: BLE001
                 msg_id = str(record.get("messageId") or "").strip()
                 if msg_id:
@@ -628,7 +654,8 @@ class App:
         handler = self._eventbridge_handler_for_event(event)
         if handler is None:
             return None
-        return handler(self._event_context(ctx), event)
+        wrapped = self._apply_event_middlewares(handler)
+        return wrapped(self._event_context(ctx), event)
 
     def _dynamodb_handler_for_event(self, event: dict[str, Any]) -> DynamoDBStreamHandler | None:
         records = event.get("Records") or []
@@ -660,12 +687,13 @@ class App:
             return {"batchItemFailures": failures}
 
         evt_ctx = self._event_context(ctx)
+        wrapped = self._apply_event_middlewares(handler)
         failures = []
         for record in records:
             if not isinstance(record, dict):
                 continue
             try:
-                handler(evt_ctx, record)
+                wrapped(evt_ctx, record)
             except Exception:  # noqa: BLE001
                 event_id = str(record.get("eventID") or "").strip()
                 if event_id:
