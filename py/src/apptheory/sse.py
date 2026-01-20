@@ -63,4 +63,3 @@ def sse(status: int, events: list[SSEEvent]) -> Response:
             is_base64=False,
         )
     )
-

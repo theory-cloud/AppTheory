@@ -57,4 +57,3 @@ class Client:
             raise RuntimeError("apptheory: websocket connection id is empty")
         client = self._client()
         client.delete_connection(ConnectionId=conn)
-

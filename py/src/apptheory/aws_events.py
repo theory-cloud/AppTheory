@@ -71,4 +71,3 @@ def build_dynamodb_stream_event(stream_arn: str, records: list[dict[str, Any]] |
             }
         )
     return {"Records": out_records}
-
