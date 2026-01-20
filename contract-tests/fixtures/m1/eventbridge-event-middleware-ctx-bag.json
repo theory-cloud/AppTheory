@@ -1,0 +1,27 @@
+{
+  "id": "m1.eventbridge.event_middleware.ctx_bag",
+  "tier": "m1",
+  "name": "EventBridge: event middleware + ctx.Set/Get",
+  "setup": {
+    "middlewares": ["evt_mw_a", "evt_mw_b"],
+    "eventbridge": [{ "rule_name": "rule-a", "handler": "eventbridge_echo_event_middleware" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "eventbridge",
+      "event": {
+        "version": "0",
+        "id": "evt-1",
+        "detail-type": "custom",
+        "source": "apptheory.test",
+        "account": "000000000000",
+        "time": "1970-01-01T00:00:00Z",
+        "region": "us-east-1",
+        "resources": ["arn:aws:events:us-east-1:000000000000:rule/rule-a"],
+        "detail": {}
+      }
+    }
+  },
+  "expect": { "output_json": { "mw": "ok", "trace": ["evt_mw_a", "evt_mw_b"] } }
+}
+

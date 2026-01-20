@@ -144,6 +144,7 @@ export class EventContext {
     this._ids = ids ?? new RandomIdGenerator();
     this.requestId = requestId ?? "";
     this.remainingMs = Number(remainingMs ?? 0);
+    this._values = new Map();
   }
 
   now() {
@@ -152,6 +153,18 @@ export class EventContext {
 
   newId() {
     return this._ids.newId();
+  }
+
+  set(key, value) {
+    const k = String(key ?? "").trim();
+    if (!k) return;
+    this._values.set(k, value);
+  }
+
+  get(key) {
+    const k = String(key ?? "").trim();
+    if (!k) return undefined;
+    return this._values.get(k);
   }
 }
 
@@ -373,6 +386,298 @@ export function resourceName(appName, resource, stage, tenant = "") {
   return ten ? `${app}-${ten}-${res}-${stg}` : `${app}-${res}-${stg}`;
 }
 
+const REDACTED_VALUE = "[REDACTED]";
+
+const allowedSanitizeFields = new Set(["card_bin", "card_brand", "card_type"]);
+
+const sensitiveSanitizeFields = new Map([
+  ["cvv", "fully"],
+  ["security_code", "fully"],
+  ["cvv2", "fully"],
+  ["cvc", "fully"],
+  ["cvc2", "fully"],
+
+  ["cardholder", "fully"],
+  ["cardholder_name", "fully"],
+
+  ["card_number", "partial"],
+  ["number", "partial"],
+
+  ["account_number", "partial"],
+  ["ssn", "partial"],
+  ["tin", "partial"],
+  ["tax_id", "partial"],
+  ["ein", "partial"],
+
+  ["password", "fully"],
+  ["secret", "fully"],
+  ["private_key", "fully"],
+  ["secret_key", "fully"],
+
+  ["api_token", "fully"],
+  ["api_key_id", "partial"],
+  ["authorization", "fully"],
+  ["authorization_id", "fully"],
+  ["authorization_header", "fully"],
+]);
+
+export function sanitizeLogString(value) {
+  const v = String(value ?? "");
+  if (!v) return v;
+  return v.replace(/\r/g, "").replace(/\n/g, "");
+}
+
+function stripNonDigits(value) {
+  return String(value ?? "").replace(/[^\d]+/g, "");
+}
+
+function maskRestrictedString(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return REDACTED_VALUE;
+
+  const digits = stripNonDigits(raw);
+  if (digits.length >= 4) {
+    if (digits.length === 4) return "****";
+    return `${"*".repeat(digits.length - 4)}${digits.slice(-4)}`;
+  }
+
+  if (raw.length >= 4) return `...${raw.slice(-4)}`;
+  return REDACTED_VALUE;
+}
+
+function maskCardNumberString(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return REDACTED_VALUE;
+
+  const digits = stripNonDigits(raw);
+  if (digits.length < 4) return REDACTED_VALUE;
+  if (digits.length > 10) {
+    return `${digits.slice(0, 6)}${"*".repeat(digits.length - 10)}${digits.slice(-4)}`;
+  }
+  if (digits.length > 4) {
+    return `${"*".repeat(digits.length - 4)}${digits.slice(-4)}`;
+  }
+  return "****";
+}
+
+function sanitizeValue(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") return sanitizeLogString(value);
+  if (value instanceof Uint8Array) return sanitizeLogString(Buffer.from(value).toString("utf8"));
+  if (Array.isArray(value)) return value.map((v) => sanitizeValue(v));
+  if (typeof value === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = sanitizeFieldValue(k, v);
+    }
+    return out;
+  }
+  return sanitizeLogString(String(value));
+}
+
+export function sanitizeFieldValue(key, value) {
+  const k = String(key ?? "").trim().toLowerCase();
+  if (!k) return sanitizeValue(value);
+  if (allowedSanitizeFields.has(k)) return sanitizeValue(value);
+
+  const explicit = sensitiveSanitizeFields.get(k);
+  if (explicit === "fully") return REDACTED_VALUE;
+  if (explicit === "partial") {
+    if (k === "card_number" || k === "number") return maskCardNumberString(value);
+    return maskRestrictedString(value);
+  }
+
+  const blockedSubstrings = ["secret", "token", "password", "private_key", "client_secret", "api_key", "authorization"];
+  for (const s of blockedSubstrings) {
+    if (k.includes(s)) return REDACTED_VALUE;
+  }
+
+  return sanitizeValue(value);
+}
+
+export function sanitizeJSON(jsonBytes) {
+  const buf = typeof jsonBytes === "string" ? Buffer.from(jsonBytes, "utf8") : toBuffer(jsonBytes);
+  if (!buf || buf.length === 0) return "(empty)";
+
+  let data;
+  try {
+    data = JSON.parse(buf.toString("utf8"));
+  } catch (err) {
+    const msg = err && typeof err === "object" && "message" in err ? String(err.message) : String(err);
+    return `(malformed JSON: ${msg})`;
+  }
+
+  const sanitized = sanitizeJSONValue(data);
+  try {
+    return JSON.stringify(sanitized, null, 2);
+  } catch {
+    return "(error marshaling sanitized JSON)";
+  }
+}
+
+function sanitizeJSONValue(value) {
+  if (value === null || value === undefined) return null;
+  if (Array.isArray(value)) return value.map((v) => sanitizeJSONValue(v));
+  if (typeof value !== "object") return sanitizeValue(value);
+
+  const out = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (key === "body" && typeof raw === "string") {
+      try {
+        const parsed = JSON.parse(raw);
+        out[key] = JSON.stringify(sanitizeJSONValue(parsed));
+        continue;
+      } catch {
+        // fall through
+      }
+    }
+    out[key] = sanitizeFieldValue(key, raw);
+  }
+  return out;
+}
+
+export function sanitizeXML(xmlString, patterns) {
+  let out = String(xmlString ?? "");
+  const list = Array.isArray(patterns) ? patterns : [];
+  for (const p of list) {
+    if (!p || !(p.pattern instanceof RegExp) || typeof p.maskingFunc !== "function") continue;
+    out = out.replace(p.pattern, (match) => p.maskingFunc(match));
+  }
+  return out;
+}
+
+function maskCardNumberXML(match) {
+  const m = String(match ?? "");
+  const isEscaped = m.includes("&gt;");
+
+  let start;
+  let end;
+  if (isEscaped) {
+    start = m.indexOf("&gt;") + 4;
+    end = m.lastIndexOf("&lt;");
+  } else {
+    start = m.indexOf(">") + 1;
+    end = m.lastIndexOf("<");
+  }
+
+  if (end > start) {
+    const number = m.slice(start, end);
+    const masked = maskCardNumberString(number);
+    return m.slice(0, start) + masked + m.slice(end);
+  }
+  return m;
+}
+
+function maskCompletelyXML(replacement) {
+  const rep = String(replacement ?? "");
+  return (match) => {
+    const m = String(match ?? "");
+    const isEscaped = m.includes("&gt;");
+
+    let start;
+    let end;
+    if (isEscaped) {
+      start = m.indexOf("&gt;") + 4;
+      end = m.lastIndexOf("&lt;");
+    } else {
+      start = m.indexOf(">") + 1;
+      end = m.lastIndexOf("<");
+    }
+
+    if (end >= start) {
+      return m.slice(0, start) + rep + m.slice(end);
+    }
+    return m;
+  };
+}
+
+function maskTokenLastFourXML(match) {
+  const m = String(match ?? "");
+  const isEscaped = m.includes("&gt;");
+
+  if (m.includes("><") || m.includes("&gt;&lt;")) return m;
+
+  let start;
+  let end;
+  if (isEscaped) {
+    start = m.indexOf("&gt;") + 4;
+    end = m.lastIndexOf("&lt;");
+  } else {
+    start = m.indexOf(">") + 1;
+    end = m.lastIndexOf("<");
+  }
+
+  if (end > start) {
+    const token = m.slice(start, end);
+    const trimmed = String(token ?? "");
+    if (trimmed.length > 4) {
+      const masked = `${"*".repeat(trimmed.length - 4)}${trimmed.slice(-4)}`;
+      return m.slice(0, start) + masked + m.slice(end);
+    }
+  }
+  return m;
+}
+
+export const paymentXMLPatterns = [
+  {
+    name: "AcctNum",
+    pattern: /(<AcctNum>[^<]*<\/AcctNum>|&lt;AcctNum&gt;[^&]*&lt;\/AcctNum&gt;)/gi,
+    maskingFunc: maskCardNumberXML,
+  },
+  {
+    name: "CardNum",
+    pattern: /(<CardNum>[^<]*<\/CardNum>|&lt;CardNum&gt;[^&]*&lt;\/CardNum&gt;)/gi,
+    maskingFunc: maskCardNumberXML,
+  },
+  {
+    name: "CardNumber",
+    pattern: /(<CardNumber>[^<]*<\/CardNumber>|&lt;CardNumber&gt;[^&]*&lt;\/CardNumber&gt;)/gi,
+    maskingFunc: maskCardNumberXML,
+  },
+  {
+    name: "TrackData",
+    pattern: /(<TrackData>[^<]*<\/TrackData>|&lt;TrackData&gt;[^&]*&lt;\/TrackData&gt;)/gi,
+    maskingFunc: maskCompletelyXML(REDACTED_VALUE),
+  },
+  {
+    name: "CVV",
+    pattern: /(<CVV>[^<]*<\/CVV>|&lt;CVV&gt;[^&]*&lt;\/CVV&gt;)/gi,
+    maskingFunc: maskCompletelyXML(REDACTED_VALUE),
+  },
+  {
+    name: "CVV2",
+    pattern: /(<CVV2>[^<]*<\/CVV2>|&lt;CVV2&gt;[^&]*&lt;\/CVV2&gt;)/gi,
+    maskingFunc: maskCompletelyXML(REDACTED_VALUE),
+  },
+  {
+    name: "CVC",
+    pattern: /(<CVC>[^<]*<\/CVC>|&lt;CVC&gt;[^&]*&lt;\/CVC&gt;)/gi,
+    maskingFunc: maskCompletelyXML(REDACTED_VALUE),
+  },
+  {
+    name: "ExpDate",
+    pattern: /(<ExpDate>[^<]*<\/ExpDate>|&lt;ExpDate&gt;[^&]*&lt;\/ExpDate&gt;)/gi,
+    maskingFunc: maskCompletelyXML(REDACTED_VALUE),
+  },
+  {
+    name: "ExpiryDate",
+    pattern: /(<ExpiryDate>[^<]*<\/ExpiryDate>|&lt;ExpiryDate&gt;[^&]*&lt;\/ExpiryDate&gt;)/gi,
+    maskingFunc: maskCompletelyXML(REDACTED_VALUE),
+  },
+  {
+    name: "Password",
+    pattern: /(<Password>[^<]*<\/Password>|&lt;Password&gt;[^&]*&lt;\/Password&gt;)/gi,
+    maskingFunc: maskCompletelyXML(REDACTED_VALUE),
+  },
+  {
+    name: "TransArmorToken",
+    pattern: /(<TransArmorToken>[^<]*<\/TransArmorToken>|&lt;TransArmorToken&gt;[^&]*&lt;\/TransArmorToken&gt;)/gi,
+    maskingFunc: maskTokenLastFourXML,
+  },
+];
+
+export const rapidConnectXMLPatterns = paymentXMLPatterns;
+
 export class App {
   constructor({ clock, ids, tier, limits, authHook, policyHook, observability, webSocketClientFactory } = {}) {
     this._router = new Router();
@@ -395,6 +700,7 @@ export class App {
     this._eventBridgeRoutes = [];
     this._dynamoDBRoutes = [];
     this._middlewares = [];
+    this._eventMiddlewares = [];
   }
 
   handle(method, pattern, handler, options = {}) {
@@ -424,6 +730,12 @@ export class App {
     return this;
   }
 
+  useEvents(middleware) {
+    if (typeof middleware !== "function") return this;
+    this._eventMiddlewares.push(middleware);
+    return this;
+  }
+
   _applyMiddlewares(handler) {
     if (typeof handler !== "function" || this._middlewares.length === 0) {
       return handler;
@@ -434,6 +746,20 @@ export class App {
       if (typeof mw !== "function") continue;
       const next = wrapped;
       wrapped = async (ctx) => mw(ctx, next);
+    }
+    return wrapped;
+  }
+
+  _applyEventMiddlewares(handler) {
+    if (typeof handler !== "function" || this._eventMiddlewares.length === 0) {
+      return handler;
+    }
+    let wrapped = handler;
+    for (let i = this._eventMiddlewares.length - 1; i >= 0; i -= 1) {
+      const mw = this._eventMiddlewares[i];
+      if (typeof mw !== "function") continue;
+      const next = wrapped;
+      wrapped = async (ctx, event) => mw(ctx, event, async () => next(ctx, event));
     }
     return wrapped;
   }
@@ -807,10 +1133,11 @@ export class App {
     }
 
     const evtCtx = this._eventContext(ctx);
+    const wrapped = this._applyEventMiddlewares(handler);
     const failures = [];
     for (const record of records) {
       try {
-        await handler(evtCtx, record);
+        await wrapped(evtCtx, record);
       } catch {
         const id = String(record?.messageId ?? "").trim();
         if (id) failures.push({ itemIdentifier: id });
@@ -845,7 +1172,8 @@ export class App {
     const handler = this._eventBridgeHandlerForEvent(event);
     if (!handler) return null;
     const evtCtx = this._eventContext(ctx);
-    return handler(evtCtx, event);
+    const wrapped = this._applyEventMiddlewares(handler);
+    return wrapped(evtCtx, event);
   }
 
   _dynamoDBHandlerForEvent(event) {
@@ -871,10 +1199,11 @@ export class App {
     }
 
     const evtCtx = this._eventContext(ctx);
+    const wrapped = this._applyEventMiddlewares(handler);
     const failures = [];
     for (const record of records) {
       try {
-        await handler(evtCtx, record);
+        await wrapped(evtCtx, record);
       } catch {
         const id = String(record?.eventID ?? "").trim();
         if (id) failures.push({ itemIdentifier: id });

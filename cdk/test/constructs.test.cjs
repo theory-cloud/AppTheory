@@ -215,3 +215,17 @@ test("AppTheoryDynamoDBStreamMapping synthesizes expected template", () => {
     expectSnapshot("dynamodb-stream-mapping", template);
   }
 });
+
+test("AppTheoryEventBusTable synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryEventBusTable(stack, "Events", { tableName: "apptheory-events" });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("eventbus-table", template);
+  } else {
+    expectSnapshot("eventbus-table", template);
+  }
+});

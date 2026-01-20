@@ -1,0 +1,31 @@
+{
+  "id": "m1.sqs.event_middleware.ctx_bag",
+  "tier": "m1",
+  "name": "SQS: event middleware + ctx.Set/Get",
+  "setup": {
+    "middlewares": ["evt_mw_a", "evt_mw_b"],
+    "sqs": [{ "queue": "queue-a", "handler": "sqs_requires_event_middleware" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "sqs",
+      "event": {
+        "Records": [
+          {
+            "messageId": "msg-1",
+            "receiptHandle": "rh-1",
+            "body": "ok",
+            "attributes": {},
+            "messageAttributes": {},
+            "md5OfBody": "",
+            "eventSource": "aws:sqs",
+            "eventSourceARN": "arn:aws:sqs:us-east-1:000000000000:queue-a",
+            "awsRegion": "us-east-1"
+          }
+        ]
+      }
+    }
+  },
+  "expect": { "output_json": { "batchItemFailures": [] } }
+}
+

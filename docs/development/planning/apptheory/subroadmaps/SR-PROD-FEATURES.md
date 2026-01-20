@@ -26,6 +26,15 @@ Non-goals:
 - Treating Lift production features as optional. Prioritize by real usage (Pay Theory + Lesser inventories), but missing
   Lift-required prod behavior is considered a parity gap until implemented.
 
+## Current status (AppTheory `premain`)
+
+- Portable observability hooks exist across Go/TS/Py (see runtime contract v0).
+- Go-only logger parity (Lift `pkg/observability` + `observability/zap`) exists:
+  - `pkg/observability` defines `StructuredLogger` + config/stats and provides `HooksFromLogger` to connect to
+    `apptheory.WithObservability`.
+  - `pkg/observability/zap` provides `NewZapLogger` / `NewZapLoggerFactory`, safe-by-default field sanitization, and an
+    optional SNS error notification notifier (`WithEnvironmentErrorNotifications` + `NewSNSNotifier`).
+
 ## Milestones
 
 ### P0 — Freeze portable boundaries (what must match)

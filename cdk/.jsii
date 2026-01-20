@@ -8780,6 +8780,202 @@
       ],
       "symbolId": "lib/eventbridge-handler:AppTheoryEventBridgeHandlerProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryEventBusTable": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBusTable",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/eventbus-table.ts",
+          "line": 21
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "optional": true,
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBusTableProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/eventbus-table.ts",
+        "line": 18
+      },
+      "name": "AppTheoryEventBusTable",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 19
+          },
+          "name": "table",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.Table"
+          }
+        }
+      ],
+      "symbolId": "lib/eventbus-table:AppTheoryEventBusTable"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryEventBusTableProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBusTableProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/eventbus-table.ts",
+        "line": 5
+      },
+      "name": "AppTheoryEventBusTableProps",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 7
+          },
+          "name": "billingMode",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.BillingMode"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 13
+          },
+          "name": "enableEventIdIndex",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 10
+          },
+          "name": "enablePointInTimeRecovery",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 11
+          },
+          "name": "enableStream",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 14
+          },
+          "name": "readCapacity",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 8
+          },
+          "name": "removalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 12
+          },
+          "name": "streamViewType",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.StreamViewType"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 6
+          },
+          "name": "tableName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 9
+          },
+          "name": "timeToLiveAttribute",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 15
+          },
+          "name": "writeCapacity",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/eventbus-table:AppTheoryEventBusTableProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryFunction": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -9448,5 +9644,5 @@
     }
   },
   "version": "0.2.0-rc.1",
-  "fingerprint": "ALadCkOwSgPxQvj2ViZ3xGcd6X7x/vGNdVtrJyd6gbY="
+  "fingerprint": "X2XV9Mv9N9GJcq7d0E01vdZLSizdO4tdK4fIvWciWog="
 }
