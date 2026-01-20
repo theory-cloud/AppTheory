@@ -1409,10 +1409,12 @@ class Router {
   add(method, pattern, handler, options = {}) {
     const normalizedMethod = normalizeMethod(method);
     const normalizedPattern = normalizePath(pattern);
+    const segments = normalizeRouteSegments(splitPath(normalizedPattern));
+    const normalizedPatternValue = segments.length > 0 ? `/${segments.join("/")}` : "/";
     this._routes.push({
       method: normalizedMethod,
-      pattern: normalizedPattern,
-      segments: splitPath(normalizedPattern),
+      pattern: normalizedPatternValue,
+      segments,
       handler,
       authRequired: Boolean(options?.authRequired),
     });
@@ -1455,6 +1457,17 @@ function splitPath(path) {
   const value = normalizePath(path).replace(/^\//, "");
   if (!value) return [];
   return value.split("/");
+}
+
+function normalizeRouteSegments(segments) {
+  if (!segments || segments.length === 0) return [];
+  return segments.map((segment) => {
+    const value = String(segment ?? "");
+    if (value.startsWith(":") && value.length > 1) {
+      return `{${value.slice(1)}}`;
+    }
+    return value;
+  });
 }
 
 function matchPath(patternSegments, pathSegments) {
