@@ -950,6 +950,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
             def gen():
                 yield b"a"
                 resp.headers["x-phase"] = ["after"]
+                resp.cookies.append("c=d; Path=/")
                 yield b"b"
 
             resp.body_stream = gen()
@@ -999,6 +1000,33 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
                         "ps": "para\u2029sep",
                     }
                 ),
+            )
+
+        return handler
+
+    if name == "cookies_from_set_cookie_header":
+        def handler(_ctx):
+            return runtime.Response(
+                status=200,
+                headers={
+                    "content-type": ["text/plain; charset=utf-8"],
+                    "set-cookie": ["a=b; Path=/", "c=d; Path=/"],
+                },
+                cookies=["e=f; Path=/"],
+                body=b"ok",
+                is_base64=False,
+            )
+
+        return handler
+
+    if name == "header_multivalue":
+        def handler(_ctx):
+            return runtime.Response(
+                status=200,
+                headers={"content-type": ["text/plain; charset=utf-8"], "x-multi": ["a", "b"]},
+                cookies=[],
+                body=b"ok",
+                is_base64=False,
             )
 
         return handler
@@ -1841,6 +1869,12 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
 
 def _fixture_policy_hook(runtime, ctx):
     headers = getattr(getattr(ctx, "request", None), "headers", {}) or {}
+    if str((headers.get("x-force-rate-limit-content-type") or [""])[0]).strip():
+        return runtime.PolicyDecision(
+            code="app.rate_limited",
+            message="rate limited",
+            headers={"retry-after": ["1"], "Content-Type": ["text/plain; charset=utf-8"]},
+        )
     if str((headers.get("x-force-rate-limit") or [""])[0]).strip():
         return runtime.PolicyDecision(
             code="app.rate_limited",

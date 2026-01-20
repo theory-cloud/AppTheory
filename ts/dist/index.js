@@ -2031,7 +2031,12 @@ function normalizeResponse(response) {
   const out = {};
   out.status = response.status ?? 200;
   out.headers = canonicalizeHeaders(response.headers);
-  out.cookies = Array.isArray(response.cookies) ? [...response.cookies] : [];
+  out.cookies = Array.isArray(response.cookies) ? response.cookies.map((c) => String(c)) : [];
+  const setCookie = out.headers["set-cookie"];
+  if (Array.isArray(setCookie) && setCookie.length > 0) {
+    out.cookies.push(...setCookie.map((c) => String(c)));
+    delete out.headers["set-cookie"];
+  }
   out.body = toBuffer(response.body);
   out.bodyStream = response.bodyStream !== null && response.bodyStream !== undefined ? normalizeBodyStream(response.bodyStream) : null;
   out.isBase64 = Boolean(response.isBase64);

@@ -1592,6 +1592,13 @@ async function runFixtureP2(fixture) {
       return "authorized";
     },
     policyHook: (ctx) => {
+      if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-rate-limit-content-type")) {
+        return {
+          code: "app.rate_limited",
+          message: "rate limited",
+          headers: { "retry-after": ["1"], "Content-Type": ["text/plain; charset=utf-8"] },
+        };
+      }
       if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-rate-limit")) {
         return { code: "app.rate_limited", message: "rate limited", headers: { "retry-after": ["1"] } };
       }
@@ -1762,6 +1769,7 @@ function builtInAppTheoryHandler(runtime, name) {
         resp.bodyStream = (async function* () {
           yield Buffer.from("a", "utf8");
           resp.headers["x-phase"] = ["after"];
+          resp.cookies.push("c=d; Path=/");
           yield Buffer.from("b", "utf8");
         })();
 
@@ -1801,6 +1809,25 @@ function builtInAppTheoryHandler(runtime, name) {
             ps: "para\u2029sep",
           }),
         );
+    case "cookies_from_set_cookie_header":
+      return () => ({
+        status: 200,
+        headers: {
+          "content-type": ["text/plain; charset=utf-8"],
+          "set-cookie": ["a=b; Path=/", "c=d; Path=/"],
+        },
+        cookies: ["e=f; Path=/"],
+        body: Buffer.from("ok", "utf8"),
+        isBase64: false,
+      });
+    case "header_multivalue":
+      return () => ({
+        status: 200,
+        headers: { "content-type": ["text/plain; charset=utf-8"], "x-multi": ["a", "b"] },
+        cookies: [],
+        body: Buffer.from("ok", "utf8"),
+        isBase64: false,
+      });
     default:
       return null;
   }

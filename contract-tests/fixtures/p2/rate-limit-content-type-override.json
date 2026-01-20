@@ -1,0 +1,81 @@
+{
+  "id": "p2.rate_limit.content_type_override",
+  "tier": "p2",
+  "name": "Rate limited requests force JSON content-type even if a policy sets Content-Type",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/limited", "handler": "echo_context" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/limited",
+      "query": {},
+      "headers": {
+        "x-force-rate-limit-content-type": ["true"],
+        "x-tenant-id": ["tenant_abc"]
+      },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 429,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "retry-after": ["1"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.rate_limited",
+          "message": "rate limited",
+          "request_id": "req_test_123"
+        }
+      },
+      "is_base64": false
+    },
+    "logs": [
+      {
+        "level": "warn",
+        "event": "request.completed",
+        "request_id": "req_test_123",
+        "tenant_id": "tenant_abc",
+        "method": "GET",
+        "path": "/limited",
+        "status": 429,
+        "error_code": "app.rate_limited"
+      }
+    ],
+    "metrics": [
+      {
+        "name": "apptheory.request",
+        "value": 1,
+        "tags": {
+          "method": "GET",
+          "path": "/limited",
+          "status": "429",
+          "error_code": "app.rate_limited",
+          "tenant_id": "tenant_abc"
+        }
+      }
+    ],
+    "spans": [
+      {
+        "name": "http GET /limited",
+        "attributes": {
+          "http.method": "GET",
+          "http.route": "/limited",
+          "http.status_code": "429",
+          "request.id": "req_test_123",
+          "tenant.id": "tenant_abc",
+          "error.code": "app.rate_limited"
+        }
+      }
+    ]
+  }
+}
+

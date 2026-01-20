@@ -96,7 +96,9 @@ def safe_json_for_html(value: Any) -> str:
 def normalize_response(resp: Response) -> Response:
     status = int(resp.status or 200)
     headers = canonicalize_headers(resp.headers)
+    set_cookies = headers.pop("set-cookie", [])
     cookies = [str(c) for c in (resp.cookies or [])]
+    cookies.extend([str(c) for c in (set_cookies or [])])
     body = to_bytes(resp.body)
     body_stream_raw = getattr(resp, "body_stream", None)
     body_stream = None
