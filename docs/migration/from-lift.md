@@ -85,10 +85,12 @@ Size limits:
 
 - Configure with `apptheory.WithLimits(apptheory.Limits{ MaxRequestBytes: ..., MaxResponseBytes: ... })`
 
-Custom middleware:
+Custom middleware (Lift parity):
 
-- AppTheory does not require a global middleware registration API to preserve ordering; wrap handlers locally when you
-  need additional behavior.
+- Register global middleware with `app.Use(mw)` (applied in registration order: `m1 -> m2 -> handler`).
+- Share request-scoped state across middleware + handlers with `ctx.Set(key, value)` / `ctx.Get(key)`.
+- Contract-defined built-ins still run in their fixed order; user middleware wraps the final handler stage so it doesn’t
+  reorder request-id/auth/CORS invariants.
 
 ### 4) Auth and protected routes
 
@@ -168,6 +170,12 @@ SSE responses:
 
 - Use `apptheory.SSEResponse(status, ...events)` (or `apptheory.MustSSEResponse`) to build a properly framed SSE response.
 - For API Gateway REST API v1 SSE, enable method-level streaming in infra (see CDK section below).
+
+Event-by-event SSE streaming (no full-body buffering):
+
+- Go: `apptheory.SSEStreamResponse(ctx, status, <-chan apptheory.SSEEvent)`
+- TS: `sseEventStream(AsyncIterable<SSEEvent>)` yields framed chunks
+- Py: `sse_event_stream(Iterable[SSEEvent])` yields framed chunks
 
 ### 10) AWS entrypoints (WebSockets)
 
@@ -251,6 +259,8 @@ This table is a migration-focused subset. For the broader mapping seed, see:
 | Lift handler funcs | `apptheory.Handler` | `func(*apptheory.Context) (*apptheory.Response, error)` |
 | Lift JSON helpers | `ctx.JSONValue()` + `json.Unmarshal` | portable JSON parsing semantics are contract-defined |
 | `lift.SSEResponse` / `lift.SSEEvent` | `apptheory.SSEResponse` / `apptheory.SSEEvent` | REST API v1 + SSE helpers |
+| Lift `app.Use(...)` + `ctx.Set/Get` | `app.Use(...)` + `ctx.Set/Get` | global middleware pipeline + context value bag |
+| Lift `pkg/naming` | `pkg/naming` | deterministic naming helpers (stage/name builders) |
 | `app.WebSocket("$connect", handler)` | `app.WebSocket("$connect", handler)` | `ctx.AsWebSocket()` returns `*WebSocketContext` |
 | `wsCtx.SendJSONMessage(...)` | `ws.SendJSONMessage(...)` | uses API Gateway Management API via `pkg/streamer` |
 | `app.SQS(queue, handler)` | `app.SQS(queue, handler)` | SQS routing by queue name |

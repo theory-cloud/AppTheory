@@ -21,6 +21,13 @@ Non-goals:
 - 100% API compatibility with Lift.
 - Supporting external Lift users’ edge cases beyond what Pay Theory uses (unless chosen later).
 
+## Current status (AppTheory `v0.2.0-rc.1`)
+
+- Migration guide exists and is kept current for Lift parity surfaces (HTTP, REST v1 + SSE, WebSockets, event sources,
+  rate limiting, TableTheory data posture): `docs/migration/from-lift.md`.
+- Go automation helper exists for high-leverage import rewrites: `scripts/migrate-from-lift-go.sh`.
+- Representative migration notes exist (rate limiting): `docs/migration/g4-representative-migration.md`.
+
 ## Milestones
 
 ### G0 — Inventory real Lift usage (Pay Theory baseline)

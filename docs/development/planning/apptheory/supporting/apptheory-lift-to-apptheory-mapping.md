@@ -36,7 +36,7 @@ This is a conceptual mapping to guide repo layout and migration docs.
 | `pkg/naming` | `naming` (Go/TS/Py) | deterministic resource naming utilities (used by infra) |
 | `app.SQS/EventBridge/DynamoDB` | event-source router (Go/TS/Py) | non-HTTP trigger routing + fixtures (SR-EVENTSOURCES) |
 | `app.WebSocket` + `WebSocketContext` | WebSocket router + context (Go/TS/Py) | `$connect/$disconnect/$default` routing + send helpers (SR-WEBSOCKETS) |
-| `SSEResponse` / `SSEEvent` | SSE helpers (Go/TS/Py) | REST API v1 + response streaming (SR-SSE) |
+| `SSEResponse` / `SSEEvent` | SSE helpers (Go/TS/Py) | REST API v1 + response streaming + event-by-event streaming (SR-SSE) |
 | `pkg/cdk/constructs` | `cdk/` (jsii) | Lift construct parity for what our apps use (SR-CDK) |
 | `pkg/services` | services packages (start: EventBus) | required for Autheory; see `subroadmaps/SR-SERVICES.md` |
 | `pkg/utils/sanitization` | sanitization utilities (Go/TS/Py) | required for K3; see `subroadmaps/SR-SANITIZATION.md` |
