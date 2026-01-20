@@ -202,7 +202,7 @@ func (s *MultiWindowStrategy) GetLimit(key RateLimitKey) int {
 	return limits[0].MaxRequests
 }
 
-func (s *MultiWindowStrategy) ShouldAllow(counts map[string]int, limit int) bool {
+func (s *MultiWindowStrategy) ShouldAllow(counts map[string]int, _ int) bool {
 	if len(s.Windows) == 0 {
 		return false
 	}
@@ -212,7 +212,7 @@ func (s *MultiWindowStrategy) ShouldAllow(counts map[string]int, limit int) bool
 		if config.Duration <= 0 {
 			continue
 		}
-		max := config.MaxRequests
+		maxAllowed := config.MaxRequests
 		suffix := "_" + config.Duration.String()
 
 		count := 0
@@ -223,7 +223,7 @@ func (s *MultiWindowStrategy) ShouldAllow(counts map[string]int, limit int) bool
 			}
 		}
 
-		if count >= max {
+		if count >= maxAllowed {
 			return false
 		}
 	}

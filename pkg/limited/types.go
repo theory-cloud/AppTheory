@@ -162,4 +162,3 @@ func NewError(errorType ErrorType, message string) *Error {
 func WrapError(cause error, errorType ErrorType, message string) *Error {
 	return &Error{Type: errorType, Message: message, Cause: cause}
 }
-

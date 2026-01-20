@@ -2,7 +2,10 @@ package apptheory
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
+	"sync/atomic"
+	"time"
 )
 
 // IDGenerator provides randomness for IDs/correlation IDs.
@@ -13,9 +16,19 @@ type IDGenerator interface {
 // RandomIDGenerator generates IDs using cryptographic randomness.
 type RandomIDGenerator struct{}
 
+var fallbackIDCounter uint64
+
 func (RandomIDGenerator) NewID() string {
 	var b [16]byte
-	_, _ = rand.Read(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		// Extremely rare; fall back to time + counter so IDs remain unique.
+		nano := time.Now().UnixNano()
+		if nano < 0 {
+			nano = 0
+		}
+		//nolint:gosec // nano is clamped to non-negative before conversion.
+		binary.LittleEndian.PutUint64(b[0:8], uint64(nano))
+		binary.LittleEndian.PutUint64(b[8:16], atomic.AddUint64(&fallbackIDCounter, 1))
+	}
 	return hex.EncodeToString(b[:])
 }
-

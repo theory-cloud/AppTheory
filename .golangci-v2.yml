@@ -1,0 +1,139 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    gofmt:
+      simplify: true
+    goimports:
+      local-prefixes:
+        - github.com/theory-cloud/apptheory
+
+linters:
+  default: none
+  enable:
+    # Core correctness
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+    # Resource / context best practices
+    - bodyclose
+    - noctx
+
+    # Performance / cleanup
+    - prealloc
+    - unconvert
+
+    # Code quality & maintainability
+    - misspell
+    - revive
+    - gocognit
+    - gocyclo
+    - dupl
+    - gocritic
+    - goconst
+
+    # Security & best practices
+    - gosec
+    - copyloopvar
+
+    # Hygiene
+    - godox
+
+  exclusions:
+    paths:
+      - vendor
+      - third_party
+      - testdata
+      - dist
+      - build
+      - node_modules
+      - examples
+
+    rules:
+      # Test files can be more relaxed.
+      - path: _test\.go
+        linters:
+          - dupl
+          - goconst
+          - revive
+          - gocognit
+          - gocyclo
+
+      # Allow TODO/FIXME in test files.
+      - path: "(.*)?_test\\.go"
+        text: "TODO|FIXME"
+        linters:
+          - godox
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+      exclude-functions:
+        - (*github.com/stretchr/testify/assert.Assertions).NotNil
+        - (*github.com/stretchr/testify/assert.Assertions).Nil
+
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+
+    gocyclo:
+      min-complexity: 15
+
+    dupl:
+      threshold: 100
+
+    misspell:
+      locale: US
+
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: if-return
+        - name: increment-decrement
+        - name: var-declaration
+        - name: range
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+        - name: unreachable-code
+        - name: redefines-builtin-id
+
+    gosec:
+      excludes:
+        - G104 # handled by errcheck
+      config:
+        global:
+          audit: true
+
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+severity:
+  default: error

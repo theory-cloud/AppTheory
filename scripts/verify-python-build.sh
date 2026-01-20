@@ -52,6 +52,24 @@ if ! ls "dist/apptheory-${expected_version}-"*.whl >/dev/null 2>&1; then
   exit 1
 fi
 
+wheel_path="$(ls "dist/apptheory-${expected_version}-"*.whl | head -n 1)"
+WHEEL_PATH="${wheel_path}" python3 - <<'PY'
+import zipfile
+from pathlib import Path
+
+wheel = Path(__import__("os").environ["WHEEL_PATH"])
+with zipfile.ZipFile(wheel) as z:
+  names = z.namelist()
+
+def is_license(name: str) -> bool:
+  upper = name.upper()
+  return upper.endswith("/LICENSE") or upper.endswith("/LICENSE.TXT") or upper.endswith("/LICENSE.MD")
+
+matches = [n for n in names if is_license(n)]
+if not matches:
+  raise SystemExit(f"python-build: FAIL (wheel missing LICENSE file: {wheel.name})")
+PY
+
 if [[ ! -f "dist/apptheory-${expected_version}.tar.gz" ]]; then
   echo "python-build: FAIL (missing sdist for ${expected_version})"
   exit 1
@@ -121,5 +139,10 @@ with open(tmp_out, "wb") as file_out:
 tmp_out.replace(sdist)
 shutil.rmtree(extract_dir, ignore_errors=True)
 PY
+
+tar -tzf "dist/apptheory-${expected_version}.tar.gz" | grep "^apptheory-${expected_version}/LICENSE$" >/dev/null || {
+  echo "python-build: FAIL (sdist missing LICENSE for ${expected_version})"
+  exit 1
+}
 
 echo "python-build: PASS (${expected_version})"

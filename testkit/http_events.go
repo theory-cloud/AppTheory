@@ -123,11 +123,10 @@ func (e *Env) InvokeLambdaFunctionURL(
 
 func splitPathAndQuery(path string, query map[string][]string) (string, string) {
 	parsed := strings.TrimSpace(path)
-	rawPath := parsed
-	rawQuery := ""
-	if i := strings.Index(parsed, "?"); i >= 0 {
-		rawPath = parsed[:i]
-		rawQuery = parsed[i+1:]
+	rawPath, rawQuery, ok := strings.Cut(parsed, "?")
+	if !ok {
+		rawPath = parsed
+		rawQuery = ""
 	}
 
 	rawPath = strings.TrimSpace(rawPath)

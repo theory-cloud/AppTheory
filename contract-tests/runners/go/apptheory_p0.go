@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
+
+	"github.com/aws/aws-lambda-go/events"
 
 	"github.com/theory-cloud/apptheory"
 )
@@ -22,9 +25,21 @@ func runFixtureP0(f Fixture) error {
 		app.Handle(r.Method, r.Path, handler)
 	}
 
+	actual, err := serveFixtureP0(app, f)
+	if err != nil {
+		return err
+	}
+	return compareFixtureResponse(f, actual, nil, nil, nil)
+}
+
+func serveFixtureP0(app *apptheory.App, f Fixture) (apptheory.Response, error) {
+	if f.Input.AWSEvent != nil {
+		return serveFixtureP0AWS(app, f.Input.AWSEvent)
+	}
+
 	bodyBytes, err := decodeFixtureBody(f.Input.Request.Body)
 	if err != nil {
-		return fmt.Errorf("decode request body: %w", err)
+		return apptheory.Response{}, fmt.Errorf("decode request body: %w", err)
 	}
 
 	req := apptheory.Request{
@@ -36,8 +51,29 @@ func runFixtureP0(f Fixture) error {
 		IsBase64: f.Input.Request.IsBase64,
 	}
 
-	actual := app.Serve(context.Background(), req)
-	return compareFixtureResponse(f, actual, nil, nil, nil)
+	return app.Serve(context.Background(), req), nil
+}
+
+func serveFixtureP0AWS(app *apptheory.App, awsEvent *FixtureAWSEvent) (apptheory.Response, error) {
+	source := strings.ToLower(strings.TrimSpace(awsEvent.Source))
+	switch source {
+	case "apigw_v2":
+		var event events.APIGatewayV2HTTPRequest
+		if err := json.Unmarshal(awsEvent.Event, &event); err != nil {
+			return apptheory.Response{}, fmt.Errorf("parse apigw_v2 event: %w", err)
+		}
+		out := app.ServeAPIGatewayV2(context.Background(), event)
+		return responseFromAPIGatewayV2(out)
+	case "lambda_function_url":
+		var event events.LambdaFunctionURLRequest
+		if err := json.Unmarshal(awsEvent.Event, &event); err != nil {
+			return apptheory.Response{}, fmt.Errorf("parse lambda_function_url event: %w", err)
+		}
+		out := app.ServeLambdaFunctionURL(context.Background(), event)
+		return responseFromLambdaFunctionURL(out)
+	default:
+		return apptheory.Response{}, fmt.Errorf("unknown aws_event source %q", awsEvent.Source)
+	}
 }
 
 func printFailureP0(f Fixture) {
@@ -52,23 +88,12 @@ func printFailureP0(f Fixture) {
 		app.Handle(r.Method, r.Path, handler)
 	}
 
-	bodyBytes, err := decodeFixtureBody(f.Input.Request.Body)
+	actual, err := serveFixtureP0(app, f)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  got: <unavailable>\n")
 		printExpected(f)
 		return
 	}
-
-	req := apptheory.Request{
-		Method:   f.Input.Request.Method,
-		Path:     f.Input.Request.Path,
-		Query:    f.Input.Request.Query,
-		Headers:  f.Input.Request.Headers,
-		Body:     bodyBytes,
-		IsBase64: f.Input.Request.IsBase64,
-	}
-
-	actual := app.Serve(context.Background(), req)
 	actual.Headers = canonicalizeHeaders(actual.Headers)
 
 	debug := actualResponseForCompare{
@@ -89,12 +114,12 @@ func printFailureP0(f Fixture) {
 		debug.Body = &FixtureBody{Encoding: "base64", Value: base64.StdEncoding.EncodeToString(actual.Body)}
 	}
 
-	b, _ := json.MarshalIndent(debug, "", "  ")
+	b := marshalIndentOrPlaceholder(debug)
 	fmt.Fprintf(os.Stderr, "  got: %s\n", string(b))
 
-	logs, _ := json.MarshalIndent([]FixtureLogRecord(nil), "", "  ")
-	metrics, _ := json.MarshalIndent([]FixtureMetricRecord(nil), "", "  ")
-	spans, _ := json.MarshalIndent([]FixtureSpanRecord(nil), "", "  ")
+	logs := marshalIndentOrPlaceholder([]FixtureLogRecord(nil))
+	metrics := marshalIndentOrPlaceholder([]FixtureMetricRecord(nil))
+	spans := marshalIndentOrPlaceholder([]FixtureSpanRecord(nil))
 	fmt.Fprintf(os.Stderr, "  got.logs: %s\n", string(logs))
 	fmt.Fprintf(os.Stderr, "  got.metrics: %s\n", string(metrics))
 	fmt.Fprintf(os.Stderr, "  got.spans: %s\n", string(spans))
@@ -105,15 +130,69 @@ func printFailureP0(f Fixture) {
 func printExpected(f Fixture) {
 	expected := f.Expect.Response
 	expected.Headers = canonicalizeHeaders(expected.Headers)
-	b, _ := json.MarshalIndent(expected, "", "  ")
+	b := marshalIndentOrPlaceholder(expected)
 	fmt.Fprintf(os.Stderr, "  expected: %s\n", string(b))
 
-	logs, _ := json.MarshalIndent(f.Expect.Logs, "", "  ")
-	metrics, _ := json.MarshalIndent(f.Expect.Metrics, "", "  ")
-	spans, _ := json.MarshalIndent(f.Expect.Spans, "", "  ")
+	logs := marshalIndentOrPlaceholder(f.Expect.Logs)
+	metrics := marshalIndentOrPlaceholder(f.Expect.Metrics)
+	spans := marshalIndentOrPlaceholder(f.Expect.Spans)
 	fmt.Fprintf(os.Stderr, "  expected.logs: %s\n", string(logs))
 	fmt.Fprintf(os.Stderr, "  expected.metrics: %s\n", string(metrics))
 	fmt.Fprintf(os.Stderr, "  expected.spans: %s\n", string(spans))
+}
+
+func responseFromAPIGatewayV2(resp events.APIGatewayV2HTTPResponse) (apptheory.Response, error) {
+	body := []byte(resp.Body)
+	if resp.IsBase64Encoded {
+		decoded, err := base64.StdEncoding.DecodeString(resp.Body)
+		if err != nil {
+			return apptheory.Response{}, fmt.Errorf("decode apigw_v2 response body: %w", err)
+		}
+		body = decoded
+	}
+
+	headers := map[string][]string{}
+	if len(resp.MultiValueHeaders) > 0 {
+		for key, values := range resp.MultiValueHeaders {
+			headers[key] = append([]string(nil), values...)
+		}
+	} else {
+		for key, value := range resp.Headers {
+			headers[key] = []string{value}
+		}
+	}
+
+	return apptheory.Response{
+		Status:   resp.StatusCode,
+		Headers:  headers,
+		Cookies:  append([]string(nil), resp.Cookies...),
+		Body:     body,
+		IsBase64: resp.IsBase64Encoded,
+	}, nil
+}
+
+func responseFromLambdaFunctionURL(resp events.LambdaFunctionURLResponse) (apptheory.Response, error) {
+	body := []byte(resp.Body)
+	if resp.IsBase64Encoded {
+		decoded, err := base64.StdEncoding.DecodeString(resp.Body)
+		if err != nil {
+			return apptheory.Response{}, fmt.Errorf("decode lambda_function_url response body: %w", err)
+		}
+		body = decoded
+	}
+
+	headers := map[string][]string{}
+	for key, value := range resp.Headers {
+		headers[key] = []string{value}
+	}
+
+	return apptheory.Response{
+		Status:   resp.StatusCode,
+		Headers:  headers,
+		Cookies:  append([]string(nil), resp.Cookies...),
+		Body:     body,
+		IsBase64: resp.IsBase64Encoded,
+	}, nil
 }
 
 func builtInAppTheoryHandler(name string) apptheory.Handler {
@@ -159,10 +238,10 @@ func builtInAppTheoryHandler(name string) apptheory.Handler {
 	case "echo_context":
 		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 			return apptheory.JSON(200, map[string]any{
-				"request_id":     ctx.RequestID,
-				"tenant_id":      ctx.TenantID,
-				"auth_identity":  ctx.AuthIdentity,
-				"remaining_ms":   ctx.RemainingMS,
+				"request_id":    ctx.RequestID,
+				"tenant_id":     ctx.TenantID,
+				"auth_identity": ctx.AuthIdentity,
+				"remaining_ms":  ctx.RemainingMS,
 			})
 		}
 	case "echo_middleware_trace":
@@ -194,6 +273,18 @@ func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []Fixture
 	expectedHeaders := canonicalizeHeaders(expected.Headers)
 	actualHeaders := canonicalizeHeaders(actual.Headers)
 
+	if err := compareFixtureResponseMeta(expected, actual, expectedHeaders, actualHeaders); err != nil {
+		return err
+	}
+
+	if err := compareFixtureResponseBody(expected, actual); err != nil {
+		return err
+	}
+
+	return compareFixtureSideEffects(f.Expect, logs, metrics, spans)
+}
+
+func compareFixtureResponseMeta(expected FixtureResponse, actual apptheory.Response, expectedHeaders, actualHeaders map[string][]string) error {
 	if expected.Status != actual.Status {
 		return fmt.Errorf("status: expected %d, got %d", expected.Status, actual.Status)
 	}
@@ -206,7 +297,10 @@ func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []Fixture
 	if !equalHeaders(expectedHeaders, actualHeaders) {
 		return fmt.Errorf("headers mismatch")
 	}
+	return nil
+}
 
+func compareFixtureResponseBody(expected FixtureResponse, actual apptheory.Response) error {
 	if len(expected.BodyJSON) > 0 {
 		var expectedJSON any
 		if err := json.Unmarshal(expected.BodyJSON, &expectedJSON); err != nil {
@@ -219,22 +313,11 @@ func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []Fixture
 		if !jsonEqual(expectedJSON, actualJSON) {
 			return fmt.Errorf("body_json mismatch")
 		}
-		if !reflect.DeepEqual(f.Expect.Logs, logs) {
-			return fmt.Errorf("logs mismatch")
-		}
-		if !reflect.DeepEqual(f.Expect.Metrics, metrics) {
-			return fmt.Errorf("metrics mismatch")
-		}
-		if !reflect.DeepEqual(f.Expect.Spans, spans) {
-			return fmt.Errorf("spans mismatch")
-		}
 		return nil
 	}
 
 	var expectedBodyBytes []byte
-	if expected.Body == nil {
-		expectedBodyBytes = nil
-	} else {
+	if expected.Body != nil {
 		var err error
 		expectedBodyBytes, err = decodeFixtureBody(*expected.Body)
 		if err != nil {
@@ -244,14 +327,17 @@ func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []Fixture
 	if !equalBytes(expectedBodyBytes, actual.Body) {
 		return fmt.Errorf("body mismatch")
 	}
+	return nil
+}
 
-	if !reflect.DeepEqual(f.Expect.Logs, logs) {
+func compareFixtureSideEffects(expected FixtureExpect, logs []FixtureLogRecord, metrics []FixtureMetricRecord, spans []FixtureSpanRecord) error {
+	if !reflect.DeepEqual(expected.Logs, logs) {
 		return fmt.Errorf("logs mismatch")
 	}
-	if !reflect.DeepEqual(f.Expect.Metrics, metrics) {
+	if !reflect.DeepEqual(expected.Metrics, metrics) {
 		return fmt.Errorf("metrics mismatch")
 	}
-	if !reflect.DeepEqual(f.Expect.Spans, spans) {
+	if !reflect.DeepEqual(expected.Spans, spans) {
 		return fmt.Errorf("spans mismatch")
 	}
 	return nil

@@ -1,0 +1,62 @@
+{
+  "id": "p0.adapter.apigw_v2.cookie_list_precedence",
+  "tier": "p0",
+  "name": "APIGW v2: cookies list overrides Cookie header",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/echo", "handler": "echo_request" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/echo",
+      "query": {},
+      "headers": {
+        "X-Test": ["Hello"],
+        "Cookie": ["a=1", "b=2"]
+      },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    },
+    "aws_event": {
+      "source": "apigw_v2",
+      "event": {
+        "version": "2.0",
+        "routeKey": "$default",
+        "rawPath": "/echo",
+        "rawQueryString": "",
+        "cookies": ["a=1", "b=2"],
+        "headers": {
+          "Cookie": "a=ignored; c=3",
+          "X-Test": "Hello"
+        },
+        "queryStringParameters": null,
+        "requestContext": { "http": { "method": "GET", "path": "/echo" } },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "method": "GET",
+        "path": "/echo",
+        "query": {},
+        "headers": {
+          "cookie": ["a=1", "b=2"],
+          "x-test": ["Hello"]
+        },
+        "cookies": { "a": "1", "b": "2" },
+        "body_b64": "",
+        "is_base64": false
+      },
+      "is_base64": false
+    }
+  }
+}
+

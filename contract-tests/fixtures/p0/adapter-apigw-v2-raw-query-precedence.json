@@ -1,0 +1,64 @@
+{
+  "id": "p0.adapter.apigw_v2.raw_query_precedence",
+  "tier": "p0",
+  "name": "APIGW v2: rawQueryString overrides queryStringParameters",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/echo", "handler": "echo_request" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/echo",
+      "query": {
+        "a": ["1", "2"],
+        "b": ["three four"],
+        "c": ["x+y"]
+      },
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    },
+    "aws_event": {
+      "source": "apigw_v2",
+      "event": {
+        "version": "2.0",
+        "routeKey": "$default",
+        "rawPath": "/echo",
+        "rawQueryString": "?a=1&a=2&b=three+four&c=x%2By",
+        "cookies": [],
+        "headers": {},
+        "queryStringParameters": {
+          "a": "ignored",
+          "d": "ignored"
+        },
+        "requestContext": { "http": { "method": "GET", "path": "/echo" } },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "method": "GET",
+        "path": "/echo",
+        "query": {
+          "a": ["1", "2"],
+          "b": ["three four"],
+          "c": ["x+y"]
+        },
+        "headers": {},
+        "cookies": {},
+        "body_b64": "",
+        "is_base64": false
+      },
+      "is_base64": false
+    }
+  }
+}
+

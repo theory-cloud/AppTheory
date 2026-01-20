@@ -18,6 +18,7 @@ Primary goals:
 ## Start here
 
 - `docs/development/planning/apptheory/apptheory-multilang-roadmap.md` (primary roadmap + acceptance criteria)
+- `docs/development/planning/apptheory/apptheory-gap-analysis.md` (current gaps + remediation roadmap)
 
 ## Sub-roadmaps (deep workstreams)
 
@@ -36,4 +37,3 @@ Primary goals:
 - `docs/development/planning/apptheory/supporting/apptheory-parity-matrix.md`
 - `docs/development/planning/apptheory/supporting/apptheory-lift-to-apptheory-mapping.md`
 - `docs/development/planning/apptheory/supporting/apptheory-governance-note.md`
-

@@ -11,6 +11,34 @@ import (
 	"strings"
 )
 
+const (
+	appErrorBadRequest       = "app.bad_request"
+	appErrorValidationFailed = "app.validation_failed"
+	appErrorUnauthorized     = "app.unauthorized"
+	appErrorForbidden        = "app.forbidden"
+	appErrorNotFound         = "app.not_found"
+	appErrorMethodNotAllowed = "app.method_not_allowed"
+	appErrorConflict         = "app.conflict"
+	appErrorTooLarge         = "app.too_large"
+	appErrorRateLimited      = "app.rate_limited"
+	appErrorOverloaded       = "app.overloaded"
+	appErrorInternal         = "app.internal"
+)
+
+const (
+	msgInvalidJSON      = "invalid json"
+	msgUnauthorized     = "unauthorized"
+	msgForbidden        = "forbidden"
+	msgNotFound         = "not found"
+	msgMethodNotAllowed = "method not allowed"
+	msgRequestTooLarge  = "request too large"
+	msgResponseTooLarge = "response too large"
+	msgRateLimited      = "rate limited"
+	msgOverloaded       = "overloaded"
+	msgInternal         = "internal error"
+	authorizedIdentity  = "authorized"
+)
+
 type CanonicalRequest struct {
 	Method          string
 	Path            string
@@ -59,9 +87,12 @@ func appErrorResponse(code, message string, headers map[string][]string, request
 		errBody["request_id"] = requestID
 	}
 
-	body, _ := json.Marshal(map[string]any{
+	body, err := json.Marshal(map[string]any{
 		"error": errBody,
 	})
+	if err != nil {
+		body = []byte(`{"error":{"code":"app.internal","message":"internal error"}}`)
+	}
 
 	return CanonicalResponse{
 		Status:   statusForError(code),
@@ -74,25 +105,25 @@ func appErrorResponse(code, message string, headers map[string][]string, request
 
 func statusForError(code string) int {
 	switch code {
-	case "app.bad_request", "app.validation_failed":
+	case appErrorBadRequest, appErrorValidationFailed:
 		return 400
-	case "app.unauthorized":
+	case appErrorUnauthorized:
 		return 401
-	case "app.forbidden":
+	case appErrorForbidden:
 		return 403
-	case "app.not_found":
+	case appErrorNotFound:
 		return 404
-	case "app.method_not_allowed":
+	case appErrorMethodNotAllowed:
 		return 405
-	case "app.conflict":
+	case appErrorConflict:
 		return 409
-	case "app.too_large":
+	case appErrorTooLarge:
 		return 413
-	case "app.rate_limited":
+	case appErrorRateLimited:
 		return 429
-	case "app.overloaded":
+	case appErrorOverloaded:
 		return 503
-	case "app.internal":
+	case appErrorInternal:
 		return 500
 	default:
 		return 500
@@ -137,7 +168,7 @@ func enableP2ForTier(tier string) bool {
 }
 
 func newFixtureApp(setup FixtureSetup, tier string) (*fixtureApp, error) {
-	var compiled []compiledRoute
+	compiled := make([]compiledRoute, 0, len(setup.Routes))
 	for _, r := range setup.Routes {
 		if strings.TrimSpace(r.Method) == "" || strings.TrimSpace(r.Path) == "" || strings.TrimSpace(r.Handler) == "" {
 			return nil, errors.New("route entries must have method, path, and handler")
@@ -180,7 +211,7 @@ func (a *fixtureApp) match(method, path string) (*matchResult, []string) {
 	method = strings.ToUpper(strings.TrimSpace(method))
 	pathSegments := splitPath(path)
 
-	var allowed []string
+	allowed := make([]string, 0, len(a.routes))
 	for _, r := range a.routes {
 		params, ok := matchPath(r.Segments, pathSegments)
 		if !ok {
@@ -227,126 +258,166 @@ func (a *fixtureApp) handle(req CanonicalRequest) (resp CanonicalResponse) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			errorCode = "app.internal"
-			resp = appErrorResponse("app.internal", "internal error", nil, requestID)
-			resp = a.finish(req, resp, requestID, origin, errorCode)
+			errorCode = appErrorInternal
+			resp = appErrorResponse(appErrorInternal, msgInternal, nil, requestID)
 		}
+		resp = a.finish(req, resp, requestID, origin, errorCode)
 	}()
 
 	if a.enableP1 {
-		requestID = firstHeaderValue(req.Headers, "x-request-id")
-		if requestID == "" {
-			requestID = "req_test_123"
-		}
-		req.RequestID = requestID
+		var coreCode string
+		resp, requestID, origin, coreCode = a.handleP1(&req)
+		errorCode = coreCode
+		return resp
+	}
 
-		origin = firstHeaderValue(req.Headers, "origin")
-		req.TenantID = extractTenantID(req.Headers, req.Query)
+	resp, errorCode = a.handleP0(&req)
+	return resp
+}
 
-		req.MiddlewareTrace = append(req.MiddlewareTrace,
-			"request_id",
-			"recovery",
-			"logging",
-		)
-		if origin != "" {
-			req.MiddlewareTrace = append(req.MiddlewareTrace, "cors")
-		}
+func (a *fixtureApp) handleP1(req *CanonicalRequest) (CanonicalResponse, string, string, string) {
+	requestID, origin := a.initP1(req)
 
-		if isCorsPreflight(req.Method, req.Headers) && origin != "" {
-			preflight := CanonicalResponse{
-				Status: 204,
-				Headers: map[string][]string{
-					"access-control-allow-methods": []string{firstHeaderValue(req.Headers, "access-control-request-method")},
+	if origin != "" && isCorsPreflight(req.Method, req.Headers) {
+		return CanonicalResponse{
+			Status: 204,
+			Headers: map[string][]string{
+				"access-control-allow-methods": {
+					firstHeaderValue(req.Headers, "access-control-request-method"),
 				},
-				Body:     nil,
-				IsBase64: false,
-			}
-			resp = a.finish(req, preflight, requestID, origin, errorCode)
-			return resp
-		}
+			},
+		}, requestID, origin, ""
+	}
 
-		if a.limits.MaxRequestBytes > 0 && len(req.Body) > a.limits.MaxRequestBytes {
-			errorCode = "app.too_large"
-			resp = appErrorResponse("app.too_large", "request too large", nil, requestID)
-			resp = a.finish(req, resp, requestID, origin, errorCode)
-			return resp
-		}
+	if a.limits.MaxRequestBytes > 0 && len(req.Body) > a.limits.MaxRequestBytes {
+		return appErrorResponse(appErrorTooLarge, msgRequestTooLarge, nil, requestID), requestID, origin, appErrorTooLarge
+	}
 
-		if a.enableP2 {
-			if firstHeaderValue(req.Headers, "x-force-rate-limit") != "" {
-				errorCode = "app.rate_limited"
-				resp = appErrorResponse("app.rate_limited", "rate limited", map[string][]string{
-					"retry-after": []string{"1"},
-				}, requestID)
-				return a.finish(req, resp, requestID, origin, errorCode)
-			}
-			if firstHeaderValue(req.Headers, "x-force-shed") != "" {
-				errorCode = "app.overloaded"
-				resp = appErrorResponse("app.overloaded", "overloaded", map[string][]string{
-					"retry-after": []string{"1"},
-				}, requestID)
-				return a.finish(req, resp, requestID, origin, errorCode)
-			}
+	if a.enableP2 {
+		forcedResp, forcedCode, ok := forcedP2Response(*req, requestID)
+		if ok {
+			return forcedResp, requestID, origin, forcedCode
 		}
 	}
 
 	match, allowed := a.match(req.Method, req.Path)
 	if match == nil {
-		if len(allowed) > 0 {
-			headers := map[string][]string{
-				"allow": []string{formatAllowHeader(allowed)},
-			}
-			errorCode = "app.method_not_allowed"
-			resp = appErrorResponse("app.method_not_allowed", "method not allowed", headers, requestID)
-			return a.finish(req, resp, requestID, origin, errorCode)
-		}
-		errorCode = "app.not_found"
-		resp = appErrorResponse("app.not_found", "not found", nil, requestID)
-		return a.finish(req, resp, requestID, origin, errorCode)
+		resp, errorCode := missingRouteResponse(allowed, requestID)
+		return resp, requestID, origin, errorCode
 	}
 
 	req.PathParams = match.PathParams
-	if match.Route.AuthRequired && a.enableP1 {
-		req.MiddlewareTrace = append(req.MiddlewareTrace, "auth")
-		authz := firstHeaderValue(req.Headers, "authorization")
-		if strings.TrimSpace(authz) == "" {
-			errorCode = "app.unauthorized"
-			resp = appErrorResponse("app.unauthorized", "unauthorized", nil, requestID)
-			return a.finish(req, resp, requestID, origin, errorCode)
+	if match.Route.AuthRequired {
+		if authResp, ok := handleAuth(req, requestID); ok {
+			return authResp, requestID, origin, appErrorUnauthorized
 		}
-		req.AuthIdentity = "authorized"
 	}
-	if a.enableP1 {
-		req.MiddlewareTrace = append(req.MiddlewareTrace, "handler")
-	}
+
+	req.MiddlewareTrace = append(req.MiddlewareTrace, "handler")
 
 	handler := builtInHandler(match.Route.Handler)
 	if handler == nil {
-		errorCode = "app.internal"
-		resp = appErrorResponse("app.internal", "internal error", nil, requestID)
-		return a.finish(req, resp, requestID, origin, errorCode)
+		return appErrorResponse(appErrorInternal, msgInternal, nil, requestID), requestID, origin, appErrorInternal
 	}
 
-	r, err := handler(req)
+	resp, err := handler(*req)
 	if err != nil {
-		var appErr *AppError
-		if errors.As(err, &appErr) {
-			errorCode = appErr.Code
-			resp = appErrorResponse(appErr.Code, appErr.Message, nil, requestID)
-			return a.finish(req, resp, requestID, origin, errorCode)
+		errorResp, errorCode := responseForHandlerError(err, requestID)
+		return errorResp, requestID, origin, errorCode
+	}
+
+	if a.limits.MaxResponseBytes > 0 && len(resp.Body) > a.limits.MaxResponseBytes {
+		return appErrorResponse(appErrorTooLarge, msgResponseTooLarge, nil, requestID), requestID, origin, appErrorTooLarge
+	}
+
+	return resp, requestID, origin, ""
+}
+
+func (a *fixtureApp) handleP0(req *CanonicalRequest) (CanonicalResponse, string) {
+	match, allowed := a.match(req.Method, req.Path)
+	if match == nil {
+		resp, errorCode := missingRouteResponse(allowed, "")
+		return resp, errorCode
+	}
+
+	req.PathParams = match.PathParams
+
+	handler := builtInHandler(match.Route.Handler)
+	if handler == nil {
+		return appErrorResponse(appErrorInternal, msgInternal, nil, ""), appErrorInternal
+	}
+
+	resp, err := handler(*req)
+	if err != nil {
+		errorResp, errorCode := responseForHandlerError(err, "")
+		return errorResp, errorCode
+	}
+
+	return resp, ""
+}
+
+func (a *fixtureApp) initP1(req *CanonicalRequest) (requestID, origin string) {
+	requestID = firstHeaderValue(req.Headers, "x-request-id")
+	if requestID == "" {
+		requestID = "req_test_123"
+	}
+	req.RequestID = requestID
+
+	origin = firstHeaderValue(req.Headers, "origin")
+	req.TenantID = extractTenantID(req.Headers, req.Query)
+
+	req.MiddlewareTrace = append(req.MiddlewareTrace,
+		"request_id",
+		"recovery",
+		"logging",
+	)
+	if origin != "" {
+		req.MiddlewareTrace = append(req.MiddlewareTrace, "cors")
+	}
+
+	return requestID, origin
+}
+
+func missingRouteResponse(allowed []string, requestID string) (CanonicalResponse, string) {
+	if len(allowed) > 0 {
+		headers := map[string][]string{
+			"allow": {formatAllowHeader(allowed)},
 		}
-		errorCode = "app.internal"
-		resp = appErrorResponse("app.internal", "internal error", nil, requestID)
-		return a.finish(req, resp, requestID, origin, errorCode)
+		return appErrorResponse(appErrorMethodNotAllowed, msgMethodNotAllowed, headers, requestID), appErrorMethodNotAllowed
 	}
+	return appErrorResponse(appErrorNotFound, msgNotFound, nil, requestID), appErrorNotFound
+}
 
-	if a.enableP1 && a.limits.MaxResponseBytes > 0 && len(r.Body) > a.limits.MaxResponseBytes {
-		errorCode = "app.too_large"
-		resp = appErrorResponse("app.too_large", "response too large", nil, requestID)
-		return a.finish(req, resp, requestID, origin, errorCode)
+func handleAuth(req *CanonicalRequest, requestID string) (CanonicalResponse, bool) {
+	req.MiddlewareTrace = append(req.MiddlewareTrace, "auth")
+	authz := firstHeaderValue(req.Headers, "authorization")
+	if strings.TrimSpace(authz) == "" {
+		return appErrorResponse(appErrorUnauthorized, msgUnauthorized, nil, requestID), true
 	}
+	req.AuthIdentity = authorizedIdentity
+	return CanonicalResponse{}, false
+}
 
-	return a.finish(req, r, requestID, origin, errorCode)
+func responseForHandlerError(err error, requestID string) (CanonicalResponse, string) {
+	var appErr *AppError
+	if errors.As(err, &appErr) {
+		return appErrorResponse(appErr.Code, appErr.Message, nil, requestID), appErr.Code
+	}
+	return appErrorResponse(appErrorInternal, msgInternal, nil, requestID), appErrorInternal
+}
+
+func forcedP2Response(req CanonicalRequest, requestID string) (CanonicalResponse, string, bool) {
+	if firstHeaderValue(req.Headers, "x-force-rate-limit") != "" {
+		return appErrorResponse(appErrorRateLimited, msgRateLimited, map[string][]string{
+			"retry-after": {"1"},
+		}, requestID), appErrorRateLimited, true
+	}
+	if firstHeaderValue(req.Headers, "x-force-shed") != "" {
+		return appErrorResponse(appErrorOverloaded, msgOverloaded, map[string][]string{
+			"retry-after": {"1"},
+		}, requestID), appErrorOverloaded, true
+	}
+	return CanonicalResponse{}, "", false
 }
 
 func (a *fixtureApp) finalizeResponse(resp CanonicalResponse, requestID, origin string) CanonicalResponse {
@@ -459,7 +530,7 @@ func formatAllowHeader(methods []string) string {
 		}
 		set[m] = struct{}{}
 	}
-	var uniq []string
+	uniq := make([]string, 0, len(set))
 	for m := range set {
 		uniq = append(uniq, m)
 	}
@@ -593,144 +664,148 @@ func jsonContentType(headers map[string][]string) bool {
 
 type handlerFunc func(CanonicalRequest) (CanonicalResponse, error)
 
+var builtInHandlers = map[string]handlerFunc{
+	"static_pong": func(_ CanonicalRequest) (CanonicalResponse, error) {
+		return CanonicalResponse{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"text/plain; charset=utf-8"},
+			},
+			Body:     []byte("pong"),
+			IsBase64: false,
+		}, nil
+	},
+	"echo_path_params": func(req CanonicalRequest) (CanonicalResponse, error) {
+		body, err := json.Marshal(map[string]any{
+			"params": req.PathParams,
+		})
+		if err != nil {
+			return CanonicalResponse{}, err
+		}
+		return CanonicalResponse{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"application/json; charset=utf-8"},
+			},
+			Body:     body,
+			IsBase64: false,
+		}, nil
+	},
+	"echo_request": func(req CanonicalRequest) (CanonicalResponse, error) {
+		body, err := json.Marshal(map[string]any{
+			"method":    req.Method,
+			"path":      req.Path,
+			"query":     req.Query,
+			"headers":   req.Headers,
+			"cookies":   req.Cookies,
+			"body_b64":  base64.StdEncoding.EncodeToString(req.Body),
+			"is_base64": req.IsBase64,
+		})
+		if err != nil {
+			return CanonicalResponse{}, err
+		}
+		return CanonicalResponse{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"application/json; charset=utf-8"},
+			},
+			Body:     body,
+			IsBase64: false,
+		}, nil
+	},
+	"echo_context": func(req CanonicalRequest) (CanonicalResponse, error) {
+		body, err := json.Marshal(map[string]any{
+			"request_id":    req.RequestID,
+			"tenant_id":     req.TenantID,
+			"auth_identity": req.AuthIdentity,
+			"remaining_ms":  req.RemainingMS,
+		})
+		if err != nil {
+			return CanonicalResponse{}, err
+		}
+		return CanonicalResponse{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"application/json; charset=utf-8"},
+			},
+			Body:     body,
+			IsBase64: false,
+		}, nil
+	},
+	"echo_middleware_trace": func(req CanonicalRequest) (CanonicalResponse, error) {
+		body, err := json.Marshal(map[string]any{
+			"trace": req.MiddlewareTrace,
+		})
+		if err != nil {
+			return CanonicalResponse{}, err
+		}
+		return CanonicalResponse{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"application/json; charset=utf-8"},
+			},
+			Body:     body,
+			IsBase64: false,
+		}, nil
+	},
+	"parse_json_echo": func(req CanonicalRequest) (CanonicalResponse, error) {
+		if !jsonContentType(req.Headers) {
+			return CanonicalResponse{}, &AppError{Code: appErrorBadRequest, Message: msgInvalidJSON}
+		}
+
+		var value any
+		if len(req.Body) == 0 {
+			value = nil
+		} else if err := json.Unmarshal(req.Body, &value); err != nil {
+			return CanonicalResponse{}, &AppError{Code: appErrorBadRequest, Message: msgInvalidJSON}
+		}
+
+		body, err := json.Marshal(value)
+		if err != nil {
+			return CanonicalResponse{}, err
+		}
+		return CanonicalResponse{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"application/json; charset=utf-8"},
+			},
+			Body:     body,
+			IsBase64: false,
+		}, nil
+	},
+	"panic": func(_ CanonicalRequest) (CanonicalResponse, error) {
+		panic("boom")
+	},
+	"binary_body": func(_ CanonicalRequest) (CanonicalResponse, error) {
+		return CanonicalResponse{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"application/octet-stream"},
+			},
+			Body:     []byte{0x00, 0x01, 0x02},
+			IsBase64: true,
+		}, nil
+	},
+	"unauthorized": func(_ CanonicalRequest) (CanonicalResponse, error) {
+		return CanonicalResponse{}, &AppError{Code: appErrorUnauthorized, Message: msgUnauthorized}
+	},
+	"validation_failed": func(_ CanonicalRequest) (CanonicalResponse, error) {
+		return CanonicalResponse{}, &AppError{Code: appErrorValidationFailed, Message: "validation failed"}
+	},
+	"large_response": func(_ CanonicalRequest) (CanonicalResponse, error) {
+		return CanonicalResponse{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"text/plain; charset=utf-8"},
+			},
+			Body:     []byte("12345"),
+			IsBase64: false,
+		}, nil
+	},
+}
+
 func builtInHandler(name string) handlerFunc {
-	switch name {
-	case "static_pong":
-		return func(_ CanonicalRequest) (CanonicalResponse, error) {
-			return CanonicalResponse{
-				Status: 200,
-				Headers: map[string][]string{
-					"content-type": []string{"text/plain; charset=utf-8"},
-				},
-				Body:     []byte("pong"),
-				IsBase64: false,
-			}, nil
-		}
-	case "echo_path_params":
-		return func(req CanonicalRequest) (CanonicalResponse, error) {
-			body, _ := json.Marshal(map[string]any{
-				"params": req.PathParams,
-			})
-			return CanonicalResponse{
-				Status: 200,
-				Headers: map[string][]string{
-					"content-type": []string{"application/json; charset=utf-8"},
-				},
-				Body:     body,
-				IsBase64: false,
-			}, nil
-		}
-	case "echo_request":
-		return func(req CanonicalRequest) (CanonicalResponse, error) {
-			body, _ := json.Marshal(map[string]any{
-				"method":    req.Method,
-				"path":      req.Path,
-				"query":     req.Query,
-				"headers":   req.Headers,
-				"cookies":   req.Cookies,
-				"body_b64":  base64.StdEncoding.EncodeToString(req.Body),
-				"is_base64": req.IsBase64,
-			})
-			return CanonicalResponse{
-				Status: 200,
-				Headers: map[string][]string{
-					"content-type": []string{"application/json; charset=utf-8"},
-				},
-				Body:     body,
-				IsBase64: false,
-			}, nil
-		}
-	case "echo_context":
-		return func(req CanonicalRequest) (CanonicalResponse, error) {
-			body, _ := json.Marshal(map[string]any{
-				"request_id":    req.RequestID,
-				"tenant_id":     req.TenantID,
-				"auth_identity": req.AuthIdentity,
-				"remaining_ms":  req.RemainingMS,
-			})
-			return CanonicalResponse{
-				Status: 200,
-				Headers: map[string][]string{
-					"content-type": []string{"application/json; charset=utf-8"},
-				},
-				Body:     body,
-				IsBase64: false,
-			}, nil
-		}
-	case "echo_middleware_trace":
-		return func(req CanonicalRequest) (CanonicalResponse, error) {
-			body, _ := json.Marshal(map[string]any{
-				"trace": req.MiddlewareTrace,
-			})
-			return CanonicalResponse{
-				Status: 200,
-				Headers: map[string][]string{
-					"content-type": []string{"application/json; charset=utf-8"},
-				},
-				Body:     body,
-				IsBase64: false,
-			}, nil
-		}
-	case "parse_json_echo":
-		return func(req CanonicalRequest) (CanonicalResponse, error) {
-			if !jsonContentType(req.Headers) {
-				return CanonicalResponse{}, &AppError{Code: "app.bad_request", Message: "invalid json"}
-			}
-
-			var value any
-			if len(req.Body) == 0 {
-				value = nil
-			} else if err := json.Unmarshal(req.Body, &value); err != nil {
-				return CanonicalResponse{}, &AppError{Code: "app.bad_request", Message: "invalid json"}
-			}
-
-			body, _ := json.Marshal(value)
-			return CanonicalResponse{
-				Status: 200,
-				Headers: map[string][]string{
-					"content-type": []string{"application/json; charset=utf-8"},
-				},
-				Body:     body,
-				IsBase64: false,
-			}, nil
-		}
-	case "panic":
-		return func(_ CanonicalRequest) (CanonicalResponse, error) {
-			panic("boom")
-		}
-	case "binary_body":
-		return func(_ CanonicalRequest) (CanonicalResponse, error) {
-			return CanonicalResponse{
-				Status: 200,
-				Headers: map[string][]string{
-					"content-type": []string{"application/octet-stream"},
-				},
-				Body:     []byte{0x00, 0x01, 0x02},
-				IsBase64: true,
-			}, nil
-		}
-	case "unauthorized":
-		return func(_ CanonicalRequest) (CanonicalResponse, error) {
-			return CanonicalResponse{}, &AppError{Code: "app.unauthorized", Message: "unauthorized"}
-		}
-	case "validation_failed":
-		return func(_ CanonicalRequest) (CanonicalResponse, error) {
-			return CanonicalResponse{}, &AppError{Code: "app.validation_failed", Message: "validation failed"}
-		}
-	case "large_response":
-		return func(_ CanonicalRequest) (CanonicalResponse, error) {
-			return CanonicalResponse{
-				Status: 200,
-				Headers: map[string][]string{
-					"content-type": []string{"text/plain; charset=utf-8"},
-				},
-				Body:     []byte("12345"),
-				IsBase64: false,
-			}, nil
-		}
-	default:
-		return nil
-	}
+	return builtInHandlers[name]
 }
 
 func equalStringSlices(a, b []string) bool {

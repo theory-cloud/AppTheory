@@ -7,4 +7,3 @@ type PolicyDecision struct {
 }
 
 type PolicyHook func(*Context) (*PolicyDecision, error)
-

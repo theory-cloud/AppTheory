@@ -43,7 +43,7 @@ func (a *App) Delete(pattern string, handler Handler, opts ...RouteOption) *App 
 
 func (a *App) Serve(ctx context.Context, req Request) (resp Response) {
 	if a == nil || a.router == nil {
-		return errorResponse("app.internal", "internal error", nil)
+		return errorResponse(errorCodeInternal, errorMessageInternal, nil)
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -71,11 +71,11 @@ func (a *App) serveP0(ctx context.Context, req Request) (resp Response) {
 	if match == nil {
 		if len(allowed) > 0 {
 			headers := map[string][]string{
-				"allow": []string{formatAllowHeader(allowed)},
+				"allow": {formatAllowHeader(allowed)},
 			}
-			return errorResponse("app.method_not_allowed", "method not allowed", headers)
+			return errorResponse(errorCodeMethodNotAllowed, errorMessageMethodNotAllowed, headers)
 		}
-		return errorResponse("app.not_found", "not found", nil)
+		return errorResponse(errorCodeNotFound, errorMessageNotFound, nil)
 	}
 
 	requestCtx := &Context{
@@ -88,7 +88,7 @@ func (a *App) serveP0(ctx context.Context, req Request) (resp Response) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			resp = errorResponse("app.internal", "internal error", nil)
+			resp = errorResponse(errorCodeInternal, errorMessageInternal, nil)
 		}
 	}()
 
@@ -98,7 +98,7 @@ func (a *App) serveP0(ctx context.Context, req Request) (resp Response) {
 		if errors.As(handlerErr, &appErr) {
 			return errorResponse(appErr.Code, appErr.Message, nil)
 		}
-		return errorResponse("app.internal", "internal error", nil)
+		return errorResponse(errorCodeInternal, errorMessageInternal, nil)
 	}
 
 	return normalizeResponse(out)
@@ -112,147 +112,100 @@ func (a *App) serveP2(ctx context.Context, req Request) (resp Response) {
 	return a.servePortable(ctx, req, true)
 }
 
+type portableServeState struct {
+	method    string
+	path      string
+	requestID string
+	origin    string
+	tenantID  string
+	errorCode string
+}
+
 func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool) (resp Response) {
-	headers := canonicalizeHeaders(req.Headers)
-	query := cloneQuery(req.Query)
-
-	method := strings.ToUpper(strings.TrimSpace(req.Method))
-	path := normalizePath(req.Path)
-
-	requestID := firstHeaderValue(headers, "x-request-id")
-	if requestID == "" {
-		requestID = a.newRequestID()
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	origin := firstHeaderValue(headers, "origin")
-	tenantID := extractTenantID(headers, query)
-	remainingMS := remainingMSFromContext(ctx, a.clock)
-
-	trace := []string{"request_id", "recovery", "logging"}
-	if origin != "" {
-		trace = append(trace, "cors")
-	}
-
-	errorCode := ""
+	state := portableServeState{}
 	defer func() {
 		if r := recover(); r != nil {
-			errorCode = "app.internal"
-			resp = errorResponseWithRequestID("app.internal", "internal error", nil, requestID)
+			state.errorCode = errorCodeInternal
+			resp = errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, state.requestID)
 		}
-		resp = finalizeP1Response(resp, requestID, origin)
+		resp = finalizeP1Response(resp, state.requestID, state.origin)
 		if enableP2 {
-			a.recordObservability(method, path, requestID, tenantID, resp.Status, errorCode)
+			a.recordObservability(state.method, state.path, state.requestID, state.tenantID, resp.Status, state.errorCode)
 		}
 	}()
 
+	resp = a.servePortableCore(ctx, req, enableP2, &state)
+	return resp
+}
+
+func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool, state *portableServeState) Response {
+	headers := canonicalizeHeaders(req.Headers)
+	query := cloneQuery(req.Query)
+
+	state.method = strings.ToUpper(strings.TrimSpace(req.Method))
+	state.path = normalizePath(req.Path)
+
+	state.requestID = firstHeaderValue(headers, "x-request-id")
+	if state.requestID == "" {
+		state.requestID = a.newRequestID()
+	}
+
+	state.origin = firstHeaderValue(headers, "origin")
+	state.tenantID = extractTenantID(headers, query)
+
+	remainingMS := remainingMSFromContext(ctx, a.clock)
+	trace := portableTrace(state.origin)
+
 	if isCorsPreflight(req.Method, headers) {
-		allow := firstHeaderValue(headers, "access-control-request-method")
-		resp = Response{
-			Status: 204,
-			Headers: map[string][]string{
-				"access-control-allow-methods": []string{allow},
-			},
-		}
-		return resp
+		return preflightResponse(headers)
 	}
 
 	normalized, err := normalizeRequest(req)
 	if err != nil {
-		var appErr *AppError
-		if errors.As(err, &appErr) {
-			errorCode = appErr.Code
-		} else {
-			errorCode = "app.internal"
-		}
-		resp = responseForErrorWithRequestID(err, requestID)
-		return resp
+		state.errorCode = errorCodeForError(err)
+		return responseForErrorWithRequestID(err, state.requestID)
 	}
 
-	method = normalized.Method
-	path = normalized.Path
-	tenantID = extractTenantID(normalized.Headers, normalized.Query)
+	state.method = normalized.Method
+	state.path = normalized.Path
+	state.tenantID = extractTenantID(normalized.Headers, normalized.Query)
 
 	requestCtx := &Context{
-		ctx:            ctx,
-		Request:        normalized,
-		Params:         nil,
-		clock:          a.clock,
-		ids:            a.ids,
-		RequestID:      requestID,
-		TenantID:       tenantID,
-		AuthIdentity:   "",
-		RemainingMS:    remainingMS,
+		ctx:             ctx,
+		Request:         normalized,
+		clock:           a.clock,
+		ids:             a.ids,
+		RequestID:       state.requestID,
+		TenantID:        state.tenantID,
+		RemainingMS:     remainingMS,
 		MiddlewareTrace: trace,
 	}
 
-	if max := a.limits.MaxRequestBytes; max > 0 && len(normalized.Body) > max {
-		errorCode = "app.too_large"
-		resp = errorResponseWithRequestID("app.too_large", "request too large", nil, requestID)
-		return resp
+	if maxBytes := a.limits.MaxRequestBytes; maxBytes > 0 && len(normalized.Body) > maxBytes {
+		state.errorCode = errorCodeTooLarge
+		return errorResponseWithRequestID(errorCodeTooLarge, errorMessageRequestTooLarge, nil, state.requestID)
 	}
 
-	match, allowed := a.router.match(method, path)
+	match, allowed := a.router.match(state.method, state.path)
 	if match == nil {
-		if len(allowed) > 0 {
-			errorCode = "app.method_not_allowed"
-			headers := map[string][]string{
-				"allow": []string{formatAllowHeader(allowed)},
-			}
-			resp = errorResponseWithRequestID("app.method_not_allowed", "method not allowed", headers, requestID)
-			return resp
-		}
-		errorCode = "app.not_found"
-		resp = errorResponseWithRequestID("app.not_found", "not found", nil, requestID)
+		resp, errorCode := routeNotFoundResponse(allowed, state.requestID)
+		state.errorCode = errorCode
 		return resp
 	}
 	requestCtx.Params = match.Params
 
-	if enableP2 && a.policy != nil {
-		decision, err := a.policy(requestCtx)
-		if err != nil {
-			errorCode = "app.internal"
-			resp = errorResponseWithRequestID("app.internal", "internal error", nil, requestID)
-			return resp
-		}
-		if decision != nil {
-			code := strings.TrimSpace(decision.Code)
-			if code != "" {
-				message := strings.TrimSpace(decision.Message)
-				if message == "" {
-					message = defaultPolicyMessage(code)
-				}
-				errorCode = code
-				resp = errorResponseWithRequestID(code, message, decision.Headers, requestID)
-				return resp
-			}
-		}
+	if resp, errorCode, ok := a.applyPolicy(enableP2, requestCtx, state.requestID); ok {
+		state.errorCode = errorCode
+		return resp
 	}
 
-	if match.Route.AuthRequired {
-		requestCtx.MiddlewareTrace = append(requestCtx.MiddlewareTrace, "auth")
-		if a.auth == nil {
-			errorCode = "app.unauthorized"
-			resp = errorResponseWithRequestID("app.unauthorized", "unauthorized", nil, requestID)
-			return resp
-		}
-		identity, err := a.auth(requestCtx)
-		if err != nil {
-			var appErr *AppError
-			if errors.As(err, &appErr) {
-				errorCode = appErr.Code
-			} else {
-				errorCode = "app.internal"
-			}
-			resp = responseForErrorWithRequestID(err, requestID)
-			return resp
-		}
-		identity = strings.TrimSpace(identity)
-		if identity == "" {
-			errorCode = "app.unauthorized"
-			resp = errorResponseWithRequestID("app.unauthorized", "unauthorized", nil, requestID)
-			return resp
-		}
-		requestCtx.AuthIdentity = identity
+	if resp, errorCode, ok := a.authorize(match.Route.AuthRequired, requestCtx, state.requestID); ok {
+		state.errorCode = errorCode
+		return resp
 	}
 
 	requestCtx.MiddlewareTrace = append(requestCtx.MiddlewareTrace, "handler")
@@ -261,38 +214,122 @@ func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool) (re
 	if handlerErr != nil {
 		var appErr *AppError
 		if errors.As(handlerErr, &appErr) {
-			errorCode = appErr.Code
-			resp = errorResponseWithRequestID(appErr.Code, appErr.Message, nil, requestID)
-			return resp
+			state.errorCode = appErr.Code
+			return errorResponseWithRequestID(appErr.Code, appErr.Message, nil, state.requestID)
 		}
-		errorCode = "app.internal"
-		resp = errorResponseWithRequestID("app.internal", "internal error", nil, requestID)
-		return resp
+		state.errorCode = errorCodeInternal
+		return errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, state.requestID)
 	}
 
 	if out == nil {
-		errorCode = "app.internal"
-		resp = errorResponseWithRequestID("app.internal", "internal error", nil, requestID)
-		return resp
+		state.errorCode = errorCodeInternal
+		return errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, state.requestID)
 	}
 
-	resp = normalizeResponse(out)
-	if max := a.limits.MaxResponseBytes; max > 0 && len(resp.Body) > max {
-		errorCode = "app.too_large"
-		resp = errorResponseWithRequestID("app.too_large", "response too large", nil, requestID)
+	resp := normalizeResponse(out)
+	if maxBytes := a.limits.MaxResponseBytes; maxBytes > 0 && len(resp.Body) > maxBytes {
+		state.errorCode = errorCodeTooLarge
+		return errorResponseWithRequestID(errorCodeTooLarge, errorMessageResponseTooLarge, nil, state.requestID)
 	}
 
 	return resp
 }
 
+func portableTrace(origin string) []string {
+	trace := []string{"request_id", "recovery", "logging"}
+	if origin != "" {
+		trace = append(trace, "cors")
+	}
+	return trace
+}
+
+func preflightResponse(headers map[string][]string) Response {
+	allow := firstHeaderValue(headers, "access-control-request-method")
+	return Response{
+		Status: 204,
+		Headers: map[string][]string{
+			"access-control-allow-methods": {allow},
+		},
+	}
+}
+
+func errorCodeForError(err error) string {
+	var appErr *AppError
+	if errors.As(err, &appErr) {
+		return appErr.Code
+	}
+	return errorCodeInternal
+}
+
+func routeNotFoundResponse(allowed []string, requestID string) (Response, string) {
+	if len(allowed) > 0 {
+		headers := map[string][]string{
+			"allow": {formatAllowHeader(allowed)},
+		}
+		return errorResponseWithRequestID(errorCodeMethodNotAllowed, errorMessageMethodNotAllowed, headers, requestID), errorCodeMethodNotAllowed
+	}
+	return errorResponseWithRequestID(errorCodeNotFound, errorMessageNotFound, nil, requestID), errorCodeNotFound
+}
+
+func (a *App) applyPolicy(enableP2 bool, requestCtx *Context, requestID string) (Response, string, bool) {
+	if !enableP2 || a.policy == nil {
+		return Response{}, "", false
+	}
+
+	decision, err := a.policy(requestCtx)
+	if err != nil {
+		return errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, requestID), errorCodeInternal, true
+	}
+	if decision == nil {
+		return Response{}, "", false
+	}
+
+	code := strings.TrimSpace(decision.Code)
+	if code == "" {
+		return Response{}, "", false
+	}
+
+	message := strings.TrimSpace(decision.Message)
+	if message == "" {
+		message = defaultPolicyMessage(code)
+	}
+
+	return errorResponseWithRequestID(code, message, decision.Headers, requestID), code, true
+}
+
+func (a *App) authorize(authRequired bool, requestCtx *Context, requestID string) (Response, string, bool) {
+	if !authRequired {
+		return Response{}, "", false
+	}
+
+	requestCtx.MiddlewareTrace = append(requestCtx.MiddlewareTrace, "auth")
+
+	if a.auth == nil {
+		return errorResponseWithRequestID(errorCodeUnauthorized, errorMessageUnauthorized, nil, requestID), errorCodeUnauthorized, true
+	}
+
+	identity, err := a.auth(requestCtx)
+	if err != nil {
+		return responseForErrorWithRequestID(err, requestID), errorCodeForError(err), true
+	}
+
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return errorResponseWithRequestID(errorCodeUnauthorized, errorMessageUnauthorized, nil, requestID), errorCodeUnauthorized, true
+	}
+
+	requestCtx.AuthIdentity = identity
+	return Response{}, "", false
+}
+
 func defaultPolicyMessage(code string) string {
 	switch code {
-	case "app.rate_limited":
-		return "rate limited"
-	case "app.overloaded":
-		return "overloaded"
+	case errorCodeRateLimited:
+		return errorMessageRateLimited
+	case errorCodeOverloaded:
+		return errorMessageOverloaded
 	default:
-		return "internal error"
+		return errorMessageInternal
 	}
 }
 

@@ -67,4 +67,9 @@ tar -tf "dist/${expected_tgz}" | grep "^package/\\.jsii$" >/dev/null || {
   exit 1
 }
 
+tar -tf "dist/${expected_tgz}" | grep "^package/LICENSE$" >/dev/null || {
+  echo "cdk-ts-pack: FAIL (missing LICENSE in ${expected_tgz})"
+  exit 1
+}
+
 echo "cdk-ts-pack: PASS (${expected_tgz})"

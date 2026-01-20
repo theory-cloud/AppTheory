@@ -37,18 +37,23 @@ if [[ ! -f "dist/${expected_tgz}" ]]; then
   exit 1
 fi
 
-tar -tf "dist/${expected_tgz}" | grep -q "^package/dist/index.js$" || {
+tar -tf "dist/${expected_tgz}" | grep "^package/dist/index.js$" >/dev/null || {
   echo "ts-pack: FAIL (missing dist/index.js in ${expected_tgz})"
   exit 1
 }
 
-tar -tf "dist/${expected_tgz}" | grep -q "^package/dist/index.d.ts$" || {
+tar -tf "dist/${expected_tgz}" | grep "^package/dist/index.d.ts$" >/dev/null || {
   echo "ts-pack: FAIL (missing dist/index.d.ts in ${expected_tgz})"
   exit 1
 }
 
-tar -tf "dist/${expected_tgz}" | grep -q "^package/README.md$" || {
+tar -tf "dist/${expected_tgz}" | grep "^package/README.md$" >/dev/null || {
   echo "ts-pack: FAIL (missing README.md in ${expected_tgz})"
+  exit 1
+}
+
+tar -tf "dist/${expected_tgz}" | grep "^package/LICENSE$" >/dev/null || {
+  echo "ts-pack: FAIL (missing LICENSE in ${expected_tgz})"
   exit 1
 }
 
