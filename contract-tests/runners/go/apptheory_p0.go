@@ -380,6 +380,23 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 			IsBase64: false,
 		}, nil
 	},
+	"cache_helpers": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		tag := apptheory.ETag([]byte("hello"))
+		return apptheory.JSON(200, map[string]any{
+			"cache_control_ssr": apptheory.CacheControlSSR(),
+			"cache_control_ssg": apptheory.CacheControlSSG(),
+			"cache_control_isr": apptheory.CacheControlISR(60, 30),
+			"etag":              tag,
+			"if_none_match_hit": apptheory.MatchesIfNoneMatch(ctx.Request.Headers, tag),
+			"vary":              apptheory.Vary([]string{"origin"}, "accept-encoding", "Origin"),
+		})
+	},
+	"cloudfront_helpers": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"origin_url": apptheory.OriginURL(ctx.Request.Headers),
+			"client_ip":  apptheory.ClientIP(ctx.Request.Headers),
+		})
+	},
 }
 
 func builtInAppTheoryHandler(name string) apptheory.Handler {

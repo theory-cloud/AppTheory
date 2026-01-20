@@ -15,7 +15,9 @@ from apptheory.app import (
 )
 from apptheory.aws_events import build_dynamodb_stream_event, build_eventbridge_event, build_sqs_event
 from apptheory.aws_http import build_apigw_v2_request, build_lambda_function_url_request
+from apptheory.cache import cache_control_isr, cache_control_ssg, cache_control_ssr, etag, matches_if_none_match, vary
 from apptheory.clock import Clock, ManualClock, RealClock
+from apptheory.cloudfront import client_ip, origin_url
 from apptheory.context import Context, EventContext, WebSocketContext
 from apptheory.errors import AppError
 from apptheory.ids import IdGenerator, ManualIdGenerator, RealIdGenerator
@@ -76,6 +78,11 @@ __all__ = [
     "build_sqs_event",
     "build_websocket_event",
     "binary",
+    "cache_control_isr",
+    "cache_control_ssg",
+    "cache_control_ssr",
+    "client_ip",
+    "etag",
     "html",
     "html_stream",
     "base_name",
@@ -85,6 +92,8 @@ __all__ = [
     "event_bridge_pattern",
     "event_bridge_rule",
     "json",
+    "matches_if_none_match",
+    "origin_url",
     "safe_json_for_html",
     "normalize_stage",
     "resource_name",
@@ -98,4 +107,5 @@ __all__ = [
     "sse_event_stream",
     "text",
     "timeout_middleware",
+    "vary",
 ]

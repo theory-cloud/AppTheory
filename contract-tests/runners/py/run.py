@@ -1031,6 +1031,39 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
 
         return handler
 
+    if name == "cache_helpers":
+        def handler(ctx):
+            tag = runtime.etag("hello")
+            return runtime.json(
+                200,
+                {
+                    "cache_control_ssr": runtime.cache_control_ssr(),
+                    "cache_control_ssg": runtime.cache_control_ssg(),
+                    "cache_control_isr": runtime.cache_control_isr(60, 30),
+                    "etag": tag,
+                    "if_none_match_hit": runtime.matches_if_none_match(
+                        getattr(getattr(ctx, "request", None), "headers", {}) or {},
+                        tag,
+                    ),
+                    "vary": runtime.vary(["origin"], "accept-encoding", "Origin"),
+                },
+            )
+
+        return handler
+
+    if name == "cloudfront_helpers":
+        def handler(ctx):
+            headers = getattr(getattr(ctx, "request", None), "headers", {}) or {}
+            return runtime.json(
+                200,
+                {
+                    "origin_url": runtime.origin_url(headers),
+                    "client_ip": runtime.client_ip(headers),
+                },
+            )
+
+        return handler
+
     return None
 
 

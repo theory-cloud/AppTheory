@@ -415,6 +415,14 @@ export declare function htmlStream(
   chunks: AsyncIterable<Uint8Array | string> | Iterable<Uint8Array | string>,
 ): Response;
 export declare function safeJSONForHTML(value: unknown): string;
+export declare function cacheControlSSR(): string;
+export declare function cacheControlSSG(): string;
+export declare function cacheControlISR(revalidateSeconds: number, staleWhileRevalidateSeconds?: number): string;
+export declare function etag(body: Uint8Array | string): string;
+export declare function matchesIfNoneMatch(headers: Headers, etag: string): boolean;
+export declare function vary(existing: string[] | null | undefined, ...add: string[]): string[];
+export declare function originURL(headers: Headers): string;
+export declare function clientIP(headers: Headers): string;
 
 export interface SSEEvent {
   id?: string;

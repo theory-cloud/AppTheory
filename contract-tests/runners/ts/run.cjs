@@ -1828,6 +1828,24 @@ function builtInAppTheoryHandler(runtime, name) {
         body: Buffer.from("ok", "utf8"),
         isBase64: false,
       });
+    case "cache_helpers":
+      return (ctx) => {
+        const tag = runtime.etag("hello");
+        return runtime.json(200, {
+          cache_control_ssr: runtime.cacheControlSSR(),
+          cache_control_ssg: runtime.cacheControlSSG(),
+          cache_control_isr: runtime.cacheControlISR(60, 30),
+          etag: tag,
+          if_none_match_hit: runtime.matchesIfNoneMatch(ctx?.request?.headers ?? {}, tag),
+          vary: runtime.vary(["origin"], "accept-encoding", "Origin"),
+        });
+      };
+    case "cloudfront_helpers":
+      return (ctx) =>
+        runtime.json(200, {
+          origin_url: runtime.originURL(ctx?.request?.headers ?? {}),
+          client_ip: runtime.clientIP(ctx?.request?.headers ?? {}),
+        });
     default:
       return null;
   }

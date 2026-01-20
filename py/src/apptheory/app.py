@@ -11,6 +11,7 @@ from apptheory.aws_http import (
     request_from_apigw_v2,
     request_from_lambda_function_url,
 )
+from apptheory.cache import vary
 from apptheory.clock import Clock, RealClock
 from apptheory.context import Context, EventContext, WebSocketClientFactory, WebSocketContext
 from apptheory.errors import (
@@ -946,7 +947,7 @@ def _finalize_p1_response(resp: Response, request_id: str, origin: str, cors: CO
         headers["x-request-id"] = [str(request_id)]
     if origin and _cors_origin_allowed(origin, cors):
         headers["access-control-allow-origin"] = [str(origin)]
-        headers["vary"] = ["origin"]
+        headers["vary"] = vary(headers.get("vary"), "origin")
         if cors.allow_credentials:
             headers["access-control-allow-credentials"] = ["true"]
         allow_headers = _cors_allow_headers_value(cors)

@@ -1,0 +1,44 @@
+{
+  "id": "m14.cache.helpers",
+  "tier": "m14",
+  "name": "Cache helpers: cache-control presets, etag, if-none-match, vary",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/cache", "handler": "cache_helpers" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/cache",
+      "query": {},
+      "headers": {
+        "if-none-match": [
+          "W/\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\", \"nope\""
+        ]
+      },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "cache_control_ssr": "private, no-store",
+        "cache_control_ssg": "public, max-age=0, s-maxage=31536000",
+        "cache_control_isr": "public, max-age=0, s-maxage=60, stale-while-revalidate=30",
+        "etag": "\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\"",
+        "if_none_match_hit": true,
+        "vary": ["accept-encoding", "origin"]
+      },
+      "is_base64": false
+    }
+  }
+}
+
