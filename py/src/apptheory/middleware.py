@@ -96,4 +96,3 @@ def _timeout_for_context(ctx: Context, config: TimeoutConfig) -> int:
         timeout_ms = remaining_ms
 
     return timeout_ms
-

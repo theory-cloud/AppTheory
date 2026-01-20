@@ -66,6 +66,7 @@ def _split_path(path: str) -> list[str]:
         return []
     return value.split("/")
 
+
 def _normalize_route_segments(segments: list[str]) -> list[str]:
     if not segments:
         return []
