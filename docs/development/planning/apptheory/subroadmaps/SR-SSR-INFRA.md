@@ -43,6 +43,9 @@ Acceptance:
   - preferred: TS constructs exported via jsii for Go/Py CDK
   - fallback: template-first, but examples/templates are treated as first-class release artifacts
 
+Decision (AppTheory `m14`): **TS-first jsii constructs** (in `cdk/`), shipped via GitHub Releases, with an example CDK
+app in `examples/cdk/*` as the first integration surface.
+
 ### I2 — Implement SSR site deployment pattern (examples first)
 
 Acceptance:
@@ -65,4 +68,3 @@ Acceptance:
   - uploading assets + manifest
   - invalidation strategy (if needed)
   - wiring env vars for runtime to locate assets/manifest/cache metadata
-
