@@ -5,15 +5,15 @@
 package jsii
 
 import (
-	_ "embed"
+	_          "embed"
 
-	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
+	_jsii_     "github.com/aws/jsii-runtime-go/runtime"
 
-	awscdk "github.com/aws/aws-cdk-go/awscdk/v2/jsii"
+	awscdk     "github.com/aws/aws-cdk-go/awscdk/v2/jsii"
 	constructs "github.com/aws/constructs-go/constructs/v10/jsii"
 )
 
-//go:embed theory-cloud-apptheory-cdk-0.1.0.tgz
+//go:embed theory-cloud-apptheory-cdk-0.2.0-rc.1.tgz
 var tarball []byte
 
 // Initialize loads the necessary packages in the @jsii/kernel to support the enclosing module.
@@ -24,5 +24,5 @@ func Initialize() {
 	constructs.Initialize()
 
 	// Load this library into the kernel
-	_jsii_.Load("@theory-cloud/apptheory-cdk", "0.1.0", tarball)
+	_jsii_.Load("@theory-cloud/apptheory-cdk", "0.2.0-rc.1", tarball)
 }

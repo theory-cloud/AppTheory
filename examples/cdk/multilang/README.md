@@ -13,6 +13,7 @@ It also wires up the same non-HTTP event sources to each Lambda:
 - SQS → Lambda (partial batch failure enabled)
 - EventBridge schedule → Lambda
 - DynamoDB Streams → Lambda (partial batch failure enabled)
+- WebSocket API → Lambda (`$connect`/`$disconnect`/`$default`, with management API send)
 
 ## Prerequisites
 

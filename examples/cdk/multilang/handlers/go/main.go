@@ -47,6 +47,52 @@ func buildApp() *apptheory.App {
 		})
 	})
 
+	app.WebSocket("$connect", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		ws := ctx.AsWebSocket()
+		return apptheory.MustJSON(200, map[string]any{
+			"ok":            true,
+			"lang":          lang,
+			"name":          name,
+			"route_key":     ws.RouteKey,
+			"connection_id": ws.ConnectionID,
+			"request_id":    ws.RequestID,
+		}), nil
+	})
+
+	app.WebSocket("$disconnect", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		ws := ctx.AsWebSocket()
+		return apptheory.MustJSON(200, map[string]any{
+			"ok":            true,
+			"lang":          lang,
+			"name":          name,
+			"route_key":     ws.RouteKey,
+			"connection_id": ws.ConnectionID,
+			"request_id":    ws.RequestID,
+		}), nil
+	})
+
+	app.WebSocket("$default", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		ws := ctx.AsWebSocket()
+		if ws != nil {
+			if err := ws.SendJSONMessage(map[string]any{
+				"ok":   true,
+				"lang": lang,
+				"name": name,
+			}); err != nil {
+				return nil, err
+			}
+		}
+		return apptheory.MustJSON(200, map[string]any{
+			"ok":                  true,
+			"lang":                lang,
+			"name":                name,
+			"route_key":           ws.RouteKey,
+			"connection_id":       ws.ConnectionID,
+			"management_endpoint": ws.ManagementEndpoint,
+			"request_id":          ws.RequestID,
+		}), nil
+	})
+
 	queueName := os.Getenv("APPTHEORY_DEMO_QUEUE_NAME")
 	ruleName := os.Getenv("APPTHEORY_DEMO_RULE_NAME")
 	tableName := os.Getenv("APPTHEORY_DEMO_TABLE_NAME")

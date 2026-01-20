@@ -10,7 +10,19 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 )
 
-func validateAppTheoryFunctionAlarms_IsConstructParameters(x interface{}) error {
+func (a *jsiiProxy_AppTheoryRestApi) validateAddRouteParameters(path *string, options *AppTheoryRestApiRouteOptions) error {
+	if path == nil {
+		return fmt.Errorf("parameter path is required, but nil was provided")
+	}
+
+	if err := _jsii_.ValidateStruct(options, func() string { return "parameter options" }); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateAppTheoryRestApi_IsConstructParameters(x interface{}) error {
 	if x == nil {
 		return fmt.Errorf("parameter x is required, but nil was provided")
 	}
@@ -18,7 +30,7 @@ func validateAppTheoryFunctionAlarms_IsConstructParameters(x interface{}) error 
 	return nil
 }
 
-func validateNewAppTheoryFunctionAlarmsParameters(scope constructs.Construct, id *string, props *AppTheoryFunctionAlarmsProps) error {
+func validateNewAppTheoryRestApiParameters(scope constructs.Construct, id *string, props *AppTheoryRestApiProps) error {
 	if scope == nil {
 		return fmt.Errorf("parameter scope is required, but nil was provided")
 	}

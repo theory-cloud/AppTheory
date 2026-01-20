@@ -4,26 +4,26 @@ import (
 	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
 	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/jsii"
 
-	"github.com/aws/aws-cdk-go/awscdk/v2/awssqs"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsevents"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
 
-type AppTheoryQueueProcessor interface {
+type AppTheoryEventBridgeHandler interface {
 	constructs.Construct
 	// The tree node.
 	Node() constructs.Node
-	Queue() awssqs.Queue
+	Rule() awsevents.Rule
 	// Returns a string representation of this construct.
 	ToString() *string
 }
 
-// The jsii proxy struct for AppTheoryQueueProcessor
-type jsiiProxy_AppTheoryQueueProcessor struct {
+// The jsii proxy struct for AppTheoryEventBridgeHandler
+type jsiiProxy_AppTheoryEventBridgeHandler struct {
 	internal.Type__constructsConstruct
 }
 
-func (j *jsiiProxy_AppTheoryQueueProcessor) Node() constructs.Node {
+func (j *jsiiProxy_AppTheoryEventBridgeHandler) Node() constructs.Node {
 	var returns constructs.Node
 	_jsii_.Get(
 		j,
@@ -33,27 +33,27 @@ func (j *jsiiProxy_AppTheoryQueueProcessor) Node() constructs.Node {
 	return returns
 }
 
-func (j *jsiiProxy_AppTheoryQueueProcessor) Queue() awssqs.Queue {
-	var returns awssqs.Queue
+func (j *jsiiProxy_AppTheoryEventBridgeHandler) Rule() awsevents.Rule {
+	var returns awsevents.Rule
 	_jsii_.Get(
 		j,
-		"queue",
+		"rule",
 		&returns,
 	)
 	return returns
 }
 
 
-func NewAppTheoryQueueProcessor(scope constructs.Construct, id *string, props *AppTheoryQueueProcessorProps) AppTheoryQueueProcessor {
+func NewAppTheoryEventBridgeHandler(scope constructs.Construct, id *string, props *AppTheoryEventBridgeHandlerProps) AppTheoryEventBridgeHandler {
 	_init_.Initialize()
 
-	if err := validateNewAppTheoryQueueProcessorParameters(scope, id, props); err != nil {
+	if err := validateNewAppTheoryEventBridgeHandlerParameters(scope, id, props); err != nil {
 		panic(err)
 	}
-	j := jsiiProxy_AppTheoryQueueProcessor{}
+	j := jsiiProxy_AppTheoryEventBridgeHandler{}
 
 	_jsii_.Create(
-		"@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor",
+		"@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandler",
 		[]interface{}{scope, id, props},
 		&j,
 	)
@@ -61,11 +61,11 @@ func NewAppTheoryQueueProcessor(scope constructs.Construct, id *string, props *A
 	return &j
 }
 
-func NewAppTheoryQueueProcessor_Override(a AppTheoryQueueProcessor, scope constructs.Construct, id *string, props *AppTheoryQueueProcessorProps) {
+func NewAppTheoryEventBridgeHandler_Override(a AppTheoryEventBridgeHandler, scope constructs.Construct, id *string, props *AppTheoryEventBridgeHandlerProps) {
 	_init_.Initialize()
 
 	_jsii_.Create(
-		"@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor",
+		"@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandler",
 		[]interface{}{scope, id, props},
 		a,
 	)
@@ -88,16 +88,16 @@ func NewAppTheoryQueueProcessor_Override(a AppTheoryQueueProcessor, scope constr
 // this type-testing method instead.
 //
 // Returns: true if `x` is an object created from a class which extends `Construct`.
-func AppTheoryQueueProcessor_IsConstruct(x interface{}) *bool {
+func AppTheoryEventBridgeHandler_IsConstruct(x interface{}) *bool {
 	_init_.Initialize()
 
-	if err := validateAppTheoryQueueProcessor_IsConstructParameters(x); err != nil {
+	if err := validateAppTheoryEventBridgeHandler_IsConstructParameters(x); err != nil {
 		panic(err)
 	}
 	var returns *bool
 
 	_jsii_.StaticInvoke(
-		"@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor",
+		"@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandler",
 		"isConstruct",
 		[]interface{}{x},
 		&returns,
@@ -106,7 +106,7 @@ func AppTheoryQueueProcessor_IsConstruct(x interface{}) *bool {
 	return returns
 }
 
-func (a *jsiiProxy_AppTheoryQueueProcessor) ToString() *string {
+func (a *jsiiProxy_AppTheoryEventBridgeHandler) ToString() *string {
 	var returns *string
 
 	_jsii_.Invoke(
