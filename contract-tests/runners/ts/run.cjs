@@ -878,6 +878,16 @@ function builtInSQSHandler(name) {
           throw new Error("fail");
         }
       };
+    case "sqs_requires_event_middleware":
+      return async (ctx) => {
+        if (ctx.get("mw") !== "ok") {
+          throw new Error("missing middleware value");
+        }
+        const trace = ctx.get("trace");
+        if (!Array.isArray(trace) || trace.join(",") !== "evt_mw_a,evt_mw_b") {
+          throw new Error("bad trace");
+        }
+      };
     default:
       return null;
   }
@@ -897,6 +907,16 @@ function builtInDynamoDBStreamHandler(name) {
           throw new Error("fail");
         }
       };
+    case "ddb_requires_event_middleware":
+      return async (ctx) => {
+        if (ctx.get("mw") !== "ok") {
+          throw new Error("missing middleware value");
+        }
+        const trace = ctx.get("trace");
+        if (!Array.isArray(trace) || trace.join(",") !== "evt_mw_a,evt_mw_b") {
+          throw new Error("bad trace");
+        }
+      };
     default:
       return null;
   }
@@ -908,6 +928,29 @@ function builtInEventBridgeHandler(name) {
       return async () => ({ handler: "a" });
     case "eventbridge_static_b":
       return async () => ({ handler: "b" });
+    case "eventbridge_echo_event_middleware":
+      return async (ctx) => ({ mw: ctx.get("mw"), trace: ctx.get("trace") });
+    default:
+      return null;
+  }
+}
+
+function builtInEventMiddleware(name) {
+  switch (String(name ?? "").trim()) {
+    case "evt_mw_a":
+      return async (ctx, _event, next) => {
+        ctx.set("mw", "ok");
+        ctx.set("trace", ["evt_mw_a"]);
+        return next();
+      };
+    case "evt_mw_b":
+      return async (ctx, _event, next) => {
+        const existing = ctx.get("trace");
+        const trace = Array.isArray(existing) ? existing.slice() : [];
+        trace.push("evt_mw_b");
+        ctx.set("trace", trace);
+        return next();
+      };
     default:
       return null;
   }
@@ -916,6 +959,14 @@ function builtInEventBridgeHandler(name) {
 async function runFixtureM1(fixture) {
   const runtime = await loadAppTheoryRuntime();
   const app = runtime.createApp({ tier: "p0" });
+
+  for (const name of fixture.setup?.middlewares ?? []) {
+    const mw = builtInEventMiddleware(name);
+    if (!mw) {
+      throw new Error(`unknown event middleware ${JSON.stringify(name)}`);
+    }
+    app.useEvents(mw);
+  }
 
   for (const route of fixture.setup?.sqs ?? []) {
     const handler = builtInSQSHandler(route.handler);

@@ -22,6 +22,8 @@ type EventContext struct {
 
 	RequestID   string
 	RemainingMS int
+
+	values map[string]any
 }
 
 func (c *EventContext) Context() context.Context {
@@ -43,6 +45,31 @@ func (c *EventContext) NewID() string {
 		return RandomIDGenerator{}.NewID()
 	}
 	return c.ids.NewID()
+}
+
+func (c *EventContext) Set(key string, value any) {
+	if c == nil {
+		return
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+	if c.values == nil {
+		c.values = map[string]any{}
+	}
+	c.values[key] = value
+}
+
+func (c *EventContext) Get(key string) any {
+	if c == nil || c.values == nil {
+		return nil
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil
+	}
+	return c.values[key]
 }
 
 func (a *App) eventContext(ctx context.Context) *EventContext {
@@ -159,20 +186,68 @@ func serveBatchItemFailures[Record any, Failure any](
 	return batchItemFailures(records, runner, recordID, failureForID)
 }
 
+func wrapEventRecordHandler[Record any](
+	a *App,
+	handler func(*EventContext, Record) error,
+	coerce func(any) (Record, bool),
+	invalidTypeError string,
+) func(*EventContext, Record) error {
+	if a == nil || handler == nil || len(a.eventMiddlewares) == 0 || coerce == nil {
+		return handler
+	}
+
+	wrapped := a.applyEventMiddlewares(func(ctx *EventContext, event any) (any, error) {
+		record, ok := coerce(event)
+		if !ok {
+			return nil, errors.New(invalidTypeError)
+		}
+		return nil, handler(ctx, record)
+	})
+
+	return func(ctx *EventContext, record Record) error {
+		_, err := wrapped(ctx, record)
+		return err
+	}
+}
+
+type batchEventSpec[Record any, Failure any, Response any] struct {
+	coerce              func(any) (Record, bool)
+	invalidTypeError    string
+	recordID            func(Record) string
+	failureForID        func(string) Failure
+	responseForFailures func([]Failure) Response
+}
+
+func serveBatchEvent[Record any, Failure any, Response any](
+	ctx context.Context,
+	a *App,
+	records []Record,
+	handler func(*EventContext, Record) error,
+	spec batchEventSpec[Record, Failure, Response],
+) Response {
+	handler = wrapEventRecordHandler(a, handler, spec.coerce, spec.invalidTypeError)
+	failures := serveBatchItemFailures(ctx, a, records, handler, spec.recordID, spec.failureForID)
+	return spec.responseForFailures(failures)
+}
+
+var sqsBatchSpec = batchEventSpec[events.SQSMessage, events.SQSBatchItemFailure, events.SQSEventResponse]{
+	coerce: func(event any) (events.SQSMessage, bool) {
+		msg, ok := event.(events.SQSMessage)
+		return msg, ok
+	},
+	invalidTypeError: "apptheory: invalid sqs record type",
+	recordID:         func(msg events.SQSMessage) string { return msg.MessageId },
+	failureForID:     func(id string) events.SQSBatchItemFailure { return events.SQSBatchItemFailure{ItemIdentifier: id} },
+	responseForFailures: func(failures []events.SQSBatchItemFailure) events.SQSEventResponse {
+		return events.SQSEventResponse{BatchItemFailures: failures}
+	},
+}
+
 // ServeSQS routes an SQS event to the registered queue handler and returns a partial batch failure response.
 //
 // If the queue is unrecognized, it fails closed by returning all messages as failures.
 func (a *App) ServeSQS(ctx context.Context, event events.SQSEvent) events.SQSEventResponse {
-	handler := a.sqsHandlerForEvent(event)
-	failures := serveBatchItemFailures(
-		ctx,
-		a,
-		event.Records,
-		handler,
-		func(msg events.SQSMessage) string { return msg.MessageId },
-		func(id string) events.SQSBatchItemFailure { return events.SQSBatchItemFailure{ItemIdentifier: id} },
-	)
-	return events.SQSEventResponse{BatchItemFailures: failures}
+	return serveBatchEvent(ctx, a, event.Records, a.sqsHandlerForEvent(event), sqsBatchSpec)
 }
 
 type EventBridgeSelector struct {
@@ -288,7 +363,21 @@ func (a *App) ServeEventBridge(ctx context.Context, event events.EventBridgeEven
 	if handler == nil {
 		return nil, nil
 	}
-	return handler(a.eventContext(ctx), event)
+
+	evtCtx := a.eventContext(ctx)
+	if a != nil && len(a.eventMiddlewares) > 0 {
+		original := handler
+		wrapped := a.applyEventMiddlewares(func(ctx *EventContext, event any) (any, error) {
+			ev, ok := event.(events.EventBridgeEvent)
+			if !ok {
+				return nil, errors.New("apptheory: invalid eventbridge event type")
+			}
+			return original(ctx, ev)
+		})
+		return wrapped(evtCtx, event)
+	}
+
+	return handler(evtCtx, event)
 }
 
 type DynamoDBStreamHandler func(*EventContext, events.DynamoDBEventRecord) error
@@ -347,22 +436,28 @@ func (a *App) dynamoDBHandlerForEvent(event events.DynamoDBEvent) DynamoDBStream
 	return nil
 }
 
+var dynamoDBBatchSpec = batchEventSpec[events.DynamoDBEventRecord, events.DynamoDBBatchItemFailure, events.DynamoDBEventResponse]{}
+
+func init() {
+	dynamoDBBatchSpec.coerce = func(event any) (events.DynamoDBEventRecord, bool) {
+		record, ok := event.(events.DynamoDBEventRecord)
+		return record, ok
+	}
+	dynamoDBBatchSpec.invalidTypeError = "apptheory: invalid dynamodb record type"
+	dynamoDBBatchSpec.recordID = func(record events.DynamoDBEventRecord) string { return record.EventID }
+	dynamoDBBatchSpec.failureForID = func(id string) events.DynamoDBBatchItemFailure {
+		return events.DynamoDBBatchItemFailure{ItemIdentifier: id}
+	}
+	dynamoDBBatchSpec.responseForFailures = func(failures []events.DynamoDBBatchItemFailure) events.DynamoDBEventResponse {
+		return events.DynamoDBEventResponse{BatchItemFailures: failures}
+	}
+}
+
 // ServeDynamoDBStream routes a DynamoDB Streams event to the registered table handler and returns a partial batch failure response.
 //
 // If the table is unrecognized, it fails closed by returning all records as failures.
 func (a *App) ServeDynamoDBStream(ctx context.Context, event events.DynamoDBEvent) events.DynamoDBEventResponse {
-	handler := a.dynamoDBHandlerForEvent(event)
-	failures := serveBatchItemFailures(
-		ctx,
-		a,
-		event.Records,
-		handler,
-		func(record events.DynamoDBEventRecord) string { return record.EventID },
-		func(id string) events.DynamoDBBatchItemFailure {
-			return events.DynamoDBBatchItemFailure{ItemIdentifier: id}
-		},
-	)
-	return events.DynamoDBEventResponse{BatchItemFailures: failures}
+	return serveBatchEvent(ctx, a, event.Records, a.dynamoDBHandlerForEvent(event), dynamoDBBatchSpec)
 }
 
 type lambdaEnvelope struct {

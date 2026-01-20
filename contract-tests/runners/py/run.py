@@ -946,6 +946,28 @@ def _built_in_m12_middleware(runtime: Any, name: str):
     return None
 
 
+def _built_in_event_middleware(name: str):
+    if name == "evt_mw_a":
+        def mw(ctx, _event, next_handler):
+            ctx.set("mw", "ok")
+            ctx.set("trace", ["evt_mw_a"])
+            return next_handler()
+
+        return mw
+
+    if name == "evt_mw_b":
+        def mw(ctx, _event, next_handler):
+            existing = ctx.get("trace")
+            trace = list(existing) if isinstance(existing, list) else []
+            trace.append("evt_mw_b")
+            ctx.set("trace", trace)
+            return next_handler()
+
+        return mw
+
+    return None
+
+
 def _built_in_sqs_handler(name: str):
     if name == "sqs_noop":
         return lambda _ctx, _msg: None
@@ -960,6 +982,16 @@ def _built_in_sqs_handler(name: str):
         def handler(_ctx, msg):
             if str((msg or {}).get("body") or "").strip() == "fail":
                 raise RuntimeError("fail")
+
+        return handler
+
+    if name == "sqs_requires_event_middleware":
+        def handler(ctx, _msg):
+            if ctx.get("mw") != "ok":
+                raise RuntimeError("missing middleware value")
+            trace = ctx.get("trace")
+            if not isinstance(trace, list) or ",".join(trace) != "evt_mw_a,evt_mw_b":
+                raise RuntimeError("bad trace")
 
         return handler
 
@@ -983,6 +1015,16 @@ def _built_in_dynamodb_stream_handler(name: str):
 
         return handler
 
+    if name == "ddb_requires_event_middleware":
+        def handler(ctx, _record):
+            if ctx.get("mw") != "ok":
+                raise RuntimeError("missing middleware value")
+            trace = ctx.get("trace")
+            if not isinstance(trace, list) or ",".join(trace) != "evt_mw_a,evt_mw_b":
+                raise RuntimeError("bad trace")
+
+        return handler
+
     return None
 
 
@@ -991,6 +1033,8 @@ def _built_in_eventbridge_handler(name: str):
         return lambda _ctx, _event: {"handler": "a"}
     if name == "eventbridge_static_b":
         return lambda _ctx, _event: {"handler": "b"}
+    if name == "eventbridge_echo_event_middleware":
+        return lambda ctx, _event: {"mw": ctx.get("mw"), "trace": ctx.get("trace")}
     return None
 
 
@@ -1111,6 +1155,12 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
     app = runtime.create_app(tier="p0")
 
     setup = fixture.get("setup", {}) or {}
+    for name in setup.get("middlewares", []) or []:
+        mw = _built_in_event_middleware(str(name or "").strip())
+        if mw is None:
+            raise RuntimeError(f"unknown event middleware {name!r}")
+        app.use_events(mw)
+
     for route in setup.get("sqs", []) or []:
         handler = _built_in_sqs_handler(str(route.get("handler") or ""))
         if handler is None:
