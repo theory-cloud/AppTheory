@@ -65,7 +65,7 @@ See: `docs/development/planning/apptheory/supporting/apptheory-versioning-and-re
 
 ## Roadmap overview
 
-The milestones below are the shortest path to v1.0 while keeping parity and supply-chain posture intact.
+The milestones below are the shortest path to v0.1.0 while keeping parity and supply-chain posture intact.
 
 Deep workstreams are tracked in dedicated sub-roadmaps:
 
@@ -248,14 +248,14 @@ Deep workstreams are tracked in dedicated sub-roadmaps:
 
 ---
 
-### M11 — Releases + rubric gates + v1.0
+### M11 — Releases + rubric gates + v0.1.0
 
-**Goal:** ship v1.0 with supply-chain posture and parity guarantees.
+**Goal:** ship v0.1.0 with supply-chain posture and parity guarantees.
 
 **Complex enough for sub-roadmap:** yes. See `subroadmaps/SR-RELEASE.md`.
 
 **Acceptance criteria**
-- GitHub Release for `v1.0.0` contains:
+- GitHub Release for `v0.1.0` contains:
   - TS `npm pack` tarball
   - Python wheel + sdist
   - checksums for assets
@@ -265,7 +265,7 @@ Deep workstreams are tracked in dedicated sub-roadmaps:
   - build/test/lint/format checks
   - contract tests across languages
   - CDK synth (for examples/constructs)
-- `make rubric` (or equivalent single command) proves the repo is v1.0-ready.
+- `make rubric` (or equivalent single command) proves the repo is v0.1.0-ready.
 
 ## Notes on governance artifacts (`hgm-infra/`)
 
