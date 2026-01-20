@@ -337,6 +337,24 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		}()
 		return resp, nil
 	},
+	"html_basic": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.HTML(200, "<h1>Hello</h1>"), nil
+	},
+	"html_stream_two_chunks": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.HTMLStream(200, apptheory.StreamBytes([]byte("<h1>"), []byte("Hello</h1>"))), nil
+	},
+	"safe_json_for_html": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		out, err := apptheory.SafeJSONForHTML(map[string]any{
+			"html": "</script><div>&</div><",
+			"amp":  "a&b",
+			"ls":   "line\u2028sep",
+			"ps":   "para\u2029sep",
+		})
+		if err != nil {
+			return nil, err
+		}
+		return apptheory.Text(200, out), nil
+	},
 }
 
 func builtInAppTheoryHandler(name string) apptheory.Handler {

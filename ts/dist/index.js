@@ -285,6 +285,58 @@ export function binary(status, body, contentType) {
   });
 }
 
+export function html(status, body) {
+  return normalizeResponse({
+    status,
+    headers: { "content-type": ["text/html; charset=utf-8"] },
+    cookies: [],
+    body: toBuffer(body),
+    isBase64: false,
+  });
+}
+
+export function htmlStream(status, chunks) {
+  return normalizeResponse({
+    status,
+    headers: { "content-type": ["text/html; charset=utf-8"] },
+    cookies: [],
+    body: Buffer.alloc(0),
+    bodyStream: chunks,
+    isBase64: false,
+  });
+}
+
+function sortKeysDeep(value) {
+  if (value === null || value === undefined) return value;
+  if (Array.isArray(value)) return value.map(sortKeysDeep);
+  if (typeof value !== "object") return value;
+  if (value instanceof Uint8Array || Buffer.isBuffer(value)) return value;
+  const keys = Object.keys(value).sort();
+  const out = {};
+  for (const key of keys) {
+    const next = sortKeysDeep(value[key]);
+    if (next === undefined) continue;
+    out[key] = next;
+  }
+  return out;
+}
+
+export function safeJSONForHTML(value) {
+  let serialized;
+  try {
+    serialized = JSON.stringify(sortKeysDeep(value));
+  } catch (err) {
+    throw new Error(`json serialization failed: ${String(err)}`);
+  }
+
+  return String(serialized)
+    .replace(/&/g, "\\u0026")
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
 function formatSSEEvent(event) {
   const id = String(event?.id ?? "").trim();
   const name = String(event?.event ?? "").trim();

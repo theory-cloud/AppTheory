@@ -974,6 +974,35 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
 
         return handler
 
+    if name == "html_basic":
+        return lambda _ctx: runtime.html(200, "<h1>Hello</h1>")
+
+    if name == "html_stream_two_chunks":
+        def handler(_ctx):
+            def gen():
+                yield b"<h1>"
+                yield b"Hello</h1>"
+
+            return runtime.html_stream(200, gen())
+
+        return handler
+
+    if name == "safe_json_for_html":
+        def handler(_ctx):
+            return runtime.text(
+                200,
+                runtime.safe_json_for_html(
+                    {
+                        "html": "</script><div>&</div><",
+                        "amp": "a&b",
+                        "ls": "line\u2028sep",
+                        "ps": "para\u2029sep",
+                    }
+                ),
+            )
+
+        return handler
+
     return None
 
 

@@ -22,7 +22,7 @@ from apptheory.ids import IdGenerator, ManualIdGenerator, RealIdGenerator
 from apptheory.middleware import TimeoutConfig, timeout_middleware
 from apptheory.naming import base_name, normalize_stage, resource_name
 from apptheory.request import Request
-from apptheory.response import Response, binary, json, text
+from apptheory.response import Response, binary, html, html_stream, json, safe_json_for_html, text
 from apptheory.sanitization import (
     payment_xml_patterns,
     rapid_connect_xml_patterns,
@@ -76,6 +76,8 @@ __all__ = [
     "build_sqs_event",
     "build_websocket_event",
     "binary",
+    "html",
+    "html_stream",
     "base_name",
     "create_app",
     "create_fake_websocket_client_factory",
@@ -83,6 +85,7 @@ __all__ = [
     "event_bridge_pattern",
     "event_bridge_rule",
     "json",
+    "safe_json_for_html",
     "normalize_stage",
     "resource_name",
     "payment_xml_patterns",

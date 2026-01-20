@@ -409,6 +409,12 @@ export declare function timeoutMiddleware(config?: TimeoutConfig): Middleware;
 export declare function text(status: number, body: string): Response;
 export declare function json(status: number, value: unknown): Response;
 export declare function binary(status: number, body: Uint8Array, contentType?: string): Response;
+export declare function html(status: number, body: Uint8Array | string): Response;
+export declare function htmlStream(
+  status: number,
+  chunks: AsyncIterable<Uint8Array | string> | Iterable<Uint8Array | string>,
+): Response;
+export declare function safeJSONForHTML(value: unknown): string;
 
 export interface SSEEvent {
   id?: string;

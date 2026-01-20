@@ -57,6 +57,42 @@ def binary(status: int, body: Any, content_type: str | None = None) -> Response:
     )
 
 
+def html(status: int, body: Any) -> Response:
+    return normalize_response(
+        Response(
+            status=status,
+            headers={"content-type": ["text/html; charset=utf-8"]},
+            cookies=[],
+            body=to_bytes(body),
+            is_base64=False,
+        )
+    )
+
+
+def html_stream(status: int, chunks: Any) -> Response:
+    return normalize_response(
+        Response(
+            status=status,
+            headers={"content-type": ["text/html; charset=utf-8"]},
+            cookies=[],
+            body=b"",
+            is_base64=False,
+            body_stream=chunks,
+        )
+    )
+
+
+def safe_json_for_html(value: Any) -> str:
+    raw = jsonlib.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return (
+        raw.replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
 def normalize_response(resp: Response) -> Response:
     status = int(resp.status or 200)
     headers = canonicalize_headers(resp.headers)
