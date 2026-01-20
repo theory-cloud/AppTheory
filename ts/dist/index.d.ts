@@ -461,6 +461,15 @@ export declare class TestEnv {
     webSocketClientFactory?: WebSocketClientFactory;
   }): App;
   invoke(app: App, request: Request, ctx?: unknown): Promise<Response>;
+  invokeStreaming(app: App, request: Request, ctx?: unknown): Promise<{
+    status: number;
+    headers: Headers;
+    cookies: string[];
+    chunks: Uint8Array[];
+    body: Uint8Array;
+    is_base64: boolean;
+    stream_error_code: string;
+  }>;
   invokeAPIGatewayV2(app: App, event: APIGatewayV2HTTPRequest, ctx?: unknown): Promise<APIGatewayV2HTTPResponse>;
   invokeLambdaFunctionURL(app: App, event: LambdaFunctionURLRequest, ctx?: unknown): Promise<LambdaFunctionURLResponse>;
   invokeLambdaFunctionURLStreaming(app: App, event: LambdaFunctionURLRequest, ctx?: unknown): Promise<{
