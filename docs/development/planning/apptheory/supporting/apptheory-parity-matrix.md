@@ -75,8 +75,8 @@ Legend:
 
 | Feature | Fixtures | Go | TS | Py | Notes |
 | --- | --- | --- | --- | --- | --- |
-| HTTP adapter: Lambda URL | P0 | 🟨 | 🟨 | 🟨 | implemented (M7); not fixture-backed yet |
-| HTTP adapter: APIGW v2 | P0 | 🟨 | 🟨 | 🟨 | implemented (M7); not fixture-backed yet |
+| HTTP adapter: Lambda URL | P0 | ✅ | ✅ | ✅ | fixture-backed (contract tests) |
+| HTTP adapter: APIGW v2 | P0 | ✅ | ✅ | ✅ | fixture-backed (contract tests) |
 | Router: path + method dispatch | P0 | ✅ | ✅ | ✅ | |
 | JSON parsing + content-type rules | P0 | ✅ | ✅ | ✅ | |
 | Headers normalization | P0 | ✅ | ✅ | ✅ | case-insensitive lookups |

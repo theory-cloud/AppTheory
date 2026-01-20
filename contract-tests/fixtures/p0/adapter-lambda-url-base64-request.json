@@ -1,0 +1,52 @@
+{
+  "id": "p0.adapter.lambda_function_url.base64_request_body",
+  "tier": "p0",
+  "name": "Lambda Function URL: base64 request bodies are decoded",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/echo", "handler": "echo_request" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/echo",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "hi" },
+      "is_base64": true
+    },
+    "aws_event": {
+      "source": "lambda_function_url",
+      "event": {
+        "version": "2.0",
+        "rawPath": "/echo",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": {},
+        "queryStringParameters": null,
+        "requestContext": { "http": { "method": "POST", "path": "/echo" } },
+        "body": "aGk=",
+        "isBase64Encoded": true
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "method": "POST",
+        "path": "/echo",
+        "query": {},
+        "headers": {},
+        "cookies": {},
+        "body_b64": "aGk=",
+        "is_base64": true
+      },
+      "is_base64": false
+    }
+  }
+}
+
