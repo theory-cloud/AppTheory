@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
 import * as path from "node:path";
 
-import { AppTheoryFunction, AppTheoryFunctionAlarms, AppTheoryHttpApi } from "@theory-cloud/apptheory-cdk";
+import { AppTheoryFunction, AppTheoryFunctionAlarms, AppTheoryHttpApi, AppTheoryRestApi } from "@theory-cloud/apptheory-cdk";
 import * as cdk from "aws-cdk-lib";
 import { Stack } from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
@@ -218,5 +218,14 @@ export class MultiLangStack extends Stack {
     new cdk.CfnOutput(this, "GoApiUrl", { value: goApi.api.url ?? "" });
     new cdk.CfnOutput(this, "TsApiUrl", { value: tsApi.api.url ?? "" });
     new cdk.CfnOutput(this, "PyApiUrl", { value: pyApi.api.url ?? "" });
+
+    const goRestApi = new AppTheoryRestApi(this, "GoRestApi", {
+      apiName: `${name}-go-rest`,
+      handler: goHandler.fn,
+    });
+    goRestApi.addRoute("/sse", ["GET"], { streaming: true });
+
+    new cdk.CfnOutput(this, "GoRestApiUrl", { value: goRestApi.api.url ?? "" });
+    new cdk.CfnOutput(this, "GoRestSseUrl", { value: goRestApi.api.urlForPath("/sse") ?? "" });
   }
 }

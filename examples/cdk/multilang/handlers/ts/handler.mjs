@@ -1,4 +1,4 @@
-import { createApp, json } from "./vendor/apptheory/index.js";
+import { createApp, json, sse } from "./vendor/apptheory/index.js";
 
 const tier = process.env.APPTHEORY_TIER ?? "p2";
 const name = process.env.APPTHEORY_DEMO_NAME ?? "apptheory-multilang";
@@ -34,5 +34,7 @@ app.get("/hello/{name}", (ctx) =>
     tenant_id: ctx.tenantId,
   }),
 );
+
+app.get("/sse", () => sse(200, [{ id: "1", event: "message", data: { ok: true, lang, name } }]));
 
 export const handler = async (event, context) => app.handleLambda(event, context);

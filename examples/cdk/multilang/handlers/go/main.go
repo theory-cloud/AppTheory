@@ -39,6 +39,14 @@ func buildApp() *apptheory.App {
 		}), nil
 	})
 
+	app.Get("/sse", func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.SSEResponse(200, apptheory.SSEEvent{
+			ID:    "1",
+			Event: "message",
+			Data:  map[string]any{"ok": true, "lang": lang, "name": name},
+		})
+	})
+
 	queueName := os.Getenv("APPTHEORY_DEMO_QUEUE_NAME")
 	ruleName := os.Getenv("APPTHEORY_DEMO_RULE_NAME")
 	tableName := os.Getenv("APPTHEORY_DEMO_TABLE_NAME")

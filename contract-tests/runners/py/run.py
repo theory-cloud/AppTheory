@@ -52,7 +52,7 @@ def stable_json(value: Any) -> str:
 
 def list_fixture_files(fixtures_root: Path) -> list[Path]:
     files: list[Path] = []
-    for tier in ("p0", "p1", "p2", "m1", "m2"):
+    for tier in ("p0", "p1", "p2", "m1", "m2", "m3"):
         tier_dir = fixtures_root / tier
         if not tier_dir.exists():
             continue
@@ -699,6 +699,8 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
         return run_fixture_m1(fixture)
     if tier == "m2":
         return run_fixture_m2(fixture)
+    if tier == "m3":
+        return run_fixture_m3(fixture)
 
     setup = fixture.get("setup", {})
     input_ = fixture.get("input", {})
@@ -854,6 +856,17 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
 
     if name == "large_response":
         return lambda _ctx: runtime.text(200, "12345")
+
+    if name == "sse_single_event":
+        def handler(_ctx):
+            return runtime.sse(
+                200,
+                [
+                    runtime.SSEEvent(id="1", event="message", data={"ok": True}),
+                ],
+            )
+
+        return handler
 
     return None
 
@@ -1173,6 +1186,38 @@ def run_fixture_m2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
         return False, ws_reason, actual, expected, dummy
 
     return True, "", actual, expected, dummy
+
+
+def run_fixture_m3(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+    runtime = _load_apptheory_runtime()
+    app = runtime.create_app(tier="p0")
+
+    setup = fixture.get("setup", {}) or {}
+    for route in setup.get("routes", []) or []:
+        name = str(route.get("handler", ""))
+        handler = _built_in_apptheory_handler(runtime, name)
+        if handler is None:
+            raise RuntimeError(f"unknown handler {name!r}")
+        app.handle(
+            route.get("method", ""),
+            route.get("path", ""),
+            handler,
+            auth_required=bool(route.get("auth_required")),
+        )
+
+    input_ = fixture.get("input", {}) or {}
+    aws_event = (input_ or {}).get("aws_event") or {}
+    event = (aws_event or {}).get("event")
+    if not isinstance(event, dict):
+        raise RuntimeError("fixture missing input.aws_event.event")
+
+    out = app.handle_lambda(event, ctx={})
+    if not isinstance(out, dict):
+        raise RuntimeError(f"expected apigw proxy response, got {type(out)!r}")
+
+    actual = canonical_response_from_apigw_proxy(out)
+    expected = fixture.get("expect", {}).get("response", {})
+    return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
 
 
 def run_fixture_p0(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:

@@ -51,7 +51,7 @@ function deepEqual(a, b) {
 }
 
 function listFixtureFiles(fixturesRoot) {
-  const tiers = ["p0", "p1", "p2", "m1", "m2"];
+  const tiers = ["p0", "p1", "p2", "m1", "m2", "m3"];
   const files = [];
   for (const tier of tiers) {
     const dir = path.join(fixturesRoot, tier);
@@ -626,6 +626,10 @@ async function runFixture(fixture) {
     if (!result.ok) return result;
     return compareWebSocketCalls(fixture, wsCalls);
   }
+  if (tier === "m3") {
+    const { actual } = await runFixtureM3(fixture);
+    return compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
+  }
 
   const enableP1 = ["p1", "p2"].includes(tier);
   const enableP2 = tier === "p2";
@@ -1038,6 +1042,28 @@ async function runFixtureM2(fixture) {
   };
 }
 
+async function runFixtureM3(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const app = runtime.createApp({ tier: "p0" });
+
+  for (const route of fixture.setup?.routes ?? []) {
+    const handler = builtInAppTheoryHandler(runtime, route.handler);
+    if (!handler) {
+      throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
+    }
+    app.handle(route.method, route.path, handler, { authRequired: Boolean(route.auth_required) });
+  }
+
+  const awsEvent = fixture.input?.aws_event ?? null;
+  if (!awsEvent) {
+    throw new Error("fixture missing input.aws_event");
+  }
+
+  const resp = await app.handleLambda(awsEvent.event ?? {}, {});
+  const actual = canonicalResponseFromAPIGatewayProxyResponse(resp);
+  return { actual };
+}
+
 async function runFixtureP0(fixture) {
   const runtime = await loadAppTheoryRuntime();
   const app = runtime.createApp({ tier: "p0" });
@@ -1352,6 +1378,8 @@ function builtInAppTheoryHandler(runtime, name) {
       return (ctx) => runtime.json(200, { trace: ctx.middlewareTrace ?? [] });
     case "large_response":
       return () => runtime.text(200, "12345");
+    case "sse_single_event":
+      return () => runtime.sse(200, [{ id: "1", event: "message", data: { ok: true } }]);
     default:
       return null;
   }

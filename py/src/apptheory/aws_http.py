@@ -18,6 +18,27 @@ def request_from_lambda_function_url(event: dict[str, Any]) -> Request:
     return _request_from_http_event(event)
 
 
+def request_from_apigw_proxy(event: dict[str, Any]) -> Request:
+    request_context = event.get("requestContext") or {}
+    if not isinstance(request_context, dict):
+        request_context = {}
+
+    headers = _headers_from_proxy(event.get("headers"), event.get("multiValueHeaders"))
+    query = _query_from_proxy(
+        event.get("queryStringParameters"),
+        event.get("multiValueQueryStringParameters"),
+    )
+
+    return Request(
+        method=str(event.get("httpMethod") or request_context.get("httpMethod") or ""),
+        path=str(event.get("path") or request_context.get("path") or "/"),
+        query=query,
+        headers=headers,
+        body=str(event.get("body") or ""),
+        is_base64=bool(event.get("isBase64Encoded")),
+    )
+
+
 def apigw_v2_response_from_response(resp: Response) -> dict[str, Any]:
     headers: dict[str, str] = {}
     multi: dict[str, list[str]] = {}
@@ -215,6 +236,44 @@ def _headers_from_single(headers: dict[str, Any] | None, *, ignore_cookie_header
 def _query_from_single(query: dict[str, Any] | None) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for key, value in (query or {}).items():
+        out[str(key)] = [str(value)]
+    return out
+
+
+def _headers_from_proxy(
+    headers: dict[str, Any] | None,
+    multi: dict[str, Any] | None,
+) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for key, values in (multi or {}).items():
+        if values is None:
+            continue
+        if isinstance(values, list):
+            out[str(key)] = [str(v) for v in values]
+        else:
+            out[str(key)] = [str(values)]
+    for key, value in (headers or {}).items():
+        if str(key) in out:
+            continue
+        out[str(key)] = [str(value)]
+    return out
+
+
+def _query_from_proxy(
+    query: dict[str, Any] | None,
+    multi: dict[str, Any] | None,
+) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for key, values in (multi or {}).items():
+        if values is None:
+            continue
+        if isinstance(values, list):
+            out[str(key)] = [str(v) for v in values]
+        else:
+            out[str(key)] = [str(values)]
+    for key, value in (query or {}).items():
+        if str(key) in out:
+            continue
         out[str(key)] = [str(value)]
     return out
 

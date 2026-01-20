@@ -458,6 +458,14 @@ func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMess
 		return a.ServeWebSocket(ctx, ws), true, nil
 	}
 
+	var proxy events.APIGatewayProxyRequest
+	if err := json.Unmarshal(event, &proxy); err != nil {
+		return nil, true, fmt.Errorf("apptheory: parse apigw proxy event: %w", err)
+	}
+	if strings.TrimSpace(proxy.HTTPMethod) != "" {
+		return a.serveAPIGatewayProxyLambda(ctx, proxy), true, nil
+	}
+
 	return nil, false, nil
 }
 
@@ -465,10 +473,12 @@ func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMess
 //
 // Supported triggers:
 // - API Gateway v2 (HTTP API)
+// - API Gateway REST API v1 (Proxy)
 // - Lambda Function URL
 // - SQS
 // - EventBridge
 // - DynamoDB Streams
+// - API Gateway v2 (WebSocket API)
 func (a *App) HandleLambda(ctx context.Context, event json.RawMessage) (any, error) {
 	if a == nil {
 		return nil, errors.New("apptheory: nil app")

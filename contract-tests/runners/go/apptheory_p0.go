@@ -269,6 +269,14 @@ func builtInAppTheoryHandler(name string) apptheory.Handler {
 		return func(_ *apptheory.Context) (*apptheory.Response, error) {
 			return apptheory.Text(200, "12345"), nil
 		}
+	case "sse_single_event":
+		return func(_ *apptheory.Context) (*apptheory.Response, error) {
+			return apptheory.SSEResponse(200, apptheory.SSEEvent{
+				ID:    "1",
+				Event: "message",
+				Data:  map[string]any{"ok": true},
+			})
+		}
 	default:
 		return nil
 	}

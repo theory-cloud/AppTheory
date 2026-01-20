@@ -1,0 +1,42 @@
+{
+  "id": "m3.apigw_proxy.base64_request_body",
+  "tier": "m3",
+  "name": "APIGW REST API v1: base64 request body decode",
+  "setup": {
+    "routes": [{ "method": "POST", "path": "/echo", "handler": "echo_request" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "apigw_proxy",
+      "event": {
+        "path": "/echo",
+        "httpMethod": "POST",
+        "headers": { "content-type": "application/octet-stream" },
+        "multiValueHeaders": {},
+        "queryStringParameters": {},
+        "multiValueQueryStringParameters": {},
+        "requestContext": { "requestId": "req-1", "path": "/echo", "httpMethod": "POST" },
+        "body": "AAEC",
+        "isBase64Encoded": true
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "method": "POST",
+        "path": "/echo",
+        "query": {},
+        "headers": { "content-type": ["application/octet-stream"] },
+        "cookies": {},
+        "body_b64": "AAEC",
+        "is_base64": true
+      },
+      "is_base64": false
+    }
+  }
+}
+

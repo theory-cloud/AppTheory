@@ -8896,8 +8896,161 @@
         }
       ],
       "symbolId": "lib/queue-processor:AppTheoryQueueProcessorProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestApi": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApi",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/rest-api.ts",
+          "line": 18
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/rest-api.ts",
+        "line": 14
+      },
+      "methods": [
+        {
+          "locationInModule": {
+            "filename": "lib/rest-api.ts",
+            "line": 31
+          },
+          "name": "addRoute",
+          "parameters": [
+            {
+              "name": "path",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "name": "methods",
+              "optional": true,
+              "type": {
+                "collection": {
+                  "elementtype": {
+                    "primitive": "string"
+                  },
+                  "kind": "array"
+                }
+              }
+            },
+            {
+              "name": "options",
+              "optional": true,
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouteOptions"
+              }
+            }
+          ]
+        }
+      ],
+      "name": "AppTheoryRestApi",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api.ts",
+            "line": 15
+          },
+          "name": "api",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.RestApi"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-api:AppTheoryRestApi"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestApiProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/rest-api.ts",
+        "line": 5
+      },
+      "name": "AppTheoryRestApiProps",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api.ts",
+            "line": 6
+          },
+          "name": "handler",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api.ts",
+            "line": 7
+          },
+          "name": "apiName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-api:AppTheoryRestApiProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouteOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouteOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/rest-api.ts",
+        "line": 10
+      },
+      "name": "AppTheoryRestApiRouteOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api.ts",
+            "line": 11
+          },
+          "name": "streaming",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-api:AppTheoryRestApiRouteOptions"
     }
   },
   "version": "0.1.0",
-  "fingerprint": "91BQd7ZocMzSZT+FenT/xi+Oy94oONu5yCYZwSx67qE="
+  "fingerprint": "PO7m5pIP56DAUecTXUtc/r6eoAGYt3NU8OqauJd093w="
 }
