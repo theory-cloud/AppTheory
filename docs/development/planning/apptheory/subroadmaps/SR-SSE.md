@@ -45,8 +45,10 @@ Non-goals:
 - REST API v1 adapter exists.
 - SSE framing helpers exist.
 - REST API v1 **streaming response type** support exists for `text/event-stream`.
-- Missing for full Lift parity: an event-by-event “true streaming” SSE API (Lift uses `SSEResponse(ctx, <-chan SSEEvent)`
-  and streams via a pipe/reader rather than buffering the entire body).
+- Event-by-event SSE streaming APIs exist (no full-body buffering):
+  - Go: `SSEStreamResponse(ctx, status, <-chan SSEEvent)` (streaming via `io.Pipe`)
+  - TS: `sseEventStream(AsyncIterable<SSEEvent>)`
+  - Py: `sse_event_stream(Iterable[SSEEvent])`
 
 ## Milestones
 

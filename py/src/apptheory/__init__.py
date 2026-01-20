@@ -20,7 +20,7 @@ from apptheory.errors import AppError
 from apptheory.ids import IdGenerator, ManualIdGenerator, RealIdGenerator
 from apptheory.request import Request
 from apptheory.response import Response, binary, json, text
-from apptheory.sse import SSEEvent, sse
+from apptheory.sse import SSEEvent, sse, sse_event_stream
 from apptheory.testkit import (
     FakeWebSocketClientFactory,
     FakeWebSocketManagementClient,
@@ -68,5 +68,6 @@ __all__ = [
     "event_bridge_rule",
     "json",
     "sse",
+    "sse_event_stream",
     "text",
 ]
