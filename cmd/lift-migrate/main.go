@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,6 +23,10 @@ type change struct {
 }
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	var root string
 	var apply bool
 
@@ -31,6 +36,45 @@ func main() {
 
 	root = filepath.Clean(root)
 
+	changes, err := collectChanges(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lift-migrate: FAIL: %v\n", err)
+		return 2
+	}
+
+	if len(changes) == 0 {
+		fmt.Println("lift-migrate: no changes")
+		return 0
+	}
+
+	if !apply {
+		if err := printChangesDiff(root, changes); err != nil {
+			fmt.Fprintf(os.Stderr, "lift-migrate: FAIL: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(os.Stderr, "lift-migrate: %d file(s) would change (re-run with -apply)\n", len(changes))
+		return 1
+	}
+
+	if err := applyChanges(changes); err != nil {
+		fmt.Fprintf(os.Stderr, "lift-migrate: FAIL: %v\n", err)
+		return 2
+	}
+
+	fmt.Printf("lift-migrate: updated %d file(s)\n", len(changes))
+	return 0
+}
+
+func shouldSkipDir(name string) bool {
+	switch name {
+	case ".git", "node_modules", "dist", "vendor", ".venv":
+		return true
+	default:
+		return false
+	}
+}
+
+func collectChanges(root string) ([]change, error) {
 	var changes []change
 
 	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
@@ -49,6 +93,7 @@ func main() {
 			return nil
 		}
 
+		//nolint:gosec // File path is discovered from walking the user-supplied root directory.
 		src, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
@@ -69,49 +114,33 @@ func main() {
 		return nil
 	})
 	if walkErr != nil {
-		fmt.Fprintf(os.Stderr, "lift-migrate: FAIL: %v\n", walkErr)
-		os.Exit(2)
+		return nil, walkErr
 	}
 
-	if len(changes) == 0 {
-		fmt.Println("lift-migrate: no changes")
-		return
-	}
+	return changes, nil
+}
 
-	if !apply {
-		for _, ch := range changes {
-			if err := printUnifiedDiff(root, ch.path, ch.after); err != nil {
-				fmt.Fprintf(os.Stderr, "lift-migrate: FAIL: %v\n", err)
-				os.Exit(2)
-			}
+func printChangesDiff(root string, changes []change) error {
+	for _, ch := range changes {
+		if err := printUnifiedDiff(root, ch.path, ch.after); err != nil {
+			return err
 		}
-		fmt.Fprintf(os.Stderr, "lift-migrate: %d file(s) would change (re-run with -apply)\n", len(changes))
-		os.Exit(1)
 	}
+	return nil
+}
 
+func applyChanges(changes []change) error {
 	for _, ch := range changes {
 		info, err := os.Stat(ch.path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "lift-migrate: FAIL: %v\n", err)
-			os.Exit(2)
+			return err
 		}
 
 		if err := os.WriteFile(ch.path, ch.after, info.Mode().Perm()); err != nil {
-			fmt.Fprintf(os.Stderr, "lift-migrate: FAIL: %v\n", err)
-			os.Exit(2)
+			return err
 		}
 	}
-
-	fmt.Printf("lift-migrate: updated %d file(s)\n", len(changes))
-}
-
-func shouldSkipDir(name string) bool {
-	switch name {
-	case ".git", "node_modules", "dist", "vendor", ".venv":
-		return true
-	default:
-		return false
-	}
+	return nil
 }
 
 func rewriteGoFile(filename string, src []byte) ([]byte, bool, error) {
@@ -178,11 +207,17 @@ func printUnifiedDiff(root, path string, after []byte) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer func() {
+		if err := os.Remove(tmpName); err != nil {
+			fmt.Fprintf(os.Stderr, "lift-migrate: warning: cleanup temp file: %v\n", err)
+		}
+	}()
 
 	if _, err := tmp.Write(after); err != nil {
-		_ = tmp.Close()
-		return err
+		if closeErr := tmp.Close(); closeErr != nil {
+			return fmt.Errorf("close temp file after write failure: %w (write error: %v)", closeErr, err)
+		}
+		return fmt.Errorf("write temp file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		return err
@@ -196,7 +231,8 @@ func printUnifiedDiff(root, path string, after []byte) error {
 	}
 	rel = filepath.ToSlash(rel)
 
-	cmd := exec.Command("diff", "-u",
+	//nolint:gosec // `diff` is invoked with a fixed command and file paths as args (no shell).
+	cmd := exec.CommandContext(context.Background(), "diff", "-u",
 		"--label", "a/"+rel,
 		"--label", "b/"+rel,
 		path,
@@ -215,4 +251,3 @@ func printUnifiedDiff(root, path string, after []byte) error {
 
 	return nil
 }
-

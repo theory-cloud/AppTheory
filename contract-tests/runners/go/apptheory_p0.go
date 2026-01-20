@@ -89,12 +89,12 @@ func printFailureP0(f Fixture) {
 		debug.Body = &FixtureBody{Encoding: "base64", Value: base64.StdEncoding.EncodeToString(actual.Body)}
 	}
 
-	b, _ := json.MarshalIndent(debug, "", "  ")
+	b := marshalIndentOrPlaceholder(debug)
 	fmt.Fprintf(os.Stderr, "  got: %s\n", string(b))
 
-	logs, _ := json.MarshalIndent([]FixtureLogRecord(nil), "", "  ")
-	metrics, _ := json.MarshalIndent([]FixtureMetricRecord(nil), "", "  ")
-	spans, _ := json.MarshalIndent([]FixtureSpanRecord(nil), "", "  ")
+	logs := marshalIndentOrPlaceholder([]FixtureLogRecord(nil))
+	metrics := marshalIndentOrPlaceholder([]FixtureMetricRecord(nil))
+	spans := marshalIndentOrPlaceholder([]FixtureSpanRecord(nil))
 	fmt.Fprintf(os.Stderr, "  got.logs: %s\n", string(logs))
 	fmt.Fprintf(os.Stderr, "  got.metrics: %s\n", string(metrics))
 	fmt.Fprintf(os.Stderr, "  got.spans: %s\n", string(spans))
@@ -105,12 +105,12 @@ func printFailureP0(f Fixture) {
 func printExpected(f Fixture) {
 	expected := f.Expect.Response
 	expected.Headers = canonicalizeHeaders(expected.Headers)
-	b, _ := json.MarshalIndent(expected, "", "  ")
+	b := marshalIndentOrPlaceholder(expected)
 	fmt.Fprintf(os.Stderr, "  expected: %s\n", string(b))
 
-	logs, _ := json.MarshalIndent(f.Expect.Logs, "", "  ")
-	metrics, _ := json.MarshalIndent(f.Expect.Metrics, "", "  ")
-	spans, _ := json.MarshalIndent(f.Expect.Spans, "", "  ")
+	logs := marshalIndentOrPlaceholder(f.Expect.Logs)
+	metrics := marshalIndentOrPlaceholder(f.Expect.Metrics)
+	spans := marshalIndentOrPlaceholder(f.Expect.Spans)
 	fmt.Fprintf(os.Stderr, "  expected.logs: %s\n", string(logs))
 	fmt.Fprintf(os.Stderr, "  expected.metrics: %s\n", string(metrics))
 	fmt.Fprintf(os.Stderr, "  expected.spans: %s\n", string(spans))
@@ -159,10 +159,10 @@ func builtInAppTheoryHandler(name string) apptheory.Handler {
 	case "echo_context":
 		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 			return apptheory.JSON(200, map[string]any{
-				"request_id":     ctx.RequestID,
-				"tenant_id":      ctx.TenantID,
-				"auth_identity":  ctx.AuthIdentity,
-				"remaining_ms":   ctx.RemainingMS,
+				"request_id":    ctx.RequestID,
+				"tenant_id":     ctx.TenantID,
+				"auth_identity": ctx.AuthIdentity,
+				"remaining_ms":  ctx.RemainingMS,
 			})
 		}
 	case "echo_middleware_trace":
@@ -194,6 +194,18 @@ func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []Fixture
 	expectedHeaders := canonicalizeHeaders(expected.Headers)
 	actualHeaders := canonicalizeHeaders(actual.Headers)
 
+	if err := compareFixtureResponseMeta(expected, actual, expectedHeaders, actualHeaders); err != nil {
+		return err
+	}
+
+	if err := compareFixtureResponseBody(expected, actual); err != nil {
+		return err
+	}
+
+	return compareFixtureSideEffects(f.Expect, logs, metrics, spans)
+}
+
+func compareFixtureResponseMeta(expected FixtureResponse, actual apptheory.Response, expectedHeaders, actualHeaders map[string][]string) error {
 	if expected.Status != actual.Status {
 		return fmt.Errorf("status: expected %d, got %d", expected.Status, actual.Status)
 	}
@@ -206,7 +218,10 @@ func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []Fixture
 	if !equalHeaders(expectedHeaders, actualHeaders) {
 		return fmt.Errorf("headers mismatch")
 	}
+	return nil
+}
 
+func compareFixtureResponseBody(expected FixtureResponse, actual apptheory.Response) error {
 	if len(expected.BodyJSON) > 0 {
 		var expectedJSON any
 		if err := json.Unmarshal(expected.BodyJSON, &expectedJSON); err != nil {
@@ -219,22 +234,11 @@ func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []Fixture
 		if !jsonEqual(expectedJSON, actualJSON) {
 			return fmt.Errorf("body_json mismatch")
 		}
-		if !reflect.DeepEqual(f.Expect.Logs, logs) {
-			return fmt.Errorf("logs mismatch")
-		}
-		if !reflect.DeepEqual(f.Expect.Metrics, metrics) {
-			return fmt.Errorf("metrics mismatch")
-		}
-		if !reflect.DeepEqual(f.Expect.Spans, spans) {
-			return fmt.Errorf("spans mismatch")
-		}
 		return nil
 	}
 
 	var expectedBodyBytes []byte
-	if expected.Body == nil {
-		expectedBodyBytes = nil
-	} else {
+	if expected.Body != nil {
 		var err error
 		expectedBodyBytes, err = decodeFixtureBody(*expected.Body)
 		if err != nil {
@@ -244,14 +248,17 @@ func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []Fixture
 	if !equalBytes(expectedBodyBytes, actual.Body) {
 		return fmt.Errorf("body mismatch")
 	}
+	return nil
+}
 
-	if !reflect.DeepEqual(f.Expect.Logs, logs) {
+func compareFixtureSideEffects(expected FixtureExpect, logs []FixtureLogRecord, metrics []FixtureMetricRecord, spans []FixtureSpanRecord) error {
+	if !reflect.DeepEqual(expected.Logs, logs) {
 		return fmt.Errorf("logs mismatch")
 	}
-	if !reflect.DeepEqual(f.Expect.Metrics, metrics) {
+	if !reflect.DeepEqual(expected.Metrics, metrics) {
 		return fmt.Errorf("metrics mismatch")
 	}
-	if !reflect.DeepEqual(f.Expect.Spans, spans) {
+	if !reflect.DeepEqual(expected.Spans, spans) {
 		return fmt.Errorf("spans mismatch")
 	}
 	return nil

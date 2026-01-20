@@ -26,67 +26,78 @@ func (a *App) ServeLambdaFunctionURL(ctx context.Context, event events.LambdaFun
 }
 
 func requestFromAPIGatewayV2(event events.APIGatewayV2HTTPRequest) (Request, error) {
-	rawQuery := strings.TrimPrefix(event.RawQueryString, "?")
-	query, err := parseEventRawQuery(rawQuery, event.QueryStringParameters)
-	if err != nil {
-		return Request{}, err
-	}
-
-	headers := headersFromSingle(event.Headers, len(event.Cookies) > 0)
-	if len(event.Cookies) > 0 {
-		headers["cookie"] = append([]string(nil), event.Cookies...)
-	}
-
-	path := event.RawPath
-	if path == "" {
-		path = event.RequestContext.HTTP.Path
-	}
-
-	return Request{
-		Method:   event.RequestContext.HTTP.Method,
-		Path:     path,
-		Query:    query,
-		Headers:  headers,
-		Body:     []byte(event.Body),
-		IsBase64: event.IsBase64Encoded,
-	}, nil
+	return requestFromHTTPEvent(
+		event.RawQueryString,
+		event.QueryStringParameters,
+		event.Headers,
+		event.Cookies,
+		event.RawPath,
+		event.RequestContext.HTTP.Method,
+		event.RequestContext.HTTP.Path,
+		event.Body,
+		event.IsBase64Encoded,
+	)
 }
 
 func requestFromLambdaFunctionURL(event events.LambdaFunctionURLRequest) (Request, error) {
-	rawQuery := strings.TrimPrefix(event.RawQueryString, "?")
-	query, err := parseEventRawQuery(rawQuery, event.QueryStringParameters)
+	return requestFromHTTPEvent(
+		event.RawQueryString,
+		event.QueryStringParameters,
+		event.Headers,
+		event.Cookies,
+		event.RawPath,
+		event.RequestContext.HTTP.Method,
+		event.RequestContext.HTTP.Path,
+		event.Body,
+		event.IsBase64Encoded,
+	)
+}
+
+func requestFromHTTPEvent(
+	rawQueryString string,
+	queryStringParameters map[string]string,
+	singleHeaders map[string]string,
+	cookies []string,
+	rawPath string,
+	requestContextHTTPMethod string,
+	requestContextHTTPPath string,
+	body string,
+	isBase64Encoded bool,
+) (Request, error) {
+	rawQuery := strings.TrimPrefix(rawQueryString, "?")
+	query, err := parseEventRawQuery(rawQuery, queryStringParameters)
 	if err != nil {
 		return Request{}, err
 	}
 
-	headers := headersFromSingle(event.Headers, len(event.Cookies) > 0)
-	if len(event.Cookies) > 0 {
-		headers["cookie"] = append([]string(nil), event.Cookies...)
+	headers := headersFromSingle(singleHeaders, len(cookies) > 0)
+	if len(cookies) > 0 {
+		headers["cookie"] = append([]string(nil), cookies...)
 	}
 
-	path := event.RawPath
+	path := rawPath
 	if path == "" {
-		path = event.RequestContext.HTTP.Path
+		path = requestContextHTTPPath
 	}
 
 	return Request{
-		Method:   event.RequestContext.HTTP.Method,
+		Method:   requestContextHTTPMethod,
 		Path:     path,
 		Query:    query,
 		Headers:  headers,
-		Body:     []byte(event.Body),
-		IsBase64: event.IsBase64Encoded,
+		Body:     []byte(body),
+		IsBase64: isBase64Encoded,
 	}, nil
 }
 
 func apigatewayV2ResponseFromResponse(resp Response) events.APIGatewayV2HTTPResponse {
 	out := events.APIGatewayV2HTTPResponse{
-		StatusCode:      resp.Status,
-		Headers:         map[string]string{},
+		StatusCode:        resp.Status,
+		Headers:           map[string]string{},
 		MultiValueHeaders: map[string][]string{},
-		Cookies:         append([]string(nil), resp.Cookies...),
-		IsBase64Encoded: resp.IsBase64,
-		Body:            string(resp.Body),
+		Cookies:           append([]string(nil), resp.Cookies...),
+		IsBase64Encoded:   resp.IsBase64,
+		Body:              string(resp.Body),
 	}
 
 	for key, values := range resp.Headers {
@@ -142,7 +153,7 @@ func parseEventRawQuery(raw string, single map[string]string) (map[string][]stri
 	if raw != "" {
 		values, err := url.ParseQuery(raw)
 		if err != nil {
-			return nil, &AppError{Code: "app.bad_request", Message: "invalid query string"}
+			return nil, &AppError{Code: errorCodeBadRequest, Message: errorMessageInvalidQueryString}
 		}
 		out := map[string][]string{}
 		for key, vs := range values {
@@ -157,4 +168,3 @@ func parseEventRawQuery(raw string, single map[string]string) (map[string][]stri
 	}
 	return out, nil
 }
-

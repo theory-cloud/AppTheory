@@ -29,7 +29,7 @@ func normalizeRequest(in Request) (Request, error) {
 	if in.IsBase64 {
 		decoded, err := base64.StdEncoding.DecodeString(string(in.Body))
 		if err != nil {
-			return Request{}, &AppError{Code: "app.bad_request", Message: fmt.Sprintf("invalid base64: %v", err)}
+			return Request{}, &AppError{Code: errorCodeBadRequest, Message: fmt.Sprintf("invalid base64: %v", err)}
 		}
 		out.Body = decoded
 	} else {

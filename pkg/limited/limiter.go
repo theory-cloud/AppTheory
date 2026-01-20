@@ -20,6 +20,10 @@ type DynamoRateLimiter struct {
 
 var _ AtomicRateLimiter = (*DynamoRateLimiter)(nil)
 
+type transactDB interface {
+	TransactWrite(ctx context.Context, fn func(tablecore.TransactionBuilder) error) error
+}
+
 func NewDynamoRateLimiter(db tablecore.DB, config *Config, strategy RateLimitStrategy) *DynamoRateLimiter {
 	if config == nil {
 		config = DefaultConfig()
@@ -276,6 +280,10 @@ func (r *DynamoRateLimiter) CheckAndIncrement(ctx context.Context, key RateLimit
 		return r.checkAndIncrementMultiWindow(ctx, key, now, multiWindow)
 	}
 
+	return r.checkAndIncrementSingleWindow(ctx, key, now)
+}
+
+func (r *DynamoRateLimiter) checkAndIncrementSingleWindow(ctx context.Context, key RateLimitKey, now time.Time) (*LimitDecision, error) {
 	windows := r.strategy.CalculateWindows(now)
 	if len(windows) == 0 {
 		return nil, NewError(ErrorTypeInternal, "no windows calculated")
@@ -316,90 +324,7 @@ func (r *DynamoRateLimiter) CheckAndIncrement(ctx context.Context, key RateLimit
 	}
 
 	if tableerrors.IsConditionFailed(err) {
-		// Either Count doesn't exist or Count >= limit.
-		var currentEntry RateLimitEntry
-		err2 := r.db.Model(&RateLimitEntry{}).
-			WithContext(ctx).
-			Where("PK", "=", entry.PK).
-			Where("SK", "=", entry.SK).
-			First(&currentEntry)
-
-		if err2 == nil {
-			decision := &LimitDecision{
-				Allowed:      false,
-				CurrentCount: int(currentEntry.Count),
-				Limit:        limit,
-				ResetsAt:     window.End,
-			}
-			retryAfter := window.End.Sub(now)
-			decision.RetryAfter = &retryAfter
-			return decision, nil
-		}
-
-		if !tableerrors.IsNotFound(err2) {
-			if r.config.FailOpen {
-				return &LimitDecision{
-					Allowed:      true,
-					CurrentCount: 0,
-					Limit:        limit,
-					ResetsAt:     window.End,
-				}, nil
-			}
-			return nil, WrapError(err2, ErrorTypeInternal, "failed to load rate limit entry")
-		}
-
-		// Entry doesn't exist; create it when limit permits.
-		if limit > 0 {
-			newEntry := &RateLimitEntry{
-				Identifier:  key.Identifier,
-				WindowStart: window.Start.Unix(),
-				Resource:    key.Resource,
-				Operation:   key.Operation,
-				WindowType:  window.Key,
-				WindowID:    window.Start.UTC().Format("2006-01-02T15:04:05Z"),
-				Count:       1,
-				CreatedAt:   now,
-				UpdatedAt:   now,
-				TTL:         ttl,
-				Metadata:    key.Metadata,
-			}
-			newEntry.SetKeys()
-
-			err3 := r.db.Model(newEntry).WithContext(ctx).IfNotExists().Create()
-			if err3 == nil {
-				return &LimitDecision{
-					Allowed:      true,
-					CurrentCount: 1,
-					Limit:        limit,
-					ResetsAt:     window.End,
-				}, nil
-			}
-
-			if tableerrors.IsConditionFailed(err3) {
-				// Race: item now exists; retry once.
-				return r.CheckAndIncrement(ctx, key)
-			}
-
-			if r.config.FailOpen {
-				return &LimitDecision{
-					Allowed:      true,
-					CurrentCount: 0,
-					Limit:        limit,
-					ResetsAt:     window.End,
-				}, nil
-			}
-			return nil, WrapError(err3, ErrorTypeInternal, "failed to create rate limit entry")
-		}
-
-		decision := &LimitDecision{
-			Allowed:      false,
-			CurrentCount: 0,
-			Limit:        limit,
-			ResetsAt:     window.End,
-		}
-		retryAfter := window.End.Sub(now)
-		decision.RetryAfter = &retryAfter
-		return decision, nil
+		return r.handleSingleWindowConditionFailed(ctx, key, now, window, limit, ttl, entry)
 	}
 
 	if r.config.FailOpen {
@@ -412,6 +337,105 @@ func (r *DynamoRateLimiter) CheckAndIncrement(ctx context.Context, key RateLimit
 	}
 
 	return nil, WrapError(err, ErrorTypeInternal, "failed to check and increment rate limit")
+}
+
+func (r *DynamoRateLimiter) handleSingleWindowConditionFailed(ctx context.Context, key RateLimitKey, now time.Time, window TimeWindow, limit int, ttl int64, entry *RateLimitEntry) (*LimitDecision, error) {
+	currentEntry, found, err := r.loadEntry(ctx, entry)
+	if err != nil {
+		if r.config.FailOpen {
+			return &LimitDecision{
+				Allowed:      true,
+				CurrentCount: 0,
+				Limit:        limit,
+				ResetsAt:     window.End,
+			}, nil
+		}
+		return nil, WrapError(err, ErrorTypeInternal, "failed to load rate limit entry")
+	}
+
+	if found {
+		decision := &LimitDecision{
+			Allowed:      false,
+			CurrentCount: int(currentEntry.Count),
+			Limit:        limit,
+			ResetsAt:     window.End,
+		}
+		retryAfter := window.End.Sub(now)
+		decision.RetryAfter = &retryAfter
+		return decision, nil
+	}
+
+	return r.createSingleWindowEntry(ctx, key, now, window, limit, ttl)
+}
+
+func (r *DynamoRateLimiter) loadEntry(ctx context.Context, entry *RateLimitEntry) (RateLimitEntry, bool, error) {
+	var currentEntry RateLimitEntry
+	err := r.db.Model(&RateLimitEntry{}).
+		WithContext(ctx).
+		Where("PK", "=", entry.PK).
+		Where("SK", "=", entry.SK).
+		First(&currentEntry)
+	if err == nil {
+		return currentEntry, true, nil
+	}
+	if tableerrors.IsNotFound(err) {
+		return RateLimitEntry{}, false, nil
+	}
+	return RateLimitEntry{}, false, err
+}
+
+func (r *DynamoRateLimiter) createSingleWindowEntry(ctx context.Context, key RateLimitKey, now time.Time, window TimeWindow, limit int, ttl int64) (*LimitDecision, error) {
+	if limit <= 0 {
+		decision := &LimitDecision{
+			Allowed:      false,
+			CurrentCount: 0,
+			Limit:        limit,
+			ResetsAt:     window.End,
+		}
+		retryAfter := window.End.Sub(now)
+		decision.RetryAfter = &retryAfter
+		return decision, nil
+	}
+
+	newEntry := &RateLimitEntry{
+		Identifier:  key.Identifier,
+		WindowStart: window.Start.Unix(),
+		Resource:    key.Resource,
+		Operation:   key.Operation,
+		WindowType:  window.Key,
+		WindowID:    window.Start.UTC().Format("2006-01-02T15:04:05Z"),
+		Count:       1,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		TTL:         ttl,
+		Metadata:    key.Metadata,
+	}
+	newEntry.SetKeys()
+
+	err := r.db.Model(newEntry).WithContext(ctx).IfNotExists().Create()
+	if err == nil {
+		return &LimitDecision{
+			Allowed:      true,
+			CurrentCount: 1,
+			Limit:        limit,
+			ResetsAt:     window.End,
+		}, nil
+	}
+
+	if tableerrors.IsConditionFailed(err) {
+		// Race: item now exists; retry once.
+		return r.CheckAndIncrement(ctx, key)
+	}
+
+	if r.config.FailOpen {
+		return &LimitDecision{
+			Allowed:      true,
+			CurrentCount: 0,
+			Limit:        limit,
+			ResetsAt:     window.End,
+		}, nil
+	}
+	return nil, WrapError(err, ErrorTypeInternal, "failed to create rate limit entry")
 }
 
 func (r *DynamoRateLimiter) SetClock(clock Clock) {
@@ -481,15 +505,15 @@ func resetTimeForDecision(strategy RateLimitStrategy, now time.Time, windows []T
 	multiWindow, _ := asMultiWindowStrategy(strategy)
 	maxReset := windows[0].End
 	for _, window := range windows {
-		max := maxRequestsForWindow(multiWindow, window)
-		if max <= 0 {
+		maxAllowed := maxRequestsForWindow(multiWindow, window)
+		if maxAllowed <= 0 {
 			if window.End.After(maxReset) {
 				maxReset = window.End
 			}
 			continue
 		}
 
-		if counts[window.Key] >= max && window.End.After(maxReset) {
+		if counts[window.Key] >= maxAllowed && window.End.After(maxReset) {
 			maxReset = window.End
 		}
 	}
@@ -515,105 +539,130 @@ func (r *DynamoRateLimiter) checkAndIncrementMultiWindow(ctx context.Context, ke
 		return decision, nil
 	}
 
-	type transactDB interface {
-		TransactWrite(ctx context.Context, fn func(tablecore.TransactionBuilder) error) error
-	}
-
 	ext, ok := r.db.(transactDB)
 	if !ok {
-		decision, err := r.CheckLimit(ctx, key)
-		if err != nil {
-			return nil, err
-		}
-		if !decision.Allowed {
-			return decision, nil
-		}
-		if err := r.RecordRequest(ctx, key); err != nil {
-			if r.config.FailOpen {
-				return decision, nil
-			}
-			return nil, WrapError(err, ErrorTypeInternal, "failed to record request")
-		}
-		decision.CurrentCount++
-		return decision, nil
+		return r.checkAndIncrementMultiWindowFallback(ctx, key)
 	}
 
-	err := ext.TransactWrite(ctx, func(tx tablecore.TransactionBuilder) error {
+	if err := r.transactIncrementMultiWindow(ctx, ext, key, now, strategy, windows); err != nil {
+		return r.handleMultiWindowIncrementError(ctx, key, now, windows, primaryLimit, err)
+	}
+
+	primary := windows[0]
+	currentCount, err := r.loadPrimaryWindowCount(ctx, key, primary)
+	if err != nil {
+		if r.config.FailOpen {
+			return &LimitDecision{
+				Allowed:      true,
+				CurrentCount: 0,
+				Limit:        primaryLimit,
+				ResetsAt:     primary.End,
+			}, nil
+		}
+		return nil, WrapError(err, ErrorTypeInternal, "failed to load updated rate limit entry")
+	}
+
+	return &LimitDecision{
+		Allowed:      true,
+		CurrentCount: currentCount,
+		Limit:        primaryLimit,
+		ResetsAt:     primary.End,
+	}, nil
+}
+
+func (r *DynamoRateLimiter) checkAndIncrementMultiWindowFallback(ctx context.Context, key RateLimitKey) (*LimitDecision, error) {
+	decision, err := r.CheckLimit(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if !decision.Allowed {
+		return decision, nil
+	}
+	if err := r.RecordRequest(ctx, key); err != nil {
+		if r.config.FailOpen {
+			return decision, nil
+		}
+		return nil, WrapError(err, ErrorTypeInternal, "failed to record request")
+	}
+	decision.CurrentCount++
+	return decision, nil
+}
+
+func (r *DynamoRateLimiter) transactIncrementMultiWindow(ctx context.Context, db transactDB, key RateLimitKey, now time.Time, strategy *MultiWindowStrategy, windows []TimeWindow) error {
+	return db.TransactWrite(ctx, func(tx tablecore.TransactionBuilder) error {
 		tx.WithContext(ctx)
 		for _, window := range windows {
-			max := maxRequestsForWindow(strategy, window)
-			if max <= 0 {
-				return tableerrors.ErrConditionFailed
+			if err := r.addMultiWindowUpdate(tx, key, now, strategy, window); err != nil {
+				return err
 			}
-
-			entry := &RateLimitEntry{
-				Identifier:  key.Identifier,
-				WindowStart: window.Start.Unix(),
-				Resource:    key.Resource,
-				Operation:   key.Operation,
-			}
-			entry.SetKeys()
-
-			ttl := window.End.Unix() + int64(r.config.TTLHours*3600)
-
-			tx.UpdateWithBuilder(entry, func(ub tablecore.UpdateBuilder) error {
-				ub.Add("Count", int64(1)).
-					SetIfNotExists("WindowType", nil, window.Key).
-					SetIfNotExists("WindowID", nil, window.Start.UTC().Format("2006-01-02T15:04:05Z")).
-					SetIfNotExists("Identifier", nil, key.Identifier).
-					SetIfNotExists("Resource", nil, key.Resource).
-					SetIfNotExists("Operation", nil, key.Operation).
-					SetIfNotExists("WindowStart", nil, window.Start.Unix()).
-					SetIfNotExists("TTL", nil, ttl).
-					SetIfNotExists("CreatedAt", nil, now).
-					Set("UpdatedAt", now)
-
-				ub.ConditionNotExists("Count")
-				ub.OrCondition("Count", "<", max)
-
-				var ignored RateLimitEntry
-				return ub.ExecuteWithResult(&ignored)
-			})
 		}
 		return nil
 	})
+}
 
-	if err == nil {
-		primary := windows[0]
-		entry := &RateLimitEntry{
-			Identifier:  key.Identifier,
-			WindowStart: primary.Start.Unix(),
-			Resource:    key.Resource,
-			Operation:   key.Operation,
-		}
-		entry.SetKeys()
-
-		var record RateLimitEntry
-		readErr := r.db.Model(&RateLimitEntry{}).
-			WithContext(ctx).
-			Where("PK", "=", entry.PK).
-			Where("SK", "=", entry.SK).
-			First(&record)
-		if readErr != nil && !tableerrors.IsNotFound(readErr) {
-			if r.config.FailOpen {
-				return &LimitDecision{
-					Allowed:      true,
-					CurrentCount: 0,
-					Limit:        primaryLimit,
-					ResetsAt:     primary.End,
-				}, nil
-			}
-			return nil, WrapError(readErr, ErrorTypeInternal, "failed to load updated rate limit entry")
-		}
-
-		return &LimitDecision{
-			Allowed:      true,
-			CurrentCount: int(record.Count),
-			Limit:        primaryLimit,
-			ResetsAt:     primary.End,
-		}, nil
+func (r *DynamoRateLimiter) addMultiWindowUpdate(tx tablecore.TransactionBuilder, key RateLimitKey, now time.Time, strategy *MultiWindowStrategy, window TimeWindow) error {
+	maxAllowed := maxRequestsForWindow(strategy, window)
+	if maxAllowed <= 0 {
+		return tableerrors.ErrConditionFailed
 	}
 
+	entry := &RateLimitEntry{
+		Identifier:  key.Identifier,
+		WindowStart: window.Start.Unix(),
+		Resource:    key.Resource,
+		Operation:   key.Operation,
+	}
+	entry.SetKeys()
+
+	ttl := window.End.Unix() + int64(r.config.TTLHours*3600)
+
+	tx.UpdateWithBuilder(entry, func(ub tablecore.UpdateBuilder) error {
+		ub.Add("Count", int64(1)).
+			SetIfNotExists("WindowType", nil, window.Key).
+			SetIfNotExists("WindowID", nil, window.Start.UTC().Format("2006-01-02T15:04:05Z")).
+			SetIfNotExists("Identifier", nil, key.Identifier).
+			SetIfNotExists("Resource", nil, key.Resource).
+			SetIfNotExists("Operation", nil, key.Operation).
+			SetIfNotExists("WindowStart", nil, window.Start.Unix()).
+			SetIfNotExists("TTL", nil, ttl).
+			SetIfNotExists("CreatedAt", nil, now).
+			Set("UpdatedAt", now)
+
+		ub.ConditionNotExists("Count")
+		ub.OrCondition("Count", "<", maxAllowed)
+
+		var ignored RateLimitEntry
+		return ub.ExecuteWithResult(&ignored)
+	})
+
+	return nil
+}
+
+func (r *DynamoRateLimiter) loadPrimaryWindowCount(ctx context.Context, key RateLimitKey, window TimeWindow) (int, error) {
+	entry := &RateLimitEntry{
+		Identifier:  key.Identifier,
+		WindowStart: window.Start.Unix(),
+		Resource:    key.Resource,
+		Operation:   key.Operation,
+	}
+	entry.SetKeys()
+
+	var record RateLimitEntry
+	err := r.db.Model(&RateLimitEntry{}).
+		WithContext(ctx).
+		Where("PK", "=", entry.PK).
+		Where("SK", "=", entry.SK).
+		First(&record)
+	if err == nil {
+		return int(record.Count), nil
+	}
+	if tableerrors.IsNotFound(err) {
+		return 0, nil
+	}
+	return 0, err
+}
+
+func (r *DynamoRateLimiter) handleMultiWindowIncrementError(ctx context.Context, key RateLimitKey, now time.Time, windows []TimeWindow, primaryLimit int, err error) (*LimitDecision, error) {
 	if tableerrors.IsConditionFailed(err) {
 		decision, decisionErr := r.CheckLimit(ctx, key)
 		if decisionErr != nil {

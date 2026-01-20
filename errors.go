@@ -18,25 +18,25 @@ func (e *AppError) Error() string {
 
 func statusForErrorCode(code string) int {
 	switch code {
-	case "app.bad_request", "app.validation_failed":
+	case errorCodeBadRequest, errorCodeValidationFailed:
 		return 400
-	case "app.unauthorized":
+	case errorCodeUnauthorized:
 		return 401
-	case "app.forbidden":
+	case errorCodeForbidden:
 		return 403
-	case "app.not_found":
+	case errorCodeNotFound:
 		return 404
-	case "app.method_not_allowed":
+	case errorCodeMethodNotAllowed:
 		return 405
-	case "app.conflict":
+	case errorCodeConflict:
 		return 409
-	case "app.too_large":
+	case errorCodeTooLarge:
 		return 413
-	case "app.rate_limited":
+	case errorCodeRateLimited:
 		return 429
-	case "app.overloaded":
+	case errorCodeOverloaded:
 		return 503
-	case "app.internal":
+	case errorCodeInternal:
 		return 500
 	default:
 		return 500
@@ -50,12 +50,15 @@ func errorResponse(code, message string, headers map[string][]string) Response {
 	headers = cloneHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
-	body, _ := json.Marshal(map[string]any{
+	body, err := json.Marshal(map[string]any{
 		"error": map[string]any{
 			"code":    code,
 			"message": message,
 		},
 	})
+	if err != nil {
+		body = []byte(`{"error":{"code":"app.internal","message":"internal error"}}`)
+	}
 
 	return Response{
 		Status:   statusForErrorCode(code),
@@ -80,9 +83,12 @@ func errorResponseWithRequestID(code, message string, headers map[string][]strin
 	if requestID != "" {
 		errBody["request_id"] = requestID
 	}
-	body, _ := json.Marshal(map[string]any{
+	body, err := json.Marshal(map[string]any{
 		"error": errBody,
 	})
+	if err != nil {
+		body = []byte(`{"error":{"code":"app.internal","message":"internal error"}}`)
+	}
 
 	return Response{
 		Status:   statusForErrorCode(code),
@@ -98,7 +104,7 @@ func responseForError(err error) Response {
 	if errors.As(err, &appErr) {
 		return errorResponse(appErr.Code, appErr.Message, nil)
 	}
-	return errorResponse("app.internal", "internal error", nil)
+	return errorResponse(errorCodeInternal, errorMessageInternal, nil)
 }
 
 func responseForErrorWithRequestID(err error, requestID string) Response {
@@ -106,5 +112,5 @@ func responseForErrorWithRequestID(err error, requestID string) Response {
 	if errors.As(err, &appErr) {
 		return errorResponseWithRequestID(appErr.Code, appErr.Message, nil, requestID)
 	}
-	return errorResponseWithRequestID("app.internal", "internal error", nil, requestID)
+	return errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, requestID)
 }

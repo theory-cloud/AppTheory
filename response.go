@@ -16,7 +16,7 @@ func Text(status int, body string) *Response {
 	return &Response{
 		Status: status,
 		Headers: map[string][]string{
-			"content-type": []string{"text/plain; charset=utf-8"},
+			"content-type": {"text/plain; charset=utf-8"},
 		},
 		Body:     []byte(body),
 		IsBase64: false,
@@ -32,7 +32,7 @@ func JSON(status int, value any) (*Response, error) {
 	return &Response{
 		Status: status,
 		Headers: map[string][]string{
-			"content-type": []string{"application/json; charset=utf-8"},
+			"content-type": {"application/json; charset=utf-8"},
 		},
 		Body:     body,
 		IsBase64: false,
@@ -64,7 +64,7 @@ func Binary(status int, body []byte, contentType string) *Response {
 
 func normalizeResponse(in *Response) Response {
 	if in == nil {
-		return errorResponse("app.internal", "internal error", nil)
+		return errorResponse(errorCodeInternal, errorMessageInternal, nil)
 	}
 	out := *in
 	if out.Status == 0 {

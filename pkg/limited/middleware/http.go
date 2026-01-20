@@ -82,7 +82,9 @@ func Middleware(opts Options) func(http.HandlerFunc) http.HandlerFunc {
 			}
 
 			if decision.Allowed {
-				_ = opts.Limiter.RecordRequest(r.Context(), key)
+				if err := opts.Limiter.RecordRequest(r.Context(), key); err != nil {
+					_ = err
+				}
 			}
 
 			handleDecision(w, r, decision, &opts, next)
@@ -160,7 +162,9 @@ func defaultExtractOperation(r *http.Request) string {
 func defaultErrorHandler(w http.ResponseWriter, _ *http.Request, _ *limited.LimitDecision) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusTooManyRequests)
-	_, _ = w.Write([]byte(`{"error":"rate_limit_exceeded","message":"Too many requests. Please retry later."}`))
+	if _, err := w.Write([]byte(`{"error":"rate_limit_exceeded","message":"Too many requests. Please retry later."}`)); err != nil {
+		_ = err
+	}
 }
 
 func getClientIP(r *http.Request) string {
@@ -186,4 +190,3 @@ func WithIdentifier(r *http.Request, identifier string) *http.Request {
 	ctx := context.WithValue(r.Context(), IdentifierKey, identifier)
 	return r.WithContext(ctx)
 }
-

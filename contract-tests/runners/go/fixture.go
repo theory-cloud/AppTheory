@@ -114,6 +114,7 @@ func loadFixtures(fixturesRoot string) ([]Fixture, error) {
 
 	var fixtures []Fixture
 	for _, file := range files {
+		//nolint:gosec // Fixture files are discovered from the repo-owned fixtures directory.
 		raw, err := os.ReadFile(file)
 		if err != nil {
 			return nil, fmt.Errorf("read fixture %s: %w", file, err)

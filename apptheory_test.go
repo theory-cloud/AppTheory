@@ -11,4 +11,3 @@ func TestNew(t *testing.T) {
 		t.Fatal("expected New() to return a non-nil App")
 	}
 }
-
