@@ -970,7 +970,7 @@ export class App {
       resp = normalizeResponse(out);
     }
 
-    if (this._limits.maxResponseBytes > 0 && resp.body.length > this._limits.maxResponseBytes) {
+    if (!resp.bodyStream && this._limits.maxResponseBytes > 0 && resp.body.length > this._limits.maxResponseBytes) {
       return finish(errorResponseWithRequestId("app.too_large", "response too large", {}, requestId), "app.too_large");
     }
 
@@ -1615,6 +1615,25 @@ function toBuffer(body) {
   throw new TypeError("body must be Uint8Array, Buffer, or string");
 }
 
+async function* normalizeBodyStream(bodyStream) {
+  if (bodyStream === null || bodyStream === undefined) {
+    return;
+  }
+  if (typeof bodyStream[Symbol.asyncIterator] === "function") {
+    for await (const chunk of bodyStream) {
+      yield toBuffer(chunk);
+    }
+    return;
+  }
+  if (typeof bodyStream[Symbol.iterator] === "function") {
+    for (const chunk of bodyStream) {
+      yield toBuffer(chunk);
+    }
+    return;
+  }
+  throw new TypeError("bodyStream must be an Iterable or AsyncIterable");
+}
+
 function normalizeRequest(request) {
   const out = {};
   out.method = normalizeMethod(request?.method);
@@ -1648,7 +1667,11 @@ function normalizeResponse(response) {
   out.headers = canonicalizeHeaders(response.headers);
   out.cookies = Array.isArray(response.cookies) ? [...response.cookies] : [];
   out.body = toBuffer(response.body);
+  out.bodyStream = response.bodyStream !== null && response.bodyStream !== undefined ? normalizeBodyStream(response.bodyStream) : null;
   out.isBase64 = Boolean(response.isBase64);
+  if (out.isBase64 && out.bodyStream) {
+    throw new TypeError("bodyStream cannot be used with isBase64=true");
+  }
   return out;
 }
 

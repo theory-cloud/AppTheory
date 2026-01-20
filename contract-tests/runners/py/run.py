@@ -6,7 +6,7 @@ import argparse
 import base64
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +37,8 @@ class CanonicalResponse:
     cookies: list[str]
     body: bytes
     is_base64: bool
+    chunks: list[bytes] = field(default_factory=list)
+    stream_error_code: str = ""
 
 
 class AppError(Exception):
@@ -52,7 +54,7 @@ def stable_json(value: Any) -> str:
 
 def list_fixture_files(fixtures_root: Path) -> list[Path]:
     files: list[Path] = []
-    for tier in ("p0", "p1", "p2", "m1", "m2", "m3", "m12"):
+    for tier in ("p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14"):
         tier_dir = fixtures_root / tier
         if not tier_dir.exists():
             continue
@@ -703,6 +705,8 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
         return run_fixture_m3(fixture)
     if tier == "m12":
         return run_fixture_m12(fixture)
+    if tier == "m14":
+        return run_fixture_m14(fixture)
 
     setup = fixture.get("setup", {})
     input_ = fixture.get("input", {})
@@ -926,6 +930,46 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
                 cookies=[],
                 body=body,
                 is_base64=False,
+            )
+
+        return handler
+
+    if name == "stream_mutate_headers_after_first_chunk":
+        def handler(_ctx):
+            resp = runtime.Response(
+                status=200,
+                headers={
+                    "content-type": ["text/plain; charset=utf-8"],
+                    "x-phase": ["before"],
+                },
+                cookies=["a=b; Path=/"],
+                body=b"",
+                is_base64=False,
+            )
+
+            def gen():
+                yield b"a"
+                resp.headers["x-phase"] = ["after"]
+                yield b"b"
+
+            resp.body_stream = gen()
+            return resp
+
+        return handler
+
+    if name == "stream_error_after_first_chunk":
+        def handler(_ctx):
+            def gen():
+                yield b"hello"
+                raise runtime.AppError("app.internal", "boom")
+
+            return runtime.Response(
+                status=200,
+                headers={"content-type": ["text/plain; charset=utf-8"]},
+                cookies=[],
+                body=b"",
+                is_base64=False,
+                body_stream=gen(),
             )
 
         return handler
@@ -1415,6 +1459,90 @@ def run_fixture_m12(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespon
     expected = fixture.get("expect", {}).get("response", {})
     return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
 
+
+def run_fixture_m14(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+    runtime = _load_apptheory_runtime()
+    ids = runtime.ManualIdGenerator()
+    ids.push("req_test_123")
+
+    setup = fixture.get("setup", {})
+    limits = setup.get("limits", {}) or {}
+    app = runtime.create_app(
+        tier="p1",
+        id_generator=ids,
+        limits=runtime.Limits(
+            max_request_bytes=int(limits.get("max_request_bytes") or 0),
+            max_response_bytes=int(limits.get("max_response_bytes") or 0),
+        ),
+        auth_hook=lambda ctx: _fixture_auth_hook(runtime, ctx),
+    )
+
+    for name in setup.get("middlewares", []) or []:
+        mw = _built_in_m12_middleware(runtime, str(name or "").strip())
+        if mw is None:
+            raise RuntimeError(f"unknown middleware {name!r}")
+        app.use(mw)
+
+    for route in setup.get("routes", []) or []:
+        name = str(route.get("handler", ""))
+        handler = _built_in_apptheory_handler(runtime, name)
+        if handler is None:
+            raise RuntimeError(f"unknown handler {name!r}")
+        app.handle(
+            route.get("method", ""),
+            route.get("path", ""),
+            handler,
+            auth_required=bool(route.get("auth_required")),
+        )
+
+    input_ = fixture.get("input", {}).get("request", {})
+    req_body = decode_fixture_body(input_.get("body"))
+    req = runtime.Request(
+        method=input_.get("method", ""),
+        path=input_.get("path", ""),
+        query=input_.get("query") or {},
+        headers=input_.get("headers") or {},
+        body=req_body,
+        is_base64=bool(input_.get("is_base64")),
+    )
+
+    runtime_ctx = {"remaining_ms": int((fixture.get("input", {}).get("context", {}) or {}).get("remaining_ms") or 0)}
+    resp = app.serve(req, runtime_ctx)
+
+    chunks: list[bytes] = []
+    parts: list[bytes] = []
+    if resp.body:
+        chunks.append(bytes(resp.body))
+        parts.append(bytes(resp.body))
+
+    stream_error_code = ""
+    stream = getattr(resp, "body_stream", None)
+    if stream is not None:
+        try:
+            for chunk in stream:
+                b = bytes(chunk or b"")
+                chunks.append(b)
+                parts.append(b)
+        except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, runtime.AppError):
+                stream_error_code = str(exc.code or "")
+            else:
+                stream_error_code = "app.internal"
+
+    actual = CanonicalResponse(
+        status=resp.status,
+        headers=resp.headers,
+        cookies=resp.cookies,
+        body=b"".join(parts),
+        is_base64=resp.is_base64,
+        chunks=chunks,
+        stream_error_code=stream_error_code,
+    )
+
+    expected = fixture.get("expect", {}).get("response", {})
+    return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
+
+
 def run_fixture_p0(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     runtime = _load_apptheory_runtime()
     app = runtime.create_app(tier="p0")
@@ -1728,6 +1856,10 @@ def run_fixture_compare(
     if not compare_headers(expected.get("headers"), actual.headers):
         return False, "headers mismatch", actual, expected, app
 
+    expected_stream_error_code = str(expected.get("stream_error_code") or "")
+    if expected_stream_error_code != actual.stream_error_code:
+        return False, "stream_error_code mismatch", actual, expected, app
+
     if "body_json" in expected:
         try:
             actual_json = json.loads(actual.body.decode("utf-8"))
@@ -1735,6 +1867,25 @@ def run_fixture_compare(
             return False, "body_json mismatch", actual, expected, app
         if expected["body_json"] != actual_json:
             return False, "body_json mismatch", actual, expected, app
+
+        if (fixture.get("expect", {}).get("logs") or []) != app.logs:
+            return False, "logs mismatch", actual, expected, app
+        if (fixture.get("expect", {}).get("metrics") or []) != app.metrics:
+            return False, "metrics mismatch", actual, expected, app
+        if (fixture.get("expect", {}).get("spans") or []) != app.spans:
+            return False, "spans mismatch", actual, expected, app
+
+        return True, "", actual, expected, app
+
+    expected_chunks_raw = expected.get("chunks")
+    if isinstance(expected_chunks_raw, list) and len(expected_chunks_raw) > 0:
+        expected_chunks = [decode_fixture_body(b) for b in expected_chunks_raw]
+        if expected_chunks != actual.chunks:
+            return False, "chunks mismatch", actual, expected, app
+
+        expected_body = decode_fixture_body(expected.get("body")) if expected.get("body") is not None else b"".join(expected_chunks)
+        if expected_body != actual.body:
+            return False, "body mismatch", actual, expected, app
 
         if (fixture.get("expect", {}).get("logs") or []) != app.logs:
             return False, "logs mismatch", actual, expected, app

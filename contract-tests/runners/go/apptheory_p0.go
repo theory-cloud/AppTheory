@@ -295,6 +295,48 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		close(events)
 		return apptheory.SSEStreamResponse(ctx.Context(), 200, events)
 	},
+	"stream_mutate_headers_after_first_chunk": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		resp := &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"text/plain; charset=utf-8"},
+				"x-phase":      {"before"},
+			},
+			Cookies:  []string{"a=b; Path=/"},
+			Body:     nil,
+			IsBase64: false,
+		}
+
+		ch := make(chan apptheory.StreamChunk, 2)
+		resp.BodyStream = ch
+		go func() {
+			defer close(ch)
+			ch <- apptheory.StreamChunk{Bytes: []byte("a")}
+			resp.Headers["x-phase"] = []string{"after"}
+			ch <- apptheory.StreamChunk{Bytes: []byte("b")}
+		}()
+		return resp, nil
+	},
+	"stream_error_after_first_chunk": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		resp := &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"text/plain; charset=utf-8"},
+			},
+			Cookies:  nil,
+			Body:     nil,
+			IsBase64: false,
+		}
+
+		ch := make(chan apptheory.StreamChunk, 2)
+		resp.BodyStream = ch
+		go func() {
+			defer close(ch)
+			ch <- apptheory.StreamChunk{Bytes: []byte("hello")}
+			ch <- apptheory.StreamChunk{Err: &apptheory.AppError{Code: "app.internal", Message: "boom"}}
+		}()
+		return resp, nil
+	},
 }
 
 func builtInAppTheoryHandler(name string) apptheory.Handler {

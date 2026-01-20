@@ -14,6 +14,7 @@ class Response:
     cookies: list[str]
     body: bytes
     is_base64: bool
+    body_stream: Any | None = None
 
 
 def text(status: int, body: str) -> Response:
@@ -61,10 +62,19 @@ def normalize_response(resp: Response) -> Response:
     headers = canonicalize_headers(resp.headers)
     cookies = [str(c) for c in (resp.cookies or [])]
     body = to_bytes(resp.body)
+    body_stream_raw = getattr(resp, "body_stream", None)
+    body_stream = None
+    if body_stream_raw is not None:
+        def gen():
+            for chunk in body_stream_raw:
+                yield to_bytes(chunk)
+
+        body_stream = gen()
     return Response(
         status=status,
         headers=headers,
         cookies=cookies,
         body=body,
         is_base64=bool(resp.is_base64),
+        body_stream=body_stream,
     )

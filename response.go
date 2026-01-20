@@ -12,6 +12,7 @@ type Response struct {
 	Cookies    []string
 	Body       []byte
 	BodyReader io.Reader
+	BodyStream BodyStream
 	IsBase64   bool
 }
 

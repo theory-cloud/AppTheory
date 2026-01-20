@@ -11,6 +11,7 @@ File layout:
 - `contract-tests/fixtures/m2/` — API Gateway WebSockets (+ management client fakes)
 - `contract-tests/fixtures/m3/` — API Gateway REST v1 (+ SSE)
 - `contract-tests/fixtures/m12/` — Lift parity completion extensions (middleware/ctx bag/naming/SSE streaming)
+- `contract-tests/fixtures/m14/` — FaceTheory enablement (streaming contract, catch-all routing, SSR helpers)
 
 Each fixture is a single JSON object.
 
@@ -31,6 +32,8 @@ Each fixture is a single JSON object.
 - `input.context` (object, optional): synthetic invocation context (portable subset).
 - `setup.routes[].auth_required` (boolean, optional): whether the route requires auth.
 - `expect.response` (object): expected canonical response.
+  - `chunks` (array, optional): expected streamed response chunks (when using the streaming test harness).
+  - `stream_error_code` (string, optional): expected error code when an error occurs after streaming begins.
 - `expect.logs` (array, optional): expected structured log records (P2 portable envelope).
 - `expect.metrics` (array, optional): expected metric emissions (portable subset).
 - `expect.spans` (array, optional): expected trace span emissions (portable subset).

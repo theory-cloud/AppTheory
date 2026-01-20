@@ -103,8 +103,11 @@ type FixtureResponse struct {
 	Headers  map[string][]string `json:"headers"`
 	Cookies  []string            `json:"cookies"`
 	Body     *FixtureBody        `json:"body,omitempty"`
+	Chunks   []FixtureBody       `json:"chunks,omitempty"`
 	BodyJSON json.RawMessage     `json:"body_json,omitempty"`
 	IsBase64 bool                `json:"is_base64"`
+
+	StreamErrorCode string `json:"stream_error_code,omitempty"`
 }
 
 type FixtureWebSocketCall struct {
@@ -148,7 +151,7 @@ type FixtureSpanRecord struct {
 
 func loadFixtures(fixturesRoot string) ([]Fixture, error) {
 	var files []string
-	for _, tier := range []string{"p0", "p1", "p2", "m1", "m2", "m3", "m12"} {
+	for _, tier := range []string{"p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14"} {
 		matches, err := filepath.Glob(filepath.Join(fixturesRoot, tier, "*.json"))
 		if err != nil {
 			return nil, fmt.Errorf("glob %s fixtures: %w", tier, err)
