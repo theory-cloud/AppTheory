@@ -82,3 +82,20 @@ jobs:
           python-version: "3.14"
       - name: Run contract tests
         run: scripts/verify-contract-tests.sh
+
+  rubric:
+    name: Rubric (full gate set)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.6"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Run full rubric
+        run: make rubric
