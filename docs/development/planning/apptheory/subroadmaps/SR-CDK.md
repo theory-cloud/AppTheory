@@ -51,6 +51,8 @@ Non-goals:
   - how constructs are versioned with the repo
   - how constructs are distributed (GitHub Releases only)
 
+Decision: `docs/development/planning/apptheory/adr/0001-cdk-constructs-via-jsii.md`
+
 ---
 
 ### D3 — Port “top 20%” constructs (if jsii path chosen)
@@ -74,4 +76,3 @@ Non-goals:
 - **Constructs explosion:** enforce a “top 20% first” rule and require usage in an example for every construct.
 - **Multi-language pain:** prefer jsii constructs so all languages share the same infra abstractions.
 - **Synth drift:** pin CDK versions and add deterministic synth gates early.
-
