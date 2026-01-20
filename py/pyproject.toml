@@ -8,7 +8,8 @@ version = "0.0.0"
 requires-python = ">=3.14"
 description = "AppTheory — multi-language serverless application framework (Python package)"
 readme = "README.md"
-license = "LicenseRef-Proprietary"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 
 [tool.setuptools]
 package-dir = { "" = "src" }
