@@ -23,6 +23,7 @@ Top observed import prefixes in a 200-result sample:
 
 - `pkg/lift`
 - `pkg/middleware`
+- `github.com/pay-theory/limited`
 - `pkg/observability` (including `zap`, `aws`, `cloudwatch`, `xray`)
 - `pkg/cdk/constructs` and `pkg/cdk/patterns`
 - `pkg/testing`
@@ -37,30 +38,38 @@ Top observed import prefixes in a 200-result sample:
 
 ## “Keep 100% functionality” posture (categorization)
 
-G0 requires mapping each usage to a posture. For AppTheory we use these categories:
+G0 requires mapping each usage to a posture (see `SR-MIGRATION`). For AppTheory we use these categories:
 
-- **Port (portable):** implement as part of AppTheory’s cross-language contract surface.
-- **Port (Go-only):** implement in AppTheory for Go users, but explicitly non-portable (documented as Go-only).
+- **Direct replacement in AppTheory:** capability exists with Lift-equivalent intent; wiring may change, but semantics are
+  preserved.
+- **Replacement with behavior change:** capability exists, but users must adapt to a documented behavior or integration
+  change (for example: TableTheory replacing DynamORM, different config defaults, different error envelopes).
 - **Temporary: keep using Lift:** AppTheory migration can keep importing Lift for this capability until AppTheory has an
   equivalent; target is to remove all “temporary” items over time.
 - **Drop:** intentionally removed. **Not allowed for Pay Theory baseline** (goal is 100% functionality).
+
+Separately from the posture above, AppTheory tracks whether a replacement is:
+
+- **Portable (contract surface):** must match fixtures in Go/TypeScript/Python.
+- **Go-only:** available to Go users, explicitly non-portable.
 
 ## Package-level migration intent (baseline)
 
 This table is intentionally conservative: anything not yet designed for portability is treated as Go-only or temporary,
 but still preserved for Go users.
 
-| Lift area | Examples in Lift | AppTheory intent | Notes |
-| --- | --- | --- | --- |
-| Runtime core | `pkg/lift`, adapters | Port (portable) | Becomes the P0/P1 contract surface. |
-| Middleware | `pkg/middleware` | Port (portable + Go-only extensions) | Portable subset becomes contract; advanced prod middleware may be Go-only until ported. |
-| Rate limiting | `pkg/middleware/limited.go` + `github.com/pay-theory/limited` | Port (portable API; Go impl first) | Decision: replicate **all** `limited` functionality inside AppTheory (`pkg/limited`), backed by **TableTheory** (no long-term dependency on `limited` or DynamORM). |
-| Observability | `pkg/observability/*`, `pkg/logger` | Port (portable hooks + Go-only integrations) | Keep schema + hooks portable; provider integrations can be Go-only initially. |
-| Testing | `pkg/testing` | Port (portable testkit shape) | Align with SR-MOCKS; preserve deterministic harness behavior. |
-| CDK | `pkg/cdk/*` | Port (examples-first; constructs TBD) | Preserve current Lift functionality via examples; decide constructs strategy in `SR-CDK`. |
-| Security/compliance | `pkg/security`, `pkg/compliance` | Port (Go-only then portable subset) | Preserve behavior; port portable subset as contract requirements later. |
-| Deployment/dev tooling | `pkg/deployment`, `pkg/dev` | Temporary: keep using Lift | AppTheory will likely replace with repo templates + examples instead of a Go package. |
-| Service clients | `pkg/services/*` | Port (portable interface; Go impl first) | Preserve current surfaces; extract portable boundaries where possible. |
+| Lift area | Examples in Lift | Posture | Portability | Notes |
+| --- | --- | --- | --- | --- |
+| Runtime core | `pkg/lift`, adapters | Direct replacement in AppTheory | Portable (P0/P1) | Becomes the P0/P1 contract surface. |
+| Middleware | `pkg/middleware` | Direct replacement in AppTheory | Portable + Go-only extensions | Portable subset becomes contract; advanced prod middleware may be Go-only until ported. |
+| Rate limiting | `pkg/middleware/limited.go` + `github.com/pay-theory/limited` | Replacement with behavior change | Portable API; Go impl first | Decision: replicate **all** `limited` functionality inside AppTheory (`pkg/limited`), backed by **TableTheory** (no long-term dependency on `limited` or DynamORM). |
+| Data access (DynamoDB) | `pkg/dynamorm` | Replacement with behavior change | Portable data framework (TableTheory) | TableTheory is AppTheory’s companion data framework for Go/TypeScript/Python and replaces DynamORM for new work. |
+| Observability | `pkg/observability/*`, `pkg/logger` | Replacement with behavior change | Portable hooks + Go-only integrations | Keep schema + hooks portable; provider integrations can be Go-only initially. |
+| Testing | `pkg/testing` | Direct replacement in AppTheory | Portable testkit shape | Align with SR-MOCKS; preserve deterministic harness behavior. |
+| CDK | `pkg/cdk/*` | Replacement with behavior change | TS-first jsii constructs + examples | Preserve Lift-equivalent capability via examples; multi-language constructs are TS-first (jsii). |
+| Security/compliance | `pkg/security`, `pkg/compliance` | Replacement with behavior change | Go-only then portable subset | Preserve behavior; port portable subset as contract requirements later. |
+| Deployment/dev tooling | `pkg/deployment`, `pkg/dev` | Temporary: keep using Lift | Go-only (Lift) | AppTheory will likely replace with repo templates + examples instead of a Go package. |
+| Service clients | `pkg/services/*` | Replacement with behavior change | Portable interfaces; Go impl first | Preserve current surfaces; extract portable boundaries where possible. |
 
 ## Follow-ups for a deeper audit
 
