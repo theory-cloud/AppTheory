@@ -1779,6 +1779,28 @@ function builtInAppTheoryHandler(runtime, name) {
         })(),
         isBase64: false,
       });
+    case "html_basic":
+      return () => runtime.html(200, "<h1>Hello</h1>");
+    case "html_stream_two_chunks":
+      return () =>
+        runtime.htmlStream(
+          200,
+          (async function* () {
+            yield Buffer.from("<h1>", "utf8");
+            yield Buffer.from("Hello</h1>", "utf8");
+          })(),
+        );
+    case "safe_json_for_html":
+      return () =>
+        runtime.text(
+          200,
+          runtime.safeJSONForHTML({
+            html: "</script><div>&</div><",
+            amp: "a&b",
+            ls: "line\u2028sep",
+            ps: "para\u2029sep",
+          }),
+        );
     default:
       return null;
   }

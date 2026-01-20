@@ -1,0 +1,36 @@
+{
+  "id": "m14.html.safe_json_for_html",
+  "tier": "m14",
+  "name": "Hydration: safe JSON for HTML embedding is deterministic across languages",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/safe-json", "handler": "safe_json_for_html" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/safe-json",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["text/plain; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body": {
+        "encoding": "base64",
+        "value": "eyJhbXAiOiJhXHUwMDI2YiIsImh0bWwiOiJcdTAwM2Mvc2NyaXB0XHUwMDNlXHUwMDNjZGl2XHUwMDNlXHUwMDI2XHUwMDNjL2Rpdlx1MDAzZVx1MDAzYyIsImxzIjoibGluZVx1MjAyOHNlcCIsInBzIjoicGFyYVx1MjAyOXNlcCJ9"
+      },
+      "is_base64": false
+    }
+  }
+}
+
