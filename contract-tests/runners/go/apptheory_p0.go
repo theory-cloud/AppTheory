@@ -313,6 +313,7 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 			defer close(ch)
 			ch <- apptheory.StreamChunk{Bytes: []byte("a")}
 			resp.Headers["x-phase"] = []string{"after"}
+			resp.Cookies = append(resp.Cookies, "c=d; Path=/")
 			ch <- apptheory.StreamChunk{Bytes: []byte("b")}
 		}()
 		return resp, nil
@@ -354,6 +355,30 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 			return nil, err
 		}
 		return apptheory.Text(200, out), nil
+	},
+	"cookies_from_set_cookie_header": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"text/plain; charset=utf-8"},
+				"set-cookie":   {"a=b; Path=/", "c=d; Path=/"},
+			},
+			Cookies:  []string{"e=f; Path=/"},
+			Body:     []byte("ok"),
+			IsBase64: false,
+		}, nil
+	},
+	"header_multivalue": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"text/plain; charset=utf-8"},
+				"x-multi":      {"a", "b"},
+			},
+			Cookies:  nil,
+			Body:     []byte("ok"),
+			IsBase64: false,
+		}, nil
 	},
 }
 
