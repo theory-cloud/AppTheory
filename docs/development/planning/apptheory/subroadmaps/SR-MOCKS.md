@@ -91,6 +91,11 @@ Status (today):
   - (once middleware exists) run middleware chains deterministically in tests
 - Docs include “how to test middleware” per language.
 
+Status (today):
+
+- Middleware + `ctx.set/get` are covered in `examples/testkit/ts.mjs` and `examples/testkit/py.py` and documented in
+  `ts/README.md` and `py/README.md`.
+
 ## Risks and mitigation
 
 - **Mock drift:** keep mocks small and strict; only mock what AppTheory owns.
