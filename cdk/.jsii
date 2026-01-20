@@ -8498,6 +8498,758 @@
     }
   },
   "types": {
+    "@theory-cloud/apptheory-cdk.AppTheoryApiDomain": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryApiDomain",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/api-domain.ts",
+          "line": 26
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryApiDomainProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/api-domain.ts",
+        "line": 20
+      },
+      "name": "AppTheoryApiDomain",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/api-domain.ts",
+            "line": 22
+          },
+          "name": "apiMapping",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.ApiMapping"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/api-domain.ts",
+            "line": 21
+          },
+          "name": "domainName",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.DomainName"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/api-domain.ts",
+            "line": 24
+          },
+          "name": "domainString",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/api-domain.ts",
+            "line": 23
+          },
+          "name": "cnameRecord",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.CnameRecord"
+          }
+        }
+      ],
+      "symbolId": "lib/api-domain:AppTheoryApiDomain"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryApiDomainProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryApiDomainProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/api-domain.ts",
+        "line": 7
+      },
+      "name": "AppTheoryApiDomainProps",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/api-domain.ts",
+            "line": 10
+          },
+          "name": "certificate",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_certificatemanager.ICertificate"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/api-domain.ts",
+            "line": 8
+          },
+          "name": "domainName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/api-domain.ts",
+            "line": 11
+          },
+          "name": "httpApi",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.IHttpApi"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/api-domain.ts",
+            "line": 9
+          },
+          "name": "apiMappingKey",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/api-domain.ts",
+            "line": 16
+          },
+          "name": "createCname",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/api-domain.ts",
+            "line": 13
+          },
+          "name": "hostedZone",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.IHostedZone"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/api-domain.ts",
+            "line": 14
+          },
+          "name": "mutualTlsAuthentication",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.MTLSConfig"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/api-domain.ts",
+            "line": 15
+          },
+          "name": "recordTtl",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/api-domain.ts",
+            "line": 17
+          },
+          "name": "securityPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.SecurityPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/api-domain.ts",
+            "line": 12
+          },
+          "name": "stage",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.IStage"
+          }
+        }
+      ],
+      "symbolId": "lib/api-domain:AppTheoryApiDomainProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryApp": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryApp",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/app.ts",
+          "line": 46
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryAppProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/app.ts",
+        "line": 39
+      },
+      "name": "AppTheoryApp",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 40
+          },
+          "name": "api",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApi"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 41
+          },
+          "name": "fn",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryFunction"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 42
+          },
+          "name": "databaseTable",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.ITable"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 44
+          },
+          "name": "domain",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryApiDomain"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 43
+          },
+          "name": "rateLimitTable",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.ITable"
+          }
+        }
+      ],
+      "symbolId": "lib/app:AppTheoryApp"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryAppProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryAppProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/app.ts",
+        "line": 13
+      },
+      "name": "AppTheoryAppProps",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 14
+          },
+          "name": "appName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 34
+          },
+          "name": "certificateArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 16
+          },
+          "name": "code",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.Code"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 15
+          },
+          "name": "codeAssetPath",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 26
+          },
+          "name": "databasePartitionKey",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 27
+          },
+          "name": "databaseSortKey",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 28
+          },
+          "name": "databaseTable",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.ITable"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 25
+          },
+          "name": "databaseTableName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 33
+          },
+          "name": "domainName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 24
+          },
+          "name": "enableDatabase",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 30
+          },
+          "name": "enableRateLimiting",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 20
+          },
+          "name": "environment",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "map"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 18
+          },
+          "name": "handler",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 35
+          },
+          "name": "hostedZone",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.IHostedZone"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 21
+          },
+          "name": "memorySize",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 31
+          },
+          "name": "rateLimitTableName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 17
+          },
+          "name": "runtime",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.Runtime"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 36
+          },
+          "name": "stage",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.IStage"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 22
+          },
+          "name": "timeoutSeconds",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/app:AppTheoryAppProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryCertificate": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCertificate",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/certificate.ts",
+          "line": 17
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCertificateProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/certificate.ts",
+        "line": 14
+      },
+      "methods": [
+        {
+          "locationInModule": {
+            "filename": "lib/certificate.ts",
+            "line": 36
+          },
+          "name": "addDependency",
+          "parameters": [
+            {
+              "name": "dependency",
+              "type": {
+                "fqn": "constructs.IConstruct"
+              }
+            }
+          ]
+        }
+      ],
+      "name": "AppTheoryCertificate",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/certificate.ts",
+            "line": 15
+          },
+          "name": "certificate",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_certificatemanager.Certificate"
+          }
+        }
+      ],
+      "symbolId": "lib/certificate:AppTheoryCertificate"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryCertificateProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCertificateProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/certificate.ts",
+        "line": 5
+      },
+      "name": "AppTheoryCertificateProps",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/certificate.ts",
+            "line": 6
+          },
+          "name": "domainName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/certificate.ts",
+            "line": 8
+          },
+          "name": "hostedZone",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.IHostedZone"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/certificate.ts",
+            "line": 11
+          },
+          "name": "certificateName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/certificate.ts",
+            "line": 7
+          },
+          "name": "subjectAlternativeNames",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/certificate.ts",
+            "line": 10
+          },
+          "name": "transparencyLoggingEnabled",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/certificate.ts",
+            "line": 9
+          },
+          "name": "validationZone",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.IHostedZone"
+          }
+        }
+      ],
+      "symbolId": "lib/certificate:AppTheoryCertificateProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryDynamoDBStreamMapping": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -8651,6 +9403,394 @@
         }
       ],
       "symbolId": "lib/dynamodb-stream-mapping:AppTheoryDynamoDBStreamMappingProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryEnhancedSecurity": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEnhancedSecurity",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/enhanced-security.ts",
+          "line": 74
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEnhancedSecurityProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/enhanced-security.ts",
+        "line": 63
+      },
+      "methods": [
+        {
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 160
+          },
+          "name": "addCustomSecurityRule",
+          "parameters": [
+            {
+              "name": "rule",
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheorySecurityRule"
+              }
+            },
+            {
+              "name": "direction",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ]
+        },
+        {
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 136
+          },
+          "name": "secret",
+          "parameters": [
+            {
+              "name": "name",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_secretsmanager.Secret"
+            }
+          }
+        },
+        {
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 132
+          },
+          "name": "securityGroupResource",
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_ec2.ISecurityGroup"
+            }
+          }
+        },
+        {
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 152
+          },
+          "name": "securityMetric",
+          "parameters": [
+            {
+              "name": "name",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_cloudwatch.IMetric"
+            }
+          }
+        },
+        {
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 144
+          },
+          "name": "vpcEndpoint",
+          "parameters": [
+            {
+              "name": "name",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_ec2.InterfaceVpcEndpoint"
+            }
+          }
+        },
+        {
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 125
+          },
+          "name": "wafWebAcl",
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_wafv2.CfnWebACL"
+            }
+          }
+        }
+      ],
+      "name": "AppTheoryEnhancedSecurity",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 66
+          },
+          "name": "secrets",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_secretsmanager.Secret"
+              },
+              "kind": "map"
+            }
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 64
+          },
+          "name": "securityGroup",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_ec2.SecurityGroup"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 68
+          },
+          "name": "securityMetrics",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_cloudwatch.IMetric"
+              },
+              "kind": "map"
+            }
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 69
+          },
+          "name": "vpcEndpoints",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_ec2.InterfaceVpcEndpoint"
+              },
+              "kind": "map"
+            }
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 67
+          },
+          "name": "vpcFlowLogsGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.LogGroup"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 65
+          },
+          "name": "waf",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_wafv2.CfnWebACL"
+          }
+        }
+      ],
+      "symbolId": "lib/enhanced-security:AppTheoryEnhancedSecurity"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryEnhancedSecurityProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEnhancedSecurityProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/enhanced-security.ts",
+        "line": 50
+      },
+      "name": "AppTheoryEnhancedSecurityProps",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 51
+          },
+          "name": "vpc",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_ec2.IVpc"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 56
+          },
+          "name": "applicationName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 58
+          },
+          "name": "egressRules",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheorySecurityRule"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 54
+          },
+          "name": "enableVpcFlowLogs",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 52
+          },
+          "name": "enableWaf",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 55
+          },
+          "name": "environment",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 57
+          },
+          "name": "ingressRules",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheorySecurityRule"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 59
+          },
+          "name": "secrets",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheorySecretConfig"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 60
+          },
+          "name": "vpcEndpointConfig",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryVpcEndpointConfig"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 53
+          },
+          "name": "wafConfig",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryWafRuleConfig"
+          }
+        }
+      ],
+      "symbolId": "lib/enhanced-security:AppTheoryEnhancedSecurityProps"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandler": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -9169,6 +10309,314 @@
       "name": "AppTheoryFunctionProps",
       "symbolId": "lib/function:AppTheoryFunctionProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryHostedZone": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHostedZone",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/hosted-zone.ts",
+          "line": 24
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHostedZoneProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/hosted-zone.ts",
+        "line": 18
+      },
+      "methods": [
+        {
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 96
+          },
+          "name": "addCnameRecord",
+          "parameters": [
+            {
+              "name": "recordName",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "name": "domainName",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "name": "ttl",
+              "type": {
+                "fqn": "aws-cdk-lib.Duration"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_route53.CnameRecord"
+            }
+          }
+        },
+        {
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 87
+          },
+          "name": "addNsRecord",
+          "parameters": [
+            {
+              "name": "recordName",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "name": "targetNameServers",
+              "type": {
+                "collection": {
+                  "elementtype": {
+                    "primitive": "string"
+                  },
+                  "kind": "array"
+                }
+              }
+            },
+            {
+              "name": "ttl",
+              "type": {
+                "fqn": "aws-cdk-lib.Duration"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_route53.NsRecord"
+            }
+          }
+        },
+        {
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 82
+          },
+          "name": "nameServers",
+          "returns": {
+            "optional": true,
+            "type": {
+              "collection": {
+                "elementtype": {
+                  "primitive": "string"
+                },
+                "kind": "array"
+              }
+            }
+          }
+        }
+      ],
+      "name": "AppTheoryHostedZone",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 19
+          },
+          "name": "hostedZone",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.IHostedZone"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 20
+          },
+          "name": "hostedZoneId",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 22
+          },
+          "name": "isImported",
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 21
+          },
+          "name": "zoneName",
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/hosted-zone:AppTheoryHostedZone"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryHostedZoneProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHostedZoneProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/hosted-zone.ts",
+        "line": 6
+      },
+      "name": "AppTheoryHostedZoneProps",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 7
+          },
+          "name": "zoneName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 14
+          },
+          "name": "cfnExportName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 8
+          },
+          "name": "comment",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 13
+          },
+          "name": "enableCfnExport",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 11
+          },
+          "name": "enableSsmExport",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 10
+          },
+          "name": "existingZoneId",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 9
+          },
+          "name": "importIfExists",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 12
+          },
+          "name": "ssmParameterPath",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/hosted-zone.ts",
+            "line": 15
+          },
+          "name": "tags",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "map"
+            }
+          }
+        }
+      ],
+      "symbolId": "lib/hosted-zone:AppTheoryHostedZoneProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryHttpApi": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -9258,6 +10706,372 @@
         }
       ],
       "symbolId": "lib/http-api:AppTheoryHttpApiProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryKmsKey": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryKmsKey",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/kms-key.ts",
+          "line": 39
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "optional": true,
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryKmsKeyProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/kms-key.ts",
+        "line": 32
+      },
+      "name": "AppTheoryKmsKey",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 33
+          },
+          "name": "key",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kms.IKey"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 36
+          },
+          "name": "keyArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 37
+          },
+          "name": "keyId",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 34
+          },
+          "name": "alias",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kms.Alias"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 35
+          },
+          "name": "ssmParameter",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_ssm.StringParameter"
+          }
+        }
+      ],
+      "symbolId": "lib/kms-key:AppTheoryKmsKey"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryKmsKeyProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryKmsKeyProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/kms-key.ts",
+        "line": 7
+      },
+      "name": "AppTheoryKmsKeyProps",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 12
+          },
+          "name": "administratorArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 9
+          },
+          "name": "aliasName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 13
+          },
+          "name": "customKeyPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_iam.PolicyDocument"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 8
+          },
+          "name": "description",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 16
+          },
+          "name": "enabledRegions",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 20
+          },
+          "name": "enableKeyRotation",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 21
+          },
+          "name": "enableSsmParameter",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 23
+          },
+          "name": "grantEncryptDecrypt",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 24
+          },
+          "name": "grantGenerateMac",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 19
+          },
+          "name": "isReplicaKey",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 26
+          },
+          "name": "keySpec",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kms.KeySpec"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 27
+          },
+          "name": "keyUsage",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kms.KeyUsage"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 18
+          },
+          "name": "multiRegion",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 28
+          },
+          "name": "pendingWindow",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 11
+          },
+          "name": "primaryKeyArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 29
+          },
+          "name": "removalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 14
+          },
+          "name": "ssmParameterPath",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kms-key.ts",
+            "line": 15
+          },
+          "name": "tags",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "map"
+            }
+          }
+        }
+      ],
+      "symbolId": "lib/kms-key:AppTheoryKmsKeyProps"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -9528,6 +11342,422 @@
       ],
       "symbolId": "lib/rest-api:AppTheoryRestApiRouteOptions"
     },
+    "@theory-cloud/apptheory-cdk.AppTheorySecretConfig": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheorySecretConfig",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/enhanced-security.ts",
+        "line": 18
+      },
+      "name": "AppTheorySecretConfig",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 22
+          },
+          "name": "description",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 21
+          },
+          "name": "name",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 27
+          },
+          "name": "enableRotation",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 25
+          },
+          "name": "excludeChars",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 24
+          },
+          "name": "generateKey",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 26
+          },
+          "name": "length",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 19
+          },
+          "name": "rotationLambda",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 20
+          },
+          "name": "rotationSchedule",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_secretsmanager.RotationScheduleOptions"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 23
+          },
+          "name": "template",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/enhanced-security:AppTheorySecretConfig"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheorySecurityRule": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheorySecurityRule",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/enhanced-security.ts",
+        "line": 11
+      },
+      "name": "AppTheorySecurityRule",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 14
+          },
+          "name": "description",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 15
+          },
+          "name": "port",
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 13
+          },
+          "name": "protocol",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_ec2.Protocol"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 12
+          },
+          "name": "source",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_ec2.IPeer"
+          }
+        }
+      ],
+      "symbolId": "lib/enhanced-security:AppTheorySecurityRule"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryVpcEndpointConfig": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryVpcEndpointConfig",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/enhanced-security.ts",
+        "line": 41
+      },
+      "name": "AppTheoryVpcEndpointConfig",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 43
+          },
+          "name": "enableCloudWatchLogs",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 46
+          },
+          "name": "enableCloudWatchMonitoring",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 45
+          },
+          "name": "enableKms",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 42
+          },
+          "name": "enableSecretsManager",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 44
+          },
+          "name": "enableXRay",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 47
+          },
+          "name": "privateDnsEnabled",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        }
+      ],
+      "symbolId": "lib/enhanced-security:AppTheoryVpcEndpointConfig"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryWafRuleConfig": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryWafRuleConfig",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/enhanced-security.ts",
+        "line": 30
+      },
+      "name": "AppTheoryWafRuleConfig",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 35
+          },
+          "name": "enableKnownBadInputs",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 31
+          },
+          "name": "enableRateLimit",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 33
+          },
+          "name": "enableSQLiProtection",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 34
+          },
+          "name": "enableXSSProtection",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 38
+          },
+          "name": "geoBlocking",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 37
+          },
+          "name": "ipBlacklist",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 36
+          },
+          "name": "ipWhitelist",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/enhanced-security.ts",
+            "line": 32
+          },
+          "name": "rateLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/enhanced-security:AppTheoryWafRuleConfig"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryWebSocketApi": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -9644,5 +11874,5 @@
     }
   },
   "version": "0.2.0-rc.1",
-  "fingerprint": "X2XV9Mv9N9GJcq7d0E01vdZLSizdO4tdK4fIvWciWog="
+  "fingerprint": "r1vSytG+LM+IX1ZmKIa0EKV9qXO1gMOZXLeiM0+J6Es="
 }

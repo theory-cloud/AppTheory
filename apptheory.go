@@ -10,6 +10,7 @@ type App struct {
 	ids              IDGenerator
 	tier             Tier
 	limits           Limits
+	cors             CORSConfig
 	auth             AuthHook
 	obs              ObservabilityHooks
 	policy           PolicyHook
@@ -50,6 +51,7 @@ func New(opts ...Option) *App {
 		ids:    RandomIDGenerator{},
 		tier:   TierP2,
 		limits: Limits{},
+		cors:   CORSConfig{},
 		auth:   nil,
 		obs:    ObservabilityHooks{},
 		policy: nil,

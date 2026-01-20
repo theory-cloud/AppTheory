@@ -32,6 +32,8 @@ func statusForErrorCode(code string) int {
 		return 409
 	case errorCodeTooLarge:
 		return 413
+	case errorCodeTimeout:
+		return 408
 	case errorCodeRateLimited:
 		return 429
 	case errorCodeOverloaded:

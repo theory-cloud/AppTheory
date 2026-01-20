@@ -1,0 +1,75 @@
+{
+  "Outputs": {
+    "ZoneZoneIdOutput2A248FC1": {
+      "Description": "Hosted Zone ID for example.com",
+      "Export": {
+        "Name": "HostedZoneId-example-com"
+      },
+      "Value": {
+        "Ref": "ZoneHostedZoneB23BB523"
+      }
+    }
+  },
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "ZoneHostedZoneB23BB523": {
+      "Properties": {
+        "HostedZoneConfig": {
+          "Comment": "apptheory test zone"
+        },
+        "HostedZoneTags": [
+          {
+            "Key": "Owner",
+            "Value": "apptheory"
+          }
+        ],
+        "Name": "example.com."
+      },
+      "Type": "AWS::Route53::HostedZone"
+    },
+    "ZoneZoneIdParameterC34EC192": {
+      "Properties": {
+        "Description": "Hosted Zone ID for example.com",
+        "Name": "/route53/zones/example.com/id",
+        "Type": "String",
+        "Value": {
+          "Ref": "ZoneHostedZoneB23BB523"
+        }
+      },
+      "Type": "AWS::SSM::Parameter"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}
