@@ -1,0 +1,120 @@
+{
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "Key9BCD29C7": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "Description": "apptheory test HMAC key",
+        "EnableKeyRotation": false,
+        "KeyPolicy": {
+          "Statement": [
+            {
+              "Action": "kms:*",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition"
+                      },
+                      ":iam::",
+                      {
+                        "Ref": "AWS::AccountId"
+                      },
+                      ":root"
+                    ]
+                  ]
+                }
+              },
+              "Resource": "*"
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "KeySpec": "HMAC_256",
+        "KeyUsage": "GENERATE_VERIFY_MAC",
+        "MultiRegion": true,
+        "PendingWindowInDays": 30,
+        "Tags": [
+          {
+            "Key": "Component",
+            "Value": "KMS"
+          },
+          {
+            "Key": "Framework",
+            "Value": "AppTheory"
+          },
+          {
+            "Key": "Purpose",
+            "Value": "test"
+          }
+        ]
+      },
+      "Type": "AWS::KMS::Key",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "KeyAlias910D852D": {
+      "Properties": {
+        "AliasName": "alias/apptheory/test-hmac",
+        "TargetKeyId": {
+          "Fn::GetAtt": [
+            "Key9BCD29C7",
+            "Arn"
+          ]
+        }
+      },
+      "Type": "AWS::KMS::Alias"
+    },
+    "KeySSMParameter7E89D468": {
+      "Properties": {
+        "Description": "KMS Key ARN for apptheory test HMAC key",
+        "Name": "/apptheory/test/hmac-key-arn",
+        "Tier": "Standard",
+        "Type": "String",
+        "Value": {
+          "Fn::GetAtt": [
+            "Key9BCD29C7",
+            "Arn"
+          ]
+        }
+      },
+      "Type": "AWS::SSM::Parameter"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}

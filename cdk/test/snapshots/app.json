@@ -1,0 +1,491 @@
+{
+  "Outputs": {
+    "ApiUrl": {
+      "Description": "API Gateway endpoint URL",
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "https://",
+            {
+              "Ref": "AppAPIApiB048D7B0"
+            },
+            ".execute-api.",
+            {
+              "Ref": "AWS::Region"
+            },
+            ".",
+            {
+              "Ref": "AWS::URLSuffix"
+            },
+            "/"
+          ]
+        ]
+      }
+    },
+    "DatabaseTableName": {
+      "Description": "DynamoDB table name",
+      "Value": {
+        "Ref": "AppDatabaseFE436DA6"
+      }
+    },
+    "FunctionName": {
+      "Description": "Lambda function name",
+      "Value": {
+        "Ref": "AppFunctionC4660EF9"
+      }
+    }
+  },
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "AppAPIApiANYDD0B5DD1": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "AppAPIApiB048D7B0"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "ANY /",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "AppAPIApiANYRoot29991A5C"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "AppAPIApiANYRoot29991A5C": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "AppAPIApiB048D7B0"
+        },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": {
+          "Fn::GetAtt": [
+            "AppFunctionC4660EF9",
+            "Arn"
+          ]
+        },
+        "PayloadFormatVersion": "2.0"
+      },
+      "Type": "AWS::ApiGatewayV2::Integration"
+    },
+    "AppAPIApiANYRootPermissionCB035F5F": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "AppFunctionC4660EF9",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "AppAPIApiB048D7B0"
+              },
+              "/*/*/"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "AppAPIApiANYproxyC63BFB83": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "AppAPIApiB048D7B0"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "ANY /{proxy+}",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "AppAPIApiANYproxyProxy2CE946C4"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "AppAPIApiANYproxyProxy2CE946C4": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "AppAPIApiB048D7B0"
+        },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": {
+          "Fn::GetAtt": [
+            "AppFunctionC4660EF9",
+            "Arn"
+          ]
+        },
+        "PayloadFormatVersion": "2.0"
+      },
+      "Type": "AWS::ApiGatewayV2::Integration"
+    },
+    "AppAPIApiANYproxyProxyPermission16AD8C64": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "AppFunctionC4660EF9",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "AppAPIApiB048D7B0"
+              },
+              "/*/*/{proxy+}"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "AppAPIApiB048D7B0": {
+      "Properties": {
+        "Name": "apptheory-test-api",
+        "ProtocolType": "HTTP"
+      },
+      "Type": "AWS::ApiGatewayV2::Api"
+    },
+    "AppAPIApiDefaultStage409A487C": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "AppAPIApiB048D7B0"
+        },
+        "AutoDeploy": true,
+        "StageName": "$default"
+      },
+      "Type": "AWS::ApiGatewayV2::Stage"
+    },
+    "AppDatabaseFE436DA6": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "ID",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "SK",
+            "AttributeType": "S"
+          }
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [
+          {
+            "AttributeName": "ID",
+            "KeyType": "HASH"
+          },
+          {
+            "AttributeName": "SK",
+            "KeyType": "RANGE"
+          }
+        ],
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "SSESpecification": {
+          "SSEEnabled": true
+        },
+        "StreamSpecification": {
+          "StreamViewType": "NEW_AND_OLD_IMAGES"
+        },
+        "TableName": "apptheory-test-table",
+        "TimeToLiveSpecification": {
+          "AttributeName": "ttl",
+          "Enabled": true
+        }
+      },
+      "Type": "AWS::DynamoDB::Table",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "AppFunctionC4660EF9": {
+      "DependsOn": [
+        "AppFunctionServiceRoleDefaultPolicy58EE8930",
+        "AppFunctionServiceRole265AF9F5"
+      ],
+      "Properties": {
+        "Architectures": [
+          "arm64"
+        ],
+        "Code": {
+          "ZipFile": "exports.handler = async () => ({ statusCode: 200, body: 'ok' });"
+        },
+        "Environment": {
+          "Variables": {
+            "APPTHEORY_RATE_LIMIT_TABLE_NAME": {
+              "Ref": "AppRateLimitTable811D78F6"
+            },
+            "DYNAMODB_TABLE": {
+              "Ref": "AppDatabaseFE436DA6"
+            },
+            "LIMITED_TABLE_NAME": {
+              "Ref": "AppRateLimitTable811D78F6"
+            },
+            "RATE_LIMIT_TABLE": {
+              "Ref": "AppRateLimitTable811D78F6"
+            },
+            "RATE_LIMIT_TABLE_NAME": {
+              "Ref": "AppRateLimitTable811D78F6"
+            }
+          }
+        },
+        "FunctionName": "apptheory-test",
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "AppFunctionServiceRole265AF9F5",
+            "Arn"
+          ]
+        },
+        "Runtime": "nodejs24.x",
+        "Timeout": 30,
+        "TracingConfig": {
+          "Mode": "Active"
+        }
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "AppFunctionServiceRole265AF9F5": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+              ]
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "AppFunctionServiceRoleDefaultPolicy58EE8930": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "xray:PutTraceSegments",
+                "xray:PutTelemetryRecords"
+              ],
+              "Effect": "Allow",
+              "Resource": "*"
+            },
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable"
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "AppDatabaseFE436DA6",
+                  "Arn"
+                ]
+              }
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator"
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "AppDatabaseFE436DA6",
+                  "Arn"
+                ]
+              }
+            },
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable"
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "AppRateLimitTable811D78F6",
+                  "Arn"
+                ]
+              }
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator"
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "AppRateLimitTable811D78F6",
+                  "Arn"
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "PolicyName": "AppFunctionServiceRoleDefaultPolicy58EE8930",
+        "Roles": [
+          {
+            "Ref": "AppFunctionServiceRole265AF9F5"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Policy"
+    },
+    "AppRateLimitTable811D78F6": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "pk",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "sk",
+            "AttributeType": "S"
+          }
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [
+          {
+            "AttributeName": "pk",
+            "KeyType": "HASH"
+          },
+          {
+            "AttributeName": "sk",
+            "KeyType": "RANGE"
+          }
+        ],
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "SSESpecification": {
+          "SSEEnabled": true
+        },
+        "TableName": "apptheory-test-rate-limits",
+        "TimeToLiveSpecification": {
+          "AttributeName": "ttl",
+          "Enabled": true
+        }
+      },
+      "Type": "AWS::DynamoDB::Table",
+      "UpdateReplacePolicy": "Retain"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}
