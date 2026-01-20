@@ -60,6 +60,13 @@ class Limits:
 
 
 @dataclass(slots=True)
+class CORSConfig:
+    allowed_origins: list[str] | None = None
+    allow_credentials: bool = False
+    allow_headers: list[str] | None = None
+
+
+@dataclass(slots=True)
 class LogRecord:
     level: str
     event: str
@@ -110,6 +117,7 @@ class App:
     _id_generator: IdGenerator
     _tier: str
     _limits: Limits
+    _cors: CORSConfig
     _auth_hook: AuthHook | None
     _observability: ObservabilityHooks
     _policy_hook: PolicyHook | None
@@ -128,6 +136,7 @@ class App:
         id_generator: IdGenerator | None = None,
         tier: str = "p2",
         limits: Limits | None = None,
+        cors: CORSConfig | None = None,
         auth_hook: AuthHook | None = None,
         observability: ObservabilityHooks | None = None,
         policy_hook: PolicyHook | None = None,
@@ -141,6 +150,7 @@ class App:
             tier_value = "p2"
         self._tier = tier_value
         self._limits = limits or Limits()
+        self._cors = _normalize_cors_config(cors)
         self._auth_hook = auth_hook
         self._observability = observability or ObservabilityHooks()
         self._policy_hook = policy_hook
@@ -300,7 +310,7 @@ class App:
             trace.append("cors")
 
         def finish(resp: Response, error_code: str = "") -> Response:
-            out = _finalize_p1_response(resp, request_id, origin)
+            out = _finalize_p1_response(resp, request_id, origin, self._cors)
             if enable_p2:
                 self._record_observability(method, path, request_id, tenant_id, out.status, error_code)
             return out
@@ -737,6 +747,7 @@ def create_app(
     id_generator: IdGenerator | None = None,
     tier: str = "p2",
     limits: Limits | None = None,
+    cors: CORSConfig | None = None,
     auth_hook: AuthHook | None = None,
     observability: ObservabilityHooks | None = None,
     policy_hook: PolicyHook | None = None,
@@ -747,6 +758,7 @@ def create_app(
         id_generator=id_generator,
         tier=tier,
         limits=limits,
+        cors=cors,
         auth_hook=auth_hook,
         observability=observability,
         policy_hook=policy_hook,
@@ -867,14 +879,78 @@ def _is_cors_preflight(method: str, headers: dict[str, list[str]]) -> bool:
         _first_header_value(headers, "access-control-request-method")
     )
 
+def _normalize_cors_config(cors: CORSConfig | None) -> CORSConfig:
+    if cors is None:
+        return CORSConfig()
 
-def _finalize_p1_response(resp: Response, request_id: str, origin: str) -> Response:
+    allowed_origins: list[str] | None
+    if cors.allowed_origins is None:
+        allowed_origins = None
+    else:
+        allowed_origins = []
+        for origin in cors.allowed_origins:
+            trimmed = str(origin or "").strip()
+            if not trimmed:
+                continue
+            if trimmed == "*":
+                allowed_origins = ["*"]
+                break
+            allowed_origins.append(trimmed)
+
+    allow_headers: list[str] | None
+    if cors.allow_headers is None:
+        allow_headers = None
+    else:
+        allow_headers = []
+        for header in cors.allow_headers:
+            trimmed = str(header or "").strip()
+            if not trimmed:
+                continue
+            allow_headers.append(trimmed)
+
+    return CORSConfig(
+        allowed_origins=allowed_origins,
+        allow_credentials=bool(cors.allow_credentials),
+        allow_headers=allow_headers,
+    )
+
+
+def _cors_origin_allowed(origin: str, cors: CORSConfig) -> bool:
+    origin_value = str(origin or "").strip()
+    if not origin_value:
+        return False
+
+    if cors.allowed_origins is None:
+        return True
+    if not cors.allowed_origins:
+        return False
+
+    for allowed in cors.allowed_origins:
+        if allowed == "*" or allowed == origin_value:
+            return True
+    return False
+
+
+def _cors_allow_headers_value(cors: CORSConfig) -> str:
+    if cors.allow_headers:
+        return ", ".join([str(h) for h in cors.allow_headers if str(h).strip()])
+    if cors.allow_credentials:
+        return "Content-Type, Authorization"
+    return ""
+
+
+def _finalize_p1_response(resp: Response, request_id: str, origin: str, cors: CORSConfig) -> Response:
     headers = canonicalize_headers(resp.headers)
     if request_id:
         headers["x-request-id"] = [str(request_id)]
-    if origin:
+    if origin and _cors_origin_allowed(origin, cors):
         headers["access-control-allow-origin"] = [str(origin)]
         headers["vary"] = ["origin"]
+        if cors.allow_credentials:
+            headers["access-control-allow-credentials"] = ["true"]
+        allow_headers = _cors_allow_headers_value(cors)
+        if allow_headers:
+            headers["access-control-allow-headers"] = [allow_headers]
     return normalize_response(
         Response(
             status=resp.status,

@@ -679,7 +679,7 @@ export const paymentXMLPatterns = [
 export const rapidConnectXMLPatterns = paymentXMLPatterns;
 
 export class App {
-  constructor({ clock, ids, tier, limits, authHook, policyHook, observability, webSocketClientFactory } = {}) {
+  constructor({ clock, ids, tier, limits, cors, authHook, policyHook, observability, webSocketClientFactory } = {}) {
     this._router = new Router();
     this._clock = clock ?? new RealClock();
     this._ids = ids ?? new RandomIdGenerator();
@@ -688,6 +688,7 @@ export class App {
       maxRequestBytes: Number(limits?.maxRequestBytes ?? 0),
       maxResponseBytes: Number(limits?.maxResponseBytes ?? 0),
     };
+    this._cors = normalizeCorsConfig(cors);
     this._authHook = authHook ?? null;
     this._policyHook = policyHook ?? null;
     this._observability = observability ?? null;
@@ -852,7 +853,7 @@ export class App {
     const enableP2 = this._tier === "p2";
 
     const finish = (resp, errCode) => {
-      const out = finalizeP1Response(resp, requestId, origin);
+      const out = finalizeP1Response(resp, requestId, origin, this._cors);
       if (enableP2) {
         recordObservability(this._observability, {
           method,
@@ -1673,14 +1674,84 @@ function isCorsPreflight(method, headers) {
   return normalizeMethod(method) === "OPTIONS" && firstHeaderValue(headers, "access-control-request-method");
 }
 
-function finalizeP1Response(resp, requestId, origin) {
+function normalizeCorsConfig(cors) {
+  const allowCredentials = Boolean(cors?.allowCredentials);
+
+  let allowedOrigins = null;
+  if (cors && typeof cors === "object" && "allowedOrigins" in cors) {
+    if (Array.isArray(cors.allowedOrigins)) {
+      const normalized = [];
+      for (const origin of cors.allowedOrigins) {
+        const trimmed = String(origin ?? "").trim();
+        if (!trimmed) continue;
+        if (trimmed === "*") {
+          allowedOrigins = ["*"];
+          break;
+        }
+        normalized.push(trimmed);
+      }
+      if (!allowedOrigins) {
+        allowedOrigins = normalized;
+      }
+    }
+  }
+
+  let allowHeaders = null;
+  if (cors && typeof cors === "object" && "allowHeaders" in cors) {
+    if (Array.isArray(cors.allowHeaders)) {
+      const normalized = [];
+      for (const header of cors.allowHeaders) {
+        const trimmed = String(header ?? "").trim();
+        if (!trimmed) continue;
+        normalized.push(trimmed);
+      }
+      allowHeaders = normalized;
+    }
+  }
+
+  return { allowedOrigins, allowCredentials, allowHeaders };
+}
+
+function corsOriginAllowed(origin, cors) {
+  const originValue = String(origin ?? "").trim();
+  if (!originValue) return false;
+
+  const allowed = cors?.allowedOrigins ?? null;
+  if (allowed === null) {
+    return true;
+  }
+  if (!Array.isArray(allowed) || allowed.length === 0) {
+    return false;
+  }
+  return allowed.some((entry) => entry === "*" || entry === originValue);
+}
+
+function corsAllowHeadersValue(cors) {
+  const headers = Array.isArray(cors?.allowHeaders) ? cors.allowHeaders : [];
+  if (headers.length > 0) {
+    return headers.join(", ");
+  }
+  if (cors?.allowCredentials) {
+    return "Content-Type, Authorization";
+  }
+  return "";
+}
+
+function finalizeP1Response(resp, requestId, origin, cors) {
   const headers = canonicalizeHeaders(resp.headers ?? {});
   if (requestId) {
     headers["x-request-id"] = [String(requestId)];
   }
-  if (origin) {
+  if (origin && corsOriginAllowed(origin, cors)) {
     headers["access-control-allow-origin"] = [String(origin)];
     headers.vary = ["origin"];
+    if (cors?.allowCredentials) {
+      headers["access-control-allow-credentials"] = ["true"];
+    }
+    const allowHeaders = corsAllowHeadersValue(cors);
+    if (allowHeaders) {
+      headers["access-control-allow-headers"] = [allowHeaders];
+    }
   }
   return { ...resp, headers };
 }

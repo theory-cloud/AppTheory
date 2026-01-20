@@ -23,6 +23,11 @@ func runFixtureP2(f Fixture) error {
 			MaxRequestBytes:  f.Setup.Limits.MaxRequestBytes,
 			MaxResponseBytes: f.Setup.Limits.MaxResponseBytes,
 		}),
+		apptheory.WithCORS(apptheory.CORSConfig{
+			AllowedOrigins:   f.Setup.CORS.AllowedOrigins,
+			AllowCredentials: f.Setup.CORS.AllowCredentials,
+			AllowHeaders:     f.Setup.CORS.AllowHeaders,
+		}),
 		apptheory.WithAuthHook(func(ctx *apptheory.Context) (string, error) {
 			authz := strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "authorization"))
 			if authz == "" {

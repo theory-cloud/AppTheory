@@ -2,7 +2,13 @@
   "id": "p1.cors.preflight",
   "tier": "p1",
   "name": "CORS preflight requests are handled before routing",
-  "setup": { "routes": [] },
+  "setup": {
+    "routes": [],
+    "cors": {
+      "allowed_origins": ["https://example.com"],
+      "allow_credentials": true
+    }
+  },
   "input": {
     "request": {
       "method": "OPTIONS",
@@ -20,6 +26,8 @@
     "response": {
       "status": 204,
       "headers": {
+        "access-control-allow-credentials": ["true"],
+        "access-control-allow-headers": ["Content-Type, Authorization"],
         "access-control-allow-methods": ["GET"],
         "access-control-allow-origin": ["https://example.com"],
         "vary": ["origin"],
@@ -31,4 +39,3 @@
     }
   }
 }
-

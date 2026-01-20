@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from apptheory.app import (
     App,
+    CORSConfig,
     EventBridgeSelector,
     Limits,
     ObservabilityHooks,
@@ -45,6 +46,7 @@ __all__ = [
     "AppError",
     "Clock",
     "Context",
+    "CORSConfig",
     "EventBridgeSelector",
     "EventContext",
     "Limits",
