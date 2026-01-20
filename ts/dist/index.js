@@ -1503,6 +1503,49 @@ export class TestEnv {
     return app.serve(request, ctx);
   }
 
+  async invokeStreaming(app, request, ctx) {
+    const resp = await app.serve(request, ctx);
+
+    const headers = {};
+    for (const [key, values] of Object.entries(resp.headers ?? {})) {
+      headers[key] = Array.isArray(values) ? [...values].map((v) => String(v)) : [String(values)];
+    }
+
+    const cookies = Array.isArray(resp.cookies) ? [...resp.cookies].map((c) => String(c)) : [];
+
+    const chunks = [];
+    const buffers = [];
+
+    if (resp.body && Buffer.from(resp.body).length > 0) {
+      const b = Buffer.from(resp.body);
+      chunks.push(b);
+      buffers.push(b);
+    }
+
+    let streamErrorCode = "";
+    if (resp.bodyStream) {
+      try {
+        for await (const chunk of resp.bodyStream) {
+          const b = Buffer.from(chunk ?? []);
+          chunks.push(b);
+          buffers.push(b);
+        }
+      } catch (err) {
+        streamErrorCode = err instanceof AppError ? String(err.code ?? "") : "app.internal";
+      }
+    }
+
+    return {
+      status: Number(resp.status ?? 0),
+      headers,
+      cookies,
+      chunks,
+      body: Buffer.concat(buffers),
+      is_base64: Boolean(resp.isBase64),
+      stream_error_code: streamErrorCode,
+    };
+  }
+
   invokeAPIGatewayV2(app, event, ctx) {
     return app.serveAPIGatewayV2(event, ctx);
   }

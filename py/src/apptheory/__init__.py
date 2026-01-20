@@ -35,6 +35,7 @@ from apptheory.sse import SSEEvent, sse, sse_event_stream
 from apptheory.testkit import (
     FakeWebSocketClientFactory,
     FakeWebSocketManagementClient,
+    StreamResult,
     TestEnv,
     WebSocketCall,
     build_websocket_event,
@@ -65,6 +66,7 @@ __all__ = [
     "TimeoutConfig",
     "FakeWebSocketClientFactory",
     "FakeWebSocketManagementClient",
+    "StreamResult",
     "TestEnv",
     "WebSocketCall",
     "build_apigw_v2_request",
