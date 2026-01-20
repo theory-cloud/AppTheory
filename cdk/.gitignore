@@ -2,6 +2,7 @@ dist/
 node_modules/
 .venv/
 .jsii.tgz
+*.tgz
 *.tsbuildinfo
 tsconfig.json
 lib/**/*.js.map

@@ -3,9 +3,11 @@
 Status snapshot:
 
 - Repo: `AppTheory/`
-- Commit: `6b8117236f9998c7cbb9b0f34dde7bb8c0b10787`
+- Commit: `v0.1.0` (tagged release commit)
 - Toolchains: Go `1.25.6`, Node `24`, Python `3.14` (per `go.mod` + docs)
-- Current quality signal: `make rubric` passes locally
+- Current quality signal:
+  - `make rubric`: PASS
+  - `make verify-builds`: PASS (deterministic artifacts)
 
 This document captures the remaining gaps *after* implementing the multi-language roadmap structure and the initial
 end-to-end rubric gates, and proposes a concrete remediation roadmap to fully close out “v0.1.0-ready” expectations.
@@ -14,16 +16,29 @@ Primary roadmap reference:
 
 - `docs/development/planning/apptheory/apptheory-multilang-roadmap.md`
 
+## Remediation status (current)
+
+| Gap | Status | Evidence in repo |
+| --- | --- | --- |
+| Gap A (release outcome) | CLOSED | `VERSION` is `0.1.0`; tag `v0.1.0`; Release workflow exercised |
+| Gap B (CI runs full rubric) | CLOSED | `AppTheory/.github/workflows/ci.yml` has `rubric` job |
+| Gap C (TableTheory Go lint parity) | CLOSED | `AppTheory/.golangci-v2.yml`, `scripts/verify-go-lint.sh`, `make lint` |
+| Gap D (adapter fixtures) | CLOSED | parity matrix adapters are `✅`; adapter fixtures exist under `contract-tests/fixtures/p0/` |
+| Gap E (migration guide/tooling completeness) | PARTIAL | guide + helpers in-repo; “first real service migration” is external |
+| Gap F (license metadata alignment) | CLOSED | `ts/package.json`, `cdk/package.json`, `py/pyproject.toml` now Apache-2.0 |
+
 ## What’s already working (evidence)
 
 `make rubric` (`scripts/verify-rubric.sh`) currently proves:
 
 - Version alignment across Go/TS/Py/CDK (`scripts/verify-version-alignment.sh`)
+- Go formatting is clean (`scripts/fmt-check.sh`)
+- Go lint (`scripts/verify-go-lint.sh` → `golangci-lint run --config .golangci-v2.yml`)
 - Go tests + vet (`scripts/verify-go.sh`)
 - TS release packaging via `npm pack` (`scripts/verify-ts-pack.sh`)
 - Python wheel + sdist build (`scripts/verify-python-build.sh`)
 - CDK constructs tests + jsii packaging + Go bindings tests + synth drift gate (`scripts/verify-cdk-*.sh`)
-- Contract tests pass in Go/TS/Py (27 fixtures) (`scripts/verify-contract-tests.sh`)
+- Contract tests pass in Go/TS/Py (31 fixtures) (`scripts/verify-contract-tests.sh`)
 - Testkit examples run in TS + Py (`scripts/verify-testkit-examples.sh`)
 
 Release workflow exists and is aligned with the “GitHub Releases only” posture:
@@ -35,11 +50,13 @@ Release workflow exists and is aligned with the “GitHub Releases only” postu
 
 ### Gap A — “Roadmap complete” vs “Release complete” (M11 outcome)
 
+**Status:** CLOSED
+
 **Current state**
 
-- `VERSION` is `0.0.0` (`AppTheory/VERSION:1`).
-- No git tags exist (`git tag` is empty).
-- Release workflow is in place (`.github/workflows/release.yml`) but has never been exercised end-to-end on a real tag.
+- `VERSION` is `0.1.0` (`AppTheory/VERSION:1`).
+- Tag `v0.1.0` exists (cut from `main`).
+- Release workflow has been exercised end-to-end on a real tag (`.github/workflows/release.yml`).
 
 **Why it matters**
 
@@ -71,12 +88,12 @@ Release workflow exists and is aligned with the “GitHub Releases only” postu
 
 ### Gap B — CI does not run the full rubric gate set
 
+**Status:** CLOSED
+
 **Current state**
 
-- CI runs a subset of gates (version alignment, Go test/vet, TS pack, Python build, deterministic builds, contract tests).
-- CI does not run CDK construct tests or synth drift detection.
-- CI does not run testkit examples.
-- CI does not enforce formatting (`fmt-check`) and does not run “real lint”.
+- CI runs the full rubric gate set (including fmt-check, Go lint, CDK gates, synth drift detection, contract tests, and
+  testkit examples) via the `rubric` job in `AppTheory/.github/workflows/ci.yml`.
 
 **Why it matters**
 
@@ -84,8 +101,7 @@ Release workflow exists and is aligned with the “GitHub Releases only” postu
 
 **Remediation**
 
-- Add a “Rubric” job to `AppTheory/.github/workflows/ci.yml` that runs `make rubric` (or add equivalent dedicated jobs for
-  the missing gates: CDK + synth + examples).
+- Implemented: `AppTheory/.github/workflows/ci.yml` now includes a `rubric` job that runs `make rubric`.
 
 **Acceptance criteria**
 
@@ -96,31 +112,24 @@ Release workflow exists and is aligned with the “GitHub Releases only” postu
 
 ### Gap C — Linting parity with TableTheory (requested: import TableTheory lint config)
 
+**Status:** CLOSED
+
 **Current state**
 
-- AppTheory has no `golangci-lint` config and no Go lint invocation.
-- `make lint` currently runs `scripts/verify-go.sh` (test + vet), which is not equivalent to TableTheory’s lint posture.
-- TableTheory’s Go lint config is in `TableTheory/.golangci-v2.yml`.
+- AppTheory now has a TableTheory-derived Go lint config: `AppTheory/.golangci-v2.yml`.
+- `make lint` runs `scripts/verify-go-lint.sh` (requires `golangci-lint` installed/pinned in PATH).
+- `make rubric` includes formatting + Go lint gates before running tests/builds.
 
-When the TableTheory config is run against AppTheory code as-is, it reports a sizable initial backlog (example categories
-include `dupl`, `errcheck`, `gofmt`, `gosec`, `prealloc`, `revive`, and `govet` field alignment).
+Note: AppTheory disables `govet`’s `fieldalignment` check to avoid churn for low-value struct layout changes.
 
 **Why it matters**
 
 - You asked for TableTheory-style release patterns and first-class quality posture; linting is one of the main
   “fail-closed” gates that prevents quality drift.
 
-**Remediation (plan only; do not implement in this step)**
+**Remediation**
 
-1. Port `TableTheory/.golangci-v2.yml` into AppTheory as `AppTheory/.golangci-v2.yml`.
-2. Update `goimports` `local-prefixes` to include `github.com/theory-cloud/apptheory`.
-3. Decide whether AppTheory’s policy is:
-   - “Match TableTheory strictly” (fix code until clean), or
-   - “Match TableTheory with scoped exclusions” (documented carve-outs for generated/fixture/test harness code).
-4. Wire `golangci-lint` into:
-   - `AppTheory/Makefile` `lint` target (and optionally `rubric`)
-   - `AppTheory/.github/workflows/ci.yml` (pinned install)
-5. Burn down the initial lint backlog (or configure permitted exclusions).
+- Implemented: lint config + `make lint` + CI install are in place, and `make rubric` includes lint.
 
 **Complex enough for a dedicated sub-roadmap**
 
@@ -141,10 +150,13 @@ include `dupl`, `errcheck`, `gofmt`, `gosec`, `prealloc`, `revive`, and `govet` 
 
 ### Gap D — Contract coverage for AWS event adapters (fixture-backed)
 
+**Status:** CLOSED
+
 **Current state**
 
-- Contract v0 claims HTTP event sources are in-scope (`docs/.../apptheory-runtime-contract-v0.md`).
-- The parity matrix marks Lambda URL and APIGW v2 adapters as implemented but **not fixture-backed** (`🟨`).
+- Lambda URL and APIGW v2 adapter behavior is now fixture-backed:
+  - `contract-tests/fixtures/p0/adapter-*`
+  - parity matrix shows `✅` for both adapters.
 
 **Why it matters**
 
@@ -174,10 +186,15 @@ include `dupl`, `errcheck`, `gofmt`, `gosec`, `prealloc`, `revive`, and `govet` 
 
 ### Gap E — Migration toolkit is present but not yet “complete” (M10)
 
+**Status:** PARTIAL
+
 **Current state**
 
-- Migration docs exist, but the main guide is explicitly a skeleton (`docs/migration/from-lift.md`).
-- A real automation helper exists, but it only rewrites `pay-theory/limited` imports (`cmd/lift-migrate`).
+- Migration guide exists and is no longer a skeleton: `docs/migration/from-lift.md`.
+- Automation helper exists for safe, diff-based import rewriting for `limited`:
+  - `scripts/migrate-from-lift-go.sh`
+  - `cmd/lift-migrate`
+- The remaining “first real service migration” work happens in Pay Theory repos (outside AppTheory).
 
 **Why it matters**
 
@@ -205,12 +222,14 @@ include `dupl`, `errcheck`, `gofmt`, `gosec`, `prealloc`, `revive`, and `govet` 
 
 ### Gap F — Package metadata consistency (licenses, provenance, and consumer clarity)
 
+**Status:** CLOSED
+
 **Current state**
 
-- Repo has Apache 2.0 in `LICENSE`, but:
-  - `ts/package.json` is `UNLICENSED`
-  - `cdk/package.json` is `UNLICENSED`
-  - `py/pyproject.toml` uses `LicenseRef-Proprietary`
+- License metadata is aligned to Apache-2.0 across:
+  - `ts/package.json`
+  - `cdk/package.json`
+  - `py/pyproject.toml`
 
 **Why it matters**
 
@@ -231,6 +250,8 @@ include `dupl`, `errcheck`, `gofmt`, `gosec`, `prealloc`, `revive`, and `govet` 
 
 ### R0 — Decide release target + policy confirmations (small)
 
+**Status:** PARTIAL (license policy confirmed; version/tag decision still pending)
+
 **Goal:** remove ambiguity before tightening gates.
 
 **Steps**
@@ -247,6 +268,8 @@ include `dupl`, `errcheck`, `gofmt`, `gosec`, `prealloc`, `revive`, and `govet` 
 
 ### R1 — CI gate parity with release rubric (medium)
 
+**Status:** COMPLETE
+
 **Goal:** prevent drift between PR-time and tag-time.
 
 **Steps**
@@ -261,6 +284,8 @@ include `dupl`, `errcheck`, `gofmt`, `gosec`, `prealloc`, `revive`, and `govet` 
 ---
 
 ### R2 — Linting parity workstream (large; merits `SR-LINT`)
+
+**Status:** COMPLETE (Go lint parity)
 
 **Goal:** adopt TableTheory-style lint posture in AppTheory without weakening gates.
 
@@ -280,6 +305,8 @@ include `dupl`, `errcheck`, `gofmt`, `gosec`, `prealloc`, `revive`, and `govet` 
 
 ### R3 — Adapter fixtures for Lambda URL + APIGWv2 (medium)
 
+**Status:** COMPLETE
+
 **Goal:** make “HTTP event sources are in the contract” true in fixtures.
 
 **Steps**
@@ -294,6 +321,8 @@ include `dupl`, `errcheck`, `gofmt`, `gosec`, `prealloc`, `revive`, and `govet` 
 ---
 
 ### R4 — Migration guide + tooling to “first service migrated” (large; already tracked by `SR-MIGRATION`)
+
+**Status:** PARTIAL (guide/tooling in place; first real service migration is external)
 
 **Goal:** make Pay Theory migrations predictable and repeatable.
 
@@ -311,6 +340,8 @@ include `dupl`, `errcheck`, `gofmt`, `gosec`, `prealloc`, `revive`, and `govet` 
 
 ### R5 — Cut `v0.1.0` release (medium)
 
+**Status:** OPEN
+
 **Goal:** finish M11 as an outcome.
 
 **Steps**
@@ -322,4 +353,3 @@ include `dupl`, `errcheck`, `gofmt`, `gosec`, `prealloc`, `revive`, and `govet` 
 **Acceptance criteria**
 
 - GitHub Release exists for `v0.1.0` with the required assets + checksums + notes, and `make rubric` passes from the tag.
-
