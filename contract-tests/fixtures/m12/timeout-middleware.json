@@ -1,0 +1,38 @@
+{
+  "id": "m12.middleware.timeout",
+  "tier": "m12",
+  "name": "Middleware: timeout maps to app.timeout and short-circuits slow handlers",
+  "setup": {
+    "middlewares": ["timeout_5ms"],
+    "routes": [{ "method": "GET", "path": "/slow", "handler": "sleep_50ms" }]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/slow",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 408,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.timeout",
+          "message": "request timeout",
+          "request_id": "req_test_123"
+        }
+      },
+      "is_base64": false
+    }
+  }
+}
+
