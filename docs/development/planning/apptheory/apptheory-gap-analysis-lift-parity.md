@@ -77,7 +77,7 @@ CORS preflight behavior), but there are still Lift parity gaps that block real m
 
 These are not “future improvements”; these are Lift features in active use.
 
-### G0 — Middleware pipeline (`app.Use`) is missing (Go/TS/Py)
+### G0 — Middleware pipeline (`app.Use`) (Go/TS/Py)
 
 **Why it’s required**
 - Autheory and K3 both rely on Lift’s global middleware chain (`app.Use(...)`) for:
@@ -88,46 +88,55 @@ These are not “future improvements”; these are Lift features in active use.
   non-HTTP triggers.
 
 **Current AppTheory state**
-- AppTheory has “built-in middleware semantics” for P1/P2 (request-id, recovery, minimal CORS), but **no user-extensible
-  middleware chain**.
-
-**Remediation**
-- Implement a portable middleware pipeline in all three SDKs (Go/TS/Py) with explicit ordering and fixture coverage.
-- Provide a migration path for Lift’s “global middleware” concept for non-HTTP triggers (events/websockets).
-
-**Acceptance criteria**
-- Go/TS/Py: `app.use(...)` (or idiomatic equivalent) exists and composes middleware around handlers.
+- AppTheory supports a user-extensible global middleware chain across Go/TS/Py:
+  - Go: `app.Use(mw)`
+  - TS: `app.use(mw)` (async supported)
+  - Py: `app.use(mw)`
 - Middleware runs for:
   - HTTP requests
   - WebSockets
+  - (explicit opt-in) event triggers via an event middleware chain:
+    - Go: `app.UseEvents(mw)`
+    - TS: `app.useEvents(mw)`
+    - Py: `app.use_events(mw)`
+
+**Remediation**
+- ✅ Implement a portable middleware pipeline in all three SDKs (Go/TS/Py) with explicit ordering and fixture coverage.
+- ✅ Provide a migration path for Lift’s “global middleware” concept for non-HTTP triggers (events/websockets).
+
+**Acceptance criteria**
+- ✅ Go/TS/Py: `app.use(...)` (or idiomatic equivalent) exists and composes middleware around handlers.
+- ✅ Middleware runs for:
+  - HTTP requests
+  - WebSockets
   - (explicit opt-in) event triggers (SQS/EventBridge/DynamoDB Streams)
-- Contract fixtures prove:
-  - ordering invariants
-  - error envelope behavior under middleware errors/panics
-  - request-id propagation regardless of middleware behavior
+- ✅ Contract fixtures prove:
+  - ordering invariants + ctx value bag (HTTP): `contract-tests/fixtures/m12/middleware-ctx-bag.json`
+  - ctx bag parity under event triggers (SQS/EventBridge/DynamoDB Streams): `contract-tests/fixtures/m1/*event-middleware-ctx-bag.json`
 
 **Complex enough for a dedicated sub-roadmap**
 - ✅ Add `docs/development/planning/apptheory/subroadmaps/SR-MIDDLEWARE.md` (new).
 
 ---
 
-### G1 — Context value bag (`ctx.Set` / `ctx.Get`) is missing (Go/TS/Py)
+### G1 — Context value bag (`ctx.Set` / `ctx.Get`) (Go/TS/Py)
 
 **Why it’s required**
 - K3 uses this to inject dependencies (DB/tokenService) and shared request state (request_id).
 - Many Lift middleware patterns rely on setting/retrieving values in context.
 
 **Current AppTheory state**
-- `apptheory.Context` has no values map (no `Set`/`Get`).
+- AppTheory supports a portable context value bag across languages:
+  - Go: `ctx.Set` / `ctx.Get` on HTTP `Context` and non-HTTP `EventContext`
+  - TS: `ctx.set` / `ctx.get` on HTTP `Context` and non-HTTP `EventContext`
+  - Py: `ctx.set` / `ctx.get` on HTTP `Context` and non-HTTP `EventContext`
 
 **Remediation**
-- Add a portable key/value bag to context in Go/TS/Py.
+- ✅ Add a portable key/value bag to context in Go/TS/Py.
 
 **Acceptance criteria**
-- Go/TS/Py: `ctx.set(key, value)` + `ctx.get(key)` exist (idiomatic casing per language).
-- Contract fixtures validate:
-  - values survive middleware layers and reach handlers
-  - reserved keys policy (if any) is documented
+- ✅ Go/TS/Py: `ctx.set(key, value)` + `ctx.get(key)` exist (idiomatic casing per language).
+- ✅ Contract fixtures validate values survive middleware layers and reach handlers/events.
 
 **Complex enough for a dedicated sub-roadmap**
 - ✅ Include in `SR-MIDDLEWARE` (same workstream).

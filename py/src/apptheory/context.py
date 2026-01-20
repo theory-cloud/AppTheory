@@ -95,6 +95,7 @@ class EventContext:
     ctx: Any | None
     request_id: str
     remaining_ms: int
+    _values: dict[str, Any]
 
     def __init__(
         self,
@@ -110,12 +111,25 @@ class EventContext:
         self.ctx = ctx
         self.request_id = str(request_id)
         self.remaining_ms = int(remaining_ms or 0)
+        self._values = {}
 
     def now(self):
         return self.clock.now()
 
     def new_id(self) -> str:
         return self.id_generator.new_id()
+
+    def set(self, key: str, value: Any) -> None:
+        name = str(key or "").strip()
+        if not name:
+            return
+        self._values[name] = value
+
+    def get(self, key: str, default: Any | None = None) -> Any:
+        name = str(key or "").strip()
+        if not name:
+            return default
+        return self._values.get(name, default)
 
 
 class WebSocketManagementClient(Protocol):

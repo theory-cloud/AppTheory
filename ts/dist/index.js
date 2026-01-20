@@ -144,6 +144,7 @@ export class EventContext {
     this._ids = ids ?? new RandomIdGenerator();
     this.requestId = requestId ?? "";
     this.remainingMs = Number(remainingMs ?? 0);
+    this._values = new Map();
   }
 
   now() {
@@ -152,6 +153,18 @@ export class EventContext {
 
   newId() {
     return this._ids.newId();
+  }
+
+  set(key, value) {
+    const k = String(key ?? "").trim();
+    if (!k) return;
+    this._values.set(k, value);
+  }
+
+  get(key) {
+    const k = String(key ?? "").trim();
+    if (!k) return undefined;
+    return this._values.get(k);
   }
 }
 
@@ -687,6 +700,7 @@ export class App {
     this._eventBridgeRoutes = [];
     this._dynamoDBRoutes = [];
     this._middlewares = [];
+    this._eventMiddlewares = [];
   }
 
   handle(method, pattern, handler, options = {}) {
@@ -716,6 +730,12 @@ export class App {
     return this;
   }
 
+  useEvents(middleware) {
+    if (typeof middleware !== "function") return this;
+    this._eventMiddlewares.push(middleware);
+    return this;
+  }
+
   _applyMiddlewares(handler) {
     if (typeof handler !== "function" || this._middlewares.length === 0) {
       return handler;
@@ -726,6 +746,20 @@ export class App {
       if (typeof mw !== "function") continue;
       const next = wrapped;
       wrapped = async (ctx) => mw(ctx, next);
+    }
+    return wrapped;
+  }
+
+  _applyEventMiddlewares(handler) {
+    if (typeof handler !== "function" || this._eventMiddlewares.length === 0) {
+      return handler;
+    }
+    let wrapped = handler;
+    for (let i = this._eventMiddlewares.length - 1; i >= 0; i -= 1) {
+      const mw = this._eventMiddlewares[i];
+      if (typeof mw !== "function") continue;
+      const next = wrapped;
+      wrapped = async (ctx, event) => mw(ctx, event, async () => next(ctx, event));
     }
     return wrapped;
   }
@@ -1099,10 +1133,11 @@ export class App {
     }
 
     const evtCtx = this._eventContext(ctx);
+    const wrapped = this._applyEventMiddlewares(handler);
     const failures = [];
     for (const record of records) {
       try {
-        await handler(evtCtx, record);
+        await wrapped(evtCtx, record);
       } catch {
         const id = String(record?.messageId ?? "").trim();
         if (id) failures.push({ itemIdentifier: id });
@@ -1137,7 +1172,8 @@ export class App {
     const handler = this._eventBridgeHandlerForEvent(event);
     if (!handler) return null;
     const evtCtx = this._eventContext(ctx);
-    return handler(evtCtx, event);
+    const wrapped = this._applyEventMiddlewares(handler);
+    return wrapped(evtCtx, event);
   }
 
   _dynamoDBHandlerForEvent(event) {
@@ -1163,10 +1199,11 @@ export class App {
     }
 
     const evtCtx = this._eventContext(ctx);
+    const wrapped = this._applyEventMiddlewares(handler);
     const failures = [];
     for (const record of records) {
       try {
-        await handler(evtCtx, record);
+        await wrapped(evtCtx, record);
       } catch {
         const id = String(record?.eventID ?? "").trim();
         if (id) failures.push({ itemIdentifier: id });

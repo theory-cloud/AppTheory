@@ -164,7 +164,12 @@ def _sanitize_json_value(value: Any) -> Any:
         if key == "body" and isinstance(raw, str):
             try:
                 parsed = jsonlib.loads(raw)
-                out[key] = jsonlib.dumps(_sanitize_json_value(parsed), separators=(",", ":"), ensure_ascii=False, sort_keys=True)
+                out[key] = jsonlib.dumps(
+                    _sanitize_json_value(parsed),
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
                 continue
             except Exception:  # noqa: BLE001
                 pass
@@ -260,7 +265,10 @@ payment_xml_patterns: list[XMLSanitizationPattern] = [
     ),
     XMLSanitizationPattern(
         name="CardNumber",
-        pattern=re.compile(r"(<CardNumber>[^<]*</CardNumber>|&lt;CardNumber&gt;[^&]*&lt;/CardNumber&gt;)", re.IGNORECASE),
+        pattern=re.compile(
+            r"(<CardNumber>[^<]*</CardNumber>|&lt;CardNumber&gt;[^&]*&lt;/CardNumber&gt;)",
+            re.IGNORECASE,
+        ),
         masking_func=_mask_card_number_xml,
     ),
     XMLSanitizationPattern(
@@ -290,7 +298,10 @@ payment_xml_patterns: list[XMLSanitizationPattern] = [
     ),
     XMLSanitizationPattern(
         name="ExpiryDate",
-        pattern=re.compile(r"(<ExpiryDate>[^<]*</ExpiryDate>|&lt;ExpiryDate&gt;[^&]*&lt;/ExpiryDate&gt;)", re.IGNORECASE),
+        pattern=re.compile(
+            r"(<ExpiryDate>[^<]*</ExpiryDate>|&lt;ExpiryDate&gt;[^&]*&lt;/ExpiryDate&gt;)",
+            re.IGNORECASE,
+        ),
         masking_func=_mask_completely_xml(_REDACTED_VALUE),
     ),
     XMLSanitizationPattern(
@@ -309,4 +320,3 @@ payment_xml_patterns: list[XMLSanitizationPattern] = [
 ]
 
 rapid_connect_xml_patterns = payment_xml_patterns
-
