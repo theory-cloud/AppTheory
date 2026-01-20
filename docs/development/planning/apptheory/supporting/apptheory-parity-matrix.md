@@ -89,13 +89,13 @@ These are required for Lift parity (e.g. Lesser usage) and must become fixture-b
 
 | Feature | Fixtures | Go | TS | Py | Notes |
 | --- | --- | --- | --- | --- | --- |
-| HTTP adapter: APIGW v1 (REST API) | P0+ | ⬜ | ⬜ | ⬜ | required for REST API v1 + SSE |
-| SSE helpers + streaming responses | P0+ | ⬜ | ⬜ | ⬜ | `SSEEvent` + `SSEResponse` parity |
-| Trigger routing: SQS | P0+ | ⬜ | ⬜ | ⬜ | `app.SQS(...)` parity |
-| Trigger routing: EventBridge | P0+ | ⬜ | ⬜ | ⬜ | `app.EventBridge(...)` parity |
-| Trigger routing: DynamoDB Streams | P0+ | ⬜ | ⬜ | ⬜ | `app.DynamoDB(...)` parity |
-| Trigger routing: WebSockets | P0+ | ⬜ | ⬜ | ⬜ | `$connect/$disconnect/$default` routing |
-| WebSocket management client (`streamer`) | P0+ | ⬜ | ⬜ | ⬜ | `PostToConnection/GetConnection/DeleteConnection` parity |
+| HTTP adapter: APIGW v1 (REST API) | m3 | ✅ | ✅ | ✅ | REST API v1 (Lambda proxy) adapter |
+| SSE helpers + streaming responses | m3 | ✅ | ✅ | ✅ | `SSEEvent` + `SSEResponse` parity |
+| Trigger routing: SQS | m1 | ✅ | ✅ | ✅ | `app.SQS(...)` parity |
+| Trigger routing: EventBridge | m1 | ✅ | ✅ | ✅ | `app.EventBridge(...)` parity |
+| Trigger routing: DynamoDB Streams | m1 | ✅ | ✅ | ✅ | `app.DynamoDB(...)` parity |
+| Trigger routing: WebSockets | m2 | ✅ | ✅ | ✅ | `$connect/$disconnect/$default` routing |
+| WebSocket management client (`streamer`) | m2 | ✅ | ✅ | ✅ | `PostToConnection/GetConnection/DeleteConnection` parity |
 
 ## P1 — Context + middleware
 

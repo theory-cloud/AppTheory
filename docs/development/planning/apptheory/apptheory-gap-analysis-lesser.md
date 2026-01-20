@@ -7,7 +7,7 @@ replacement** for Lesser.
 Status snapshot:
 
 - AppTheory repo: `AppTheory/`
-  - `make rubric`: PASS (as of `v0.1.0`)
+  - `make rubric`: PASS (as of `v0.2.0-rc.1`)
 - Lesser repo (local workspace): `lesser/`
   - Lift dependency: `github.com/pay-theory/lift v1.0.82` (`lesser/go.mod`)
 
@@ -70,122 +70,87 @@ Lesser uses Lift’s **Go CDK constructs** for:
   - APIGW v2 (HTTP API) adapter
   - Lambda URL adapter
   - router, middleware tiers, error envelope, contract fixtures
+- Lift parity runtime extensions (Go/TS/Py):
+  - API Gateway REST API v1 adapter (Lambda proxy)
+  - SSE framing helpers
+  - WebSockets routing + WebSocketContext
+  - WebSocket management client + strict fakes
+  - Non-HTTP trigger routing (SQS, EventBridge, DynamoDB Streams)
+- CDK parity for Lift parity extensions:
+  - REST API v1 (with method-level streaming toggle)
+  - EventBridge handler wiring
+  - DynamoDB Streams event source mappings
+  - SQS queue processor wiring
 - Release posture and rubric gating:
   - GitHub Releases-only distribution
   - `make rubric` verifies version alignment, Go lint, TS/Py packaging, CDK packaging/synth, and contract tests
 
-### Gaps (must be implemented to “pass Lift parity”)
+### Remaining gaps (still required for Lesser Lift parity)
 
 | Gap | What’s missing in AppTheory today | Required for parity | Complex enough for sub-roadmap |
 | --- | --- | --- | --- |
-| G1 | API Gateway REST API v1 adapter (non-streaming + streaming) | Lesser SSE and any Lift REST API v1 usage | ✅ `SR-SSE` |
-| G2 | SSE primitives (event type + streaming response helper) | Lesser SSE Lambda (`lift.SSEEvent`, `lift.SSEResponse`) | ✅ `SR-SSE` |
-| G3 | WebSocket trigger support + WebSocketContext | Lesser streaming + GraphQL WS Lambdas | ✅ `SR-WEBSOCKETS` |
-| G4 | WebSocket management client (Lift `pkg/streamer` equivalent) + strict fakes | Lesser message delivery (`PostToConnection`) and tests (`GetConnection`) | ✅ `SR-WEBSOCKETS` + `SR-MOCKS` |
-| G5 | Non-HTTP event sources routing (SQS, EventBridge, DynamoDB Streams) | Multiple Lesser processors | ✅ `SR-EVENTSOURCES` |
-| G6 | Cross-language parity + fixtures for G1–G5 | First-class TS/Py requirement | ✅ extend `SR-CONTRACT` + each sub-roadmap |
-| G7 | CDK constructs parity for Lesser-used constructs | Lift-quality deploy story for REST v1 + WS + event sources | ✅ extend `SR-CDK` |
-| G8 | Migration playbook sections for SSE/WS/event-sources + CDK | “Easy migration” constraint | ✅ extend `SR-MIGRATION` |
-| G9 | Lint/config parity with TableTheory (TS/Py) | Release-quality posture matching TableTheory | ✅ `SR-LINT` |
+| L1 | Lift-style middleware pipeline (`app.Use`) | Lesser uses Lift middleware (RequestID/Recover/Logger/Timeout) and “global middleware” patterns | ✅ new `SR-MIDDLEWARE` |
+| L2 | Lift-style context value bag (`ctx.Set`/`ctx.Get`) | required for common middleware patterns and test harnesses | ✅ new `SR-MIDDLEWARE` |
+| L3 | Lift naming helpers (`lift/pkg/naming`) | Lesser imports naming utilities for deterministic infra naming | ✅ new `SR-NAMING` |
+| L4 | Lift testing helpers (`lift/pkg/testing`) | Lesser uses Lift test harness patterns (`NewTestApp`, `CreateTestContext`) | ✅ extend `SR-MOCKS` |
+| L5 | “True streaming” SSE API (channel/stream) | Lift’s `SSEResponse(ctx, <-chan SSEEvent)` supports event-by-event streaming | ✅ extend `SR-SSE` |
+| L6 | Migration guide sections for L1–L5 | “Easy migration” constraint (not drop-in, but predictable) | ✅ extend `SR-MIGRATION` |
+| L7 | Lint parity with TableTheory (TS/Py) | First-class contributor DX and release posture | ✅ `SR-LINT` (plan-only) |
 
 ## Remediation roadmap (required implementation plan)
 
-This roadmap is sequenced to keep AppTheory continuously shippable while closing Lift parity gaps.
+This roadmap is sequenced to keep AppTheory continuously shippable while closing the remaining Lesser-required Lift
+parity gaps.
 
-### M1 — Event source router parity (SQS / EventBridge / DynamoDB Streams)
-
-Sub-roadmap: `docs/development/planning/apptheory/subroadmaps/SR-EVENTSOURCES.md`
+### L0 — Fix planning doc drift (small)
 
 **Acceptance criteria**
-- Go runtime supports registering handlers for SQS, EventBridge, and DynamoDB Streams and routes events deterministically.
-- TS runtime supports the same trigger types with equivalent semantics.
-- Py runtime supports the same trigger types with equivalent semantics.
-- Contract fixtures exist for each trigger type, and all three languages pass.
-- Testkits ship event builders for each trigger type (Go/TS/Py).
-- CDK example(s) demonstrate wiring SQS, EventBridge schedule, and DynamoDB Streams into Lambdas in all three languages.
+- This doc reflects current AppTheory behavior (no longer listing implemented Lift parity features as gaps).
+- `docs/development/planning/apptheory/supporting/apptheory-parity-matrix.md` matches implemented status.
 
 ---
 
-### M2 — WebSocket runtime parity + management client
-
-Sub-roadmap: `docs/development/planning/apptheory/subroadmaps/SR-WEBSOCKETS.md`
+### L1 — Middleware pipeline + context value bag (`SR-MIDDLEWARE`) (largest blocker)
 
 **Acceptance criteria**
-- Go runtime supports WebSocket trigger routing (`$connect`, `$disconnect`, `$default`) with a WebSocket-specific context.
-- Go provides a `streamer`-equivalent client for API Gateway Management API with strict fakes for tests.
-- TS and Py provide equivalent runtime support and management client interfaces (or a clearly-defined portable boundary).
-- Contract fixtures cover:
-  - trigger routing
-  - extracting `connectionId`, `routeKey`, `managementEndpoint`, etc
-  - deterministic error envelope behavior
-  - message send behavior (via mocks/fakes)
-- CDK example deploys a WebSocket API and demonstrates send/broadcast paths.
+- Go/TS/Py middleware exists and can replace the Lift middleware usage patterns Lesser relies on.
+- `ctx.Set/ctx.Get` exists (portable) so middleware and tests can share request-scoped state.
 
 ---
 
-### M3 — API Gateway REST API v1 + SSE parity (including streaming)
-
-Sub-roadmap: `docs/development/planning/apptheory/subroadmaps/SR-SSE.md`
+### L2 — “True streaming” SSE API (`SR-SSE`)
 
 **Acceptance criteria**
-- Go runtime supports API Gateway REST API v1 request/response normalization.
-- Go runtime supports streaming responses required for SSE (where supported by AWS).
-- TS and Py provide equivalent REST v1 adapter support and SSE response helpers.
-- Contract fixtures cover REST v1 normalization and SSE response framing.
-- CDK constructs and examples support deploying REST v1 + enabling streaming per-method (SSE endpoints).
+- AppTheory can stream SSE events incrementally (Lift parity: channel/stream-driven SSE), not just return a buffered body.
 
 ---
 
-### M4 — CDK parity for Lesser-used Lift constructs
-
-Sub-roadmap: extend `docs/development/planning/apptheory/subroadmaps/SR-CDK.md`
+### L3 — Naming helpers (`SR-NAMING`)
 
 **Acceptance criteria**
-- AppTheory CDK library (jsii) provides equivalents for the Lift constructs Lesser uses:
-  - REST API v1 (with streaming toggles)
-  - event source mappings (streams)
-  - EventBridge schedule → Lambda wiring
-  - sane Lambda defaults wrapper
-- CDK assets are distributed via GitHub Releases and consumable in Go/TS/Py.
-- Snapshot tests and `cdk synth` drift gates cover these constructs.
+- Deterministic naming helpers exist (Go/TS/Py) and can replace Lesser’s `lift/pkg/naming` usage.
 
 ---
 
-### M5 — Mocks/testkit parity for new AWS touchpoints
-
-Sub-roadmap: extend `docs/development/planning/apptheory/subroadmaps/SR-MOCKS.md`
+### L4 — Lift-style testing helpers (`SR-MOCKS`)
 
 **Acceptance criteria**
-- For every AWS client AppTheory wraps to match Lift parity (notably API Gateway Management API), strict fakes exist in:
-  - Go testkit
-  - TS testkit
-  - Py testkit
-- Examples/tests for WS/SSE/event-sources run in CI without AWS credentials.
+- AppTheory provides an ergonomic unit-test harness for handlers and middleware (Go/TS/Py), comparable to Lift’s
+  `pkg/testing` patterns.
 
 ---
 
-### M6 — Migration playbook completeness (Lesser patterns)
-
-Sub-roadmap: extend `docs/development/planning/apptheory/subroadmaps/SR-MIGRATION.md`
+### L5 — Migration playbook sections (extend `SR-MIGRATION`)
 
 **Acceptance criteria**
-- `docs/migration/from-lift.md` includes dedicated sections for:
-  - SQS / EventBridge / DynamoDB Streams triggers
-  - WebSockets + `streamer` usage
-  - API Gateway REST v1 + SSE streaming
-  - CDK migration notes (Lift constructs → AppTheory constructs)
-- A representative Lesser subsystem migration is documented (even if not drop-in identical).
+- `docs/migration/from-lift.md` includes Lesser-focused guidance for:
+  - middleware migration patterns
+  - naming helper mapping
+  - SSE streaming migration (including infra knobs)
 
 ---
 
-### M7 — Lint parity with TableTheory (plan-only in this pass)
-
-Sub-roadmap: `docs/development/planning/apptheory/subroadmaps/SR-LINT.md`
+### L6 — Lint parity with TableTheory (plan-only in this pass) (`SR-LINT`)
 
 **Acceptance criteria**
-- AppTheory uses TableTheory-aligned lint configs and scripts for:
-  - Go (already present)
-  - TypeScript (ESLint + formatting rules)
-  - Python (ruff + formatting rules)
-- `make rubric` fails closed on lint issues in all three languages.
-
+- TS/Py lint posture matches TableTheory once TS moves to a source-based workflow (eslint on source, not only `dist/`).
