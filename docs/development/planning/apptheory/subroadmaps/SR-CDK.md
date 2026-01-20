@@ -18,6 +18,14 @@ Non-goals:
 - Treating Lift parity as optional. AppTheory must provide construct parity for what our Lift apps actually use (at
   minimum: Pay Theory + Lesser inventories), and track any remaining Lift constructs explicitly until parity is complete.
 
+## Current status (AppTheory `v0.2.0-rc.1`)
+
+- A deployable multi-language CDK demo exists: `examples/cdk/multilang` (Go, Node.js 24, Python 3.14).
+- Deterministic synth gate exists and fails closed: `./scripts/verify-cdk-synth.sh`.
+- TS-first jsii constructs strategy is recorded (ADR): `docs/development/planning/apptheory/adr/0001-cdk-constructs-via-jsii.md`.
+- Build/consumption gates are in CI: `./scripts/verify-cdk-constructs.sh`, `./scripts/verify-cdk-go.sh`,
+  `./scripts/verify-cdk-python-build.sh`.
+
 ## Milestones
 
 ### D0 — Multi-language CDK demo (template quality)
