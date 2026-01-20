@@ -21,14 +21,17 @@ export class AppTheoryHttpApi extends Construct {
     this.api.addRoutes({
       path: "/",
       methods: [apigwv2.HttpMethod.ANY],
-      integration: new apigwv2Integrations.HttpLambdaIntegration("Root", props.handler),
+      integration: new apigwv2Integrations.HttpLambdaIntegration("Root", props.handler, {
+        payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_2_0,
+      }),
     });
 
     this.api.addRoutes({
       path: "/{proxy+}",
       methods: [apigwv2.HttpMethod.ANY],
-      integration: new apigwv2Integrations.HttpLambdaIntegration("Proxy", props.handler),
+      integration: new apigwv2Integrations.HttpLambdaIntegration("Proxy", props.handler, {
+        payloadFormatVersion: apigwv2.PayloadFormatVersion.VERSION_2_0,
+      }),
     });
   }
 }
-
