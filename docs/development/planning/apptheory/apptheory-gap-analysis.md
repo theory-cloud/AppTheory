@@ -15,6 +15,7 @@ end-to-end rubric gates, and proposes a concrete remediation roadmap to fully cl
 Primary roadmap reference:
 
 - `docs/development/planning/apptheory/apptheory-multilang-roadmap.md`
+- Lift parity gaps derived from a second real Lift app (Lesser): `docs/development/planning/apptheory/apptheory-gap-analysis-lesser.md`
 
 ## Remediation status (current)
 

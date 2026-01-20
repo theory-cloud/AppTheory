@@ -20,6 +20,8 @@ type Context struct {
 	AuthIdentity    string
 	RemainingMS     int
 	MiddlewareTrace []string
+
+	ws *WebSocketContext
 }
 
 func (c *Context) Context() context.Context {
@@ -66,6 +68,13 @@ func (c *Context) JSONValue() (any, error) {
 		return nil, &AppError{Code: errorCodeBadRequest, Message: errorMessageInvalidJSON}
 	}
 	return value, nil
+}
+
+func (c *Context) AsWebSocket() *WebSocketContext {
+	if c == nil {
+		return nil
+	}
+	return c.ws
 }
 
 func hasJSONContentType(headers map[string][]string) bool {

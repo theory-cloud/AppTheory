@@ -50,3 +50,11 @@ test("unit test without AWS", async () => {
   assert.equal(body.now, "2026-01-01T00:00:00.000Z");
 });
 ```
+
+## Lint
+
+```bash
+cd ts
+npm ci
+npm run lint
+```

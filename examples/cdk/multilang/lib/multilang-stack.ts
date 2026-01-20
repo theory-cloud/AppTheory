@@ -2,11 +2,22 @@ import { execSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
 import * as path from "node:path";
 
-import { AppTheoryFunction, AppTheoryFunctionAlarms, AppTheoryHttpApi } from "@theory-cloud/apptheory-cdk";
+import {
+  AppTheoryDynamoDBStreamMapping,
+  AppTheoryEventBridgeHandler,
+  AppTheoryFunction,
+  AppTheoryFunctionAlarms,
+  AppTheoryHttpApi,
+  AppTheoryRestApi,
+} from "@theory-cloud/apptheory-cdk";
 import * as cdk from "aws-cdk-lib";
 import { Stack } from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as events from "aws-cdk-lib/aws-events";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
+import * as sqs from "aws-cdk-lib/aws-sqs";
 import type { Construct } from "constructs";
 
 function contextValue(app: cdk.App, key: string): string | undefined {
@@ -130,6 +141,60 @@ export class MultiLangStack extends Stack {
       environment: { ...commonEnv, APPTHEORY_LANG: "py" },
     });
 
+    const goQueue = new sqs.Queue(this, "GoQueue");
+    goHandler.fn.addEnvironment("APPTHEORY_DEMO_QUEUE_NAME", goQueue.queueName);
+    goHandler.fn.addEventSource(new lambdaEventSources.SqsEventSource(goQueue, { reportBatchItemFailures: true }));
+
+    const goTable = new dynamodb.Table(this, "GoTable", {
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+    });
+    goHandler.fn.addEnvironment("APPTHEORY_DEMO_TABLE_NAME", goTable.tableName);
+    new AppTheoryDynamoDBStreamMapping(this, "GoStream", { consumer: goHandler.fn, table: goTable });
+
+    const goSchedule = new AppTheoryEventBridgeHandler(this, "GoSchedule", {
+      handler: goHandler.fn,
+      schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+    });
+    goHandler.fn.addEnvironment("APPTHEORY_DEMO_RULE_NAME", goSchedule.rule.ruleName);
+
+    const tsQueue = new sqs.Queue(this, "TsQueue");
+    tsHandler.fn.addEnvironment("APPTHEORY_DEMO_QUEUE_NAME", tsQueue.queueName);
+    tsHandler.fn.addEventSource(new lambdaEventSources.SqsEventSource(tsQueue, { reportBatchItemFailures: true }));
+
+    const tsTable = new dynamodb.Table(this, "TsTable", {
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+    });
+    tsHandler.fn.addEnvironment("APPTHEORY_DEMO_TABLE_NAME", tsTable.tableName);
+    new AppTheoryDynamoDBStreamMapping(this, "TsStream", { consumer: tsHandler.fn, table: tsTable });
+
+    const tsSchedule = new AppTheoryEventBridgeHandler(this, "TsSchedule", {
+      handler: tsHandler.fn,
+      schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+    });
+    tsHandler.fn.addEnvironment("APPTHEORY_DEMO_RULE_NAME", tsSchedule.rule.ruleName);
+
+    const pyQueue = new sqs.Queue(this, "PyQueue");
+    pyHandler.fn.addEnvironment("APPTHEORY_DEMO_QUEUE_NAME", pyQueue.queueName);
+    pyHandler.fn.addEventSource(new lambdaEventSources.SqsEventSource(pyQueue, { reportBatchItemFailures: true }));
+
+    const pyTable = new dynamodb.Table(this, "PyTable", {
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+    });
+    pyHandler.fn.addEnvironment("APPTHEORY_DEMO_TABLE_NAME", pyTable.tableName);
+    new AppTheoryDynamoDBStreamMapping(this, "PyStream", { consumer: pyHandler.fn, table: pyTable });
+
+    const pySchedule = new AppTheoryEventBridgeHandler(this, "PySchedule", {
+      handler: pyHandler.fn,
+      schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+    });
+    pyHandler.fn.addEnvironment("APPTHEORY_DEMO_RULE_NAME", pySchedule.rule.ruleName);
+
     const goApi = new AppTheoryHttpApi(this, "GoApi", {
       apiName: `${name}-go`,
       handler: goHandler.fn,
@@ -150,5 +215,14 @@ export class MultiLangStack extends Stack {
     new cdk.CfnOutput(this, "GoApiUrl", { value: goApi.api.url ?? "" });
     new cdk.CfnOutput(this, "TsApiUrl", { value: tsApi.api.url ?? "" });
     new cdk.CfnOutput(this, "PyApiUrl", { value: pyApi.api.url ?? "" });
+
+    const goRestApi = new AppTheoryRestApi(this, "GoRestApi", {
+      apiName: `${name}-go-rest`,
+      handler: goHandler.fn,
+    });
+    goRestApi.addRoute("/sse", ["GET"], { streaming: true });
+
+    new cdk.CfnOutput(this, "GoRestApiUrl", { value: goRestApi.api.url ?? "" });
+    new cdk.CfnOutput(this, "GoRestSseUrl", { value: goRestApi.api.urlForPath("/sse") ?? "" });
   }
 }

@@ -22,7 +22,15 @@ Contract v0 covers **HTTP** events only:
 - AWS Lambda Function URL
 - API Gateway v2 (HTTP API)
 
-Other event sources (SQS, EventBridge, DynamoDB Streams, etc.) are out-of-scope until fixture-backed.
+Lift parity requires additional event sources (SQS, EventBridge, DynamoDB Streams, WebSockets, API Gateway REST v1/SSE).
+These are **required AppTheory capabilities**, but are versioned as follow-on contract work (contract v1+), so they can
+be specified and fixture-tested without destabilizing the already-shipped HTTP contract.
+
+Tracking:
+
+- `docs/development/planning/apptheory/subroadmaps/SR-EVENTSOURCES.md`
+- `docs/development/planning/apptheory/subroadmaps/SR-WEBSOCKETS.md`
+- `docs/development/planning/apptheory/subroadmaps/SR-SSE.md`
 
 ## Canonical request model (v0)
 

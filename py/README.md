@@ -48,3 +48,9 @@ def test_unit_without_aws():
     assert body["id"] == "req-1"
     assert body["now"] == "2026-01-01T00:00:00+00:00"
 ```
+
+## Lint
+
+```bash
+./scripts/verify-python-lint.sh
+```

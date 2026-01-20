@@ -63,8 +63,13 @@ Inventory doc:
 
 Status (today):
 
-- AppTheory currently wraps **no AWS SDK clients** (see `docs/development/planning/apptheory/supporting/apptheory-aws-touchpoints.md`),
-  so there are no shipped AWS-client fakes yet.
+- AppTheory’s HTTP contract slice wraps **no AWS SDK clients** (see
+  `docs/development/planning/apptheory/supporting/apptheory-aws-touchpoints.md`), so there are no shipped AWS-client fakes
+  yet for HTTP-only behavior.
+- Lift parity requires AppTheory-owned AWS clients for:
+  - API Gateway Management API (WebSocket message delivery / connection inspection)
+  - (potentially) response streaming helpers where the runtime must own a platform integration
+  When these are implemented, strict fakes MUST ship in Go/TS/Py and be exercised in contract fixtures.
 - For data access, use **TableTheory** (companion framework) and its language-specific test/mocks utilities.
 
 ---

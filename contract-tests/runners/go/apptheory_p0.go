@@ -37,6 +37,9 @@ func serveFixtureP0(app *apptheory.App, f Fixture) (apptheory.Response, error) {
 		return serveFixtureP0AWS(app, f.Input.AWSEvent)
 	}
 
+	if f.Input.Request == nil {
+		return apptheory.Response{}, fmt.Errorf("fixture missing input.request")
+	}
 	bodyBytes, err := decodeFixtureBody(f.Input.Request.Body)
 	if err != nil {
 		return apptheory.Response{}, fmt.Errorf("decode request body: %w", err)
@@ -103,7 +106,7 @@ func printFailureP0(f Fixture) {
 		IsBase64: actual.IsBase64,
 	}
 
-	if len(f.Expect.Response.BodyJSON) > 0 {
+	if f.Expect.Response != nil && len(f.Expect.Response.BodyJSON) > 0 {
 		var actualJSON any
 		if json.Unmarshal(actual.Body, &actualJSON) == nil {
 			debug.BodyJSON = actualJSON
@@ -128,10 +131,14 @@ func printFailureP0(f Fixture) {
 }
 
 func printExpected(f Fixture) {
-	expected := f.Expect.Response
-	expected.Headers = canonicalizeHeaders(expected.Headers)
-	b := marshalIndentOrPlaceholder(expected)
-	fmt.Fprintf(os.Stderr, "  expected: %s\n", string(b))
+	if f.Expect.Response != nil {
+		expected := *f.Expect.Response
+		expected.Headers = canonicalizeHeaders(expected.Headers)
+		b := marshalIndentOrPlaceholder(expected)
+		fmt.Fprintf(os.Stderr, "  expected: %s\n", string(b))
+	} else {
+		fmt.Fprintf(os.Stderr, "  expected: <unavailable>\n")
+	}
 
 	logs := marshalIndentOrPlaceholder(f.Expect.Logs)
 	metrics := marshalIndentOrPlaceholder(f.Expect.Metrics)
@@ -262,13 +269,24 @@ func builtInAppTheoryHandler(name string) apptheory.Handler {
 		return func(_ *apptheory.Context) (*apptheory.Response, error) {
 			return apptheory.Text(200, "12345"), nil
 		}
+	case "sse_single_event":
+		return func(_ *apptheory.Context) (*apptheory.Response, error) {
+			return apptheory.SSEResponse(200, apptheory.SSEEvent{
+				ID:    "1",
+				Event: "message",
+				Data:  map[string]any{"ok": true},
+			})
+		}
 	default:
 		return nil
 	}
 }
 
 func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []FixtureLogRecord, metrics []FixtureMetricRecord, spans []FixtureSpanRecord) error {
-	expected := f.Expect.Response
+	if f.Expect.Response == nil {
+		return fmt.Errorf("fixture missing expect.response")
+	}
+	expected := *f.Expect.Response
 
 	expectedHeaders := canonicalizeHeaders(expected.Headers)
 	actualHeaders := canonicalizeHeaders(actual.Headers)

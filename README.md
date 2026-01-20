@@ -13,7 +13,8 @@ first-class in **Go, TypeScript, and Python**.
 Target audiences and use cases:
 
 - Platform and application teams building HTTP APIs on AWS Lambda (Lambda Function URL, API Gateway v2).
-- Event-driven workloads (SQS, EventBridge, etc.) once fixture-backed by contract tests.
+- Event-driven workloads (SQS, EventBridge, DynamoDB Streams) and WebSockets are required for Lift parity and are tracked
+  as remaining contract work (see `docs/development/planning/apptheory/apptheory-gap-analysis-lesser.md`).
 - Internal tooling and shared libraries that need consistent request/response semantics across languages.
 
 Non-goals (near-term):

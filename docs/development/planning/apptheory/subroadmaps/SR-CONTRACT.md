@@ -20,7 +20,8 @@ Portable semantics only (P0/P1/P2 tiers):
 
 Non-goals (for contract v0):
 
-- Full AWS event-source surface area (SQS/EventBridge/etc) until fixture-backed.
+- Contract v0 is the **first slice** (HTTP). Lift parity requires expanding the contract (v1+) to cover non-HTTP triggers
+  and streaming/WebSockets, but those additions must ship with fixtures (fail closed) rather than as informal behavior.
 - Non-portable “power features” that cannot be made equivalent across languages.
 
 ## Artifacts (source of truth)
@@ -125,6 +126,23 @@ Non-goals (for contract v0):
   - at least one implementation
 - A “contract change checklist” exists in contributing docs (or a PR template).
 
+---
+
+### C7 — Lift parity extensions (contract v1+)
+
+**Acceptance criteria**
+- New contract specs + fixtures exist for Lift-parity runtime surfaces beyond HTTP:
+  - SQS / EventBridge / DynamoDB Streams routing and semantics
+  - WebSocket trigger routing + portable WebSocket context shape
+  - API Gateway REST API v1 normalization and SSE streaming helpers
+- All three languages pass the new fixtures (no “Go first” exceptions for portable surfaces).
+
+Tracking sub-roadmaps:
+
+- `docs/development/planning/apptheory/subroadmaps/SR-EVENTSOURCES.md`
+- `docs/development/planning/apptheory/subroadmaps/SR-WEBSOCKETS.md`
+- `docs/development/planning/apptheory/subroadmaps/SR-SSE.md`
+
 ## Risks and mitigation
 
 - **Event source complexity creep:** keep contract v0 narrowly scoped to HTTP events; add new event sources only when
@@ -132,4 +150,3 @@ Non-goals (for contract v0):
 - **Fixture ambiguity:** avoid “fuzzy” expectations; prefer exact expected outputs.
 - **Language mismatch pressure:** if a semantics choice is hard in one language, redesign contract to be portable or
   explicitly mark as Go-only.
-
