@@ -879,6 +879,7 @@ def _is_cors_preflight(method: str, headers: dict[str, list[str]]) -> bool:
         _first_header_value(headers, "access-control-request-method")
     )
 
+
 def _normalize_cors_config(cors: CORSConfig | None) -> CORSConfig:
     if cors is None:
         return CORSConfig()
