@@ -14,6 +14,7 @@ support consistent infrastructure naming across environments.
 - Go: `pkg/naming` (`NormalizeStage`, `BaseName`, `ResourceName`)
 - TS: `normalizeStage`, `baseName`, `resourceName` exports
 - Py: `apptheory.naming` (`normalize_stage`, `base_name`, `resource_name`)
+- Contract fixture coverage exists: `contract-tests/fixtures/m12/naming-helpers.json`.
 
 Non-goals:
 

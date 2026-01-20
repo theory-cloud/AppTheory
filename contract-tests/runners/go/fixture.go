@@ -22,6 +22,7 @@ type Fixture struct {
 type FixtureSetup struct {
 	Limits      FixtureLimits             `json:"limits,omitempty"`
 	Routes      []FixtureRoute            `json:"routes,omitempty"`
+	Middlewares []string                  `json:"middlewares,omitempty"`
 	WebSockets  []FixtureWebSocketRoute   `json:"websockets,omitempty"`
 	SQS         []FixtureSQSRoute         `json:"sqs,omitempty"`
 	EventBridge []FixtureEventBridgeRoute `json:"eventbridge,omitempty"`
@@ -140,7 +141,7 @@ type FixtureSpanRecord struct {
 
 func loadFixtures(fixturesRoot string) ([]Fixture, error) {
 	var files []string
-	for _, tier := range []string{"p0", "p1", "p2", "m1", "m2", "m3"} {
+	for _, tier := range []string{"p0", "p1", "p2", "m1", "m2", "m3", "m12"} {
 		matches, err := filepath.Glob(filepath.Join(fixturesRoot, tier, "*.json"))
 		if err != nil {
 			return nil, fmt.Errorf("glob %s fixtures: %w", tier, err)

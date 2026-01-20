@@ -45,6 +45,7 @@ Non-goals:
   - TS: `ctx.set(key, value)` / `ctx.get(key)`
   - Py: `ctx.set(key, value)` / `ctx.get(key, default=None)`
 - Middleware applies to HTTP + WebSocket handlers; non-HTTP event trigger middleware remains an explicit follow-on.
+- Contract fixture coverage exists for middleware + ctx bag: `contract-tests/fixtures/m12/middleware-ctx-bag.json`.
 
 ## Milestones
 

@@ -49,6 +49,7 @@ Non-goals:
   - Go: `SSEStreamResponse(ctx, status, <-chan SSEEvent)` (streaming via `io.Pipe`)
   - TS: `sseEventStream(AsyncIterable<SSEEvent>)`
   - Py: `sse_event_stream(Iterable[SSEEvent])`
+- Contract fixture coverage exists for stream framing: `contract-tests/fixtures/m12/sse-event-stream-three-events.json`.
 
 ## Milestones
 

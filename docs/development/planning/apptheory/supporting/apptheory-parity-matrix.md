@@ -91,8 +91,8 @@ These are required for Lift parity (e.g. Lesser usage) and must become fixture-b
 | --- | --- | --- | --- | --- | --- |
 | HTTP adapter: APIGW v1 (REST API) | m3 | ✅ | ✅ | ✅ | REST API v1 (Lambda proxy) adapter |
 | SSE helpers + streaming responses | m3 | ✅ | ✅ | ✅ | `SSEEvent` + `SSEResponse` parity |
-| SSE event-by-event streaming API | m12 | 🟨 | 🟨 | 🟨 | API exists; streaming behavior not fixture-backed yet |
-| Naming helpers (`SR-NAMING`) | m12 | 🟨 | 🟨 | 🟨 | deterministic resource naming utilities (infra/shared) |
+| SSE event-by-event streaming API | m12 | ✅ | ✅ | ✅ | fixture-backed (contract tests) |
+| Naming helpers (`SR-NAMING`) | m12 | ✅ | ✅ | ✅ | fixture-backed (contract tests) |
 | Trigger routing: SQS | m1 | ✅ | ✅ | ✅ | `app.SQS(...)` parity |
 | Trigger routing: EventBridge | m1 | ✅ | ✅ | ✅ | `app.EventBridge(...)` parity |
 | Trigger routing: DynamoDB Streams | m1 | ✅ | ✅ | ✅ | `app.DynamoDB(...)` parity |
@@ -103,8 +103,8 @@ These are required for Lift parity (e.g. Lesser usage) and must become fixture-b
 
 | Feature | Fixtures | Go | TS | Py | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Global middleware pipeline (`app.Use`) | m12 | 🟨 | 🟨 | 🟨 | implemented; not fixture-backed yet |
-| Context value bag (`ctx.Set/Get`) | m12 | 🟨 | 🟨 | 🟨 | implemented; not fixture-backed yet |
+| Global middleware pipeline (`app.Use`) | m12 | ✅ | ✅ | ✅ | fixture-backed (contract tests) |
+| Context value bag (`ctx.Set/Get`) | m12 | ✅ | ✅ | ✅ | fixture-backed (contract tests) |
 | Request ID middleware | P1 | ✅ | ✅ | ✅ | |
 | Auth hook interface | P1 | ✅ | ✅ | ✅ | |
 | Tenant extraction | P1 | ✅ | ✅ | ✅ | |

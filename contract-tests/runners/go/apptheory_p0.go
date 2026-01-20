@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 
 	"github.com/theory-cloud/apptheory"
+	"github.com/theory-cloud/apptheory/pkg/naming"
 )
 
 func runFixtureP0(f Fixture) error {
@@ -257,6 +258,25 @@ func builtInAppTheoryHandler(name string) apptheory.Handler {
 				"trace": ctx.MiddlewareTrace,
 			})
 		}
+	case "echo_ctx_value_and_trace":
+		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+			return apptheory.JSON(200, map[string]any{
+				"mw":    ctx.Get("mw"),
+				"trace": ctx.MiddlewareTrace,
+			})
+		}
+	case "naming_helpers":
+		return func(_ *apptheory.Context) (*apptheory.Response, error) {
+			return apptheory.JSON(200, map[string]any{
+				"normalized": map[string]string{
+					"prod":   naming.NormalizeStage("prod"),
+					"stg":    naming.NormalizeStage("stg"),
+					"custom": naming.NormalizeStage("  Foo_Bar  "),
+				},
+				"base":     naming.BaseName("Pay Theory", "prod", "Tenant_1"),
+				"resource": naming.ResourceName("Pay Theory", "WS Api", "prod", "Tenant_1"),
+			})
+		}
 	case "unauthorized":
 		return func(_ *apptheory.Context) (*apptheory.Response, error) {
 			return nil, &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
@@ -276,6 +296,15 @@ func builtInAppTheoryHandler(name string) apptheory.Handler {
 				Event: "message",
 				Data:  map[string]any{"ok": true},
 			})
+		}
+	case "sse_stream_three_events":
+		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+			events := make(chan apptheory.SSEEvent, 3)
+			events <- apptheory.SSEEvent{ID: "1", Event: "message", Data: map[string]any{"a": 1, "b": 2}}
+			events <- apptheory.SSEEvent{Event: "note", Data: "hello\nworld"}
+			events <- apptheory.SSEEvent{ID: "3", Data: ""}
+			close(events)
+			return apptheory.SSEStreamResponse(ctx.Context(), 200, events)
 		}
 	default:
 		return nil
