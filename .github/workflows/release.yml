@@ -51,9 +51,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/*.tgz
-            dist/*.whl
-            dist/*.tar.gz
+            dist/theory-cloud-apptheory*.tgz
+            dist/apptheory*.whl
+            dist/apptheory*.tar.gz
             dist/SHA256SUMS.txt
           body_path: dist/RELEASE_NOTES.md
           prerelease: ${{ contains(github.ref_name, '-rc.') }}
