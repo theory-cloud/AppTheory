@@ -18,6 +18,7 @@ Primary goals:
 ## Start here
 
 - `docs/development/planning/apptheory/apptheory-multilang-roadmap.md` (primary roadmap + acceptance criteria)
+- `docs/development/planning/apptheory/apptheory-facetheory-support-roadmap.md` (FaceTheory enablement: Lambda URL + streaming SSR)
 - `docs/development/planning/apptheory/apptheory-gap-analysis.md` (current gaps + remediation roadmap)
 - `docs/development/planning/apptheory/apptheory-gap-analysis-lift-parity.md` (Lift parity gaps for Pay Theory: Autheory + K3, plus Lesser)
 - `docs/development/planning/apptheory/apptheory-gap-analysis-lesser.md` (Lift parity gaps derived from `equaltoai/lesser`)
@@ -37,6 +38,8 @@ Primary goals:
 - `docs/development/planning/apptheory/subroadmaps/SR-EVENTSOURCES.md` (SQS/EventBridge/DynamoDB Streams parity)
 - `docs/development/planning/apptheory/subroadmaps/SR-WEBSOCKETS.md` (WebSocket runtime + `streamer` parity)
 - `docs/development/planning/apptheory/subroadmaps/SR-SSE.md` (API Gateway REST v1 + SSE streaming parity)
+- `docs/development/planning/apptheory/subroadmaps/SR-STREAMING.md` (response streaming contract + Lambda URL streaming handler + streaming testkit)
+- `docs/development/planning/apptheory/subroadmaps/SR-SSR-INFRA.md` (CloudFront + S3 + Lambda URL deployment pattern)
 - `docs/development/planning/apptheory/subroadmaps/SR-LINT.md` (lint parity across Go/TS/Py)
 
 ## Supporting docs (living references)
