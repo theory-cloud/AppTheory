@@ -39,10 +39,16 @@ func newRouter() *router {
 func (r *router) add(method, pattern string, handler Handler, opts routeOptions) {
 	method = strings.ToUpper(strings.TrimSpace(method))
 	pattern = normalizePath(pattern)
+	segments := normalizeRouteSegments(splitPath(pattern))
+	if len(segments) == 0 {
+		pattern = "/"
+	} else {
+		pattern = "/" + strings.Join(segments, "/")
+	}
 	r.routes = append(r.routes, route{
 		Method:       method,
 		Pattern:      pattern,
-		Segments:     splitPath(pattern),
+		Segments:     segments,
 		Handler:      handler,
 		AuthRequired: opts.authRequired,
 	})
@@ -78,6 +84,21 @@ func splitPath(path string) []string {
 		return nil
 	}
 	return strings.Split(path, "/")
+}
+
+func normalizeRouteSegments(segments []string) []string {
+	if len(segments) == 0 {
+		return nil
+	}
+	out := make([]string, len(segments))
+	for i, segment := range segments {
+		if strings.HasPrefix(segment, ":") && len(segment) > 1 {
+			out[i] = "{" + segment[1:] + "}"
+			continue
+		}
+		out[i] = segment
+	}
+	return out
 }
 
 func matchPath(patternSegments, pathSegments []string) (map[string]string, bool) {

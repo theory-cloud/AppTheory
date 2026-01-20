@@ -27,12 +27,13 @@ class Router:
 
     def add(self, method: str, pattern: str, handler: object, *, auth_required: bool = False) -> None:
         method_value = str(method or "").strip().upper()
-        pattern_value = normalize_path(pattern)
+        segments = _normalize_route_segments(_split_path(pattern))
+        pattern_value = "/" + "/".join(segments) if segments else "/"
         self._routes.append(
             _Route(
                 method=method_value,
                 pattern=pattern_value,
-                segments=_split_path(pattern_value),
+                segments=segments,
                 handler=handler,
                 auth_required=bool(auth_required),
             )
@@ -64,6 +65,17 @@ def _split_path(path: str) -> list[str]:
     if not value:
         return []
     return value.split("/")
+
+def _normalize_route_segments(segments: list[str]) -> list[str]:
+    if not segments:
+        return []
+    out: list[str] = []
+    for segment in segments:
+        if segment.startswith(":") and len(segment) > 1:
+            out.append("{" + segment[1:] + "}")
+            continue
+        out.append(segment)
+    return out
 
 
 def _match_path(pattern_segments: list[str], path_segments: list[str]) -> dict[str, str] | None:
