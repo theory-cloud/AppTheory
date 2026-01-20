@@ -74,6 +74,7 @@ To reproduce release assets from a tag:
 
 - Checkout the tag: `git checkout vX.Y.Z` (or `vX.Y.Z-rc.N`).
 - Run `make rubric` to build the TS tarball + Python wheel/sdist and run verification.
+- Optional: run `make verify-builds` to build twice and compare checksums (reproducibility check).
 - Run `scripts/generate-checksums.sh` to produce `dist/SHA256SUMS.txt`.
 
 Artifacts are written to `dist/`.
