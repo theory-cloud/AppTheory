@@ -2,11 +2,10 @@ import { execSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
 import * as path from "node:path";
 
+import { AppTheoryFunction, AppTheoryFunctionAlarms, AppTheoryHttpApi } from "@theory-cloud/apptheory-cdk";
 import * as cdk from "aws-cdk-lib";
-import { Duration, Stack } from "aws-cdk-lib";
+import { Stack } from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
-import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
-import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import type { Construct } from "constructs";
 
@@ -47,10 +46,7 @@ export class MultiLangStack extends Stack {
       APPTHEORY_DEMO_NAME: name,
     };
 
-    const arch = lambda.Architecture.ARM_64;
-
-    const goHandler = new lambda.Function(this, "GoHandler", {
-      architecture: arch,
+    const goHandler = new AppTheoryFunction(this, "GoHandler", {
       runtime: lambda.Runtime.PROVIDED_AL2023,
       handler: "bootstrap",
       code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "go"), {
@@ -88,12 +84,9 @@ export class MultiLangStack extends Stack {
         },
       }),
       environment: { ...commonEnv, APPTHEORY_LANG: "go" },
-      timeout: Duration.seconds(10),
-      memorySize: 256,
     });
 
-    const tsHandler = new lambda.Function(this, "TsHandler", {
-      architecture: arch,
+    const tsHandler = new AppTheoryFunction(this, "TsHandler", {
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: "handler.handler",
       code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "ts"), {
@@ -114,12 +107,9 @@ export class MultiLangStack extends Stack {
         },
       }),
       environment: { ...commonEnv, APPTHEORY_LANG: "ts" },
-      timeout: Duration.seconds(10),
-      memorySize: 256,
     });
 
-    const pyHandler = new lambda.Function(this, "PyHandler", {
-      architecture: arch,
+    const pyHandler = new AppTheoryFunction(this, "PyHandler", {
       runtime: lambda.Runtime.PYTHON_3_14,
       handler: "handler.handler",
       code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "py"), {
@@ -138,54 +128,27 @@ export class MultiLangStack extends Stack {
         },
       }),
       environment: { ...commonEnv, APPTHEORY_LANG: "py" },
-      timeout: Duration.seconds(10),
-      memorySize: 256,
     });
 
-    const goApi = new apigwv2.HttpApi(this, "GoApi", {
+    const goApi = new AppTheoryHttpApi(this, "GoApi", {
       apiName: `${name}-go`,
+      handler: goHandler.fn,
     });
-    goApi.addRoutes({
-      path: "/",
-      methods: [apigwv2.HttpMethod.ANY],
-      integration: new apigwv2Integrations.HttpLambdaIntegration("GoRoot", goHandler),
-    });
-    goApi.addRoutes({
-      path: "/{proxy+}",
-      methods: [apigwv2.HttpMethod.ANY],
-      integration: new apigwv2Integrations.HttpLambdaIntegration("GoProxy", goHandler),
-    });
-
-    const tsApi = new apigwv2.HttpApi(this, "TsApi", {
+    const tsApi = new AppTheoryHttpApi(this, "TsApi", {
       apiName: `${name}-ts`,
+      handler: tsHandler.fn,
     });
-    tsApi.addRoutes({
-      path: "/",
-      methods: [apigwv2.HttpMethod.ANY],
-      integration: new apigwv2Integrations.HttpLambdaIntegration("TsRoot", tsHandler),
-    });
-    tsApi.addRoutes({
-      path: "/{proxy+}",
-      methods: [apigwv2.HttpMethod.ANY],
-      integration: new apigwv2Integrations.HttpLambdaIntegration("TsProxy", tsHandler),
-    });
-
-    const pyApi = new apigwv2.HttpApi(this, "PyApi", {
+    const pyApi = new AppTheoryHttpApi(this, "PyApi", {
       apiName: `${name}-py`,
-    });
-    pyApi.addRoutes({
-      path: "/",
-      methods: [apigwv2.HttpMethod.ANY],
-      integration: new apigwv2Integrations.HttpLambdaIntegration("PyRoot", pyHandler),
-    });
-    pyApi.addRoutes({
-      path: "/{proxy+}",
-      methods: [apigwv2.HttpMethod.ANY],
-      integration: new apigwv2Integrations.HttpLambdaIntegration("PyProxy", pyHandler),
+      handler: pyHandler.fn,
     });
 
-    new cdk.CfnOutput(this, "GoApiUrl", { value: goApi.url ?? "" });
-    new cdk.CfnOutput(this, "TsApiUrl", { value: tsApi.url ?? "" });
-    new cdk.CfnOutput(this, "PyApiUrl", { value: pyApi.url ?? "" });
+    new AppTheoryFunctionAlarms(this, "GoAlarms", { fn: goHandler.fn });
+    new AppTheoryFunctionAlarms(this, "TsAlarms", { fn: tsHandler.fn });
+    new AppTheoryFunctionAlarms(this, "PyAlarms", { fn: pyHandler.fn });
+
+    new cdk.CfnOutput(this, "GoApiUrl", { value: goApi.api.url ?? "" });
+    new cdk.CfnOutput(this, "TsApiUrl", { value: tsApi.api.url ?? "" });
+    new cdk.CfnOutput(this, "PyApiUrl", { value: pyApi.api.url ?? "" });
   }
 }
