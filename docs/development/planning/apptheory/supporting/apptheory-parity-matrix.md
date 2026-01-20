@@ -92,6 +92,7 @@ These are required for Lift parity (e.g. Lesser usage) and must become fixture-b
 | HTTP adapter: APIGW v1 (REST API) | m3 | ✅ | ✅ | ✅ | REST API v1 (Lambda proxy) adapter |
 | SSE helpers + streaming responses | m3 | ✅ | ✅ | ✅ | `SSEEvent` + `SSEResponse` parity |
 | SSE event-by-event streaming API | m12 | 🟨 | 🟨 | 🟨 | API exists; streaming behavior not fixture-backed yet |
+| Naming helpers (`SR-NAMING`) | m12 | 🟨 | 🟨 | 🟨 | deterministic resource naming utilities (infra/shared) |
 | Trigger routing: SQS | m1 | ✅ | ✅ | ✅ | `app.SQS(...)` parity |
 | Trigger routing: EventBridge | m1 | ✅ | ✅ | ✅ | `app.EventBridge(...)` parity |
 | Trigger routing: DynamoDB Streams | m1 | ✅ | ✅ | ✅ | `app.DynamoDB(...)` parity |

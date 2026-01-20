@@ -9,6 +9,12 @@ support consistent infrastructure naming across environments.
 - Resource name builders based on env inputs (`APP_NAME`, `STAGE`, optional tenant/partner)
 - Unit tests in each language (deterministic)
 
+## Current status (AppTheory `v0.2.0-rc.1`)
+
+- Go: `pkg/naming` (`NormalizeStage`, `BaseName`, `ResourceName`)
+- TS: `normalizeStage`, `baseName`, `resourceName` exports
+- Py: `apptheory.naming` (`normalize_stage`, `base_name`, `resource_name`)
+
 Non-goals:
 
 - Replacing CDK naming conventions; this is a small utility package to keep names consistent across services, scripts,
@@ -53,4 +59,3 @@ Non-goals:
 ## Risks and mitigation
 
 - **Naming drift:** keep the rules small, explicit, and tested; avoid adding “magic” heuristics without tests.
-
