@@ -9,6 +9,7 @@ import {
   AppTheoryFunctionAlarms,
   AppTheoryHttpApi,
   AppTheoryRestApi,
+  AppTheoryWebSocketApi,
 } from "@theory-cloud/apptheory-cdk";
 import * as cdk from "aws-cdk-lib";
 import { Stack } from "aws-cdk-lib";
@@ -215,6 +216,26 @@ export class MultiLangStack extends Stack {
     new cdk.CfnOutput(this, "GoApiUrl", { value: goApi.api.url ?? "" });
     new cdk.CfnOutput(this, "TsApiUrl", { value: tsApi.api.url ?? "" });
     new cdk.CfnOutput(this, "PyApiUrl", { value: pyApi.api.url ?? "" });
+
+    const goWs = new AppTheoryWebSocketApi(this, "GoWebSocket", {
+      apiName: `${name}-go-ws`,
+      handler: goHandler.fn,
+      stageName: "dev",
+    });
+    const tsWs = new AppTheoryWebSocketApi(this, "TsWebSocket", {
+      apiName: `${name}-ts-ws`,
+      handler: tsHandler.fn,
+      stageName: "dev",
+    });
+    const pyWs = new AppTheoryWebSocketApi(this, "PyWebSocket", {
+      apiName: `${name}-py-ws`,
+      handler: pyHandler.fn,
+      stageName: "dev",
+    });
+
+    new cdk.CfnOutput(this, "GoWebSocketUrl", { value: goWs.stage.url });
+    new cdk.CfnOutput(this, "TsWebSocketUrl", { value: tsWs.stage.url });
+    new cdk.CfnOutput(this, "PyWebSocketUrl", { value: pyWs.stage.url });
 
     const goRestApi = new AppTheoryRestApi(this, "GoRestApi", {
       apiName: `${name}-go-rest`,

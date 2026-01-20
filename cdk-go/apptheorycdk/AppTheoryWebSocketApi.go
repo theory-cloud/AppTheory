@@ -4,26 +4,37 @@ import (
 	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
 	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/jsii"
 
-	"github.com/aws/aws-cdk-go/awscdk/v2/awssqs"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigatewayv2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
 
-type AppTheoryQueueProcessor interface {
+type AppTheoryWebSocketApi interface {
 	constructs.Construct
+	Api() awsapigatewayv2.WebSocketApi
 	// The tree node.
 	Node() constructs.Node
-	Queue() awssqs.Queue
+	Stage() awsapigatewayv2.WebSocketStage
 	// Returns a string representation of this construct.
 	ToString() *string
 }
 
-// The jsii proxy struct for AppTheoryQueueProcessor
-type jsiiProxy_AppTheoryQueueProcessor struct {
+// The jsii proxy struct for AppTheoryWebSocketApi
+type jsiiProxy_AppTheoryWebSocketApi struct {
 	internal.Type__constructsConstruct
 }
 
-func (j *jsiiProxy_AppTheoryQueueProcessor) Node() constructs.Node {
+func (j *jsiiProxy_AppTheoryWebSocketApi) Api() awsapigatewayv2.WebSocketApi {
+	var returns awsapigatewayv2.WebSocketApi
+	_jsii_.Get(
+		j,
+		"api",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryWebSocketApi) Node() constructs.Node {
 	var returns constructs.Node
 	_jsii_.Get(
 		j,
@@ -33,27 +44,27 @@ func (j *jsiiProxy_AppTheoryQueueProcessor) Node() constructs.Node {
 	return returns
 }
 
-func (j *jsiiProxy_AppTheoryQueueProcessor) Queue() awssqs.Queue {
-	var returns awssqs.Queue
+func (j *jsiiProxy_AppTheoryWebSocketApi) Stage() awsapigatewayv2.WebSocketStage {
+	var returns awsapigatewayv2.WebSocketStage
 	_jsii_.Get(
 		j,
-		"queue",
+		"stage",
 		&returns,
 	)
 	return returns
 }
 
 
-func NewAppTheoryQueueProcessor(scope constructs.Construct, id *string, props *AppTheoryQueueProcessorProps) AppTheoryQueueProcessor {
+func NewAppTheoryWebSocketApi(scope constructs.Construct, id *string, props *AppTheoryWebSocketApiProps) AppTheoryWebSocketApi {
 	_init_.Initialize()
 
-	if err := validateNewAppTheoryQueueProcessorParameters(scope, id, props); err != nil {
+	if err := validateNewAppTheoryWebSocketApiParameters(scope, id, props); err != nil {
 		panic(err)
 	}
-	j := jsiiProxy_AppTheoryQueueProcessor{}
+	j := jsiiProxy_AppTheoryWebSocketApi{}
 
 	_jsii_.Create(
-		"@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor",
+		"@theory-cloud/apptheory-cdk.AppTheoryWebSocketApi",
 		[]interface{}{scope, id, props},
 		&j,
 	)
@@ -61,11 +72,11 @@ func NewAppTheoryQueueProcessor(scope constructs.Construct, id *string, props *A
 	return &j
 }
 
-func NewAppTheoryQueueProcessor_Override(a AppTheoryQueueProcessor, scope constructs.Construct, id *string, props *AppTheoryQueueProcessorProps) {
+func NewAppTheoryWebSocketApi_Override(a AppTheoryWebSocketApi, scope constructs.Construct, id *string, props *AppTheoryWebSocketApiProps) {
 	_init_.Initialize()
 
 	_jsii_.Create(
-		"@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor",
+		"@theory-cloud/apptheory-cdk.AppTheoryWebSocketApi",
 		[]interface{}{scope, id, props},
 		a,
 	)
@@ -88,16 +99,16 @@ func NewAppTheoryQueueProcessor_Override(a AppTheoryQueueProcessor, scope constr
 // this type-testing method instead.
 //
 // Returns: true if `x` is an object created from a class which extends `Construct`.
-func AppTheoryQueueProcessor_IsConstruct(x interface{}) *bool {
+func AppTheoryWebSocketApi_IsConstruct(x interface{}) *bool {
 	_init_.Initialize()
 
-	if err := validateAppTheoryQueueProcessor_IsConstructParameters(x); err != nil {
+	if err := validateAppTheoryWebSocketApi_IsConstructParameters(x); err != nil {
 		panic(err)
 	}
 	var returns *bool
 
 	_jsii_.StaticInvoke(
-		"@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor",
+		"@theory-cloud/apptheory-cdk.AppTheoryWebSocketApi",
 		"isConstruct",
 		[]interface{}{x},
 		&returns,
@@ -106,7 +117,7 @@ func AppTheoryQueueProcessor_IsConstruct(x interface{}) *bool {
 	return returns
 }
 
-func (a *jsiiProxy_AppTheoryQueueProcessor) ToString() *string {
+func (a *jsiiProxy_AppTheoryWebSocketApi) ToString() *string {
 	var returns *string
 
 	_jsii_.Invoke(

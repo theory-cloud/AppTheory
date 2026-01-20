@@ -10,7 +10,7 @@ import (
 	"github.com/aws/constructs-go/constructs/v10"
 )
 
-func validateAppTheoryFunctionAlarms_IsConstructParameters(x interface{}) error {
+func validateAppTheoryWebSocketApi_IsConstructParameters(x interface{}) error {
 	if x == nil {
 		return fmt.Errorf("parameter x is required, but nil was provided")
 	}
@@ -18,7 +18,7 @@ func validateAppTheoryFunctionAlarms_IsConstructParameters(x interface{}) error 
 	return nil
 }
 
-func validateNewAppTheoryFunctionAlarmsParameters(scope constructs.Construct, id *string, props *AppTheoryFunctionAlarmsProps) error {
+func validateNewAppTheoryWebSocketApiParameters(scope constructs.Construct, id *string, props *AppTheoryWebSocketApiProps) error {
 	if scope == nil {
 		return fmt.Errorf("parameter scope is required, but nil was provided")
 	}

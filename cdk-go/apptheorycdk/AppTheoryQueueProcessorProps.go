@@ -7,8 +7,9 @@ import (
 )
 
 type AppTheoryQueueProcessorProps struct {
-	Consumer          awslambda.Function `field:"required" json:"consumer" yaml:"consumer"`
-	BatchSize         *float64           `field:"optional" json:"batchSize" yaml:"batchSize"`
-	MaxBatchingWindow awscdk.Duration    `field:"optional" json:"maxBatchingWindow" yaml:"maxBatchingWindow"`
-	QueueProps        *awssqs.QueueProps `field:"optional" json:"queueProps" yaml:"queueProps"`
+	Consumer awslambda.Function `field:"required" json:"consumer" yaml:"consumer"`
+	BatchSize *float64 `field:"optional" json:"batchSize" yaml:"batchSize"`
+	MaxBatchingWindow awscdk.Duration `field:"optional" json:"maxBatchingWindow" yaml:"maxBatchingWindow"`
+	QueueProps *awssqs.QueueProps `field:"optional" json:"queueProps" yaml:"queueProps"`
 }
+

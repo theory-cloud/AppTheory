@@ -81,6 +81,30 @@ test("AppTheoryHttpApi synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryWebSocketApi synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryWebSocketApi(stack, "WebSocketApi", {
+    handler: fn,
+    apiName: "apptheory-test",
+    stageName: "dev",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("websocket-api", template);
+  } else {
+    expectSnapshot("websocket-api", template);
+  }
+});
+
 test("AppTheoryQueueProcessor synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
