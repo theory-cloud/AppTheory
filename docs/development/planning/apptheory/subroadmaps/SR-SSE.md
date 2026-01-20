@@ -40,6 +40,14 @@ Non-goals:
   - `Cache-Control: no-cache`
   - `Connection: keep-alive` (where applicable)
 
+## Current status (AppTheory `v0.2.0-rc.1`)
+
+- REST API v1 adapter exists.
+- SSE framing helpers exist.
+- REST API v1 **streaming response type** support exists for `text/event-stream`.
+- Missing for full Lift parity: an event-by-event “true streaming” SSE API (Lift uses `SSEResponse(ctx, <-chan SSEEvent)`
+  and streams via a pipe/reader rather than buffering the entire body).
+
 ## Milestones
 
 ### S0 — REST v1 adapter parity (non-streaming)
@@ -69,3 +77,10 @@ Non-goals:
 - CDK constructs/examples enable streaming at the API/method level (Lift `LiftRestAPI` parity).
 - A deployable example demonstrates an SSE endpoint end-to-end.
 
+---
+
+### S3 — Event-by-event SSE streaming API (Lift parity)
+
+**Acceptance criteria**
+- Go/TS/Py expose an API that can stream multiple SSE events over time without buffering the full response in memory.
+- Fixture coverage exists for framing/headers; example coverage exists for long-lived streaming behavior.

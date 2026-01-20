@@ -80,6 +80,17 @@ Status (today):
 - Each language’s docs include a full “unit test without AWS” example using the testkit.
 - Examples run in CI without credentials.
 
+---
+
+### K5 — Lift-style test harness parity (handlers + middleware)
+
+**Acceptance criteria**
+- Each language provides ergonomic helpers comparable to Lift’s `pkg/testing` patterns:
+  - create a request/context for handler tests
+  - invoke a handler or route without AWS events
+  - (once middleware exists) run middleware chains deterministically in tests
+- Docs include “how to test middleware” per language.
+
 ## Risks and mitigation
 
 - **Mock drift:** keep mocks small and strict; only mock what AppTheory owns.

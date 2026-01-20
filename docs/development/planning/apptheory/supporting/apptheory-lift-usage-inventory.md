@@ -126,3 +126,50 @@ Observed Lift CDK construct usage (Lesser):
 - Lambda wrapper: `LiftFunction`
 
 Tracking: `docs/development/planning/apptheory/apptheory-gap-analysis-lesser.md`
+
+## Supplemental: Lift usage in Autheory (Pay Theory)
+
+Snapshot inputs (local workspace):
+
+- Repo: `autheory/`
+- Lift imports (observed):
+  - `github.com/pay-theory/lift/pkg/lift`
+  - `github.com/pay-theory/lift/pkg/middleware`
+  - `github.com/pay-theory/lift/pkg/services` (EventBus)
+  - `github.com/pay-theory/lift/pkg/lift/adapters` (tests)
+  - `github.com/pay-theory/lift/pkg/cdk/constructs`
+  - `github.com/pay-theory/lift/pkg/cdk/patterns`
+
+Observed Lift runtime patterns (Autheory):
+
+- Global middleware chain (`app.Use(...)`) for tracing, CORS, auth, audit logging.
+- Lift-style route patterns (`:id` segments) across many routes.
+- Durable EventBus via `lift/pkg/services` (DynamoDB-backed + replay tooling).
+
+Tracking:
+
+- `docs/development/planning/apptheory/apptheory-gap-analysis-lift-parity.md`
+
+## Supplemental: Lift usage in K3 (Pay Theory)
+
+Snapshot inputs (local workspace):
+
+- Repo: `k3/`
+- Lift imports (observed):
+  - `github.com/pay-theory/lift/pkg/lift`
+  - `github.com/pay-theory/lift/pkg/observability`
+  - `github.com/pay-theory/lift/pkg/observability/zap`
+  - `github.com/pay-theory/lift/pkg/utils/sanitization`
+  - `github.com/pay-theory/lift/pkg/lift/adapters` (tests)
+  - `github.com/pay-theory/lift/pkg/cdk/constructs`
+
+Observed Lift runtime patterns (K3):
+
+- Global middleware chain (`app.Use(...)`) for request-id, security headers, rate limiting, request logging, and
+  dependency injection (`ctx.Set`/`ctx.Get`).
+- Lift observability packages for structured logging (zap integration) and lifecycle (`Close()`).
+- Sanitization helpers for safe logging of raw AWS event payloads.
+
+Tracking:
+
+- `docs/development/planning/apptheory/apptheory-gap-analysis-lift-parity.md`

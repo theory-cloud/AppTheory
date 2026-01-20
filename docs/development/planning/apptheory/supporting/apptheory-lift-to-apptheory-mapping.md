@@ -27,6 +27,7 @@ This is a conceptual mapping to guide repo layout and migration docs.
 | `pkg/lift` | `pkg/apptheory` (or root entrypoint) | core app/router/handler surfaces |
 | `pkg/context` | `pkg/context` | portable context shape must match contract |
 | `pkg/middleware` | `pkg/middleware` | ordering must match contract |
+| `app.Use(...)` + `ctx.Set/Get` | portable middleware + context value bag | required for Lift parity (Autheory/K3/Lesser); see `subroadmaps/SR-MIDDLEWARE.md` |
 | `pkg/middleware/limited.go` + `github.com/pay-theory/limited` | `pkg/limited` (+ `pkg/limited/middleware`) | replicate `limited` feature set in-repo, backed by TableTheory |
 | `pkg/validation` | `pkg/validation` | portable validation behavior; error mapping |
 | `pkg/logger` / `pkg/observability` | `pkg/observability` | portable subset + hooks |
@@ -37,6 +38,8 @@ This is a conceptual mapping to guide repo layout and migration docs.
 | `app.WebSocket` + `WebSocketContext` | WebSocket router + context (Go/TS/Py) | `$connect/$disconnect/$default` routing + send helpers (SR-WEBSOCKETS) |
 | `SSEResponse` / `SSEEvent` | SSE helpers (Go/TS/Py) | REST API v1 + response streaming (SR-SSE) |
 | `pkg/cdk/constructs` | `cdk/` (jsii) | Lift construct parity for what our apps use (SR-CDK) |
+| `pkg/services` | services packages (start: EventBus) | required for Autheory; see `subroadmaps/SR-SERVICES.md` |
+| `pkg/utils/sanitization` | sanitization utilities (Go/TS/Py) | required for K3; see `subroadmaps/SR-SANITIZATION.md` |
 
 ## Feature mapping (seed)
 

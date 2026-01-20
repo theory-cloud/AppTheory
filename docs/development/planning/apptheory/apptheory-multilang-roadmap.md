@@ -74,6 +74,10 @@ Deep workstreams are tracked in dedicated sub-roadmaps:
 - CDK strategy: `subroadmaps/SR-CDK.md`
 - Testkits + mocks: `subroadmaps/SR-MOCKS.md`
 - Prod features parity: `subroadmaps/SR-PROD-FEATURES.md`
+- Middleware + extensibility: `subroadmaps/SR-MIDDLEWARE.md`
+- Lift services parity: `subroadmaps/SR-SERVICES.md`
+- Sanitization utilities: `subroadmaps/SR-SANITIZATION.md`
+- Naming utilities: `subroadmaps/SR-NAMING.md`
 - Lift migration: `subroadmaps/SR-MIGRATION.md`
 - Non-HTTP event sources: `subroadmaps/SR-EVENTSOURCES.md`
 - WebSockets: `subroadmaps/SR-WEBSOCKETS.md`
@@ -275,7 +279,7 @@ Deep workstreams are tracked in dedicated sub-roadmaps:
 
 ### M12 — Lift parity completion (event sources, WebSockets, SSE/REST v1)
 
-**Goal:** AppTheory is a Lift replacement for real apps (Pay Theory + Lesser) across Go/TS/Py.
+**Goal:** AppTheory is a Lift replacement for **Lesser-class** apps across Go/TS/Py (not “HTTP-only Lift”).
 
 **Complex enough for sub-roadmaps:** yes.
 
@@ -284,17 +288,55 @@ Tracking:
 - `subroadmaps/SR-EVENTSOURCES.md` (SQS/EventBridge/DynamoDB Streams)
 - `subroadmaps/SR-WEBSOCKETS.md` (WebSocket runtime + `streamer`)
 - `subroadmaps/SR-SSE.md` (API Gateway REST v1 + SSE streaming)
+- `subroadmaps/SR-MIDDLEWARE.md` (middleware pipeline + `ctx.Set/Get` parity)
+- `subroadmaps/SR-NAMING.md` (Lift `pkg/naming` parity)
+- `subroadmaps/SR-MOCKS.md` (Lift `pkg/testing`-style harness parity)
 - `subroadmaps/SR-CDK.md` (construct parity for these surfaces)
 - `subroadmaps/SR-CONTRACT.md` (contract v1+ fixtures)
+- `subroadmaps/SR-MIGRATION.md` (migration guide updates for these surfaces)
 
 **Acceptance criteria**
 - Parity matrix P0+ items are implemented and fixture-backed in Go/TS/Py:
   - REST API v1 adapter
-  - SSE helpers + streaming
+  - SSE helpers + streaming (including event-by-event “true streaming” parity)
   - SQS/EventBridge/DynamoDB Streams routing
   - WebSocket routing + management client
+- Lift DX parity required by real apps is available (portable where feasible):
+  - middleware pipeline + context value bag (`ctx.Set/Get`)
+  - naming helpers
+  - unit-test harness helpers for handlers/middleware
 - CDK story supports deploying these capabilities (examples and/or constructs) in a multi-language way.
 - `make rubric` includes the new contract fixtures and example gates (fails closed).
+
+---
+
+### M13 — Lift parity completion (Pay Theory: Autheory + K3)
+
+**Goal:** AppTheory fully replaces Lift for Pay Theory’s hardest real apps (Autheory + K3) and is a robust improvement
+on Lift (not a minimal subset).
+
+**Complex enough for sub-roadmaps:** yes.
+
+Tracking:
+
+- `subroadmaps/SR-MIDDLEWARE.md` (middleware pipeline + context mutation, events story)
+- `subroadmaps/SR-SERVICES.md` (Lift `pkg/services` parity; start: EventBus)
+- `subroadmaps/SR-PROD-FEATURES.md` (logger implementation packages + integration guidance)
+- `subroadmaps/SR-SANITIZATION.md` (Lift `pkg/utils/sanitization` parity)
+- `subroadmaps/SR-CDK.md` (Autheory + K3 construct parity or template-first equivalents)
+- `subroadmaps/SR-MOCKS.md` (test harness parity)
+- `subroadmaps/SR-MIGRATION.md` (Autheory/K3 migration playbooks + checklists)
+
+**Acceptance criteria**
+- AppTheory provides supported replacements (portable when feasible; Go-only when required and explicitly documented) for
+  the Lift surfaces Autheory + K3 actually use:
+  - global middleware pipeline (`app.Use`) and `ctx.Set/Get` patterns
+  - EventBus (`lift/pkg/services`) used by Autheory
+  - structured logging integrations (`lift/pkg/observability` + `observability/zap`) used by K3
+  - sanitization utilities (`lift/pkg/utils/sanitization`) used by K3
+- CDK story can deploy Autheory/K3-class stacks without long-term dependency on Lift constructs (construct parity and/or
+  first-class templates/examples, still consumable from GitHub Releases).
+- Migration docs include Autheory + K3 focused guidance and capture known non-drop-in differences explicitly.
 
 ## Notes on governance artifacts (`hgm-infra/`)
 

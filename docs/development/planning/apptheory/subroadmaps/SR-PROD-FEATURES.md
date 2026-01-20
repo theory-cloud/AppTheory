@@ -15,6 +15,12 @@ P1/P2 features that are expected to be portable:
 - Observability envelope: minimum structured log schema; optional metrics/tracing hooks
 - Rate limiting / load shedding semantics (portable subset only)
 
+Additional Lift parity (may be Go-only initially, but must be supported for Pay Theory migrations):
+
+- Logger implementation packages (e.g. zap integration, lifecycle/close semantics, environment-aware behavior)
+  on top of the portable observability hooks
+- Safe logging guidance and integration with sanitization utilities (see `subroadmaps/SR-SANITIZATION.md`)
+
 Non-goals:
 
 - Treating Lift production features as optional. Prioritize by real usage (Pay Theory + Lesser inventories), but missing
