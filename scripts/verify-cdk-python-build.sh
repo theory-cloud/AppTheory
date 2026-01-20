@@ -4,6 +4,10 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 expected_version="$(tr -d ' \t\r\n' < VERSION)"
+expected_py_version="${expected_version}"
+if [[ "${expected_py_version}" == *"-rc."* ]]; then
+  expected_py_version="${expected_py_version/-rc./rc}"
+fi
 
 epoch="${SOURCE_DATE_EPOCH:-}"
 if [[ -z "${epoch}" ]]; then
@@ -75,9 +79,9 @@ for file_path in root.rglob("*"):
     os.utime(file_path, (epoch, epoch))
 PY
 
-rm -f "dist/apptheory_cdk-${expected_version}-"*.whl
-rm -f "dist/apptheory_cdk-${expected_version}.tar.gz"
-rm -f "dist/apptheory-cdk-${expected_version}.tar.gz"
+rm -f "dist/apptheory_cdk-${expected_py_version}-"*.whl
+rm -f "dist/apptheory_cdk-${expected_py_version}.tar.gz"
+rm -f "dist/apptheory-cdk-${expected_py_version}.tar.gz"
 
 if ! cdk/.venv/bin/python -m build --no-isolation "${tmp_dir}/python" --outdir dist >/dev/null 2>"${tmp_log}"; then
   echo "cdk-python-build: FAIL (python build failed)" >&2
@@ -85,12 +89,12 @@ if ! cdk/.venv/bin/python -m build --no-isolation "${tmp_dir}/python" --outdir d
   exit 1
 fi
 
-if ! ls "dist/apptheory_cdk-${expected_version}-"*.whl >/dev/null 2>&1; then
+if ! ls "dist/apptheory_cdk-${expected_py_version}-"*.whl >/dev/null 2>&1; then
   echo "cdk-python-build: FAIL (missing wheel for ${expected_version})"
   exit 1
 fi
 
-wheel_path="$(ls "dist/apptheory_cdk-${expected_version}-"*.whl | head -n 1)"
+wheel_path="$(ls "dist/apptheory_cdk-${expected_py_version}-"*.whl | head -n 1)"
 WHEEL_PATH="${wheel_path}" python3 - <<'PY'
 import zipfile
 from pathlib import Path
@@ -109,10 +113,10 @@ if not matches:
 PY
 
 sdist=""
-if [[ -f "dist/apptheory_cdk-${expected_version}.tar.gz" ]]; then
-  sdist="dist/apptheory_cdk-${expected_version}.tar.gz"
-elif [[ -f "dist/apptheory-cdk-${expected_version}.tar.gz" ]]; then
-  sdist="dist/apptheory-cdk-${expected_version}.tar.gz"
+if [[ -f "dist/apptheory_cdk-${expected_py_version}.tar.gz" ]]; then
+  sdist="dist/apptheory_cdk-${expected_py_version}.tar.gz"
+elif [[ -f "dist/apptheory-cdk-${expected_py_version}.tar.gz" ]]; then
+  sdist="dist/apptheory-cdk-${expected_py_version}.tar.gz"
 else
   echo "cdk-python-build: FAIL (missing sdist for ${expected_version})"
   exit 1
@@ -182,7 +186,7 @@ tmp_out.replace(sdist)
 shutil.rmtree(extract_dir, ignore_errors=True)
 PY
 
-tar -tzf "${sdist}" | grep -E "^apptheory[_-]cdk-${expected_version}/LICENSE$" >/dev/null || {
+tar -tzf "${sdist}" | grep -E "^apptheory[_-]cdk-${expected_py_version}/LICENSE$" >/dev/null || {
   echo "cdk-python-build: FAIL (sdist missing LICENSE for ${expected_version})"
   exit 1
 }
