@@ -8476,7 +8476,7 @@
   },
   "name": "@theory-cloud/apptheory-cdk",
   "readme": {
-    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring.\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n\n"
+    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring.\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
   },
   "repository": {
     "directory": "cdk",
@@ -8498,6 +8498,288 @@
     }
   },
   "types": {
+    "@theory-cloud/apptheory-cdk.AppTheoryDynamoDBStreamMapping": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryDynamoDBStreamMapping",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/dynamodb-stream-mapping.ts",
+          "line": 19
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryDynamoDBStreamMappingProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/dynamodb-stream-mapping.ts",
+        "line": 18
+      },
+      "name": "AppTheoryDynamoDBStreamMapping",
+      "symbolId": "lib/dynamodb-stream-mapping:AppTheoryDynamoDBStreamMapping"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryDynamoDBStreamMappingProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryDynamoDBStreamMappingProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/dynamodb-stream-mapping.ts",
+        "line": 7
+      },
+      "name": "AppTheoryDynamoDBStreamMappingProps",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamodb-stream-mapping.ts",
+            "line": 8
+          },
+          "name": "consumer",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.Function"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamodb-stream-mapping.ts",
+            "line": 9
+          },
+          "name": "table",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.ITable"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamodb-stream-mapping.ts",
+            "line": 11
+          },
+          "name": "batchSize",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamodb-stream-mapping.ts",
+            "line": 12
+          },
+          "name": "bisectBatchOnError",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamodb-stream-mapping.ts",
+            "line": 14
+          },
+          "name": "maxRecordAge",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamodb-stream-mapping.ts",
+            "line": 15
+          },
+          "name": "reportBatchItemFailures",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamodb-stream-mapping.ts",
+            "line": 13
+          },
+          "name": "retryAttempts",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamodb-stream-mapping.ts",
+            "line": 10
+          },
+          "name": "startingPosition",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.StartingPosition"
+          }
+        }
+      ],
+      "symbolId": "lib/dynamodb-stream-mapping:AppTheoryDynamoDBStreamMappingProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandler": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandler",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/eventbridge-handler.ts",
+          "line": 17
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandlerProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/eventbridge-handler.ts",
+        "line": 14
+      },
+      "name": "AppTheoryEventBridgeHandler",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-handler.ts",
+            "line": 15
+          },
+          "name": "rule",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_events.Rule"
+          }
+        }
+      ],
+      "symbolId": "lib/eventbridge-handler:AppTheoryEventBridgeHandler"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandlerProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandlerProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/eventbridge-handler.ts",
+        "line": 6
+      },
+      "name": "AppTheoryEventBridgeHandlerProps",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-handler.ts",
+            "line": 7
+          },
+          "name": "handler",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-handler.ts",
+            "line": 8
+          },
+          "name": "schedule",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_events.Schedule"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-handler.ts",
+            "line": 11
+          },
+          "name": "description",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-handler.ts",
+            "line": 10
+          },
+          "name": "enabled",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-handler.ts",
+            "line": 9
+          },
+          "name": "ruleName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/eventbridge-handler:AppTheoryEventBridgeHandlerProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryFunction": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -9052,5 +9334,5 @@
     }
   },
   "version": "0.1.0",
-  "fingerprint": "PO7m5pIP56DAUecTXUtc/r6eoAGYt3NU8OqauJd093w="
+  "fingerprint": "vQ6E6CE0z+6wrtMBKury2i9oR6KICWjHypIlTI/V3mY="
 }
