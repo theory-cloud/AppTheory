@@ -43,7 +43,6 @@ func (j *jsiiProxy_AppTheoryHttpApi) Node() constructs.Node {
 	return returns
 }
 
-
 func NewAppTheoryHttpApi(scope constructs.Construct, id *string, props *AppTheoryHttpApiProps) AppTheoryHttpApi {
 	_init_.Initialize()
 
@@ -118,4 +117,3 @@ func (a *jsiiProxy_AppTheoryHttpApi) ToString() *string {
 
 	return returns
 }
-

@@ -45,4 +45,3 @@ func TestInvokeLambdaFunctionURL(t *testing.T) {
 		t.Fatalf("expected body pong, got %#v", resp.Body)
 	}
 }
-

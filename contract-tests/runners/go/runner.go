@@ -47,9 +47,21 @@ func runFixtureLegacy(f Fixture) error {
 	actual := app.handle(req)
 	expected := f.Expect.Response
 
-	expectedHeaders := canonicalizeHeaders(expected.Headers)
 	actual.Headers = canonicalizeHeaders(actual.Headers)
+	expectedHeaders := canonicalizeHeaders(expected.Headers)
 
+	if err := compareLegacyResponseMeta(expected, actual, expectedHeaders); err != nil {
+		return err
+	}
+
+	if err := compareLegacyResponseBody(expected, actual.Body); err != nil {
+		return err
+	}
+
+	return compareLegacySideEffects(f.Expect, app.logs, app.metrics, app.spans)
+}
+
+func compareLegacyResponseMeta(expected FixtureResponse, actual CanonicalResponse, expectedHeaders map[string][]string) error {
 	if expected.Status != actual.Status {
 		return fmt.Errorf("status: expected %d, got %d", expected.Status, actual.Status)
 	}
@@ -62,51 +74,47 @@ func runFixtureLegacy(f Fixture) error {
 	if !equalHeaders(expectedHeaders, actual.Headers) {
 		return fmt.Errorf("headers mismatch")
 	}
+	return nil
+}
 
+func compareLegacyResponseBody(expected FixtureResponse, actualBody []byte) error {
 	if len(expected.BodyJSON) > 0 {
 		var expectedJSON any
-		if err := json.Unmarshal(expected.BodyJSON, &expectedJSON); err != nil {
-			return fmt.Errorf("parse expected body_json: %w", err)
+		if unmarshalErr := json.Unmarshal(expected.BodyJSON, &expectedJSON); unmarshalErr != nil {
+			return fmt.Errorf("parse expected body_json: %w", unmarshalErr)
 		}
 		var actualJSON any
-		if err := json.Unmarshal(actual.Body, &actualJSON); err != nil {
-			return fmt.Errorf("parse actual response body as json: %w", err)
+		if unmarshalErr := json.Unmarshal(actualBody, &actualJSON); unmarshalErr != nil {
+			return fmt.Errorf("parse actual response body as json: %w", unmarshalErr)
 		}
 		if !jsonEqual(expectedJSON, actualJSON) {
 			return fmt.Errorf("body_json mismatch")
-		}
-		if !reflect.DeepEqual(f.Expect.Logs, app.logs) {
-			return fmt.Errorf("logs mismatch")
-		}
-		if !reflect.DeepEqual(f.Expect.Metrics, app.metrics) {
-			return fmt.Errorf("metrics mismatch")
-		}
-		if !reflect.DeepEqual(f.Expect.Spans, app.spans) {
-			return fmt.Errorf("spans mismatch")
 		}
 		return nil
 	}
 
 	var expectedBodyBytes []byte
-	if expected.Body == nil {
-		expectedBodyBytes = nil
-	} else {
+	if expected.Body != nil {
+		var err error
 		expectedBodyBytes, err = decodeFixtureBody(*expected.Body)
 		if err != nil {
 			return fmt.Errorf("decode expected body: %w", err)
 		}
 	}
-	if !equalBytes(expectedBodyBytes, actual.Body) {
+	if !equalBytes(expectedBodyBytes, actualBody) {
 		return fmt.Errorf("body mismatch")
 	}
+	return nil
+}
 
-	if !reflect.DeepEqual(f.Expect.Logs, app.logs) {
+func compareLegacySideEffects(expected FixtureExpect, logs []FixtureLogRecord, metrics []FixtureMetricRecord, spans []FixtureSpanRecord) error {
+	if !reflect.DeepEqual(expected.Logs, logs) {
 		return fmt.Errorf("logs mismatch")
 	}
-	if !reflect.DeepEqual(f.Expect.Metrics, app.metrics) {
+	if !reflect.DeepEqual(expected.Metrics, metrics) {
 		return fmt.Errorf("metrics mismatch")
 	}
-	if !reflect.DeepEqual(f.Expect.Spans, app.spans) {
+	if !reflect.DeepEqual(expected.Spans, spans) {
 		return fmt.Errorf("spans mismatch")
 	}
 	return nil
@@ -158,12 +166,12 @@ func printFailure(f Fixture, err error) {
 			debug.Body = &FixtureBody{Encoding: "base64", Value: base64.StdEncoding.EncodeToString(actual.Body)}
 		}
 
-		b, _ := json.MarshalIndent(debug, "", "  ")
+		b := marshalIndentOrPlaceholder(debug)
 		fmt.Fprintf(os.Stderr, "  got: %s\n", string(b))
 
-		logs, _ := json.MarshalIndent(app.logs, "", "  ")
-		metrics, _ := json.MarshalIndent(app.metrics, "", "  ")
-		spans, _ := json.MarshalIndent(app.spans, "", "  ")
+		logs := marshalIndentOrPlaceholder(app.logs)
+		metrics := marshalIndentOrPlaceholder(app.metrics)
+		spans := marshalIndentOrPlaceholder(app.spans)
 		fmt.Fprintf(os.Stderr, "  got.logs: %s\n", string(logs))
 		fmt.Fprintf(os.Stderr, "  got.metrics: %s\n", string(metrics))
 		fmt.Fprintf(os.Stderr, "  got.spans: %s\n", string(spans))
@@ -173,12 +181,12 @@ func printFailure(f Fixture, err error) {
 
 	expected := f.Expect.Response
 	expected.Headers = canonicalizeHeaders(expected.Headers)
-	b, _ := json.MarshalIndent(expected, "", "  ")
+	b := marshalIndentOrPlaceholder(expected)
 	fmt.Fprintf(os.Stderr, "  expected: %s\n", string(b))
 
-	logs, _ := json.MarshalIndent(f.Expect.Logs, "", "  ")
-	metrics, _ := json.MarshalIndent(f.Expect.Metrics, "", "  ")
-	spans, _ := json.MarshalIndent(f.Expect.Spans, "", "  ")
+	logs := marshalIndentOrPlaceholder(f.Expect.Logs)
+	metrics := marshalIndentOrPlaceholder(f.Expect.Metrics)
+	spans := marshalIndentOrPlaceholder(f.Expect.Spans)
 	fmt.Fprintf(os.Stderr, "  expected.logs: %s\n", string(logs))
 	fmt.Fprintf(os.Stderr, "  expected.metrics: %s\n", string(metrics))
 	fmt.Fprintf(os.Stderr, "  expected.spans: %s\n", string(spans))

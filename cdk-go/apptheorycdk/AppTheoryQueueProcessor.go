@@ -43,7 +43,6 @@ func (j *jsiiProxy_AppTheoryQueueProcessor) Queue() awssqs.Queue {
 	return returns
 }
 
-
 func NewAppTheoryQueueProcessor(scope constructs.Construct, id *string, props *AppTheoryQueueProcessorProps) AppTheoryQueueProcessor {
 	_init_.Initialize()
 
@@ -118,4 +117,3 @@ func (a *jsiiProxy_AppTheoryQueueProcessor) ToString() *string {
 
 	return returns
 }
-

@@ -112,7 +112,7 @@ func formatAllowHeader(methods []string) string {
 		}
 		set[m] = struct{}{}
 	}
-	var uniq []string
+	uniq := make([]string, 0, len(set))
 	for m := range set {
 		uniq = append(uniq, m)
 	}
