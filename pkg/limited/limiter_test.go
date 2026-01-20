@@ -142,3 +142,47 @@ func TestDynamoRateLimiter_CheckAndIncrement_CreatesEntryWhenMissing(t *testing.
 	mockUpdate.AssertExpectations(t)
 }
 
+func TestDynamoRateLimiter_CheckLimit_MultiWindowDeniesWhenAnyWindowExceeded(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 5, 30, 0, time.UTC)
+
+	strategy := NewMultiWindowStrategy([]WindowConfig{
+		{Duration: time.Minute, MaxRequests: 2},
+		{Duration: time.Hour, MaxRequests: 1000},
+	})
+
+	mockDB := new(tablemocks.MockDB)
+	mockQuery := new(tablemocks.MockQuery)
+
+	mockDB.On("Model", mock.Anything).Return(mockQuery)
+	mockQuery.On("WithContext", mock.Anything).Return(mockQuery)
+	mockQuery.On("Where", mock.Anything, mock.Anything, mock.Anything).Return(mockQuery)
+
+	var firstCalls int
+	mockQuery.On("First", mock.Anything).Run(func(args mock.Arguments) {
+		firstCalls++
+		record := args.Get(0).(*RateLimitEntry)
+		if firstCalls == 1 {
+			record.Count = 2
+			return
+		}
+		record.Count = 0
+	}).Return(nil)
+
+	limiter := NewDynamoRateLimiter(mockDB, DefaultConfig(), strategy)
+	limiter.SetClock(fixedClock{now: now})
+
+	decision, err := limiter.CheckLimit(context.Background(), RateLimitKey{
+		Identifier: "user:123",
+		Resource:   "/users",
+		Operation:  "GET",
+	})
+	require.NoError(t, err)
+	require.False(t, decision.Allowed)
+	require.Equal(t, 2, decision.CurrentCount)
+	require.Equal(t, 2, decision.Limit)
+	require.NotNil(t, decision.RetryAfter)
+	require.Equal(t, now.Truncate(time.Minute).Add(time.Minute), decision.ResetsAt)
+
+	mockDB.AssertExpectations(t)
+	mockQuery.AssertExpectations(t)
+}
