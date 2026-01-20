@@ -1,0 +1,46 @@
+{
+  "id": "m2.websocket.disconnect_routing",
+  "tier": "m2",
+  "name": "WebSocket: route $disconnect + extract context fields",
+  "setup": {
+    "websockets": [{ "route_key": "$disconnect", "handler": "ws_disconnect_ok" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "apigw_websocket",
+      "event": {
+        "path": "/",
+        "httpMethod": "GET",
+        "headers": {},
+        "queryStringParameters": {},
+        "requestContext": {
+          "stage": "dev",
+          "requestId": "ws-req-2",
+          "connectionId": "conn-2",
+          "domainName": "example.execute-api.us-east-1.amazonaws.com",
+          "eventType": "DISCONNECT",
+          "routeKey": "$disconnect"
+        },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "handler": "disconnect",
+        "route_key": "$disconnect",
+        "event_type": "DISCONNECT",
+        "connection_id": "conn-2",
+        "management_endpoint": "https://example.execute-api.us-east-1.amazonaws.com/dev",
+        "request_id": "ws-req-2"
+      },
+      "is_base64": false
+    }
+  }
+}
+

@@ -4,13 +4,14 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from apptheory.aws_http import (
+    apigw_proxy_response_from_response,
     apigw_v2_response_from_response,
     lambda_function_url_response_from_response,
     request_from_apigw_v2,
     request_from_lambda_function_url,
 )
 from apptheory.clock import Clock, RealClock
-from apptheory.context import Context, EventContext
+from apptheory.context import Context, EventContext, WebSocketClientFactory, WebSocketContext
 from apptheory.errors import (
     AppError,
     error_response,
@@ -30,6 +31,7 @@ PolicyHook = Callable[[Context], "PolicyDecision | None"]
 SQSHandler = Callable[[EventContext, dict[str, Any]], None]
 DynamoDBStreamHandler = Callable[[EventContext, dict[str, Any]], None]
 EventBridgeHandler = Callable[[EventContext, dict[str, Any]], Any]
+WebSocketHandler = Callable[[Context], Response]
 
 
 @dataclass(slots=True)
@@ -110,6 +112,8 @@ class App:
     _sqs_routes: list[tuple[str, SQSHandler]]
     _eventbridge_routes: list[tuple[EventBridgeSelector, EventBridgeHandler]]
     _dynamodb_routes: list[tuple[str, DynamoDBStreamHandler]]
+    _ws_routes: dict[str, WebSocketHandler]
+    _websocket_client_factory: WebSocketClientFactory | None
 
     def __init__(
         self,
@@ -121,6 +125,7 @@ class App:
         auth_hook: AuthHook | None = None,
         observability: ObservabilityHooks | None = None,
         policy_hook: PolicyHook | None = None,
+        websocket_client_factory: WebSocketClientFactory | None = None,
     ) -> None:
         self._router = Router()
         self._clock = clock or RealClock()
@@ -136,6 +141,8 @@ class App:
         self._sqs_routes = []
         self._eventbridge_routes = []
         self._dynamodb_routes = []
+        self._ws_routes = {}
+        self._websocket_client_factory = websocket_client_factory or _default_websocket_client_factory
 
     def handle(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
         self._router.add(method, pattern, handler, auth_required=auth_required)
@@ -178,6 +185,13 @@ class App:
         if not name:
             return self
         self._dynamodb_routes.append((name, handler))
+        return self
+
+    def websocket(self, route_key: str, handler: WebSocketHandler) -> App:
+        key = str(route_key or "").strip()
+        if not key:
+            return self
+        self._ws_routes[key] = handler
         return self
 
     def serve(self, request: Request, ctx: Any | None = None) -> Response:
@@ -423,6 +437,74 @@ class App:
         resp = self.serve(request, ctx)
         return lambda_function_url_response_from_response(resp)
 
+    def serve_websocket(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        try:
+            request = _request_from_websocket_event(event)
+        except Exception as exc:  # noqa: BLE001
+            return apigw_proxy_response_from_response(response_for_error(exc))
+
+        try:
+            normalized = normalize_request(request)
+        except Exception as exc:  # noqa: BLE001
+            return apigw_proxy_response_from_response(response_for_error(exc))
+
+        request_context = event.get("requestContext") or {}
+        if not isinstance(request_context, dict):
+            request_context = {}
+
+        route_key = str(request_context.get("routeKey") or "").strip()
+        handler = self._ws_routes.get(route_key)
+        if handler is None:
+            return apigw_proxy_response_from_response(error_response("app.not_found", "not found"))
+
+        request_id = str(request_context.get("requestId") or "").strip()
+        if not request_id:
+            request_id = self._id_generator.new_id()
+
+        tenant_id = _extract_tenant_id(normalized.headers, normalized.query)
+        remaining_ms = _remaining_ms(ctx)
+
+        domain_name = str(request_context.get("domainName") or "").strip()
+        stage = str(request_context.get("stage") or "").strip()
+        management_endpoint = _websocket_management_endpoint(domain_name, stage)
+
+        ws_ctx = WebSocketContext(
+            clock=self._clock,
+            id_generator=self._id_generator,
+            ctx=ctx,
+            request_id=request_id,
+            remaining_ms=remaining_ms,
+            connection_id=str(request_context.get("connectionId") or "").strip(),
+            route_key=route_key,
+            domain_name=domain_name,
+            stage=stage,
+            event_type=str(request_context.get("eventType") or "").strip(),
+            management_endpoint=management_endpoint,
+            body=normalized.body,
+            client_factory=self._websocket_client_factory,
+        )
+
+        request_ctx = Context(
+            request=normalized,
+            params={},
+            clock=self._clock,
+            id_generator=self._id_generator,
+            ctx=ctx,
+            request_id=request_id,
+            tenant_id=tenant_id,
+            auth_identity="",
+            remaining_ms=remaining_ms,
+            middleware_trace=[],
+            websocket=ws_ctx,
+        )
+
+        try:
+            resp = handler(request_ctx)
+        except Exception as exc:  # noqa: BLE001
+            return apigw_proxy_response_from_response(response_for_error(exc))
+
+        return apigw_proxy_response_from_response(normalize_response(resp))
+
     def _event_context(self, ctx: Any | None) -> EventContext:
         request_id = ""
         if ctx is not None:
@@ -567,9 +649,13 @@ class App:
             return self.serve_eventbridge(event, ctx=ctx)
 
         if "requestContext" in event:
-            if "routeKey" in event:
-                return self.serve_apigw_v2(event, ctx=ctx)
-            return self.serve_lambda_function_url(event, ctx=ctx)
+            request_context = event.get("requestContext") or {}
+            if isinstance(request_context, dict) and request_context.get("connectionId"):
+                return self.serve_websocket(event, ctx=ctx)
+            if isinstance(request_context, dict) and "http" in request_context:
+                if "routeKey" in event:
+                    return self.serve_apigw_v2(event, ctx=ctx)
+                return self.serve_lambda_function_url(event, ctx=ctx)
 
         raise RuntimeError("apptheory: unknown event type")
 
@@ -583,6 +669,7 @@ def create_app(
     auth_hook: AuthHook | None = None,
     observability: ObservabilityHooks | None = None,
     policy_hook: PolicyHook | None = None,
+    websocket_client_factory: WebSocketClientFactory | None = None,
 ) -> App:
     return App(
         clock=clock,
@@ -592,7 +679,59 @@ def create_app(
         auth_hook=auth_hook,
         observability=observability,
         policy_hook=policy_hook,
+        websocket_client_factory=websocket_client_factory,
     )
+
+
+def _default_websocket_client_factory(endpoint: str, _ctx: Any | None):
+    from apptheory.streamer import Client
+
+    return Client(endpoint)
+
+
+def _request_from_websocket_event(event: dict[str, Any]) -> Request:
+    headers = event.get("headers") or {}
+    if not isinstance(headers, dict):
+        headers = {}
+
+    multi = event.get("multiValueQueryStringParameters")
+    single = event.get("queryStringParameters")
+    query: dict[str, list[str]] = {}
+    if isinstance(multi, dict):
+        for key, values in multi.items():
+            if values is None:
+                continue
+            if isinstance(values, list):
+                query[str(key)] = [str(v) for v in values]
+            else:
+                query[str(key)] = [str(values)]
+    elif isinstance(single, dict):
+        for key, value in single.items():
+            query[str(key)] = [str(value)]
+
+    return Request(
+        method=str(event.get("httpMethod") or "").strip().upper(),
+        path=str(event.get("path") or "/"),
+        query=query,
+        headers=headers,
+        body=str(event.get("body") or ""),
+        is_base64=bool(event.get("isBase64Encoded")),
+    )
+
+
+def _websocket_management_endpoint(domain_name: str, stage: str) -> str:
+    domain = str(domain_name or "").strip().strip("/")
+    if not domain:
+        return ""
+    if domain.startswith("https://") or domain.startswith("http://"):
+        base = domain
+    else:
+        base = "https://" + domain
+
+    stage_value = str(stage or "").strip().strip("/")
+    if not stage_value:
+        return base
+    return base + "/" + stage_value
 
 
 def _sqs_queue_name_from_arn(arn: str) -> str:

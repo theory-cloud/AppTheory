@@ -51,7 +51,7 @@ function deepEqual(a, b) {
 }
 
 function listFixtureFiles(fixturesRoot) {
-  const tiers = ["p0", "p1", "p2", "m1"];
+  const tiers = ["p0", "p1", "p2", "m1", "m2"];
   const files = [];
   for (const tier of tiers) {
     const dir = path.join(fixturesRoot, tier);
@@ -620,6 +620,12 @@ async function runFixture(fixture) {
     const { actualOutput } = await runFixtureM1(fixture);
     return compareFixtureOutputJson(fixture, actualOutput);
   }
+  if (tier === "m2") {
+    const { actual, wsCalls } = await runFixtureM2(fixture);
+    const result = compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
+    if (!result.ok) return result;
+    return compareWebSocketCalls(fixture, wsCalls);
+  }
 
   const enableP1 = ["p1", "p2"].includes(tier);
   const enableP2 = tier === "p2";
@@ -799,6 +805,57 @@ function compareFixtureOutputJson(fixture, actualOutput) {
   return { ok: true };
 }
 
+function compareWebSocketCalls(fixture, wsCalls) {
+  const expected = fixture.expect?.ws_calls ?? [];
+  const actual = wsCalls?.calls ?? [];
+  const endpoint = String(wsCalls?.endpoint ?? "");
+
+  if (expected.length === 0) {
+    if (actual.length === 0) return { ok: true };
+    return { ok: false, reason: `unexpected ws_calls (${actual.length})`, actual_ws_calls: actual, expected_ws_calls: [] };
+  }
+
+  if (expected.length !== actual.length) {
+    return {
+      ok: false,
+      reason: `ws_calls length mismatch: expected ${expected.length}, got ${actual.length}`,
+      actual_ws_calls: actual,
+      expected_ws_calls: expected,
+    };
+  }
+
+  for (let i = 0; i < expected.length; i += 1) {
+    const exp = expected[i] ?? {};
+    const got = actual[i] ?? {};
+
+    if (String(exp.op ?? "").trim() !== String(got.op ?? "").trim()) {
+      return { ok: false, reason: `ws_calls[${i}].op mismatch`, actual_ws_calls: actual, expected_ws_calls: expected };
+    }
+
+    const expEndpoint = String(exp.endpoint ?? "").trim();
+    if (expEndpoint && expEndpoint !== endpoint) {
+      return { ok: false, reason: `ws_calls[${i}].endpoint mismatch`, actual_ws_calls: actual, expected_ws_calls: expected };
+    }
+
+    if (String(exp.connection_id ?? "").trim() !== String(got.connectionId ?? "").trim()) {
+      return {
+        ok: false,
+        reason: `ws_calls[${i}].connection_id mismatch`,
+        actual_ws_calls: actual,
+        expected_ws_calls: expected,
+      };
+    }
+
+    const expectedBytes = exp.data ? decodeFixtureBody(exp.data) : Buffer.alloc(0);
+    const gotBytes = got.data ? Buffer.from(got.data) : Buffer.alloc(0);
+    if (!expectedBytes.equals(gotBytes)) {
+      return { ok: false, reason: `ws_calls[${i}].data mismatch`, actual_ws_calls: actual, expected_ws_calls: expected };
+    }
+  }
+
+  return { ok: true };
+}
+
 function builtInSQSHandler(name) {
   switch (String(name ?? "").trim()) {
     case "sqs_noop":
@@ -883,6 +940,102 @@ async function runFixtureM1(fixture) {
 
   const actualOutput = await app.handleLambda(awsEvent.event ?? {}, {});
   return { actualOutput };
+}
+
+function builtInWebSocketHandler(runtime, name) {
+  switch (String(name ?? "").trim()) {
+    case "ws_connect_ok":
+      return async (ctx) => {
+        const ws = ctx.asWebSocket?.();
+        if (!ws) {
+          throw new Error("missing websocket context");
+        }
+        return runtime.json(200, {
+          handler: "connect",
+          route_key: ws.routeKey,
+          event_type: ws.eventType,
+          connection_id: ws.connectionId,
+          management_endpoint: ws.managementEndpoint,
+          request_id: ctx.requestId,
+        });
+      };
+    case "ws_disconnect_ok":
+      return async (ctx) => {
+        const ws = ctx.asWebSocket?.();
+        if (!ws) {
+          throw new Error("missing websocket context");
+        }
+        return runtime.json(200, {
+          handler: "disconnect",
+          route_key: ws.routeKey,
+          event_type: ws.eventType,
+          connection_id: ws.connectionId,
+          management_endpoint: ws.managementEndpoint,
+          request_id: ctx.requestId,
+        });
+      };
+    case "ws_default_send_json_ok":
+      return async (ctx) => {
+        const ws = ctx.asWebSocket?.();
+        if (!ws) {
+          throw new Error("missing websocket context");
+        }
+        await ws.sendJSONMessage({ ok: true });
+        return runtime.json(200, {
+          handler: "default",
+          sent: true,
+          route_key: ws.routeKey,
+          event_type: ws.eventType,
+          connection_id: ws.connectionId,
+          management_endpoint: ws.managementEndpoint,
+          request_id: ctx.requestId,
+        });
+      };
+    case "ws_bad_request":
+      return async () => {
+        throw new runtime.AppError("app.bad_request", "bad request");
+      };
+    default:
+      return null;
+  }
+}
+
+async function runFixtureM2(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+
+  let wsClient = null;
+  const app = runtime.createApp({
+    tier: "p0",
+    webSocketClientFactory: (endpoint) => {
+      wsClient = new runtime.FakeWebSocketManagementClient({ endpoint });
+      return wsClient;
+    },
+  });
+
+  for (const route of fixture.setup?.websockets ?? []) {
+    const handler = builtInWebSocketHandler(runtime, route.handler);
+    if (!handler) {
+      throw new Error(`unknown websocket handler ${JSON.stringify(route.handler)}`);
+    }
+    app.webSocket(route.route_key, handler);
+  }
+
+  const awsEvent = fixture.input?.aws_event ?? null;
+  if (!awsEvent) {
+    throw new Error("fixture missing input.aws_event");
+  }
+
+  const raw = awsEvent.event ?? {};
+  const resp = await app.handleLambda(raw, {});
+  const actual = canonicalResponseFromAPIGatewayProxyResponse(resp);
+
+  return {
+    actual,
+    wsCalls: {
+      endpoint: wsClient?.endpoint ?? "",
+      calls: Array.isArray(wsClient?.calls) ? wsClient.calls : [],
+    },
+  };
 }
 
 async function runFixtureP0(fixture) {
@@ -978,6 +1131,33 @@ function canonicalResponseFromLambdaFunctionURLResponse(resp) {
     status,
     headers,
     cookies: Array.isArray(resp?.cookies) ? resp.cookies.map((c) => String(c)) : [],
+    body,
+    is_base64: isBase64Encoded,
+  };
+}
+
+function canonicalResponseFromAPIGatewayProxyResponse(resp) {
+  const status = Number(resp?.statusCode ?? 0);
+  const isBase64Encoded = Boolean(resp?.isBase64Encoded);
+  const bodyStr = String(resp?.body ?? "");
+  const body = isBase64Encoded ? Buffer.from(bodyStr, "base64") : Buffer.from(bodyStr, "utf8");
+
+  const headersSource =
+    resp?.multiValueHeaders && Object.keys(resp.multiValueHeaders).length > 0 ? resp.multiValueHeaders : resp?.headers ?? {};
+
+  const headersRaw = {};
+  for (const [key, value] of Object.entries(headersSource ?? {})) {
+    headersRaw[key] = Array.isArray(value) ? value.map((v) => String(v)) : [String(value)];
+  }
+  const headers = canonicalizeHeaders(headersRaw);
+
+  const cookies = Array.isArray(headers["set-cookie"]) ? headers["set-cookie"].map((v) => String(v)) : [];
+  delete headers["set-cookie"];
+
+  return {
+    status,
+    headers,
+    cookies,
     body,
     is_base64: isBase64Encoded,
   };

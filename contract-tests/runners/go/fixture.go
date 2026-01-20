@@ -22,6 +22,7 @@ type Fixture struct {
 type FixtureSetup struct {
 	Limits      FixtureLimits             `json:"limits,omitempty"`
 	Routes      []FixtureRoute            `json:"routes,omitempty"`
+	WebSockets  []FixtureWebSocketRoute   `json:"websockets,omitempty"`
 	SQS         []FixtureSQSRoute         `json:"sqs,omitempty"`
 	EventBridge []FixtureEventBridgeRoute `json:"eventbridge,omitempty"`
 	DynamoDB    []FixtureDynamoDBRoute    `json:"dynamodb,omitempty"`
@@ -32,6 +33,11 @@ type FixtureRoute struct {
 	Path         string `json:"path"`
 	Handler      string `json:"handler"`
 	AuthRequired bool   `json:"auth_required,omitempty"`
+}
+
+type FixtureWebSocketRoute struct {
+	RouteKey string `json:"route_key"`
+	Handler  string `json:"handler"`
 }
 
 type FixtureSQSRoute struct {
@@ -76,11 +82,12 @@ type FixtureRequest struct {
 }
 
 type FixtureExpect struct {
-	Response *FixtureResponse      `json:"response,omitempty"`
-	Output   json.RawMessage       `json:"output_json,omitempty"`
-	Logs     []FixtureLogRecord    `json:"logs,omitempty"`
-	Metrics  []FixtureMetricRecord `json:"metrics,omitempty"`
-	Spans    []FixtureSpanRecord   `json:"spans,omitempty"`
+	Response       *FixtureResponse       `json:"response,omitempty"`
+	Output         json.RawMessage        `json:"output_json,omitempty"`
+	WebSocketCalls []FixtureWebSocketCall `json:"ws_calls,omitempty"`
+	Logs           []FixtureLogRecord     `json:"logs,omitempty"`
+	Metrics        []FixtureMetricRecord  `json:"metrics,omitempty"`
+	Spans          []FixtureSpanRecord    `json:"spans,omitempty"`
 }
 
 type FixtureResponse struct {
@@ -90,6 +97,13 @@ type FixtureResponse struct {
 	Body     *FixtureBody        `json:"body,omitempty"`
 	BodyJSON json.RawMessage     `json:"body_json,omitempty"`
 	IsBase64 bool                `json:"is_base64"`
+}
+
+type FixtureWebSocketCall struct {
+	Op           string       `json:"op"`
+	Endpoint     string       `json:"endpoint,omitempty"`
+	ConnectionID string       `json:"connection_id"`
+	Data         *FixtureBody `json:"data,omitempty"`
 }
 
 type FixtureBody struct {
@@ -126,7 +140,7 @@ type FixtureSpanRecord struct {
 
 func loadFixtures(fixturesRoot string) ([]Fixture, error) {
 	var files []string
-	for _, tier := range []string{"p0", "p1", "p2", "m1"} {
+	for _, tier := range []string{"p0", "p1", "p2", "m1", "m2"} {
 		matches, err := filepath.Glob(filepath.Join(fixturesRoot, tier, "*.json"))
 		if err != nil {
 			return nil, fmt.Errorf("glob %s fixtures: %w", tier, err)

@@ -65,6 +65,34 @@ def lambda_function_url_response_from_response(resp: Response) -> dict[str, Any]
     }
 
 
+def apigw_proxy_response_from_response(resp: Response) -> dict[str, Any]:
+    headers: dict[str, str] = {}
+    multi: dict[str, list[str]] = {}
+    for key, values in (resp.headers or {}).items():
+        if not values:
+            continue
+        headers[str(key)] = str(values[0])
+        multi[str(key)] = [str(v) for v in values]
+
+    if resp.cookies:
+        headers["set-cookie"] = str(resp.cookies[0])
+        multi["set-cookie"] = [str(c) for c in resp.cookies]
+
+    body = (
+        base64.b64encode(resp.body).decode("ascii")
+        if resp.is_base64
+        else resp.body.decode("utf-8", errors="replace")
+    )
+
+    return {
+        "statusCode": int(resp.status),
+        "headers": headers,
+        "multiValueHeaders": multi,
+        "body": body,
+        "isBase64Encoded": bool(resp.is_base64),
+    }
+
+
 def build_apigw_v2_request(
     method: str,
     path: str,
@@ -214,4 +242,3 @@ def _split_path_and_query(path: str, query: dict[str, list[str]] | None) -> tupl
         return normalized_path, urllib.parse.urlencode(items, doseq=True)
 
     return normalized_path, raw_query_from_path
-
