@@ -243,6 +243,9 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 
 	routeKey := strings.TrimSpace(event.RequestContext.RouteKey)
 	handler := a.webSocketHandlerForRoute(routeKey)
+	if handler != nil {
+		handler = WebSocketHandler(a.applyMiddlewares(Handler(handler)))
+	}
 
 	requestID := strings.TrimSpace(event.RequestContext.RequestID)
 	if requestID == "" {

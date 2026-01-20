@@ -102,6 +102,8 @@ These are required for Lift parity (e.g. Lesser usage) and must become fixture-b
 
 | Feature | Fixtures | Go | TS | Py | Notes |
 | --- | --- | --- | --- | --- | --- |
+| Global middleware pipeline (`app.Use`) | m12 | 🟨 | 🟨 | 🟨 | implemented; not fixture-backed yet |
+| Context value bag (`ctx.Set/Get`) | m12 | 🟨 | 🟨 | 🟨 | implemented; not fixture-backed yet |
 | Request ID middleware | P1 | ✅ | ✅ | ✅ | |
 | Auth hook interface | P1 | ✅ | ✅ | ✅ | |
 | Tenant extraction | P1 | ✅ | ✅ | ✅ | |

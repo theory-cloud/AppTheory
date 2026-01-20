@@ -23,6 +23,7 @@ class Context:
     remaining_ms: int
     middleware_trace: list[str]
     websocket: WebSocketContext | None
+    _values: dict[str, Any]
 
     def __init__(
         self,
@@ -50,6 +51,7 @@ class Context:
         self.remaining_ms = int(remaining_ms or 0)
         self.middleware_trace = middleware_trace if middleware_trace is not None else []
         self.websocket = websocket
+        self._values = {}
 
     def now(self):
         return self.clock.now()
@@ -59,6 +61,18 @@ class Context:
 
     def param(self, name: str) -> str:
         return self.params.get(name, "")
+
+    def set(self, key: str, value: Any) -> None:
+        name = str(key or "").strip()
+        if not name:
+            return
+        self._values[name] = value
+
+    def get(self, key: str, default: Any | None = None) -> Any:
+        name = str(key or "").strip()
+        if not name:
+            return default
+        return self._values.get(name, default)
 
     def as_websocket(self) -> WebSocketContext | None:
         return self.websocket
