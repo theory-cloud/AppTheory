@@ -17,6 +17,10 @@ type App struct {
 	sqsRoutes         []sqsRoute
 	eventBridgeRoutes []eventBridgeRoute
 	dynamoDBRoutes    []dynamoDBRoute
+
+	webSocketEnabled       bool
+	webSocketRoutes        []webSocketRoute
+	webSocketClientFactory WebSocketClientFactory
 }
 
 type Option func(*App)
@@ -54,6 +58,11 @@ func New(opts ...Option) *App {
 		}
 		opt(app)
 	}
+
+	if app.webSocketClientFactory == nil {
+		app.webSocketClientFactory = defaultWebSocketClientFactory
+	}
+
 	return app
 }
 

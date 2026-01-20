@@ -367,7 +367,7 @@ func (a *App) ServeDynamoDBStream(ctx context.Context, event events.DynamoDBEven
 
 type lambdaEnvelope struct {
 	Records        json.RawMessage `json:"Records"`
-	RequestContext any             `json:"requestContext"`
+	RequestContext json.RawMessage `json:"requestContext"`
 	RouteKey       *string         `json:"routeKey"`
 	DetailType     *string         `json:"detail-type"`
 }
@@ -418,23 +418,47 @@ func (a *App) handleLambdaEventBridge(ctx context.Context, event json.RawMessage
 }
 
 func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMessage, env lambdaEnvelope) (any, bool, error) {
-	if env.RequestContext == nil {
+	if len(env.RequestContext) == 0 {
 		return nil, false, nil
 	}
 
-	if env.RouteKey != nil {
-		var http events.APIGatewayV2HTTPRequest
-		if err := json.Unmarshal(event, &http); err != nil {
-			return nil, true, fmt.Errorf("apptheory: parse apigw v2 event: %w", err)
-		}
-		return a.ServeAPIGatewayV2(ctx, http), true, nil
+	var probe struct {
+		HTTP         json.RawMessage `json:"http"`
+		ConnectionID *string         `json:"connectionId"`
+	}
+	if err := json.Unmarshal(env.RequestContext, &probe); err != nil {
+		return nil, false, nil
 	}
 
-	var urlEvent events.LambdaFunctionURLRequest
-	if err := json.Unmarshal(event, &urlEvent); err != nil {
-		return nil, true, fmt.Errorf("apptheory: parse lambda url event: %w", err)
+	if len(probe.HTTP) > 0 {
+		if env.RouteKey != nil {
+			var http events.APIGatewayV2HTTPRequest
+			if err := json.Unmarshal(event, &http); err != nil {
+				return nil, true, fmt.Errorf("apptheory: parse apigw v2 event: %w", err)
+			}
+			return a.ServeAPIGatewayV2(ctx, http), true, nil
+		}
+
+		var urlEvent events.LambdaFunctionURLRequest
+		if err := json.Unmarshal(event, &urlEvent); err != nil {
+			return nil, true, fmt.Errorf("apptheory: parse lambda url event: %w", err)
+		}
+		return a.ServeLambdaFunctionURL(ctx, urlEvent), true, nil
 	}
-	return a.ServeLambdaFunctionURL(ctx, urlEvent), true, nil
+
+	if probe.ConnectionID != nil {
+		if !a.webSocketEnabled {
+			return nil, false, nil
+		}
+
+		var ws events.APIGatewayWebsocketProxyRequest
+		if err := json.Unmarshal(event, &ws); err != nil {
+			return nil, true, fmt.Errorf("apptheory: parse apigw websocket event: %w", err)
+		}
+		return a.ServeWebSocket(ctx, ws), true, nil
+	}
+
+	return nil, false, nil
 }
 
 // HandleLambda routes an untyped Lambda event to the correct AppTheory entrypoint.
