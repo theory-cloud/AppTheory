@@ -36,7 +36,7 @@ func TestMiddleware_OrderIsDeterministic(t *testing.T) {
 
 	app.Use(func(next Handler) Handler {
 		return func(ctx *Context) (*Response, error) {
-			trace, _ := ctx.Get("trace").([]string)
+			trace := traceFromContext(ctx)
 			ctx.Set("trace", append(trace, "m1"))
 			return next(ctx)
 		}
@@ -44,14 +44,14 @@ func TestMiddleware_OrderIsDeterministic(t *testing.T) {
 
 	app.Use(func(next Handler) Handler {
 		return func(ctx *Context) (*Response, error) {
-			trace, _ := ctx.Get("trace").([]string)
+			trace := traceFromContext(ctx)
 			ctx.Set("trace", append(trace, "m2"))
 			return next(ctx)
 		}
 	})
 
 	app.Get("/", func(ctx *Context) (*Response, error) {
-		trace, _ := ctx.Get("trace").([]string)
+		trace := traceFromContext(ctx)
 		return MustJSON(200, map[string]any{"trace": append(trace, "handler")}), nil
 	})
 
@@ -72,4 +72,16 @@ func TestMiddleware_OrderIsDeterministic(t *testing.T) {
 			t.Fatalf("unexpected trace: got=%v want=%v", body.Trace, want)
 		}
 	}
+}
+
+func traceFromContext(ctx *Context) []string {
+	if ctx == nil {
+		return nil
+	}
+	value := ctx.Get("trace")
+	trace, ok := value.([]string)
+	if !ok {
+		return nil
+	}
+	return trace
 }

@@ -6,10 +6,9 @@ import (
 )
 
 type AppTheoryEventBridgeHandlerProps struct {
-	Handler awslambda.IFunction `field:"required" json:"handler" yaml:"handler"`
-	Schedule awsevents.Schedule `field:"required" json:"schedule" yaml:"schedule"`
-	Description *string `field:"optional" json:"description" yaml:"description"`
-	Enabled *bool `field:"optional" json:"enabled" yaml:"enabled"`
-	RuleName *string `field:"optional" json:"ruleName" yaml:"ruleName"`
+	Handler     awslambda.IFunction `field:"required" json:"handler" yaml:"handler"`
+	Schedule    awsevents.Schedule  `field:"required" json:"schedule" yaml:"schedule"`
+	Description *string             `field:"optional" json:"description" yaml:"description"`
+	Enabled     *bool               `field:"optional" json:"enabled" yaml:"enabled"`
+	RuleName    *string             `field:"optional" json:"ruleName" yaml:"ruleName"`
 }
-

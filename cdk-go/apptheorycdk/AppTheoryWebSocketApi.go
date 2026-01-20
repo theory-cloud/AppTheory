@@ -54,7 +54,6 @@ func (j *jsiiProxy_AppTheoryWebSocketApi) Stage() awsapigatewayv2.WebSocketStage
 	return returns
 }
 
-
 func NewAppTheoryWebSocketApi(scope constructs.Construct, id *string, props *AppTheoryWebSocketApiProps) AppTheoryWebSocketApi {
 	_init_.Initialize()
 
@@ -129,4 +128,3 @@ func (a *jsiiProxy_AppTheoryWebSocketApi) ToString() *string {
 
 	return returns
 }
-

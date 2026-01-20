@@ -11,4 +11,3 @@ func validateAppTheoryDynamoDBStreamMapping_IsConstructParameters(x interface{})
 func validateNewAppTheoryDynamoDBStreamMappingParameters(scope constructs.Construct, id *string, props *AppTheoryDynamoDBStreamMappingProps) error {
 	return nil
 }
-
