@@ -61,6 +61,56 @@ export interface LambdaFunctionURLResponse {
   cookies: string[];
 }
 
+export interface SQSEvent {
+  Records: SQSMessage[];
+}
+
+export interface SQSMessage {
+  messageId: string;
+  body?: string;
+  eventSource?: string;
+  eventSourceARN?: string;
+  [key: string]: unknown;
+}
+
+export interface SQSEventResponse {
+  batchItemFailures: { itemIdentifier: string }[];
+}
+
+export interface DynamoDBStreamEvent {
+  Records: DynamoDBStreamRecord[];
+}
+
+export interface DynamoDBStreamRecord {
+  eventID: string;
+  eventName?: string;
+  eventSource?: string;
+  eventSourceARN?: string;
+  dynamodb?: unknown;
+  [key: string]: unknown;
+}
+
+export interface DynamoDBStreamEventResponse {
+  batchItemFailures: { itemIdentifier: string }[];
+}
+
+export interface EventBridgeEvent {
+  version?: string;
+  id?: string;
+  "detail-type"?: string;
+  detailType?: string;
+  source?: string;
+  resources?: string[];
+  detail?: unknown;
+  [key: string]: unknown;
+}
+
+export interface EventBridgeSelector {
+  ruleName?: string;
+  source?: string;
+  detailType?: string;
+}
+
 export interface Clock {
   now(): Date;
 }
@@ -120,6 +170,20 @@ export declare class Context {
 }
 
 export type Handler = (ctx: Context) => Response | Promise<Response>;
+
+export declare class EventContext {
+  readonly ctx: unknown | null;
+  requestId: string;
+  remainingMs: number;
+  now(): Date;
+  newId(): string;
+}
+
+export type SQSHandler = (ctx: EventContext, message: SQSMessage) => void | Promise<void>;
+
+export type DynamoDBStreamHandler = (ctx: EventContext, record: DynamoDBStreamRecord) => void | Promise<void>;
+
+export type EventBridgeHandler = (ctx: EventContext, event: EventBridgeEvent) => unknown | Promise<unknown>;
 
 export type Tier = "p0" | "p1" | "p2";
 
@@ -185,9 +249,16 @@ export declare class App {
   post(pattern: string, handler: Handler): this;
   put(pattern: string, handler: Handler): this;
   delete(pattern: string, handler: Handler): this;
+  sqs(queueName: string, handler: SQSHandler): this;
+  eventBridge(selector: EventBridgeSelector, handler: EventBridgeHandler): this;
+  dynamoDB(tableName: string, handler: DynamoDBStreamHandler): this;
   serve(request: Request, ctx?: unknown): Promise<Response>;
   serveAPIGatewayV2(event: APIGatewayV2HTTPRequest, ctx?: unknown): Promise<APIGatewayV2HTTPResponse>;
   serveLambdaFunctionURL(event: LambdaFunctionURLRequest, ctx?: unknown): Promise<LambdaFunctionURLResponse>;
+  serveSQSEvent(event: SQSEvent, ctx?: unknown): Promise<SQSEventResponse>;
+  serveEventBridge(event: EventBridgeEvent, ctx?: unknown): Promise<unknown>;
+  serveDynamoDBStream(event: DynamoDBStreamEvent, ctx?: unknown): Promise<DynamoDBStreamEventResponse>;
+  handleLambda(event: unknown, ctx?: unknown): Promise<unknown>;
 }
 
 export declare function createApp(options?: {
@@ -220,6 +291,10 @@ export declare class TestEnv {
   invoke(app: App, request: Request, ctx?: unknown): Promise<Response>;
   invokeAPIGatewayV2(app: App, event: APIGatewayV2HTTPRequest, ctx?: unknown): Promise<APIGatewayV2HTTPResponse>;
   invokeLambdaFunctionURL(app: App, event: LambdaFunctionURLRequest, ctx?: unknown): Promise<LambdaFunctionURLResponse>;
+  invokeSQS(app: App, event: SQSEvent, ctx?: unknown): Promise<SQSEventResponse>;
+  invokeEventBridge(app: App, event: EventBridgeEvent, ctx?: unknown): Promise<unknown>;
+  invokeDynamoDBStream(app: App, event: DynamoDBStreamEvent, ctx?: unknown): Promise<DynamoDBStreamEventResponse>;
+  invokeLambda(app: App, event: unknown, ctx?: unknown): Promise<unknown>;
 }
 
 export declare function createTestEnv(options?: { now?: Date }): TestEnv;
@@ -235,3 +310,23 @@ export declare function buildLambdaFunctionURLRequest(
   path: string,
   options?: { query?: Query; headers?: Record<string, string>; cookies?: string[]; body?: Uint8Array | string; isBase64?: boolean },
 ): LambdaFunctionURLRequest;
+
+export declare function buildSQSEvent(queueArn: string, records?: Array<Partial<SQSMessage>>): SQSEvent;
+
+export declare function buildEventBridgeEvent(options?: {
+  ruleArn?: string;
+  resources?: string[];
+  version?: string;
+  id?: string;
+  source?: string;
+  detailType?: string;
+  account?: string;
+  time?: string;
+  region?: string;
+  detail?: unknown;
+}): EventBridgeEvent;
+
+export declare function buildDynamoDBStreamEvent(
+  streamArn: string,
+  records?: Array<Partial<DynamoDBStreamRecord>>,
+): DynamoDBStreamEvent;

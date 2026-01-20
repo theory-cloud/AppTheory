@@ -51,7 +51,7 @@ function deepEqual(a, b) {
 }
 
 function listFixtureFiles(fixturesRoot) {
-  const tiers = ["p0", "p1", "p2"];
+  const tiers = ["p0", "p1", "p2", "m1"];
   const files = [];
   for (const tier of tiers) {
     const dir = path.join(fixturesRoot, tier);
@@ -616,6 +616,10 @@ async function runFixture(fixture) {
     const { actual, effects } = await runFixtureP2(fixture);
     return compareFixture(fixture, actual, effects);
   }
+  if (tier === "m1") {
+    const { actualOutput } = await runFixtureM1(fixture);
+    return compareFixtureOutputJson(fixture, actualOutput);
+  }
 
   const enableP1 = ["p1", "p2"].includes(tier);
   const enableP2 = tier === "p2";
@@ -772,6 +776,113 @@ function compareFixture(fixture, actual, effects) {
     };
   }
   return { ok: true };
+}
+
+function compareFixtureOutputJson(fixture, actualOutput) {
+  if (!fixture.expect || !Object.prototype.hasOwnProperty.call(fixture.expect, "output_json")) {
+    return {
+      ok: false,
+      reason: "missing expect.output_json",
+      expected_output_json: null,
+      actual_output_json: actualOutput,
+    };
+  }
+  const expectedOutput = fixture.expect.output_json;
+  if (stableStringify(expectedOutput) !== stableStringify(actualOutput)) {
+    return {
+      ok: false,
+      reason: "output_json mismatch",
+      expected_output_json: expectedOutput,
+      actual_output_json: actualOutput,
+    };
+  }
+  return { ok: true };
+}
+
+function builtInSQSHandler(name) {
+  switch (String(name ?? "").trim()) {
+    case "sqs_noop":
+      return async () => {};
+    case "sqs_always_fail":
+      return async () => {
+        throw new Error("fail");
+      };
+    case "sqs_fail_on_body":
+      return async (_ctx, msg) => {
+        if (String(msg?.body ?? "").trim() === "fail") {
+          throw new Error("fail");
+        }
+      };
+    default:
+      return null;
+  }
+}
+
+function builtInDynamoDBStreamHandler(name) {
+  switch (String(name ?? "").trim()) {
+    case "ddb_noop":
+      return async () => {};
+    case "ddb_always_fail":
+      return async () => {
+        throw new Error("fail");
+      };
+    case "ddb_fail_on_event_name_remove":
+      return async (_ctx, record) => {
+        if (String(record?.eventName ?? "").trim() === "REMOVE") {
+          throw new Error("fail");
+        }
+      };
+    default:
+      return null;
+  }
+}
+
+function builtInEventBridgeHandler(name) {
+  switch (String(name ?? "").trim()) {
+    case "eventbridge_static_a":
+      return async () => ({ handler: "a" });
+    case "eventbridge_static_b":
+      return async () => ({ handler: "b" });
+    default:
+      return null;
+  }
+}
+
+async function runFixtureM1(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const app = runtime.createApp({ tier: "p0" });
+
+  for (const route of fixture.setup?.sqs ?? []) {
+    const handler = builtInSQSHandler(route.handler);
+    if (!handler) {
+      throw new Error(`unknown sqs handler ${JSON.stringify(route.handler)}`);
+    }
+    app.sqs(route.queue, handler);
+  }
+
+  for (const route of fixture.setup?.dynamodb ?? []) {
+    const handler = builtInDynamoDBStreamHandler(route.handler);
+    if (!handler) {
+      throw new Error(`unknown dynamodb handler ${JSON.stringify(route.handler)}`);
+    }
+    app.dynamoDB(route.table, handler);
+  }
+
+  for (const route of fixture.setup?.eventbridge ?? []) {
+    const handler = builtInEventBridgeHandler(route.handler);
+    if (!handler) {
+      throw new Error(`unknown eventbridge handler ${JSON.stringify(route.handler)}`);
+    }
+    app.eventBridge({ ruleName: route.rule_name, source: route.source, detailType: route.detail_type }, handler);
+  }
+
+  const awsEvent = fixture.input?.aws_event ?? null;
+  if (!awsEvent) {
+    throw new Error("fixture missing input.aws_event");
+  }
+
+  const actualOutput = await app.handleLambda(awsEvent.event ?? {}, {});
+  return { actualOutput };
 }
 
 async function runFixtureP0(fixture) {
@@ -1096,8 +1207,13 @@ async function main() {
     if (!result.ok) {
       console.error(`FAIL ${fixture.id} — ${fixture.name}`);
       console.error(`  ${result.reason}`);
-      console.error(`  expected: ${stableStringify(result.expected)}`);
-      console.error(`  got: ${stableStringify(debugActualForExpected(result.actual, result.expected))}`);
+      if ("expected_output_json" in result) {
+        console.error(`  expected.output_json: ${stableStringify(result.expected_output_json)}`);
+        console.error(`  got.output_json: ${stableStringify(result.actual_output_json)}`);
+      } else {
+        console.error(`  expected: ${stableStringify(result.expected)}`);
+        console.error(`  got: ${stableStringify(debugActualForExpected(result.actual, result.expected))}`);
+      }
       if ("expected_logs" in result) {
         console.error(`  expected.logs: ${stableStringify(result.expected_logs)}`);
         console.error(`  got.logs: ${stableStringify(result.actual_logs)}`);

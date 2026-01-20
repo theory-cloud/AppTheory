@@ -52,7 +52,7 @@ def stable_json(value: Any) -> str:
 
 def list_fixture_files(fixtures_root: Path) -> list[Path]:
     files: list[Path] = []
-    for tier in ("p0", "p1", "p2"):
+    for tier in ("p0", "p1", "p2", "m1"):
         tier_dir = fixtures_root / tier
         if not tier_dir.exists():
             continue
@@ -695,6 +695,8 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
         return run_fixture_p1(fixture)
     if tier == "p2":
         return run_fixture_p2(fixture)
+    if tier == "m1":
+        return run_fixture_m1(fixture)
 
     setup = fixture.get("setup", {})
     input_ = fixture.get("input", {})
@@ -852,6 +854,100 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
         return lambda _ctx: runtime.text(200, "12345")
 
     return None
+
+
+def _built_in_sqs_handler(name: str):
+    if name == "sqs_noop":
+        return lambda _ctx, _msg: None
+
+    if name == "sqs_always_fail":
+        def handler(_ctx, _msg):
+            raise RuntimeError("fail")
+
+        return handler
+
+    if name == "sqs_fail_on_body":
+        def handler(_ctx, msg):
+            if str((msg or {}).get("body") or "").strip() == "fail":
+                raise RuntimeError("fail")
+
+        return handler
+
+    return None
+
+
+def _built_in_dynamodb_stream_handler(name: str):
+    if name == "ddb_noop":
+        return lambda _ctx, _record: None
+
+    if name == "ddb_always_fail":
+        def handler(_ctx, _record):
+            raise RuntimeError("fail")
+
+        return handler
+
+    if name == "ddb_fail_on_event_name_remove":
+        def handler(_ctx, record):
+            if str((record or {}).get("eventName") or "").strip() == "REMOVE":
+                raise RuntimeError("fail")
+
+        return handler
+
+    return None
+
+
+def _built_in_eventbridge_handler(name: str):
+    if name == "eventbridge_static_a":
+        return lambda _ctx, _event: {"handler": "a"}
+    if name == "eventbridge_static_b":
+        return lambda _ctx, _event: {"handler": "b"}
+    return None
+
+
+def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _DummyEffectsApp]:
+    runtime = _load_apptheory_runtime()
+    app = runtime.create_app(tier="p0")
+
+    setup = fixture.get("setup", {}) or {}
+    for route in setup.get("sqs", []) or []:
+        handler = _built_in_sqs_handler(str(route.get("handler") or ""))
+        if handler is None:
+            raise RuntimeError(f"unknown sqs handler {route.get('handler')!r}")
+        app.sqs(str(route.get("queue") or ""), handler)
+
+    for route in setup.get("dynamodb", []) or []:
+        handler = _built_in_dynamodb_stream_handler(str(route.get("handler") or ""))
+        if handler is None:
+            raise RuntimeError(f"unknown dynamodb handler {route.get('handler')!r}")
+        app.dynamodb(str(route.get("table") or ""), handler)
+
+    for route in setup.get("eventbridge", []) or []:
+        handler = _built_in_eventbridge_handler(str(route.get("handler") or ""))
+        if handler is None:
+            raise RuntimeError(f"unknown eventbridge handler {route.get('handler')!r}")
+        selector = runtime.EventBridgeSelector(
+            rule_name=str(route.get("rule_name") or "").strip(),
+            source=str(route.get("source") or "").strip(),
+            detail_type=str(route.get("detail_type") or "").strip(),
+        )
+        app.event_bridge(selector, handler)
+
+    input_ = fixture.get("input", {}) or {}
+    aws_event = (input_ or {}).get("aws_event") or {}
+    event = (aws_event or {}).get("event")
+    if not isinstance(event, dict):
+        raise RuntimeError("fixture missing input.aws_event.event")
+
+    actual_output = app.handle_lambda(event, ctx={})
+    expect_obj = fixture.get("expect", {}) or {}
+    if "output_json" not in expect_obj:
+        return False, "missing expect.output_json", actual_output, None, _DummyEffectsApp()
+
+    expected_output = expect_obj.get("output_json")
+    if stable_json(expected_output) != stable_json(actual_output):
+        return False, "output_json mismatch", actual_output, expected_output, _DummyEffectsApp()
+
+    return True, "", actual_output, expected_output, _DummyEffectsApp()
 
 
 def run_fixture_p0(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
@@ -1209,14 +1305,18 @@ def main() -> int:
             continue
         print(f"FAIL {fixture['id']} — {fixture.get('name', '')}", file=sys.stderr)
         print(f"  {reason}", file=sys.stderr)
-        print(f"  expected: {stable_json(expected)}", file=sys.stderr)
-        print(f"  got: {stable_json(debug_actual_for_expected(actual, expected))}", file=sys.stderr)
-        print(f"  expected.logs: {stable_json(fixture.get('expect', {}).get('logs') or [])}", file=sys.stderr)
-        print(f"  got.logs: {stable_json(app.logs)}", file=sys.stderr)
-        print(f"  expected.metrics: {stable_json(fixture.get('expect', {}).get('metrics') or [])}", file=sys.stderr)
-        print(f"  got.metrics: {stable_json(app.metrics)}", file=sys.stderr)
-        print(f"  expected.spans: {stable_json(fixture.get('expect', {}).get('spans') or [])}", file=sys.stderr)
-        print(f"  got.spans: {stable_json(app.spans)}", file=sys.stderr)
+        if "output_json" in (fixture.get("expect", {}) or {}):
+            print(f"  expected.output_json: {stable_json(expected)}", file=sys.stderr)
+            print(f"  got.output_json: {stable_json(actual)}", file=sys.stderr)
+        else:
+            print(f"  expected: {stable_json(expected)}", file=sys.stderr)
+            print(f"  got: {stable_json(debug_actual_for_expected(actual, expected))}", file=sys.stderr)
+            print(f"  expected.logs: {stable_json(fixture.get('expect', {}).get('logs') or [])}", file=sys.stderr)
+            print(f"  got.logs: {stable_json(app.logs)}", file=sys.stderr)
+            print(f"  expected.metrics: {stable_json(fixture.get('expect', {}).get('metrics') or [])}", file=sys.stderr)
+            print(f"  got.metrics: {stable_json(app.metrics)}", file=sys.stderr)
+            print(f"  expected.spans: {stable_json(fixture.get('expect', {}).get('spans') or [])}", file=sys.stderr)
+            print(f"  got.spans: {stable_json(app.spans)}", file=sys.stderr)
         failed.append(fixture)
 
     if failed:

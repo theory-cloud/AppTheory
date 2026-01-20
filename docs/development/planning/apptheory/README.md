@@ -19,6 +19,7 @@ Primary goals:
 
 - `docs/development/planning/apptheory/apptheory-multilang-roadmap.md` (primary roadmap + acceptance criteria)
 - `docs/development/planning/apptheory/apptheory-gap-analysis.md` (current gaps + remediation roadmap)
+- `docs/development/planning/apptheory/apptheory-gap-analysis-lesser.md` (Lift parity gaps derived from `equaltoai/lesser`)
 
 ## Sub-roadmaps (deep workstreams)
 
@@ -28,6 +29,10 @@ Primary goals:
 - `docs/development/planning/apptheory/subroadmaps/SR-MOCKS.md` (AWS mocks + local testkits per language)
 - `docs/development/planning/apptheory/subroadmaps/SR-PROD-FEATURES.md` (multi-tenant/auth/observability/rate limits)
 - `docs/development/planning/apptheory/subroadmaps/SR-MIGRATION.md` (Lift → AppTheory migration plan)
+- `docs/development/planning/apptheory/subroadmaps/SR-EVENTSOURCES.md` (SQS/EventBridge/DynamoDB Streams parity)
+- `docs/development/planning/apptheory/subroadmaps/SR-WEBSOCKETS.md` (WebSocket runtime + `streamer` parity)
+- `docs/development/planning/apptheory/subroadmaps/SR-SSE.md` (API Gateway REST v1 + SSE streaming parity)
+- `docs/development/planning/apptheory/subroadmaps/SR-LINT.md` (lint parity across Go/TS/Py)
 
 ## Supporting docs (living references)
 
