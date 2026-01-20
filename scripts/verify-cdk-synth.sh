@@ -33,6 +33,7 @@ fi
 tmp_out="$(mktemp -d)"
 tmp_log="$(mktemp)"
 cleanup() {
+  rm -rf "${example_dir}/node_modules" >/dev/null 2>&1 || true
   rm -rf "${tmp_out}"
   rm -f "${tmp_log}"
 }
