@@ -1,6 +1,6 @@
 # AppTheory Makefile
 
-.PHONY: all build test test-unit lint fmt fmt-check rubric
+.PHONY: all build test test-unit lint fmt fmt-check rubric verify-builds
 
 TOOLCHAIN := $(shell awk '/^toolchain / {print $$2}' go.mod | head -n 1)
 export GOTOOLCHAIN ?= $(TOOLCHAIN)
@@ -34,3 +34,6 @@ fmt-check:
 
 rubric:
 	@./scripts/verify-rubric.sh
+
+verify-builds:
+	@./scripts/verify-builds.sh
