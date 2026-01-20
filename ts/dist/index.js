@@ -1664,14 +1664,22 @@ class Router {
   add(method, pattern, handler, options = {}) {
     const normalizedMethod = normalizeMethod(method);
     const normalizedPattern = normalizePath(pattern);
-    const segments = normalizeRouteSegments(splitPath(normalizedPattern));
-    const normalizedPatternValue = segments.length > 0 ? `/${segments.join("/")}` : "/";
+    const parsed = parseRouteSegments(splitPath(normalizedPattern));
+    if (!parsed.ok) {
+      return;
+    }
+
+    const normalizedPatternValue = parsed.canonicalSegments.length > 0 ? `/${parsed.canonicalSegments.join("/")}` : "/";
     this._routes.push({
       method: normalizedMethod,
       pattern: normalizedPatternValue,
-      segments,
+      segments: parsed.segments,
       handler,
       authRequired: Boolean(options?.authRequired),
+      staticCount: parsed.staticCount,
+      paramCount: parsed.paramCount,
+      hasProxy: parsed.hasProxy,
+      order: this._routes.length,
     });
   }
 
@@ -1680,17 +1688,20 @@ class Router {
     const pathSegments = splitPath(normalizePath(path));
 
     const allowed = [];
+    let best = null;
     for (const route of this._routes) {
-      const params = matchPath(route.segments, pathSegments);
+      const params = matchRoute(route.segments, pathSegments);
       if (!params) {
         continue;
       }
       allowed.push(route.method);
       if (route.method === normalizedMethod) {
-        return { match: { route, params }, allowed };
+        if (!best || routeMoreSpecific(route, best.route)) {
+          best = { route, params };
+        }
       }
     }
-    return { match: null, allowed };
+    return { match: best, allowed };
   }
 }
 
@@ -1714,34 +1725,117 @@ function splitPath(path) {
   return value.split("/");
 }
 
-function normalizeRouteSegments(segments) {
-  if (!segments || segments.length === 0) return [];
-  return segments.map((segment) => {
-    const value = String(segment ?? "");
-    if (value.startsWith(":") && value.length > 1) {
-      return `{${value.slice(1)}}`;
+function parseRouteSegments(rawSegments) {
+  const rawList = Array.isArray(rawSegments) ? rawSegments : [];
+  const segments = [];
+  const canonicalSegments = [];
+  let staticCount = 0;
+  let paramCount = 0;
+  let hasProxy = false;
+
+  for (let i = 0; i < rawList.length; i += 1) {
+    let raw = String(rawList[i] ?? "").trim();
+    if (!raw) return { ok: false };
+
+    if (raw.startsWith(":") && raw.length > 1) {
+      raw = `{${raw.slice(1)}}`;
     }
-    return value;
-  });
-}
 
-function matchPath(patternSegments, pathSegments) {
-  if (patternSegments.length !== pathSegments.length) return null;
+    if (raw.startsWith("{") && raw.endsWith("}") && raw.length > 2) {
+      const inner = raw.slice(1, -1).trim();
+      if (inner.endsWith("+")) {
+        const name = inner.slice(0, -1).trim();
+        if (!name) return { ok: false };
+        if (i !== rawList.length - 1) return { ok: false };
+        segments.push({ kind: "proxy", value: name });
+        canonicalSegments.push(`{${name}+}`);
+        hasProxy = true;
+        continue;
+      }
 
-  const params = {};
-  for (let i = 0; i < patternSegments.length; i += 1) {
-    const pattern = patternSegments[i];
-    const segment = pathSegments[i];
-    if (!segment) return null;
-
-    if (pattern.startsWith("{") && pattern.endsWith("}") && pattern.length > 2) {
-      const name = pattern.slice(1, -1);
-      params[name] = segment;
+      if (!inner) return { ok: false };
+      segments.push({ kind: "param", value: inner });
+      canonicalSegments.push(`{${inner}}`);
+      paramCount += 1;
       continue;
     }
-    if (pattern !== segment) return null;
+
+    segments.push({ kind: "static", value: raw });
+    canonicalSegments.push(raw);
+    staticCount += 1;
+  }
+
+  return { ok: true, segments, canonicalSegments, staticCount, paramCount, hasProxy };
+}
+
+function matchRoute(patternSegments, pathSegments) {
+  const patterns = Array.isArray(patternSegments) ? patternSegments : [];
+  const paths = Array.isArray(pathSegments) ? pathSegments : [];
+  if (patterns.length === 0) return paths.length === 0 ? {} : null;
+
+  const last = patterns[patterns.length - 1];
+  const hasProxy = last?.kind === "proxy";
+
+  if (hasProxy) {
+    const prefixLen = patterns.length - 1;
+    if (paths.length <= prefixLen) return null;
+
+    const params = {};
+    for (let i = 0; i < prefixLen; i += 1) {
+      const pattern = patterns[i];
+      const segment = paths[i];
+      if (!segment) return null;
+      if (pattern.kind === "static") {
+        if (pattern.value !== segment) return null;
+      } else if (pattern.kind === "param") {
+        params[pattern.value] = segment;
+      } else {
+        return null;
+      }
+    }
+
+    params[last.value] = paths.slice(prefixLen).join("/");
+    return params;
+  }
+
+  if (patterns.length !== paths.length) return null;
+
+  const params = {};
+  for (let i = 0; i < patterns.length; i += 1) {
+    const pattern = patterns[i];
+    const segment = paths[i];
+    if (!segment) return null;
+    if (pattern.kind === "static") {
+      if (pattern.value !== segment) return null;
+    } else if (pattern.kind === "param") {
+      params[pattern.value] = segment;
+    } else {
+      return null;
+    }
   }
   return params;
+}
+
+function routeMoreSpecific(a, b) {
+  const aStatic = Number(a?.staticCount ?? 0);
+  const bStatic = Number(b?.staticCount ?? 0);
+  if (aStatic !== bStatic) return aStatic > bStatic;
+
+  const aParam = Number(a?.paramCount ?? 0);
+  const bParam = Number(b?.paramCount ?? 0);
+  if (aParam !== bParam) return aParam > bParam;
+
+  const aProxy = Boolean(a?.hasProxy ?? false);
+  const bProxy = Boolean(b?.hasProxy ?? false);
+  if (aProxy !== bProxy) return !aProxy && bProxy;
+
+  const aLen = Array.isArray(a?.segments) ? a.segments.length : 0;
+  const bLen = Array.isArray(b?.segments) ? b.segments.length : 0;
+  if (aLen !== bLen) return aLen > bLen;
+
+  const aOrder = Number(a?.order ?? 0);
+  const bOrder = Number(b?.order ?? 0);
+  return aOrder < bOrder;
 }
 
 function canonicalizeHeaders(headers) {
