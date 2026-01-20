@@ -16,6 +16,7 @@ export interface Response {
   headers: Headers;
   cookies: string[];
   body: Uint8Array;
+  bodyStream?: AsyncIterable<Uint8Array> | Iterable<Uint8Array> | null;
   isBase64: boolean;
 }
 

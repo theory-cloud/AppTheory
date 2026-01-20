@@ -417,7 +417,7 @@ class App:
             return finish(response_for_error_with_request_id(exc, request_id), "app.internal")
 
         resp = normalize_response(resp)
-        if self._limits.max_response_bytes > 0 and len(resp.body) > self._limits.max_response_bytes:
+        if self._limits.max_response_bytes > 0 and resp.body_stream is None and len(resp.body) > self._limits.max_response_bytes:
             return finish(
                 error_response_with_request_id("app.too_large", "response too large", request_id=request_id),
                 "app.too_large",
@@ -959,6 +959,7 @@ def _finalize_p1_response(resp: Response, request_id: str, origin: str, cors: CO
             cookies=resp.cookies,
             body=resp.body,
             is_base64=resp.is_base64,
+            body_stream=resp.body_stream,
         )
     )
 

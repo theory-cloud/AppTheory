@@ -51,7 +51,7 @@ function deepEqual(a, b) {
 }
 
 function listFixtureFiles(fixturesRoot) {
-  const tiers = ["p0", "p1", "p2", "m1", "m2", "m3", "m12"];
+  const tiers = ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14"];
   const files = [];
   for (const tier of tiers) {
     const dir = path.join(fixturesRoot, tier);
@@ -634,6 +634,10 @@ async function runFixture(fixture) {
     const { actual } = await runFixtureM12(fixture);
     return compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
   }
+  if (tier === "m14") {
+    const { actual } = await runFixtureM14(fixture);
+    return compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
+  }
 
   const enableP1 = ["p1", "p2"].includes(tier);
   const enableP2 = tier === "p2";
@@ -665,6 +669,17 @@ function compareFixture(fixture, actual, effects) {
     return { ok: false, reason: "headers mismatch", actual, expected };
   }
 
+  const expectedStreamErrorCode = String(expected.stream_error_code ?? "");
+  const actualStreamErrorCode = String(actual.stream_error_code ?? "");
+  if (expectedStreamErrorCode !== actualStreamErrorCode) {
+    return {
+      ok: false,
+      reason: `stream_error_code: expected ${JSON.stringify(expectedStreamErrorCode)}, got ${JSON.stringify(actualStreamErrorCode)}`,
+      actual,
+      expected,
+    };
+  }
+
   const hasBodyJson = Object.prototype.hasOwnProperty.call(expected, "body_json");
   if (hasBodyJson) {
     let actualJson;
@@ -676,6 +691,60 @@ function compareFixture(fixture, actual, effects) {
     if (!deepEqual(expected.body_json, actualJson)) {
       return { ok: false, reason: "body_json mismatch", actual, expected };
     }
+    const expectedLogs = fixture.expect?.logs ?? [];
+    const expectedMetrics = fixture.expect?.metrics ?? [];
+    const expectedSpans = fixture.expect?.spans ?? [];
+    if (!deepEqual(expectedLogs, effects.logs ?? [])) {
+      return {
+        ok: false,
+        reason: "logs mismatch",
+        actual,
+        expected,
+        expected_logs: expectedLogs,
+        actual_logs: effects.logs ?? [],
+      };
+    }
+    if (!deepEqual(expectedMetrics, effects.metrics ?? [])) {
+      return {
+        ok: false,
+        reason: "metrics mismatch",
+        actual,
+        expected,
+        expected_metrics: expectedMetrics,
+        actual_metrics: effects.metrics ?? [],
+      };
+    }
+    if (!deepEqual(expectedSpans, effects.spans ?? [])) {
+      return {
+        ok: false,
+        reason: "spans mismatch",
+        actual,
+        expected,
+        expected_spans: expectedSpans,
+        actual_spans: effects.spans ?? [],
+      };
+    }
+    return { ok: true };
+  }
+
+  const expectedChunksRaw = expected.chunks ?? null;
+  if (Array.isArray(expectedChunksRaw) && expectedChunksRaw.length > 0) {
+    const expectedChunks = expectedChunksRaw.map(decodeFixtureBody);
+    const actualChunks = Array.isArray(actual.chunks) ? actual.chunks.map((c) => Buffer.from(c ?? [])) : [];
+    if (expectedChunks.length !== actualChunks.length) {
+      return { ok: false, reason: "chunks mismatch", actual, expected };
+    }
+    for (let i = 0; i < expectedChunks.length; i += 1) {
+      if (!expectedChunks[i].equals(actualChunks[i])) {
+        return { ok: false, reason: `chunk ${i} mismatch`, actual, expected };
+      }
+    }
+
+    const expectedBody = expected.body ? decodeFixtureBody(expected.body) : Buffer.concat(expectedChunks);
+    if (!expectedBody.equals(actual.body)) {
+      return { ok: false, reason: "body mismatch", actual, expected };
+    }
+
     const expectedLogs = fixture.expect?.logs ?? [];
     const expectedMetrics = fixture.expect?.metrics ?? [];
     const expectedSpans = fixture.expect?.spans ?? [];
@@ -1195,6 +1264,107 @@ async function runFixtureM12(fixture) {
   return { actual };
 }
 
+async function runFixtureM14(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+
+  const ids = new runtime.ManualIdGenerator();
+  ids.queue("req_test_123");
+
+  const limits = fixture.setup?.limits ?? {};
+  const corsSetup = fixture.setup?.cors ?? null;
+  const cors =
+    corsSetup && typeof corsSetup === "object"
+      ? {
+          allowedOrigins: corsSetup.allowed_origins,
+          allowCredentials: Boolean(corsSetup.allow_credentials),
+          allowHeaders: corsSetup.allow_headers,
+        }
+      : undefined;
+  const app = runtime.createApp({
+    tier: "p1",
+    ids,
+    limits: {
+      maxRequestBytes: Number(limits.max_request_bytes ?? 0),
+      maxResponseBytes: Number(limits.max_response_bytes ?? 0),
+    },
+    ...(cors ? { cors } : {}),
+    authHook: (ctx) => {
+      const authz = firstHeaderValue(ctx.request.headers ?? {}, "authorization").trim();
+      if (!authz) {
+        throw new runtime.AppError("app.unauthorized", "unauthorized");
+      }
+      if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-forbidden")) {
+        throw new runtime.AppError("app.forbidden", "forbidden");
+      }
+      return "authorized";
+    },
+  });
+
+  for (const name of fixture.setup?.middlewares ?? []) {
+    const mw = builtInMiddleware(runtime, name);
+    if (!mw) {
+      throw new Error(`unknown middleware ${JSON.stringify(name)}`);
+    }
+    app.use(mw);
+  }
+
+  for (const route of fixture.setup?.routes ?? []) {
+    const handler = builtInAppTheoryHandler(runtime, route.handler);
+    if (!handler) {
+      throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
+    }
+    app.handle(route.method, route.path, handler, { authRequired: Boolean(route.auth_required) });
+  }
+
+  const input = fixture.input?.request ?? {};
+  const body = decodeFixtureBody(input.body);
+  const req = {
+    method: input.method,
+    path: input.path,
+    query: input.query ?? {},
+    headers: input.headers ?? {},
+    body,
+    isBase64: input.is_base64 ?? false,
+  };
+
+  const runtimeCtx = { remaining_ms: Number(fixture.input?.context?.remaining_ms ?? 0) };
+  const resp = await app.serve(req, runtimeCtx);
+
+  const chunks = [];
+  const buffers = [];
+
+  if (resp.body && Buffer.from(resp.body).length > 0) {
+    const b = Buffer.from(resp.body);
+    chunks.push(b);
+    buffers.push(b);
+  }
+
+  let streamErrorCode = "";
+  if (resp.bodyStream) {
+    try {
+      for await (const chunk of resp.bodyStream) {
+        const b = Buffer.from(chunk ?? []);
+        chunks.push(b);
+        buffers.push(b);
+      }
+    } catch (err) {
+      streamErrorCode = err instanceof runtime.AppError ? String(err.code ?? "") : "app.internal";
+    }
+  }
+
+  const actual = {
+    status: resp.status,
+    headers: resp.headers ?? {},
+    cookies: resp.cookies ?? [],
+    chunks,
+    body: Buffer.concat(buffers),
+    is_base64: resp.isBase64 ?? false,
+    stream_error_code: streamErrorCode,
+  };
+
+  return { actual };
+}
+
 async function runFixtureP0(fixture) {
   const runtime = await loadAppTheoryRuntime();
   const app = runtime.createApp({ tier: "p0" });
@@ -1576,6 +1746,39 @@ function builtInAppTheoryHandler(runtime, name) {
           isBase64: false,
         };
       };
+    case "stream_mutate_headers_after_first_chunk":
+      return () => {
+        const resp = {
+          status: 200,
+          headers: {
+            "content-type": ["text/plain; charset=utf-8"],
+            "x-phase": ["before"],
+          },
+          cookies: ["a=b; Path=/"],
+          body: Buffer.alloc(0),
+          isBase64: false,
+        };
+
+        resp.bodyStream = (async function* () {
+          yield Buffer.from("a", "utf8");
+          resp.headers["x-phase"] = ["after"];
+          yield Buffer.from("b", "utf8");
+        })();
+
+        return resp;
+      };
+    case "stream_error_after_first_chunk":
+      return () => ({
+        status: 200,
+        headers: { "content-type": ["text/plain; charset=utf-8"] },
+        cookies: [],
+        body: Buffer.alloc(0),
+        bodyStream: (async function* () {
+          yield Buffer.from("hello", "utf8");
+          throw new runtime.AppError("app.internal", "boom");
+        })(),
+        isBase64: false,
+      });
     default:
       return null;
   }
