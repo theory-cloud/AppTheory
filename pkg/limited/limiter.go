@@ -3,6 +3,7 @@ package limited
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
@@ -85,7 +86,7 @@ func (r *DynamoRateLimiter) CheckLimit(ctx context.Context, key RateLimitKey) (*
 
 		if err != nil {
 			if tableerrors.IsNotFound(err) {
-				counts[window.Start.Format(time.RFC3339)] = 0
+				counts[window.Key] = 0
 				continue
 			}
 
@@ -101,26 +102,23 @@ func (r *DynamoRateLimiter) CheckLimit(ctx context.Context, key RateLimitKey) (*
 			return nil, WrapError(err, ErrorTypeInternal, "failed to check rate limit")
 		}
 
-		counts[window.Start.Format(time.RFC3339)] = int(record.Count)
+		counts[window.Key] = int(record.Count)
 	}
 
 	limit := r.strategy.GetLimit(key)
 	allowed := r.strategy.ShouldAllow(counts, limit)
 
-	totalCount := 0
-	for _, count := range counts {
-		totalCount += count
-	}
-
+	currentCount := countForPrimaryWindow(r.strategy, windows, counts)
+	resetsAt := resetTimeForDecision(r.strategy, now, windows, counts, allowed)
 	decision := &LimitDecision{
 		Allowed:      allowed,
-		CurrentCount: totalCount,
+		CurrentCount: currentCount,
 		Limit:        limit,
-		ResetsAt:     windows[0].End,
+		ResetsAt:     resetsAt,
 	}
 
 	if !allowed {
-		retryAfter := windows[0].End.Sub(now)
+		retryAfter := resetsAt.Sub(now)
 		decision.RetryAfter = &retryAfter
 	}
 
@@ -141,36 +139,42 @@ func (r *DynamoRateLimiter) RecordRequest(ctx context.Context, key RateLimitKey)
 		return NewError(ErrorTypeInternal, "no windows calculated")
 	}
 
-	window := windows[0]
-
-	entry := &RateLimitEntry{
-		Identifier:  key.Identifier,
-		WindowStart: window.Start.Unix(),
-		Resource:    key.Resource,
-		Operation:   key.Operation,
+	targetWindows := windows[:1]
+	if isMultiWindowStrategy(r.strategy) {
+		targetWindows = windows
 	}
-	entry.SetKeys()
 
-	ttl := window.End.Unix() + int64(r.config.TTLHours*3600)
+	for _, window := range targetWindows {
+		entry := &RateLimitEntry{
+			Identifier:  key.Identifier,
+			WindowStart: window.Start.Unix(),
+			Resource:    key.Resource,
+			Operation:   key.Operation,
+		}
+		entry.SetKeys()
 
-	err := r.db.Model(&RateLimitEntry{}).
-		WithContext(ctx).
-		Where("PK", "=", entry.PK).
-		Where("SK", "=", entry.SK).
-		UpdateBuilder().
-		Add("Count", int64(1)).
-		SetIfNotExists("WindowType", nil, window.Key).
-		SetIfNotExists("WindowID", nil, window.Start.Format(time.RFC3339)).
-		SetIfNotExists("Identifier", nil, key.Identifier).
-		SetIfNotExists("Resource", nil, key.Resource).
-		SetIfNotExists("Operation", nil, key.Operation).
-		SetIfNotExists("WindowStart", nil, window.Start.Unix()).
-		SetIfNotExists("TTL", nil, ttl).
-		Set("UpdatedAt", now).
-		Execute()
+		ttl := window.End.Unix() + int64(r.config.TTLHours*3600)
 
-	if err != nil {
-		return WrapError(err, ErrorTypeInternal, "failed to record request")
+		err := r.db.Model(&RateLimitEntry{}).
+			WithContext(ctx).
+			Where("PK", "=", entry.PK).
+			Where("SK", "=", entry.SK).
+			UpdateBuilder().
+			Add("Count", int64(1)).
+			SetIfNotExists("WindowType", nil, window.Key).
+			SetIfNotExists("WindowID", nil, window.Start.UTC().Format("2006-01-02T15:04:05Z")).
+			SetIfNotExists("Identifier", nil, key.Identifier).
+			SetIfNotExists("Resource", nil, key.Resource).
+			SetIfNotExists("Operation", nil, key.Operation).
+			SetIfNotExists("WindowStart", nil, window.Start.Unix()).
+			SetIfNotExists("TTL", nil, ttl).
+			SetIfNotExists("CreatedAt", nil, now).
+			Set("UpdatedAt", now).
+			Execute()
+
+		if err != nil {
+			return WrapError(err, ErrorTypeInternal, "failed to record request")
+		}
 	}
 
 	return nil
@@ -267,6 +271,11 @@ func (r *DynamoRateLimiter) CheckAndIncrement(ctx context.Context, key RateLimit
 	}
 
 	now := r.clock.Now()
+
+	if multiWindow, ok := asMultiWindowStrategy(r.strategy); ok && multiWindow != nil {
+		return r.checkAndIncrementMultiWindow(ctx, key, now, multiWindow)
+	}
+
 	windows := r.strategy.CalculateWindows(now)
 	if len(windows) == 0 {
 		return nil, NewError(ErrorTypeInternal, "no windows calculated")
@@ -347,7 +356,7 @@ func (r *DynamoRateLimiter) CheckAndIncrement(ctx context.Context, key RateLimit
 				Resource:    key.Resource,
 				Operation:   key.Operation,
 				WindowType:  window.Key,
-				WindowID:    window.Start.Format(time.RFC3339),
+				WindowID:    window.Start.UTC().Format("2006-01-02T15:04:05Z"),
 				Count:       1,
 				CreatedAt:   now,
 				UpdatedAt:   now,
@@ -433,3 +442,221 @@ func (r *DynamoRateLimiter) String() string {
 	return fmt.Sprintf("limited.DynamoRateLimiter{fail_open:%t}", r.config != nil && r.config.FailOpen)
 }
 
+func asMultiWindowStrategy(strategy RateLimitStrategy) (*MultiWindowStrategy, bool) {
+	typed, ok := strategy.(*MultiWindowStrategy)
+	return typed, ok
+}
+
+func isMultiWindowStrategy(strategy RateLimitStrategy) bool {
+	_, ok := asMultiWindowStrategy(strategy)
+	return ok
+}
+
+func countForPrimaryWindow(strategy RateLimitStrategy, windows []TimeWindow, counts map[string]int) int {
+	if len(windows) == 0 || len(counts) == 0 {
+		return 0
+	}
+
+	if _, ok := strategy.(*SlidingWindowStrategy); ok {
+		total := 0
+		for _, count := range counts {
+			total += count
+		}
+		return total
+	}
+
+	return counts[windows[0].Key]
+}
+
+func resetTimeForDecision(strategy RateLimitStrategy, now time.Time, windows []TimeWindow, counts map[string]int, allowed bool) time.Time {
+	if len(windows) == 0 {
+		return now
+	}
+	if allowed || !isMultiWindowStrategy(strategy) {
+		return windows[0].End
+	}
+
+	// For multi-window limits, surface the earliest time a request could succeed.
+	// When multiple windows are exceeded, this is the latest reset time among them.
+	multiWindow, _ := asMultiWindowStrategy(strategy)
+	maxReset := windows[0].End
+	for _, window := range windows {
+		max := maxRequestsForWindow(multiWindow, window)
+		if max <= 0 {
+			if window.End.After(maxReset) {
+				maxReset = window.End
+			}
+			continue
+		}
+
+		if counts[window.Key] >= max && window.End.After(maxReset) {
+			maxReset = window.End
+		}
+	}
+	return maxReset
+}
+
+func (r *DynamoRateLimiter) checkAndIncrementMultiWindow(ctx context.Context, key RateLimitKey, now time.Time, strategy *MultiWindowStrategy) (*LimitDecision, error) {
+	windows := strategy.CalculateWindows(now)
+	if len(windows) == 0 {
+		return nil, NewError(ErrorTypeInternal, "no windows calculated")
+	}
+
+	primaryLimit := strategy.GetLimit(key)
+	if primaryLimit <= 0 {
+		decision := &LimitDecision{
+			Allowed:      false,
+			CurrentCount: 0,
+			Limit:        primaryLimit,
+			ResetsAt:     windows[0].End,
+		}
+		retryAfter := windows[0].End.Sub(now)
+		decision.RetryAfter = &retryAfter
+		return decision, nil
+	}
+
+	type transactDB interface {
+		TransactWrite(ctx context.Context, fn func(tablecore.TransactionBuilder) error) error
+	}
+
+	ext, ok := r.db.(transactDB)
+	if !ok {
+		decision, err := r.CheckLimit(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		if !decision.Allowed {
+			return decision, nil
+		}
+		if err := r.RecordRequest(ctx, key); err != nil {
+			if r.config.FailOpen {
+				return decision, nil
+			}
+			return nil, WrapError(err, ErrorTypeInternal, "failed to record request")
+		}
+		decision.CurrentCount++
+		return decision, nil
+	}
+
+	err := ext.TransactWrite(ctx, func(tx tablecore.TransactionBuilder) error {
+		tx.WithContext(ctx)
+		for _, window := range windows {
+			max := maxRequestsForWindow(strategy, window)
+			if max <= 0 {
+				return tableerrors.ErrConditionFailed
+			}
+
+			entry := &RateLimitEntry{
+				Identifier:  key.Identifier,
+				WindowStart: window.Start.Unix(),
+				Resource:    key.Resource,
+				Operation:   key.Operation,
+			}
+			entry.SetKeys()
+
+			ttl := window.End.Unix() + int64(r.config.TTLHours*3600)
+
+			tx.UpdateWithBuilder(entry, func(ub tablecore.UpdateBuilder) error {
+				ub.Add("Count", int64(1)).
+					SetIfNotExists("WindowType", nil, window.Key).
+					SetIfNotExists("WindowID", nil, window.Start.UTC().Format("2006-01-02T15:04:05Z")).
+					SetIfNotExists("Identifier", nil, key.Identifier).
+					SetIfNotExists("Resource", nil, key.Resource).
+					SetIfNotExists("Operation", nil, key.Operation).
+					SetIfNotExists("WindowStart", nil, window.Start.Unix()).
+					SetIfNotExists("TTL", nil, ttl).
+					SetIfNotExists("CreatedAt", nil, now).
+					Set("UpdatedAt", now)
+
+				ub.ConditionNotExists("Count")
+				ub.OrCondition("Count", "<", max)
+
+				var ignored RateLimitEntry
+				return ub.ExecuteWithResult(&ignored)
+			})
+		}
+		return nil
+	})
+
+	if err == nil {
+		primary := windows[0]
+		entry := &RateLimitEntry{
+			Identifier:  key.Identifier,
+			WindowStart: primary.Start.Unix(),
+			Resource:    key.Resource,
+			Operation:   key.Operation,
+		}
+		entry.SetKeys()
+
+		var record RateLimitEntry
+		readErr := r.db.Model(&RateLimitEntry{}).
+			WithContext(ctx).
+			Where("PK", "=", entry.PK).
+			Where("SK", "=", entry.SK).
+			First(&record)
+		if readErr != nil && !tableerrors.IsNotFound(readErr) {
+			if r.config.FailOpen {
+				return &LimitDecision{
+					Allowed:      true,
+					CurrentCount: 0,
+					Limit:        primaryLimit,
+					ResetsAt:     primary.End,
+				}, nil
+			}
+			return nil, WrapError(readErr, ErrorTypeInternal, "failed to load updated rate limit entry")
+		}
+
+		return &LimitDecision{
+			Allowed:      true,
+			CurrentCount: int(record.Count),
+			Limit:        primaryLimit,
+			ResetsAt:     primary.End,
+		}, nil
+	}
+
+	if tableerrors.IsConditionFailed(err) {
+		decision, decisionErr := r.CheckLimit(ctx, key)
+		if decisionErr != nil {
+			return nil, WrapError(decisionErr, ErrorTypeInternal, "failed to load rate limit state after condition failure")
+		}
+		decision.Allowed = false
+		if decision.RetryAfter == nil {
+			retryAfter := decision.ResetsAt.Sub(now)
+			decision.RetryAfter = &retryAfter
+		}
+		return decision, nil
+	}
+
+	if r.config.FailOpen {
+		return &LimitDecision{
+			Allowed:      true,
+			CurrentCount: 0,
+			Limit:        primaryLimit,
+			ResetsAt:     windows[0].End,
+		}, nil
+	}
+
+	return nil, WrapError(err, ErrorTypeInternal, "failed to check and increment rate limit")
+}
+
+func maxRequestsForWindow(strategy *MultiWindowStrategy, window TimeWindow) int {
+	if strategy == nil {
+		return 0
+	}
+
+	idx := strings.LastIndex(window.Key, "_")
+	if idx != -1 && idx < len(window.Key)-1 {
+		if dur, err := time.ParseDuration(window.Key[idx+1:]); err == nil {
+			for _, config := range strategy.Windows {
+				if config.Duration == dur {
+					return config.MaxRequests
+				}
+			}
+		}
+	}
+
+	if len(strategy.Windows) > 0 {
+		return strategy.Windows[0].MaxRequests
+	}
+	return 0
+}

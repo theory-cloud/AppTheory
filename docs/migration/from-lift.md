@@ -17,8 +17,8 @@ This is intentionally **not** a drop-in compatibility promise. The posture is �
 
 - Lift imports like `github.com/pay-theory/lift/pkg/lift` become AppTheory imports rooted at
   `github.com/theory-cloud/apptheory`.
-- Many Lift “subsystems” remain available, but will likely move into AppTheory subpackages (for example:
-  `apptheory/middleware`, `apptheory/observability`, `apptheory/testkit`).
+- Lift “subsystems” land either in the root `apptheory` package (portable runtime contract surface) or in focused
+  subpackages (example: `apptheory/testkit`, `apptheory/pkg/limited`).
 
 Why: AppTheory is a new repo with a multi-language contract and a single shared release version. Import paths must change
 to reflect the new module/package identity.
@@ -82,16 +82,16 @@ This table is a starting point for G1 and will evolve as AppTheory’s P0/P1 con
 
 | Lift symbol/pattern | AppTheory equivalent | Notes |
 | --- | --- | --- |
-| `lift.New()` | `apptheory.New()` (planned) | new app/router surface rooted at AppTheory |
-| `app.Use(middleware.X())` | `app.Use(middleware.X())` (planned) | portable subset is contract-defined; advanced middleware may be Go-only initially |
-| `lift.SimpleHandler(fn)` | `apptheory.Handler(fn)` (TBD) | exact shape depends on contract + language parity |
-| `ctx.ParseRequest(&v)` | `ctx.Bind(&v)` (TBD) | portable parsing + validation semantics must match fixtures |
+| `lift.New()` | `apptheory.New()` | new app/router surface rooted at AppTheory |
+| `app.Get("/path", handler)` | `app.Get("/path", handler)` | handler signature changes (see below) |
+| Lift handler funcs | `apptheory.Handler` | Go signature: `func(*apptheory.Context) (*apptheory.Response, error)` |
+| Lift request parsing helpers | `ctx.JSONValue()` + `json.Unmarshal` | portable bind/validate helpers will be added once contract semantics are pinned |
 | `github.com/pay-theory/limited` | `github.com/theory-cloud/apptheory/pkg/limited` | ported to TableTheory; keep `limited` semantics |
-| Lift CDK constructs | AppTheory examples/templates (TBD) | preserve behavior even if authoring model changes |
+| Lift CDK constructs | AppTheory CDK (TS-first jsii) + examples | preserve behavior even if authoring model changes |
 
 ## What’s missing (tracked work)
 
-The concrete, step-by-step playbook and any automation helpers are deliverables of `SR-MIGRATION` and milestone `M2`.
+The concrete, step-by-step playbook and any automation helpers are deliverables of `SR-MIGRATION` and milestone `M10`.
 
 ## Representative migration (G4)
 
