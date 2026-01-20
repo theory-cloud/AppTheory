@@ -21,6 +21,14 @@ from apptheory.ids import IdGenerator, ManualIdGenerator, RealIdGenerator
 from apptheory.naming import base_name, normalize_stage, resource_name
 from apptheory.request import Request
 from apptheory.response import Response, binary, json, text
+from apptheory.sanitization import (
+    payment_xml_patterns,
+    rapid_connect_xml_patterns,
+    sanitize_field_value,
+    sanitize_json,
+    sanitize_log_string,
+    sanitize_xml,
+)
 from apptheory.sse import SSEEvent, sse, sse_event_stream
 from apptheory.testkit import (
     FakeWebSocketClientFactory,
@@ -71,6 +79,12 @@ __all__ = [
     "json",
     "normalize_stage",
     "resource_name",
+    "payment_xml_patterns",
+    "rapid_connect_xml_patterns",
+    "sanitize_field_value",
+    "sanitize_json",
+    "sanitize_log_string",
+    "sanitize_xml",
     "sse",
     "sse_event_stream",
     "text",

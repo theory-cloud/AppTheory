@@ -206,13 +206,16 @@ These are not “future improvements”; these are Lift features in active use.
 
 ---
 
-### G5 — Lift sanitization utilities (K3) are missing
+### G5 — Lift sanitization utilities (K3)
 
 **Why it’s required**
 - K3 uses `github.com/pay-theory/lift/pkg/utils/sanitization` for safe logging (e.g. `SanitizeJSON`).
 
 **Current AppTheory state**
-- No sanitization helpers exist.
+- Sanitization helpers exist in Go/TS/Py:
+  - Go: `pkg/sanitization` (`SanitizeLogString`, `SanitizeJSON`, `SanitizeXML`, `PaymentXMLPatterns`)
+  - TS: `ts/dist/index.js` (`sanitizeLogString`, `sanitizeJSON`, `sanitizeXML`, `paymentXMLPatterns`)
+  - Py: `py/src/apptheory/sanitization.py` (`sanitize_log_string`, `sanitize_json`, `sanitize_xml`, `payment_xml_patterns`)
 
 **Remediation**
 - Add an AppTheory sanitization package:

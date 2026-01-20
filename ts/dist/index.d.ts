@@ -395,6 +395,24 @@ export declare function baseName(appName: string, stage: string, tenant?: string
 
 export declare function resourceName(appName: string, resource: string, stage: string, tenant?: string): string;
 
+export declare function sanitizeLogString(value: string): string;
+
+export declare function sanitizeFieldValue(key: string, value: unknown): unknown;
+
+export declare function sanitizeJSON(jsonBytes: Uint8Array | string): string;
+
+export interface XMLSanitizationPattern {
+  name: string;
+  pattern: RegExp;
+  maskingFunc: (match: string) => string;
+}
+
+export declare function sanitizeXML(xmlString: string, patterns: XMLSanitizationPattern[]): string;
+
+export declare const paymentXMLPatterns: XMLSanitizationPattern[];
+
+export declare const rapidConnectXMLPatterns: XMLSanitizationPattern[];
+
 export declare class TestEnv {
   readonly clock: ManualClock;
   readonly ids: ManualIdGenerator;
