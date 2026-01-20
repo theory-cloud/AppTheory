@@ -65,3 +65,14 @@ Acceptance:
   - ALB: TBD
   - REST v1 + SSE: already supported (ensure no regressions)
 
+Current notes (AppTheory `m14`):
+
+- **Lambda Function URL**
+  - TypeScript supports true streaming via `createLambdaFunctionURLStreamingHandler(...)`.
+  - Go/Py do not currently ship an AWS adapter that emits streamed chunks; streamed responses should be treated as
+    buffered when targeting Lambda URL from those runtimes.
+- **API Gateway v2 (HTTP API)**: buffered only (no streaming body support today).
+- **API Gateway REST v1 (Proxy)**
+  - buffered request/response supported
+  - SSE streaming supported for `text/event-stream` (do not regress)
+- **ALB**: TBD (tracked under FT-A8).
