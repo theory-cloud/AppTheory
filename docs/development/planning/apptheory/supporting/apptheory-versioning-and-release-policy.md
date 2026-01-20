@@ -2,7 +2,7 @@
 
 Goal: match TableTheory’s distribution model while shipping Go/TypeScript/Python from one monorepo.
 
-Status: frozen for milestone `M0`; implementation tracked in `SR-RELEASE`.
+Status: frozen for milestone `M11` (`SR-RELEASE` R0).
 
 ## Principles
 
@@ -28,9 +28,14 @@ Status: frozen for milestone `M0`; implementation tracked in `SR-RELEASE`.
 - Stable releases: `vX.Y.Z`
 - Pre-releases: `vX.Y.Z-rc.N` (recommended)
 
+Initial public release:
+
+- The first public AppTheory release is planned as `v0.1.0` (tag on `main`).
+
 Breaking changes:
 
 - Prefer semver major bumps for contract-breaking changes.
+- While AppTheory is `0.x`, breaking changes may ship in `0.(Y+1).0` as needed; keep `0.Y.Z` patch releases non-breaking.
 - If contract changes, the contract fixtures must change in the same release.
 
 ## Release assets (required)
