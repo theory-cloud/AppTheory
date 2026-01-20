@@ -34,6 +34,18 @@ Non-goals:
   - WebSockets (default)
   - non-HTTP event triggers (opt-in; explicit mechanism)
 
+## Current status (AppTheory `v0.2.0-rc.1`)
+
+- Global middleware pipeline exists:
+  - Go: `app.Use(mw)` where `mw` wraps an `apptheory.Handler`
+  - TS: `app.use(mw)` where `mw(ctx, next)` can be async
+  - Py: `app.use(mw)` where `mw(ctx, next)` is sync
+- Context value bag exists (portable `Set`/`Get`):
+  - Go: `ctx.Set(key, value)` / `ctx.Get(key)`
+  - TS: `ctx.set(key, value)` / `ctx.get(key)`
+  - Py: `ctx.set(key, value)` / `ctx.get(key, default=None)`
+- Middleware applies to HTTP + WebSocket handlers; non-HTTP event trigger middleware remains an explicit follow-on.
+
 ## Milestones
 
 ### MW0 — API design + contract decisions (portable boundary)
@@ -108,4 +120,3 @@ Non-goals:
 - **Portability mismatch:** keep the portable subset small and fixture-backed; allow Go-only extensions explicitly.
 - **API churn:** design MW0 carefully; middleware API is hard to change once adopted.
 - **Overreach:** start with what Autheory/K3/Lesser use; expand only when a real app proves the need.
-

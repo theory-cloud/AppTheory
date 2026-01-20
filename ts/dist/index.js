@@ -91,6 +91,7 @@ export class Context {
     this.remainingMs = Number(remainingMs ?? 0);
     this.middlewareTrace = Array.isArray(middlewareTrace) ? middlewareTrace : [];
     this._webSocket = webSocket ?? null;
+    this._values = new Map();
   }
 
   now() {
@@ -103,6 +104,18 @@ export class Context {
 
   param(name) {
     return this.params?.[name] ?? "";
+  }
+
+  set(key, value) {
+    const k = String(key ?? "").trim();
+    if (!k) return;
+    this._values.set(k, value);
+  }
+
+  get(key) {
+    const k = String(key ?? "").trim();
+    if (!k) return undefined;
+    return this._values.get(k);
   }
 
   jsonValue() {
@@ -332,6 +345,7 @@ export class App {
     this._sqsRoutes = [];
     this._eventBridgeRoutes = [];
     this._dynamoDBRoutes = [];
+    this._middlewares = [];
   }
 
   handle(method, pattern, handler, options = {}) {
@@ -353,6 +367,26 @@ export class App {
 
   delete(pattern, handler) {
     return this.handle("DELETE", pattern, handler);
+  }
+
+  use(middleware) {
+    if (typeof middleware !== "function") return this;
+    this._middlewares.push(middleware);
+    return this;
+  }
+
+  _applyMiddlewares(handler) {
+    if (typeof handler !== "function" || this._middlewares.length === 0) {
+      return handler;
+    }
+    let wrapped = handler;
+    for (let i = this._middlewares.length - 1; i >= 0; i -= 1) {
+      const mw = this._middlewares[i];
+      if (typeof mw !== "function") continue;
+      const next = wrapped;
+      wrapped = async (ctx) => mw(ctx, next);
+    }
+    return wrapped;
   }
 
   webSocket(routeKey, handler) {
@@ -416,7 +450,8 @@ export class App {
     });
 
     try {
-      const out = await match.route.handler(requestCtx);
+      const handler = this._applyMiddlewares(match.route.handler);
+      const out = await handler(requestCtx);
       return normalizeResponse(out);
     } catch (err) {
       return responseForError(err);
@@ -546,7 +581,8 @@ export class App {
 
     let out;
     try {
-      out = await match.route.handler(requestCtx);
+      const handler = this._applyMiddlewares(match.route.handler);
+      out = await handler(requestCtx);
     } catch (err) {
       return finish(responseForErrorWithRequestId(err, requestId), err instanceof AppError ? err.code : "app.internal");
     }
@@ -608,7 +644,7 @@ export class App {
   }
 
   async serveWebSocket(event, ctx) {
-    const handler = this._webSocketHandlerForEvent(event);
+    const handler = this._applyMiddlewares(this._webSocketHandlerForEvent(event));
 
     const requestId = String(event?.requestContext?.requestId ?? "").trim()
       ? String(event.requestContext.requestId).trim()

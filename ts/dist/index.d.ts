@@ -201,11 +201,15 @@ export declare class Context {
   now(): Date;
   newId(): string;
   param(name: string): string;
+  set(key: string, value: unknown): void;
+  get(key: string): unknown;
   jsonValue(): unknown;
   asWebSocket(): WebSocketContext | null;
 }
 
 export type Handler = (ctx: Context) => Response | Promise<Response>;
+
+export type Middleware = (ctx: Context, next: Handler) => Response | Promise<Response>;
 
 export declare class EventContext {
   readonly ctx: unknown | null;
@@ -342,6 +346,7 @@ export declare class App {
   post(pattern: string, handler: Handler): this;
   put(pattern: string, handler: Handler): this;
   delete(pattern: string, handler: Handler): this;
+  use(middleware: Middleware): this;
   webSocket(routeKey: string, handler: Handler): this;
   sqs(queueName: string, handler: SQSHandler): this;
   eventBridge(selector: EventBridgeSelector, handler: EventBridgeHandler): this;
