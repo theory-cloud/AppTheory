@@ -1,0 +1,21 @@
+{
+  "name": "@theory-cloud/apptheory-cdk-multilang-example",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "synth": "cdk synth",
+    "deploy": "cdk deploy --all"
+  },
+  "devDependencies": {
+    "@theory-cloud/apptheory-cdk": "file:../../../cdk",
+    "@types/node": "24.10.9",
+    "aws-cdk": "2.1101.0",
+    "aws-cdk-lib": "2.235.1",
+    "constructs": "10.4.5",
+    "ts-node": "10.9.2",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

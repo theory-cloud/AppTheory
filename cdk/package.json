@@ -1,0 +1,54 @@
+{
+  "name": "@theory-cloud/apptheory-cdk",
+  "version": "0.0.0",
+  "description": "AppTheory CDK constructs (TS-first jsii)",
+  "author": "Theory Cloud",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/theory-cloud/AppTheory.git",
+    "directory": "cdk"
+  },
+  "license": "UNLICENSED",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "files": [
+    "lib",
+    ".jsii",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "jsii",
+    "pretest": "npm run build",
+    "test": "node --test test/*.test.cjs"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "aws-cdk-lib": "2.235.1",
+    "constructs": "10.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.9",
+    "aws-cdk-lib": "2.235.1",
+    "constructs": "10.4.5",
+    "jsii": "5.9.23",
+    "jsii-pacmak": "1.125.0",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "jsii": {
+    "outdir": "dist",
+    "targets": {
+      "python": {
+        "distName": "apptheory-cdk",
+        "module": "apptheory_cdk"
+      },
+      "go": {
+        "moduleName": "github.com/theory-cloud/apptheory/cdk-go",
+        "packageName": "apptheorycdk"
+      }
+    }
+  }
+}

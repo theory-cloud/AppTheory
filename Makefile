@@ -11,6 +11,8 @@ build:
 	@echo "Building release artifacts..."
 	@./scripts/verify-ts-pack.sh
 	@./scripts/verify-python-build.sh
+	@./scripts/verify-cdk-ts-pack.sh
+	@./scripts/verify-cdk-python-build.sh
 
 test: test-unit
 	@./scripts/verify-version-alignment.sh
@@ -32,4 +34,3 @@ fmt-check:
 
 rubric:
 	@./scripts/verify-rubric.sh
-
