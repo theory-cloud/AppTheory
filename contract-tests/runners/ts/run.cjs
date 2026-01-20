@@ -786,6 +786,26 @@ async function runFixtureP0(fixture) {
     app.handle(route.method, route.path, handler);
   }
 
+  const awsEvent = fixture.input?.aws_event ?? null;
+  if (awsEvent) {
+    const source = String(awsEvent.source ?? "").trim().toLowerCase();
+    const event = awsEvent.event ?? {};
+
+    if (source === "apigw_v2") {
+      const resp = await app.serveAPIGatewayV2(event);
+      return { actual: canonicalResponseFromAPIGatewayV2Response(resp), effects: { logs: [], metrics: [], spans: [] } };
+    }
+    if (source === "lambda_function_url") {
+      const resp = await app.serveLambdaFunctionURL(event);
+      return {
+        actual: canonicalResponseFromLambdaFunctionURLResponse(resp),
+        effects: { logs: [], metrics: [], spans: [] },
+      };
+    }
+
+    throw new Error(`unknown aws_event source ${JSON.stringify(awsEvent.source)}`);
+  }
+
   const input = fixture.input?.request ?? {};
   const body = decodeFixtureBody(input.body);
   const req = {
@@ -807,6 +827,49 @@ async function runFixtureP0(fixture) {
   };
 
   return { actual, effects: { logs: [], metrics: [], spans: [] } };
+}
+
+function canonicalResponseFromAPIGatewayV2Response(resp) {
+  const status = Number(resp?.statusCode ?? 0);
+  const isBase64Encoded = Boolean(resp?.isBase64Encoded);
+  const bodyStr = String(resp?.body ?? "");
+  const body = isBase64Encoded ? Buffer.from(bodyStr, "base64") : Buffer.from(bodyStr, "utf8");
+
+  const headersSource =
+    resp?.multiValueHeaders && Object.keys(resp.multiValueHeaders).length > 0 ? resp.multiValueHeaders : resp?.headers ?? {};
+
+  const headers = {};
+  for (const [key, value] of Object.entries(headersSource ?? {})) {
+    headers[key] = Array.isArray(value) ? value.map((v) => String(v)) : [String(value)];
+  }
+
+  return {
+    status,
+    headers,
+    cookies: Array.isArray(resp?.cookies) ? resp.cookies.map((c) => String(c)) : [],
+    body,
+    is_base64: isBase64Encoded,
+  };
+}
+
+function canonicalResponseFromLambdaFunctionURLResponse(resp) {
+  const status = Number(resp?.statusCode ?? 0);
+  const isBase64Encoded = Boolean(resp?.isBase64Encoded);
+  const bodyStr = String(resp?.body ?? "");
+  const body = isBase64Encoded ? Buffer.from(bodyStr, "base64") : Buffer.from(bodyStr, "utf8");
+
+  const headers = {};
+  for (const [key, value] of Object.entries(resp?.headers ?? {})) {
+    headers[key] = [String(value)];
+  }
+
+  return {
+    status,
+    headers,
+    cookies: Array.isArray(resp?.cookies) ? resp.cookies.map((c) => String(c)) : [],
+    body,
+    is_base64: isBase64Encoded,
+  };
 }
 
 async function runFixtureP1(fixture) {

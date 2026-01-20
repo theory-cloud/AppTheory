@@ -32,8 +32,14 @@ type FixtureRoute struct {
 }
 
 type FixtureInput struct {
-	Context FixtureContext `json:"context,omitempty"`
-	Request FixtureRequest `json:"request"`
+	Context  FixtureContext   `json:"context,omitempty"`
+	Request  FixtureRequest   `json:"request"`
+	AWSEvent *FixtureAWSEvent `json:"aws_event,omitempty"`
+}
+
+type FixtureAWSEvent struct {
+	Source string          `json:"source"`
+	Event  json.RawMessage `json:"event"`
 }
 
 type FixtureContext struct {

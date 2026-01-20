@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
+
+	"github.com/aws/aws-lambda-go/events"
 
 	"github.com/theory-cloud/apptheory"
 )
@@ -22,9 +25,21 @@ func runFixtureP0(f Fixture) error {
 		app.Handle(r.Method, r.Path, handler)
 	}
 
+	actual, err := serveFixtureP0(app, f)
+	if err != nil {
+		return err
+	}
+	return compareFixtureResponse(f, actual, nil, nil, nil)
+}
+
+func serveFixtureP0(app *apptheory.App, f Fixture) (apptheory.Response, error) {
+	if f.Input.AWSEvent != nil {
+		return serveFixtureP0AWS(app, f.Input.AWSEvent)
+	}
+
 	bodyBytes, err := decodeFixtureBody(f.Input.Request.Body)
 	if err != nil {
-		return fmt.Errorf("decode request body: %w", err)
+		return apptheory.Response{}, fmt.Errorf("decode request body: %w", err)
 	}
 
 	req := apptheory.Request{
@@ -36,8 +51,29 @@ func runFixtureP0(f Fixture) error {
 		IsBase64: f.Input.Request.IsBase64,
 	}
 
-	actual := app.Serve(context.Background(), req)
-	return compareFixtureResponse(f, actual, nil, nil, nil)
+	return app.Serve(context.Background(), req), nil
+}
+
+func serveFixtureP0AWS(app *apptheory.App, awsEvent *FixtureAWSEvent) (apptheory.Response, error) {
+	source := strings.ToLower(strings.TrimSpace(awsEvent.Source))
+	switch source {
+	case "apigw_v2":
+		var event events.APIGatewayV2HTTPRequest
+		if err := json.Unmarshal(awsEvent.Event, &event); err != nil {
+			return apptheory.Response{}, fmt.Errorf("parse apigw_v2 event: %w", err)
+		}
+		out := app.ServeAPIGatewayV2(context.Background(), event)
+		return responseFromAPIGatewayV2(out)
+	case "lambda_function_url":
+		var event events.LambdaFunctionURLRequest
+		if err := json.Unmarshal(awsEvent.Event, &event); err != nil {
+			return apptheory.Response{}, fmt.Errorf("parse lambda_function_url event: %w", err)
+		}
+		out := app.ServeLambdaFunctionURL(context.Background(), event)
+		return responseFromLambdaFunctionURL(out)
+	default:
+		return apptheory.Response{}, fmt.Errorf("unknown aws_event source %q", awsEvent.Source)
+	}
 }
 
 func printFailureP0(f Fixture) {
@@ -52,23 +88,12 @@ func printFailureP0(f Fixture) {
 		app.Handle(r.Method, r.Path, handler)
 	}
 
-	bodyBytes, err := decodeFixtureBody(f.Input.Request.Body)
+	actual, err := serveFixtureP0(app, f)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  got: <unavailable>\n")
 		printExpected(f)
 		return
 	}
-
-	req := apptheory.Request{
-		Method:   f.Input.Request.Method,
-		Path:     f.Input.Request.Path,
-		Query:    f.Input.Request.Query,
-		Headers:  f.Input.Request.Headers,
-		Body:     bodyBytes,
-		IsBase64: f.Input.Request.IsBase64,
-	}
-
-	actual := app.Serve(context.Background(), req)
 	actual.Headers = canonicalizeHeaders(actual.Headers)
 
 	debug := actualResponseForCompare{
@@ -114,6 +139,60 @@ func printExpected(f Fixture) {
 	fmt.Fprintf(os.Stderr, "  expected.logs: %s\n", string(logs))
 	fmt.Fprintf(os.Stderr, "  expected.metrics: %s\n", string(metrics))
 	fmt.Fprintf(os.Stderr, "  expected.spans: %s\n", string(spans))
+}
+
+func responseFromAPIGatewayV2(resp events.APIGatewayV2HTTPResponse) (apptheory.Response, error) {
+	body := []byte(resp.Body)
+	if resp.IsBase64Encoded {
+		decoded, err := base64.StdEncoding.DecodeString(resp.Body)
+		if err != nil {
+			return apptheory.Response{}, fmt.Errorf("decode apigw_v2 response body: %w", err)
+		}
+		body = decoded
+	}
+
+	headers := map[string][]string{}
+	if len(resp.MultiValueHeaders) > 0 {
+		for key, values := range resp.MultiValueHeaders {
+			headers[key] = append([]string(nil), values...)
+		}
+	} else {
+		for key, value := range resp.Headers {
+			headers[key] = []string{value}
+		}
+	}
+
+	return apptheory.Response{
+		Status:   resp.StatusCode,
+		Headers:  headers,
+		Cookies:  append([]string(nil), resp.Cookies...),
+		Body:     body,
+		IsBase64: resp.IsBase64Encoded,
+	}, nil
+}
+
+func responseFromLambdaFunctionURL(resp events.LambdaFunctionURLResponse) (apptheory.Response, error) {
+	body := []byte(resp.Body)
+	if resp.IsBase64Encoded {
+		decoded, err := base64.StdEncoding.DecodeString(resp.Body)
+		if err != nil {
+			return apptheory.Response{}, fmt.Errorf("decode lambda_function_url response body: %w", err)
+		}
+		body = decoded
+	}
+
+	headers := map[string][]string{}
+	for key, value := range resp.Headers {
+		headers[key] = []string{value}
+	}
+
+	return apptheory.Response{
+		Status:   resp.StatusCode,
+		Headers:  headers,
+		Cookies:  append([]string(nil), resp.Cookies...),
+		Body:     body,
+		IsBase64: resp.IsBase64Encoded,
+	}, nil
 }
 
 func builtInAppTheoryHandler(name string) apptheory.Handler {
