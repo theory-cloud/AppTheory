@@ -400,6 +400,10 @@ export declare function createApp(options?: {
   webSocketClientFactory?: WebSocketClientFactory;
 }): App;
 
+export type LambdaFunctionURLStreamingHandler = (event: LambdaFunctionURLRequest, ctx?: unknown) => Promise<unknown>;
+
+export declare function createLambdaFunctionURLStreamingHandler(app: App): LambdaFunctionURLStreamingHandler;
+
 export declare function timeoutMiddleware(config?: TimeoutConfig): Middleware;
 
 export declare function text(status: number, body: string): Response;
@@ -459,6 +463,15 @@ export declare class TestEnv {
   invoke(app: App, request: Request, ctx?: unknown): Promise<Response>;
   invokeAPIGatewayV2(app: App, event: APIGatewayV2HTTPRequest, ctx?: unknown): Promise<APIGatewayV2HTTPResponse>;
   invokeLambdaFunctionURL(app: App, event: LambdaFunctionURLRequest, ctx?: unknown): Promise<LambdaFunctionURLResponse>;
+  invokeLambdaFunctionURLStreaming(app: App, event: LambdaFunctionURLRequest, ctx?: unknown): Promise<{
+    status: number;
+    headers: Headers;
+    cookies: string[];
+    chunks: Uint8Array[];
+    body: Uint8Array;
+    is_base64: boolean;
+    stream_error_code: string;
+  }>;
   invokeAPIGatewayProxy(app: App, event: APIGatewayProxyRequest, ctx?: unknown): Promise<APIGatewayProxyResponse>;
   invokeSQS(app: App, event: SQSEvent, ctx?: unknown): Promise<SQSEventResponse>;
   invokeEventBridge(app: App, event: EventBridgeEvent, ctx?: unknown): Promise<unknown>;
