@@ -27,6 +27,7 @@ from apptheory.router import Router
 from apptheory.util import canonicalize_headers, clone_query
 
 Handler = Callable[[Context], Response]
+Middleware = Callable[[Context, Handler], Response]
 AuthHook = Callable[[Context], str]
 PolicyHook = Callable[[Context], "PolicyDecision | None"]
 SQSHandler = Callable[[EventContext, dict[str, Any]], None]
@@ -115,6 +116,7 @@ class App:
     _dynamodb_routes: list[tuple[str, DynamoDBStreamHandler]]
     _ws_routes: dict[str, WebSocketHandler]
     _websocket_client_factory: WebSocketClientFactory | None
+    _middlewares: list[Middleware]
 
     def __init__(
         self,
@@ -144,6 +146,7 @@ class App:
         self._dynamodb_routes = []
         self._ws_routes = {}
         self._websocket_client_factory = websocket_client_factory or _default_websocket_client_factory
+        self._middlewares = []
 
     def handle(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
         self._router.add(method, pattern, handler, auth_required=auth_required)
@@ -195,6 +198,27 @@ class App:
         self._ws_routes[key] = handler
         return self
 
+    def use(self, middleware: Middleware) -> App:
+        if middleware is None:
+            return self
+        self._middlewares.append(middleware)
+        return self
+
+    def _apply_middlewares(self, handler: Handler) -> Handler:
+        wrapped = handler
+        for middleware in reversed(self._middlewares):
+            if middleware is None:
+                continue
+
+            def apply_one(next_handler: Handler, mw: Middleware = middleware) -> Handler:
+                def _wrapped(ctx: Context) -> Response:
+                    return mw(ctx, next_handler)
+
+                return _wrapped
+
+            wrapped = apply_one(wrapped)
+        return wrapped
+
     def serve(self, request: Request, ctx: Any | None = None) -> Response:
         if self._tier == "p1":
             return self._serve_portable(request, ctx, enable_p2=False)
@@ -224,8 +248,9 @@ class App:
             ctx=ctx,
         )
 
+        handler = self._apply_middlewares(match.handler)
         try:
-            resp = match.handler(request_ctx)
+            resp = handler(request_ctx)
         except AppError as exc:
             return error_response(exc.code, exc.message)
         except Exception:  # noqa: BLE001
@@ -348,8 +373,9 @@ class App:
 
         trace.append("handler")
 
+        handler = self._apply_middlewares(match.handler)
         try:
-            resp = match.handler(request_ctx)
+            resp = handler(request_ctx)
         except AppError as exc:
             return finish(error_response_with_request_id(exc.code, exc.message, request_id=request_id), exc.code)
         except Exception as exc:  # noqa: BLE001
@@ -469,6 +495,8 @@ class App:
         handler = self._ws_routes.get(route_key)
         if handler is None:
             return apigw_proxy_response_from_response(error_response("app.not_found", "not found"))
+
+        handler = self._apply_middlewares(handler)
 
         request_id = str(request_context.get("requestId") or "").strip()
         if not request_id:

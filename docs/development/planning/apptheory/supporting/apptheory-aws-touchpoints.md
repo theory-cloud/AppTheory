@@ -7,17 +7,15 @@ fakes/mocks shipped in the language testkits.
 
 ## AWS SDK clients wrapped by AppTheory
 
-Current (HTTP contract slice): none.
-
-Required for Lift parity (must be added):
+Current (implemented for Lift parity):
 
 - API Gateway Management API (WebSockets): equivalent to Lift `pkg/streamer`
 
 | Language | Wrapped AWS clients | Notes |
 | --- | --- | --- |
-| Go | (none yet) | WebSocket parity requires an owned APIGW management client + strict fake (SR-WEBSOCKETS/SR-MOCKS). |
-| TypeScript | (none yet) | WebSocket parity requires an owned APIGW management client + strict fake (SR-WEBSOCKETS/SR-MOCKS). |
-| Python | (none yet) | WebSocket parity requires an owned APIGW management client + strict fake (SR-WEBSOCKETS/SR-MOCKS). |
+| Go | `apigatewaymanagementapi` (AWS SDK v2) | Wrapped by `pkg/streamer` with strict fakes in `testkit`. |
+| TypeScript | HTTP+SigV4 wrapper (no AWS SDK dependency) | `WebSocketManagementClient` signs requests and uses `fetch`; strict fake exists. |
+| Python | `boto3.client("apigatewaymanagementapi")` (optional dependency) | `streamer.Client` uses boto3 when installed; strict fake exists. |
 
 ## AWS surfaces supported (not SDK clients)
 

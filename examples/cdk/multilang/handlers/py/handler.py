@@ -52,6 +52,55 @@ def _build_app():
     def sse_demo(_ctx):
         return sse(200, [SSEEvent(id="1", event="message", data={"ok": True, "lang": lang, "name": name})])
 
+    def ws_connect(ctx):
+        ws = ctx.as_websocket()
+        return json(
+            200,
+            {
+                "ok": True,
+                "lang": lang,
+                "name": name,
+                "route_key": ws.route_key if ws else "",
+                "connection_id": ws.connection_id if ws else "",
+                "request_id": ws.request_id if ws else ctx.request_id,
+            },
+        )
+
+    def ws_disconnect(ctx):
+        ws = ctx.as_websocket()
+        return json(
+            200,
+            {
+                "ok": True,
+                "lang": lang,
+                "name": name,
+                "route_key": ws.route_key if ws else "",
+                "connection_id": ws.connection_id if ws else "",
+                "request_id": ws.request_id if ws else ctx.request_id,
+            },
+        )
+
+    def ws_default(ctx):
+        ws = ctx.as_websocket()
+        if ws:
+            ws.send_json_message({"ok": True, "lang": lang, "name": name})
+        return json(
+            200,
+            {
+                "ok": True,
+                "lang": lang,
+                "name": name,
+                "route_key": ws.route_key if ws else "",
+                "connection_id": ws.connection_id if ws else "",
+                "management_endpoint": ws.management_endpoint if ws else "",
+                "request_id": ws.request_id if ws else ctx.request_id,
+            },
+        )
+
+    app.websocket("$connect", ws_connect)
+    app.websocket("$disconnect", ws_disconnect)
+    app.websocket("$default", ws_default)
+
     return app
 
 

@@ -5,14 +5,15 @@ package apptheory
 // AppTheory's runtime behavior is defined by a fixture-backed, versioned contract:
 // `docs/development/planning/apptheory/supporting/apptheory-runtime-contract-v0.md`.
 type App struct {
-	router *router
-	clock  Clock
-	ids    IDGenerator
-	tier   Tier
-	limits Limits
-	auth   AuthHook
-	obs    ObservabilityHooks
-	policy PolicyHook
+	router      *router
+	clock       Clock
+	ids         IDGenerator
+	tier        Tier
+	limits      Limits
+	auth        AuthHook
+	obs         ObservabilityHooks
+	policy      PolicyHook
+	middlewares []Middleware
 
 	sqsRoutes         []sqsRoute
 	eventBridgeRoutes []eventBridgeRoute

@@ -19,6 +19,7 @@ Primary goals:
 
 - `docs/development/planning/apptheory/apptheory-multilang-roadmap.md` (primary roadmap + acceptance criteria)
 - `docs/development/planning/apptheory/apptheory-gap-analysis.md` (current gaps + remediation roadmap)
+- `docs/development/planning/apptheory/apptheory-gap-analysis-lift-parity.md` (Lift parity gaps for Pay Theory: Autheory + K3, plus Lesser)
 - `docs/development/planning/apptheory/apptheory-gap-analysis-lesser.md` (Lift parity gaps derived from `equaltoai/lesser`)
 
 ## Sub-roadmaps (deep workstreams)
@@ -28,6 +29,10 @@ Primary goals:
 - `docs/development/planning/apptheory/subroadmaps/SR-CDK.md` (CDK strategy: examples → constructs via jsii)
 - `docs/development/planning/apptheory/subroadmaps/SR-MOCKS.md` (AWS mocks + local testkits per language)
 - `docs/development/planning/apptheory/subroadmaps/SR-PROD-FEATURES.md` (multi-tenant/auth/observability/rate limits)
+- `docs/development/planning/apptheory/subroadmaps/SR-MIDDLEWARE.md` (middleware pipeline + `ctx.Set/Get` parity)
+- `docs/development/planning/apptheory/subroadmaps/SR-SERVICES.md` (Lift `pkg/services` parity; start: EventBus)
+- `docs/development/planning/apptheory/subroadmaps/SR-SANITIZATION.md` (safe logging + redaction utilities)
+- `docs/development/planning/apptheory/subroadmaps/SR-NAMING.md` (deterministic naming helpers)
 - `docs/development/planning/apptheory/subroadmaps/SR-MIGRATION.md` (Lift → AppTheory migration plan)
 - `docs/development/planning/apptheory/subroadmaps/SR-EVENTSOURCES.md` (SQS/EventBridge/DynamoDB Streams parity)
 - `docs/development/planning/apptheory/subroadmaps/SR-WEBSOCKETS.md` (WebSocket runtime + `streamer` parity)

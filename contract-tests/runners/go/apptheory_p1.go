@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"strings"
 	"time"
 
@@ -34,25 +33,7 @@ func headerFirstValue(headers map[string][]string, key string) string {
 
 func runFixtureP1(f Fixture) error {
 	now := time.Unix(0, 0).UTC()
-	app := apptheory.New(
-		apptheory.WithTier(apptheory.TierP1),
-		apptheory.WithClock(fixedClock{now: now}),
-		apptheory.WithIDGenerator(fixedIDGenerator{id: "req_test_123"}),
-		apptheory.WithLimits(apptheory.Limits{
-			MaxRequestBytes:  f.Setup.Limits.MaxRequestBytes,
-			MaxResponseBytes: f.Setup.Limits.MaxResponseBytes,
-		}),
-		apptheory.WithAuthHook(func(ctx *apptheory.Context) (string, error) {
-			authz := strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "authorization"))
-			if authz == "" {
-				return "", &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
-			}
-			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-forbidden")) != "" {
-				return "", &apptheory.AppError{Code: "app.forbidden", Message: "forbidden"}
-			}
-			return authorizedIdentity, nil
-		}),
-	)
+	app := newAppTheoryFixtureAppP1(now, f.Setup.Limits)
 
 	for _, r := range f.Setup.Routes {
 		handler := builtInAppTheoryHandler(r.Handler)
@@ -84,10 +65,8 @@ func runFixtureP1(f Fixture) error {
 		IsBase64: f.Input.Request.IsBase64,
 	}
 
-	ctx := context.Background()
-	if f.Input.Context.RemainingMS > 0 {
-		var cancel func()
-		ctx, cancel = context.WithDeadline(ctx, now.Add(time.Duration(f.Input.Context.RemainingMS)*time.Millisecond))
+	ctx, cancel := fixtureContext(now, f.Input.Context.RemainingMS)
+	if cancel != nil {
 		defer cancel()
 	}
 

@@ -22,6 +22,8 @@ type Context struct {
 	MiddlewareTrace []string
 
 	ws *WebSocketContext
+
+	values map[string]any
 }
 
 func (c *Context) Context() context.Context {
@@ -75,6 +77,31 @@ func (c *Context) AsWebSocket() *WebSocketContext {
 		return nil
 	}
 	return c.ws
+}
+
+func (c *Context) Set(key string, value any) {
+	if c == nil {
+		return
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+	if c.values == nil {
+		c.values = map[string]any{}
+	}
+	c.values[key] = value
+}
+
+func (c *Context) Get(key string) any {
+	if c == nil || c.values == nil {
+		return nil
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil
+	}
+	return c.values[key]
 }
 
 func hasJSONContentType(headers map[string][]string) bool {

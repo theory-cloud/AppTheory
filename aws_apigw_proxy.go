@@ -3,6 +3,7 @@ package apptheory
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -61,12 +62,21 @@ func isTextEventStream(headers map[string][]string) bool {
 }
 
 func apigatewayProxyStreamingResponseFromResponse(resp Response) *events.APIGatewayProxyStreamingResponse {
+	body := io.Reader(bytes.NewReader(resp.Body))
+	if resp.BodyReader != nil {
+		if len(resp.Body) > 0 {
+			body = io.MultiReader(bytes.NewReader(resp.Body), resp.BodyReader)
+		} else {
+			body = resp.BodyReader
+		}
+	}
+
 	out := &events.APIGatewayProxyStreamingResponse{
 		StatusCode:        resp.Status,
 		Headers:           map[string]string{},
 		MultiValueHeaders: map[string][]string{},
 		Cookies:           append([]string(nil), resp.Cookies...),
-		Body:              bytes.NewReader(resp.Body),
+		Body:              body,
 	}
 
 	for key, values := range resp.Headers {

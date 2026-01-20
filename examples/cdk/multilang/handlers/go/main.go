@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -39,12 +41,66 @@ func buildApp() *apptheory.App {
 		}), nil
 	})
 
-	app.Get("/sse", func(_ *apptheory.Context) (*apptheory.Response, error) {
-		return apptheory.SSEResponse(200, apptheory.SSEEvent{
-			ID:    "1",
-			Event: "message",
-			Data:  map[string]any{"ok": true, "lang": lang, "name": name},
-		})
+	app.Get("/sse", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		events := make(chan apptheory.SSEEvent)
+		go func() {
+			defer close(events)
+			for i := 1; i <= 3; i++ {
+				events <- apptheory.SSEEvent{
+					ID:    fmt.Sprintf("%d", i),
+					Event: "message",
+					Data:  map[string]any{"ok": true, "lang": lang, "name": name, "seq": i},
+				}
+				time.Sleep(1 * time.Second)
+			}
+		}()
+		return apptheory.SSEStreamResponse(ctx.Context(), 200, events)
+	})
+
+	app.WebSocket("$connect", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		ws := ctx.AsWebSocket()
+		return apptheory.MustJSON(200, map[string]any{
+			"ok":            true,
+			"lang":          lang,
+			"name":          name,
+			"route_key":     ws.RouteKey,
+			"connection_id": ws.ConnectionID,
+			"request_id":    ws.RequestID,
+		}), nil
+	})
+
+	app.WebSocket("$disconnect", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		ws := ctx.AsWebSocket()
+		return apptheory.MustJSON(200, map[string]any{
+			"ok":            true,
+			"lang":          lang,
+			"name":          name,
+			"route_key":     ws.RouteKey,
+			"connection_id": ws.ConnectionID,
+			"request_id":    ws.RequestID,
+		}), nil
+	})
+
+	app.WebSocket("$default", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		ws := ctx.AsWebSocket()
+		if ws != nil {
+			if err := ws.SendJSONMessage(map[string]any{
+				"ok":   true,
+				"lang": lang,
+				"name": name,
+			}); err != nil {
+				return nil, err
+			}
+		}
+		return apptheory.MustJSON(200, map[string]any{
+			"ok":                  true,
+			"lang":                lang,
+			"name":                name,
+			"route_key":           ws.RouteKey,
+			"connection_id":       ws.ConnectionID,
+			"management_endpoint": ws.ManagementEndpoint,
+			"request_id":          ws.RequestID,
+		}), nil
 	})
 
 	queueName := os.Getenv("APPTHEORY_DEMO_QUEUE_NAME")

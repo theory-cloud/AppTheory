@@ -92,7 +92,8 @@ func (a *App) serveP0(ctx context.Context, req Request) (resp Response) {
 		}
 	}()
 
-	out, handlerErr := match.Route.Handler(requestCtx)
+	handler := a.applyMiddlewares(match.Route.Handler)
+	out, handlerErr := handler(requestCtx)
 	if handlerErr != nil {
 		var appErr *AppError
 		if errors.As(handlerErr, &appErr) {
@@ -210,7 +211,8 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 
 	requestCtx.MiddlewareTrace = append(requestCtx.MiddlewareTrace, "handler")
 
-	out, handlerErr := match.Route.Handler(requestCtx)
+	handler := a.applyMiddlewares(match.Route.Handler)
+	out, handlerErr := handler(requestCtx)
 	if handlerErr != nil {
 		var appErr *AppError
 		if errors.As(handlerErr, &appErr) {

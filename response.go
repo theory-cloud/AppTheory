@@ -1,14 +1,18 @@
 package apptheory
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"io"
+)
 
 // Response is the canonical HTTP response model returned by AppTheory handlers.
 type Response struct {
-	Status   int
-	Headers  map[string][]string
-	Cookies  []string
-	Body     []byte
-	IsBase64 bool
+	Status     int
+	Headers    map[string][]string
+	Cookies    []string
+	Body       []byte
+	BodyReader io.Reader
+	IsBase64   bool
 }
 
 // Text builds a text/plain response (utf-8).

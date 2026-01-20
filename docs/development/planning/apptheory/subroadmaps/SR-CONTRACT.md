@@ -30,6 +30,16 @@ Non-goals (for contract v0):
 - Fixtures (machine-readable): `contract-tests/` (to be created)
 - Runners (language-specific): `contract-tests/runners/{go,ts,py}` (to be created)
 
+## Current status (AppTheory `v0.2.0-rc.1`)
+
+- Contract fixtures exist and are validated in CI across Go/TS/Py for:
+  - P0 / P1 / P2 core tiers (`contract-tests/fixtures/p0|p1|p2`)
+  - Lift parity extensions (`contract-tests/fixtures/m1|m2|m3|m12`)
+- M12 fixtures cover:
+  - global middleware pipeline + `ctx.Set/Get` (`contract-tests/fixtures/m12/middleware-ctx-bag.json`)
+  - naming helpers (`contract-tests/fixtures/m12/naming-helpers.json`)
+  - SSE event-by-event streaming framing (`contract-tests/fixtures/m12/sse-event-stream-three-events.json`)
+
 ## Contract versioning rules (fail-closed)
 
 - Contract changes must be additive unless explicitly marked breaking.

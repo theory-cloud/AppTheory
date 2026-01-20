@@ -34,6 +34,8 @@ func runFixture(f Fixture) error {
 		return runFixtureM2(f)
 	case "m3":
 		return runFixtureM3(f)
+	case "m12":
+		return runFixtureM12(f)
 	default:
 		return runFixtureLegacy(f)
 	}
