@@ -15,4 +15,3 @@ func validateAppTheoryRestApi_IsConstructParameters(x interface{}) error {
 func validateNewAppTheoryRestApiParameters(scope constructs.Construct, id *string, props *AppTheoryRestApiProps) error {
 	return nil
 }
-

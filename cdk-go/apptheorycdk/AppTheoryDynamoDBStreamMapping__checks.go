@@ -36,4 +36,3 @@ func validateNewAppTheoryDynamoDBStreamMappingParameters(scope constructs.Constr
 
 	return nil
 }
-

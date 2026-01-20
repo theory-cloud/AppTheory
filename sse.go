@@ -111,35 +111,7 @@ func SSEStreamResponse(ctx context.Context, status int, events <-chan SSEEvent) 
 	}
 
 	pr, pw := io.Pipe()
-	go func() {
-		defer pw.Close()
-
-		if events == nil {
-			return
-		}
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case ev, ok := <-events:
-				if !ok {
-					return
-				}
-
-				b, err := formatSSEEvent(ev)
-				if err != nil {
-					_ = pw.CloseWithError(err)
-					return
-				}
-
-				if _, err := pw.Write(b); err != nil {
-					_ = pw.CloseWithError(err)
-					return
-				}
-			}
-		}
-	}()
+	go streamSSEEvents(ctx, pw, events)
 
 	return &Response{
 		Status: status,
@@ -153,6 +125,57 @@ func SSEStreamResponse(ctx context.Context, status int, events <-chan SSEEvent) 
 		BodyReader: pr,
 		IsBase64:   false,
 	}, nil
+}
+
+func streamSSEEvents(ctx context.Context, pw *io.PipeWriter, events <-chan SSEEvent) {
+	defer safeClosePipeWriter(pw)
+
+	if events == nil {
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-events:
+			if !ok {
+				return
+			}
+
+			if err := writeSSEEvent(pw, ev); err != nil {
+				closePipeWriterWithError(pw, err)
+				return
+			}
+		}
+	}
+}
+
+func writeSSEEvent(pw *io.PipeWriter, ev SSEEvent) error {
+	b, err := formatSSEEvent(ev)
+	if err != nil {
+		return err
+	}
+	_, err = pw.Write(b)
+	return err
+}
+
+func closePipeWriterWithError(pw *io.PipeWriter, err error) {
+	if pw == nil {
+		return
+	}
+	if closeErr := pw.CloseWithError(err); closeErr != nil {
+		_ = closeErr
+	}
+}
+
+func safeClosePipeWriter(pw *io.PipeWriter) {
+	if pw == nil {
+		return
+	}
+	if err := pw.Close(); err != nil {
+		_ = err
+	}
 }
 
 // MustSSEResponse builds an SSE response and panics on framing/serialization errors.

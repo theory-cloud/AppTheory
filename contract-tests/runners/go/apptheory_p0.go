@@ -203,112 +203,101 @@ func responseFromLambdaFunctionURL(resp events.LambdaFunctionURLResponse) (appth
 	}, nil
 }
 
+var builtInAppTheoryHandlers = map[string]apptheory.Handler{
+	"static_pong": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Text(200, "pong"), nil
+	},
+	"echo_path_params": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"params": ctx.Params,
+		})
+	},
+	"echo_request": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"method":    ctx.Request.Method,
+			"path":      ctx.Request.Path,
+			"query":     ctx.Request.Query,
+			"headers":   ctx.Request.Headers,
+			"cookies":   ctx.Request.Cookies,
+			"body_b64":  base64.StdEncoding.EncodeToString(ctx.Request.Body),
+			"is_base64": ctx.Request.IsBase64,
+		})
+	},
+	"parse_json_echo": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		value, err := ctx.JSONValue()
+		if err != nil {
+			return nil, err
+		}
+		return apptheory.JSON(200, value)
+	},
+	"panic": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		panic("boom")
+	},
+	"binary_body": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Binary(200, []byte{0x00, 0x01, 0x02}, "application/octet-stream"), nil
+	},
+	"echo_context": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"request_id":    ctx.RequestID,
+			"tenant_id":     ctx.TenantID,
+			"auth_identity": ctx.AuthIdentity,
+			"remaining_ms":  ctx.RemainingMS,
+		})
+	},
+	"echo_middleware_trace": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"trace": ctx.MiddlewareTrace,
+		})
+	},
+	"echo_ctx_value_and_trace": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"mw":    ctx.Get("mw"),
+			"trace": ctx.MiddlewareTrace,
+		})
+	},
+	"naming_helpers": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"normalized": map[string]string{
+				"prod":   naming.NormalizeStage("prod"),
+				"stg":    naming.NormalizeStage("stg"),
+				"custom": naming.NormalizeStage("  Foo_Bar  "),
+			},
+			"base":     naming.BaseName("Pay Theory", "prod", "Tenant_1"),
+			"resource": naming.ResourceName("Pay Theory", "WS Api", "prod", "Tenant_1"),
+		})
+	},
+	"unauthorized": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return nil, &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
+	},
+	"validation_failed": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return nil, &apptheory.AppError{Code: "app.validation_failed", Message: "validation failed"}
+	},
+	"large_response": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Text(200, "12345"), nil
+	},
+	"sse_single_event": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.SSEResponse(200, apptheory.SSEEvent{
+			ID:    "1",
+			Event: "message",
+			Data:  map[string]any{"ok": true},
+		})
+	},
+	"sse_stream_three_events": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		events := make(chan apptheory.SSEEvent, 3)
+		events <- apptheory.SSEEvent{ID: "1", Event: "message", Data: map[string]any{"a": 1, "b": 2}}
+		events <- apptheory.SSEEvent{Event: "note", Data: "hello\nworld"}
+		events <- apptheory.SSEEvent{ID: "3", Data: ""}
+		close(events)
+		return apptheory.SSEStreamResponse(ctx.Context(), 200, events)
+	},
+}
+
 func builtInAppTheoryHandler(name string) apptheory.Handler {
-	switch name {
-	case "static_pong":
-		return func(_ *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.Text(200, "pong"), nil
-		}
-	case "echo_path_params":
-		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.JSON(200, map[string]any{
-				"params": ctx.Params,
-			})
-		}
-	case "echo_request":
-		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.JSON(200, map[string]any{
-				"method":    ctx.Request.Method,
-				"path":      ctx.Request.Path,
-				"query":     ctx.Request.Query,
-				"headers":   ctx.Request.Headers,
-				"cookies":   ctx.Request.Cookies,
-				"body_b64":  base64.StdEncoding.EncodeToString(ctx.Request.Body),
-				"is_base64": ctx.Request.IsBase64,
-			})
-		}
-	case "parse_json_echo":
-		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-			value, err := ctx.JSONValue()
-			if err != nil {
-				return nil, err
-			}
-			return apptheory.JSON(200, value)
-		}
-	case "panic":
-		return func(_ *apptheory.Context) (*apptheory.Response, error) {
-			panic("boom")
-		}
-	case "binary_body":
-		return func(_ *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.Binary(200, []byte{0x00, 0x01, 0x02}, "application/octet-stream"), nil
-		}
-	case "echo_context":
-		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.JSON(200, map[string]any{
-				"request_id":    ctx.RequestID,
-				"tenant_id":     ctx.TenantID,
-				"auth_identity": ctx.AuthIdentity,
-				"remaining_ms":  ctx.RemainingMS,
-			})
-		}
-	case "echo_middleware_trace":
-		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.JSON(200, map[string]any{
-				"trace": ctx.MiddlewareTrace,
-			})
-		}
-	case "echo_ctx_value_and_trace":
-		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.JSON(200, map[string]any{
-				"mw":    ctx.Get("mw"),
-				"trace": ctx.MiddlewareTrace,
-			})
-		}
-	case "naming_helpers":
-		return func(_ *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.JSON(200, map[string]any{
-				"normalized": map[string]string{
-					"prod":   naming.NormalizeStage("prod"),
-					"stg":    naming.NormalizeStage("stg"),
-					"custom": naming.NormalizeStage("  Foo_Bar  "),
-				},
-				"base":     naming.BaseName("Pay Theory", "prod", "Tenant_1"),
-				"resource": naming.ResourceName("Pay Theory", "WS Api", "prod", "Tenant_1"),
-			})
-		}
-	case "unauthorized":
-		return func(_ *apptheory.Context) (*apptheory.Response, error) {
-			return nil, &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
-		}
-	case "validation_failed":
-		return func(_ *apptheory.Context) (*apptheory.Response, error) {
-			return nil, &apptheory.AppError{Code: "app.validation_failed", Message: "validation failed"}
-		}
-	case "large_response":
-		return func(_ *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.Text(200, "12345"), nil
-		}
-	case "sse_single_event":
-		return func(_ *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.SSEResponse(200, apptheory.SSEEvent{
-				ID:    "1",
-				Event: "message",
-				Data:  map[string]any{"ok": true},
-			})
-		}
-	case "sse_stream_three_events":
-		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-			events := make(chan apptheory.SSEEvent, 3)
-			events <- apptheory.SSEEvent{ID: "1", Event: "message", Data: map[string]any{"a": 1, "b": 2}}
-			events <- apptheory.SSEEvent{Event: "note", Data: "hello\nworld"}
-			events <- apptheory.SSEEvent{ID: "3", Data: ""}
-			close(events)
-			return apptheory.SSEStreamResponse(ctx.Context(), 200, events)
-		}
-	default:
+	key := strings.TrimSpace(name)
+	if key == "" {
 		return nil
 	}
+	return builtInAppTheoryHandlers[key]
 }
 
 func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []FixtureLogRecord, metrics []FixtureMetricRecord, spans []FixtureSpanRecord) error {

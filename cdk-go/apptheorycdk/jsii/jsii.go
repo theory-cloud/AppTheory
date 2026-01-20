@@ -5,11 +5,11 @@
 package jsii
 
 import (
-	_          "embed"
+	_ "embed"
 
-	_jsii_     "github.com/aws/jsii-runtime-go/runtime"
+	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
 
-	awscdk     "github.com/aws/aws-cdk-go/awscdk/v2/jsii"
+	awscdk "github.com/aws/aws-cdk-go/awscdk/v2/jsii"
 	constructs "github.com/aws/constructs-go/constructs/v10/jsii"
 )
 
