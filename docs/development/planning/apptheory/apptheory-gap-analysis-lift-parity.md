@@ -179,7 +179,7 @@ These are not “future improvements”; these are Lift features in active use.
 
 ---
 
-### G4 — Lift observability packages parity (K3) is missing
+### G4 — Lift observability packages parity (K3)
 
 **Why it’s required**
 - K3 depends on:
@@ -189,11 +189,16 @@ These are not “future improvements”; these are Lift features in active use.
     notifications.
 
 **Current AppTheory state**
-- AppTheory exposes portable observability **hooks**, not a logger implementation or zap integration.
+- AppTheory exposes portable observability **hooks** (contract-backed) and also provides Go-only logger implementation
+  packages for Lift parity:
+  - Go: `pkg/observability` (`StructuredLogger`, `LoggerConfig`, `HooksFromLogger`, `NewTestLogger`, `NewNoOpLogger`)
+  - Go: `pkg/observability/zap` (`NewZapLogger`, `NewZapLoggerFactory`, `WithEnvironmentErrorNotifications`,
+    `NewSNSNotifier`)
+  - Go: `apptheory.IsLambda()` / `app.IsLambda()` helpers exist for environment-aware behavior.
 
 **Remediation**
-- Define an AppTheory Go logger interface + zap integration package that can replace K3’s usage.
-- Keep the portable hooks as the “contract surface”; allow Go-only integrations on top.
+- ✅ Define an AppTheory Go logger interface + zap integration package that can replace K3’s usage.
+- ✅ Keep the portable hooks as the “contract surface”; allow Go-only integrations on top.
 
 **Acceptance criteria**
 - K3 can create a structured logger and connect it to AppTheory’s runtime without re-implementing the entire logging
