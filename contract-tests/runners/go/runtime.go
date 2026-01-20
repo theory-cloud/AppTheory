@@ -168,7 +168,7 @@ func enableP2ForTier(tier string) bool {
 }
 
 func newFixtureApp(setup FixtureSetup, tier string) (*fixtureApp, error) {
-	var compiled []compiledRoute
+	compiled := make([]compiledRoute, 0, len(setup.Routes))
 	for _, r := range setup.Routes {
 		if strings.TrimSpace(r.Method) == "" || strings.TrimSpace(r.Path) == "" || strings.TrimSpace(r.Handler) == "" {
 			return nil, errors.New("route entries must have method, path, and handler")
@@ -211,7 +211,7 @@ func (a *fixtureApp) match(method, path string) (*matchResult, []string) {
 	method = strings.ToUpper(strings.TrimSpace(method))
 	pathSegments := splitPath(path)
 
-	var allowed []string
+	allowed := make([]string, 0, len(a.routes))
 	for _, r := range a.routes {
 		params, ok := matchPath(r.Segments, pathSegments)
 		if !ok {
