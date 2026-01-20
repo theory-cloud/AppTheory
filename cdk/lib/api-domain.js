@@ -55,7 +55,7 @@ class AppTheoryApiDomain extends constructs_1.Construct {
 }
 exports.AppTheoryApiDomain = AppTheoryApiDomain;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryApiDomain[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryApiDomain", version: "0.2.0-rc.1" };
+AppTheoryApiDomain[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryApiDomain", version: "0.2.0-rc.2" };
 function toRoute53RecordName(domainName, zone) {
     const fqdn = String(domainName ?? "").trim().replace(/\.$/, "");
     const zoneName = String(zone.zoneName ?? "").trim().replace(/\.$/, "");
