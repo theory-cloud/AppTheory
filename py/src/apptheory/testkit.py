@@ -32,6 +32,7 @@ class TestEnv:
         auth_hook: AuthHook | None = None,
         observability: ObservabilityHooks | None = None,
         policy_hook: PolicyHook | None = None,
+        websocket_client_factory: WebSocketClientFactory | None = None,
     ) -> App:
         kwargs: dict[str, object] = {
             "clock": clock or self.clock,
@@ -47,6 +48,8 @@ class TestEnv:
             kwargs["observability"] = observability
         if policy_hook is not None:
             kwargs["policy_hook"] = policy_hook
+        if websocket_client_factory is not None:
+            kwargs["websocket_client_factory"] = websocket_client_factory
         return create_app(**kwargs)
 
     def invoke(self, app: App, request: Request) -> Response:
@@ -125,35 +128,57 @@ class FakeWebSocketManagementClient:
     def __init__(self, endpoint: str) -> None:
         self.endpoint = str(endpoint or "").strip()
         self.calls: list[WebSocketCall] = []
+        self.connections: dict[str, dict[str, Any]] = {}
+        self.post_error: Exception | None = None
+        self.get_error: Exception | None = None
+        self.delete_error: Exception | None = None
 
     def post_to_connection(self, connection_id: str, data: bytes) -> None:
+        conn = str(connection_id or "").strip()
+        if not conn:
+            raise RuntimeError("apptheory: websocket connection id is empty")
         self.calls.append(
             WebSocketCall(
                 op="post_to_connection",
                 endpoint=self.endpoint,
-                connection_id=str(connection_id or "").strip(),
+                connection_id=conn,
                 data=bytes(data or b""),
             )
         )
+        if self.post_error is not None:
+            raise self.post_error
 
     def get_connection(self, connection_id: str) -> dict[str, Any]:
+        conn = str(connection_id or "").strip()
+        if not conn:
+            raise RuntimeError("apptheory: websocket connection id is empty")
         self.calls.append(
             WebSocketCall(
                 op="get_connection",
                 endpoint=self.endpoint,
-                connection_id=str(connection_id or "").strip(),
+                connection_id=conn,
             )
         )
-        return {}
+        if self.get_error is not None:
+            raise self.get_error
+        if conn not in self.connections:
+            raise RuntimeError("apptheory: connection not found")
+        return dict(self.connections.get(conn) or {})
 
     def delete_connection(self, connection_id: str) -> None:
+        conn = str(connection_id or "").strip()
+        if not conn:
+            raise RuntimeError("apptheory: websocket connection id is empty")
         self.calls.append(
             WebSocketCall(
                 op="delete_connection",
                 endpoint=self.endpoint,
-                connection_id=str(connection_id or "").strip(),
+                connection_id=conn,
             )
         )
+        if self.delete_error is not None:
+            raise self.delete_error
+        self.connections.pop(conn, None)
 
 
 class FakeWebSocketClientFactory:
