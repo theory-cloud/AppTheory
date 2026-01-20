@@ -1511,6 +1511,25 @@ def run_fixture_p1(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
 
     setup = fixture.get("setup", {})
     limits = setup.get("limits", {}) or {}
+    cors_setup = setup.get("cors", None)
+    cors = None
+    if isinstance(cors_setup, dict):
+        allowed_origins = None
+        if "allowed_origins" in cors_setup:
+            raw = cors_setup.get("allowed_origins")
+            allowed_origins = [str(v) for v in raw] if isinstance(raw, list) else []
+
+        allow_headers = None
+        if "allow_headers" in cors_setup:
+            raw = cors_setup.get("allow_headers")
+            allow_headers = [str(v) for v in raw] if isinstance(raw, list) else []
+
+        if allowed_origins is not None or allow_headers is not None or bool(cors_setup.get("allow_credentials")):
+            cors = runtime.CORSConfig(
+                allowed_origins=allowed_origins,
+                allow_credentials=bool(cors_setup.get("allow_credentials")),
+                allow_headers=allow_headers,
+            )
     app = runtime.create_app(
         tier="p1",
         id_generator=ids,
@@ -1518,6 +1537,7 @@ def run_fixture_p1(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
             max_response_bytes=int(limits.get("max_response_bytes") or 0),
         ),
+        cors=cors,
         auth_hook=lambda ctx: _fixture_auth_hook(runtime, ctx),
     )
 
@@ -1567,6 +1587,25 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
 
     setup = fixture.get("setup", {})
     limits = setup.get("limits", {}) or {}
+    cors_setup = setup.get("cors", None)
+    cors = None
+    if isinstance(cors_setup, dict):
+        allowed_origins = None
+        if "allowed_origins" in cors_setup:
+            raw = cors_setup.get("allowed_origins")
+            allowed_origins = [str(v) for v in raw] if isinstance(raw, list) else []
+
+        allow_headers = None
+        if "allow_headers" in cors_setup:
+            raw = cors_setup.get("allow_headers")
+            allow_headers = [str(v) for v in raw] if isinstance(raw, list) else []
+
+        if allowed_origins is not None or allow_headers is not None or bool(cors_setup.get("allow_credentials")):
+            cors = runtime.CORSConfig(
+                allowed_origins=allowed_origins,
+                allow_credentials=bool(cors_setup.get("allow_credentials")),
+                allow_headers=allow_headers,
+            )
     app = runtime.create_app(
         tier="p2",
         id_generator=ids,
@@ -1574,6 +1613,7 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
             max_response_bytes=int(limits.get("max_response_bytes") or 0),
         ),
+        cors=cors,
         auth_hook=lambda ctx: _fixture_auth_hook(runtime, ctx),
         policy_hook=lambda ctx: _fixture_policy_hook(runtime, ctx),
         observability=runtime.ObservabilityHooks(

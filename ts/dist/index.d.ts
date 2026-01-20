@@ -298,6 +298,12 @@ export interface Limits {
   maxResponseBytes?: number;
 }
 
+export interface CORSConfig {
+  allowedOrigins?: string[];
+  allowCredentials?: boolean;
+  allowHeaders?: string[];
+}
+
 export interface RouteOptions {
   authRequired?: boolean;
 }
@@ -346,6 +352,7 @@ export declare class App {
     ids?: IdGenerator;
     tier?: Tier;
     limits?: Limits;
+    cors?: CORSConfig;
     authHook?: AuthHook;
     policyHook?: PolicyHook;
     observability?: ObservabilityHooks;
@@ -378,6 +385,7 @@ export declare function createApp(options?: {
   ids?: IdGenerator;
   tier?: Tier;
   limits?: Limits;
+  cors?: CORSConfig;
   authHook?: AuthHook;
   policyHook?: PolicyHook;
   observability?: ObservabilityHooks;

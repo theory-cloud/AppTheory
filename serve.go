@@ -133,7 +133,7 @@ func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool) (re
 			state.errorCode = errorCodeInternal
 			resp = errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, state.requestID)
 		}
-		resp = finalizeP1Response(resp, state.requestID, state.origin)
+		resp = finalizeP1Response(resp, state.requestID, state.origin, a.cors)
 		if enableP2 {
 			a.recordObservability(state.method, state.path, state.requestID, state.tenantID, resp.Status, state.errorCode)
 		}
@@ -384,14 +384,20 @@ func remainingMSFromContext(ctx context.Context, clock Clock) int {
 	return int(d / time.Millisecond)
 }
 
-func finalizeP1Response(resp Response, requestID, origin string) Response {
+func finalizeP1Response(resp Response, requestID, origin string, cors CORSConfig) Response {
 	headers := canonicalizeHeaders(resp.Headers)
 	if requestID != "" {
 		headers["x-request-id"] = []string{requestID}
 	}
-	if origin != "" {
+	if origin != "" && corsOriginAllowed(origin, cors) {
 		headers["access-control-allow-origin"] = []string{origin}
 		headers["vary"] = []string{"origin"}
+		if cors.AllowCredentials {
+			headers["access-control-allow-credentials"] = []string{"true"}
+		}
+		if allowHeaders := corsAllowHeadersValue(cors); allowHeaders != "" {
+			headers["access-control-allow-headers"] = []string{allowHeaders}
+		}
 	}
 	resp.Headers = headers
 	return resp
