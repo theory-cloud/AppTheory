@@ -39,7 +39,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! (cd "${example_dir}" && npx cdk synth --quiet --no-notices -o "${tmp_out}" >/dev/null 2>"${tmp_log}"); then
+if ! (cd "${example_dir}" && npx cdk synth --quiet --no-notices --no-version-reporting -o "${tmp_out}" >/dev/null 2>"${tmp_log}"); then
   echo "cdk-synth: FAIL (synth failed)" >&2
   cat "${tmp_log}" >&2
   exit 1
