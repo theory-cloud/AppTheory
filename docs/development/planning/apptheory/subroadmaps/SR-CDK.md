@@ -25,6 +25,9 @@ Non-goals:
 - TS-first jsii constructs strategy is recorded (ADR): `docs/development/planning/apptheory/adr/0001-cdk-constructs-via-jsii.md`.
 - Build/consumption gates are in CI: `./scripts/verify-cdk-constructs.sh`, `./scripts/verify-cdk-go.sh`,
   `./scripts/verify-cdk-python-build.sh`.
+- Lift parity construct coverage includes an EventBus table construct for Autheory migrations:
+  - `cdk/lib/eventbus-table.ts` (`AppTheoryEventBusTable`) provisions `pk/sk`, TTL, and the required GSIs
+    (`event-id-index`, `tenant-timestamp-index`).
 
 ## Milestones
 
