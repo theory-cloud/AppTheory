@@ -294,7 +294,10 @@ class App:
                     ),
                     "app.method_not_allowed",
                 )
-            return finish(error_response_with_request_id("app.not_found", "not found", request_id=request_id), "app.not_found")
+            return finish(
+                error_response_with_request_id("app.not_found", "not found", request_id=request_id),
+                "app.not_found",
+            )
 
         request_ctx = Context(
             request=normalized,

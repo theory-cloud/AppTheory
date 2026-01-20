@@ -4,7 +4,6 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Any
 
-from apptheory.aws_http import build_apigw_v2_request, build_lambda_function_url_request
 from apptheory.app import App, AuthHook, Limits, ObservabilityHooks, PolicyHook, create_app
 from apptheory.clock import ManualClock
 from apptheory.context import WebSocketClientFactory
@@ -69,7 +68,9 @@ class TestEnv:
     def invoke_eventbridge(self, app: App, event: dict[str, object], ctx: object | None = None) -> object:
         return app.serve_eventbridge(event, ctx=ctx)
 
-    def invoke_dynamodb_stream(self, app: App, event: dict[str, object], ctx: object | None = None) -> dict[str, object]:
+    def invoke_dynamodb_stream(
+        self, app: App, event: dict[str, object], ctx: object | None = None
+    ) -> dict[str, object]:
         return app.serve_dynamodb_stream(event, ctx=ctx)
 
     def invoke_websocket(self, app: App, event: dict[str, object], ctx: object | None = None) -> dict[str, object]:

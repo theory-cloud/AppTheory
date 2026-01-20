@@ -49,9 +49,7 @@ def apigw_v2_response_from_response(resp: Response) -> dict[str, Any]:
         multi[str(key)] = [str(v) for v in values]
 
     body = (
-        base64.b64encode(resp.body).decode("ascii")
-        if resp.is_base64
-        else resp.body.decode("utf-8", errors="replace")
+        base64.b64encode(resp.body).decode("ascii") if resp.is_base64 else resp.body.decode("utf-8", errors="replace")
     )
 
     return {
@@ -72,9 +70,7 @@ def lambda_function_url_response_from_response(resp: Response) -> dict[str, Any]
         headers[str(key)] = ",".join([str(v) for v in values])
 
     body = (
-        base64.b64encode(resp.body).decode("ascii")
-        if resp.is_base64
-        else resp.body.decode("utf-8", errors="replace")
+        base64.b64encode(resp.body).decode("ascii") if resp.is_base64 else resp.body.decode("utf-8", errors="replace")
     )
 
     return {
@@ -100,9 +96,7 @@ def apigw_proxy_response_from_response(resp: Response) -> dict[str, Any]:
         multi["set-cookie"] = [str(c) for c in resp.cookies]
 
     body = (
-        base64.b64encode(resp.body).decode("ascii")
-        if resp.is_base64
-        else resp.body.decode("utf-8", errors="replace")
+        base64.b64encode(resp.body).decode("ascii") if resp.is_base64 else resp.body.decode("utf-8", errors="replace")
     )
 
     return {
@@ -127,9 +121,7 @@ def build_apigw_v2_request(
     raw_path, raw_query_string = _split_path_and_query(path, query)
     body_bytes = to_bytes(body)
     body_str = (
-        base64.b64encode(body_bytes).decode("ascii")
-        if is_base64
-        else body_bytes.decode("utf-8", errors="replace")
+        base64.b64encode(body_bytes).decode("ascii") if is_base64 else body_bytes.decode("utf-8", errors="replace")
     )
 
     query_string_parameters: dict[str, str] = {}
@@ -169,9 +161,7 @@ def build_lambda_function_url_request(
     raw_path, raw_query_string = _split_path_and_query(path, query)
     body_bytes = to_bytes(body)
     body_str = (
-        base64.b64encode(body_bytes).decode("ascii")
-        if is_base64
-        else body_bytes.decode("utf-8", errors="replace")
+        base64.b64encode(body_bytes).decode("ascii") if is_base64 else body_bytes.decode("utf-8", errors="replace")
     )
 
     query_string_parameters: dict[str, str] = {}
