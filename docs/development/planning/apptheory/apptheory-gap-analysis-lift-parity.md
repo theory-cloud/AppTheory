@@ -171,17 +171,24 @@ These are not “future improvements”; these are Lift features in active use.
   - EventBridge detail shaping helpers
 
 **Current AppTheory state**
-- AppTheory provides **event triggers** (EventBridge + DynamoDB Streams) but not a durable EventBus abstraction.
+- ✅ AppTheory provides a durable EventBus abstraction (Go) backed by TableTheory:
+  - API + models: `pkg/services/eventbus.go`
+  - Memory EventBus (tests/local): `pkg/services/eventbus_memory.go`
+  - DynamoDB EventBus (production): `pkg/services/eventbus_dynamodb.go`
+- Portability is explicit:
+  - API is Lift-compatible and stable.
+  - DynamoDB-backed implementation is currently Go-only (TS/Py follow once the TableTheory dependency story is wired for
+    consumers).
 
 **Remediation**
-- Port the EventBus surface into AppTheory (Go first), with a clear multi-language portability story:
-  - If full parity is feasible cross-language: design it as portable.
-  - If not: ship Go-only first, explicitly documented (but still a parity requirement for Pay Theory).
+- ✅ Ported the EventBus surface into AppTheory (Go) using TableTheory (no raw AWS SDK DynamoDB workarounds).
+- ✅ Added deterministic unit tests: `pkg/services/eventbus_test.go`.
+- ✅ Recorded portability decision in `subroadmaps/SR-SERVICES.md`.
 
 **Acceptance criteria**
-- An AppTheory EventBus API exists that can replace Autheory’s Lift EventBus usage (at least: create events, query, and
-  DynamoDB persistence).
-- Test coverage includes deterministic unit tests and any required strict fakes.
+- ✅ An AppTheory EventBus API exists that can replace Autheory’s Lift EventBus usage (at least: create events, query,
+  and DynamoDB persistence).
+- ✅ Test coverage includes deterministic unit tests.
 
 **Complex enough for a dedicated sub-roadmap**
 - ✅ Add `docs/development/planning/apptheory/subroadmaps/SR-SERVICES.md` (new), starting with EventBus.

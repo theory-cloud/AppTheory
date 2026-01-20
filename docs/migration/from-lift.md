@@ -134,6 +134,28 @@ Reference example:
 
 - `examples/migration/rate-limited-http/README.md`
 
+### 6b) EventBus (Lift `pkg/services`) (Autheory)
+
+AppTheory ports the Lift EventBus surface needed by Autheory:
+
+- Lift: `github.com/pay-theory/lift/pkg/services`
+- AppTheory: `github.com/theory-cloud/apptheory/pkg/services`
+
+Key mapping:
+
+- `services.NewEvent(...)` → `services.NewEvent(...)`
+- `services.NewMemoryEventBus()` → `services.NewMemoryEventBus()` (tests/local)
+- `services.NewDynamoDBEventBus(...)` → `services.NewDynamoDBEventBus(...)` (production; TableTheory-backed)
+
+Notes:
+
+- DynamoDB backing uses **TableTheory** (no raw AWS SDK DynamoDB calls).
+- Table name can be set via `EventBusConfig.TableName` or env `APPTHEORY_EVENTBUS_TABLE_NAME` (migration-friendly fallbacks
+  exist for Autheory deployments).
+- Cursor pagination uses `EventQuery.LastEvaluatedKey["cursor"]` and returns `EventQuery.NextKey["cursor"]`.
+- `DynamoDBEventBus.Query(...)` requires `TenantID`; `MemoryEventBus.Query(...)` also supports event-type-only queries
+  (useful for adapter tests).
+
 ### 7) Observability (logs/metrics/traces)
 
 AppTheory’s portable observability surface is hook-based:
@@ -267,6 +289,7 @@ This table is a migration-focused subset. For the broader mapping seed, see:
 | `app.EventBridge(...)` | `app.EventBridge(...)` | match by rule name or by source/detail-type |
 | `app.DynamoDB(table, handler)` | `app.DynamoDB(table, handler)` | DynamoDB Streams routing by table name |
 | `github.com/pay-theory/limited` | `apptheory/pkg/limited` | replicated feature set; TableTheory-backed |
+| Lift `pkg/services` (EventBus) | `apptheory/pkg/services` (EventBus) | Lift-compatible API; DynamoDB implementation uses TableTheory |
 | DynamORM usage | TableTheory | companion data framework for AppTheory |
 
 ## Known Differences (Intentional)

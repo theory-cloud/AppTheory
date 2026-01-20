@@ -33,6 +33,42 @@ Non-goals:
 - **Portability must be explicit:** if EventBus cannot be made portable across Go/TS/Py in the first pass, ship Go-only
   first but document the boundary and keep the API stable for eventual portability.
 
+## Current status (AppTheory `v0.2.0-rc.1`)
+
+Autheory inventory (Lift EventBus usage):
+
+- Adapter layer: `autheory/pkg/autheory/services/hub/lift_event_bus.go`:
+  - uses Lift `NewEvent(...)` + `EventBus.Publish(...)`
+  - relies on Memory EventBus in tests for `Query(...)` filtering
+- Replay tooling: `autheory/cmd/eventbus-replay/main.go`:
+  - uses `EventBus.Query(...)` with:
+    - required `tenant_id`
+    - optional `event_type`
+    - time ranges (`start_time`/`end_time`)
+    - limit + cursor pagination (`LastEvaluatedKey["cursor"]`)
+- EventBridge detail shaping: `autheory/pkg/autheory/eventpipeline/eventbridge_detail.go` expects fields:
+  `id`, `event_type`, `tenant_id`, `source_id`, `published_at`, `correlation_id`, `version`, `payload`, `metadata`, `tags`
+
+Portability decision (this pass):
+
+- **API shape is stable** and intended to be portable across Go/TS/Py.
+- **Production DynamoDB implementation is Go-only** for now and uses TableTheory (no raw AWS SDK workarounds).
+
+Implemented (Go):
+
+- `pkg/services`:
+  - Lift-compatible `EventBus` interface + `Event`/`EventQuery` models
+  - `NewEvent(...)` helper and fluent event helpers (`WithTTL`, `WithMetadata`, `WithTags`, `WithCorrelationID`)
+  - `MemoryEventBus` for deterministic unit tests
+  - `DynamoDBEventBus` backed by TableTheory with:
+    - idempotent `Publish` (`IfNotExists` → condition-failed treated as success)
+    - tenant-wide + event-type-specific queries with cursor pagination
+    - tag filtering (`CONTAINS`) and time-range support
+    - `GetEvent` (by ID via GSI) and `DeleteEvent`
+    - optional portable metrics emission via `EventBusConfig.EmitMetric` (no AWS SDK client wrapper)
+- Tests: `pkg/services/eventbus_test.go`
+- Migration guidance: `docs/migration/from-lift.md` (section “6b) EventBus”)
+
 ## Milestones
 
 ### S0 — Inventory and scope lock (Autheory-focused)
@@ -87,4 +123,3 @@ Non-goals:
 - **Scope explosion:** keep SR-SERVICES anchored to Autheory needs; do not port unused Lift services “just in case”.
 - **Portability pressure:** if EventBus is too hard to make portable immediately, ship Go-only with a clear interface and
   document the plan to extend.
-
