@@ -7,13 +7,17 @@ fakes/mocks shipped in the language testkits.
 
 ## AWS SDK clients wrapped by AppTheory
 
-None today.
+Current (HTTP contract slice): none.
+
+Required for Lift parity (must be added):
+
+- API Gateway Management API (WebSockets): equivalent to Lift `pkg/streamer`
 
 | Language | Wrapped AWS clients | Notes |
 | --- | --- | --- |
-| Go | (none) | AppTheory runtime/testkit do not create AWS SDK clients or make network calls. |
-| TypeScript | (none) | AppTheory runtime/testkit do not create AWS SDK clients or make network calls. |
-| Python | (none) | AppTheory runtime/testkit do not create AWS SDK clients or make network calls. |
+| Go | (none yet) | WebSocket parity requires an owned APIGW management client + strict fake (SR-WEBSOCKETS/SR-MOCKS). |
+| TypeScript | (none yet) | WebSocket parity requires an owned APIGW management client + strict fake (SR-WEBSOCKETS/SR-MOCKS). |
+| Python | (none yet) | WebSocket parity requires an owned APIGW management client + strict fake (SR-WEBSOCKETS/SR-MOCKS). |
 
 ## AWS surfaces supported (not SDK clients)
 
@@ -26,7 +30,8 @@ These are **event shapes**, not AWS SDK clients.
 
 ## User-space AWS clients
 
-All AWS SDK usage (DynamoDB, SQS, SNS, EventBridge, etc.) is currently **user-space**.
+All AWS SDK usage (DynamoDB, SQS, SNS, EventBridge, etc.) is **user-space** unless AppTheory explicitly owns a wrapper as
+part of Lift parity (notably: WebSocket management API for message delivery).
 
 Data access should use **TableTheory** as the companion framework for AppTheory across Go/TypeScript/Python.
 

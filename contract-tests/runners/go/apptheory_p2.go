@@ -88,6 +88,10 @@ func runFixtureP2(f Fixture) error {
 		app.Handle(r.Method, r.Path, handler, opts...)
 	}
 
+	if f.Input.Request == nil {
+		return &apptheory.AppError{Code: "app.internal", Message: "internal error"}
+	}
+
 	bodyBytes, err := decodeFixtureBody(f.Input.Request.Body)
 	if err != nil {
 		return err

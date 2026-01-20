@@ -3,6 +3,9 @@ import { createApp, json } from "./vendor/apptheory/index.js";
 const tier = process.env.APPTHEORY_TIER ?? "p2";
 const name = process.env.APPTHEORY_DEMO_NAME ?? "apptheory-multilang";
 const lang = process.env.APPTHEORY_LANG ?? "ts";
+const queueName = process.env.APPTHEORY_DEMO_QUEUE_NAME ?? "";
+const ruleName = process.env.APPTHEORY_DEMO_RULE_NAME ?? "";
+const tableName = process.env.APPTHEORY_DEMO_TABLE_NAME ?? "";
 
 const app = createApp({ tier });
 
@@ -17,6 +20,10 @@ app.get("/", (ctx) =>
   }),
 );
 
+app.sqs(queueName, async () => {});
+app.eventBridge({ ruleName }, async () => ({ ok: true, trigger: "eventbridge", lang }));
+app.dynamoDB(tableName, async () => {});
+
 app.get("/hello/{name}", (ctx) =>
   json(200, {
     message: `hello ${ctx.param("name")}`,
@@ -28,4 +35,4 @@ app.get("/hello/{name}", (ctx) =>
   }),
 );
 
-export const handler = async (event, context) => app.serveAPIGatewayV2(event, context);
+export const handler = async (event, context) => app.handleLambda(event, context);

@@ -20,8 +20,11 @@ type Fixture struct {
 }
 
 type FixtureSetup struct {
-	Limits FixtureLimits  `json:"limits,omitempty"`
-	Routes []FixtureRoute `json:"routes"`
+	Limits      FixtureLimits             `json:"limits,omitempty"`
+	Routes      []FixtureRoute            `json:"routes,omitempty"`
+	SQS         []FixtureSQSRoute         `json:"sqs,omitempty"`
+	EventBridge []FixtureEventBridgeRoute `json:"eventbridge,omitempty"`
+	DynamoDB    []FixtureDynamoDBRoute    `json:"dynamodb,omitempty"`
 }
 
 type FixtureRoute struct {
@@ -31,9 +34,26 @@ type FixtureRoute struct {
 	AuthRequired bool   `json:"auth_required,omitempty"`
 }
 
+type FixtureSQSRoute struct {
+	Queue   string `json:"queue"`
+	Handler string `json:"handler"`
+}
+
+type FixtureEventBridgeRoute struct {
+	RuleName   string `json:"rule_name,omitempty"`
+	Source     string `json:"source,omitempty"`
+	DetailType string `json:"detail_type,omitempty"`
+	Handler    string `json:"handler"`
+}
+
+type FixtureDynamoDBRoute struct {
+	Table   string `json:"table"`
+	Handler string `json:"handler"`
+}
+
 type FixtureInput struct {
 	Context  FixtureContext   `json:"context,omitempty"`
-	Request  FixtureRequest   `json:"request"`
+	Request  *FixtureRequest  `json:"request,omitempty"`
 	AWSEvent *FixtureAWSEvent `json:"aws_event,omitempty"`
 }
 
@@ -56,7 +76,8 @@ type FixtureRequest struct {
 }
 
 type FixtureExpect struct {
-	Response FixtureResponse       `json:"response"`
+	Response *FixtureResponse      `json:"response,omitempty"`
+	Output   json.RawMessage       `json:"output_json,omitempty"`
 	Logs     []FixtureLogRecord    `json:"logs,omitempty"`
 	Metrics  []FixtureMetricRecord `json:"metrics,omitempty"`
 	Spans    []FixtureSpanRecord   `json:"spans,omitempty"`
@@ -105,7 +126,7 @@ type FixtureSpanRecord struct {
 
 func loadFixtures(fixturesRoot string) ([]Fixture, error) {
 	var files []string
-	for _, tier := range []string{"p0", "p1", "p2"} {
+	for _, tier := range []string{"p0", "p1", "p2", "m1"} {
 		matches, err := filepath.Glob(filepath.Join(fixturesRoot, tier, "*.json"))
 		if err != nil {
 			return nil, fmt.Errorf("glob %s fixtures: %w", tier, err)

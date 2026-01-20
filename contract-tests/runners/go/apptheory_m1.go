@@ -1,0 +1,155 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/aws/aws-lambda-go/events"
+
+	"github.com/theory-cloud/apptheory"
+)
+
+func runFixtureM1(f Fixture) error {
+	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+
+	for _, r := range f.Setup.SQS {
+		queue := strings.TrimSpace(r.Queue)
+		handler := builtInSQSHandler(r.Handler)
+		if handler == nil {
+			return fmt.Errorf("unknown sqs handler %q", r.Handler)
+		}
+		app.SQS(queue, handler)
+	}
+
+	for _, r := range f.Setup.DynamoDB {
+		table := strings.TrimSpace(r.Table)
+		handler := builtInDynamoDBStreamHandler(r.Handler)
+		if handler == nil {
+			return fmt.Errorf("unknown dynamodb handler %q", r.Handler)
+		}
+		app.DynamoDB(table, handler)
+	}
+
+	for _, r := range f.Setup.EventBridge {
+		handler := builtInEventBridgeHandler(r.Handler)
+		if handler == nil {
+			return fmt.Errorf("unknown eventbridge handler %q", r.Handler)
+		}
+		selector := apptheory.EventBridgeSelector{
+			RuleName:   strings.TrimSpace(r.RuleName),
+			Source:     strings.TrimSpace(r.Source),
+			DetailType: strings.TrimSpace(r.DetailType),
+		}
+		app.EventBridge(selector, handler)
+	}
+
+	if f.Input.AWSEvent == nil {
+		return errors.New("fixture missing input.aws_event")
+	}
+
+	out, err := app.HandleLambda(context.Background(), f.Input.AWSEvent.Event)
+	if err != nil {
+		return err
+	}
+	return compareFixtureOutputJSON(f, out)
+}
+
+func compareFixtureOutputJSON(f Fixture, out any) error {
+	if len(f.Expect.Output) == 0 {
+		return errors.New("fixture missing expect.output_json")
+	}
+
+	var expected any
+	if err := json.Unmarshal(f.Expect.Output, &expected); err != nil {
+		return fmt.Errorf("parse expected output_json: %w", err)
+	}
+
+	actualJSON, err := json.Marshal(out)
+	if err != nil {
+		return fmt.Errorf("marshal actual output: %w", err)
+	}
+
+	var actual any
+	if err := json.Unmarshal(actualJSON, &actual); err != nil {
+		return fmt.Errorf("parse actual output as json: %w", err)
+	}
+
+	if !jsonEqual(expected, actual) {
+		return fmt.Errorf("output_json mismatch")
+	}
+	return nil
+}
+
+func builtInRecordHandler[T any](
+	name string,
+	noopName string,
+	alwaysFailName string,
+	conditionalFailName string,
+	shouldFail func(T) bool,
+) func(*apptheory.EventContext, T) error {
+	switch strings.TrimSpace(name) {
+	case noopName:
+		return func(_ *apptheory.EventContext, _ T) error {
+			return nil
+		}
+	case alwaysFailName:
+		return func(_ *apptheory.EventContext, _ T) error {
+			return errors.New("fail")
+		}
+	case conditionalFailName:
+		return func(_ *apptheory.EventContext, record T) error {
+			if shouldFail(record) {
+				return errors.New("fail")
+			}
+			return nil
+		}
+	default:
+		return nil
+	}
+}
+
+func builtInSQSHandler(name string) apptheory.SQSHandler {
+	handler := builtInRecordHandler[events.SQSMessage](
+		name,
+		"sqs_noop",
+		"sqs_always_fail",
+		"sqs_fail_on_body",
+		func(msg events.SQSMessage) bool { return strings.TrimSpace(msg.Body) == "fail" },
+	)
+	if handler == nil {
+		return nil
+	}
+	return apptheory.SQSHandler(handler)
+}
+
+func builtInDynamoDBStreamHandler(name string) apptheory.DynamoDBStreamHandler {
+	handler := builtInRecordHandler[events.DynamoDBEventRecord](
+		name,
+		"ddb_noop",
+		"ddb_always_fail",
+		"ddb_fail_on_event_name_remove",
+		func(record events.DynamoDBEventRecord) bool { return strings.TrimSpace(record.EventName) == "REMOVE" },
+	)
+	if handler == nil {
+		return nil
+	}
+	return apptheory.DynamoDBStreamHandler(handler)
+}
+
+func builtInEventBridgeHandler(name string) apptheory.EventBridgeHandler {
+	switch strings.TrimSpace(name) {
+	case "eventbridge_static_a":
+		return func(_ *apptheory.EventContext, _ events.EventBridgeEvent) (any, error) {
+			return map[string]any{"handler": "a"}, nil
+		}
+	case "eventbridge_static_b":
+		return func(_ *apptheory.EventContext, _ events.EventBridgeEvent) (any, error) {
+			return map[string]any{"handler": "b"}, nil
+		}
+	default:
+		return nil
+	}
+}

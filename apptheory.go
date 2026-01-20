@@ -13,6 +13,10 @@ type App struct {
 	auth   AuthHook
 	obs    ObservabilityHooks
 	policy PolicyHook
+
+	sqsRoutes         []sqsRoute
+	eventBridgeRoutes []eventBridgeRoute
+	dynamoDBRoutes    []dynamoDBRoute
 }
 
 type Option func(*App)

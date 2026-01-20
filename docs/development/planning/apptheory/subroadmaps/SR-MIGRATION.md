@@ -26,7 +26,9 @@ Non-goals:
 ### G0 — Inventory real Lift usage (Pay Theory baseline)
 
 **Acceptance criteria**
-- A list exists of which Lift packages/features are used in the Pay Theory stack.
+- A list exists of which Lift packages/features are used in:
+  - the Pay Theory stack, and
+  - other known Lift apps we care about (notably: `equaltoai/lesser`)
 - Each usage is mapped to:
   - “direct replacement in AppTheory”
   - “replacement with behavior change”
@@ -35,6 +37,7 @@ Non-goals:
 Inventory doc (baseline):
 
 - `docs/development/planning/apptheory/supporting/apptheory-lift-usage-inventory.md`
+- Gap analysis derived from Lesser: `docs/development/planning/apptheory/apptheory-gap-analysis-lesser.md`
 
 ---
 

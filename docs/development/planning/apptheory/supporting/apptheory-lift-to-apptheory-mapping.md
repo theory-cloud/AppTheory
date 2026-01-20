@@ -31,7 +31,12 @@ This is a conceptual mapping to guide repo layout and migration docs.
 | `pkg/validation` | `pkg/validation` | portable validation behavior; error mapping |
 | `pkg/logger` / `pkg/observability` | `pkg/observability` | portable subset + hooks |
 | `pkg/testing` | `pkg/testkit` | deterministic testkit (align with SR-MOCKS) |
-| `pkg/cdk/constructs` | `cdk/` (TBD) | prefer jsii constructs for multi-language |
+| `pkg/streamer` | `streamer` (Go/TS/Py) | API Gateway Management API client + strict fakes (SR-WEBSOCKETS/SR-MOCKS) |
+| `pkg/naming` | `naming` (Go/TS/Py) | deterministic resource naming utilities (used by infra) |
+| `app.SQS/EventBridge/DynamoDB` | event-source router (Go/TS/Py) | non-HTTP trigger routing + fixtures (SR-EVENTSOURCES) |
+| `app.WebSocket` + `WebSocketContext` | WebSocket router + context (Go/TS/Py) | `$connect/$disconnect/$default` routing + send helpers (SR-WEBSOCKETS) |
+| `SSEResponse` / `SSEEvent` | SSE helpers (Go/TS/Py) | REST API v1 + response streaming (SR-SSE) |
+| `pkg/cdk/constructs` | `cdk/` (jsii) | Lift construct parity for what our apps use (SR-CDK) |
 
 ## Feature mapping (seed)
 

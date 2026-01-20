@@ -8,6 +8,12 @@ This example deploys the **same AppTheory HTTP app** implemented in:
 
 Each language is deployed as its own Lambda + HTTP API so you can compare behavior side-by-side.
 
+It also wires up the same non-HTTP event sources to each Lambda:
+
+- SQS → Lambda (partial batch failure enabled)
+- EventBridge schedule → Lambda
+- DynamoDB Streams → Lambda (partial batch failure enabled)
+
 ## Prerequisites
 
 - Node.js `>=24` + `npm`
@@ -36,10 +42,12 @@ The CDK stack injects a shared configuration story across languages:
 
 - `APPTHEORY_TIER` (defaults to `p2`)
 - `APPTHEORY_DEMO_NAME` (defaults to `apptheory-multilang`)
+- `APPTHEORY_DEMO_QUEUE_NAME`
+- `APPTHEORY_DEMO_RULE_NAME`
+- `APPTHEORY_DEMO_TABLE_NAME`
 
 You can override these via CDK context:
 
 ```bash
 npx cdk synth -c tier=p2 -c name=demo
 ```
-

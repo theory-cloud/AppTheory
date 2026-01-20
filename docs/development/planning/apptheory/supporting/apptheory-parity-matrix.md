@@ -83,6 +83,20 @@ Legend:
 | Cookies normalization | P0 | ✅ | ✅ | ✅ | |
 | Error envelope + taxonomy | P0 | ✅ | ✅ | ✅ | stable error codes |
 
+## P0+ — Lift parity extensions (required)
+
+These are required for Lift parity (e.g. Lesser usage) and must become fixture-backed contract work (contract v1+).
+
+| Feature | Fixtures | Go | TS | Py | Notes |
+| --- | --- | --- | --- | --- | --- |
+| HTTP adapter: APIGW v1 (REST API) | P0+ | ⬜ | ⬜ | ⬜ | required for REST API v1 + SSE |
+| SSE helpers + streaming responses | P0+ | ⬜ | ⬜ | ⬜ | `SSEEvent` + `SSEResponse` parity |
+| Trigger routing: SQS | P0+ | ⬜ | ⬜ | ⬜ | `app.SQS(...)` parity |
+| Trigger routing: EventBridge | P0+ | ⬜ | ⬜ | ⬜ | `app.EventBridge(...)` parity |
+| Trigger routing: DynamoDB Streams | P0+ | ⬜ | ⬜ | ⬜ | `app.DynamoDB(...)` parity |
+| Trigger routing: WebSockets | P0+ | ⬜ | ⬜ | ⬜ | `$connect/$disconnect/$default` routing |
+| WebSocket management client (`streamer`) | P0+ | ⬜ | ⬜ | ⬜ | `PostToConnection/GetConnection/DeleteConnection` parity |
+
 ## P1 — Context + middleware
 
 | Feature | Fixtures | Go | TS | Py | Notes |

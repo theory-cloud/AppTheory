@@ -6,7 +6,12 @@ import { AppTheoryFunction, AppTheoryFunctionAlarms, AppTheoryHttpApi } from "@t
 import * as cdk from "aws-cdk-lib";
 import { Stack } from "aws-cdk-lib";
 import type { StackProps } from "aws-cdk-lib";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as events from "aws-cdk-lib/aws-events";
+import * as targets from "aws-cdk-lib/aws-events-targets";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
+import * as sqs from "aws-cdk-lib/aws-sqs";
 import type { Construct } from "constructs";
 
 function contextValue(app: cdk.App, key: string): string | undefined {
@@ -129,6 +134,69 @@ export class MultiLangStack extends Stack {
       }),
       environment: { ...commonEnv, APPTHEORY_LANG: "py" },
     });
+
+    const goQueue = new sqs.Queue(this, "GoQueue");
+    goHandler.fn.addEnvironment("APPTHEORY_DEMO_QUEUE_NAME", goQueue.queueName);
+    goHandler.fn.addEventSource(new lambdaEventSources.SqsEventSource(goQueue, { reportBatchItemFailures: true }));
+
+    const goTable = new dynamodb.Table(this, "GoTable", {
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+    });
+    goHandler.fn.addEnvironment("APPTHEORY_DEMO_TABLE_NAME", goTable.tableName);
+    goHandler.fn.addEventSource(
+      new lambdaEventSources.DynamoEventSource(goTable, {
+        startingPosition: lambda.StartingPosition.LATEST,
+        reportBatchItemFailures: true,
+      }),
+    );
+
+    const goRule = new events.Rule(this, "GoRule", { schedule: events.Schedule.rate(cdk.Duration.minutes(5)) });
+    goRule.addTarget(new targets.LambdaFunction(goHandler.fn));
+    goHandler.fn.addEnvironment("APPTHEORY_DEMO_RULE_NAME", goRule.ruleName);
+
+    const tsQueue = new sqs.Queue(this, "TsQueue");
+    tsHandler.fn.addEnvironment("APPTHEORY_DEMO_QUEUE_NAME", tsQueue.queueName);
+    tsHandler.fn.addEventSource(new lambdaEventSources.SqsEventSource(tsQueue, { reportBatchItemFailures: true }));
+
+    const tsTable = new dynamodb.Table(this, "TsTable", {
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+    });
+    tsHandler.fn.addEnvironment("APPTHEORY_DEMO_TABLE_NAME", tsTable.tableName);
+    tsHandler.fn.addEventSource(
+      new lambdaEventSources.DynamoEventSource(tsTable, {
+        startingPosition: lambda.StartingPosition.LATEST,
+        reportBatchItemFailures: true,
+      }),
+    );
+
+    const tsRule = new events.Rule(this, "TsRule", { schedule: events.Schedule.rate(cdk.Duration.minutes(5)) });
+    tsRule.addTarget(new targets.LambdaFunction(tsHandler.fn));
+    tsHandler.fn.addEnvironment("APPTHEORY_DEMO_RULE_NAME", tsRule.ruleName);
+
+    const pyQueue = new sqs.Queue(this, "PyQueue");
+    pyHandler.fn.addEnvironment("APPTHEORY_DEMO_QUEUE_NAME", pyQueue.queueName);
+    pyHandler.fn.addEventSource(new lambdaEventSources.SqsEventSource(pyQueue, { reportBatchItemFailures: true }));
+
+    const pyTable = new dynamodb.Table(this, "PyTable", {
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+    });
+    pyHandler.fn.addEnvironment("APPTHEORY_DEMO_TABLE_NAME", pyTable.tableName);
+    pyHandler.fn.addEventSource(
+      new lambdaEventSources.DynamoEventSource(pyTable, {
+        startingPosition: lambda.StartingPosition.LATEST,
+        reportBatchItemFailures: true,
+      }),
+    );
+
+    const pyRule = new events.Rule(this, "PyRule", { schedule: events.Schedule.rate(cdk.Duration.minutes(5)) });
+    pyRule.addTarget(new targets.LambdaFunction(pyHandler.fn));
+    pyHandler.fn.addEnvironment("APPTHEORY_DEMO_RULE_NAME", pyRule.ruleName);
 
     const goApi = new AppTheoryHttpApi(this, "GoApi", {
       apiName: `${name}-go`,

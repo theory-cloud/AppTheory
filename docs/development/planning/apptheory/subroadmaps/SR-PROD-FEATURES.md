@@ -17,7 +17,8 @@ P1/P2 features that are expected to be portable:
 
 Non-goals:
 
-- Porting every Lift enterprise feature immediately. Prioritize what Pay Theory actually uses and what is portable.
+- Treating Lift production features as optional. Prioritize by real usage (Pay Theory + Lesser inventories), but missing
+  Lift-required prod behavior is considered a parity gap until implemented.
 
 ## Milestones
 
@@ -77,4 +78,3 @@ Non-goals:
 
 - **Portability pressure:** if a feature cannot be made portable, explicitly make it Go-only and do not pretend otherwise.
 - **Overreach:** prioritize features actually required for Pay Theory migrations and multi-language parity.
-

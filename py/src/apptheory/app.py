@@ -10,7 +10,7 @@ from apptheory.aws_http import (
     request_from_lambda_function_url,
 )
 from apptheory.clock import Clock, RealClock
-from apptheory.context import Context
+from apptheory.context import Context, EventContext
 from apptheory.errors import (
     AppError,
     error_response,
@@ -27,6 +27,24 @@ from apptheory.util import canonicalize_headers, clone_query
 Handler = Callable[[Context], Response]
 AuthHook = Callable[[Context], str]
 PolicyHook = Callable[[Context], "PolicyDecision | None"]
+SQSHandler = Callable[[EventContext, dict[str, Any]], None]
+DynamoDBStreamHandler = Callable[[EventContext, dict[str, Any]], None]
+EventBridgeHandler = Callable[[EventContext, dict[str, Any]], Any]
+
+
+@dataclass(slots=True)
+class EventBridgeSelector:
+    rule_name: str = ""
+    source: str = ""
+    detail_type: str = ""
+
+
+def event_bridge_rule(rule_name: str) -> EventBridgeSelector:
+    return EventBridgeSelector(rule_name=str(rule_name or "").strip())
+
+
+def event_bridge_pattern(source: str, detail_type: str) -> EventBridgeSelector:
+    return EventBridgeSelector(source=str(source or "").strip(), detail_type=str(detail_type or "").strip())
 
 
 @dataclass(slots=True)
@@ -89,6 +107,9 @@ class App:
     _auth_hook: AuthHook | None
     _observability: ObservabilityHooks
     _policy_hook: PolicyHook | None
+    _sqs_routes: list[tuple[str, SQSHandler]]
+    _eventbridge_routes: list[tuple[EventBridgeSelector, EventBridgeHandler]]
+    _dynamodb_routes: list[tuple[str, DynamoDBStreamHandler]]
 
     def __init__(
         self,
@@ -112,6 +133,9 @@ class App:
         self._auth_hook = auth_hook
         self._observability = observability or ObservabilityHooks()
         self._policy_hook = policy_hook
+        self._sqs_routes = []
+        self._eventbridge_routes = []
+        self._dynamodb_routes = []
 
     def handle(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
         self._router.add(method, pattern, handler, auth_required=auth_required)
@@ -128,6 +152,33 @@ class App:
 
     def delete(self, pattern: str, handler: Handler) -> App:
         return self.handle("DELETE", pattern, handler)
+
+    def sqs(self, queue_name: str, handler: SQSHandler) -> App:
+        name = str(queue_name or "").strip()
+        if not name:
+            return self
+        self._sqs_routes.append((name, handler))
+        return self
+
+    def event_bridge(self, selector: EventBridgeSelector, handler: EventBridgeHandler) -> App:
+        if selector is None:
+            return self
+        sel = EventBridgeSelector(
+            rule_name=str(selector.rule_name or "").strip(),
+            source=str(selector.source or "").strip(),
+            detail_type=str(selector.detail_type or "").strip(),
+        )
+        if not sel.rule_name and not sel.source and not sel.detail_type:
+            return self
+        self._eventbridge_routes.append((sel, handler))
+        return self
+
+    def dynamodb(self, table_name: str, handler: DynamoDBStreamHandler) -> App:
+        name = str(table_name or "").strip()
+        if not name:
+            return self
+        self._dynamodb_routes.append((name, handler))
+        return self
 
     def serve(self, request: Request, ctx: Any | None = None) -> Response:
         if self._tier == "p1":
@@ -372,6 +423,156 @@ class App:
         resp = self.serve(request, ctx)
         return lambda_function_url_response_from_response(resp)
 
+    def _event_context(self, ctx: Any | None) -> EventContext:
+        request_id = ""
+        if ctx is not None:
+            request_id = str(getattr(ctx, "aws_request_id", "") or getattr(ctx, "awsRequestId", "") or "").strip()
+        if not request_id:
+            request_id = self._id_generator.new_id()
+        return EventContext(
+            clock=self._clock,
+            id_generator=self._id_generator,
+            ctx=ctx,
+            request_id=request_id,
+            remaining_ms=_remaining_ms(ctx),
+        )
+
+    def _sqs_handler_for_event(self, event: dict[str, Any]) -> SQSHandler | None:
+        records = event.get("Records") or []
+        if not isinstance(records, list) or not records:
+            return None
+        first = records[0] if isinstance(records[0], dict) else {}
+        queue_name = _sqs_queue_name_from_arn(str(first.get("eventSourceARN") or ""))
+        if not queue_name:
+            return None
+        for name, handler in self._sqs_routes:
+            if name == queue_name:
+                return handler
+        return None
+
+    def serve_sqs(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        records = event.get("Records") or []
+        if not isinstance(records, list):
+            records = []
+
+        handler = self._sqs_handler_for_event(event)
+        if handler is None:
+            failures = []
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                msg_id = str(record.get("messageId") or "").strip()
+                if msg_id:
+                    failures.append({"itemIdentifier": msg_id})
+            return {"batchItemFailures": failures}
+
+        evt_ctx = self._event_context(ctx)
+        failures = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            try:
+                handler(evt_ctx, record)
+            except Exception:  # noqa: BLE001
+                msg_id = str(record.get("messageId") or "").strip()
+                if msg_id:
+                    failures.append({"itemIdentifier": msg_id})
+
+        return {"batchItemFailures": failures}
+
+    def _eventbridge_handler_for_event(self, event: dict[str, Any]) -> EventBridgeHandler | None:
+        source = str(event.get("source") or "").strip()
+        detail_type = str(event.get("detail-type") or event.get("detailType") or "").strip()
+        resources = event.get("resources") or []
+
+        for selector, handler in self._eventbridge_routes:
+            if selector.rule_name:
+                if isinstance(resources, list):
+                    for resource in resources:
+                        if _eventbridge_rule_name_from_arn(str(resource or "")) == selector.rule_name:
+                            return handler
+                continue
+
+            if selector.source and selector.source != source:
+                continue
+            if selector.detail_type and selector.detail_type != detail_type:
+                continue
+            return handler
+
+        return None
+
+    def serve_eventbridge(self, event: dict[str, Any], ctx: Any | None = None) -> Any:
+        handler = self._eventbridge_handler_for_event(event)
+        if handler is None:
+            return None
+        return handler(self._event_context(ctx), event)
+
+    def _dynamodb_handler_for_event(self, event: dict[str, Any]) -> DynamoDBStreamHandler | None:
+        records = event.get("Records") or []
+        if not isinstance(records, list) or not records:
+            return None
+        first = records[0] if isinstance(records[0], dict) else {}
+        table_name = _dynamodb_table_name_from_stream_arn(str(first.get("eventSourceARN") or ""))
+        if not table_name:
+            return None
+        for name, handler in self._dynamodb_routes:
+            if name == table_name:
+                return handler
+        return None
+
+    def serve_dynamodb_stream(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        records = event.get("Records") or []
+        if not isinstance(records, list):
+            records = []
+
+        handler = self._dynamodb_handler_for_event(event)
+        if handler is None:
+            failures = []
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                event_id = str(record.get("eventID") or "").strip()
+                if event_id:
+                    failures.append({"itemIdentifier": event_id})
+            return {"batchItemFailures": failures}
+
+        evt_ctx = self._event_context(ctx)
+        failures = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            try:
+                handler(evt_ctx, record)
+            except Exception:  # noqa: BLE001
+                event_id = str(record.get("eventID") or "").strip()
+                if event_id:
+                    failures.append({"itemIdentifier": event_id})
+
+        return {"batchItemFailures": failures}
+
+    def handle_lambda(self, event: Any, ctx: Any | None = None) -> Any:
+        if not isinstance(event, dict):
+            raise RuntimeError("apptheory: unknown event type")
+
+        records = event.get("Records") or []
+        if isinstance(records, list) and records:
+            first = records[0] if isinstance(records[0], dict) else {}
+            source = str(first.get("eventSource") or "").strip()
+            if source == "aws:sqs":
+                return self.serve_sqs(event, ctx=ctx)
+            if source == "aws:dynamodb":
+                return self.serve_dynamodb_stream(event, ctx=ctx)
+
+        if "detail-type" in event or "detailType" in event:
+            return self.serve_eventbridge(event, ctx=ctx)
+
+        if "requestContext" in event:
+            if "routeKey" in event:
+                return self.serve_apigw_v2(event, ctx=ctx)
+            return self.serve_lambda_function_url(event, ctx=ctx)
+
+        raise RuntimeError("apptheory: unknown event type")
+
 
 def create_app(
     *,
@@ -392,6 +593,50 @@ def create_app(
         observability=observability,
         policy_hook=policy_hook,
     )
+
+
+def _sqs_queue_name_from_arn(arn: str) -> str:
+    value = str(arn or "").strip()
+    if not value:
+        return ""
+    parts = value.split(":")
+    return parts[-1] if parts else ""
+
+
+def _eventbridge_rule_name_from_arn(arn: str) -> str:
+    value = str(arn or "").strip()
+    if not value:
+        return ""
+
+    marker = ":rule/"
+    idx = value.find(marker)
+    if idx >= 0:
+        after = value[idx + len(marker) :].lstrip("/")
+    else:
+        marker = "rule/"
+        idx = value.find(marker)
+        if idx < 0:
+            return ""
+        after = value[idx + len(marker) :].lstrip("/")
+
+    if not after:
+        return ""
+    return after.split("/", 1)[0]
+
+
+def _dynamodb_table_name_from_stream_arn(arn: str) -> str:
+    value = str(arn or "").strip()
+    if not value:
+        return ""
+    marker = ":table/"
+    idx = value.find(marker)
+    if idx < 0:
+        return ""
+    after = value[idx + len(marker) :]
+    stream_idx = after.find("/stream/")
+    if stream_idx >= 0:
+        return after[:stream_idx]
+    return after.split("/", 1)[0]
 
 
 def _first_header_value(headers: dict[str, list[str]], key: str) -> str:

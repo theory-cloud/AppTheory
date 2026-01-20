@@ -118,6 +118,24 @@ export class Context {
   }
 }
 
+export class EventContext {
+  constructor({ clock, ids, ctx, requestId, remainingMs }) {
+    this.ctx = ctx ?? null;
+    this._clock = clock ?? new RealClock();
+    this._ids = ids ?? new RandomIdGenerator();
+    this.requestId = requestId ?? "";
+    this.remainingMs = Number(remainingMs ?? 0);
+  }
+
+  now() {
+    return this._clock.now();
+  }
+
+  newId() {
+    return this._ids.newId();
+  }
+}
+
 export function text(status, body) {
   return normalizeResponse({
     status,
@@ -172,6 +190,9 @@ export class App {
     this._authHook = authHook ?? null;
     this._policyHook = policyHook ?? null;
     this._observability = observability ?? null;
+    this._sqsRoutes = [];
+    this._eventBridgeRoutes = [];
+    this._dynamoDBRoutes = [];
   }
 
   handle(method, pattern, handler, options = {}) {
@@ -193,6 +214,32 @@ export class App {
 
   delete(pattern, handler) {
     return this.handle("DELETE", pattern, handler);
+  }
+
+  sqs(queueName, handler) {
+    const name = String(queueName ?? "").trim();
+    if (!name || typeof handler !== "function") return this;
+    this._sqsRoutes.push({ queueName: name, handler });
+    return this;
+  }
+
+  eventBridge(selector, handler) {
+    if (typeof handler !== "function") return this;
+    const sel = {
+      ruleName: String(selector?.ruleName ?? "").trim(),
+      source: String(selector?.source ?? "").trim(),
+      detailType: String(selector?.detailType ?? "").trim(),
+    };
+    if (!sel.ruleName && !sel.source && !sel.detailType) return this;
+    this._eventBridgeRoutes.push({ selector: sel, handler });
+    return this;
+  }
+
+  dynamoDB(tableName, handler) {
+    const name = String(tableName ?? "").trim();
+    if (!name || typeof handler !== "function") return this;
+    this._dynamoDBRoutes.push({ tableName: name, handler });
+    return this;
   }
 
   async serve(request, ctx) {
@@ -393,6 +440,149 @@ export class App {
     const resp = await this.serve(request, ctx);
     return lambdaFunctionURLResponseFromResponse(resp);
   }
+
+  _eventContext(ctx) {
+    const requestId =
+      ctx && typeof ctx === "object" && typeof ctx.awsRequestId === "string" && ctx.awsRequestId.trim()
+        ? ctx.awsRequestId.trim()
+        : this._ids.newId();
+    return new EventContext({
+      clock: this._clock,
+      ids: this._ids,
+      ctx,
+      requestId,
+      remainingMs: extractRemainingMs(ctx),
+    });
+  }
+
+  _sqsHandlerForEvent(event) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    if (records.length === 0) return null;
+    const queueName = sqsQueueNameFromArn(records[0]?.eventSourceARN);
+    if (!queueName) return null;
+    for (const route of this._sqsRoutes) {
+      if (route.queueName === queueName) return route.handler;
+    }
+    return null;
+  }
+
+  async serveSQSEvent(event, ctx) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    const handler = this._sqsHandlerForEvent(event);
+    if (!handler) {
+      return {
+        batchItemFailures: records
+          .map((r) => ({ itemIdentifier: String(r?.messageId ?? "").trim() }))
+          .filter((f) => Boolean(f.itemIdentifier)),
+      };
+    }
+
+    const evtCtx = this._eventContext(ctx);
+    const failures = [];
+    for (const record of records) {
+      try {
+        await handler(evtCtx, record);
+      } catch {
+        const id = String(record?.messageId ?? "").trim();
+        if (id) failures.push({ itemIdentifier: id });
+      }
+    }
+    return { batchItemFailures: failures };
+  }
+
+  _eventBridgeHandlerForEvent(event) {
+    const source = String(event?.source ?? "").trim();
+    const detailType = String(event?.["detail-type"] ?? event?.detailType ?? "").trim();
+    const resources = Array.isArray(event?.resources) ? event.resources : [];
+
+    for (const route of this._eventBridgeRoutes) {
+      const sel = route.selector ?? {};
+      if (sel.ruleName) {
+        for (const resource of resources) {
+          if (eventBridgeRuleNameFromArn(resource) === sel.ruleName) {
+            return route.handler;
+          }
+        }
+        continue;
+      }
+      if (sel.source && sel.source !== source) continue;
+      if (sel.detailType && sel.detailType !== detailType) continue;
+      return route.handler;
+    }
+    return null;
+  }
+
+  async serveEventBridge(event, ctx) {
+    const handler = this._eventBridgeHandlerForEvent(event);
+    if (!handler) return null;
+    const evtCtx = this._eventContext(ctx);
+    return handler(evtCtx, event);
+  }
+
+  _dynamoDBHandlerForEvent(event) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    if (records.length === 0) return null;
+    const tableName = dynamoDBTableNameFromStreamArn(records[0]?.eventSourceARN);
+    if (!tableName) return null;
+    for (const route of this._dynamoDBRoutes) {
+      if (route.tableName === tableName) return route.handler;
+    }
+    return null;
+  }
+
+  async serveDynamoDBStream(event, ctx) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    const handler = this._dynamoDBHandlerForEvent(event);
+    if (!handler) {
+      return {
+        batchItemFailures: records
+          .map((r) => ({ itemIdentifier: String(r?.eventID ?? "").trim() }))
+          .filter((f) => Boolean(f.itemIdentifier)),
+      };
+    }
+
+    const evtCtx = this._eventContext(ctx);
+    const failures = [];
+    for (const record of records) {
+      try {
+        await handler(evtCtx, record);
+      } catch {
+        const id = String(record?.eventID ?? "").trim();
+        if (id) failures.push({ itemIdentifier: id });
+      }
+    }
+    return { batchItemFailures: failures };
+  }
+
+  async handleLambda(event, ctx) {
+    if (!event || typeof event !== "object") {
+      throw new Error("apptheory: unknown event type");
+    }
+
+    const records = Array.isArray(event.Records) ? event.Records : [];
+    if (records.length > 0) {
+      const source = String(records[0]?.eventSource ?? "").trim();
+      if (source === "aws:sqs") {
+        return this.serveSQSEvent(event, ctx);
+      }
+      if (source === "aws:dynamodb") {
+        return this.serveDynamoDBStream(event, ctx);
+      }
+    }
+
+    if ("detail-type" in event || "detailType" in event) {
+      return this.serveEventBridge(event, ctx);
+    }
+
+    if (event.requestContext) {
+      if ("routeKey" in event) {
+        return this.serveAPIGatewayV2(event, ctx);
+      }
+      return this.serveLambdaFunctionURL(event, ctx);
+    }
+
+    throw new Error("apptheory: unknown event type");
+  }
 }
 
 export function createApp(options = {}) {
@@ -419,6 +609,22 @@ export class TestEnv {
 
   invokeLambdaFunctionURL(app, event, ctx) {
     return app.serveLambdaFunctionURL(event, ctx);
+  }
+
+  invokeSQS(app, event, ctx) {
+    return app.serveSQSEvent(event, ctx);
+  }
+
+  invokeEventBridge(app, event, ctx) {
+    return app.serveEventBridge(event, ctx);
+  }
+
+  invokeDynamoDBStream(app, event, ctx) {
+    return app.serveDynamoDBStream(event, ctx);
+  }
+
+  invokeLambda(app, event, ctx) {
+    return app.handleLambda(event, ctx);
   }
 }
 
@@ -472,6 +678,56 @@ export function buildLambdaFunctionURLRequest(method, path, options = {}) {
     },
     body: isBase64Encoded ? bodyBytes.toString("base64") : bodyBytes.toString("utf8"),
     isBase64Encoded,
+  };
+}
+
+export function buildSQSEvent(queueArn, records = []) {
+  const arn = String(queueArn ?? "").trim();
+  return {
+    Records: records.map((r, idx) => ({
+      messageId: String(r?.messageId ?? `msg-${idx + 1}`),
+      receiptHandle: String(r?.receiptHandle ?? ""),
+      body: String(r?.body ?? ""),
+      attributes: r?.attributes ?? {},
+      messageAttributes: r?.messageAttributes ?? {},
+      md5OfBody: String(r?.md5OfBody ?? ""),
+      eventSource: "aws:sqs",
+      eventSourceARN: String(r?.eventSourceARN ?? arn),
+      awsRegion: String(r?.awsRegion ?? "us-east-1"),
+    })),
+  };
+}
+
+export function buildEventBridgeEvent(options = {}) {
+  const ruleArn = String(options.ruleArn ?? "").trim();
+  const resources = Array.isArray(options.resources) ? [...options.resources] : [];
+  if (ruleArn) resources.push(ruleArn);
+
+  return {
+    version: String(options.version ?? "0"),
+    id: String(options.id ?? "evt-1"),
+    "detail-type": String(options.detailType ?? "Scheduled Event"),
+    source: String(options.source ?? "aws.events"),
+    account: String(options.account ?? "000000000000"),
+    time: String(options.time ?? "1970-01-01T00:00:00Z"),
+    region: String(options.region ?? "us-east-1"),
+    resources,
+    detail: options.detail ?? {},
+  };
+}
+
+export function buildDynamoDBStreamEvent(streamArn, records = []) {
+  const arn = String(streamArn ?? "").trim();
+  return {
+    Records: records.map((r, idx) => ({
+      eventID: String(r?.eventID ?? `evt-${idx + 1}`),
+      eventName: String(r?.eventName ?? "MODIFY"),
+      eventVersion: String(r?.eventVersion ?? "1.1"),
+      eventSource: "aws:dynamodb",
+      awsRegion: String(r?.awsRegion ?? "us-east-1"),
+      dynamodb: r?.dynamodb ?? { SequenceNumber: String(idx + 1), SizeBytes: 1, StreamViewType: "NEW_AND_OLD_IMAGES" },
+      eventSourceARN: String(r?.eventSourceARN ?? arn),
+    })),
   };
 }
 
@@ -1007,4 +1263,35 @@ function splitPathAndQuery(path, query) {
   const rawPath = normalizePath(idx >= 0 ? value.slice(0, idx) : value);
   const rawQueryString = query && Object.keys(query).length > 0 ? encodeRawQueryString(query) : idx >= 0 ? value.slice(idx + 1) : "";
   return { rawPath, rawQueryString };
+}
+
+function sqsQueueNameFromArn(arn) {
+  const value = String(arn ?? "").trim();
+  if (!value) return "";
+  const parts = value.split(":");
+  return parts.length > 0 ? parts[parts.length - 1] : "";
+}
+
+function eventBridgeRuleNameFromArn(arn) {
+  const value = String(arn ?? "").trim();
+  if (!value) return "";
+  const idx = value.indexOf(":rule/");
+  const start = idx >= 0 ? idx + ":rule/".length : value.indexOf("rule/") >= 0 ? value.indexOf("rule/") + "rule/".length : -1;
+  if (start < 0) return "";
+  const after = value.slice(start).replace(/^\/+/, "");
+  if (!after) return "";
+  const slash = after.indexOf("/");
+  return slash >= 0 ? after.slice(0, slash) : after;
+}
+
+function dynamoDBTableNameFromStreamArn(arn) {
+  const value = String(arn ?? "").trim();
+  if (!value) return "";
+  const idx = value.indexOf(":table/");
+  if (idx < 0) return "";
+  const after = value.slice(idx + ":table/".length);
+  const streamIdx = after.indexOf("/stream/");
+  if (streamIdx >= 0) return after.slice(0, streamIdx);
+  const slashIdx = after.indexOf("/");
+  return slashIdx >= 0 ? after.slice(0, slashIdx) : after;
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -27,6 +28,8 @@ func runFixture(f Fixture) error {
 		return runFixtureP1(f)
 	case "p2":
 		return runFixtureP2(f)
+	case "m1":
+		return runFixtureM1(f)
 	default:
 		return runFixtureLegacy(f)
 	}
@@ -38,14 +41,20 @@ func runFixtureLegacy(f Fixture) error {
 		return fmt.Errorf("setup app: %w", err)
 	}
 
-	req, err := canonicalizeRequest(f.Input.Request)
+	if f.Input.Request == nil {
+		return errors.New("fixture missing input.request")
+	}
+	req, err := canonicalizeRequest(*f.Input.Request)
 	if err != nil {
 		return fmt.Errorf("canonicalize request: %w", err)
 	}
 	req.RemainingMS = f.Input.Context.RemainingMS
 
 	actual := app.handle(req)
-	expected := f.Expect.Response
+	if f.Expect.Response == nil {
+		return errors.New("fixture missing expect.response")
+	}
+	expected := *f.Expect.Response
 
 	actual.Headers = canonicalizeHeaders(actual.Headers)
 	expectedHeaders := canonicalizeHeaders(expected.Headers)
@@ -142,7 +151,13 @@ func printFailure(f Fixture, err error) {
 	}
 
 	app, appErr := newFixtureApp(f.Setup, f.Tier)
-	req, reqErr := canonicalizeRequest(f.Input.Request)
+	var req CanonicalRequest
+	var reqErr error
+	if f.Input.Request != nil {
+		req, reqErr = canonicalizeRequest(*f.Input.Request)
+	} else {
+		reqErr = errors.New("fixture missing input.request")
+	}
 	req.RemainingMS = f.Input.Context.RemainingMS
 	if appErr == nil && reqErr == nil {
 		actual := app.handle(req)
@@ -155,7 +170,7 @@ func printFailure(f Fixture, err error) {
 			IsBase64: actual.IsBase64,
 		}
 
-		if len(f.Expect.Response.BodyJSON) > 0 {
+		if f.Expect.Response != nil && len(f.Expect.Response.BodyJSON) > 0 {
 			var actualJSON any
 			if json.Unmarshal(actual.Body, &actualJSON) == nil {
 				debug.BodyJSON = actualJSON
@@ -179,10 +194,14 @@ func printFailure(f Fixture, err error) {
 		fmt.Fprintf(os.Stderr, "  got: <unavailable>\n")
 	}
 
-	expected := f.Expect.Response
-	expected.Headers = canonicalizeHeaders(expected.Headers)
-	b := marshalIndentOrPlaceholder(expected)
-	fmt.Fprintf(os.Stderr, "  expected: %s\n", string(b))
+	if f.Expect.Response != nil {
+		expected := *f.Expect.Response
+		expected.Headers = canonicalizeHeaders(expected.Headers)
+		b := marshalIndentOrPlaceholder(expected)
+		fmt.Fprintf(os.Stderr, "  expected: %s\n", string(b))
+	} else {
+		fmt.Fprintf(os.Stderr, "  expected: <unavailable>\n")
+	}
 
 	logs := marshalIndentOrPlaceholder(f.Expect.Logs)
 	metrics := marshalIndentOrPlaceholder(f.Expect.Metrics)

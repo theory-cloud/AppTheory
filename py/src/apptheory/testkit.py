@@ -58,6 +58,18 @@ class TestEnv:
     ) -> dict[str, object]:
         return app.serve_lambda_function_url(event, ctx=ctx)
 
+    def invoke_sqs(self, app: App, event: dict[str, object], ctx: object | None = None) -> dict[str, object]:
+        return app.serve_sqs(event, ctx=ctx)
+
+    def invoke_eventbridge(self, app: App, event: dict[str, object], ctx: object | None = None) -> object:
+        return app.serve_eventbridge(event, ctx=ctx)
+
+    def invoke_dynamodb_stream(self, app: App, event: dict[str, object], ctx: object | None = None) -> dict[str, object]:
+        return app.serve_dynamodb_stream(event, ctx=ctx)
+
+    def invoke_lambda(self, app: App, event: object, ctx: object | None = None) -> object:
+        return app.handle_lambda(event, ctx=ctx)
+
 
 def create_test_env(*, now: dt.datetime | None = None) -> TestEnv:
     return TestEnv(now=now)

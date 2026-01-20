@@ -68,6 +68,36 @@ class Context:
             raise AppError("app.bad_request", "invalid json") from None
 
 
+@dataclass(slots=True)
+class EventContext:
+    clock: Clock
+    id_generator: IdGenerator
+    ctx: Any | None
+    request_id: str
+    remaining_ms: int
+
+    def __init__(
+        self,
+        *,
+        clock: Clock | None = None,
+        id_generator: IdGenerator | None = None,
+        ctx: Any | None = None,
+        request_id: str = "",
+        remaining_ms: int = 0,
+    ) -> None:
+        self.clock = clock or RealClock()
+        self.id_generator = id_generator or RealIdGenerator()
+        self.ctx = ctx
+        self.request_id = str(request_id)
+        self.remaining_ms = int(remaining_ms or 0)
+
+    def now(self):
+        return self.clock.now()
+
+    def new_id(self) -> str:
+        return self.id_generator.new_id()
+
+
 def _has_json_content_type(headers: dict[str, list[str]]) -> bool:
     for value in headers.get("content-type", []):
         v = str(value).strip().lower()
