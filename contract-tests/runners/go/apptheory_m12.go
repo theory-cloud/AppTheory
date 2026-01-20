@@ -95,6 +95,8 @@ func builtInM12Middleware(name string) apptheory.Middleware {
 				return next(ctx)
 			}
 		}
+	case "timeout_5ms":
+		return apptheory.TimeoutMiddleware(apptheory.TimeoutConfig{DefaultTimeout: 5 * time.Millisecond})
 	default:
 		return nil
 	}

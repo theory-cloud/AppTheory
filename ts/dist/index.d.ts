@@ -211,6 +211,13 @@ export type Handler = (ctx: Context) => Response | Promise<Response>;
 
 export type Middleware = (ctx: Context, next: Handler) => Response | Promise<Response>;
 
+export interface TimeoutConfig {
+  defaultTimeoutMs?: number;
+  operationTimeoutsMs?: Record<string, number>;
+  tenantTimeoutsMs?: Record<string, number>;
+  timeoutMessage?: string;
+}
+
 export type EventHandler = (ctx: EventContext, event: unknown) => unknown | Promise<unknown>;
 
 export type EventMiddleware = (
@@ -391,6 +398,8 @@ export declare function createApp(options?: {
   observability?: ObservabilityHooks;
   webSocketClientFactory?: WebSocketClientFactory;
 }): App;
+
+export declare function timeoutMiddleware(config?: TimeoutConfig): Middleware;
 
 export declare function text(status: number, body: string): Response;
 export declare function json(status: number, value: unknown): Response;

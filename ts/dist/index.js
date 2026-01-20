@@ -1256,6 +1256,83 @@ export function createApp(options = {}) {
   return new App(options);
 }
 
+export function timeoutMiddleware(config = {}) {
+  const cfg = normalizeTimeoutConfig(config);
+
+  return async (ctx, next) => {
+    const timeoutMs = timeoutForContext(ctx, cfg);
+    if (timeoutMs <= 0) {
+      return next(ctx);
+    }
+
+    let timer = null;
+    const timeoutPromise = new Promise((_resolve, reject) => {
+      timer = setTimeout(() => reject(new AppError("app.timeout", cfg.timeoutMessage)), timeoutMs);
+    });
+
+    try {
+      const run = Promise.resolve().then(() => next(ctx));
+      return await Promise.race([run, timeoutPromise]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  };
+}
+
+function normalizeTimeoutConfig(config) {
+  let defaultTimeoutMs = Number(config?.defaultTimeoutMs ?? 0);
+  if (!Number.isFinite(defaultTimeoutMs)) defaultTimeoutMs = 0;
+  defaultTimeoutMs = Math.floor(defaultTimeoutMs);
+  if (defaultTimeoutMs === 0) defaultTimeoutMs = 30_000;
+
+  const timeoutMessage = String(config?.timeoutMessage ?? "").trim() || "request timeout";
+
+  const operationTimeoutsMs =
+    config?.operationTimeoutsMs && typeof config.operationTimeoutsMs === "object" ? config.operationTimeoutsMs : null;
+  const tenantTimeoutsMs =
+    config?.tenantTimeoutsMs && typeof config.tenantTimeoutsMs === "object" ? config.tenantTimeoutsMs : null;
+
+  return {
+    defaultTimeoutMs,
+    operationTimeoutsMs,
+    tenantTimeoutsMs,
+    timeoutMessage,
+  };
+}
+
+function timeoutForContext(ctx, config) {
+  let timeoutMs = Number(config?.defaultTimeoutMs ?? 0);
+  if (!Number.isFinite(timeoutMs)) timeoutMs = 0;
+
+  const tenant = String(ctx?.tenantId ?? "").trim();
+  if (tenant && config?.tenantTimeoutsMs && tenant in config.tenantTimeoutsMs) {
+    const override = Number(config.tenantTimeoutsMs[tenant]);
+    if (Number.isFinite(override)) {
+      timeoutMs = override;
+    }
+  }
+
+  const method = String(ctx?.request?.method ?? "").trim().toUpperCase();
+  const path = String(ctx?.request?.path ?? "").trim() || "/";
+  const op = `${method}:${path}`;
+  if (config?.operationTimeoutsMs && op in config.operationTimeoutsMs) {
+    const override = Number(config.operationTimeoutsMs[op]);
+    if (Number.isFinite(override)) {
+      timeoutMs = override;
+    }
+  }
+
+  const remainingMs = Number(ctx?.remainingMs ?? 0);
+  if (Number.isFinite(remainingMs) && remainingMs > 0 && remainingMs < timeoutMs) {
+    timeoutMs = remainingMs;
+  }
+
+  timeoutMs = Math.floor(timeoutMs);
+  return timeoutMs;
+}
+
 export class TestEnv {
   constructor({ now } = {}) {
     this.clock = new ManualClock(now ?? new Date(0));
@@ -1602,6 +1679,8 @@ function statusForErrorCode(code) {
       return 409;
     case "app.too_large":
       return 413;
+    case "app.timeout":
+      return 408;
     case "app.rate_limited":
       return 429;
     case "app.overloaded":

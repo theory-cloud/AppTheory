@@ -19,6 +19,7 @@ from apptheory.clock import Clock, ManualClock, RealClock
 from apptheory.context import Context, EventContext, WebSocketContext
 from apptheory.errors import AppError
 from apptheory.ids import IdGenerator, ManualIdGenerator, RealIdGenerator
+from apptheory.middleware import TimeoutConfig, timeout_middleware
 from apptheory.naming import base_name, normalize_stage, resource_name
 from apptheory.request import Request
 from apptheory.response import Response, binary, json, text
@@ -61,6 +62,7 @@ __all__ = [
     "Request",
     "Response",
     "SSEEvent",
+    "TimeoutConfig",
     "FakeWebSocketClientFactory",
     "FakeWebSocketManagementClient",
     "TestEnv",
@@ -90,4 +92,5 @@ __all__ = [
     "sse",
     "sse_event_stream",
     "text",
+    "timeout_middleware",
 ]

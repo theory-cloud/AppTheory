@@ -1488,6 +1488,13 @@ function builtInAppTheoryHandler(runtime, name) {
   switch (name) {
     case "static_pong":
       return () => runtime.text(200, "pong");
+    case "sleep_50ms":
+      return async () => {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 50);
+        });
+        return runtime.text(200, "done");
+      };
     case "echo_path_params":
       return (ctx) => runtime.json(200, { params: ctx.params ?? {} });
     case "echo_request":
@@ -1589,6 +1596,8 @@ function builtInMiddleware(runtime, name) {
         ctx.middlewareTrace.push("mw_b");
         return next(ctx);
       };
+    case "timeout_5ms":
+      return runtime.timeoutMiddleware({ defaultTimeoutMs: 5 });
     default:
       return null;
   }

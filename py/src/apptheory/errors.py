@@ -32,6 +32,8 @@ def status_for_error_code(code: str) -> int:
             return 409
         case "app.too_large":
             return 413
+        case "app.timeout":
+            return 408
         case "app.rate_limited":
             return 429
         case "app.overloaded":

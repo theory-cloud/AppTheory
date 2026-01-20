@@ -792,6 +792,15 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
     if name == "static_pong":
         return lambda _ctx: runtime.text(200, "pong")
 
+    if name == "sleep_50ms":
+        def handler(_ctx):
+            import time
+
+            time.sleep(0.05)
+            return runtime.text(200, "done")
+
+        return handler
+
     if name == "echo_path_params":
         return lambda ctx: runtime.json(200, {"params": ctx.params})
 
@@ -925,7 +934,6 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
 
 
 def _built_in_m12_middleware(runtime: Any, name: str):
-    _ = runtime
     if name == "mw_a":
         def mw(ctx, next_handler):
             ctx.set("mw", "ok")
@@ -942,6 +950,9 @@ def _built_in_m12_middleware(runtime: Any, name: str):
             return next_handler(ctx)
 
         return mw
+
+    if name == "timeout_5ms":
+        return runtime.timeout_middleware(runtime.TimeoutConfig(default_timeout_ms=5))
 
     return None
 
