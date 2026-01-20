@@ -268,6 +268,7 @@ Common Lift construct mappings used by Lesser:
 - Lift schedules: EventBridge rule + Lambda target → `AppTheoryEventBridgeHandler`
 - Lift stream mappings: DynamoDB stream event source mapping → `AppTheoryDynamoDBStreamMapping`
 - Lift function defaults wrapper: `LiftFunction` → `AppTheoryFunction`
+- Lift EventBus table: `EventBusTable` → `AppTheoryEventBusTable` (DynamoDB schema for `pkg/services` EventBus)
 
 ## Practical Mapping Table (High-Leverage)
 
@@ -290,6 +291,7 @@ This table is a migration-focused subset. For the broader mapping seed, see:
 | `app.DynamoDB(table, handler)` | `app.DynamoDB(table, handler)` | DynamoDB Streams routing by table name |
 | `github.com/pay-theory/limited` | `apptheory/pkg/limited` | replicated feature set; TableTheory-backed |
 | Lift `pkg/services` (EventBus) | `apptheory/pkg/services` (EventBus) | Lift-compatible API; DynamoDB implementation uses TableTheory |
+| Lift `EventBusTable` (CDK) | `AppTheoryEventBusTable` (CDK) | provisions EventBus DynamoDB table schema + GSIs |
 | DynamORM usage | TableTheory | companion data framework for AppTheory |
 
 ## Known Differences (Intentional)
