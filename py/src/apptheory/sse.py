@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json as jsonlib
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable, Iterator
 
 from apptheory.response import Response, normalize_response
 
@@ -63,3 +63,8 @@ def sse(status: int, events: list[SSEEvent]) -> Response:
             is_base64=False,
         )
     )
+
+
+def sse_event_stream(events: Iterable[SSEEvent] | None) -> Iterator[bytes]:
+    for event in events or []:
+        yield format_sse_event(event)

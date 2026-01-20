@@ -2,8 +2,10 @@ package apptheory
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -96,6 +98,60 @@ func SSEResponse(status int, events ...SSEEvent) (*Response, error) {
 		Cookies:  nil,
 		Body:     buf.Bytes(),
 		IsBase64: false,
+	}, nil
+}
+
+// SSEStreamResponse builds a canonical AppTheory Response with event-by-event SSE output.
+//
+// The returned response uses response streaming when invoked through the API Gateway REST API v1 adapter
+// (`ServeAPIGatewayProxy` via `HandleLambda`).
+func SSEStreamResponse(ctx context.Context, status int, events <-chan SSEEvent) (*Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	pr, pw := io.Pipe()
+	go func() {
+		defer pw.Close()
+
+		if events == nil {
+			return
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-events:
+				if !ok {
+					return
+				}
+
+				b, err := formatSSEEvent(ev)
+				if err != nil {
+					_ = pw.CloseWithError(err)
+					return
+				}
+
+				if _, err := pw.Write(b); err != nil {
+					_ = pw.CloseWithError(err)
+					return
+				}
+			}
+		}
+	}()
+
+	return &Response{
+		Status: status,
+		Headers: map[string][]string{
+			"content-type":  {"text/event-stream"},
+			"cache-control": {"no-cache"},
+			"connection":    {"keep-alive"},
+		},
+		Cookies:    nil,
+		Body:       nil,
+		BodyReader: pr,
+		IsBase64:   false,
 	}, nil
 }
 

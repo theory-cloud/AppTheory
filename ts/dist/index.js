@@ -305,6 +305,12 @@ export function sse(status, events) {
   });
 }
 
+export async function* sseEventStream(events) {
+  for await (const ev of events ?? []) {
+    yield Buffer.from(formatSSEEvent(ev), "utf8");
+  }
+}
+
 export class App {
   constructor({ clock, ids, tier, limits, authHook, policyHook, observability, webSocketClientFactory } = {}) {
     this._router = new Router();

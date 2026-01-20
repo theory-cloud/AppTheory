@@ -380,6 +380,10 @@ export interface SSEEvent {
 
 export declare function sse(status: number, events: SSEEvent[]): Response;
 
+export declare function sseEventStream(
+  events: AsyncIterable<SSEEvent> | Iterable<SSEEvent>,
+): AsyncIterable<Uint8Array>;
+
 export declare class TestEnv {
   readonly clock: ManualClock;
   readonly ids: ManualIdGenerator;
