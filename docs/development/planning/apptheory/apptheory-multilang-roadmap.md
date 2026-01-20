@@ -75,6 +75,10 @@ Deep workstreams are tracked in dedicated sub-roadmaps:
 - Testkits + mocks: `subroadmaps/SR-MOCKS.md`
 - Prod features parity: `subroadmaps/SR-PROD-FEATURES.md`
 - Lift migration: `subroadmaps/SR-MIGRATION.md`
+- Non-HTTP event sources: `subroadmaps/SR-EVENTSOURCES.md`
+- WebSockets: `subroadmaps/SR-WEBSOCKETS.md`
+- API Gateway REST v1 + SSE: `subroadmaps/SR-SSE.md`
+- Lint parity: `subroadmaps/SR-LINT.md`
 
 ## Milestones
 
@@ -266,6 +270,31 @@ Deep workstreams are tracked in dedicated sub-roadmaps:
   - contract tests across languages
   - CDK synth (for examples/constructs)
 - `make rubric` (or equivalent single command) proves the repo is v0.1.0-ready.
+
+---
+
+### M12 — Lift parity completion (event sources, WebSockets, SSE/REST v1)
+
+**Goal:** AppTheory is a Lift replacement for real apps (Pay Theory + Lesser) across Go/TS/Py.
+
+**Complex enough for sub-roadmaps:** yes.
+
+Tracking:
+
+- `subroadmaps/SR-EVENTSOURCES.md` (SQS/EventBridge/DynamoDB Streams)
+- `subroadmaps/SR-WEBSOCKETS.md` (WebSocket runtime + `streamer`)
+- `subroadmaps/SR-SSE.md` (API Gateway REST v1 + SSE streaming)
+- `subroadmaps/SR-CDK.md` (construct parity for these surfaces)
+- `subroadmaps/SR-CONTRACT.md` (contract v1+ fixtures)
+
+**Acceptance criteria**
+- Parity matrix P0+ items are implemented and fixture-backed in Go/TS/Py:
+  - REST API v1 adapter
+  - SSE helpers + streaming
+  - SQS/EventBridge/DynamoDB Streams routing
+  - WebSocket routing + management client
+- CDK story supports deploying these capabilities (examples and/or constructs) in a multi-language way.
+- `make rubric` includes the new contract fixtures and example gates (fails closed).
 
 ## Notes on governance artifacts (`hgm-infra/`)
 

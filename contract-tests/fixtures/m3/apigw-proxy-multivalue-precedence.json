@@ -1,0 +1,42 @@
+{
+  "id": "m3.apigw_proxy.multivalue_precedence",
+  "tier": "m3",
+  "name": "APIGW REST API v1: multiValue headers/query take precedence",
+  "setup": {
+    "routes": [{ "method": "GET", "path": "/echo", "handler": "echo_request" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "apigw_proxy",
+      "event": {
+        "path": "/echo",
+        "httpMethod": "GET",
+        "headers": { "X-Foo": "single", "Cookie": "a=b" },
+        "multiValueHeaders": { "X-Foo": ["multi-1", "multi-2"] },
+        "queryStringParameters": { "q": "single" },
+        "multiValueQueryStringParameters": { "q": ["multi-1", "multi-2"] },
+        "requestContext": { "requestId": "req-2", "path": "/echo", "httpMethod": "GET" },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "method": "GET",
+        "path": "/echo",
+        "query": { "q": ["multi-1", "multi-2"] },
+        "headers": { "cookie": ["a=b"], "x-foo": ["multi-1", "multi-2"] },
+        "cookies": { "a": "b" },
+        "body_b64": "",
+        "is_base64": false
+      },
+      "is_base64": false
+    }
+  }
+}
+

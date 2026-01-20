@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 
 export class AppError extends Error {
   constructor(code, message) {
@@ -78,6 +78,7 @@ export class Context {
     authIdentity,
     remainingMs,
     middlewareTrace,
+    webSocket,
   }) {
     this.ctx = ctx ?? null;
     this.request = request;
@@ -89,6 +90,7 @@ export class Context {
     this.authIdentity = authIdentity ?? "";
     this.remainingMs = Number(remainingMs ?? 0);
     this.middlewareTrace = Array.isArray(middlewareTrace) ? middlewareTrace : [];
+    this._webSocket = webSocket ?? null;
   }
 
   now() {
@@ -115,6 +117,104 @@ export class Context {
     } catch {
       throw new AppError("app.bad_request", "invalid json");
     }
+  }
+
+  asWebSocket() {
+    return this._webSocket;
+  }
+}
+
+export class EventContext {
+  constructor({ clock, ids, ctx, requestId, remainingMs }) {
+    this.ctx = ctx ?? null;
+    this._clock = clock ?? new RealClock();
+    this._ids = ids ?? new RandomIdGenerator();
+    this.requestId = requestId ?? "";
+    this.remainingMs = Number(remainingMs ?? 0);
+  }
+
+  now() {
+    return this._clock.now();
+  }
+
+  newId() {
+    return this._ids.newId();
+  }
+}
+
+export class WebSocketContext {
+  constructor({
+    clock,
+    ids,
+    ctx,
+    requestId,
+    remainingMs,
+    connectionId,
+    routeKey,
+    domainName,
+    stage,
+    eventType,
+    managementEndpoint,
+    body,
+    clientFactory,
+  }) {
+    this.ctx = ctx ?? null;
+    this._clock = clock ?? new RealClock();
+    this._ids = ids ?? new RandomIdGenerator();
+    this.requestId = requestId ?? "";
+    this.remainingMs = Number(remainingMs ?? 0);
+
+    this.connectionId = String(connectionId ?? "").trim();
+    this.routeKey = String(routeKey ?? "").trim();
+    this.domainName = String(domainName ?? "").trim();
+    this.stage = String(stage ?? "").trim();
+    this.eventType = String(eventType ?? "").trim();
+    this.managementEndpoint = String(managementEndpoint ?? "").trim();
+    this.body = toBuffer(body);
+
+    this._clientFactory = typeof clientFactory === "function" ? clientFactory : null;
+    this._client = null;
+    this._clientError = null;
+  }
+
+  now() {
+    return this._clock.now();
+  }
+
+  newId() {
+    return this._ids.newId();
+  }
+
+  async _managementClient() {
+    if (this._client || this._clientError) {
+      if (this._clientError) throw this._clientError;
+      return this._client;
+    }
+    if (!this._clientFactory) {
+      this._clientError = new Error("apptheory: missing websocket client factory");
+      throw this._clientError;
+    }
+    const client = await this._clientFactory(this.managementEndpoint, this.ctx);
+    if (!client) {
+      this._clientError = new Error("apptheory: websocket client factory returned null");
+      throw this._clientError;
+    }
+    this._client = client;
+    return client;
+  }
+
+  async sendMessage(data) {
+    const id = String(this.connectionId ?? "").trim();
+    if (!id) throw new Error("apptheory: websocket connection id is empty");
+    const client = await this._managementClient();
+    if (typeof client.postToConnection !== "function") {
+      throw new Error("apptheory: websocket client missing postToConnection");
+    }
+    await client.postToConnection(id, toBuffer(data));
+  }
+
+  async sendJSONMessage(value) {
+    await this.sendMessage(Buffer.from(JSON.stringify(value), "utf8"));
   }
 }
 
@@ -159,8 +259,54 @@ export function binary(status, body, contentType) {
   });
 }
 
+function formatSSEEvent(event) {
+  const id = String(event?.id ?? "").trim();
+  const name = String(event?.event ?? "").trim();
+
+  let data;
+  const value = event?.data;
+  if (value === null || value === undefined) {
+    data = "";
+  } else if (typeof value === "string") {
+    data = value;
+  } else if (value instanceof Uint8Array || Buffer.isBuffer(value)) {
+    data = Buffer.from(value).toString("utf8");
+  } else {
+    data = JSON.stringify(value);
+  }
+
+  data = String(data).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = String(data).split("\n");
+  if (lines.length === 0) lines.push("");
+
+  let out = "";
+  if (id) out += `id: ${id}\n`;
+  if (name) out += `event: ${name}\n`;
+  for (const line of lines) {
+    out += `data: ${line}\n`;
+  }
+  out += "\n";
+  return out;
+}
+
+export function sse(status, events) {
+  const list = Array.isArray(events) ? events : [];
+  const framed = list.map(formatSSEEvent).join("");
+  return normalizeResponse({
+    status,
+    headers: {
+      "content-type": ["text/event-stream"],
+      "cache-control": ["no-cache"],
+      connection: ["keep-alive"],
+    },
+    cookies: [],
+    body: Buffer.from(framed, "utf8"),
+    isBase64: false,
+  });
+}
+
 export class App {
-  constructor({ clock, ids, tier, limits, authHook, policyHook, observability } = {}) {
+  constructor({ clock, ids, tier, limits, authHook, policyHook, observability, webSocketClientFactory } = {}) {
     this._router = new Router();
     this._clock = clock ?? new RealClock();
     this._ids = ids ?? new RandomIdGenerator();
@@ -172,6 +318,14 @@ export class App {
     this._authHook = authHook ?? null;
     this._policyHook = policyHook ?? null;
     this._observability = observability ?? null;
+    this._webSocketRoutes = [];
+    this._webSocketClientFactory =
+      typeof webSocketClientFactory === "function"
+        ? webSocketClientFactory
+        : (endpoint) => new WebSocketManagementClient({ endpoint });
+    this._sqsRoutes = [];
+    this._eventBridgeRoutes = [];
+    this._dynamoDBRoutes = [];
   }
 
   handle(method, pattern, handler, options = {}) {
@@ -193,6 +347,39 @@ export class App {
 
   delete(pattern, handler) {
     return this.handle("DELETE", pattern, handler);
+  }
+
+  webSocket(routeKey, handler) {
+    const key = String(routeKey ?? "").trim();
+    if (!key || typeof handler !== "function") return this;
+    this._webSocketRoutes.push({ routeKey: key, handler });
+    return this;
+  }
+
+  sqs(queueName, handler) {
+    const name = String(queueName ?? "").trim();
+    if (!name || typeof handler !== "function") return this;
+    this._sqsRoutes.push({ queueName: name, handler });
+    return this;
+  }
+
+  eventBridge(selector, handler) {
+    if (typeof handler !== "function") return this;
+    const sel = {
+      ruleName: String(selector?.ruleName ?? "").trim(),
+      source: String(selector?.source ?? "").trim(),
+      detailType: String(selector?.detailType ?? "").trim(),
+    };
+    if (!sel.ruleName && !sel.source && !sel.detailType) return this;
+    this._eventBridgeRoutes.push({ selector: sel, handler });
+    return this;
+  }
+
+  dynamoDB(tableName, handler) {
+    const name = String(tableName ?? "").trim();
+    if (!name || typeof handler !== "function") return this;
+    this._dynamoDBRoutes.push({ tableName: name, handler });
+    return this;
   }
 
   async serve(request, ctx) {
@@ -393,6 +580,255 @@ export class App {
     const resp = await this.serve(request, ctx);
     return lambdaFunctionURLResponseFromResponse(resp);
   }
+
+  async serveAPIGatewayProxy(event, ctx) {
+    let request;
+    try {
+      request = requestFromAPIGatewayProxy(event);
+    } catch (err) {
+      return apigatewayProxyResponseFromResponse(responseForError(err));
+    }
+    const resp = await this.serve(request, ctx);
+    return apigatewayProxyResponseFromResponse(resp);
+  }
+
+  _webSocketHandlerForEvent(event) {
+    const routeKey = String(event?.requestContext?.routeKey ?? "").trim();
+    if (!routeKey) return null;
+    for (const route of this._webSocketRoutes) {
+      if (route.routeKey === routeKey) return route.handler;
+    }
+    return null;
+  }
+
+  async serveWebSocket(event, ctx) {
+    const handler = this._webSocketHandlerForEvent(event);
+
+    const requestId = String(event?.requestContext?.requestId ?? "").trim()
+      ? String(event.requestContext.requestId).trim()
+      : ctx && typeof ctx === "object" && typeof ctx.awsRequestId === "string" && ctx.awsRequestId.trim()
+        ? ctx.awsRequestId.trim()
+        : this._ids.newId();
+
+    let request;
+    try {
+      request = requestFromWebSocketEvent(event);
+    } catch (err) {
+      if (this._tier === "p0") {
+        return apigatewayProxyResponseFromResponse(responseForError(err));
+      }
+      return apigatewayProxyResponseFromResponse(responseForErrorWithRequestId(err, requestId));
+    }
+
+    const domainName = String(event?.requestContext?.domainName ?? "").trim();
+    const stage = String(event?.requestContext?.stage ?? "").trim();
+    const wsCtx = new WebSocketContext({
+      clock: this._clock,
+      ids: this._ids,
+      ctx,
+      requestId,
+      remainingMs: extractRemainingMs(ctx),
+      connectionId: String(event?.requestContext?.connectionId ?? "").trim(),
+      routeKey: String(event?.requestContext?.routeKey ?? "").trim(),
+      domainName,
+      stage,
+      eventType: String(event?.requestContext?.eventType ?? "").trim(),
+      managementEndpoint: webSocketManagementEndpoint(domainName, stage),
+      body: request.body,
+      clientFactory: this._webSocketClientFactory,
+    });
+
+    const requestCtx = new Context({
+      request,
+      params: {},
+      clock: this._clock,
+      ids: this._ids,
+      ctx,
+      requestId,
+      tenantId: extractTenantId(request.headers, request.query),
+      authIdentity: "",
+      remainingMs: extractRemainingMs(ctx),
+      middlewareTrace: [],
+      webSocket: wsCtx,
+    });
+
+    if (!handler) {
+      if (this._tier === "p0") {
+        return apigatewayProxyResponseFromResponse(errorResponse("app.not_found", "not found"));
+      }
+      return apigatewayProxyResponseFromResponse(errorResponseWithRequestId("app.not_found", "not found", {}, requestId));
+    }
+
+    let resp;
+    try {
+      resp = await handler(requestCtx);
+    } catch (err) {
+      if (this._tier === "p0") {
+        return apigatewayProxyResponseFromResponse(responseForError(err));
+      }
+      return apigatewayProxyResponseFromResponse(responseForErrorWithRequestId(err, requestId));
+    }
+
+    if (!resp) {
+      if (this._tier === "p0") {
+        return apigatewayProxyResponseFromResponse(errorResponse("app.internal", "internal error"));
+      }
+      return apigatewayProxyResponseFromResponse(errorResponseWithRequestId("app.internal", "internal error", {}, requestId));
+    }
+
+    return apigatewayProxyResponseFromResponse(normalizeResponse(resp));
+  }
+
+  _eventContext(ctx) {
+    const requestId =
+      ctx && typeof ctx === "object" && typeof ctx.awsRequestId === "string" && ctx.awsRequestId.trim()
+        ? ctx.awsRequestId.trim()
+        : this._ids.newId();
+    return new EventContext({
+      clock: this._clock,
+      ids: this._ids,
+      ctx,
+      requestId,
+      remainingMs: extractRemainingMs(ctx),
+    });
+  }
+
+  _sqsHandlerForEvent(event) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    if (records.length === 0) return null;
+    const queueName = sqsQueueNameFromArn(records[0]?.eventSourceARN);
+    if (!queueName) return null;
+    for (const route of this._sqsRoutes) {
+      if (route.queueName === queueName) return route.handler;
+    }
+    return null;
+  }
+
+  async serveSQSEvent(event, ctx) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    const handler = this._sqsHandlerForEvent(event);
+    if (!handler) {
+      return {
+        batchItemFailures: records
+          .map((r) => ({ itemIdentifier: String(r?.messageId ?? "").trim() }))
+          .filter((f) => Boolean(f.itemIdentifier)),
+      };
+    }
+
+    const evtCtx = this._eventContext(ctx);
+    const failures = [];
+    for (const record of records) {
+      try {
+        await handler(evtCtx, record);
+      } catch {
+        const id = String(record?.messageId ?? "").trim();
+        if (id) failures.push({ itemIdentifier: id });
+      }
+    }
+    return { batchItemFailures: failures };
+  }
+
+  _eventBridgeHandlerForEvent(event) {
+    const source = String(event?.source ?? "").trim();
+    const detailType = String(event?.["detail-type"] ?? event?.detailType ?? "").trim();
+    const resources = Array.isArray(event?.resources) ? event.resources : [];
+
+    for (const route of this._eventBridgeRoutes) {
+      const sel = route.selector ?? {};
+      if (sel.ruleName) {
+        for (const resource of resources) {
+          if (eventBridgeRuleNameFromArn(resource) === sel.ruleName) {
+            return route.handler;
+          }
+        }
+        continue;
+      }
+      if (sel.source && sel.source !== source) continue;
+      if (sel.detailType && sel.detailType !== detailType) continue;
+      return route.handler;
+    }
+    return null;
+  }
+
+  async serveEventBridge(event, ctx) {
+    const handler = this._eventBridgeHandlerForEvent(event);
+    if (!handler) return null;
+    const evtCtx = this._eventContext(ctx);
+    return handler(evtCtx, event);
+  }
+
+  _dynamoDBHandlerForEvent(event) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    if (records.length === 0) return null;
+    const tableName = dynamoDBTableNameFromStreamArn(records[0]?.eventSourceARN);
+    if (!tableName) return null;
+    for (const route of this._dynamoDBRoutes) {
+      if (route.tableName === tableName) return route.handler;
+    }
+    return null;
+  }
+
+  async serveDynamoDBStream(event, ctx) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    const handler = this._dynamoDBHandlerForEvent(event);
+    if (!handler) {
+      return {
+        batchItemFailures: records
+          .map((r) => ({ itemIdentifier: String(r?.eventID ?? "").trim() }))
+          .filter((f) => Boolean(f.itemIdentifier)),
+      };
+    }
+
+    const evtCtx = this._eventContext(ctx);
+    const failures = [];
+    for (const record of records) {
+      try {
+        await handler(evtCtx, record);
+      } catch {
+        const id = String(record?.eventID ?? "").trim();
+        if (id) failures.push({ itemIdentifier: id });
+      }
+    }
+    return { batchItemFailures: failures };
+  }
+
+  async handleLambda(event, ctx) {
+    if (!event || typeof event !== "object") {
+      throw new Error("apptheory: unknown event type");
+    }
+
+    const records = Array.isArray(event.Records) ? event.Records : [];
+    if (records.length > 0) {
+      const source = String(records[0]?.eventSource ?? "").trim();
+      if (source === "aws:sqs") {
+        return this.serveSQSEvent(event, ctx);
+      }
+      if (source === "aws:dynamodb") {
+        return this.serveDynamoDBStream(event, ctx);
+      }
+    }
+
+    if ("detail-type" in event || "detailType" in event) {
+      return this.serveEventBridge(event, ctx);
+    }
+
+    if (event.requestContext) {
+      if (event.requestContext.http) {
+        if ("routeKey" in event) {
+          return this.serveAPIGatewayV2(event, ctx);
+        }
+        return this.serveLambdaFunctionURL(event, ctx);
+      }
+      if (typeof event.requestContext.connectionId === "string" && event.requestContext.connectionId.trim()) {
+        return this.serveWebSocket(event, ctx);
+      }
+      if (typeof event.httpMethod === "string" && event.httpMethod.trim()) {
+        return this.serveAPIGatewayProxy(event, ctx);
+      }
+    }
+
+    throw new Error("apptheory: unknown event type");
+  }
 }
 
 export function createApp(options = {}) {
@@ -419,6 +855,26 @@ export class TestEnv {
 
   invokeLambdaFunctionURL(app, event, ctx) {
     return app.serveLambdaFunctionURL(event, ctx);
+  }
+
+  invokeAPIGatewayProxy(app, event, ctx) {
+    return app.serveAPIGatewayProxy(event, ctx);
+  }
+
+  invokeSQS(app, event, ctx) {
+    return app.serveSQSEvent(event, ctx);
+  }
+
+  invokeEventBridge(app, event, ctx) {
+    return app.serveEventBridge(event, ctx);
+  }
+
+  invokeDynamoDBStream(app, event, ctx) {
+    return app.serveDynamoDBStream(event, ctx);
+  }
+
+  invokeLambda(app, event, ctx) {
+    return app.handleLambda(event, ctx);
   }
 }
 
@@ -472,6 +928,56 @@ export function buildLambdaFunctionURLRequest(method, path, options = {}) {
     },
     body: isBase64Encoded ? bodyBytes.toString("base64") : bodyBytes.toString("utf8"),
     isBase64Encoded,
+  };
+}
+
+export function buildSQSEvent(queueArn, records = []) {
+  const arn = String(queueArn ?? "").trim();
+  return {
+    Records: records.map((r, idx) => ({
+      messageId: String(r?.messageId ?? `msg-${idx + 1}`),
+      receiptHandle: String(r?.receiptHandle ?? ""),
+      body: String(r?.body ?? ""),
+      attributes: r?.attributes ?? {},
+      messageAttributes: r?.messageAttributes ?? {},
+      md5OfBody: String(r?.md5OfBody ?? ""),
+      eventSource: "aws:sqs",
+      eventSourceARN: String(r?.eventSourceARN ?? arn),
+      awsRegion: String(r?.awsRegion ?? "us-east-1"),
+    })),
+  };
+}
+
+export function buildEventBridgeEvent(options = {}) {
+  const ruleArn = String(options.ruleArn ?? "").trim();
+  const resources = Array.isArray(options.resources) ? [...options.resources] : [];
+  if (ruleArn) resources.push(ruleArn);
+
+  return {
+    version: String(options.version ?? "0"),
+    id: String(options.id ?? "evt-1"),
+    "detail-type": String(options.detailType ?? "Scheduled Event"),
+    source: String(options.source ?? "aws.events"),
+    account: String(options.account ?? "000000000000"),
+    time: String(options.time ?? "1970-01-01T00:00:00Z"),
+    region: String(options.region ?? "us-east-1"),
+    resources,
+    detail: options.detail ?? {},
+  };
+}
+
+export function buildDynamoDBStreamEvent(streamArn, records = []) {
+  const arn = String(streamArn ?? "").trim();
+  return {
+    Records: records.map((r, idx) => ({
+      eventID: String(r?.eventID ?? `evt-${idx + 1}`),
+      eventName: String(r?.eventName ?? "MODIFY"),
+      eventVersion: String(r?.eventVersion ?? "1.1"),
+      eventSource: "aws:dynamodb",
+      awsRegion: String(r?.awsRegion ?? "us-east-1"),
+      dynamodb: r?.dynamodb ?? { SequenceNumber: String(idx + 1), SizeBytes: 1, StreamViewType: "NEW_AND_OLD_IMAGES" },
+      eventSourceARN: String(r?.eventSourceARN ?? arn),
+    })),
   };
 }
 
@@ -837,6 +1343,64 @@ function formatAllowHeader(methods) {
   return [...unique].sort().join(", ");
 }
 
+function requestFromWebSocketEvent(event) {
+  const headers = {};
+  for (const [key, values] of Object.entries(event?.multiValueHeaders ?? {})) {
+    headers[key] = Array.isArray(values) ? values.map((v) => String(v)) : [];
+  }
+  for (const [key, value] of Object.entries(event?.headers ?? {})) {
+    if (headers[key]) continue;
+    headers[key] = [String(value)];
+  }
+
+  const query = {};
+  for (const [key, values] of Object.entries(event?.multiValueQueryStringParameters ?? {})) {
+    query[key] = Array.isArray(values) ? values.map((v) => String(v)) : [];
+  }
+  for (const [key, value] of Object.entries(event?.queryStringParameters ?? {})) {
+    if (query[key]) continue;
+    query[key] = [String(value)];
+  }
+
+  return normalizeRequest({
+    method: String(event?.httpMethod ?? ""),
+    path: String(event?.path ?? "/"),
+    query,
+    headers,
+    body: String(event?.body ?? ""),
+    isBase64: Boolean(event?.isBase64Encoded),
+  });
+}
+
+function requestFromAPIGatewayProxy(event) {
+  const headers = {};
+  for (const [key, values] of Object.entries(event?.multiValueHeaders ?? {})) {
+    headers[key] = Array.isArray(values) ? values.map((v) => String(v)) : [];
+  }
+  for (const [key, value] of Object.entries(event?.headers ?? {})) {
+    if (headers[key]) continue;
+    headers[key] = [String(value)];
+  }
+
+  const query = {};
+  for (const [key, values] of Object.entries(event?.multiValueQueryStringParameters ?? {})) {
+    query[key] = Array.isArray(values) ? values.map((v) => String(v)) : [];
+  }
+  for (const [key, value] of Object.entries(event?.queryStringParameters ?? {})) {
+    if (query[key]) continue;
+    query[key] = [String(value)];
+  }
+
+  return {
+    method: String(event?.httpMethod ?? event?.requestContext?.httpMethod ?? ""),
+    path: String(event?.path ?? event?.requestContext?.path ?? "/"),
+    query,
+    headers,
+    body: String(event?.body ?? ""),
+    isBase64: Boolean(event?.isBase64Encoded),
+  };
+}
+
 function requestFromAPIGatewayV2(event) {
   const cookies = Array.isArray(event?.cookies) ? event.cookies.map((v) => String(v)) : [];
   const headers = headersFromSingle(event?.headers, cookies.length > 0);
@@ -924,6 +1488,33 @@ function lambdaFunctionURLResponseFromResponse(resp) {
   };
 }
 
+function apigatewayProxyResponseFromResponse(resp) {
+  const normalized = normalizeResponse(resp);
+  const headers = {};
+  const multiValueHeaders = {};
+  for (const [key, values] of Object.entries(normalized.headers ?? {})) {
+    if (!values || values.length === 0) continue;
+    headers[key] = String(values[0]);
+    multiValueHeaders[key] = [...values].map((v) => String(v));
+  }
+
+  if (normalized.cookies.length > 0) {
+    headers["set-cookie"] = String(normalized.cookies[0]);
+    multiValueHeaders["set-cookie"] = [...normalized.cookies].map((v) => String(v));
+  }
+
+  const bodyBytes = toBuffer(normalized.body);
+  const isBase64Encoded = Boolean(normalized.isBase64);
+
+  return {
+    statusCode: normalized.status,
+    headers,
+    multiValueHeaders,
+    body: isBase64Encoded ? bodyBytes.toString("base64") : bodyBytes.toString("utf8"),
+    isBase64Encoded,
+  };
+}
+
 function headersFromSingle(headers, ignoreCookieHeader) {
   const out = {};
   if (!headers) return out;
@@ -1007,4 +1598,253 @@ function splitPathAndQuery(path, query) {
   const rawPath = normalizePath(idx >= 0 ? value.slice(0, idx) : value);
   const rawQueryString = query && Object.keys(query).length > 0 ? encodeRawQueryString(query) : idx >= 0 ? value.slice(idx + 1) : "";
   return { rawPath, rawQueryString };
+}
+
+function sqsQueueNameFromArn(arn) {
+  const value = String(arn ?? "").trim();
+  if (!value) return "";
+  const parts = value.split(":");
+  return parts.length > 0 ? parts[parts.length - 1] : "";
+}
+
+function eventBridgeRuleNameFromArn(arn) {
+  const value = String(arn ?? "").trim();
+  if (!value) return "";
+  const idx = value.indexOf(":rule/");
+  const start = idx >= 0 ? idx + ":rule/".length : value.indexOf("rule/") >= 0 ? value.indexOf("rule/") + "rule/".length : -1;
+  if (start < 0) return "";
+  const after = value.slice(start).replace(/^\/+/, "");
+  if (!after) return "";
+  const slash = after.indexOf("/");
+  return slash >= 0 ? after.slice(0, slash) : after;
+}
+
+function dynamoDBTableNameFromStreamArn(arn) {
+  const value = String(arn ?? "").trim();
+  if (!value) return "";
+  const idx = value.indexOf(":table/");
+  if (idx < 0) return "";
+  const after = value.slice(idx + ":table/".length);
+  const streamIdx = after.indexOf("/stream/");
+  if (streamIdx >= 0) return after.slice(0, streamIdx);
+  const slashIdx = after.indexOf("/");
+  return slashIdx >= 0 ? after.slice(0, slashIdx) : after;
+}
+
+function webSocketManagementEndpoint(domainName, stage) {
+  const dn = String(domainName ?? "").trim();
+  const st = String(stage ?? "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  if (!dn || !st) return "";
+  return `https://${dn}/${st}`;
+}
+
+function inferRegionFromDomainName(domainName) {
+  const host = String(domainName ?? "").trim().toLowerCase();
+  const m = host.match(/\.execute-api\.([a-z0-9-]+)\.amazonaws\.com$/);
+  return m ? m[1] : "";
+}
+
+function loadEnvCredentials() {
+  const accessKeyId = String(process.env.AWS_ACCESS_KEY_ID ?? "").trim();
+  const secretAccessKey = String(process.env.AWS_SECRET_ACCESS_KEY ?? "").trim();
+  const sessionToken = String(process.env.AWS_SESSION_TOKEN ?? "").trim();
+  if (!accessKeyId || !secretAccessKey) {
+    throw new Error("apptheory: missing aws credentials for websocket management client");
+  }
+  return { accessKeyId, secretAccessKey, sessionToken };
+}
+
+function normalizeWebSocketManagementEndpoint(endpoint) {
+  const value = String(endpoint ?? "").trim();
+  if (!value) return "";
+  if (value.startsWith("wss://")) return `https://${value.slice("wss://".length)}`;
+  if (value.startsWith("ws://")) return `http://${value.slice("ws://".length)}`;
+  if (value.startsWith("https://") || value.startsWith("http://")) return value;
+  return `https://${value}`;
+}
+
+function sha256Hex(data) {
+  return createHash("sha256").update(data).digest("hex");
+}
+
+function hmacSha256(key, data) {
+  return createHmac("sha256", key).update(data, "utf8").digest();
+}
+
+function signingKey(secretAccessKey, dateStamp, region, service) {
+  const kDate = hmacSha256(`AWS4${secretAccessKey}`, dateStamp);
+  const kRegion = hmacSha256(kDate, region);
+  const kService = hmacSha256(kRegion, service);
+  return hmacSha256(kService, "aws4_request");
+}
+
+function amzDateNow(now = new Date()) {
+  return now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+}
+
+async function signedFetch({ method, url, region, credentials, headers, body }) {
+  const u = new URL(url);
+  const host = u.host;
+  const canonicalUri = u.pathname || "/";
+  const canonicalQueryString = u.searchParams.toString();
+  const payloadHash = sha256Hex(body ?? "");
+
+  const amzDate = amzDateNow();
+  const dateStamp = amzDate.slice(0, 8);
+
+  const merged = { host, "x-amz-date": amzDate };
+  for (const [key, value] of Object.entries(headers ?? {})) {
+    const k = String(key).trim().toLowerCase();
+    if (k) merged[k] = String(value);
+  }
+  if (credentials.sessionToken) {
+    merged["x-amz-security-token"] = credentials.sessionToken;
+  }
+
+  const sortedKeys = Object.keys(merged).sort();
+
+  const canonicalHeaders = sortedKeys.map((k) => `${k}:${String(merged[k]).trim().replace(/\\s+/g, " ")}\\n`).join("");
+  const signedHeaders = sortedKeys.join(";");
+
+  const canonicalRequest = [
+    String(method).toUpperCase(),
+    canonicalUri,
+    canonicalQueryString,
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
+  ].join("\\n");
+
+  const scope = `${dateStamp}/${region}/execute-api/aws4_request`;
+  const stringToSign = ["AWS4-HMAC-SHA256", amzDate, scope, sha256Hex(canonicalRequest)].join("\\n");
+  const kSigning = signingKey(credentials.secretAccessKey, dateStamp, region, "execute-api");
+  const signature = createHmac("sha256", kSigning).update(stringToSign, "utf8").digest("hex");
+
+  merged.authorization = `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  return fetch(u.toString(), {
+    method,
+    headers: merged,
+    body: body ?? undefined,
+  });
+}
+
+export class WebSocketManagementClient {
+  constructor({ endpoint, region, credentials } = {}) {
+    this.endpoint = normalizeWebSocketManagementEndpoint(endpoint);
+    if (!this.endpoint) {
+      throw new Error("apptheory: websocket management endpoint is empty");
+    }
+
+    const host = new URL(this.endpoint).host;
+    this.region =
+      String(region ?? "").trim() ||
+      String(process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "").trim() ||
+      inferRegionFromDomainName(host);
+    if (!this.region) {
+      throw new Error("apptheory: aws region is empty");
+    }
+
+    this.credentials = credentials ?? loadEnvCredentials();
+  }
+
+  async postToConnection(connectionId, data) {
+    const id = String(connectionId ?? "").trim();
+    if (!id) throw new Error("apptheory: websocket connection id is empty");
+    const base = new URL(this.endpoint);
+    const basePath = base.pathname.replace(/\/+$/, "");
+    const url = `${base.origin}${basePath}/@connections/${encodeURIComponent(id)}`;
+    const body = toBuffer(data);
+
+    const resp = await signedFetch({
+      method: "POST",
+      url,
+      region: this.region,
+      credentials: this.credentials,
+      headers: { "content-type": "application/octet-stream" },
+      body,
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`apptheory: post_to_connection failed (${resp.status}) ${text}`.trim());
+    }
+  }
+
+  async getConnection(connectionId) {
+    const id = String(connectionId ?? "").trim();
+    if (!id) throw new Error("apptheory: websocket connection id is empty");
+    const base = new URL(this.endpoint);
+    const basePath = base.pathname.replace(/\/+$/, "");
+    const url = `${base.origin}${basePath}/@connections/${encodeURIComponent(id)}`;
+
+    const resp = await signedFetch({
+      method: "GET",
+      url,
+      region: this.region,
+      credentials: this.credentials,
+      headers: {},
+      body: undefined,
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`apptheory: get_connection failed (${resp.status}) ${text}`.trim());
+    }
+    return resp.json();
+  }
+
+  async deleteConnection(connectionId) {
+    const id = String(connectionId ?? "").trim();
+    if (!id) throw new Error("apptheory: websocket connection id is empty");
+    const base = new URL(this.endpoint);
+    const basePath = base.pathname.replace(/\/+$/, "");
+    const url = `${base.origin}${basePath}/@connections/${encodeURIComponent(id)}`;
+
+    const resp = await signedFetch({
+      method: "DELETE",
+      url,
+      region: this.region,
+      credentials: this.credentials,
+      headers: {},
+      body: undefined,
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`apptheory: delete_connection failed (${resp.status}) ${text}`.trim());
+    }
+  }
+}
+
+export class FakeWebSocketManagementClient {
+  constructor({ endpoint } = {}) {
+    this.endpoint = String(endpoint ?? "").trim();
+    this.calls = [];
+    this.connections = new Map();
+    this.postError = null;
+    this.getError = null;
+    this.deleteError = null;
+  }
+
+  async postToConnection(connectionId, data) {
+    const id = String(connectionId ?? "").trim();
+    if (!id) throw new Error("apptheory: websocket connection id is empty");
+    this.calls.push({ op: "post_to_connection", connectionId: id, data: toBuffer(data) });
+    if (this.postError) throw this.postError;
+  }
+
+  async getConnection(connectionId) {
+    const id = String(connectionId ?? "").trim();
+    if (!id) throw new Error("apptheory: websocket connection id is empty");
+    this.calls.push({ op: "get_connection", connectionId: id, data: null });
+    if (this.getError) throw this.getError;
+    if (!this.connections.has(id)) throw new Error("apptheory: connection not found");
+    return this.connections.get(id);
+  }
+
+  async deleteConnection(connectionId) {
+    const id = String(connectionId ?? "").trim();
+    if (!id) throw new Error("apptheory: websocket connection id is empty");
+    this.calls.push({ op: "delete_connection", connectionId: id, data: null });
+    if (this.deleteError) throw this.deleteError;
+    this.connections.delete(id);
+  }
 }

@@ -1,0 +1,39 @@
+{
+  "id": "m2.websocket.error_envelope",
+  "tier": "m2",
+  "name": "WebSocket: errors map to the standard AppTheory error envelope",
+  "setup": {
+    "websockets": [{ "route_key": "$default", "handler": "ws_bad_request" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "apigw_websocket",
+      "event": {
+        "path": "/",
+        "httpMethod": "POST",
+        "headers": {},
+        "queryStringParameters": {},
+        "requestContext": {
+          "stage": "dev",
+          "requestId": "ws-req-4",
+          "connectionId": "conn-4",
+          "domainName": "example.execute-api.us-east-1.amazonaws.com",
+          "eventType": "MESSAGE",
+          "routeKey": "$default"
+        },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": { "error": { "code": "app.bad_request", "message": "bad request" } },
+      "is_base64": false
+    }
+  }
+}
+

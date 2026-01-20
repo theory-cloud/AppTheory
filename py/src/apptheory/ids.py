@@ -39,4 +39,3 @@ class ManualIdGenerator:
         out = f"{self.prefix}-{self.next}"
         self.next += 1
         return out
-
