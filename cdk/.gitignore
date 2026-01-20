@@ -1,0 +1,10 @@
+dist/
+node_modules/
+.venv/
+.jsii
+.jsii.tgz
+*.tsbuildinfo
+tsconfig.json
+lib/**/*.js
+lib/**/*.d.ts
+lib/**/*.js.map

@@ -91,6 +91,65 @@ PY
   fi
 fi
 
+if [[ ! -f "cdk/package.json" ]]; then
+  echo "version-alignment: FAIL (missing cdk/package.json)"
+  exit 1
+fi
+
+cdk_version="$(
+  python3 - <<'PY'
+import json
+from pathlib import Path
+
+data = json.loads(Path("cdk/package.json").read_text(encoding="utf-8"))
+print(data.get("version", ""))
+PY
+)"
+
+if [[ -z "${cdk_version}" ]]; then
+  echo "version-alignment: FAIL (cdk/package.json missing version)"
+  exit 1
+fi
+
+if [[ "${cdk_version}" != "${expected_version}" ]]; then
+  echo "version-alignment: FAIL (cdk/package.json ${cdk_version} != ${expected_version})"
+  exit 1
+fi
+
+if [[ -f "cdk/package-lock.json" ]]; then
+  lock_version="$(
+    python3 - <<'PY'
+import json
+from pathlib import Path
+
+data = json.loads(Path("cdk/package-lock.json").read_text(encoding="utf-8"))
+print(data.get("version", ""))
+PY
+  )"
+
+  pkg_lock_version="$(
+    python3 - <<'PY'
+import json
+from pathlib import Path
+
+data = json.loads(Path("cdk/package-lock.json").read_text(encoding="utf-8"))
+packages = data.get("packages", {})
+root = packages.get("", {}) if isinstance(packages, dict) else {}
+print(root.get("version", ""))
+PY
+  )"
+
+  if [[ "${lock_version}" != "${expected_version}" ]]; then
+    echo "version-alignment: FAIL (cdk/package-lock.json ${lock_version} != ${expected_version})"
+    exit 1
+  fi
+
+  if [[ "${pkg_lock_version}" != "${expected_version}" ]]; then
+    echo "version-alignment: FAIL (cdk/package-lock.json packages[''].version ${pkg_lock_version} != ${expected_version})"
+    exit 1
+  fi
+fi
+
 if [[ ! -f "py/pyproject.toml" ]]; then
   echo "version-alignment: FAIL (missing py/pyproject.toml)"
   exit 1
