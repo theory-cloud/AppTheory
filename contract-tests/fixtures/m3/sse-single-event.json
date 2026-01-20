@@ -1,0 +1,38 @@
+{
+  "id": "m3.sse.single_event",
+  "tier": "m3",
+  "name": "SSE: framing + required headers",
+  "setup": {
+    "routes": [{ "method": "GET", "path": "/sse", "handler": "sse_single_event" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "apigw_proxy",
+      "event": {
+        "path": "/sse",
+        "httpMethod": "GET",
+        "headers": {},
+        "multiValueHeaders": {},
+        "queryStringParameters": {},
+        "multiValueQueryStringParameters": {},
+        "requestContext": { "requestId": "req-3", "path": "/sse", "httpMethod": "GET" },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["text/event-stream"],
+        "cache-control": ["no-cache"],
+        "connection": ["keep-alive"]
+      },
+      "cookies": [],
+      "body": { "encoding": "utf8", "value": "id: 1\nevent: message\ndata: {\"ok\":true}\n\n" },
+      "is_base64": false
+    }
+  }
+}
+

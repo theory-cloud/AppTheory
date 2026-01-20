@@ -7,6 +7,7 @@ from apptheory.aws_http import (
     apigw_proxy_response_from_response,
     apigw_v2_response_from_response,
     lambda_function_url_response_from_response,
+    request_from_apigw_proxy,
     request_from_apigw_v2,
     request_from_lambda_function_url,
 )
@@ -437,6 +438,15 @@ class App:
         resp = self.serve(request, ctx)
         return lambda_function_url_response_from_response(resp)
 
+    def serve_apigw_proxy(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        try:
+            request = request_from_apigw_proxy(event)
+        except Exception as exc:  # noqa: BLE001
+            return apigw_proxy_response_from_response(response_for_error(exc))
+
+        resp = self.serve(request, ctx)
+        return apigw_proxy_response_from_response(resp)
+
     def serve_websocket(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
         try:
             request = _request_from_websocket_event(event)
@@ -656,6 +666,8 @@ class App:
                 if "routeKey" in event:
                     return self.serve_apigw_v2(event, ctx=ctx)
                 return self.serve_lambda_function_url(event, ctx=ctx)
+            if "httpMethod" in event:
+                return self.serve_apigw_proxy(event, ctx=ctx)
 
         raise RuntimeError("apptheory: unknown event type")
 

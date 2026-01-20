@@ -259,6 +259,52 @@ export function binary(status, body, contentType) {
   });
 }
 
+function formatSSEEvent(event) {
+  const id = String(event?.id ?? "").trim();
+  const name = String(event?.event ?? "").trim();
+
+  let data;
+  const value = event?.data;
+  if (value === null || value === undefined) {
+    data = "";
+  } else if (typeof value === "string") {
+    data = value;
+  } else if (value instanceof Uint8Array || Buffer.isBuffer(value)) {
+    data = Buffer.from(value).toString("utf8");
+  } else {
+    data = JSON.stringify(value);
+  }
+
+  data = String(data).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = String(data).split("\n");
+  if (lines.length === 0) lines.push("");
+
+  let out = "";
+  if (id) out += `id: ${id}\n`;
+  if (name) out += `event: ${name}\n`;
+  for (const line of lines) {
+    out += `data: ${line}\n`;
+  }
+  out += "\n";
+  return out;
+}
+
+export function sse(status, events) {
+  const list = Array.isArray(events) ? events : [];
+  const framed = list.map(formatSSEEvent).join("");
+  return normalizeResponse({
+    status,
+    headers: {
+      "content-type": ["text/event-stream"],
+      "cache-control": ["no-cache"],
+      connection: ["keep-alive"],
+    },
+    cookies: [],
+    body: Buffer.from(framed, "utf8"),
+    isBase64: false,
+  });
+}
+
 export class App {
   constructor({ clock, ids, tier, limits, authHook, policyHook, observability, webSocketClientFactory } = {}) {
     this._router = new Router();
@@ -535,6 +581,17 @@ export class App {
     return lambdaFunctionURLResponseFromResponse(resp);
   }
 
+  async serveAPIGatewayProxy(event, ctx) {
+    let request;
+    try {
+      request = requestFromAPIGatewayProxy(event);
+    } catch (err) {
+      return apigatewayProxyResponseFromResponse(responseForError(err));
+    }
+    const resp = await this.serve(request, ctx);
+    return apigatewayProxyResponseFromResponse(resp);
+  }
+
   _webSocketHandlerForEvent(event) {
     const routeKey = String(event?.requestContext?.routeKey ?? "").trim();
     if (!routeKey) return null;
@@ -765,6 +822,9 @@ export class App {
       if (typeof event.requestContext.connectionId === "string" && event.requestContext.connectionId.trim()) {
         return this.serveWebSocket(event, ctx);
       }
+      if (typeof event.httpMethod === "string" && event.httpMethod.trim()) {
+        return this.serveAPIGatewayProxy(event, ctx);
+      }
     }
 
     throw new Error("apptheory: unknown event type");
@@ -795,6 +855,10 @@ export class TestEnv {
 
   invokeLambdaFunctionURL(app, event, ctx) {
     return app.serveLambdaFunctionURL(event, ctx);
+  }
+
+  invokeAPIGatewayProxy(app, event, ctx) {
+    return app.serveAPIGatewayProxy(event, ctx);
   }
 
   invokeSQS(app, event, ctx) {
@@ -1306,6 +1370,35 @@ function requestFromWebSocketEvent(event) {
     body: String(event?.body ?? ""),
     isBase64: Boolean(event?.isBase64Encoded),
   });
+}
+
+function requestFromAPIGatewayProxy(event) {
+  const headers = {};
+  for (const [key, values] of Object.entries(event?.multiValueHeaders ?? {})) {
+    headers[key] = Array.isArray(values) ? values.map((v) => String(v)) : [];
+  }
+  for (const [key, value] of Object.entries(event?.headers ?? {})) {
+    if (headers[key]) continue;
+    headers[key] = [String(value)];
+  }
+
+  const query = {};
+  for (const [key, values] of Object.entries(event?.multiValueQueryStringParameters ?? {})) {
+    query[key] = Array.isArray(values) ? values.map((v) => String(v)) : [];
+  }
+  for (const [key, value] of Object.entries(event?.queryStringParameters ?? {})) {
+    if (query[key]) continue;
+    query[key] = [String(value)];
+  }
+
+  return {
+    method: String(event?.httpMethod ?? event?.requestContext?.httpMethod ?? ""),
+    path: String(event?.path ?? event?.requestContext?.path ?? "/"),
+    query,
+    headers,
+    body: String(event?.body ?? ""),
+    isBase64: Boolean(event?.isBase64Encoded),
+  };
 }
 
 function requestFromAPIGatewayV2(event) {

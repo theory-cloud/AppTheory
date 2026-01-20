@@ -1,6 +1,6 @@
 import os
 
-from apptheory import create_app, event_bridge_rule, json
+from apptheory import SSEEvent, create_app, event_bridge_rule, json, sse
 
 
 def _build_app():
@@ -47,6 +47,10 @@ def _build_app():
                 "tenant_id": ctx.tenant_id,
             },
         )
+
+    @app.get("/sse")
+    def sse_demo(_ctx):
+        return sse(200, [SSEEvent(id="1", event="message", data={"ok": True, "lang": lang, "name": name})])
 
     return app
 
