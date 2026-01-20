@@ -17,6 +17,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch main + premain (release branch verification)
+        run: git fetch origin main premain --force
+
+      - name: Verify tag was cut from the correct branch
+        run: scripts/verify-release-branch.sh "${{ github.ref_name }}"
+
       - name: Set SOURCE_DATE_EPOCH (deterministic artifacts)
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
 
