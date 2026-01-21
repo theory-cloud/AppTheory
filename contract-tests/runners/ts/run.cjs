@@ -1791,6 +1791,19 @@ function builtInAppTheoryHandler(runtime, name) {
           base: runtime.baseName("Pay Theory", "prod", "Tenant_1"),
           resource: runtime.resourceName("Pay Theory", "WS Api", "prod", "Tenant_1"),
         });
+    case "stepfunctions_task_token_helpers":
+      return () =>
+        runtime.json(200, {
+          from_taskToken: runtime.stepFunctionsTaskToken({ taskToken: " tok-a " }),
+          from_TaskToken: runtime.stepFunctionsTaskToken({ TaskToken: " tok-b " }),
+          from_task_token: runtime.stepFunctionsTaskToken({ task_token: " tok-c " }),
+          from_precedence: runtime.stepFunctionsTaskToken({
+            TaskToken: " tok-b ",
+            task_token: " tok-c ",
+            taskToken: " tok-a ",
+          }),
+          built: runtime.buildStepFunctionsTaskTokenEvent(" tok-built ", { foo: "bar", taskToken: "ignored" }),
+        });
     case "large_response":
       return () => runtime.text(200, "12345");
     case "sse_single_event":

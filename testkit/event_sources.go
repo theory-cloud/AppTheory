@@ -272,3 +272,17 @@ func (e *Env) InvokeSNS(ctx context.Context, app *apptheory.App, event events.SN
 	}
 	return app.ServeSNS(ctx, event)
 }
+
+type StepFunctionsTaskTokenEventOptions struct {
+	TaskToken string
+	Payload   map[string]any
+}
+
+func StepFunctionsTaskTokenEvent(opts StepFunctionsTaskTokenEventOptions) map[string]any {
+	out := make(map[string]any, len(opts.Payload)+1)
+	for k, v := range opts.Payload {
+		out[k] = v
+	}
+	out["taskToken"] = strings.TrimSpace(opts.TaskToken)
+	return out
+}

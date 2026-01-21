@@ -2118,6 +2118,26 @@ export function buildSNSEvent(topicArn, records = []) {
   };
 }
 
+export function stepFunctionsTaskToken(event) {
+  if (!event || typeof event !== "object") return "";
+  const direct = (key) => {
+    const value = event[key];
+    return typeof value === "string" ? value.trim() : "";
+  };
+  return direct("taskToken") || direct("TaskToken") || direct("task_token");
+}
+
+export function buildStepFunctionsTaskTokenEvent(taskToken, payload = {}) {
+  const out = {};
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    for (const [key, value] of Object.entries(payload)) {
+      out[key] = value;
+    }
+  }
+  out.taskToken = String(taskToken ?? "").trim();
+  return out;
+}
+
 class Router {
   constructor() {
     this._routes = [];

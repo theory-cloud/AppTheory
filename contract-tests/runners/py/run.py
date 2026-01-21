@@ -898,6 +898,30 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
 
         return handler
 
+    if name == "stepfunctions_task_token_helpers":
+        def handler(_ctx):
+            return runtime.json(
+                200,
+                {
+                    "from_taskToken": runtime.stepfunctions_task_token({"taskToken": " tok-a "}),
+                    "from_TaskToken": runtime.stepfunctions_task_token({"TaskToken": " tok-b "}),
+                    "from_task_token": runtime.stepfunctions_task_token({"task_token": " tok-c "}),
+                    "from_precedence": runtime.stepfunctions_task_token(
+                        {
+                            "TaskToken": " tok-b ",
+                            "task_token": " tok-c ",
+                            "taskToken": " tok-a ",
+                        }
+                    ),
+                    "built": runtime.build_stepfunctions_task_token_event(
+                        " tok-built ",
+                        {"foo": "bar", "taskToken": "ignored"},
+                    ),
+                },
+            )
+
+        return handler
+
     if name == "large_response":
         return lambda _ctx: runtime.text(200, "12345")
 

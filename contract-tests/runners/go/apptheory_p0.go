@@ -14,6 +14,7 @@ import (
 
 	"github.com/theory-cloud/apptheory"
 	"github.com/theory-cloud/apptheory/pkg/naming"
+	"github.com/theory-cloud/apptheory/testkit"
 )
 
 func runFixtureP0(f Fixture) error {
@@ -436,6 +437,27 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		return apptheory.JSON(200, map[string]any{
 			"origin_url": apptheory.OriginURL(ctx.Request.Headers),
 			"client_ip":  apptheory.ClientIP(ctx.Request.Headers),
+		})
+	},
+	"stepfunctions_task_token_helpers": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		built := testkit.StepFunctionsTaskTokenEvent(testkit.StepFunctionsTaskTokenEventOptions{
+			TaskToken: " tok-built ",
+			Payload: map[string]any{
+				"foo":       "bar",
+				"taskToken": "ignored",
+			},
+		})
+
+		return apptheory.JSON(200, map[string]any{
+			"from_taskToken":  apptheory.StepFunctionsTaskToken(map[string]any{"taskToken": " tok-a "}),
+			"from_TaskToken":  apptheory.StepFunctionsTaskToken(map[string]any{"TaskToken": " tok-b "}),
+			"from_task_token": apptheory.StepFunctionsTaskToken(map[string]any{"task_token": " tok-c "}),
+			"from_precedence": apptheory.StepFunctionsTaskToken(map[string]any{
+				"TaskToken":  " tok-b ",
+				"task_token": " tok-c ",
+				"taskToken":  " tok-a ",
+			}),
+			"built": built,
 		})
 	},
 }
