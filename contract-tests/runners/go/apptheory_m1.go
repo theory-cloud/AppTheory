@@ -221,25 +221,11 @@ func builtInKinesisHandler(name string) apptheory.KinesisHandler {
 }
 
 func builtInSNSHandler(name string) apptheory.SNSHandler {
-	switch strings.TrimSpace(name) {
-	case "sns_static_a":
-		return func(_ *apptheory.EventContext, _ events.SNSEventRecord) (any, error) {
-			return map[string]any{"handler": "a"}, nil
-		}
-	case "sns_static_b":
-		return func(_ *apptheory.EventContext, _ events.SNSEventRecord) (any, error) {
-			return map[string]any{"handler": "b"}, nil
-		}
-	case "sns_echo_event_middleware":
-		return func(ctx *apptheory.EventContext, _ events.SNSEventRecord) (any, error) {
-			return map[string]any{
-				"mw":    ctx.Get("mw"),
-				"trace": ctx.Get("trace"),
-			}, nil
-		}
-	default:
+	handler := builtInOutputHandler[events.SNSEventRecord](name, "sns")
+	if handler == nil {
 		return nil
 	}
+	return apptheory.SNSHandler(handler)
 }
 
 func builtInDynamoDBStreamHandler(name string) apptheory.DynamoDBStreamHandler {
@@ -263,17 +249,25 @@ func builtInDynamoDBStreamHandler(name string) apptheory.DynamoDBStreamHandler {
 }
 
 func builtInEventBridgeHandler(name string) apptheory.EventBridgeHandler {
+	handler := builtInOutputHandler[events.EventBridgeEvent](name, "eventbridge")
+	if handler == nil {
+		return nil
+	}
+	return apptheory.EventBridgeHandler(handler)
+}
+
+func builtInOutputHandler[Event any](name string, prefix string) func(*apptheory.EventContext, Event) (any, error) {
 	switch strings.TrimSpace(name) {
-	case "eventbridge_static_a":
-		return func(_ *apptheory.EventContext, _ events.EventBridgeEvent) (any, error) {
+	case prefix + "_static_a":
+		return func(_ *apptheory.EventContext, _ Event) (any, error) {
 			return map[string]any{"handler": "a"}, nil
 		}
-	case "eventbridge_static_b":
-		return func(_ *apptheory.EventContext, _ events.EventBridgeEvent) (any, error) {
+	case prefix + "_static_b":
+		return func(_ *apptheory.EventContext, _ Event) (any, error) {
 			return map[string]any{"handler": "b"}, nil
 		}
-	case "eventbridge_echo_event_middleware":
-		return func(ctx *apptheory.EventContext, _ events.EventBridgeEvent) (any, error) {
+	case prefix + "_echo_event_middleware":
+		return func(ctx *apptheory.EventContext, _ Event) (any, error) {
 			return map[string]any{
 				"mw":    ctx.Get("mw"),
 				"trace": ctx.Get("trace"),

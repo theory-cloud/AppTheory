@@ -104,14 +104,6 @@ func canonicalizeHeaders(in map[string][]string) map[string][]string {
 	return out
 }
 
-func cloneHeaders(in map[string][]string) map[string][]string {
-	out := map[string][]string{}
-	for k, v := range in {
-		out[k] = append([]string(nil), v...)
-	}
-	return out
-}
-
 func cloneQuery(in map[string][]string) map[string][]string {
 	out := map[string][]string{}
 	for k, v := range in {
