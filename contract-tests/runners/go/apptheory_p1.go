@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/theory-cloud/apptheory/runtime"
+	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
 type fixedClock struct {
