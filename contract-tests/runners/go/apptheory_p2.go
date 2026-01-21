@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/theory-cloud/apptheory/runtime"
+	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
 func runFixtureP2(f Fixture) error {

@@ -14,7 +14,7 @@ import (
 
 	"github.com/theory-cloud/apptheory/pkg/observability"
 	"github.com/theory-cloud/apptheory/pkg/sanitization"
-	"github.com/theory-cloud/apptheory/runtime"
+	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
 const (

@@ -8,7 +8,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	"github.com/theory-cloud/apptheory/runtime"
+	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
 func runFixtureM3(f Fixture) error {

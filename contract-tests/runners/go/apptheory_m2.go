@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 
 	"github.com/theory-cloud/apptheory/pkg/streamer"
-	"github.com/theory-cloud/apptheory/runtime"
+	apptheory "github.com/theory-cloud/apptheory/runtime"
 	"github.com/theory-cloud/apptheory/testkit"
 )
 
