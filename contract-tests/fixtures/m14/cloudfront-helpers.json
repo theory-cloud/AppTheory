@@ -1,0 +1,43 @@
+{
+  "id": "m14.cloudfront.helpers",
+  "tier": "m14",
+  "name": "CloudFront helpers: origin URL + client IP extraction",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/cf", "handler": "cloudfront_helpers" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/cf",
+      "query": {},
+      "headers": {
+        "host": ["internal.execute-api.us-east-1.amazonaws.com"],
+        "x-forwarded-host": ["example.com, other.example.com"],
+        "cloudfront-forwarded-proto": ["https"],
+        "x-forwarded-proto": ["http"],
+        "cloudfront-viewer-address": ["203.0.113.42:12345"],
+        "x-forwarded-for": ["198.51.100.10, 10.0.0.1"]
+      },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "origin_url": "https://example.com",
+        "client_ip": "203.0.113.42"
+      },
+      "is_base64": false
+    }
+  }
+}
+

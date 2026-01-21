@@ -210,12 +210,67 @@ func wrapEventRecordHandler[Record any](
 	}
 }
 
+func wrapEventRecordHandlerWithOutput[Record any](
+	a *App,
+	handler func(*EventContext, Record) (any, error),
+	coerce func(any) (Record, bool),
+	invalidTypeError string,
+) func(*EventContext, Record) (any, error) {
+	if a == nil || handler == nil || len(a.eventMiddlewares) == 0 || coerce == nil {
+		return handler
+	}
+
+	wrapped := a.applyEventMiddlewares(func(ctx *EventContext, event any) (any, error) {
+		record, ok := coerce(event)
+		if !ok {
+			return nil, errors.New(invalidTypeError)
+		}
+		return handler(ctx, record)
+	})
+
+	return func(ctx *EventContext, record Record) (any, error) {
+		return wrapped(ctx, record)
+	}
+}
+
 type batchEventSpec[Record any, Failure any, Response any] struct {
 	coerce              func(any) (Record, bool)
 	invalidTypeError    string
 	recordID            func(Record) string
 	failureForID        func(string) Failure
 	responseForFailures func([]Failure) Response
+}
+
+type batchItemFailure interface {
+	~struct {
+		ItemIdentifier string `json:"itemIdentifier"`
+	}
+}
+
+type batchItemFailuresResponse[Failure any] interface {
+	~struct {
+		BatchItemFailures []Failure `json:"batchItemFailures"`
+	}
+}
+
+func newBatchEventSpec[Record any, Failure batchItemFailure, Response batchItemFailuresResponse[Failure]](
+	invalidTypeError string,
+	recordID func(Record) string,
+) batchEventSpec[Record, Failure, Response] {
+	return batchEventSpec[Record, Failure, Response]{
+		coerce: func(event any) (Record, bool) {
+			record, ok := event.(Record)
+			return record, ok
+		},
+		invalidTypeError: invalidTypeError,
+		recordID:         recordID,
+		failureForID: func(id string) Failure {
+			return Failure{ItemIdentifier: id}
+		},
+		responseForFailures: func(failures []Failure) Response {
+			return Response{BatchItemFailures: failures}
+		},
+	}
 }
 
 func serveBatchEvent[Record any, Failure any, Response any](
@@ -230,24 +285,168 @@ func serveBatchEvent[Record any, Failure any, Response any](
 	return spec.responseForFailures(failures)
 }
 
-var sqsBatchSpec = batchEventSpec[events.SQSMessage, events.SQSBatchItemFailure, events.SQSEventResponse]{
-	coerce: func(event any) (events.SQSMessage, bool) {
-		msg, ok := event.(events.SQSMessage)
-		return msg, ok
-	},
-	invalidTypeError: "apptheory: invalid sqs record type",
-	recordID:         func(msg events.SQSMessage) string { return msg.MessageId },
-	failureForID:     func(id string) events.SQSBatchItemFailure { return events.SQSBatchItemFailure{ItemIdentifier: id} },
-	responseForFailures: func(failures []events.SQSBatchItemFailure) events.SQSEventResponse {
-		return events.SQSEventResponse{BatchItemFailures: failures}
-	},
-}
+var sqsBatchSpec = newBatchEventSpec[events.SQSMessage, events.SQSBatchItemFailure, events.SQSEventResponse](
+	"apptheory: invalid sqs record type",
+	func(msg events.SQSMessage) string { return msg.MessageId },
+)
 
 // ServeSQS routes an SQS event to the registered queue handler and returns a partial batch failure response.
 //
 // If the queue is unrecognized, it fails closed by returning all messages as failures.
 func (a *App) ServeSQS(ctx context.Context, event events.SQSEvent) events.SQSEventResponse {
 	return serveBatchEvent(ctx, a, event.Records, a.sqsHandlerForEvent(event), sqsBatchSpec)
+}
+
+type KinesisHandler func(*EventContext, events.KinesisEventRecord) error
+
+type kinesisRoute struct {
+	StreamName string
+	Handler    KinesisHandler
+}
+
+// Kinesis registers a handler for a Kinesis stream by stream name.
+func (a *App) Kinesis(streamName string, handler KinesisHandler) *App {
+	if a == nil {
+		return a
+	}
+	streamName = strings.TrimSpace(streamName)
+	if streamName == "" || handler == nil {
+		return a
+	}
+	a.kinesisRoutes = append(a.kinesisRoutes, kinesisRoute{StreamName: streamName, Handler: handler})
+	return a
+}
+
+func kinesisStreamNameFromARN(arn string) string {
+	arn = strings.TrimSpace(arn)
+	if arn == "" {
+		return ""
+	}
+	parts := strings.Split(arn, ":")
+	if len(parts) == 0 {
+		return ""
+	}
+	last := parts[len(parts)-1]
+	_, name, ok := strings.Cut(last, "/")
+	if ok {
+		return strings.TrimSpace(name)
+	}
+	return strings.TrimSpace(last)
+}
+
+func (a *App) kinesisHandlerForEvent(event events.KinesisEvent) KinesisHandler {
+	if a == nil {
+		return nil
+	}
+	for _, record := range event.Records {
+		streamName := kinesisStreamNameFromARN(record.EventSourceArn)
+		if streamName == "" {
+			continue
+		}
+		for _, route := range a.kinesisRoutes {
+			if route.StreamName == streamName {
+				return route.Handler
+			}
+		}
+		break
+	}
+	return nil
+}
+
+var kinesisBatchSpec = newBatchEventSpec[events.KinesisEventRecord, events.KinesisBatchItemFailure, events.KinesisEventResponse](
+	"apptheory: invalid kinesis record type",
+	func(record events.KinesisEventRecord) string { return record.EventID },
+)
+
+// ServeKinesis routes a Kinesis event to the registered stream handler and returns a partial batch failure response.
+//
+// If the stream is unrecognized, it fails closed by returning all records as failures.
+func (a *App) ServeKinesis(ctx context.Context, event events.KinesisEvent) events.KinesisEventResponse {
+	return serveBatchEvent(ctx, a, event.Records, a.kinesisHandlerForEvent(event), kinesisBatchSpec)
+}
+
+type SNSHandler func(*EventContext, events.SNSEventRecord) (any, error)
+
+type snsRoute struct {
+	TopicName string
+	Handler   SNSHandler
+}
+
+// SNS registers a handler for an SNS topic by topic name.
+func (a *App) SNS(topicName string, handler SNSHandler) *App {
+	if a == nil {
+		return a
+	}
+	topicName = strings.TrimSpace(topicName)
+	if topicName == "" || handler == nil {
+		return a
+	}
+	a.snsRoutes = append(a.snsRoutes, snsRoute{TopicName: topicName, Handler: handler})
+	return a
+}
+
+func snsTopicNameFromARN(arn string) string {
+	arn = strings.TrimSpace(arn)
+	if arn == "" {
+		return ""
+	}
+	parts := strings.Split(arn, ":")
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[len(parts)-1])
+}
+
+func (a *App) snsHandlerForEvent(event events.SNSEvent) SNSHandler {
+	if a == nil {
+		return nil
+	}
+	for _, record := range event.Records {
+		topicName := snsTopicNameFromARN(record.SNS.TopicArn)
+		if topicName == "" {
+			continue
+		}
+		for _, route := range a.snsRoutes {
+			if route.TopicName == topicName {
+				return route.Handler
+			}
+		}
+		break
+	}
+	return nil
+}
+
+// ServeSNS routes an SNS event to the registered topic handler.
+//
+// If the topic is unrecognized, it fails closed by returning an error.
+//
+// The returned output value is ignored by AWS for SNS triggers, but is useful for tests and local invocation tooling.
+func (a *App) ServeSNS(ctx context.Context, event events.SNSEvent) ([]any, error) {
+	handler := a.snsHandlerForEvent(event)
+	if handler == nil {
+		return nil, errors.New("apptheory: unrecognized sns topic")
+	}
+
+	handler = wrapEventRecordHandlerWithOutput(
+		a,
+		handler,
+		func(event any) (events.SNSEventRecord, bool) {
+			record, ok := event.(events.SNSEventRecord)
+			return record, ok
+		},
+		"apptheory: invalid sns record type",
+	)
+
+	evtCtx := a.eventContext(ctx)
+	outputs := make([]any, 0, len(event.Records))
+	for _, record := range event.Records {
+		out, err := handler(evtCtx, record)
+		if err != nil {
+			return nil, err
+		}
+		outputs = append(outputs, out)
+	}
+	return outputs, nil
 }
 
 type EventBridgeSelector struct {
@@ -436,22 +635,10 @@ func (a *App) dynamoDBHandlerForEvent(event events.DynamoDBEvent) DynamoDBStream
 	return nil
 }
 
-var dynamoDBBatchSpec = batchEventSpec[events.DynamoDBEventRecord, events.DynamoDBBatchItemFailure, events.DynamoDBEventResponse]{}
-
-func init() {
-	dynamoDBBatchSpec.coerce = func(event any) (events.DynamoDBEventRecord, bool) {
-		record, ok := event.(events.DynamoDBEventRecord)
-		return record, ok
-	}
-	dynamoDBBatchSpec.invalidTypeError = "apptheory: invalid dynamodb record type"
-	dynamoDBBatchSpec.recordID = func(record events.DynamoDBEventRecord) string { return record.EventID }
-	dynamoDBBatchSpec.failureForID = func(id string) events.DynamoDBBatchItemFailure {
-		return events.DynamoDBBatchItemFailure{ItemIdentifier: id}
-	}
-	dynamoDBBatchSpec.responseForFailures = func(failures []events.DynamoDBBatchItemFailure) events.DynamoDBEventResponse {
-		return events.DynamoDBEventResponse{BatchItemFailures: failures}
-	}
-}
+var dynamoDBBatchSpec = newBatchEventSpec[events.DynamoDBEventRecord, events.DynamoDBBatchItemFailure, events.DynamoDBEventResponse](
+	"apptheory: invalid dynamodb record type",
+	func(record events.DynamoDBEventRecord) string { return record.EventID },
+)
 
 // ServeDynamoDBStream routes a DynamoDB Streams event to the registered table handler and returns a partial batch failure response.
 //
@@ -468,7 +655,8 @@ type lambdaEnvelope struct {
 }
 
 type recordProbe struct {
-	EventSource string `json:"eventSource"`
+	EventSource    string `json:"eventSource"`
+	EventSourceAlt string `json:"EventSource"`
 }
 
 func (a *App) handleLambdaRecords(ctx context.Context, event json.RawMessage, env lambdaEnvelope) (any, bool, error) {
@@ -481,7 +669,12 @@ func (a *App) handleLambdaRecords(ctx context.Context, event json.RawMessage, en
 		return nil, false, nil
 	}
 
-	switch strings.TrimSpace(probes[0].EventSource) {
+	source := strings.TrimSpace(probes[0].EventSource)
+	if source == "" {
+		source = strings.TrimSpace(probes[0].EventSourceAlt)
+	}
+
+	switch source {
 	case "aws:sqs":
 		var sqs events.SQSEvent
 		if err := json.Unmarshal(event, &sqs); err != nil {
@@ -494,6 +687,19 @@ func (a *App) handleLambdaRecords(ctx context.Context, event json.RawMessage, en
 			return nil, true, fmt.Errorf("apptheory: parse dynamodb stream event: %w", err)
 		}
 		return a.ServeDynamoDBStream(ctx, ddb), true, nil
+	case "aws:kinesis":
+		var kin events.KinesisEvent
+		if err := json.Unmarshal(event, &kin); err != nil {
+			return nil, true, fmt.Errorf("apptheory: parse kinesis event: %w", err)
+		}
+		return a.ServeKinesis(ctx, kin), true, nil
+	case "aws:sns":
+		var sns events.SNSEvent
+		if err := json.Unmarshal(event, &sns); err != nil {
+			return nil, true, fmt.Errorf("apptheory: parse sns event: %w", err)
+		}
+		out, err := a.ServeSNS(ctx, sns)
+		return out, true, err
 	default:
 		return nil, false, nil
 	}
@@ -520,6 +726,7 @@ func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMess
 	var probe struct {
 		HTTP         json.RawMessage `json:"http"`
 		ConnectionID *string         `json:"connectionId"`
+		ELB          json.RawMessage `json:"elb"`
 	}
 	if err := json.Unmarshal(env.RequestContext, &probe); err != nil {
 		return nil, false, nil
@@ -553,6 +760,16 @@ func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMess
 		return a.ServeWebSocket(ctx, ws), true, nil
 	}
 
+	if len(probe.ELB) > 0 {
+		var alb events.ALBTargetGroupRequest
+		if err := json.Unmarshal(event, &alb); err != nil {
+			return nil, true, fmt.Errorf("apptheory: parse alb event: %w", err)
+		}
+		if strings.TrimSpace(alb.HTTPMethod) != "" {
+			return a.ServeALB(ctx, alb), true, nil
+		}
+	}
+
 	var proxy events.APIGatewayProxyRequest
 	if err := json.Unmarshal(event, &proxy); err != nil {
 		return nil, true, fmt.Errorf("apptheory: parse apigw proxy event: %w", err)
@@ -569,8 +786,11 @@ func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMess
 // Supported triggers:
 // - API Gateway v2 (HTTP API)
 // - API Gateway REST API v1 (Proxy)
+// - Application Load Balancer (Target Group)
 // - Lambda Function URL
 // - SQS
+// - Kinesis
+// - SNS
 // - EventBridge
 // - DynamoDB Streams
 // - API Gateway v2 (WebSocket API)

@@ -1,0 +1,36 @@
+{
+  "id": "m14.streaming.late_error_after_first_chunk",
+  "tier": "m14",
+  "name": "Streaming: late errors do not change status/headers (stream error captured)",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/stream-error", "handler": "stream_error_after_first_chunk" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/stream-error",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["text/plain; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "chunks": [
+        { "encoding": "utf8", "value": "hello" }
+      ],
+      "stream_error_code": "app.internal",
+      "is_base64": false
+    }
+  }
+}
+

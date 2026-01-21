@@ -18,6 +18,8 @@ type App struct {
 	eventMiddlewares []EventMiddleware
 
 	sqsRoutes         []sqsRoute
+	kinesisRoutes     []kinesisRoute
+	snsRoutes         []snsRoute
 	eventBridgeRoutes []eventBridgeRoute
 	dynamoDBRoutes    []dynamoDBRoute
 

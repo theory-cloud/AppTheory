@@ -46,10 +46,7 @@ func statusForErrorCode(code string) int {
 }
 
 func errorResponse(code, message string, headers map[string][]string) Response {
-	if headers == nil {
-		headers = map[string][]string{}
-	}
-	headers = cloneHeaders(headers)
+	headers = canonicalizeHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
 	body, err := json.Marshal(map[string]any{
@@ -72,10 +69,7 @@ func errorResponse(code, message string, headers map[string][]string) Response {
 }
 
 func errorResponseWithRequestID(code, message string, headers map[string][]string, requestID string) Response {
-	if headers == nil {
-		headers = map[string][]string{}
-	}
-	headers = cloneHeaders(headers)
+	headers = canonicalizeHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
 	errBody := map[string]any{

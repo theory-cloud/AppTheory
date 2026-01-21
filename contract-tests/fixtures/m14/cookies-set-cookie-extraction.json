@@ -1,0 +1,33 @@
+{
+  "id": "m14.cookies.set_cookie_header_extracted",
+  "tier": "m14",
+  "name": "Response: set-cookie headers are normalized into the cookies list",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/cookies", "handler": "cookies_from_set_cookie_header" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/cookies",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["text/plain; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": ["e=f; Path=/", "a=b; Path=/", "c=d; Path=/"],
+      "body": { "encoding": "utf8", "value": "ok" },
+      "is_base64": false
+    }
+  }
+}
+

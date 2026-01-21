@@ -7,9 +7,21 @@ from typing import Any
 from apptheory.app import App, AuthHook, Limits, ObservabilityHooks, PolicyHook, create_app
 from apptheory.clock import ManualClock
 from apptheory.context import WebSocketClientFactory
+from apptheory.errors import AppError
 from apptheory.ids import IdGenerator, ManualIdGenerator
 from apptheory.request import Request
 from apptheory.response import Response
+
+
+@dataclass(slots=True)
+class StreamResult:
+    status: int
+    headers: dict[str, list[str]]
+    cookies: list[str]
+    chunks: list[bytes]
+    body: bytes
+    is_base64: bool
+    stream_error_code: str
 
 
 @dataclass(slots=True)
@@ -54,6 +66,43 @@ class TestEnv:
     def invoke(self, app: App, request: Request) -> Response:
         return app.serve(request)
 
+    def invoke_streaming(self, app: App, request: Request, ctx: object | None = None) -> StreamResult:
+        resp = app.serve(request, ctx=ctx)
+
+        headers = {str(k): [str(v) for v in (vs or [])] for k, vs in (resp.headers or {}).items()}
+        cookies = [str(c) for c in (resp.cookies or [])]
+
+        chunks: list[bytes] = []
+        parts: list[bytes] = []
+
+        if resp.body:
+            b = bytes(resp.body)
+            chunks.append(b)
+            parts.append(b)
+
+        stream_error_code = ""
+        if resp.body_stream is not None:
+            try:
+                for chunk in resp.body_stream:
+                    b = bytes(chunk or b"")
+                    chunks.append(b)
+                    parts.append(b)
+            except Exception as exc:  # noqa: BLE001
+                if isinstance(exc, AppError):
+                    stream_error_code = str(exc.code or "")
+                else:
+                    stream_error_code = "app.internal"
+
+        return StreamResult(
+            status=int(resp.status),
+            headers=headers,
+            cookies=cookies,
+            chunks=chunks,
+            body=b"".join(parts),
+            is_base64=bool(resp.is_base64),
+            stream_error_code=stream_error_code,
+        )
+
     def invoke_apigw_v2(self, app: App, event: dict[str, object], ctx: object | None = None) -> dict[str, object]:
         return app.serve_apigw_v2(event, ctx=ctx)
 
@@ -61,6 +110,9 @@ class TestEnv:
         self, app: App, event: dict[str, object], ctx: object | None = None
     ) -> dict[str, object]:
         return app.serve_lambda_function_url(event, ctx=ctx)
+
+    def invoke_alb(self, app: App, event: dict[str, object], ctx: object | None = None) -> dict[str, object]:
+        return app.serve_alb(event, ctx=ctx)
 
     def invoke_sqs(self, app: App, event: dict[str, object], ctx: object | None = None) -> dict[str, object]:
         return app.serve_sqs(event, ctx=ctx)
@@ -72,6 +124,12 @@ class TestEnv:
         self, app: App, event: dict[str, object], ctx: object | None = None
     ) -> dict[str, object]:
         return app.serve_dynamodb_stream(event, ctx=ctx)
+
+    def invoke_kinesis(self, app: App, event: dict[str, object], ctx: object | None = None) -> dict[str, object]:
+        return app.serve_kinesis(event, ctx=ctx)
+
+    def invoke_sns(self, app: App, event: dict[str, object], ctx: object | None = None) -> object:
+        return app.serve_sns(event, ctx=ctx)
 
     def invoke_websocket(self, app: App, event: dict[str, object], ctx: object | None = None) -> dict[str, object]:
         return app.serve_websocket(event, ctx=ctx)

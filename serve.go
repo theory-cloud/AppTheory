@@ -391,7 +391,7 @@ func finalizeP1Response(resp Response, requestID, origin string, cors CORSConfig
 	}
 	if origin != "" && corsOriginAllowed(origin, cors) {
 		headers["access-control-allow-origin"] = []string{origin}
-		headers["vary"] = []string{"origin"}
+		headers["vary"] = Vary(headers["vary"], "origin")
 		if cors.AllowCredentials {
 			headers["access-control-allow-credentials"] = []string{"true"}
 		}

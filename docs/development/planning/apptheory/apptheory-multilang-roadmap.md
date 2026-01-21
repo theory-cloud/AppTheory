@@ -72,6 +72,8 @@ Deep workstreams are tracked in dedicated sub-roadmaps:
 - Contract tests: `subroadmaps/SR-CONTRACT.md`
 - Releases and supply-chain: `subroadmaps/SR-RELEASE.md`
 - CDK strategy: `subroadmaps/SR-CDK.md`
+- Streaming responses: `subroadmaps/SR-STREAMING.md`
+- SSR infrastructure: `subroadmaps/SR-SSR-INFRA.md`
 - Testkits + mocks: `subroadmaps/SR-MOCKS.md`
 - Prod features parity: `subroadmaps/SR-PROD-FEATURES.md`
 - Middleware + extensibility: `subroadmaps/SR-MIDDLEWARE.md`
@@ -347,3 +349,26 @@ Roadmap rule: keep this plan and core engineering artifacts in `docs/` so they r
 infrastructure is reworked.
 
 See: `docs/development/planning/apptheory/supporting/apptheory-governance-note.md`
+
+---
+
+### M14 — FaceTheory enablement (Lambda URL streaming SSR)
+
+**Goal:** make AppTheory a strong foundation for FaceTheory-style SSR/SSG/ISR sites on AWS, centered on **Lambda Function
+URL + response streaming** and CloudFront/S3 integration patterns.
+
+**Complex enough for dedicated roadmaps:** yes.
+
+Tracking:
+
+- `docs/development/planning/apptheory/apptheory-facetheory-support-roadmap.md` (milestones + acceptance criteria)
+- `subroadmaps/SR-STREAMING.md` (streaming contract + Lambda URL streaming + streaming testkit)
+- `subroadmaps/SR-SSR-INFRA.md` (CloudFront + S3 + Lambda URL deployment pattern)
+
+**Acceptance criteria**
+- FaceTheory P0/P1 dependency wishlist items in AppTheory are shipped with contract coverage:
+  - Lambda Function URL response streaming (TS first) + streaming-aware testkit
+  - router catch-all routes (`/{proxy+}`) with precedence rules
+  - HTML helpers + hydration-safe serialization helpers
+  - explicit header/cookie merge semantics (streaming-aware)
+  - cache header + CloudFront request normalization helpers
