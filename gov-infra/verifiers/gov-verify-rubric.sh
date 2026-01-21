@@ -568,6 +568,95 @@ check_security_config() {
   echo "security-config: PASS"
 }
 
+check_logging_ops_standards() {
+  # COM-6: logging/operational standards enforced (deterministic).
+  #
+  # AppTheory is a framework/runtime with multi-language surfaces. For the Go
+  # implementation, enforce:
+  # - explicit, versioned standards doc
+  # - no stdout / stdlib logging in in-scope framework code
+  # - operational tests validating sanitization/redaction
+
+  local standards="${PLANNING_DIR}/apptheory-logging-ops-standards.md"
+  if [[ ! -f "${standards}" ]]; then
+    echo "BLOCKED: missing logging/ops standards doc: ${standards}" >&2
+    return 2
+  fi
+
+  local missing=0
+  for heading in \
+    "## Scope" \
+    "## Allowed patterns" \
+    "## Prohibited patterns" \
+    "## Tests (operational standards)"; do
+    if ! grep -Fq "${heading}" "${standards}"; then
+      echo "FAIL: logging/ops standards missing required heading: ${heading}" >&2
+      missing=1
+    fi
+  done
+
+  if [[ "${missing}" -ne 0 ]]; then
+    return 1
+  fi
+
+  if ! command -v git >/dev/null 2>&1; then
+    echo "BLOCKED: git is required to deterministically enumerate in-scope files" >&2
+    return 2
+  fi
+
+  local files
+  files="$(
+    git ls-files '*.go' \
+      ':!:vendor/**' \
+      ':!:**/node_modules/**' \
+      ':!:**/dist/**' \
+      ':!:**/build/**' \
+      ':!:**/third_party/**' \
+      ':!:**/testdata/**' \
+      | grep -vE '^(examples/|testkit/|contract-tests/|gov-infra/)' \
+      | grep -vE '_test[.]go$' \
+      || true
+  )"
+
+  if [[ -z "${files}" ]]; then
+    echo "FAIL: no in-scope Go files found for logging policy scan" >&2
+    return 1
+  fi
+
+  local hits
+  hits="$(
+    printf '%s\n' "${files}" \
+      | xargs -r grep -nE \
+        '\\bfmt\\.(Print|Printf|Println)\\b|\\bprint(ln)?\\s*\\(|\\blog\\.Print(ln|f)?\\b|\\blog\\.(Fatal|Fatalln|Fatalf|Panic|Panicln|Panicf)\\b' \
+      || true
+  )"
+
+  if [[ -n "${hits}" ]]; then
+    echo "FAIL: prohibited logging/printing patterns found in in-scope code:" >&2
+    echo "${hits}" >&2
+    return 1
+  fi
+
+  require_cmd_or_blocked go || return $?
+
+  local -a pkgs=(
+    "./pkg/observability/zap"
+    "./pkg/observability"
+  )
+
+  local listed
+  listed="$(go test -list '^TestOps_' "${pkgs[@]}" 2>/dev/null | grep -E '^TestOps_' || true)"
+  if [[ -z "${listed}" ]]; then
+    echo "FAIL: no operational standards tests found (expected TestOps_* in: ${pkgs[*]})" >&2
+    return 1
+  fi
+
+  go test -count=1 -run '^TestOps_' "${pkgs[@]}"
+
+  echo "logging-ops: PASS"
+  return 0
+}
+
 check_doc_integrity() {
   # Ensures governance docs are rendered (no leftover template tokens) and pack metadata is consistent.
 
@@ -1479,7 +1568,7 @@ CMD_TOOLCHAIN="check_toolchain_pins"
 CMD_LINT_CONFIG="check_lint_config_valid"
 CMD_COV_THRESHOLD="check_coverage_threshold_floor"
 CMD_SEC_CONFIG="check_security_config"
-CMD_LOGGING="BLOCKED: logging/PII redaction gate not yet implemented"
+CMD_LOGGING="check_logging_ops_standards"
 
 CMD_SAST="gov_cmd_sast"
 CMD_VULN="gov_cmd_vuln"

@@ -53,7 +53,7 @@ Enforcement rule (anti-drift):
 | COM-3 | 2 | Lint config schema-valid (no silent skip) | `check_lint_config_valid` (inside `gov-verify-rubric.sh`) |
 | COM-4 | 2 | Coverage threshold not diluted (≥ 60%) | `check_coverage_threshold_floor` (inside `gov-verify-rubric.sh`) |
 | COM-5 | 1 | Security scan config not diluted (no excluded high-signal rules) | `check_security_config` (inside `gov-verify-rubric.sh`) |
-| COM-6 | 1 | Logging/operational standards enforced (if applicable) | **BLOCKED** — logging policy gate not yet implemented |
+| COM-6 | 1 | Logging/operational standards enforced (if applicable) | `check_logging_ops_standards` (inside `gov-verify-rubric.sh`) |
 
 **10/10 definition:** COM-1 through COM-6 pass.
 
@@ -61,7 +61,7 @@ Enforcement rule (anti-drift):
 | ID | Points | Requirement | How to verify |
 | --- | ---: | --- | --- |
 | SEC-1 | 3 | Static security scan green (pinned version) | `scripts/verify-go-lint.sh` |
-| SEC-2 | 3 | Dependency vulnerability scan green | **BLOCKED** — pinned vulnerability scanning not yet implemented (Go/Node/Python) |
+| SEC-2 | 3 | Dependency vulnerability scan green | `gov_cmd_vuln` (inside `gov-verify-rubric.sh`) |
 | SEC-3 | 2 | Supply-chain verification green | `check_supply_chain` (inside `gov-verify-rubric.sh`) |
 | SEC-4 | 2 | P0 integrity regression tests (build determinism) | `scripts/verify-builds.sh` |
 

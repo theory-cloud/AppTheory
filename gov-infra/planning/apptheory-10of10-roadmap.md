@@ -13,8 +13,8 @@ Until `bash gov-infra/verifiers/gov-verify-rubric.sh` is run in CI and archived,
 | --- | ---: | --- |
 | Quality | unknown | QUA-1, QUA-2, QUA-3 (not yet validated) |
 | Consistency | unknown | CON-1, CON-2, CON-3 (not yet validated) |
-| Completeness | unknown | COM-1..COM-6 (not yet validated; COM-6 currently BLOCKED) |
-| Security | unknown | SEC-1..SEC-4 (not yet validated; SEC-2 currently BLOCKED) |
+| Completeness | unknown | COM-1..COM-6 (not yet validated) |
+| Security | unknown | SEC-1..SEC-4 (not yet validated) |
 | Compliance Readiness | in-scope | CMP-1..CMP-3 (files exist once committed) |
 | Maintainability | unknown | MAI-1..MAI-3 (MAI-3 currently BLOCKED) |
 | Docs | unknown | DOC-1..DOC-5 (not yet validated) |
@@ -49,9 +49,9 @@ Evidence (refresh whenever behavior changes):
 | COM-3 | unknown | M0 |
 | COM-4 | unknown | M2 |
 | COM-5 | unknown | M2 |
-| COM-6 | BLOCKED (not yet implemented) | M4 |
+| COM-6 | unknown | M4 |
 | SEC-1 | unknown | M2 |
-| SEC-2 | BLOCKED (not yet implemented) | M3 |
+| SEC-2 | unknown | M3 |
 | SEC-3 | unknown | M3 |
 | SEC-4 | unknown | M2 |
 | CMP-1 | planned | M0 |
@@ -142,4 +142,3 @@ Tracking document: `gov-infra/planning/apptheory-workstream-supply-chain-roadmap
 **Acceptance criteria**
 - A deterministic duplicate-logic gate exists (initially heuristic; later semantic).
 - Any exceptions are narrow and justified.
-
