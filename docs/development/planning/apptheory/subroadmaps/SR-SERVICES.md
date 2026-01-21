@@ -28,8 +28,8 @@ Non-goals:
 ## Design constraints
 
 - **No long-lived registry tokens:** distribution remains GitHub Releases only.
-- **Prefer TableTheory for DynamoDB access** where it reduces duplication and supports Go/TS/Py, unless a lower-level AWS
-  SDK implementation is required for correctness.
+- **Prefer TableTheory for DynamoDB access** where it reduces duplication (notably in Go). TypeScript uses the AWS SDK
+  (v3) for production AWS parity; Python uses `boto3` (consistent with managed AWS runtimes).
 - **Portability must be explicit:** if EventBus cannot be made portable across Go/TS/Py in the first pass, ship Go-only
   first but document the boundary and keep the API stable for eventual portability.
 
@@ -49,10 +49,12 @@ Autheory inventory (Lift EventBus usage):
 - EventBridge detail shaping: `autheory/pkg/autheory/eventpipeline/eventbridge_detail.go` expects fields:
   `id`, `event_type`, `tenant_id`, `source_id`, `published_at`, `correlation_id`, `version`, `payload`, `metadata`, `tags`
 
-Portability decision (this pass):
+Portability decision (current):
 
 - **API shape is stable** and intended to be portable across Go/TS/Py.
-- **Production DynamoDB implementation is Go-only** for now and uses TableTheory (no raw AWS SDK workarounds).
+- **Current state:** DynamoDB-backed implementation is Go-only (TableTheory) while TS/Py parity is built.
+- **Full alignment target:** TS/Py implement DynamoDB-backed EventBus with equivalent behavior (TS: AWS SDK; Py: boto3)
+  and fixture-backed semantics (see `docs/development/planning/apptheory/apptheory-full-alignment-roadmap.md`).
 
 Implemented (Go):
 
@@ -103,8 +105,8 @@ Implemented (Go):
 ### S3 — DynamoDB EventBus (production parity)
 
 **Acceptance criteria**
-- A DynamoDB-backed EventBus exists with the required methods and sane defaults.
-- Any AWS client usage is mockable with strict fakes.
+- Go/TS/Py each ship a DynamoDB-backed EventBus with equivalent behavior and sane defaults.
+- Any AWS client usage is mockable with strict fakes (no network in unit tests).
 - A minimal integration test strategy exists (unit tests preferred; DynamoDB Local only if required).
 
 ---

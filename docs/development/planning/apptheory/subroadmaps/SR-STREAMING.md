@@ -8,7 +8,7 @@ Primary dependency: FaceTheory wishlist item “Streaming responses (Lambda Func
 ## Goals
 
 - Define a portable, fixture-testable **streaming response contract**.
-- Make streaming a first-class capability in the **TypeScript** runtime (Lambda URL).
+- Make streaming a first-class capability in **Go/TypeScript/Python** runtimes (Lambda URL).
 - Provide a **streaming-aware testkit** for deterministic chunk assertions across Go/TS/Py.
 - Lock down **header/cookie finalize** behavior to avoid drift and footguns.
 
@@ -39,6 +39,20 @@ Acceptance:
 - Streaming supports `text/html` and `text/event-stream`.
 - Errors after streaming starts are handled deterministically (contract-backed).
 
+### S2b — Go: Lambda URL streaming integration
+
+Acceptance:
+- Go runtime exposes a supported Lambda Function URL streaming entrypoint (true streaming, not buffered-only).
+- Streaming supports `text/html` and `text/event-stream`.
+- Errors after streaming starts are handled deterministically (contract-backed).
+
+### S2c — Python: Lambda URL streaming integration
+
+Acceptance:
+- Python runtime exposes a supported Lambda Function URL streaming entrypoint (true streaming, not buffered-only).
+- Streaming supports `text/html` and `text/event-stream`.
+- Errors after streaming starts are handled deterministically (contract-backed).
+
 ### S3 — Testkit: streamed response capture (Go/TS/Py)
 
 Acceptance:
@@ -54,7 +68,8 @@ Acceptance:
 - Each language exposes:
   - `htmlStream(...)` (or equivalent) that produces a stream body
   - a consistent type for “stream body” (iterable/generator/channel abstraction)
-- Go/Py may initially implement “stream body” by buffering to a single chunk, but must preserve the contract shape.
+- Go/Py may initially implement “stream body” by buffering to a single chunk to satisfy contract fixtures, but “full
+  alignment” requires true Lambda URL streaming integration in Go/Py (see S2b/S2c).
 
 ### S5 — Adapter compatibility matrix
 
@@ -69,8 +84,8 @@ Current notes (AppTheory `m14`):
 
 - **Lambda Function URL**
   - TypeScript supports true streaming via `createLambdaFunctionURLStreamingHandler(...)`.
-  - Go/Py do not currently ship an AWS adapter that emits streamed chunks; streamed responses should be treated as
-    buffered when targeting Lambda URL from those runtimes.
+  - Go/Py do not currently ship an AWS adapter that emits streamed chunks; streamed responses are treated as buffered
+    when targeting Lambda URL from those runtimes (this is a known parity gap targeted by full alignment work).
 - **API Gateway v2 (HTTP API)**: buffered only (no streaming body support today).
 - **API Gateway REST v1 (Proxy)**
   - buffered request/response supported
