@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/theory-cloud/apptheory"
+	"github.com/theory-cloud/apptheory/runtime"
 )
 
 func runFixtureM12(f Fixture) error {

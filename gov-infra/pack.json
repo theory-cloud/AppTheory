@@ -1,0 +1,40 @@
+{
+  "$schema": "https://gov.pai.dev/schemas/pack.schema.json",
+  "schemaVersion": 1,
+
+  "pack_stage": "live",
+  "pack_version": "2ba585f48951",
+  "pack_manifest_digest_sha256": "22406dbb1031ebc4dcd83e02912bbc307ab0983629463aa6106b76415e6280af",
+
+  "packVersion": "2ba585f48951",
+  "packDigest": "22406dbb1031ebc4dcd83e02912bbc307ab0983629463aa6106b76415e6280af",
+  "domain": "custom",
+  "projectSlug": "apptheory",
+  "generatedAt": "2026-01-21T00:00:00Z",
+  "source": {
+    "commitSha": "UNKNOWN",
+    "branch": "main"
+  },
+  "artifacts": {
+    "planning": [
+      "gov-infra/README.md",
+      "gov-infra/AGENTS.md",
+      "gov-infra/planning/apptheory-controls-matrix.md",
+      "gov-infra/planning/apptheory-threat-model.md",
+      "gov-infra/planning/apptheory-10of10-rubric.md",
+      "gov-infra/planning/apptheory-10of10-roadmap.md",
+      "gov-infra/planning/apptheory-evidence-plan.md",
+      "gov-infra/planning/apptheory-supply-chain-allowlist.txt",
+      "gov-infra/planning/apptheory-ai-drift-recovery.md",
+      "gov-infra/planning/apptheory-lint-green-roadmap.md",
+      "gov-infra/planning/apptheory-coverage-roadmap.md",
+      "gov-infra/planning/apptheory-workstream-supply-chain-roadmap.md"
+    ],
+    "verifiers": [
+      "gov-infra/verifiers/gov-verify-rubric.sh"
+    ],
+    "evidence": [
+      "gov-infra/evidence/gov-rubric-report.json"
+    ]
+  }
+}

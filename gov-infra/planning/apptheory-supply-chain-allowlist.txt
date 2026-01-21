@@ -1,0 +1,20 @@
+# AppTheory Supply-Chain Allowlist (SEC-3)
+#
+# Purpose: reduce false positives from heuristic supply-chain scanning without weakening the gate.
+# This file is a plain-text allowlist of exact finding IDs emitted by `SEC-3` when running:
+#   bash gov-infra/verifiers/gov-verify-rubric.sh
+#
+# Rules:
+# - One ID per line.
+# - `#` comments are allowed.
+# - Keep this file versioned in git; treat allowlist changes as security-relevant.
+# - Prefer fixing/removing the dependency over allowlisting. If you allowlist, include a justification comment.
+#
+# Example (copy from `gov-infra/evidence/SEC-3-output.log`):
+# GOV-SUPPLY:NODE:SCRIPT:pkg=some-package:ver=1.2.3:hook=postinstall:rule=CURL_PIPE_SHELL
+#
+# Other examples:
+# - Python:
+#   GOV-SUPPLY:PYTHON:LINE:file=requirements.txt:rule=CUSTOM_INDEX:sha256=deadbeefcafe
+# - Go:
+#   GOV-SUPPLY:GO:REPLACE:rule=REMOTE_REPLACE:from=github.com/example/upstream@v1.2.3:to=github.com/example/fork@v1.2.3
