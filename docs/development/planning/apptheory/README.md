@@ -49,5 +49,6 @@ Primary goals:
 - `docs/development/planning/apptheory/supporting/apptheory-versioning-and-release-policy.md`
 - `docs/development/planning/apptheory/supporting/apptheory-runtime-contract-v0.md`
 - `docs/development/planning/apptheory/supporting/apptheory-parity-matrix.md`
+- `docs/development/planning/apptheory/supporting/apptheory-full-alignment-parity-target.md`
 - `docs/development/planning/apptheory/supporting/apptheory-lift-to-apptheory-mapping.md`
 - `docs/development/planning/apptheory/supporting/apptheory-governance-note.md`

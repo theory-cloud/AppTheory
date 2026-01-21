@@ -85,6 +85,8 @@ re-sequence but keep the parity gate early.
   - feature list
   - expected behavior and invariants
   - cross-language mapping notes (idiomatic naming allowed)
+- M0 parity target document:
+  - `docs/development/planning/apptheory/supporting/apptheory-full-alignment-parity-target.md`
 
 **Acceptance criteria**
 - Every “gap area” has:
@@ -260,4 +262,3 @@ re-sequence but keep the parity gate early.
   pulling in unused clients.
 - **DynamoDB consistency edge cases:** atomic/multi-window rate limiting semantics must be tested carefully to avoid
   cross-language drift in race conditions.
-
