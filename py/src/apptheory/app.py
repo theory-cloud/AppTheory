@@ -4,9 +4,11 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from apptheory.aws_http import (
+    alb_target_group_response_from_response,
     apigw_proxy_response_from_response,
     apigw_v2_response_from_response,
     lambda_function_url_response_from_response,
+    request_from_alb_target_group,
     request_from_apigw_proxy,
     request_from_apigw_v2,
     request_from_lambda_function_url,
@@ -418,7 +420,11 @@ class App:
             return finish(response_for_error_with_request_id(exc, request_id), "app.internal")
 
         resp = normalize_response(resp)
-        if self._limits.max_response_bytes > 0 and resp.body_stream is None and len(resp.body) > self._limits.max_response_bytes:
+        if (
+            self._limits.max_response_bytes > 0
+            and resp.body_stream is None
+            and len(resp.body) > self._limits.max_response_bytes
+        ):
             return finish(
                 error_response_with_request_id("app.too_large", "response too large", request_id=request_id),
                 "app.too_large",
@@ -511,6 +517,15 @@ class App:
 
         resp = self.serve(request, ctx)
         return apigw_proxy_response_from_response(resp)
+
+    def serve_alb(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        try:
+            request = request_from_alb_target_group(event)
+        except Exception as exc:  # noqa: BLE001
+            return alb_target_group_response_from_response(response_for_error(exc))
+
+        resp = self.serve(request, ctx)
+        return alb_target_group_response_from_response(resp)
 
     def serve_websocket(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
         try:
@@ -736,6 +751,12 @@ class App:
                 if "routeKey" in event:
                     return self.serve_apigw_v2(event, ctx=ctx)
                 return self.serve_lambda_function_url(event, ctx=ctx)
+            if (
+                isinstance(request_context, dict)
+                and isinstance(request_context.get("elb"), dict)
+                and str((request_context.get("elb") or {}).get("targetGroupArn") or "").strip()
+            ):
+                return self.serve_alb(event, ctx=ctx)
             if "httpMethod" in event:
                 return self.serve_apigw_proxy(event, ctx=ctx)
 

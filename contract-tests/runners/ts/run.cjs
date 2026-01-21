@@ -1393,6 +1393,13 @@ async function runFixtureP0(fixture) {
         effects: { logs: [], metrics: [], spans: [] },
       };
     }
+    if (source === "alb") {
+      const resp = await app.serveALB(event);
+      return {
+        actual: canonicalResponseFromAPIGatewayProxyResponse(resp),
+        effects: { logs: [], metrics: [], spans: [] },
+      };
+    }
 
     throw new Error(`unknown aws_event source ${JSON.stringify(awsEvent.source)}`);
   }

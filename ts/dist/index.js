@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createHash, createHmac, randomUUID } from "node:crypto";
+import { STATUS_CODES } from "node:http";
 
 export class AppError extends Error {
   constructor(code, message) {
@@ -1219,6 +1220,17 @@ export class App {
     return apigatewayProxyResponseFromResponse(resp);
   }
 
+  async serveALB(event, ctx) {
+    let request;
+    try {
+      request = requestFromALBTargetGroup(event);
+    } catch (err) {
+      return albTargetGroupResponseFromResponse(responseForError(err));
+    }
+    const resp = await this.serve(request, ctx);
+    return albTargetGroupResponseFromResponse(resp);
+  }
+
   _webSocketHandlerForEvent(event) {
     const routeKey = String(event?.requestContext?.routeKey ?? "").trim();
     if (!routeKey) return null;
@@ -1451,6 +1463,14 @@ export class App {
       }
       if (typeof event.requestContext.connectionId === "string" && event.requestContext.connectionId.trim()) {
         return this.serveWebSocket(event, ctx);
+      }
+      if (
+        event.requestContext.elb &&
+        typeof event.requestContext.elb === "object" &&
+        typeof event.requestContext.elb.targetGroupArn === "string" &&
+        event.requestContext.elb.targetGroupArn.trim()
+      ) {
+        return this.serveALB(event, ctx);
       }
       if (typeof event.httpMethod === "string" && event.httpMethod.trim()) {
         return this.serveAPIGatewayProxy(event, ctx);
@@ -1788,6 +1808,10 @@ export class TestEnv {
     return app.serveAPIGatewayProxy(event, ctx);
   }
 
+  invokeALB(app, event, ctx) {
+    return app.serveALB(event, ctx);
+  }
+
   invokeSQS(app, event, ctx) {
     return app.serveSQSEvent(event, ctx);
   }
@@ -1851,6 +1875,51 @@ export function buildLambdaFunctionURLRequest(method, path, options = {}) {
       http: {
         method: normalizedMethod,
         path: rawPath,
+      },
+    },
+    body: isBase64Encoded ? bodyBytes.toString("base64") : bodyBytes.toString("utf8"),
+    isBase64Encoded,
+  };
+}
+
+export function buildALBTargetGroupRequest(method, path, options = {}) {
+  const normalizedMethod = normalizeMethod(method);
+  const { rawPath, rawQueryString } = splitPathAndQuery(path, options.query);
+
+  const query = options.query && Object.keys(options.query).length > 0 ? cloneQuery(options.query) : rawQueryString ? parseRawQueryString(rawQueryString) : {};
+
+  const headers = { ...(options.headers ?? {}) };
+  const multiValueHeaders = {};
+  for (const [key, values] of Object.entries(options.multiHeaders ?? {})) {
+    multiValueHeaders[key] = Array.isArray(values) ? [...values].map((v) => String(v)) : [];
+  }
+  for (const [key, value] of Object.entries(headers)) {
+    if (key in multiValueHeaders) continue;
+    multiValueHeaders[key] = [String(value)];
+  }
+  for (const [key, values] of Object.entries(multiValueHeaders)) {
+    if (key in headers) continue;
+    if (Array.isArray(values) && values.length > 0) {
+      headers[key] = String(values[0]);
+    }
+  }
+
+  const bodyBytes = toBuffer(options.body);
+  const isBase64Encoded = Boolean(options.isBase64);
+
+  return {
+    httpMethod: normalizedMethod,
+    path: rawPath,
+    queryStringParameters: firstQueryValues(query),
+    multiValueQueryStringParameters: Object.keys(query).length > 0 ? cloneQuery(query) : undefined,
+    headers,
+    multiValueHeaders: Object.keys(multiValueHeaders).length > 0 ? multiValueHeaders : undefined,
+    requestContext: {
+      elb: {
+        targetGroupArn: String(
+          options.targetGroupArn ??
+            "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/test/0000000000000000",
+        ),
       },
     },
     body: isBase64Encoded ? bodyBytes.toString("base64") : bodyBytes.toString("utf8"),
@@ -2535,6 +2604,10 @@ function requestFromAPIGatewayProxy(event) {
   };
 }
 
+function requestFromALBTargetGroup(event) {
+  return requestFromAPIGatewayProxy(event);
+}
+
 function requestFromAPIGatewayV2(event) {
   const cookies = Array.isArray(event?.cookies) ? event.cookies.map((v) => String(v)) : [];
   const headers = headersFromSingle(event?.headers, cookies.length > 0);
@@ -2647,6 +2720,17 @@ function apigatewayProxyResponseFromResponse(resp) {
     body: isBase64Encoded ? bodyBytes.toString("base64") : bodyBytes.toString("utf8"),
     isBase64Encoded,
   };
+}
+
+function albStatusDescription(status) {
+  const code = Number(status ?? 0);
+  const text = STATUS_CODES[String(code)] ?? "";
+  return text ? `${code} ${text}` : String(code);
+}
+
+function albTargetGroupResponseFromResponse(resp) {
+  const out = apigatewayProxyResponseFromResponse(resp);
+  return { ...out, statusDescription: albStatusDescription(out.statusCode) };
 }
 
 function headersFromSingle(headers, ignoreCookieHeader) {

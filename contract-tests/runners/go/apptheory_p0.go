@@ -76,6 +76,13 @@ func serveFixtureP0AWS(app *apptheory.App, awsEvent *FixtureAWSEvent) (apptheory
 		}
 		out := app.ServeLambdaFunctionURL(context.Background(), event)
 		return responseFromLambdaFunctionURL(out)
+	case "alb":
+		var event events.ALBTargetGroupRequest
+		if err := json.Unmarshal(awsEvent.Event, &event); err != nil {
+			return apptheory.Response{}, fmt.Errorf("parse alb event: %w", err)
+		}
+		out := app.ServeALB(context.Background(), event)
+		return responseFromALBTargetGroup(out)
 	default:
 		return apptheory.Response{}, fmt.Errorf("unknown aws_event source %q", awsEvent.Source)
 	}
@@ -199,6 +206,40 @@ func responseFromLambdaFunctionURL(resp events.LambdaFunctionURLResponse) (appth
 		Status:   resp.StatusCode,
 		Headers:  headers,
 		Cookies:  append([]string(nil), resp.Cookies...),
+		Body:     body,
+		IsBase64: resp.IsBase64Encoded,
+	}, nil
+}
+
+func responseFromALBTargetGroup(resp events.ALBTargetGroupResponse) (apptheory.Response, error) {
+	body := []byte(resp.Body)
+	if resp.IsBase64Encoded {
+		decoded, err := base64.StdEncoding.DecodeString(resp.Body)
+		if err != nil {
+			return apptheory.Response{}, fmt.Errorf("decode alb response body: %w", err)
+		}
+		body = decoded
+	}
+
+	headers := map[string][]string{}
+	if len(resp.MultiValueHeaders) > 0 {
+		for key, values := range resp.MultiValueHeaders {
+			headers[key] = append([]string(nil), values...)
+		}
+	} else {
+		for key, value := range resp.Headers {
+			headers[key] = []string{value}
+		}
+	}
+
+	headers = canonicalizeHeaders(headers)
+	cookies := append([]string(nil), headers["set-cookie"]...)
+	delete(headers, "set-cookie")
+
+	return apptheory.Response{
+		Status:   resp.StatusCode,
+		Headers:  headers,
+		Cookies:  cookies,
 		Body:     body,
 		IsBase64: resp.IsBase64Encoded,
 	}, nil

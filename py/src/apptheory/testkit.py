@@ -111,6 +111,9 @@ class TestEnv:
     ) -> dict[str, object]:
         return app.serve_lambda_function_url(event, ctx=ctx)
 
+    def invoke_alb(self, app: App, event: dict[str, object], ctx: object | None = None) -> dict[str, object]:
+        return app.serve_alb(event, ctx=ctx)
+
     def invoke_sqs(self, app: App, event: dict[str, object], ctx: object | None = None) -> dict[str, object]:
         return app.serve_sqs(event, ctx=ctx)
 

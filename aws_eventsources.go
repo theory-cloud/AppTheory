@@ -520,6 +520,7 @@ func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMess
 	var probe struct {
 		HTTP         json.RawMessage `json:"http"`
 		ConnectionID *string         `json:"connectionId"`
+		ELB          json.RawMessage `json:"elb"`
 	}
 	if err := json.Unmarshal(env.RequestContext, &probe); err != nil {
 		return nil, false, nil
@@ -553,6 +554,16 @@ func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMess
 		return a.ServeWebSocket(ctx, ws), true, nil
 	}
 
+	if len(probe.ELB) > 0 {
+		var alb events.ALBTargetGroupRequest
+		if err := json.Unmarshal(event, &alb); err != nil {
+			return nil, true, fmt.Errorf("apptheory: parse alb event: %w", err)
+		}
+		if strings.TrimSpace(alb.HTTPMethod) != "" {
+			return a.ServeALB(ctx, alb), true, nil
+		}
+	}
+
 	var proxy events.APIGatewayProxyRequest
 	if err := json.Unmarshal(event, &proxy); err != nil {
 		return nil, true, fmt.Errorf("apptheory: parse apigw proxy event: %w", err)
@@ -569,6 +580,7 @@ func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMess
 // Supported triggers:
 // - API Gateway v2 (HTTP API)
 // - API Gateway REST API v1 (Proxy)
+// - Application Load Balancer (Target Group)
 // - Lambda Function URL
 // - SQS
 // - EventBridge
