@@ -32,13 +32,17 @@ cd "${REPO_ROOT}"
 # Tools are installed here (never system-wide) and put first on PATH.
 GOV_TOOLS_DIR="${GOV_INFRA}/.tools"
 GOV_TOOLS_BIN="${GOV_TOOLS_DIR}/bin"
+GOV_TOOLS_PY_DIR="${GOV_TOOLS_DIR}/py"
+GOV_TOOLS_PY_BIN="${GOV_TOOLS_PY_DIR}/bin"
 mkdir -p "${GOV_TOOLS_BIN}"
-export PATH="${GOV_TOOLS_BIN}:${PATH}"
+export PATH="${GOV_TOOLS_BIN}:${GOV_TOOLS_PY_BIN}:${PATH}"
 
 # Tool pins (optional; populated by gov.init when possible).
 # If these remain unset, checks that depend on them should be marked BLOCKED (never "use whatever is installed").
-PIN_GOLANGCI_LINT_VERSION="v2.5.0"
-PIN_GOVULNCHECK_VERSION="UNSET: pin govulncheck version and wire SEC-2"
+PIN_GOLANGCI_LINT_VERSION="v2.8.0"
+PIN_GOVULNCHECK_VERSION="v1.1.4"
+PIN_OSV_SCANNER_VERSION="v1.9.2"
+PIN_PIP_AUDIT_VERSION="2.10.0"
 
 # Optional feature flags (opt-in pack features).
 FEATURE_OSS_RELEASE="false"
@@ -124,33 +128,109 @@ normalize_feature_flags() {
 }
 
 ensure_golangci_lint_pinned() {
-  local v="$PIN_GOLANGCI_LINT_VERSION"
-  if is_unset_token "$v"; then
-    echo "BLOCKED: golangci-lint version pin missing (set PIN_GOLANGCI_LINT_VERSION)" >&2
+  ensure_go_tool_pinned \
+    "golangci-lint" \
+    "github.com/golangci/golangci-lint/v2/cmd/golangci-lint" \
+    "${PIN_GOLANGCI_LINT_VERSION}"
+}
+
+go_tool_mod_version() {
+  # Returns the module version embedded in a Go-built tool binary, or exits non-zero if unavailable.
+  local tool_name="$1"
+  local tool_path
+  tool_path="$(command -v "${tool_name}" 2>/dev/null || true)"
+  [[ -n "${tool_path}" ]] || return 1
+  go version -m "${tool_path}" 2>/dev/null | awk '$1 == "mod" { print $3; exit }'
+}
+
+ensure_go_tool_pinned() {
+  # Installs a Go tool into ${GOV_TOOLS_BIN} at a pinned version.
+  #
+  # Returns:
+  #   0 - success
+  #   2 - BLOCKED (missing go toolchain / install failed)
+  local tool_name="$1"       # e.g. golangci-lint
+  local module_path="$2"     # e.g. github.com/.../cmd/golangci-lint
+  local version="$3"         # e.g. v2.8.0
+
+  if is_unset_token "${version}"; then
+    echo "BLOCKED: ${tool_name} version pin missing (set ${tool_name} pin)" >&2
     return 2
   fi
-  if [[ "$v" != v* ]]; then
-    v="v${v}"
+  if [[ "${version}" != v* ]]; then
+    version="v${version}"
   fi
 
   require_cmd_or_blocked go || return $?
 
-  local want="${v#v}"
-  if command -v golangci-lint >/dev/null 2>&1; then
-    if golangci-lint --version 2>/dev/null | grep -q "$want"; then
+  local installed_version
+  installed_version="$(go_tool_mod_version "${tool_name}" 2>/dev/null || true)"
+  if [[ "${installed_version}" == "${version}" ]]; then
+    return 0
+  fi
+
+  echo "Installing ${tool_name} ${version} into ${GOV_TOOLS_BIN}..." >&2
+  if ! GOBIN="${GOV_TOOLS_BIN}" go install "${module_path}@${version}"; then
+    echo "BLOCKED: failed to install pinned ${tool_name} ${version} (check network/toolchain)" >&2
+    return 2
+  fi
+
+  installed_version="$(go_tool_mod_version "${tool_name}" 2>/dev/null || true)"
+  if [[ "${installed_version}" != "${version}" ]]; then
+    echo "FAIL: installed ${tool_name} does not match expected version ${version}" >&2
+    go version -m "$(command -v "${tool_name}")" 2>/dev/null || true
+    return 1
+  fi
+
+  return 0
+}
+
+ensure_govulncheck_pinned() {
+  ensure_go_tool_pinned \
+    "govulncheck" \
+    "golang.org/x/vuln/cmd/govulncheck" \
+    "${PIN_GOVULNCHECK_VERSION}"
+}
+
+ensure_osv_scanner_pinned() {
+  ensure_go_tool_pinned \
+    "osv-scanner" \
+    "github.com/google/osv-scanner/cmd/osv-scanner" \
+    "${PIN_OSV_SCANNER_VERSION}"
+}
+
+ensure_pip_audit_pinned() {
+  local v="${PIN_PIP_AUDIT_VERSION}"
+  if is_unset_token "${v}"; then
+    echo "BLOCKED: pip-audit version pin missing (set PIN_PIP_AUDIT_VERSION)" >&2
+    return 2
+  fi
+
+  require_cmd_or_blocked python3 || return $?
+
+  local want="pip-audit ${v}"
+  if [[ -x "${GOV_TOOLS_PY_BIN}/pip-audit" ]]; then
+    if "${GOV_TOOLS_PY_BIN}/pip-audit" --version 2>/dev/null | grep -Fq "${want}"; then
       return 0
     fi
   fi
 
-  echo "Installing golangci-lint ${v} into ${GOV_TOOLS_BIN}..." >&2
-  if ! GOBIN="${GOV_TOOLS_BIN}" go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${v}"; then
-    echo "BLOCKED: failed to install pinned golangci-lint ${v} (check network/toolchain)" >&2
+  rm -rf "${GOV_TOOLS_PY_DIR}"
+
+  echo "Installing pip-audit ${v} into ${GOV_TOOLS_PY_DIR}..." >&2
+  if ! python3 -m venv "${GOV_TOOLS_PY_DIR}"; then
+    echo "BLOCKED: failed to create python venv at ${GOV_TOOLS_PY_DIR}" >&2
     return 2
   fi
 
-  if ! golangci-lint --version 2>/dev/null | grep -q "$want"; then
-    echo "FAIL: installed golangci-lint does not report expected version ${v}" >&2
-    golangci-lint --version 2>/dev/null || true
+  if ! "${GOV_TOOLS_PY_BIN}/python" -m pip install --disable-pip-version-check --no-cache-dir "pip-audit==${v}"; then
+    echo "BLOCKED: failed to install pinned pip-audit ${v}" >&2
+    return 2
+  fi
+
+  if ! "${GOV_TOOLS_PY_BIN}/pip-audit" --version 2>/dev/null | grep -Fq "${want}"; then
+    echo "FAIL: installed pip-audit does not match expected version ${v}" >&2
+    "${GOV_TOOLS_PY_BIN}/pip-audit" --version 2>/dev/null || true
     return 1
   fi
 
@@ -199,6 +279,72 @@ gov_cmd_sast() {
   require_cmd_or_blocked go || return $?
   ensure_golangci_lint_pinned || return $?
   scripts/verify-go-lint.sh
+}
+
+gov_cmd_vuln() {
+  require_cmd_or_blocked go || return $?
+  require_cmd_or_blocked node || return $?
+  require_cmd_or_blocked npm || return $?
+  require_cmd_or_blocked python3 || return $?
+
+  ensure_govulncheck_pinned || return $?
+  ensure_osv_scanner_pinned || return $?
+  ensure_pip_audit_pinned || return $?
+
+  local -a go_mod_dirs=(
+    "."
+    "cdk-go/apptheorycdk"
+    "cdk/dist/go/apptheorycdk"
+  )
+
+  local d
+  for d in "${go_mod_dirs[@]}"; do
+    if [[ ! -f "${d}/go.mod" ]]; then
+      echo "FAIL: expected go.mod missing: ${d}/go.mod" >&2
+      return 1
+    fi
+
+    echo "==> govulncheck: ${d}"
+    (cd "${d}" && govulncheck ./...)
+  done
+
+  local -a node_lockfiles=(
+    "ts/package-lock.json"
+    "cdk/package-lock.json"
+    "examples/cdk/multilang/package-lock.json"
+    "examples/cdk/ssr-site/package-lock.json"
+  )
+
+  local lf
+  for lf in "${node_lockfiles[@]}"; do
+    if [[ ! -f "${lf}" ]]; then
+      echo "FAIL: expected Node lockfile missing: ${lf}" >&2
+      return 1
+    fi
+
+    echo "==> osv-scanner (Node): ${lf}"
+    osv-scanner scan --lockfile="${lf}"
+  done
+
+  local -a py_requirements=(
+    "py/requirements-build.txt"
+    "py/requirements-lint.txt"
+  )
+
+  local req
+  local -a pip_audit_args=()
+  for req in "${py_requirements[@]}"; do
+    if [[ ! -f "${req}" ]]; then
+      echo "FAIL: expected Python requirements file missing: ${req}" >&2
+      return 1
+    fi
+    pip_audit_args+=("-r" "${req}")
+  done
+
+  echo "==> pip-audit (Python): ${py_requirements[*]}"
+  pip-audit "${pip_audit_args[@]}"
+
+  echo "vuln-scans: PASS"
 }
 
 gov_cmd_p0() {
@@ -289,7 +435,7 @@ check_toolchain_pins() {
     return 1
   fi
 
-  # golangci-lint pin (string check; the repo installs via `go install ...@v2.5.0`)
+  # golangci-lint pin (string check; the repo installs via `go install ...@v2.8.0`)
   if ! grep -Eq "golangci-lint.*/v2/cmd/golangci-lint@${PIN_GOLANGCI_LINT_VERSION}" "${wf}"; then
     echo "FAIL: ci.yml does not pin golangci-lint to ${PIN_GOLANGCI_LINT_VERSION}" >&2
     grep -n "golangci-lint" "${wf}" || true
@@ -557,22 +703,61 @@ sha256_12() {
 }
 
 check_supply_chain_actions_pinned() {
-  # Enforces integrity pinning for GitHub Actions (reject floating tags like @v4).
+  # Enforces integrity pinning for GitHub Actions.
+  # Requirements:
+  # - No floating tags like @v4
+  # - All remote actions pinned by full commit SHA (40 hex chars)
   local wf_dir="${REPO_ROOT}/.github/workflows"
   if [[ ! -d "${wf_dir}" ]]; then
     echo "GitHub Actions pin check: no workflows detected; skipping."
     return 0
   fi
 
-  local matches=""
-  matches="$(grep -R --include='*.yml' --include='*.yaml' -nE '^[[:space:]]*uses:[[:space:]].*@v[0-9]+' "${wf_dir}" 2>/dev/null || true)"
-  if [[ -n "${matches}" ]]; then
-    echo "FAIL: unpinned GitHub Action detected (uses @vN; pin by commit SHA)"
-    echo "${matches}"
+  local failures=0
+
+  local line
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] && continue
+
+    local loc="${line%%:*}"
+    local rest="${line#*:}"
+    local lineno="${rest%%:*}"
+    local content="${rest#*:}"
+
+    local spec
+    spec="$(printf '%s' "${content}" | sed -E 's/^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*//; s/[[:space:]]*#.*$//; s/[[:space:]]+$//')"
+    [[ -z "${spec}" ]] && continue
+
+    # Local actions do not require pinning.
+    if [[ "${spec}" == ./* || "${spec}" == ../* ]]; then
+      continue
+    fi
+
+    # Docker actions are handled separately (digest pinning), out-of-scope for now.
+    if [[ "${spec}" == docker://* ]]; then
+      continue
+    fi
+
+    if [[ "${spec}" != *"@"* ]]; then
+      echo "FAIL: GitHub Action missing ref pin: ${loc}:${lineno}: ${spec}"
+      failures=$((failures + 1))
+      continue
+    fi
+
+    local ref="${spec##*@}"
+
+    if [[ ! "${ref}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+      echo "FAIL: GitHub Action not pinned by commit SHA (expected 40 hex): ${loc}:${lineno}: ${spec}"
+      failures=$((failures + 1))
+      continue
+    fi
+  done < <(grep -R --include='*.yml' --include='*.yaml' -nE '^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*[^#[:space:]]+' "${wf_dir}" 2>/dev/null || true)
+
+  if [[ "${failures}" -ne 0 ]]; then
     return 1
   fi
 
-  echo "GitHub Actions pin check: PASS (no uses @vN detected)"
+  echo "GitHub Actions pin check: PASS (all remote uses pinned by commit SHA)"
   return 0
 }
 
@@ -1297,7 +1482,7 @@ CMD_SEC_CONFIG="check_security_config"
 CMD_LOGGING="BLOCKED: logging/PII redaction gate not yet implemented"
 
 CMD_SAST="gov_cmd_sast"
-CMD_VULN="BLOCKED: pinned vulnerability scanning (Go/Node/Python) not yet implemented"
+CMD_VULN="gov_cmd_vuln"
 CMD_SUPPLY="check_supply_chain_apptheory"
 CMD_P0="gov_cmd_p0"
 

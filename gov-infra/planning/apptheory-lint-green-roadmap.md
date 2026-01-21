@@ -15,8 +15,8 @@ Snapshot (2026-01-21):
 - Primary command: `make lint`
 - Current status: unknown (run `make lint` and capture failures into `gov-infra/evidence/CON-2-output.log` via the verifier)
 - Top failure sources (expected by repo tooling):
-  - Go: `golangci-lint` using `.golangci-v2.yml` (pinned in CI at `v2.5.0`)
-  - TS: `eslint` (ts/devDependencies: `eslint@8.57.0`)
+  - Go: `golangci-lint` using `.golangci-v2.yml` (pinned in CI at `v2.8.0`)
+  - TS: `eslint` (ts/devDependencies: `eslint@9.39.2`)
   - Python: `ruff==0.14.13`
 
 ## Progress snapshots
