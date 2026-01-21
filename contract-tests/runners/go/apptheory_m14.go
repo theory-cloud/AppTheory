@@ -165,64 +165,83 @@ func compareFixtureStreamResponse(
 
 func compareFixtureStreamResponseBody(expected FixtureResponse, actual streamCapturedResponse) error {
 	if len(expected.BodyJSON) > 0 {
-		var expectedJSON any
-		if err := json.Unmarshal(expected.BodyJSON, &expectedJSON); err != nil {
-			return fmt.Errorf("parse expected body_json: %w", err)
-		}
-		var actualJSON any
-		if err := json.Unmarshal(actual.Response.Body, &actualJSON); err != nil {
-			return fmt.Errorf("parse actual response body as json: %w", err)
-		}
-		if !jsonEqual(expectedJSON, actualJSON) {
-			return fmt.Errorf("body_json mismatch")
-		}
-		return nil
+		return compareFixtureStreamResponseBodyJSON(expected.BodyJSON, actual.Response.Body)
 	}
 
 	if len(expected.Chunks) > 0 {
-		expectedChunks := make([][]byte, 0, len(expected.Chunks))
-		var expectedBody []byte
-		for _, c := range expected.Chunks {
-			b, err := decodeFixtureBody(c)
-			if err != nil {
-				return fmt.Errorf("decode expected chunk: %w", err)
-			}
-			expectedChunks = append(expectedChunks, b)
-			expectedBody = append(expectedBody, b...)
-		}
-
-		if len(expectedChunks) != len(actual.Chunks) {
-			return fmt.Errorf("chunks length: expected %d, got %d", len(expectedChunks), len(actual.Chunks))
-		}
-		for i := range expectedChunks {
-			if !equalBytes(expectedChunks[i], actual.Chunks[i]) {
-				return fmt.Errorf("chunk %d mismatch", i)
-			}
-		}
-
-		if expected.Body != nil {
-			var err error
-			expectedBody, err = decodeFixtureBody(*expected.Body)
-			if err != nil {
-				return fmt.Errorf("decode expected body: %w", err)
-			}
-		}
-
-		if !equalBytes(expectedBody, actual.Response.Body) {
-			return fmt.Errorf("body mismatch")
-		}
-		return nil
+		return compareFixtureStreamResponseChunks(expected, actual)
 	}
 
-	var expectedBodyBytes []byte
+	return compareFixtureStreamResponseBodyBytes(expected.Body, actual.Response.Body)
+}
+
+func compareFixtureStreamResponseBodyJSON(expectedJSONRaw json.RawMessage, actualBody []byte) error {
+	var expectedJSON any
+	if err := json.Unmarshal(expectedJSONRaw, &expectedJSON); err != nil {
+		return fmt.Errorf("parse expected body_json: %w", err)
+	}
+	var actualJSON any
+	if err := json.Unmarshal(actualBody, &actualJSON); err != nil {
+		return fmt.Errorf("parse actual response body as json: %w", err)
+	}
+	if !jsonEqual(expectedJSON, actualJSON) {
+		return fmt.Errorf("body_json mismatch")
+	}
+	return nil
+}
+
+func compareFixtureStreamResponseChunks(expected FixtureResponse, actual streamCapturedResponse) error {
+	expectedChunks, expectedBody, err := decodeFixtureChunks(expected.Chunks)
+	if err != nil {
+		return err
+	}
+
+	if len(expectedChunks) != len(actual.Chunks) {
+		return fmt.Errorf("chunks length: expected %d, got %d", len(expectedChunks), len(actual.Chunks))
+	}
+	for i := range expectedChunks {
+		if !equalBytes(expectedChunks[i], actual.Chunks[i]) {
+			return fmt.Errorf("chunk %d mismatch", i)
+		}
+	}
+
 	if expected.Body != nil {
-		var err error
-		expectedBodyBytes, err = decodeFixtureBody(*expected.Body)
+		expectedBody, err = decodeFixtureBody(*expected.Body)
 		if err != nil {
 			return fmt.Errorf("decode expected body: %w", err)
 		}
 	}
-	if !equalBytes(expectedBodyBytes, actual.Response.Body) {
+
+	if !equalBytes(expectedBody, actual.Response.Body) {
+		return fmt.Errorf("body mismatch")
+	}
+	return nil
+}
+
+func decodeFixtureChunks(chunks []FixtureBody) ([][]byte, []byte, error) {
+	expectedChunks := make([][]byte, 0, len(chunks))
+	var expectedBody []byte
+	for _, c := range chunks {
+		b, err := decodeFixtureBody(c)
+		if err != nil {
+			return nil, nil, fmt.Errorf("decode expected chunk: %w", err)
+		}
+		expectedChunks = append(expectedChunks, b)
+		expectedBody = append(expectedBody, b...)
+	}
+	return expectedChunks, expectedBody, nil
+}
+
+func compareFixtureStreamResponseBodyBytes(expectedBody *FixtureBody, actualBody []byte) error {
+	var expectedBodyBytes []byte
+	if expectedBody != nil {
+		var err error
+		expectedBodyBytes, err = decodeFixtureBody(*expectedBody)
+		if err != nil {
+			return fmt.Errorf("decode expected body: %w", err)
+		}
+	}
+	if !equalBytes(expectedBodyBytes, actualBody) {
 		return fmt.Errorf("body mismatch")
 	}
 	return nil

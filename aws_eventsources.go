@@ -241,6 +241,38 @@ type batchEventSpec[Record any, Failure any, Response any] struct {
 	responseForFailures func([]Failure) Response
 }
 
+type batchItemFailure interface {
+	~struct {
+		ItemIdentifier string `json:"itemIdentifier"`
+	}
+}
+
+type batchItemFailuresResponse[Failure any] interface {
+	~struct {
+		BatchItemFailures []Failure `json:"batchItemFailures"`
+	}
+}
+
+func newBatchEventSpec[Record any, Failure batchItemFailure, Response batchItemFailuresResponse[Failure]](
+	invalidTypeError string,
+	recordID func(Record) string,
+) batchEventSpec[Record, Failure, Response] {
+	return batchEventSpec[Record, Failure, Response]{
+		coerce: func(event any) (Record, bool) {
+			record, ok := event.(Record)
+			return record, ok
+		},
+		invalidTypeError: invalidTypeError,
+		recordID:         recordID,
+		failureForID: func(id string) Failure {
+			return Failure{ItemIdentifier: id}
+		},
+		responseForFailures: func(failures []Failure) Response {
+			return Response{BatchItemFailures: failures}
+		},
+	}
+}
+
 func serveBatchEvent[Record any, Failure any, Response any](
 	ctx context.Context,
 	a *App,
@@ -253,18 +285,10 @@ func serveBatchEvent[Record any, Failure any, Response any](
 	return spec.responseForFailures(failures)
 }
 
-var sqsBatchSpec = batchEventSpec[events.SQSMessage, events.SQSBatchItemFailure, events.SQSEventResponse]{
-	coerce: func(event any) (events.SQSMessage, bool) {
-		msg, ok := event.(events.SQSMessage)
-		return msg, ok
-	},
-	invalidTypeError: "apptheory: invalid sqs record type",
-	recordID:         func(msg events.SQSMessage) string { return msg.MessageId },
-	failureForID:     func(id string) events.SQSBatchItemFailure { return events.SQSBatchItemFailure{ItemIdentifier: id} },
-	responseForFailures: func(failures []events.SQSBatchItemFailure) events.SQSEventResponse {
-		return events.SQSEventResponse{BatchItemFailures: failures}
-	},
-}
+var sqsBatchSpec = newBatchEventSpec[events.SQSMessage, events.SQSBatchItemFailure, events.SQSEventResponse](
+	"apptheory: invalid sqs record type",
+	func(msg events.SQSMessage) string { return msg.MessageId },
+)
 
 // ServeSQS routes an SQS event to the registered queue handler and returns a partial batch failure response.
 //
@@ -329,20 +353,10 @@ func (a *App) kinesisHandlerForEvent(event events.KinesisEvent) KinesisHandler {
 	return nil
 }
 
-var kinesisBatchSpec = batchEventSpec[events.KinesisEventRecord, events.KinesisBatchItemFailure, events.KinesisEventResponse]{
-	coerce: func(event any) (events.KinesisEventRecord, bool) {
-		record, ok := event.(events.KinesisEventRecord)
-		return record, ok
-	},
-	invalidTypeError: "apptheory: invalid kinesis record type",
-	recordID:         func(record events.KinesisEventRecord) string { return record.EventID },
-	failureForID: func(id string) events.KinesisBatchItemFailure {
-		return events.KinesisBatchItemFailure{ItemIdentifier: id}
-	},
-	responseForFailures: func(failures []events.KinesisBatchItemFailure) events.KinesisEventResponse {
-		return events.KinesisEventResponse{BatchItemFailures: failures}
-	},
-}
+var kinesisBatchSpec = newBatchEventSpec[events.KinesisEventRecord, events.KinesisBatchItemFailure, events.KinesisEventResponse](
+	"apptheory: invalid kinesis record type",
+	func(record events.KinesisEventRecord) string { return record.EventID },
+)
 
 // ServeKinesis routes a Kinesis event to the registered stream handler and returns a partial batch failure response.
 //
@@ -621,22 +635,10 @@ func (a *App) dynamoDBHandlerForEvent(event events.DynamoDBEvent) DynamoDBStream
 	return nil
 }
 
-var dynamoDBBatchSpec = batchEventSpec[events.DynamoDBEventRecord, events.DynamoDBBatchItemFailure, events.DynamoDBEventResponse]{}
-
-func init() {
-	dynamoDBBatchSpec.coerce = func(event any) (events.DynamoDBEventRecord, bool) {
-		record, ok := event.(events.DynamoDBEventRecord)
-		return record, ok
-	}
-	dynamoDBBatchSpec.invalidTypeError = "apptheory: invalid dynamodb record type"
-	dynamoDBBatchSpec.recordID = func(record events.DynamoDBEventRecord) string { return record.EventID }
-	dynamoDBBatchSpec.failureForID = func(id string) events.DynamoDBBatchItemFailure {
-		return events.DynamoDBBatchItemFailure{ItemIdentifier: id}
-	}
-	dynamoDBBatchSpec.responseForFailures = func(failures []events.DynamoDBBatchItemFailure) events.DynamoDBEventResponse {
-		return events.DynamoDBEventResponse{BatchItemFailures: failures}
-	}
-}
+var dynamoDBBatchSpec = newBatchEventSpec[events.DynamoDBEventRecord, events.DynamoDBBatchItemFailure, events.DynamoDBEventResponse](
+	"apptheory: invalid dynamodb record type",
+	func(record events.DynamoDBEventRecord) string { return record.EventID },
+)
 
 // ServeDynamoDBStream routes a DynamoDB Streams event to the registered table handler and returns a partial batch failure response.
 //
