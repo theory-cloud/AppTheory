@@ -182,6 +182,13 @@ even if only TS integrates to Lambda’s streaming runtime first.
 
 ---
 
+Implementation (AppTheory `m14`):
+
+- Reusable construct: `cdk/lib/ssr-site.ts` (`AppTheorySsrSite`)
+- Deployable example: `examples/cdk/ssr-site`
+- Build/deploy helpers: `examples/cdk/ssr-site/scripts/`
+- Deterministic synth gate: `scripts/verify-cdk-synth.sh`
+
 ### FT-A8 — Optional: broader AWS event ergonomics (ALB, Kinesis/SNS, Step Functions)
 
 **Goal:** reduce app glue code where these event types are used alongside FaceTheory stacks.
@@ -191,4 +198,3 @@ even if only TS integrates to Lambda’s streaming runtime first.
   - normalization helpers
   - testkit event builders
   - fixtures that lock semantics
-
