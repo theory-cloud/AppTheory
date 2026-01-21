@@ -9,11 +9,21 @@
   "Resources": {
     "Fn9270CBC0": {
       "DependsOn": [
+        "FnServiceRoleDefaultPolicyC6A839BF",
         "FnServiceRoleB9001A96"
       ],
       "Properties": {
         "Code": {
           "ZipFile": "exports.handler = async () => ({ statusCode: 200, body: 'ok' });"
+        },
+        "Environment": {
+          "Variables": {
+            "APPTHEORY_ASSETS_BUCKET": {
+              "Ref": "SiteAssetsBucket08A02D08"
+            },
+            "APPTHEORY_ASSETS_MANIFEST_KEY": "assets/manifest.json",
+            "APPTHEORY_ASSETS_PREFIX": "assets"
+          }
         },
         "Handler": "index.handler",
         "Role": {
@@ -56,6 +66,52 @@
         ]
       },
       "Type": "AWS::IAM::Role"
+    },
+    "FnServiceRoleDefaultPolicyC6A839BF": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "s3:GetObject*",
+                "s3:GetBucket*",
+                "s3:List*"
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "SiteAssetsBucket08A02D08",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "SiteAssetsBucket08A02D08",
+                          "Arn"
+                        ]
+                      },
+                      "/*"
+                    ]
+                  ]
+                }
+              ]
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "PolicyName": "FnServiceRoleDefaultPolicyC6A839BF",
+        "Roles": [
+          {
+            "Ref": "FnServiceRoleB9001A96"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Policy"
     },
     "Fninvokefunction5F592A77": {
       "Properties": {

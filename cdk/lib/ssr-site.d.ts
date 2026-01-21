@@ -11,6 +11,9 @@ export interface AppTheorySsrSiteProps {
     readonly assetsBucket?: s3.IBucket;
     readonly assetsPath?: string;
     readonly assetsKeyPrefix?: string;
+    readonly assetsManifestKey?: string;
+    readonly cacheTableName?: string;
+    readonly wireRuntimeEnv?: boolean;
     readonly enableLogging?: boolean;
     readonly logsBucket?: s3.IBucket;
     readonly removalPolicy?: RemovalPolicy;
@@ -22,6 +25,8 @@ export interface AppTheorySsrSiteProps {
 }
 export declare class AppTheorySsrSite extends Construct {
     readonly assetsBucket: s3.IBucket;
+    readonly assetsKeyPrefix: string;
+    readonly assetsManifestKey: string;
     readonly logsBucket?: s3.IBucket;
     readonly ssrUrl: lambda.FunctionUrl;
     readonly distribution: cloudfront.Distribution;

@@ -1,4 +1,4 @@
 cdk.out/
 node_modules/
 dist/
-
+assets/manifest.json
