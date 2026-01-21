@@ -17,6 +17,14 @@ export interface AppTheorySsrSiteProps {
   readonly assetsBucket?: s3.IBucket;
   readonly assetsPath?: string;
   readonly assetsKeyPrefix?: string;
+  readonly assetsManifestKey?: string;
+
+  // Optional DynamoDB table name for ISR/cache metadata owned by app code (TableTheory).
+  // When set, AppTheory will wire environment variables on the SSR function.
+  readonly cacheTableName?: string;
+
+  // When true (default), AppTheory wires recommended runtime environment variables onto the SSR function.
+  readonly wireRuntimeEnv?: boolean;
 
   readonly enableLogging?: boolean;
   readonly logsBucket?: s3.IBucket;
@@ -33,6 +41,8 @@ export interface AppTheorySsrSiteProps {
 
 export class AppTheorySsrSite extends Construct {
   public readonly assetsBucket: s3.IBucket;
+  public readonly assetsKeyPrefix: string;
+  public readonly assetsManifestKey: string;
   public readonly logsBucket?: s3.IBucket;
   public readonly ssrUrl: lambda.FunctionUrl;
   public readonly distribution: cloudfront.Distribution;
@@ -71,13 +81,23 @@ export class AppTheorySsrSite extends Construct {
         });
     }
 
-    const assetsKeyPrefix = String(props.assetsKeyPrefix ?? "assets").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+    const assetsPrefixRaw = String(props.assetsKeyPrefix ?? "assets").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+    const assetsKeyPrefix = assetsPrefixRaw || "assets";
+
+    const manifestRaw = String(props.assetsManifestKey ?? `${assetsKeyPrefix}/manifest.json`)
+      .trim()
+      .replace(/^\/+/, "")
+      .replace(/\/+$/, "");
+    const assetsManifestKey = manifestRaw || `${assetsKeyPrefix}/manifest.json`;
+
+    this.assetsKeyPrefix = assetsKeyPrefix;
+    this.assetsManifestKey = assetsManifestKey;
 
     if (props.assetsPath) {
       new s3deploy.BucketDeployment(this, "AssetsDeployment", {
         sources: [s3deploy.Source.asset(props.assetsPath)],
         destinationBucket: this.assetsBucket,
-        destinationKeyPrefix: assetsKeyPrefix || undefined,
+        destinationKeyPrefix: assetsKeyPrefix,
         prune: true,
       });
     }
@@ -150,7 +170,7 @@ export class AppTheorySsrSite extends Construct {
         originRequestPolicy: ssrOriginRequestPolicy,
       },
       additionalBehaviors: {
-        [`${assetsKeyPrefix || "assets"}/*`]: {
+        [`${assetsKeyPrefix}/*`]: {
           origin: assetsOrigin,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
@@ -160,6 +180,28 @@ export class AppTheorySsrSite extends Construct {
       },
       ...(props.webAclId ? { webAclId: props.webAclId } : {}),
     });
+
+    if (props.wireRuntimeEnv ?? true) {
+      this.assetsBucket.grantRead(props.ssrFunction);
+
+      const ssrFunctionAny = props.ssrFunction as any;
+      if (typeof ssrFunctionAny.addEnvironment !== "function") {
+        throw new Error(
+          "AppTheorySsrSite wireRuntimeEnv requires props.ssrFunction to support addEnvironment; pass a lambda.Function or set wireRuntimeEnv=false and set env vars manually",
+        );
+      }
+
+      ssrFunctionAny.addEnvironment("APPTHEORY_ASSETS_BUCKET", this.assetsBucket.bucketName);
+      ssrFunctionAny.addEnvironment("APPTHEORY_ASSETS_PREFIX", assetsKeyPrefix);
+      ssrFunctionAny.addEnvironment("APPTHEORY_ASSETS_MANIFEST_KEY", assetsManifestKey);
+
+      const cacheTableName = String(props.cacheTableName ?? "").trim();
+      if (cacheTableName) {
+        ssrFunctionAny.addEnvironment("APPTHEORY_CACHE_TABLE_NAME", cacheTableName);
+        ssrFunctionAny.addEnvironment("CACHE_TABLE_NAME", cacheTableName);
+        ssrFunctionAny.addEnvironment("CACHE_TABLE", cacheTableName);
+      }
+    }
 
     if (domainName && props.hostedZone) {
       new route53.ARecord(this, "AliasRecord", {

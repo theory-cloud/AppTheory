@@ -38,7 +38,10 @@ export class SsrSiteStack extends Stack {
     });
 
     new CfnOutput(this, "CloudFrontUrl", { value: `https://${site.distribution.domainName}` });
+    new CfnOutput(this, "CloudFrontDistributionId", { value: site.distribution.distributionId });
     new CfnOutput(this, "AssetsBucketName", { value: site.assetsBucket.bucketName });
+    new CfnOutput(this, "AssetsKeyPrefix", { value: site.assetsKeyPrefix });
+    new CfnOutput(this, "AssetsManifestKey", { value: site.assetsManifestKey });
     new CfnOutput(this, "SsrFunctionUrl", { value: site.ssrUrl.url });
   }
 }

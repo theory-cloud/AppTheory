@@ -68,3 +68,17 @@ Acceptance:
   - uploading assets + manifest
   - invalidation strategy (if needed)
   - wiring env vars for runtime to locate assets/manifest/cache metadata
+
+Conventions (AppTheory `m14`):
+
+- **Runtime env vars** (wired by `AppTheorySsrSite` when `wireRuntimeEnv` is enabled):
+  - `APPTHEORY_ASSETS_BUCKET`: S3 bucket name for assets
+  - `APPTHEORY_ASSETS_PREFIX`: S3 key prefix for assets (default `assets`)
+  - `APPTHEORY_ASSETS_MANIFEST_KEY`: S3 object key for manifest (default `${APPTHEORY_ASSETS_PREFIX}/manifest.json`)
+  - Optional cache metadata wiring when `cacheTableName` is set:
+    - `APPTHEORY_CACHE_TABLE_NAME`, `CACHE_TABLE_NAME`, `CACHE_TABLE`
+- **Build/deploy scripts** (example implementation):
+  - `examples/cdk/ssr-site/scripts/generate-assets-manifest.mjs`
+  - `examples/cdk/ssr-site/scripts/upload-assets.sh`
+- **Invalidation input**: use `AppTheorySsrSite.distribution.distributionId` (exposed as `CloudFrontDistributionId` in the
+  example stack) rather than wiring the distribution id into the Lambda env (avoids CloudFormation dependency cycles).
