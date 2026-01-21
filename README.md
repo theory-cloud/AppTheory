@@ -25,6 +25,7 @@ Non-goals (near-term):
 ## Public Names (M0)
 
 - Go module path: `github.com/theory-cloud/apptheory`
+- Go runtime package: `github.com/theory-cloud/apptheory/runtime`
 - npm package: `@theory-cloud/apptheory`
 - Python distribution name: `apptheory`
 - Python import name: `apptheory`

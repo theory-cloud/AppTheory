@@ -5,7 +5,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/theory-cloud/apptheory"
+	"github.com/theory-cloud/apptheory/runtime"
 )
 
 // StreamResult captures a streamed AppTheory response deterministically for tests.

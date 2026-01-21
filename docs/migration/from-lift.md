@@ -32,7 +32,7 @@ functionality remains available for Go users** (portable subset + documented Go-
 Core import root:
 
 - Lift: `github.com/pay-theory/lift/...`
-- AppTheory: `github.com/theory-cloud/apptheory`
+- AppTheory: `github.com/theory-cloud/apptheory/runtime`
 
 Rate limiting:
 

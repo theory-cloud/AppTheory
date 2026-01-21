@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/theory-cloud/apptheory"
+	"github.com/theory-cloud/apptheory/runtime"
 )
 
 func newAppTheoryFixtureAppP1(now time.Time, limits FixtureLimits, cors FixtureCORSConfig) *apptheory.App {
