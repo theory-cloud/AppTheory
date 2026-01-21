@@ -103,6 +103,7 @@ def normalize_response(resp: Response) -> Response:
     body_stream_raw = getattr(resp, "body_stream", None)
     body_stream = None
     if body_stream_raw is not None:
+
         def gen():
             for chunk in body_stream_raw:
                 yield to_bytes(chunk)

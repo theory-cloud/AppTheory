@@ -14,7 +14,7 @@ from apptheory.app import (
     event_bridge_rule,
 )
 from apptheory.aws_events import build_dynamodb_stream_event, build_eventbridge_event, build_sqs_event
-from apptheory.aws_http import build_apigw_v2_request, build_lambda_function_url_request
+from apptheory.aws_http import build_alb_target_group_request, build_apigw_v2_request, build_lambda_function_url_request
 from apptheory.cache import cache_control_isr, cache_control_ssg, cache_control_ssr, etag, matches_if_none_match, vary
 from apptheory.clock import Clock, ManualClock, RealClock
 from apptheory.cloudfront import client_ip, origin_url
@@ -72,6 +72,7 @@ __all__ = [
     "TestEnv",
     "WebSocketCall",
     "build_apigw_v2_request",
+    "build_alb_target_group_request",
     "build_dynamodb_stream_event",
     "build_eventbridge_event",
     "build_lambda_function_url_request",

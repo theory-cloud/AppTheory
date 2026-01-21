@@ -66,14 +66,14 @@ def _parse_forwarded(value: Any) -> dict[str, str]:
             continue
         key, val = part.split("=", 1)
         key = key.strip().lower()
-        val = val.strip().strip("\"")
+        val = val.strip().strip('"')
         if key in {"proto", "host"} and key not in out and val:
             out[key] = val
     return out
 
 
 def _parse_cloudfront_viewer_address(value: Any) -> str:
-    raw = str(value or "").strip().strip("\"")
+    raw = str(value or "").strip().strip('"')
     if not raw:
         return ""
 
@@ -90,4 +90,3 @@ def _parse_cloudfront_viewer_address(value: Any) -> str:
     if not port_part.isdigit():
         return raw
     return ip_part
-

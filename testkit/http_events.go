@@ -13,11 +13,12 @@ import (
 
 // HTTPEventOptions configures synthetic HTTP events for local testing.
 type HTTPEventOptions struct {
-	Query    map[string][]string
-	Headers  map[string]string
-	Cookies  []string
-	Body     []byte
-	IsBase64 bool
+	Query        map[string][]string
+	Headers      map[string]string
+	MultiHeaders map[string][]string
+	Cookies      []string
+	Body         []byte
+	IsBase64     bool
 }
 
 func APIGatewayV2Request(method, path string, opts HTTPEventOptions) events.APIGatewayV2HTTPRequest {
@@ -99,6 +100,95 @@ func LambdaFunctionURLRequest(method, path string, opts HTTPEventOptions) events
 	}
 }
 
+func ALBTargetGroupRequest(method, path string, opts HTTPEventOptions) events.ALBTargetGroupRequest {
+	rawPath, rawQuery := splitPathAndQuery(path, opts.Query)
+
+	headers := cloneHeaderMap(opts.Headers)
+
+	multiHeaders := map[string][]string{}
+	for key, values := range opts.MultiHeaders {
+		multiHeaders[key] = append([]string(nil), values...)
+	}
+	for key, value := range headers {
+		if _, ok := multiHeaders[key]; ok {
+			continue
+		}
+		multiHeaders[key] = []string{value}
+	}
+	for key, values := range multiHeaders {
+		if len(values) == 0 {
+			continue
+		}
+		if _, ok := headers[key]; ok {
+			continue
+		}
+		headers[key] = values[0]
+	}
+
+	if len(opts.Cookies) > 0 {
+		if _, ok := multiHeaders["cookie"]; !ok {
+			multiHeaders["cookie"] = append([]string(nil), opts.Cookies...)
+			headers["cookie"] = opts.Cookies[0]
+		}
+	}
+
+	query := opts.Query
+	if len(query) == 0 && rawQuery != "" {
+		if values, err := url.ParseQuery(rawQuery); err == nil {
+			query = map[string][]string{}
+			for key, vs := range values {
+				query[key] = append([]string(nil), vs...)
+			}
+		}
+	}
+
+	queryStringParameters := map[string]string{}
+	multiValueQueryStringParameters := map[string][]string{}
+	for key, values := range query {
+		if len(values) == 0 {
+			continue
+		}
+		queryStringParameters[key] = values[0]
+		multiValueQueryStringParameters[key] = append([]string(nil), values...)
+	}
+
+	body := string(opts.Body)
+	if opts.IsBase64 {
+		body = base64.StdEncoding.EncodeToString(opts.Body)
+	}
+
+	return events.ALBTargetGroupRequest{
+		HTTPMethod: strings.ToUpper(strings.TrimSpace(method)),
+		Path:       rawPath,
+		Headers:    headers,
+		MultiValueHeaders: func() map[string][]string {
+			if len(multiHeaders) == 0 {
+				return nil
+			}
+			return multiHeaders
+		}(),
+		QueryStringParameters: func() map[string]string {
+			if len(queryStringParameters) == 0 {
+				return nil
+			}
+			return queryStringParameters
+		}(),
+		MultiValueQueryStringParameters: func() map[string][]string {
+			if len(multiValueQueryStringParameters) == 0 {
+				return nil
+			}
+			return multiValueQueryStringParameters
+		}(),
+		RequestContext: events.ALBTargetGroupRequestContext{
+			ELB: events.ELBContext{
+				TargetGroupArn: "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/test/0000000000000000",
+			},
+		},
+		Body:            body,
+		IsBase64Encoded: opts.IsBase64,
+	}
+}
+
 func (e *Env) InvokeAPIGatewayV2(
 	ctx context.Context,
 	app *apptheory.App,
@@ -119,6 +209,17 @@ func (e *Env) InvokeLambdaFunctionURL(
 		ctx = context.Background()
 	}
 	return app.ServeLambdaFunctionURL(ctx, event)
+}
+
+func (e *Env) InvokeALB(
+	ctx context.Context,
+	app *apptheory.App,
+	event events.ALBTargetGroupRequest,
+) events.ALBTargetGroupResponse {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return app.ServeALB(ctx, event)
 }
 
 func splitPathAndQuery(path string, query map[string][]string) (string, string) {

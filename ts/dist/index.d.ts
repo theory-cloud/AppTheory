@@ -85,6 +85,27 @@ export interface APIGatewayProxyResponse {
   isBase64Encoded: boolean;
 }
 
+export interface ALBTargetGroupRequest {
+  httpMethod: string;
+  path: string;
+  queryStringParameters?: Record<string, string>;
+  multiValueQueryStringParameters?: Record<string, string[]>;
+  headers?: Record<string, string>;
+  multiValueHeaders?: Record<string, string[]>;
+  requestContext: { elb: { targetGroupArn: string } };
+  body?: string;
+  isBase64Encoded?: boolean;
+}
+
+export interface ALBTargetGroupResponse {
+  statusCode: number;
+  statusDescription: string;
+  headers: Record<string, string>;
+  multiValueHeaders: Record<string, string[]>;
+  body?: string;
+  isBase64Encoded: boolean;
+}
+
 export interface APIGatewayWebSocketProxyRequest extends APIGatewayProxyRequest {
   requestContext?: {
     stage?: string;
@@ -381,6 +402,7 @@ export declare class App {
   serveAPIGatewayV2(event: APIGatewayV2HTTPRequest, ctx?: unknown): Promise<APIGatewayV2HTTPResponse>;
   serveLambdaFunctionURL(event: LambdaFunctionURLRequest, ctx?: unknown): Promise<LambdaFunctionURLResponse>;
   serveAPIGatewayProxy(event: APIGatewayProxyRequest, ctx?: unknown): Promise<APIGatewayProxyResponse>;
+  serveALB(event: ALBTargetGroupRequest, ctx?: unknown): Promise<ALBTargetGroupResponse>;
   serveWebSocket(event: APIGatewayWebSocketProxyRequest, ctx?: unknown): Promise<APIGatewayProxyResponse>;
   serveSQSEvent(event: SQSEvent, ctx?: unknown): Promise<SQSEventResponse>;
   serveEventBridge(event: EventBridgeEvent, ctx?: unknown): Promise<unknown>;
@@ -496,6 +518,7 @@ export declare class TestEnv {
     stream_error_code: string;
   }>;
   invokeAPIGatewayProxy(app: App, event: APIGatewayProxyRequest, ctx?: unknown): Promise<APIGatewayProxyResponse>;
+  invokeALB(app: App, event: ALBTargetGroupRequest, ctx?: unknown): Promise<ALBTargetGroupResponse>;
   invokeSQS(app: App, event: SQSEvent, ctx?: unknown): Promise<SQSEventResponse>;
   invokeEventBridge(app: App, event: EventBridgeEvent, ctx?: unknown): Promise<unknown>;
   invokeDynamoDBStream(app: App, event: DynamoDBStreamEvent, ctx?: unknown): Promise<DynamoDBStreamEventResponse>;
@@ -515,6 +538,19 @@ export declare function buildLambdaFunctionURLRequest(
   path: string,
   options?: { query?: Query; headers?: Record<string, string>; cookies?: string[]; body?: Uint8Array | string; isBase64?: boolean },
 ): LambdaFunctionURLRequest;
+
+export declare function buildALBTargetGroupRequest(
+  method: string,
+  path: string,
+  options?: {
+    query?: Query;
+    headers?: Record<string, string>;
+    multiHeaders?: Headers;
+    body?: Uint8Array | string;
+    isBase64?: boolean;
+    targetGroupArn?: string;
+  },
+): ALBTargetGroupRequest;
 
 export declare function buildSQSEvent(queueArn: string, records?: Array<Partial<SQSMessage>>): SQSEvent;
 

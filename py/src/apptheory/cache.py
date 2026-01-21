@@ -31,7 +31,7 @@ def cache_control_isr(revalidate_seconds: int, stale_while_revalidate_seconds: i
 def etag(body: Any) -> str:
     b = to_bytes(body)
     digest = hashlib.sha256(b).hexdigest()
-    return f"\"{digest}\""
+    return f'"{digest}"'
 
 
 def matches_if_none_match(headers: dict[str, Any] | None, etag_value: str) -> bool:
@@ -84,4 +84,3 @@ def _split_comma_values(value: Any) -> list[str]:
         return []
     parts = [p.strip() for p in raw.split(",")]
     return [p for p in parts if p]
-

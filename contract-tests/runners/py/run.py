@@ -1655,6 +1655,9 @@ def run_fixture_p0(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
         elif source == "lambda_function_url":
             out = app.serve_lambda_function_url(event)
             actual = canonical_response_from_lambda_function_url(out)
+        elif source == "alb":
+            out = app.serve_alb(event)
+            actual = canonical_response_from_apigw_proxy(out)
         else:
             raise RuntimeError(f"unknown aws_event source {source!r}")
 
