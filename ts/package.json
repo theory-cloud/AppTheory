@@ -22,7 +22,9 @@
     "package.json"
   ],
   "devDependencies": {
-    "eslint": "8.57.0"
+    "@eslint/js": "9.39.2",
+    "eslint": "9.39.2",
+    "globals": "17.0.0"
   },
   "engines": {
     "node": ">=24"

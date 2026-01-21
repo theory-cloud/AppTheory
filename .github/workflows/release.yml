@@ -13,7 +13,7 @@ jobs:
     name: Build and attach assets
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
@@ -26,18 +26,18 @@ jobs:
       - name: Set SOURCE_DATE_EPOCH (deterministic artifacts)
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.25.6"
 
       - name: Install golangci-lint (pinned)
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version: "24"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
           python-version: "3.14"
 
@@ -51,7 +51,7 @@ jobs:
         run: scripts/render-release-notes.sh "${{ github.ref_name }}"
 
       - name: Create GitHub Release and upload assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           files: |
             dist/theory-cloud-apptheory*.tgz
