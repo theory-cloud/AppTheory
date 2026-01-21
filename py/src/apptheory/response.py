@@ -14,6 +14,7 @@ class Response:
     cookies: list[str]
     body: bytes
     is_base64: bool
+    body_stream: Any | None = None
 
 
 def text(status: int, body: str) -> Response:
@@ -56,15 +57,63 @@ def binary(status: int, body: Any, content_type: str | None = None) -> Response:
     )
 
 
+def html(status: int, body: Any) -> Response:
+    return normalize_response(
+        Response(
+            status=status,
+            headers={"content-type": ["text/html; charset=utf-8"]},
+            cookies=[],
+            body=to_bytes(body),
+            is_base64=False,
+        )
+    )
+
+
+def html_stream(status: int, chunks: Any) -> Response:
+    return normalize_response(
+        Response(
+            status=status,
+            headers={"content-type": ["text/html; charset=utf-8"]},
+            cookies=[],
+            body=b"",
+            is_base64=False,
+            body_stream=chunks,
+        )
+    )
+
+
+def safe_json_for_html(value: Any) -> str:
+    raw = jsonlib.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return (
+        raw.replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
 def normalize_response(resp: Response) -> Response:
     status = int(resp.status or 200)
     headers = canonicalize_headers(resp.headers)
+    set_cookies = headers.pop("set-cookie", [])
     cookies = [str(c) for c in (resp.cookies or [])]
+    cookies.extend([str(c) for c in (set_cookies or [])])
     body = to_bytes(resp.body)
+    body_stream_raw = getattr(resp, "body_stream", None)
+    body_stream = None
+    if body_stream_raw is not None:
+
+        def gen():
+            for chunk in body_stream_raw:
+                yield to_bytes(chunk)
+
+        body_stream = gen()
     return Response(
         status=status,
         headers=headers,
         cookies=cookies,
         body=body,
         is_base64=bool(resp.is_base64),
+        body_stream=body_stream,
     )

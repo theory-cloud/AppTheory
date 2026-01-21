@@ -51,7 +51,7 @@ function deepEqual(a, b) {
 }
 
 function listFixtureFiles(fixturesRoot) {
-  const tiers = ["p0", "p1", "p2", "m1", "m2", "m3", "m12"];
+  const tiers = ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14"];
   const files = [];
   for (const tier of tiers) {
     const dir = path.join(fixturesRoot, tier);
@@ -634,6 +634,10 @@ async function runFixture(fixture) {
     const { actual } = await runFixtureM12(fixture);
     return compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
   }
+  if (tier === "m14") {
+    const { actual } = await runFixtureM14(fixture);
+    return compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
+  }
 
   const enableP1 = ["p1", "p2"].includes(tier);
   const enableP2 = tier === "p2";
@@ -665,6 +669,17 @@ function compareFixture(fixture, actual, effects) {
     return { ok: false, reason: "headers mismatch", actual, expected };
   }
 
+  const expectedStreamErrorCode = String(expected.stream_error_code ?? "");
+  const actualStreamErrorCode = String(actual.stream_error_code ?? "");
+  if (expectedStreamErrorCode !== actualStreamErrorCode) {
+    return {
+      ok: false,
+      reason: `stream_error_code: expected ${JSON.stringify(expectedStreamErrorCode)}, got ${JSON.stringify(actualStreamErrorCode)}`,
+      actual,
+      expected,
+    };
+  }
+
   const hasBodyJson = Object.prototype.hasOwnProperty.call(expected, "body_json");
   if (hasBodyJson) {
     let actualJson;
@@ -676,6 +691,60 @@ function compareFixture(fixture, actual, effects) {
     if (!deepEqual(expected.body_json, actualJson)) {
       return { ok: false, reason: "body_json mismatch", actual, expected };
     }
+    const expectedLogs = fixture.expect?.logs ?? [];
+    const expectedMetrics = fixture.expect?.metrics ?? [];
+    const expectedSpans = fixture.expect?.spans ?? [];
+    if (!deepEqual(expectedLogs, effects.logs ?? [])) {
+      return {
+        ok: false,
+        reason: "logs mismatch",
+        actual,
+        expected,
+        expected_logs: expectedLogs,
+        actual_logs: effects.logs ?? [],
+      };
+    }
+    if (!deepEqual(expectedMetrics, effects.metrics ?? [])) {
+      return {
+        ok: false,
+        reason: "metrics mismatch",
+        actual,
+        expected,
+        expected_metrics: expectedMetrics,
+        actual_metrics: effects.metrics ?? [],
+      };
+    }
+    if (!deepEqual(expectedSpans, effects.spans ?? [])) {
+      return {
+        ok: false,
+        reason: "spans mismatch",
+        actual,
+        expected,
+        expected_spans: expectedSpans,
+        actual_spans: effects.spans ?? [],
+      };
+    }
+    return { ok: true };
+  }
+
+  const expectedChunksRaw = expected.chunks ?? null;
+  if (Array.isArray(expectedChunksRaw) && expectedChunksRaw.length > 0) {
+    const expectedChunks = expectedChunksRaw.map(decodeFixtureBody);
+    const actualChunks = Array.isArray(actual.chunks) ? actual.chunks.map((c) => Buffer.from(c ?? [])) : [];
+    if (expectedChunks.length !== actualChunks.length) {
+      return { ok: false, reason: "chunks mismatch", actual, expected };
+    }
+    for (let i = 0; i < expectedChunks.length; i += 1) {
+      if (!expectedChunks[i].equals(actualChunks[i])) {
+        return { ok: false, reason: `chunk ${i} mismatch`, actual, expected };
+      }
+    }
+
+    const expectedBody = expected.body ? decodeFixtureBody(expected.body) : Buffer.concat(expectedChunks);
+    if (!expectedBody.equals(actual.body)) {
+      return { ok: false, reason: "body mismatch", actual, expected };
+    }
+
     const expectedLogs = fixture.expect?.logs ?? [];
     const expectedMetrics = fixture.expect?.metrics ?? [];
     const expectedSpans = fixture.expect?.spans ?? [];
@@ -893,6 +962,50 @@ function builtInSQSHandler(name) {
   }
 }
 
+function builtInKinesisHandler(name) {
+  switch (String(name ?? "").trim()) {
+    case "kinesis_noop":
+      return async () => {};
+    case "kinesis_always_fail":
+      return async () => {
+        throw new Error("fail");
+      };
+    case "kinesis_fail_on_data":
+      return async (_ctx, record) => {
+        const dataB64 = String(record?.kinesis?.data ?? "").trim();
+        const decoded = dataB64 ? Buffer.from(dataB64, "base64").toString("utf8") : "";
+        if (decoded.trim() === "fail") {
+          throw new Error("fail");
+        }
+      };
+    case "kinesis_requires_event_middleware":
+      return async (ctx) => {
+        if (ctx.get("mw") !== "ok") {
+          throw new Error("missing middleware value");
+        }
+        const trace = ctx.get("trace");
+        if (!Array.isArray(trace) || trace.join(",") !== "evt_mw_a,evt_mw_b") {
+          throw new Error("bad trace");
+        }
+      };
+    default:
+      return null;
+  }
+}
+
+function builtInSNSHandler(name) {
+  switch (String(name ?? "").trim()) {
+    case "sns_static_a":
+      return async () => ({ handler: "a" });
+    case "sns_static_b":
+      return async () => ({ handler: "b" });
+    case "sns_echo_event_middleware":
+      return async (ctx) => ({ mw: ctx.get("mw"), trace: ctx.get("trace") });
+    default:
+      return null;
+  }
+}
+
 function builtInDynamoDBStreamHandler(name) {
   switch (String(name ?? "").trim()) {
     case "ddb_noop":
@@ -974,6 +1087,22 @@ async function runFixtureM1(fixture) {
       throw new Error(`unknown sqs handler ${JSON.stringify(route.handler)}`);
     }
     app.sqs(route.queue, handler);
+  }
+
+  for (const route of fixture.setup?.kinesis ?? []) {
+    const handler = builtInKinesisHandler(route.handler);
+    if (!handler) {
+      throw new Error(`unknown kinesis handler ${JSON.stringify(route.handler)}`);
+    }
+    app.kinesis(route.stream, handler);
+  }
+
+  for (const route of fixture.setup?.sns ?? []) {
+    const handler = builtInSNSHandler(route.handler);
+    if (!handler) {
+      throw new Error(`unknown sns handler ${JSON.stringify(route.handler)}`);
+    }
+    app.sns(route.topic, handler);
   }
 
   for (const route of fixture.setup?.dynamodb ?? []) {
@@ -1195,6 +1324,107 @@ async function runFixtureM12(fixture) {
   return { actual };
 }
 
+async function runFixtureM14(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+
+  const ids = new runtime.ManualIdGenerator();
+  ids.queue("req_test_123");
+
+  const limits = fixture.setup?.limits ?? {};
+  const corsSetup = fixture.setup?.cors ?? null;
+  const cors =
+    corsSetup && typeof corsSetup === "object"
+      ? {
+          allowedOrigins: corsSetup.allowed_origins,
+          allowCredentials: Boolean(corsSetup.allow_credentials),
+          allowHeaders: corsSetup.allow_headers,
+        }
+      : undefined;
+  const app = runtime.createApp({
+    tier: "p1",
+    ids,
+    limits: {
+      maxRequestBytes: Number(limits.max_request_bytes ?? 0),
+      maxResponseBytes: Number(limits.max_response_bytes ?? 0),
+    },
+    ...(cors ? { cors } : {}),
+    authHook: (ctx) => {
+      const authz = firstHeaderValue(ctx.request.headers ?? {}, "authorization").trim();
+      if (!authz) {
+        throw new runtime.AppError("app.unauthorized", "unauthorized");
+      }
+      if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-forbidden")) {
+        throw new runtime.AppError("app.forbidden", "forbidden");
+      }
+      return "authorized";
+    },
+  });
+
+  for (const name of fixture.setup?.middlewares ?? []) {
+    const mw = builtInMiddleware(runtime, name);
+    if (!mw) {
+      throw new Error(`unknown middleware ${JSON.stringify(name)}`);
+    }
+    app.use(mw);
+  }
+
+  for (const route of fixture.setup?.routes ?? []) {
+    const handler = builtInAppTheoryHandler(runtime, route.handler);
+    if (!handler) {
+      throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
+    }
+    app.handle(route.method, route.path, handler, { authRequired: Boolean(route.auth_required) });
+  }
+
+  const input = fixture.input?.request ?? {};
+  const body = decodeFixtureBody(input.body);
+  const req = {
+    method: input.method,
+    path: input.path,
+    query: input.query ?? {},
+    headers: input.headers ?? {},
+    body,
+    isBase64: input.is_base64 ?? false,
+  };
+
+  const runtimeCtx = { remaining_ms: Number(fixture.input?.context?.remaining_ms ?? 0) };
+  const resp = await app.serve(req, runtimeCtx);
+
+  const chunks = [];
+  const buffers = [];
+
+  if (resp.body && Buffer.from(resp.body).length > 0) {
+    const b = Buffer.from(resp.body);
+    chunks.push(b);
+    buffers.push(b);
+  }
+
+  let streamErrorCode = "";
+  if (resp.bodyStream) {
+    try {
+      for await (const chunk of resp.bodyStream) {
+        const b = Buffer.from(chunk ?? []);
+        chunks.push(b);
+        buffers.push(b);
+      }
+    } catch (err) {
+      streamErrorCode = err instanceof runtime.AppError ? String(err.code ?? "") : "app.internal";
+    }
+  }
+
+  const actual = {
+    status: resp.status,
+    headers: resp.headers ?? {},
+    cookies: resp.cookies ?? [],
+    chunks,
+    body: Buffer.concat(buffers),
+    is_base64: resp.isBase64 ?? false,
+    stream_error_code: streamErrorCode,
+  };
+
+  return { actual };
+}
+
 async function runFixtureP0(fixture) {
   const runtime = await loadAppTheoryRuntime();
   const app = runtime.createApp({ tier: "p0" });
@@ -1220,6 +1450,13 @@ async function runFixtureP0(fixture) {
       const resp = await app.serveLambdaFunctionURL(event);
       return {
         actual: canonicalResponseFromLambdaFunctionURLResponse(resp),
+        effects: { logs: [], metrics: [], spans: [] },
+      };
+    }
+    if (source === "alb") {
+      const resp = await app.serveALB(event);
+      return {
+        actual: canonicalResponseFromAPIGatewayProxyResponse(resp),
         effects: { logs: [], metrics: [], spans: [] },
       };
     }
@@ -1422,6 +1659,13 @@ async function runFixtureP2(fixture) {
       return "authorized";
     },
     policyHook: (ctx) => {
+      if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-rate-limit-content-type")) {
+        return {
+          code: "app.rate_limited",
+          message: "rate limited",
+          headers: { "retry-after": ["1"], "Content-Type": ["text/plain; charset=utf-8"] },
+        };
+      }
       if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-rate-limit")) {
         return { code: "app.rate_limited", message: "rate limited", headers: { "retry-after": ["1"] } };
       }
@@ -1547,6 +1791,19 @@ function builtInAppTheoryHandler(runtime, name) {
           base: runtime.baseName("Pay Theory", "prod", "Tenant_1"),
           resource: runtime.resourceName("Pay Theory", "WS Api", "prod", "Tenant_1"),
         });
+    case "stepfunctions_task_token_helpers":
+      return () =>
+        runtime.json(200, {
+          from_taskToken: runtime.stepFunctionsTaskToken({ taskToken: " tok-a " }),
+          from_TaskToken: runtime.stepFunctionsTaskToken({ TaskToken: " tok-b " }),
+          from_task_token: runtime.stepFunctionsTaskToken({ task_token: " tok-c " }),
+          from_precedence: runtime.stepFunctionsTaskToken({
+            TaskToken: " tok-b ",
+            task_token: " tok-c ",
+            taskToken: " tok-a ",
+          }),
+          built: runtime.buildStepFunctionsTaskTokenEvent(" tok-built ", { foo: "bar", taskToken: "ignored" }),
+        });
     case "large_response":
       return () => runtime.text(200, "12345");
     case "sse_single_event":
@@ -1576,6 +1833,99 @@ function builtInAppTheoryHandler(runtime, name) {
           isBase64: false,
         };
       };
+    case "stream_mutate_headers_after_first_chunk":
+      return () => {
+        const resp = {
+          status: 200,
+          headers: {
+            "content-type": ["text/plain; charset=utf-8"],
+            "x-phase": ["before"],
+          },
+          cookies: ["a=b; Path=/"],
+          body: Buffer.alloc(0),
+          isBase64: false,
+        };
+
+        resp.bodyStream = (async function* () {
+          yield Buffer.from("a", "utf8");
+          resp.headers["x-phase"] = ["after"];
+          resp.cookies.push("c=d; Path=/");
+          yield Buffer.from("b", "utf8");
+        })();
+
+        return resp;
+      };
+    case "stream_error_after_first_chunk":
+      return () => ({
+        status: 200,
+        headers: { "content-type": ["text/plain; charset=utf-8"] },
+        cookies: [],
+        body: Buffer.alloc(0),
+        bodyStream: (async function* () {
+          yield Buffer.from("hello", "utf8");
+          throw new runtime.AppError("app.internal", "boom");
+        })(),
+        isBase64: false,
+      });
+    case "html_basic":
+      return () => runtime.html(200, "<h1>Hello</h1>");
+    case "html_stream_two_chunks":
+      return () =>
+        runtime.htmlStream(
+          200,
+          (async function* () {
+            yield Buffer.from("<h1>", "utf8");
+            yield Buffer.from("Hello</h1>", "utf8");
+          })(),
+        );
+    case "safe_json_for_html":
+      return () =>
+        runtime.text(
+          200,
+          runtime.safeJSONForHTML({
+            html: "</script><div>&</div><",
+            amp: "a&b",
+            ls: "line\u2028sep",
+            ps: "para\u2029sep",
+          }),
+        );
+    case "cookies_from_set_cookie_header":
+      return () => ({
+        status: 200,
+        headers: {
+          "content-type": ["text/plain; charset=utf-8"],
+          "set-cookie": ["a=b; Path=/", "c=d; Path=/"],
+        },
+        cookies: ["e=f; Path=/"],
+        body: Buffer.from("ok", "utf8"),
+        isBase64: false,
+      });
+    case "header_multivalue":
+      return () => ({
+        status: 200,
+        headers: { "content-type": ["text/plain; charset=utf-8"], "x-multi": ["a", "b"] },
+        cookies: [],
+        body: Buffer.from("ok", "utf8"),
+        isBase64: false,
+      });
+    case "cache_helpers":
+      return (ctx) => {
+        const tag = runtime.etag("hello");
+        return runtime.json(200, {
+          cache_control_ssr: runtime.cacheControlSSR(),
+          cache_control_ssg: runtime.cacheControlSSG(),
+          cache_control_isr: runtime.cacheControlISR(60, 30),
+          etag: tag,
+          if_none_match_hit: runtime.matchesIfNoneMatch(ctx?.request?.headers ?? {}, tag),
+          vary: runtime.vary(["origin"], "accept-encoding", "Origin"),
+        });
+      };
+    case "cloudfront_helpers":
+      return (ctx) =>
+        runtime.json(200, {
+          origin_url: runtime.originURL(ctx?.request?.headers ?? {}),
+          client_ip: runtime.clientIP(ctx?.request?.headers ?? {}),
+        });
     default:
       return null;
   }

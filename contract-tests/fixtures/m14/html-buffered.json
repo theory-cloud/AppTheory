@@ -1,0 +1,33 @@
+{
+  "id": "m14.html.helper_buffered",
+  "tier": "m14",
+  "name": "HTML helper: sets content-type and encodes utf-8 body",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/html", "handler": "html_basic" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/html",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["text/html; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body": { "encoding": "utf8", "value": "<h1>Hello</h1>" },
+      "is_base64": false
+    }
+  }
+}
+

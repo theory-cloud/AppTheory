@@ -138,6 +138,94 @@ func DynamoDBStreamEvent(opts DynamoDBStreamEventOptions) events.DynamoDBEvent {
 	return out
 }
 
+type KinesisEventOptions struct {
+	StreamARN string
+	Records   []KinesisRecordOptions
+}
+
+type KinesisRecordOptions struct {
+	EventID        string
+	EventSourceARN string
+	PartitionKey   string
+	Data           []byte
+}
+
+func KinesisEvent(opts KinesisEventOptions) events.KinesisEvent {
+	streamARN := strings.TrimSpace(opts.StreamARN)
+	out := events.KinesisEvent{Records: make([]events.KinesisEventRecord, 0, len(opts.Records))}
+	for _, rec := range opts.Records {
+		id := strings.TrimSpace(rec.EventID)
+		if id == "" {
+			id = fmt.Sprintf("kin-%d", len(out.Records)+1)
+		}
+		arn := strings.TrimSpace(rec.EventSourceARN)
+		if arn == "" {
+			arn = streamARN
+		}
+
+		pk := strings.TrimSpace(rec.PartitionKey)
+		if pk == "" {
+			pk = fmt.Sprintf("pk-%d", len(out.Records)+1)
+		}
+
+		out.Records = append(out.Records, events.KinesisEventRecord{
+			EventID:        id,
+			EventName:      "aws:kinesis:record",
+			EventSource:    "aws:kinesis",
+			EventSourceArn: arn,
+			EventVersion:   "1.0",
+			AwsRegion:      "us-east-1",
+			Kinesis: events.KinesisRecord{
+				Data:                 append([]byte(nil), rec.Data...),
+				PartitionKey:         pk,
+				SequenceNumber:       fmt.Sprintf("%d", len(out.Records)),
+				KinesisSchemaVersion: "1.0",
+			},
+		})
+	}
+	return out
+}
+
+type SNSEventOptions struct {
+	TopicARN string
+	Records  []SNSRecordOptions
+}
+
+type SNSRecordOptions struct {
+	MessageID string
+	TopicArn  string
+	Subject   string
+	Message   string
+}
+
+func SNSEvent(opts SNSEventOptions) events.SNSEvent {
+	topicARN := strings.TrimSpace(opts.TopicARN)
+	out := events.SNSEvent{Records: make([]events.SNSEventRecord, 0, len(opts.Records))}
+	for _, rec := range opts.Records {
+		id := strings.TrimSpace(rec.MessageID)
+		if id == "" {
+			id = fmt.Sprintf("sns-%d", len(out.Records)+1)
+		}
+		arn := strings.TrimSpace(rec.TopicArn)
+		if arn == "" {
+			arn = topicARN
+		}
+
+		out.Records = append(out.Records, events.SNSEventRecord{
+			EventSource:  "aws:sns",
+			EventVersion: "1.0",
+			SNS: events.SNSEntity{
+				MessageID: id,
+				TopicArn:  arn,
+				Subject:   strings.TrimSpace(rec.Subject),
+				Message:   rec.Message,
+				Timestamp: time.Unix(0, 0).UTC(),
+			},
+		})
+	}
+	return out
+}
+
 func (e *Env) InvokeSQS(ctx context.Context, app *apptheory.App, event events.SQSEvent) events.SQSEventResponse {
 	if ctx == nil {
 		ctx = context.Background()
@@ -165,4 +253,36 @@ func (e *Env) InvokeDynamoDBStream(
 		ctx = context.Background()
 	}
 	return app.ServeDynamoDBStream(ctx, event)
+}
+
+func (e *Env) InvokeKinesis(
+	ctx context.Context,
+	app *apptheory.App,
+	event events.KinesisEvent,
+) events.KinesisEventResponse {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return app.ServeKinesis(ctx, event)
+}
+
+func (e *Env) InvokeSNS(ctx context.Context, app *apptheory.App, event events.SNSEvent) ([]any, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return app.ServeSNS(ctx, event)
+}
+
+type StepFunctionsTaskTokenEventOptions struct {
+	TaskToken string
+	Payload   map[string]any
+}
+
+func StepFunctionsTaskTokenEvent(opts StepFunctionsTaskTokenEventOptions) map[string]any {
+	out := make(map[string]any, len(opts.Payload)+1)
+	for k, v := range opts.Payload {
+		out[k] = v
+	}
+	out["taskToken"] = strings.TrimSpace(opts.TaskToken)
+	return out
 }

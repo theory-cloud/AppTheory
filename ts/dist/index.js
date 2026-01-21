@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createHash, createHmac, randomUUID } from "node:crypto";
+import { STATUS_CODES } from "node:http";
 
 export class AppError extends Error {
   constructor(code, message) {
@@ -283,6 +284,215 @@ export function binary(status, body, contentType) {
     body,
     isBase64: true,
   });
+}
+
+export function html(status, body) {
+  return normalizeResponse({
+    status,
+    headers: { "content-type": ["text/html; charset=utf-8"] },
+    cookies: [],
+    body: toBuffer(body),
+    isBase64: false,
+  });
+}
+
+export function htmlStream(status, chunks) {
+  return normalizeResponse({
+    status,
+    headers: { "content-type": ["text/html; charset=utf-8"] },
+    cookies: [],
+    body: Buffer.alloc(0),
+    bodyStream: chunks,
+    isBase64: false,
+  });
+}
+
+function sortKeysDeep(value) {
+  if (value === null || value === undefined) return value;
+  if (Array.isArray(value)) return value.map(sortKeysDeep);
+  if (typeof value !== "object") return value;
+  if (value instanceof Uint8Array || Buffer.isBuffer(value)) return value;
+  const keys = Object.keys(value).sort();
+  const out = {};
+  for (const key of keys) {
+    const next = sortKeysDeep(value[key]);
+    if (next === undefined) continue;
+    out[key] = next;
+  }
+  return out;
+}
+
+export function safeJSONForHTML(value) {
+  let serialized;
+  try {
+    serialized = JSON.stringify(sortKeysDeep(value));
+  } catch (err) {
+    throw new Error(`json serialization failed: ${String(err)}`);
+  }
+
+  return String(serialized)
+    .replace(/&/g, "\\u0026")
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+export function cacheControlSSR() {
+  return "private, no-store";
+}
+
+export function cacheControlSSG() {
+  return "public, max-age=0, s-maxage=31536000";
+}
+
+export function cacheControlISR(revalidateSeconds, staleWhileRevalidateSeconds = 0) {
+  let revalidate = Number(revalidateSeconds ?? 0);
+  if (!Number.isFinite(revalidate) || revalidate < 0) revalidate = 0;
+  revalidate = Math.floor(revalidate);
+
+  let swr = Number(staleWhileRevalidateSeconds ?? 0);
+  if (!Number.isFinite(swr) || swr < 0) swr = 0;
+  swr = Math.floor(swr);
+
+  const parts = ["public", "max-age=0", `s-maxage=${revalidate}`];
+  if (swr > 0) parts.push(`stale-while-revalidate=${swr}`);
+  return parts.join(", ");
+}
+
+export function etag(body) {
+  const bytes = toBuffer(body);
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  return `"${hash}"`;
+}
+
+function splitCommaValues(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+export function matchesIfNoneMatch(headers, tag) {
+  const etagValue = String(tag ?? "").trim();
+  if (!etagValue) return false;
+
+  const h = canonicalizeHeaders(headers);
+  for (const header of h["if-none-match"] ?? []) {
+    for (let token of splitCommaValues(header)) {
+      if (token === "*") return true;
+      token = token.replace(/^W\//i, "").trim();
+      if (token === etagValue) return true;
+    }
+  }
+  return false;
+}
+
+export function vary(existing, ...add) {
+  const seen = new Set();
+  const out = [];
+
+  const addToken = (token) => {
+    const key = String(token ?? "").trim().toLowerCase();
+    if (!key) return;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(key);
+  };
+
+  const addValue = (value) => {
+    for (const token of splitCommaValues(value)) {
+      addToken(token);
+    }
+  };
+
+  if (Array.isArray(existing)) {
+    for (const value of existing) addValue(value);
+  } else if (existing !== null && existing !== undefined) {
+    addValue(existing);
+  }
+
+  for (const value of add) addValue(value);
+
+  out.sort();
+  return out;
+}
+
+function parseForwardedHeader(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return { proto: "", host: "" };
+
+  const first = raw.split(",")[0];
+  let proto = "";
+  let host = "";
+
+  for (const part of String(first).split(";")) {
+    const [k, v] = String(part).trim().split("=", 2);
+    if (!k || v === undefined) continue;
+    const key = String(k).trim().toLowerCase();
+    const val = String(v).trim().replace(/^"/, "").replace(/"$/, "");
+    if (key === "proto" && !proto) proto = val;
+    if (key === "host" && !host) host = val;
+  }
+
+  return { proto, host };
+}
+
+function firstCommaToken(value) {
+  return String(value ?? "").split(",", 1)[0];
+}
+
+export function originURL(headers) {
+  const h = canonicalizeHeaders(headers);
+  const forwarded = parseForwardedHeader(firstHeaderValue(h, "forwarded"));
+
+  let host = firstHeaderValue(h, "x-forwarded-host") || forwarded.host || firstHeaderValue(h, "host");
+  host = firstCommaToken(host).trim();
+  if (!host) return "";
+
+  let proto =
+    firstHeaderValue(h, "cloudfront-forwarded-proto") || firstHeaderValue(h, "x-forwarded-proto") || forwarded.proto;
+  proto = firstCommaToken(proto).trim().toLowerCase();
+  if (!proto) proto = "https";
+
+  return `${proto}://${host}`;
+}
+
+function parseCloudFrontViewerAddress(value) {
+  const raw = String(value ?? "").trim().replace(/^"/, "").replace(/"$/, "");
+  if (!raw) return "";
+
+  if (raw.startsWith("[")) {
+    const idx = raw.indexOf("]");
+    if (idx > 1) return raw.slice(1, idx).trim();
+  }
+
+  const idx = raw.lastIndexOf(":");
+  if (idx <= 0) return raw;
+  const ipPart = raw.slice(0, idx).trim();
+  const portPart = raw.slice(idx + 1).trim();
+  if (!ipPart || !portPart) return raw;
+  if (!/^[0-9]+$/.test(portPart)) return raw;
+  return ipPart;
+}
+
+export function clientIP(headers) {
+  const h = canonicalizeHeaders(headers);
+  const cf = firstHeaderValue(h, "cloudfront-viewer-address");
+  if (cf) {
+    const parsed = parseCloudFrontViewerAddress(cf);
+    if (parsed) return parsed;
+  }
+
+  const xff = firstHeaderValue(h, "x-forwarded-for");
+  if (xff) {
+    const ip = firstCommaToken(xff).trim();
+    if (ip) return ip;
+  }
+
+  return "";
 }
 
 function formatSSEEvent(event) {
@@ -698,6 +908,8 @@ export class App {
         ? webSocketClientFactory
         : (endpoint) => new WebSocketManagementClient({ endpoint });
     this._sqsRoutes = [];
+    this._kinesisRoutes = [];
+    this._snsRoutes = [];
     this._eventBridgeRoutes = [];
     this._dynamoDBRoutes = [];
     this._middlewares = [];
@@ -776,6 +988,20 @@ export class App {
     const name = String(queueName ?? "").trim();
     if (!name || typeof handler !== "function") return this;
     this._sqsRoutes.push({ queueName: name, handler });
+    return this;
+  }
+
+  kinesis(streamName, handler) {
+    const name = String(streamName ?? "").trim();
+    if (!name || typeof handler !== "function") return this;
+    this._kinesisRoutes.push({ streamName: name, handler });
+    return this;
+  }
+
+  sns(topicName, handler) {
+    const name = String(topicName ?? "").trim();
+    if (!name || typeof handler !== "function") return this;
+    this._snsRoutes.push({ topicName: name, handler });
     return this;
   }
 
@@ -970,7 +1196,7 @@ export class App {
       resp = normalizeResponse(out);
     }
 
-    if (this._limits.maxResponseBytes > 0 && resp.body.length > this._limits.maxResponseBytes) {
+    if (!resp.bodyStream && this._limits.maxResponseBytes > 0 && resp.body.length > this._limits.maxResponseBytes) {
       return finish(errorResponseWithRequestId("app.too_large", "response too large", {}, requestId), "app.too_large");
     }
 
@@ -1008,6 +1234,17 @@ export class App {
     }
     const resp = await this.serve(request, ctx);
     return apigatewayProxyResponseFromResponse(resp);
+  }
+
+  async serveALB(event, ctx) {
+    let request;
+    try {
+      request = requestFromALBTargetGroup(event);
+    } catch (err) {
+      return albTargetGroupResponseFromResponse(responseForError(err));
+    }
+    const resp = await this.serve(request, ctx);
+    return albTargetGroupResponseFromResponse(resp);
   }
 
   _webSocketHandlerForEvent(event) {
@@ -1147,6 +1384,42 @@ export class App {
     return { batchItemFailures: failures };
   }
 
+  _kinesisHandlerForEvent(event) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    if (records.length === 0) return null;
+    const streamName = kinesisStreamNameFromArn(records[0]?.eventSourceARN);
+    if (!streamName) return null;
+    for (const route of this._kinesisRoutes) {
+      if (route.streamName === streamName) return route.handler;
+    }
+    return null;
+  }
+
+  async serveKinesisEvent(event, ctx) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    const handler = this._kinesisHandlerForEvent(event);
+    if (!handler) {
+      return {
+        batchItemFailures: records
+          .map((r) => ({ itemIdentifier: String(r?.eventID ?? "").trim() }))
+          .filter((f) => Boolean(f.itemIdentifier)),
+      };
+    }
+
+    const evtCtx = this._eventContext(ctx);
+    const wrapped = this._applyEventMiddlewares(handler);
+    const failures = [];
+    for (const record of records) {
+      try {
+        await wrapped(evtCtx, record);
+      } catch {
+        const id = String(record?.eventID ?? "").trim();
+        if (id) failures.push({ itemIdentifier: id });
+      }
+    }
+    return { batchItemFailures: failures };
+  }
+
   _eventBridgeHandlerForEvent(event) {
     const source = String(event?.source ?? "").trim();
     const detailType = String(event?.["detail-type"] ?? event?.detailType ?? "").trim();
@@ -1213,6 +1486,37 @@ export class App {
     return { batchItemFailures: failures };
   }
 
+  _snsHandlerForEvent(event) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    if (records.length === 0) return null;
+
+    const sns = records[0]?.Sns ?? records[0]?.SNS ?? records[0]?.sns ?? null;
+    const topicArn = String(sns?.TopicArn ?? sns?.topicArn ?? "").trim();
+    const topicName = snsTopicNameFromArn(topicArn);
+    if (!topicName) return null;
+
+    for (const route of this._snsRoutes) {
+      if (route.topicName === topicName) return route.handler;
+    }
+    return null;
+  }
+
+  async serveSNSEvent(event, ctx) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    const handler = this._snsHandlerForEvent(event);
+    if (!handler) {
+      throw new Error("apptheory: unrecognized sns topic");
+    }
+
+    const evtCtx = this._eventContext(ctx);
+    const wrapped = this._applyEventMiddlewares(handler);
+    const outputs = [];
+    for (const record of records) {
+      outputs.push(await wrapped(evtCtx, record));
+    }
+    return outputs;
+  }
+
   async handleLambda(event, ctx) {
     if (!event || typeof event !== "object") {
       throw new Error("apptheory: unknown event type");
@@ -1220,12 +1524,18 @@ export class App {
 
     const records = Array.isArray(event.Records) ? event.Records : [];
     if (records.length > 0) {
-      const source = String(records[0]?.eventSource ?? "").trim();
+      const source = String(records[0]?.eventSource ?? records[0]?.EventSource ?? "").trim();
       if (source === "aws:sqs") {
         return this.serveSQSEvent(event, ctx);
       }
       if (source === "aws:dynamodb") {
         return this.serveDynamoDBStream(event, ctx);
+      }
+      if (source === "aws:kinesis") {
+        return this.serveKinesisEvent(event, ctx);
+      }
+      if (source === "aws:sns") {
+        return this.serveSNSEvent(event, ctx);
       }
     }
 
@@ -1243,6 +1553,14 @@ export class App {
       if (typeof event.requestContext.connectionId === "string" && event.requestContext.connectionId.trim()) {
         return this.serveWebSocket(event, ctx);
       }
+      if (
+        event.requestContext.elb &&
+        typeof event.requestContext.elb === "object" &&
+        typeof event.requestContext.elb.targetGroupArn === "string" &&
+        event.requestContext.elb.targetGroupArn.trim()
+      ) {
+        return this.serveALB(event, ctx);
+      }
       if (typeof event.httpMethod === "string" && event.httpMethod.trim()) {
         return this.serveAPIGatewayProxy(event, ctx);
       }
@@ -1254,6 +1572,162 @@ export class App {
 
 export function createApp(options = {}) {
   return new App(options);
+}
+
+function lambdaFunctionURLSingleHeaders(headers) {
+  const out = {};
+  for (const [key, values] of Object.entries(headers ?? {})) {
+    if (!values || values.length === 0) continue;
+    out[key] = [...values].map((v) => String(v)).join(",");
+  }
+  return out;
+}
+
+function httpResponseStreamFrom(responseStream, meta) {
+  const aws = globalThis.awslambda;
+  const HttpResponseStream = aws && aws.HttpResponseStream ? aws.HttpResponseStream : null;
+  if (HttpResponseStream && typeof HttpResponseStream.from === "function") {
+    return HttpResponseStream.from(responseStream, meta);
+  }
+
+  if (responseStream && typeof responseStream.init === "function") {
+    responseStream.init(meta);
+    return responseStream;
+  }
+
+  return responseStream;
+}
+
+function streamErrorCodeForError(err) {
+  if (!err) return "";
+  if (err instanceof AppError && String(err.code ?? "").trim()) {
+    return String(err.code).trim();
+  }
+  return "app.internal";
+}
+
+async function writeStreamedLambdaFunctionURLResponse(responseStream, resp) {
+  if (resp.isBase64) {
+    throw new TypeError("apptheory: cannot stream isBase64 responses");
+  }
+
+  const headers = lambdaFunctionURLSingleHeaders(resp.headers);
+  const cookies = Array.isArray(resp.cookies) ? [...resp.cookies] : [];
+
+  const prefix = Buffer.from(resp.body ?? []);
+  const stream = resp.bodyStream;
+
+  const meta = {
+    statusCode: Number(resp.status ?? 200),
+    headers,
+    cookies,
+  };
+
+  let firstChunk = null;
+  let iterator = null;
+
+  if (prefix.length > 0) {
+    firstChunk = prefix;
+  } else if (stream) {
+    iterator = stream[Symbol.asyncIterator]();
+    try {
+      const first = await iterator.next();
+      if (!first.done) {
+        firstChunk = Buffer.from(first.value ?? []);
+      }
+    } catch (err) {
+      const requestId = firstHeaderValue(resp.headers ?? {}, "x-request-id");
+      const early = responseForErrorWithRequestId(err, requestId);
+      const earlyMeta = {
+        statusCode: Number(early.status ?? 200),
+        headers: lambdaFunctionURLSingleHeaders(early.headers),
+        cookies: Array.isArray(early.cookies) ? [...early.cookies] : [],
+      };
+
+      const out = httpResponseStreamFrom(responseStream, earlyMeta);
+      const bodyBytes = Buffer.from(early.body ?? []);
+      if (bodyBytes.length > 0) out.write(bodyBytes);
+      out.end();
+      return "";
+    }
+  }
+
+  const out = httpResponseStreamFrom(responseStream, meta);
+  let streamErrorCode = "";
+
+  if (firstChunk && firstChunk.length > 0) {
+    out.write(firstChunk);
+  }
+
+  try {
+    if (stream) {
+      if (!iterator) {
+        for await (const chunk of stream) {
+          out.write(Buffer.from(chunk ?? []));
+        }
+      } else {
+        for await (const chunk of { [Symbol.asyncIterator]: () => iterator }) {
+          out.write(Buffer.from(chunk ?? []));
+        }
+      }
+    }
+  } catch (err) {
+    streamErrorCode = streamErrorCodeForError(err);
+  } finally {
+    out.end();
+  }
+
+  return streamErrorCode;
+}
+
+async function serveLambdaFunctionURLStreaming(app, event, responseStream, ctx) {
+  let request;
+  try {
+    request = requestFromLambdaFunctionURL(event);
+  } catch (err) {
+    const resp = responseForError(err);
+    return await writeStreamedLambdaFunctionURLResponse(responseStream, resp);
+  }
+
+  const resp = await app.serve(request, ctx);
+  return await writeStreamedLambdaFunctionURLResponse(responseStream, resp);
+}
+
+export function createLambdaFunctionURLStreamingHandler(app) {
+  const aws = globalThis.awslambda;
+  if (aws && typeof aws.streamifyResponse === "function") {
+    return aws.streamifyResponse((event, responseStream, ctx) => serveLambdaFunctionURLStreaming(app, event, responseStream, ctx));
+  }
+
+  return async (event, ctx) => app.serveLambdaFunctionURL(event, ctx);
+}
+
+class CapturedHttpResponseStream {
+  constructor() {
+    this.statusCode = 0;
+    this.headers = {};
+    this.cookies = [];
+    this.chunks = [];
+    this.ended = false;
+  }
+
+  init(meta) {
+    this.statusCode = Number(meta?.statusCode ?? 0);
+    this.headers = { ...(meta?.headers ?? {}) };
+    this.cookies = Array.isArray(meta?.cookies) ? [...meta.cookies].map((c) => String(c)) : [];
+  }
+
+  write(chunk) {
+    this.chunks.push(Buffer.from(chunk ?? []));
+    return true;
+  }
+
+  end(chunk) {
+    if (chunk !== null && chunk !== undefined) {
+      this.write(chunk);
+    }
+    this.ended = true;
+  }
 }
 
 export function timeoutMiddleware(config = {}) {
@@ -1347,6 +1821,49 @@ export class TestEnv {
     return app.serve(request, ctx);
   }
 
+  async invokeStreaming(app, request, ctx) {
+    const resp = await app.serve(request, ctx);
+
+    const headers = {};
+    for (const [key, values] of Object.entries(resp.headers ?? {})) {
+      headers[key] = Array.isArray(values) ? [...values].map((v) => String(v)) : [String(values)];
+    }
+
+    const cookies = Array.isArray(resp.cookies) ? [...resp.cookies].map((c) => String(c)) : [];
+
+    const chunks = [];
+    const buffers = [];
+
+    if (resp.body && Buffer.from(resp.body).length > 0) {
+      const b = Buffer.from(resp.body);
+      chunks.push(b);
+      buffers.push(b);
+    }
+
+    let streamErrorCode = "";
+    if (resp.bodyStream) {
+      try {
+        for await (const chunk of resp.bodyStream) {
+          const b = Buffer.from(chunk ?? []);
+          chunks.push(b);
+          buffers.push(b);
+        }
+      } catch (err) {
+        streamErrorCode = err instanceof AppError ? String(err.code ?? "") : "app.internal";
+      }
+    }
+
+    return {
+      status: Number(resp.status ?? 0),
+      headers,
+      cookies,
+      chunks,
+      body: Buffer.concat(buffers),
+      is_base64: Boolean(resp.isBase64),
+      stream_error_code: streamErrorCode,
+    };
+  }
+
   invokeAPIGatewayV2(app, event, ctx) {
     return app.serveAPIGatewayV2(event, ctx);
   }
@@ -1355,8 +1872,33 @@ export class TestEnv {
     return app.serveLambdaFunctionURL(event, ctx);
   }
 
+  async invokeLambdaFunctionURLStreaming(app, event, ctx) {
+    const stream = new CapturedHttpResponseStream();
+    const streamErrorCode = await serveLambdaFunctionURLStreaming(app, event, stream, ctx);
+
+    const headers = {};
+    for (const [key, value] of Object.entries(stream.headers ?? {})) {
+      headers[key] = [String(value)];
+    }
+
+    const chunks = [...stream.chunks];
+    return {
+      status: Number(stream.statusCode ?? 0),
+      headers,
+      cookies: [...stream.cookies],
+      chunks,
+      body: Buffer.concat(chunks),
+      is_base64: false,
+      stream_error_code: streamErrorCode,
+    };
+  }
+
   invokeAPIGatewayProxy(app, event, ctx) {
     return app.serveAPIGatewayProxy(event, ctx);
+  }
+
+  invokeALB(app, event, ctx) {
+    return app.serveALB(event, ctx);
   }
 
   invokeSQS(app, event, ctx) {
@@ -1369,6 +1911,14 @@ export class TestEnv {
 
   invokeDynamoDBStream(app, event, ctx) {
     return app.serveDynamoDBStream(event, ctx);
+  }
+
+  invokeKinesis(app, event, ctx) {
+    return app.serveKinesisEvent(event, ctx);
+  }
+
+  invokeSNS(app, event, ctx) {
+    return app.serveSNSEvent(event, ctx);
   }
 
   invokeLambda(app, event, ctx) {
@@ -1429,6 +1979,51 @@ export function buildLambdaFunctionURLRequest(method, path, options = {}) {
   };
 }
 
+export function buildALBTargetGroupRequest(method, path, options = {}) {
+  const normalizedMethod = normalizeMethod(method);
+  const { rawPath, rawQueryString } = splitPathAndQuery(path, options.query);
+
+  const query = options.query && Object.keys(options.query).length > 0 ? cloneQuery(options.query) : rawQueryString ? parseRawQueryString(rawQueryString) : {};
+
+  const headers = { ...(options.headers ?? {}) };
+  const multiValueHeaders = {};
+  for (const [key, values] of Object.entries(options.multiHeaders ?? {})) {
+    multiValueHeaders[key] = Array.isArray(values) ? [...values].map((v) => String(v)) : [];
+  }
+  for (const [key, value] of Object.entries(headers)) {
+    if (key in multiValueHeaders) continue;
+    multiValueHeaders[key] = [String(value)];
+  }
+  for (const [key, values] of Object.entries(multiValueHeaders)) {
+    if (key in headers) continue;
+    if (Array.isArray(values) && values.length > 0) {
+      headers[key] = String(values[0]);
+    }
+  }
+
+  const bodyBytes = toBuffer(options.body);
+  const isBase64Encoded = Boolean(options.isBase64);
+
+  return {
+    httpMethod: normalizedMethod,
+    path: rawPath,
+    queryStringParameters: firstQueryValues(query),
+    multiValueQueryStringParameters: Object.keys(query).length > 0 ? cloneQuery(query) : undefined,
+    headers,
+    multiValueHeaders: Object.keys(multiValueHeaders).length > 0 ? multiValueHeaders : undefined,
+    requestContext: {
+      elb: {
+        targetGroupArn: String(
+          options.targetGroupArn ??
+            "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/test/0000000000000000",
+        ),
+      },
+    },
+    body: isBase64Encoded ? bodyBytes.toString("base64") : bodyBytes.toString("utf8"),
+    isBase64Encoded,
+  };
+}
+
 export function buildSQSEvent(queueArn, records = []) {
   const arn = String(queueArn ?? "").trim();
   return {
@@ -1479,6 +2074,70 @@ export function buildDynamoDBStreamEvent(streamArn, records = []) {
   };
 }
 
+export function buildKinesisEvent(streamArn, records = []) {
+  const arn = String(streamArn ?? "").trim();
+  return {
+    Records: records.map((r, idx) => {
+      const data = r?.kinesis?.data ?? r?.data ?? "";
+      const dataB64 =
+        typeof data === "string" ? data : Buffer.from(data ?? []).length > 0 ? Buffer.from(data ?? []).toString("base64") : "";
+      return {
+        eventID: String(r?.eventID ?? `kin-${idx + 1}`),
+        eventName: String(r?.eventName ?? "aws:kinesis:record"),
+        eventSource: "aws:kinesis",
+        eventSourceARN: String(r?.eventSourceARN ?? arn),
+        eventVersion: String(r?.eventVersion ?? "1.0"),
+        awsRegion: String(r?.awsRegion ?? "us-east-1"),
+        invokeIdentityArn: String(r?.invokeIdentityArn ?? ""),
+        kinesis: {
+          data: dataB64,
+          partitionKey: String(r?.kinesis?.partitionKey ?? r?.partitionKey ?? `pk-${idx + 1}`),
+          sequenceNumber: String(r?.kinesis?.sequenceNumber ?? r?.sequenceNumber ?? String(idx + 1)),
+          kinesisSchemaVersion: String(r?.kinesis?.kinesisSchemaVersion ?? "1.0"),
+        },
+      };
+    }),
+  };
+}
+
+export function buildSNSEvent(topicArn, records = []) {
+  const arn = String(topicArn ?? "").trim();
+  return {
+    Records: records.map((r, idx) => ({
+      EventSource: "aws:sns",
+      EventVersion: String(r?.EventVersion ?? r?.eventVersion ?? "1.0"),
+      EventSubscriptionArn: String(r?.EventSubscriptionArn ?? r?.eventSubscriptionArn ?? ""),
+      Sns: {
+        MessageId: String(r?.Sns?.MessageId ?? r?.sns?.MessageId ?? r?.messageId ?? `sns-${idx + 1}`),
+        TopicArn: String(r?.Sns?.TopicArn ?? r?.sns?.TopicArn ?? r?.topicArn ?? arn),
+        Subject: String(r?.Sns?.Subject ?? r?.sns?.Subject ?? r?.subject ?? ""),
+        Message: String(r?.Sns?.Message ?? r?.sns?.Message ?? r?.message ?? ""),
+        Timestamp: String(r?.Sns?.Timestamp ?? r?.sns?.Timestamp ?? "1970-01-01T00:00:00Z"),
+      },
+    })),
+  };
+}
+
+export function stepFunctionsTaskToken(event) {
+  if (!event || typeof event !== "object") return "";
+  const direct = (key) => {
+    const value = event[key];
+    return typeof value === "string" ? value.trim() : "";
+  };
+  return direct("taskToken") || direct("TaskToken") || direct("task_token");
+}
+
+export function buildStepFunctionsTaskTokenEvent(taskToken, payload = {}) {
+  const out = {};
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    for (const [key, value] of Object.entries(payload)) {
+      out[key] = value;
+    }
+  }
+  out.taskToken = String(taskToken ?? "").trim();
+  return out;
+}
+
 class Router {
   constructor() {
     this._routes = [];
@@ -1487,14 +2146,22 @@ class Router {
   add(method, pattern, handler, options = {}) {
     const normalizedMethod = normalizeMethod(method);
     const normalizedPattern = normalizePath(pattern);
-    const segments = normalizeRouteSegments(splitPath(normalizedPattern));
-    const normalizedPatternValue = segments.length > 0 ? `/${segments.join("/")}` : "/";
+    const parsed = parseRouteSegments(splitPath(normalizedPattern));
+    if (!parsed.ok) {
+      return;
+    }
+
+    const normalizedPatternValue = parsed.canonicalSegments.length > 0 ? `/${parsed.canonicalSegments.join("/")}` : "/";
     this._routes.push({
       method: normalizedMethod,
       pattern: normalizedPatternValue,
-      segments,
+      segments: parsed.segments,
       handler,
       authRequired: Boolean(options?.authRequired),
+      staticCount: parsed.staticCount,
+      paramCount: parsed.paramCount,
+      hasProxy: parsed.hasProxy,
+      order: this._routes.length,
     });
   }
 
@@ -1503,17 +2170,20 @@ class Router {
     const pathSegments = splitPath(normalizePath(path));
 
     const allowed = [];
+    let best = null;
     for (const route of this._routes) {
-      const params = matchPath(route.segments, pathSegments);
+      const params = matchRoute(route.segments, pathSegments);
       if (!params) {
         continue;
       }
       allowed.push(route.method);
       if (route.method === normalizedMethod) {
-        return { match: { route, params }, allowed };
+        if (!best || routeMoreSpecific(route, best.route)) {
+          best = { route, params };
+        }
       }
     }
-    return { match: null, allowed };
+    return { match: best, allowed };
   }
 }
 
@@ -1537,34 +2207,117 @@ function splitPath(path) {
   return value.split("/");
 }
 
-function normalizeRouteSegments(segments) {
-  if (!segments || segments.length === 0) return [];
-  return segments.map((segment) => {
-    const value = String(segment ?? "");
-    if (value.startsWith(":") && value.length > 1) {
-      return `{${value.slice(1)}}`;
+function parseRouteSegments(rawSegments) {
+  const rawList = Array.isArray(rawSegments) ? rawSegments : [];
+  const segments = [];
+  const canonicalSegments = [];
+  let staticCount = 0;
+  let paramCount = 0;
+  let hasProxy = false;
+
+  for (let i = 0; i < rawList.length; i += 1) {
+    let raw = String(rawList[i] ?? "").trim();
+    if (!raw) return { ok: false };
+
+    if (raw.startsWith(":") && raw.length > 1) {
+      raw = `{${raw.slice(1)}}`;
     }
-    return value;
-  });
-}
 
-function matchPath(patternSegments, pathSegments) {
-  if (patternSegments.length !== pathSegments.length) return null;
+    if (raw.startsWith("{") && raw.endsWith("}") && raw.length > 2) {
+      const inner = raw.slice(1, -1).trim();
+      if (inner.endsWith("+")) {
+        const name = inner.slice(0, -1).trim();
+        if (!name) return { ok: false };
+        if (i !== rawList.length - 1) return { ok: false };
+        segments.push({ kind: "proxy", value: name });
+        canonicalSegments.push(`{${name}+}`);
+        hasProxy = true;
+        continue;
+      }
 
-  const params = {};
-  for (let i = 0; i < patternSegments.length; i += 1) {
-    const pattern = patternSegments[i];
-    const segment = pathSegments[i];
-    if (!segment) return null;
-
-    if (pattern.startsWith("{") && pattern.endsWith("}") && pattern.length > 2) {
-      const name = pattern.slice(1, -1);
-      params[name] = segment;
+      if (!inner) return { ok: false };
+      segments.push({ kind: "param", value: inner });
+      canonicalSegments.push(`{${inner}}`);
+      paramCount += 1;
       continue;
     }
-    if (pattern !== segment) return null;
+
+    segments.push({ kind: "static", value: raw });
+    canonicalSegments.push(raw);
+    staticCount += 1;
+  }
+
+  return { ok: true, segments, canonicalSegments, staticCount, paramCount, hasProxy };
+}
+
+function matchRoute(patternSegments, pathSegments) {
+  const patterns = Array.isArray(patternSegments) ? patternSegments : [];
+  const paths = Array.isArray(pathSegments) ? pathSegments : [];
+  if (patterns.length === 0) return paths.length === 0 ? {} : null;
+
+  const last = patterns[patterns.length - 1];
+  const hasProxy = last?.kind === "proxy";
+
+  if (hasProxy) {
+    const prefixLen = patterns.length - 1;
+    if (paths.length <= prefixLen) return null;
+
+    const params = {};
+    for (let i = 0; i < prefixLen; i += 1) {
+      const pattern = patterns[i];
+      const segment = paths[i];
+      if (!segment) return null;
+      if (pattern.kind === "static") {
+        if (pattern.value !== segment) return null;
+      } else if (pattern.kind === "param") {
+        params[pattern.value] = segment;
+      } else {
+        return null;
+      }
+    }
+
+    params[last.value] = paths.slice(prefixLen).join("/");
+    return params;
+  }
+
+  if (patterns.length !== paths.length) return null;
+
+  const params = {};
+  for (let i = 0; i < patterns.length; i += 1) {
+    const pattern = patterns[i];
+    const segment = paths[i];
+    if (!segment) return null;
+    if (pattern.kind === "static") {
+      if (pattern.value !== segment) return null;
+    } else if (pattern.kind === "param") {
+      params[pattern.value] = segment;
+    } else {
+      return null;
+    }
   }
   return params;
+}
+
+function routeMoreSpecific(a, b) {
+  const aStatic = Number(a?.staticCount ?? 0);
+  const bStatic = Number(b?.staticCount ?? 0);
+  if (aStatic !== bStatic) return aStatic > bStatic;
+
+  const aParam = Number(a?.paramCount ?? 0);
+  const bParam = Number(b?.paramCount ?? 0);
+  if (aParam !== bParam) return aParam > bParam;
+
+  const aProxy = Boolean(a?.hasProxy ?? false);
+  const bProxy = Boolean(b?.hasProxy ?? false);
+  if (aProxy !== bProxy) return !aProxy && bProxy;
+
+  const aLen = Array.isArray(a?.segments) ? a.segments.length : 0;
+  const bLen = Array.isArray(b?.segments) ? b.segments.length : 0;
+  if (aLen !== bLen) return aLen > bLen;
+
+  const aOrder = Number(a?.order ?? 0);
+  const bOrder = Number(b?.order ?? 0);
+  return aOrder < bOrder;
 }
 
 function canonicalizeHeaders(headers) {
@@ -1615,6 +2368,25 @@ function toBuffer(body) {
   throw new TypeError("body must be Uint8Array, Buffer, or string");
 }
 
+async function* normalizeBodyStream(bodyStream) {
+  if (bodyStream === null || bodyStream === undefined) {
+    return;
+  }
+  if (typeof bodyStream[Symbol.asyncIterator] === "function") {
+    for await (const chunk of bodyStream) {
+      yield toBuffer(chunk);
+    }
+    return;
+  }
+  if (typeof bodyStream[Symbol.iterator] === "function") {
+    for (const chunk of bodyStream) {
+      yield toBuffer(chunk);
+    }
+    return;
+  }
+  throw new TypeError("bodyStream must be an Iterable or AsyncIterable");
+}
+
 function normalizeRequest(request) {
   const out = {};
   out.method = normalizeMethod(request?.method);
@@ -1646,9 +2418,18 @@ function normalizeResponse(response) {
   const out = {};
   out.status = response.status ?? 200;
   out.headers = canonicalizeHeaders(response.headers);
-  out.cookies = Array.isArray(response.cookies) ? [...response.cookies] : [];
+  out.cookies = Array.isArray(response.cookies) ? response.cookies.map((c) => String(c)) : [];
+  const setCookie = out.headers["set-cookie"];
+  if (Array.isArray(setCookie) && setCookie.length > 0) {
+    out.cookies.push(...setCookie.map((c) => String(c)));
+    delete out.headers["set-cookie"];
+  }
   out.body = toBuffer(response.body);
+  out.bodyStream = response.bodyStream !== null && response.bodyStream !== undefined ? normalizeBodyStream(response.bodyStream) : null;
   out.isBase64 = Boolean(response.isBase64);
+  if (out.isBase64 && out.bodyStream) {
+    throw new TypeError("bodyStream cannot be used with isBase64=true");
+  }
   return out;
 }
 
@@ -1823,7 +2604,7 @@ function finalizeP1Response(resp, requestId, origin, cors) {
   }
   if (origin && corsOriginAllowed(origin, cors)) {
     headers["access-control-allow-origin"] = [String(origin)];
-    headers.vary = ["origin"];
+    headers.vary = vary(headers.vary, "origin");
     if (cors?.allowCredentials) {
       headers["access-control-allow-credentials"] = ["true"];
     }
@@ -1984,6 +2765,10 @@ function requestFromAPIGatewayProxy(event) {
   };
 }
 
+function requestFromALBTargetGroup(event) {
+  return requestFromAPIGatewayProxy(event);
+}
+
 function requestFromAPIGatewayV2(event) {
   const cookies = Array.isArray(event?.cookies) ? event.cookies.map((v) => String(v)) : [];
   const headers = headersFromSingle(event?.headers, cookies.length > 0);
@@ -2098,6 +2883,17 @@ function apigatewayProxyResponseFromResponse(resp) {
   };
 }
 
+function albStatusDescription(status) {
+  const code = Number(status ?? 0);
+  const text = STATUS_CODES[String(code)] ?? "";
+  return text ? `${code} ${text}` : String(code);
+}
+
+function albTargetGroupResponseFromResponse(resp) {
+  const out = apigatewayProxyResponseFromResponse(resp);
+  return { ...out, statusDescription: albStatusDescription(out.statusCode) };
+}
+
 function headersFromSingle(headers, ignoreCookieHeader) {
   const out = {};
   if (!headers) return out;
@@ -2188,6 +2984,23 @@ function sqsQueueNameFromArn(arn) {
   if (!value) return "";
   const parts = value.split(":");
   return parts.length > 0 ? parts[parts.length - 1] : "";
+}
+
+function kinesisStreamNameFromArn(arn) {
+  const value = String(arn ?? "").trim();
+  if (!value) return "";
+  const parts = value.split(":");
+  const last = parts.length > 0 ? parts[parts.length - 1] : "";
+  if (!last) return "";
+  const idx = last.indexOf("/");
+  return idx >= 0 ? last.slice(idx + 1).trim() : last.trim();
+}
+
+function snsTopicNameFromArn(arn) {
+  const value = String(arn ?? "").trim();
+  if (!value) return "";
+  const parts = value.split(":");
+  return parts.length > 0 ? parts[parts.length - 1].trim() : "";
 }
 
 function eventBridgeRuleNameFromArn(arn) {

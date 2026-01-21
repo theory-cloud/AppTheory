@@ -16,6 +16,7 @@ export interface Response {
   headers: Headers;
   cookies: string[];
   body: Uint8Array;
+  bodyStream?: AsyncIterable<Uint8Array> | Iterable<Uint8Array> | null;
   isBase64: boolean;
 }
 
@@ -84,6 +85,27 @@ export interface APIGatewayProxyResponse {
   isBase64Encoded: boolean;
 }
 
+export interface ALBTargetGroupRequest {
+  httpMethod: string;
+  path: string;
+  queryStringParameters?: Record<string, string>;
+  multiValueQueryStringParameters?: Record<string, string[]>;
+  headers?: Record<string, string>;
+  multiValueHeaders?: Record<string, string[]>;
+  requestContext: { elb: { targetGroupArn: string } };
+  body?: string;
+  isBase64Encoded?: boolean;
+}
+
+export interface ALBTargetGroupResponse {
+  statusCode: number;
+  statusDescription: string;
+  headers: Record<string, string>;
+  multiValueHeaders: Record<string, string[]>;
+  body?: string;
+  isBase64Encoded: boolean;
+}
+
 export interface APIGatewayWebSocketProxyRequest extends APIGatewayProxyRequest {
   requestContext?: {
     stage?: string;
@@ -128,6 +150,73 @@ export interface DynamoDBStreamRecord {
 export interface DynamoDBStreamEventResponse {
   batchItemFailures: { itemIdentifier: string }[];
 }
+
+export interface KinesisEvent {
+  Records: KinesisEventRecord[];
+}
+
+export interface KinesisEventRecord {
+  eventID: string;
+  eventName?: string;
+  eventSource?: string;
+  eventSourceARN?: string;
+  awsRegion?: string;
+  eventVersion?: string;
+  invokeIdentityArn?: string;
+  kinesis?: KinesisRecord;
+  [key: string]: unknown;
+}
+
+export interface KinesisRecord {
+  data?: string;
+  partitionKey?: string;
+  sequenceNumber?: string;
+  kinesisSchemaVersion?: string;
+  [key: string]: unknown;
+}
+
+export type KinesisEventRecordInput = Partial<KinesisEventRecord> & {
+  data?: Uint8Array | string;
+  partitionKey?: string;
+  sequenceNumber?: string;
+  kinesis?: Partial<KinesisRecord> & { data?: Uint8Array | string };
+};
+
+export interface KinesisEventResponse {
+  batchItemFailures: { itemIdentifier: string }[];
+}
+
+export interface SNSEvent {
+  Records: SNSEventRecord[];
+}
+
+export interface SNSEventRecord {
+  EventSource?: string;
+  EventVersion?: string;
+  EventSubscriptionArn?: string;
+  Sns?: SNSEntity;
+  [key: string]: unknown;
+}
+
+export interface SNSEntity {
+  MessageId?: string;
+  TopicArn?: string;
+  Subject?: string;
+  Message?: string;
+  Timestamp?: string;
+  [key: string]: unknown;
+}
+
+export type SNSEventRecordInput = Partial<SNSEventRecord> & {
+  eventVersion?: string;
+  eventSubscriptionArn?: string;
+  messageId?: string;
+  topicArn?: string;
+  subject?: string;
+  message?: string;
+  sns?: Partial<SNSEntity>;
+  Sns?: Partial<SNSEntity>;
+};
 
 export interface EventBridgeEvent {
   version?: string;
@@ -294,6 +383,10 @@ export declare class FakeWebSocketManagementClient implements WebSocketManagemen
 
 export type SQSHandler = (ctx: EventContext, message: SQSMessage) => void | Promise<void>;
 
+export type KinesisHandler = (ctx: EventContext, record: KinesisEventRecord) => void | Promise<void>;
+
+export type SNSHandler = (ctx: EventContext, record: SNSEventRecord) => unknown | Promise<unknown>;
+
 export type DynamoDBStreamHandler = (ctx: EventContext, record: DynamoDBStreamRecord) => void | Promise<void>;
 
 export type EventBridgeHandler = (ctx: EventContext, event: EventBridgeEvent) => unknown | Promise<unknown>;
@@ -374,14 +467,19 @@ export declare class App {
   useEvents(middleware: EventMiddleware): this;
   webSocket(routeKey: string, handler: Handler): this;
   sqs(queueName: string, handler: SQSHandler): this;
+  kinesis(streamName: string, handler: KinesisHandler): this;
+  sns(topicName: string, handler: SNSHandler): this;
   eventBridge(selector: EventBridgeSelector, handler: EventBridgeHandler): this;
   dynamoDB(tableName: string, handler: DynamoDBStreamHandler): this;
   serve(request: Request, ctx?: unknown): Promise<Response>;
   serveAPIGatewayV2(event: APIGatewayV2HTTPRequest, ctx?: unknown): Promise<APIGatewayV2HTTPResponse>;
   serveLambdaFunctionURL(event: LambdaFunctionURLRequest, ctx?: unknown): Promise<LambdaFunctionURLResponse>;
   serveAPIGatewayProxy(event: APIGatewayProxyRequest, ctx?: unknown): Promise<APIGatewayProxyResponse>;
+  serveALB(event: ALBTargetGroupRequest, ctx?: unknown): Promise<ALBTargetGroupResponse>;
   serveWebSocket(event: APIGatewayWebSocketProxyRequest, ctx?: unknown): Promise<APIGatewayProxyResponse>;
   serveSQSEvent(event: SQSEvent, ctx?: unknown): Promise<SQSEventResponse>;
+  serveKinesisEvent(event: KinesisEvent, ctx?: unknown): Promise<KinesisEventResponse>;
+  serveSNSEvent(event: SNSEvent, ctx?: unknown): Promise<unknown[]>;
   serveEventBridge(event: EventBridgeEvent, ctx?: unknown): Promise<unknown>;
   serveDynamoDBStream(event: DynamoDBStreamEvent, ctx?: unknown): Promise<DynamoDBStreamEventResponse>;
   handleLambda(event: unknown, ctx?: unknown): Promise<unknown>;
@@ -399,11 +497,29 @@ export declare function createApp(options?: {
   webSocketClientFactory?: WebSocketClientFactory;
 }): App;
 
+export type LambdaFunctionURLStreamingHandler = (event: LambdaFunctionURLRequest, ctx?: unknown) => Promise<unknown>;
+
+export declare function createLambdaFunctionURLStreamingHandler(app: App): LambdaFunctionURLStreamingHandler;
+
 export declare function timeoutMiddleware(config?: TimeoutConfig): Middleware;
 
 export declare function text(status: number, body: string): Response;
 export declare function json(status: number, value: unknown): Response;
 export declare function binary(status: number, body: Uint8Array, contentType?: string): Response;
+export declare function html(status: number, body: Uint8Array | string): Response;
+export declare function htmlStream(
+  status: number,
+  chunks: AsyncIterable<Uint8Array | string> | Iterable<Uint8Array | string>,
+): Response;
+export declare function safeJSONForHTML(value: unknown): string;
+export declare function cacheControlSSR(): string;
+export declare function cacheControlSSG(): string;
+export declare function cacheControlISR(revalidateSeconds: number, staleWhileRevalidateSeconds?: number): string;
+export declare function etag(body: Uint8Array | string): string;
+export declare function matchesIfNoneMatch(headers: Headers, etag: string): boolean;
+export declare function vary(existing: string[] | null | undefined, ...add: string[]): string[];
+export declare function originURL(headers: Headers): string;
+export declare function clientIP(headers: Headers): string;
 
 export interface SSEEvent {
   id?: string;
@@ -456,10 +572,31 @@ export declare class TestEnv {
     webSocketClientFactory?: WebSocketClientFactory;
   }): App;
   invoke(app: App, request: Request, ctx?: unknown): Promise<Response>;
+  invokeStreaming(app: App, request: Request, ctx?: unknown): Promise<{
+    status: number;
+    headers: Headers;
+    cookies: string[];
+    chunks: Uint8Array[];
+    body: Uint8Array;
+    is_base64: boolean;
+    stream_error_code: string;
+  }>;
   invokeAPIGatewayV2(app: App, event: APIGatewayV2HTTPRequest, ctx?: unknown): Promise<APIGatewayV2HTTPResponse>;
   invokeLambdaFunctionURL(app: App, event: LambdaFunctionURLRequest, ctx?: unknown): Promise<LambdaFunctionURLResponse>;
+  invokeLambdaFunctionURLStreaming(app: App, event: LambdaFunctionURLRequest, ctx?: unknown): Promise<{
+    status: number;
+    headers: Headers;
+    cookies: string[];
+    chunks: Uint8Array[];
+    body: Uint8Array;
+    is_base64: boolean;
+    stream_error_code: string;
+  }>;
   invokeAPIGatewayProxy(app: App, event: APIGatewayProxyRequest, ctx?: unknown): Promise<APIGatewayProxyResponse>;
+  invokeALB(app: App, event: ALBTargetGroupRequest, ctx?: unknown): Promise<ALBTargetGroupResponse>;
   invokeSQS(app: App, event: SQSEvent, ctx?: unknown): Promise<SQSEventResponse>;
+  invokeKinesis(app: App, event: KinesisEvent, ctx?: unknown): Promise<KinesisEventResponse>;
+  invokeSNS(app: App, event: SNSEvent, ctx?: unknown): Promise<unknown[]>;
   invokeEventBridge(app: App, event: EventBridgeEvent, ctx?: unknown): Promise<unknown>;
   invokeDynamoDBStream(app: App, event: DynamoDBStreamEvent, ctx?: unknown): Promise<DynamoDBStreamEventResponse>;
   invokeLambda(app: App, event: unknown, ctx?: unknown): Promise<unknown>;
@@ -478,6 +615,19 @@ export declare function buildLambdaFunctionURLRequest(
   path: string,
   options?: { query?: Query; headers?: Record<string, string>; cookies?: string[]; body?: Uint8Array | string; isBase64?: boolean },
 ): LambdaFunctionURLRequest;
+
+export declare function buildALBTargetGroupRequest(
+  method: string,
+  path: string,
+  options?: {
+    query?: Query;
+    headers?: Record<string, string>;
+    multiHeaders?: Headers;
+    body?: Uint8Array | string;
+    isBase64?: boolean;
+    targetGroupArn?: string;
+  },
+): ALBTargetGroupRequest;
 
 export declare function buildSQSEvent(queueArn: string, records?: Array<Partial<SQSMessage>>): SQSEvent;
 
@@ -498,3 +648,11 @@ export declare function buildDynamoDBStreamEvent(
   streamArn: string,
   records?: Array<Partial<DynamoDBStreamRecord>>,
 ): DynamoDBStreamEvent;
+
+export declare function buildKinesisEvent(streamArn: string, records?: Array<KinesisEventRecordInput>): KinesisEvent;
+
+export declare function buildSNSEvent(topicArn: string, records?: Array<SNSEventRecordInput>): SNSEvent;
+
+export declare function stepFunctionsTaskToken(event: unknown): string;
+
+export declare function buildStepFunctionsTaskTokenEvent(taskToken: string, payload?: Record<string, unknown>): Record<string, unknown>;

@@ -59,6 +59,44 @@ test("unit test without AWS", async () => {
 });
 ```
 
+## Lambda Function URL streaming (M14)
+
+Streaming handler entrypoint:
+
+```ts
+import { createApp, createLambdaFunctionURLStreamingHandler } from "@theory-cloud/apptheory";
+
+const app = createApp();
+export const handler = createLambdaFunctionURLStreamingHandler(app);
+```
+
+Deterministic unit test (without AWS):
+
+```ts
+import assert from "node:assert/strict";
+
+import { buildLambdaFunctionURLRequest, createTestEnv } from "@theory-cloud/apptheory";
+
+const env = createTestEnv();
+const app = env.app();
+
+app.get("/stream", () => ({
+  status: 200,
+  headers: { "content-type": ["text/plain; charset=utf-8"] },
+  cookies: [],
+  body: Buffer.alloc(0),
+  bodyStream: (async function* () {
+    yield Buffer.from("hello", "utf8");
+    yield Buffer.from("world", "utf8");
+  })(),
+  isBase64: false,
+}));
+
+const event = buildLambdaFunctionURLRequest("GET", "/stream");
+const resp = await env.invokeLambdaFunctionURLStreaming(app, event);
+assert.deepEqual(resp.chunks.map((c) => Buffer.from(c).toString("utf8")), ["hello", "world"]);
+```
+
 ## Lint
 
 ```bash

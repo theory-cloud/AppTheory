@@ -12,6 +12,7 @@ type Response struct {
 	Cookies    []string
 	Body       []byte
 	BodyReader io.Reader
+	BodyStream BodyStream
 	IsBase64   bool
 }
 
@@ -75,6 +76,10 @@ func normalizeResponse(in *Response) Response {
 		out.Status = 200
 	}
 	out.Headers = canonicalizeHeaders(out.Headers)
+	if setCookies := out.Headers["set-cookie"]; len(setCookies) > 0 {
+		out.Cookies = append(append([]string(nil), out.Cookies...), setCookies...)
+		delete(out.Headers, "set-cookie")
+	}
 	out.Body = append([]byte(nil), out.Body...)
 	if out.Cookies != nil {
 		out.Cookies = append([]string(nil), out.Cookies...)

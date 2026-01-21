@@ -6,7 +6,7 @@ import argparse
 import base64
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +37,8 @@ class CanonicalResponse:
     cookies: list[str]
     body: bytes
     is_base64: bool
+    chunks: list[bytes] = field(default_factory=list)
+    stream_error_code: str = ""
 
 
 class AppError(Exception):
@@ -52,7 +54,7 @@ def stable_json(value: Any) -> str:
 
 def list_fixture_files(fixtures_root: Path) -> list[Path]:
     files: list[Path] = []
-    for tier in ("p0", "p1", "p2", "m1", "m2", "m3", "m12"):
+    for tier in ("p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14"):
         tier_dir = fixtures_root / tier
         if not tier_dir.exists():
             continue
@@ -703,6 +705,8 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
         return run_fixture_m3(fixture)
     if tier == "m12":
         return run_fixture_m12(fixture)
+    if tier == "m14":
+        return run_fixture_m14(fixture)
 
     setup = fixture.get("setup", {})
     input_ = fixture.get("input", {})
@@ -894,6 +898,30 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
 
         return handler
 
+    if name == "stepfunctions_task_token_helpers":
+        def handler(_ctx):
+            return runtime.json(
+                200,
+                {
+                    "from_taskToken": runtime.stepfunctions_task_token({"taskToken": " tok-a "}),
+                    "from_TaskToken": runtime.stepfunctions_task_token({"TaskToken": " tok-b "}),
+                    "from_task_token": runtime.stepfunctions_task_token({"task_token": " tok-c "}),
+                    "from_precedence": runtime.stepfunctions_task_token(
+                        {
+                            "TaskToken": " tok-b ",
+                            "task_token": " tok-c ",
+                            "taskToken": " tok-a ",
+                        }
+                    ),
+                    "built": runtime.build_stepfunctions_task_token_event(
+                        " tok-built ",
+                        {"foo": "bar", "taskToken": "ignored"},
+                    ),
+                },
+            )
+
+        return handler
+
     if name == "large_response":
         return lambda _ctx: runtime.text(200, "12345")
 
@@ -926,6 +954,136 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
                 cookies=[],
                 body=body,
                 is_base64=False,
+            )
+
+        return handler
+
+    if name == "stream_mutate_headers_after_first_chunk":
+        def handler(_ctx):
+            resp = runtime.Response(
+                status=200,
+                headers={
+                    "content-type": ["text/plain; charset=utf-8"],
+                    "x-phase": ["before"],
+                },
+                cookies=["a=b; Path=/"],
+                body=b"",
+                is_base64=False,
+            )
+
+            def gen():
+                yield b"a"
+                resp.headers["x-phase"] = ["after"]
+                resp.cookies.append("c=d; Path=/")
+                yield b"b"
+
+            resp.body_stream = gen()
+            return resp
+
+        return handler
+
+    if name == "stream_error_after_first_chunk":
+        def handler(_ctx):
+            def gen():
+                yield b"hello"
+                raise runtime.AppError("app.internal", "boom")
+
+            return runtime.Response(
+                status=200,
+                headers={"content-type": ["text/plain; charset=utf-8"]},
+                cookies=[],
+                body=b"",
+                is_base64=False,
+                body_stream=gen(),
+            )
+
+        return handler
+
+    if name == "html_basic":
+        return lambda _ctx: runtime.html(200, "<h1>Hello</h1>")
+
+    if name == "html_stream_two_chunks":
+        def handler(_ctx):
+            def gen():
+                yield b"<h1>"
+                yield b"Hello</h1>"
+
+            return runtime.html_stream(200, gen())
+
+        return handler
+
+    if name == "safe_json_for_html":
+        def handler(_ctx):
+            return runtime.text(
+                200,
+                runtime.safe_json_for_html(
+                    {
+                        "html": "</script><div>&</div><",
+                        "amp": "a&b",
+                        "ls": "line\u2028sep",
+                        "ps": "para\u2029sep",
+                    }
+                ),
+            )
+
+        return handler
+
+    if name == "cookies_from_set_cookie_header":
+        def handler(_ctx):
+            return runtime.Response(
+                status=200,
+                headers={
+                    "content-type": ["text/plain; charset=utf-8"],
+                    "set-cookie": ["a=b; Path=/", "c=d; Path=/"],
+                },
+                cookies=["e=f; Path=/"],
+                body=b"ok",
+                is_base64=False,
+            )
+
+        return handler
+
+    if name == "header_multivalue":
+        def handler(_ctx):
+            return runtime.Response(
+                status=200,
+                headers={"content-type": ["text/plain; charset=utf-8"], "x-multi": ["a", "b"]},
+                cookies=[],
+                body=b"ok",
+                is_base64=False,
+            )
+
+        return handler
+
+    if name == "cache_helpers":
+        def handler(ctx):
+            tag = runtime.etag("hello")
+            return runtime.json(
+                200,
+                {
+                    "cache_control_ssr": runtime.cache_control_ssr(),
+                    "cache_control_ssg": runtime.cache_control_ssg(),
+                    "cache_control_isr": runtime.cache_control_isr(60, 30),
+                    "etag": tag,
+                    "if_none_match_hit": runtime.matches_if_none_match(
+                        getattr(getattr(ctx, "request", None), "headers", {}) or {},
+                        tag,
+                    ),
+                    "vary": runtime.vary(["origin"], "accept-encoding", "Origin"),
+                },
+            )
+
+        return handler
+
+    if name == "cloudfront_helpers":
+        def handler(ctx):
+            headers = getattr(getattr(ctx, "request", None), "headers", {}) or {}
+            return runtime.json(
+                200,
+                {
+                    "origin_url": runtime.origin_url(headers),
+                    "client_ip": runtime.client_ip(headers),
+                },
             )
 
         return handler
@@ -1006,6 +1164,48 @@ def _built_in_sqs_handler(name: str):
 
         return handler
 
+    return None
+
+
+def _built_in_kinesis_handler(name: str):
+    if name == "kinesis_noop":
+        return lambda _ctx, _record: None
+
+    if name == "kinesis_always_fail":
+        def handler(_ctx, _record):
+            raise RuntimeError("fail")
+
+        return handler
+
+    if name == "kinesis_fail_on_data":
+        def handler(_ctx, record):
+            data_b64 = str(((record or {}).get("kinesis") or {}).get("data") or "").strip()
+            decoded = base64.b64decode(data_b64) if data_b64 else b""
+            if decoded.decode("utf-8", errors="ignore").strip() == "fail":
+                raise RuntimeError("fail")
+
+        return handler
+
+    if name == "kinesis_requires_event_middleware":
+        def handler(ctx, _record):
+            if ctx.get("mw") != "ok":
+                raise RuntimeError("missing middleware value")
+            trace = ctx.get("trace")
+            if not isinstance(trace, list) or ",".join(trace) != "evt_mw_a,evt_mw_b":
+                raise RuntimeError("bad trace")
+
+        return handler
+
+    return None
+
+
+def _built_in_sns_handler(name: str):
+    if name == "sns_static_a":
+        return lambda _ctx, _record: {"handler": "a"}
+    if name == "sns_static_b":
+        return lambda _ctx, _record: {"handler": "b"}
+    if name == "sns_echo_event_middleware":
+        return lambda ctx, _record: {"mw": ctx.get("mw"), "trace": ctx.get("trace")}
     return None
 
 
@@ -1177,6 +1377,18 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
         if handler is None:
             raise RuntimeError(f"unknown sqs handler {route.get('handler')!r}")
         app.sqs(str(route.get("queue") or ""), handler)
+
+    for route in setup.get("kinesis", []) or []:
+        handler = _built_in_kinesis_handler(str(route.get("handler") or ""))
+        if handler is None:
+            raise RuntimeError(f"unknown kinesis handler {route.get('handler')!r}")
+        app.kinesis(str(route.get("stream") or ""), handler)
+
+    for route in setup.get("sns", []) or []:
+        handler = _built_in_sns_handler(str(route.get("handler") or ""))
+        if handler is None:
+            raise RuntimeError(f"unknown sns handler {route.get('handler')!r}")
+        app.sns(str(route.get("topic") or ""), handler)
 
     for route in setup.get("dynamodb", []) or []:
         handler = _built_in_dynamodb_stream_handler(str(route.get("handler") or ""))
@@ -1415,6 +1627,90 @@ def run_fixture_m12(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespon
     expected = fixture.get("expect", {}).get("response", {})
     return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
 
+
+def run_fixture_m14(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+    runtime = _load_apptheory_runtime()
+    ids = runtime.ManualIdGenerator()
+    ids.push("req_test_123")
+
+    setup = fixture.get("setup", {})
+    limits = setup.get("limits", {}) or {}
+    app = runtime.create_app(
+        tier="p1",
+        id_generator=ids,
+        limits=runtime.Limits(
+            max_request_bytes=int(limits.get("max_request_bytes") or 0),
+            max_response_bytes=int(limits.get("max_response_bytes") or 0),
+        ),
+        auth_hook=lambda ctx: _fixture_auth_hook(runtime, ctx),
+    )
+
+    for name in setup.get("middlewares", []) or []:
+        mw = _built_in_m12_middleware(runtime, str(name or "").strip())
+        if mw is None:
+            raise RuntimeError(f"unknown middleware {name!r}")
+        app.use(mw)
+
+    for route in setup.get("routes", []) or []:
+        name = str(route.get("handler", ""))
+        handler = _built_in_apptheory_handler(runtime, name)
+        if handler is None:
+            raise RuntimeError(f"unknown handler {name!r}")
+        app.handle(
+            route.get("method", ""),
+            route.get("path", ""),
+            handler,
+            auth_required=bool(route.get("auth_required")),
+        )
+
+    input_ = fixture.get("input", {}).get("request", {})
+    req_body = decode_fixture_body(input_.get("body"))
+    req = runtime.Request(
+        method=input_.get("method", ""),
+        path=input_.get("path", ""),
+        query=input_.get("query") or {},
+        headers=input_.get("headers") or {},
+        body=req_body,
+        is_base64=bool(input_.get("is_base64")),
+    )
+
+    runtime_ctx = {"remaining_ms": int((fixture.get("input", {}).get("context", {}) or {}).get("remaining_ms") or 0)}
+    resp = app.serve(req, runtime_ctx)
+
+    chunks: list[bytes] = []
+    parts: list[bytes] = []
+    if resp.body:
+        chunks.append(bytes(resp.body))
+        parts.append(bytes(resp.body))
+
+    stream_error_code = ""
+    stream = getattr(resp, "body_stream", None)
+    if stream is not None:
+        try:
+            for chunk in stream:
+                b = bytes(chunk or b"")
+                chunks.append(b)
+                parts.append(b)
+        except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, runtime.AppError):
+                stream_error_code = str(exc.code or "")
+            else:
+                stream_error_code = "app.internal"
+
+    actual = CanonicalResponse(
+        status=resp.status,
+        headers=resp.headers,
+        cookies=resp.cookies,
+        body=b"".join(parts),
+        is_base64=resp.is_base64,
+        chunks=chunks,
+        stream_error_code=stream_error_code,
+    )
+
+    expected = fixture.get("expect", {}).get("response", {})
+    return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
+
+
 def run_fixture_p0(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     runtime = _load_apptheory_runtime()
     app = runtime.create_app(tier="p0")
@@ -1437,6 +1733,9 @@ def run_fixture_p0(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
         elif source == "lambda_function_url":
             out = app.serve_lambda_function_url(event)
             actual = canonical_response_from_lambda_function_url(out)
+        elif source == "alb":
+            out = app.serve_alb(event)
+            actual = canonical_response_from_apigw_proxy(out)
         else:
             raise RuntimeError(f"unknown aws_event source {source!r}")
 
@@ -1684,6 +1983,12 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
 
 def _fixture_policy_hook(runtime, ctx):
     headers = getattr(getattr(ctx, "request", None), "headers", {}) or {}
+    if str((headers.get("x-force-rate-limit-content-type") or [""])[0]).strip():
+        return runtime.PolicyDecision(
+            code="app.rate_limited",
+            message="rate limited",
+            headers={"retry-after": ["1"], "Content-Type": ["text/plain; charset=utf-8"]},
+        )
     if str((headers.get("x-force-rate-limit") or [""])[0]).strip():
         return runtime.PolicyDecision(
             code="app.rate_limited",
@@ -1728,6 +2033,10 @@ def run_fixture_compare(
     if not compare_headers(expected.get("headers"), actual.headers):
         return False, "headers mismatch", actual, expected, app
 
+    expected_stream_error_code = str(expected.get("stream_error_code") or "")
+    if expected_stream_error_code != actual.stream_error_code:
+        return False, "stream_error_code mismatch", actual, expected, app
+
     if "body_json" in expected:
         try:
             actual_json = json.loads(actual.body.decode("utf-8"))
@@ -1735,6 +2044,25 @@ def run_fixture_compare(
             return False, "body_json mismatch", actual, expected, app
         if expected["body_json"] != actual_json:
             return False, "body_json mismatch", actual, expected, app
+
+        if (fixture.get("expect", {}).get("logs") or []) != app.logs:
+            return False, "logs mismatch", actual, expected, app
+        if (fixture.get("expect", {}).get("metrics") or []) != app.metrics:
+            return False, "metrics mismatch", actual, expected, app
+        if (fixture.get("expect", {}).get("spans") or []) != app.spans:
+            return False, "spans mismatch", actual, expected, app
+
+        return True, "", actual, expected, app
+
+    expected_chunks_raw = expected.get("chunks")
+    if isinstance(expected_chunks_raw, list) and len(expected_chunks_raw) > 0:
+        expected_chunks = [decode_fixture_body(b) for b in expected_chunks_raw]
+        if expected_chunks != actual.chunks:
+            return False, "chunks mismatch", actual, expected, app
+
+        expected_body = decode_fixture_body(expected.get("body")) if expected.get("body") is not None else b"".join(expected_chunks)
+        if expected_body != actual.body:
+            return False, "body mismatch", actual, expected, app
 
         if (fixture.get("expect", {}).get("logs") or []) != app.logs:
             return False, "logs mismatch", actual, expected, app

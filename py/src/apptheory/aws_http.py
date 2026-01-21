@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import http
 import urllib.parse
 from typing import Any
 
@@ -32,6 +33,23 @@ def request_from_apigw_proxy(event: dict[str, Any]) -> Request:
     return Request(
         method=str(event.get("httpMethod") or request_context.get("httpMethod") or ""),
         path=str(event.get("path") or request_context.get("path") or "/"),
+        query=query,
+        headers=headers,
+        body=str(event.get("body") or ""),
+        is_base64=bool(event.get("isBase64Encoded")),
+    )
+
+
+def request_from_alb_target_group(event: dict[str, Any]) -> Request:
+    headers = _headers_from_proxy(event.get("headers"), event.get("multiValueHeaders"))
+    query = _query_from_proxy(
+        event.get("queryStringParameters"),
+        event.get("multiValueQueryStringParameters"),
+    )
+
+    return Request(
+        method=str(event.get("httpMethod") or ""),
+        path=str(event.get("path") or "/"),
         query=query,
         headers=headers,
         body=str(event.get("body") or ""),
@@ -101,6 +119,40 @@ def apigw_proxy_response_from_response(resp: Response) -> dict[str, Any]:
 
     return {
         "statusCode": int(resp.status),
+        "headers": headers,
+        "multiValueHeaders": multi,
+        "body": body,
+        "isBase64Encoded": bool(resp.is_base64),
+    }
+
+
+def alb_target_group_response_from_response(resp: Response) -> dict[str, Any]:
+    headers: dict[str, str] = {}
+    multi: dict[str, list[str]] = {}
+    for key, values in (resp.headers or {}).items():
+        if not values:
+            continue
+        headers[str(key)] = str(values[0])
+        multi[str(key)] = [str(v) for v in values]
+
+    if resp.cookies:
+        headers["set-cookie"] = str(resp.cookies[0])
+        multi["set-cookie"] = [str(c) for c in resp.cookies]
+
+    code = int(resp.status)
+    phrase = ""
+    try:
+        phrase = http.HTTPStatus(code).phrase
+    except Exception:  # noqa: BLE001
+        phrase = ""
+
+    body = (
+        base64.b64encode(resp.body).decode("ascii") if resp.is_base64 else resp.body.decode("utf-8", errors="replace")
+    )
+
+    return {
+        "statusCode": code,
+        "statusDescription": f"{code} {phrase}".strip(),
         "headers": headers,
         "multiValueHeaders": multi,
         "body": body,
@@ -182,6 +234,57 @@ def build_lambda_function_url_request(
                 "path": raw_path,
             }
         },
+        "body": body_str,
+        "isBase64Encoded": bool(is_base64),
+    }
+
+
+def build_alb_target_group_request(
+    method: str,
+    path: str,
+    *,
+    query: dict[str, list[str]] | None = None,
+    headers: dict[str, str] | None = None,
+    multi_headers: dict[str, list[str]] | None = None,
+    body: Any = b"",
+    is_base64: bool = False,
+    target_group_arn: str = "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/test/0000000000000000",
+) -> dict[str, Any]:
+    raw_path, raw_query_string = _split_path_and_query(path, query)
+
+    query_map = query or {}
+    if not query_map and raw_query_string:
+        query_map = _parse_raw_query_string(raw_query_string)
+
+    single_query: dict[str, str] = {}
+    for key, values in query_map.items():
+        if values:
+            single_query[str(key)] = str(values[0])
+
+    headers_single: dict[str, str] = dict(headers or {})
+    headers_multi: dict[str, list[str]] = {
+        str(k): [str(v) for v in (vs or [])] for k, vs in (multi_headers or {}).items()
+    }
+    for key, value in headers_single.items():
+        if key not in headers_multi:
+            headers_multi[key] = [str(value)]
+    for key, values in headers_multi.items():
+        if key not in headers_single and values:
+            headers_single[key] = str(values[0])
+
+    body_bytes = to_bytes(body)
+    body_str = (
+        base64.b64encode(body_bytes).decode("ascii") if is_base64 else body_bytes.decode("utf-8", errors="replace")
+    )
+
+    return {
+        "httpMethod": str(method or "").strip().upper(),
+        "path": raw_path,
+        "queryStringParameters": single_query or None,
+        "multiValueQueryStringParameters": query_map or None,
+        "headers": headers_single,
+        "multiValueHeaders": headers_multi or None,
+        "requestContext": {"elb": {"targetGroupArn": str(target_group_arn or "").strip()}},
         "body": body_str,
         "isBase64Encoded": bool(is_base64),
     }

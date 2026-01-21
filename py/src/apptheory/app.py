@@ -4,13 +4,16 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from apptheory.aws_http import (
+    alb_target_group_response_from_response,
     apigw_proxy_response_from_response,
     apigw_v2_response_from_response,
     lambda_function_url_response_from_response,
+    request_from_alb_target_group,
     request_from_apigw_proxy,
     request_from_apigw_v2,
     request_from_lambda_function_url,
 )
+from apptheory.cache import vary
 from apptheory.clock import Clock, RealClock
 from apptheory.context import Context, EventContext, WebSocketClientFactory, WebSocketContext
 from apptheory.errors import (
@@ -33,6 +36,8 @@ PolicyHook = Callable[[Context], "PolicyDecision | None"]
 EventHandler = Callable[[EventContext, dict[str, Any]], Any]
 EventMiddleware = Callable[[EventContext, dict[str, Any], Callable[[], Any]], Any]
 SQSHandler = Callable[[EventContext, dict[str, Any]], None]
+KinesisHandler = Callable[[EventContext, dict[str, Any]], None]
+SNSHandler = Callable[[EventContext, dict[str, Any]], Any]
 DynamoDBStreamHandler = Callable[[EventContext, dict[str, Any]], None]
 EventBridgeHandler = Callable[[EventContext, dict[str, Any]], Any]
 WebSocketHandler = Callable[[Context], Response]
@@ -122,6 +127,8 @@ class App:
     _observability: ObservabilityHooks
     _policy_hook: PolicyHook | None
     _sqs_routes: list[tuple[str, SQSHandler]]
+    _kinesis_routes: list[tuple[str, KinesisHandler]]
+    _sns_routes: list[tuple[str, SNSHandler]]
     _eventbridge_routes: list[tuple[EventBridgeSelector, EventBridgeHandler]]
     _dynamodb_routes: list[tuple[str, DynamoDBStreamHandler]]
     _ws_routes: dict[str, WebSocketHandler]
@@ -155,6 +162,8 @@ class App:
         self._observability = observability or ObservabilityHooks()
         self._policy_hook = policy_hook
         self._sqs_routes = []
+        self._kinesis_routes = []
+        self._sns_routes = []
         self._eventbridge_routes = []
         self._dynamodb_routes = []
         self._ws_routes = {}
@@ -183,6 +192,20 @@ class App:
         if not name:
             return self
         self._sqs_routes.append((name, handler))
+        return self
+
+    def kinesis(self, stream_name: str, handler: KinesisHandler) -> App:
+        name = str(stream_name or "").strip()
+        if not name:
+            return self
+        self._kinesis_routes.append((name, handler))
+        return self
+
+    def sns(self, topic_name: str, handler: SNSHandler) -> App:
+        name = str(topic_name or "").strip()
+        if not name:
+            return self
+        self._sns_routes.append((name, handler))
         return self
 
     def event_bridge(self, selector: EventBridgeSelector, handler: EventBridgeHandler) -> App:
@@ -417,7 +440,11 @@ class App:
             return finish(response_for_error_with_request_id(exc, request_id), "app.internal")
 
         resp = normalize_response(resp)
-        if self._limits.max_response_bytes > 0 and len(resp.body) > self._limits.max_response_bytes:
+        if (
+            self._limits.max_response_bytes > 0
+            and resp.body_stream is None
+            and len(resp.body) > self._limits.max_response_bytes
+        ):
             return finish(
                 error_response_with_request_id("app.too_large", "response too large", request_id=request_id),
                 "app.too_large",
@@ -510,6 +537,15 @@ class App:
 
         resp = self.serve(request, ctx)
         return apigw_proxy_response_from_response(resp)
+
+    def serve_alb(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        try:
+            request = request_from_alb_target_group(event)
+        except Exception as exc:  # noqa: BLE001
+            return alb_target_group_response_from_response(response_for_error(exc))
+
+        resp = self.serve(request, ctx)
+        return alb_target_group_response_from_response(resp)
 
     def serve_websocket(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
         try:
@@ -711,6 +747,83 @@ class App:
 
         return {"batchItemFailures": failures}
 
+    def _kinesis_handler_for_event(self, event: dict[str, Any]) -> KinesisHandler | None:
+        records = event.get("Records") or []
+        if not isinstance(records, list) or not records:
+            return None
+        first = records[0] if isinstance(records[0], dict) else {}
+        stream_name = _kinesis_stream_name_from_arn(str(first.get("eventSourceARN") or ""))
+        if not stream_name:
+            return None
+        for name, handler in self._kinesis_routes:
+            if name == stream_name:
+                return handler
+        return None
+
+    def serve_kinesis(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        records = event.get("Records") or []
+        if not isinstance(records, list):
+            records = []
+
+        handler = self._kinesis_handler_for_event(event)
+        if handler is None:
+            failures = []
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                event_id = str(record.get("eventID") or "").strip()
+                if event_id:
+                    failures.append({"itemIdentifier": event_id})
+            return {"batchItemFailures": failures}
+
+        evt_ctx = self._event_context(ctx)
+        wrapped = self._apply_event_middlewares(handler)
+        failures = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            try:
+                wrapped(evt_ctx, record)
+            except Exception:  # noqa: BLE001
+                event_id = str(record.get("eventID") or "").strip()
+                if event_id:
+                    failures.append({"itemIdentifier": event_id})
+
+        return {"batchItemFailures": failures}
+
+    def _sns_handler_for_event(self, event: dict[str, Any]) -> SNSHandler | None:
+        records = event.get("Records") or []
+        if not isinstance(records, list) or not records:
+            return None
+        first = records[0] if isinstance(records[0], dict) else {}
+        sns = first.get("Sns") if isinstance(first.get("Sns"), dict) else {}
+        topic_name = _sns_topic_name_from_arn(str(sns.get("TopicArn") or ""))
+        if not topic_name:
+            return None
+        for name, handler in self._sns_routes:
+            if name == topic_name:
+                return handler
+        return None
+
+    def serve_sns(self, event: dict[str, Any], ctx: Any | None = None) -> Any:
+        records = event.get("Records") or []
+        if not isinstance(records, list):
+            records = []
+
+        handler = self._sns_handler_for_event(event)
+        if handler is None:
+            raise RuntimeError("apptheory: unrecognized sns topic")
+
+        evt_ctx = self._event_context(ctx)
+        wrapped = self._apply_event_middlewares(handler)
+        outputs: list[Any] = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            outputs.append(wrapped(evt_ctx, record))
+
+        return outputs
+
     def handle_lambda(self, event: Any, ctx: Any | None = None) -> Any:
         if not isinstance(event, dict):
             raise RuntimeError("apptheory: unknown event type")
@@ -718,11 +831,15 @@ class App:
         records = event.get("Records") or []
         if isinstance(records, list) and records:
             first = records[0] if isinstance(records[0], dict) else {}
-            source = str(first.get("eventSource") or "").strip()
+            source = str(first.get("eventSource") or first.get("EventSource") or "").strip()
             if source == "aws:sqs":
                 return self.serve_sqs(event, ctx=ctx)
             if source == "aws:dynamodb":
                 return self.serve_dynamodb_stream(event, ctx=ctx)
+            if source == "aws:kinesis":
+                return self.serve_kinesis(event, ctx=ctx)
+            if source == "aws:sns":
+                return self.serve_sns(event, ctx=ctx)
 
         if "detail-type" in event or "detailType" in event:
             return self.serve_eventbridge(event, ctx=ctx)
@@ -735,6 +852,12 @@ class App:
                 if "routeKey" in event:
                     return self.serve_apigw_v2(event, ctx=ctx)
                 return self.serve_lambda_function_url(event, ctx=ctx)
+            if (
+                isinstance(request_context, dict)
+                and isinstance(request_context.get("elb"), dict)
+                and str((request_context.get("elb") or {}).get("targetGroupArn") or "").strip()
+            ):
+                return self.serve_alb(event, ctx=ctx)
             if "httpMethod" in event:
                 return self.serve_apigw_proxy(event, ctx=ctx)
 
@@ -823,6 +946,27 @@ def _sqs_queue_name_from_arn(arn: str) -> str:
         return ""
     parts = value.split(":")
     return parts[-1] if parts else ""
+
+
+def _kinesis_stream_name_from_arn(arn: str) -> str:
+    value = str(arn or "").strip()
+    if not value:
+        return ""
+    parts = value.split(":")
+    last = parts[-1] if parts else ""
+    if not last:
+        return ""
+    if "/" in last:
+        return last.split("/", 1)[1].strip()
+    return last.strip()
+
+
+def _sns_topic_name_from_arn(arn: str) -> str:
+    value = str(arn or "").strip()
+    if not value:
+        return ""
+    parts = value.split(":")
+    return parts[-1].strip() if parts else ""
 
 
 def _eventbridge_rule_name_from_arn(arn: str) -> str:
@@ -946,7 +1090,7 @@ def _finalize_p1_response(resp: Response, request_id: str, origin: str, cors: CO
         headers["x-request-id"] = [str(request_id)]
     if origin and _cors_origin_allowed(origin, cors):
         headers["access-control-allow-origin"] = [str(origin)]
-        headers["vary"] = ["origin"]
+        headers["vary"] = vary(headers.get("vary"), "origin")
         if cors.allow_credentials:
             headers["access-control-allow-credentials"] = ["true"]
         allow_headers = _cors_allow_headers_value(cors)
@@ -959,6 +1103,7 @@ def _finalize_p1_response(resp: Response, request_id: str, origin: str, cors: CO
             cookies=resp.cookies,
             body=resp.body,
             is_base64=resp.is_base64,
+            body_stream=resp.body_stream,
         )
     )
 

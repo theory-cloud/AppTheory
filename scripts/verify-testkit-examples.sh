@@ -13,7 +13,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 node examples/testkit/ts.mjs
+node examples/testkit/ts-streaming.mjs
 python3 examples/testkit/py.py
 
 echo "examples: PASS"
-

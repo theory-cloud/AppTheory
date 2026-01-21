@@ -14,6 +14,7 @@ import (
 
 	"github.com/theory-cloud/apptheory"
 	"github.com/theory-cloud/apptheory/pkg/naming"
+	"github.com/theory-cloud/apptheory/testkit"
 )
 
 func runFixtureP0(f Fixture) error {
@@ -76,6 +77,13 @@ func serveFixtureP0AWS(app *apptheory.App, awsEvent *FixtureAWSEvent) (apptheory
 		}
 		out := app.ServeLambdaFunctionURL(context.Background(), event)
 		return responseFromLambdaFunctionURL(out)
+	case "alb":
+		var event events.ALBTargetGroupRequest
+		if err := json.Unmarshal(awsEvent.Event, &event); err != nil {
+			return apptheory.Response{}, fmt.Errorf("parse alb event: %w", err)
+		}
+		out := app.ServeALB(context.Background(), event)
+		return responseFromALBTargetGroup(out)
 	default:
 		return apptheory.Response{}, fmt.Errorf("unknown aws_event source %q", awsEvent.Source)
 	}
@@ -204,6 +212,40 @@ func responseFromLambdaFunctionURL(resp events.LambdaFunctionURLResponse) (appth
 	}, nil
 }
 
+func responseFromALBTargetGroup(resp events.ALBTargetGroupResponse) (apptheory.Response, error) {
+	body := []byte(resp.Body)
+	if resp.IsBase64Encoded {
+		decoded, err := base64.StdEncoding.DecodeString(resp.Body)
+		if err != nil {
+			return apptheory.Response{}, fmt.Errorf("decode alb response body: %w", err)
+		}
+		body = decoded
+	}
+
+	headers := map[string][]string{}
+	if len(resp.MultiValueHeaders) > 0 {
+		for key, values := range resp.MultiValueHeaders {
+			headers[key] = append([]string(nil), values...)
+		}
+	} else {
+		for key, value := range resp.Headers {
+			headers[key] = []string{value}
+		}
+	}
+
+	headers = canonicalizeHeaders(headers)
+	cookies := append([]string(nil), headers["set-cookie"]...)
+	delete(headers, "set-cookie")
+
+	return apptheory.Response{
+		Status:   resp.StatusCode,
+		Headers:  headers,
+		Cookies:  cookies,
+		Body:     body,
+		IsBase64: resp.IsBase64Encoded,
+	}, nil
+}
+
 var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 	"static_pong": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		return apptheory.Text(200, "pong"), nil
@@ -294,6 +336,129 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		events <- apptheory.SSEEvent{ID: "3", Data: ""}
 		close(events)
 		return apptheory.SSEStreamResponse(ctx.Context(), 200, events)
+	},
+	"stream_mutate_headers_after_first_chunk": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		resp := &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"text/plain; charset=utf-8"},
+				"x-phase":      {"before"},
+			},
+			Cookies:  []string{"a=b; Path=/"},
+			Body:     nil,
+			IsBase64: false,
+		}
+
+		ch := make(chan apptheory.StreamChunk, 2)
+		resp.BodyStream = ch
+		go func() {
+			defer close(ch)
+			ch <- apptheory.StreamChunk{Bytes: []byte("a")}
+			resp.Headers["x-phase"] = []string{"after"}
+			resp.Cookies = append(resp.Cookies, "c=d; Path=/")
+			ch <- apptheory.StreamChunk{Bytes: []byte("b")}
+		}()
+		return resp, nil
+	},
+	"stream_error_after_first_chunk": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		resp := &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"text/plain; charset=utf-8"},
+			},
+			Cookies:  nil,
+			Body:     nil,
+			IsBase64: false,
+		}
+
+		ch := make(chan apptheory.StreamChunk, 2)
+		resp.BodyStream = ch
+		go func() {
+			defer close(ch)
+			ch <- apptheory.StreamChunk{Bytes: []byte("hello")}
+			ch <- apptheory.StreamChunk{Err: &apptheory.AppError{Code: "app.internal", Message: "boom"}}
+		}()
+		return resp, nil
+	},
+	"html_basic": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.HTML(200, "<h1>Hello</h1>"), nil
+	},
+	"html_stream_two_chunks": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.HTMLStream(200, apptheory.StreamBytes([]byte("<h1>"), []byte("Hello</h1>"))), nil
+	},
+	"safe_json_for_html": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		out, err := apptheory.SafeJSONForHTML(map[string]any{
+			"html": "</script><div>&</div><",
+			"amp":  "a&b",
+			"ls":   "line\u2028sep",
+			"ps":   "para\u2029sep",
+		})
+		if err != nil {
+			return nil, err
+		}
+		return apptheory.Text(200, out), nil
+	},
+	"cookies_from_set_cookie_header": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"text/plain; charset=utf-8"},
+				"set-cookie":   {"a=b; Path=/", "c=d; Path=/"},
+			},
+			Cookies:  []string{"e=f; Path=/"},
+			Body:     []byte("ok"),
+			IsBase64: false,
+		}, nil
+	},
+	"header_multivalue": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"text/plain; charset=utf-8"},
+				"x-multi":      {"a", "b"},
+			},
+			Cookies:  nil,
+			Body:     []byte("ok"),
+			IsBase64: false,
+		}, nil
+	},
+	"cache_helpers": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		tag := apptheory.ETag([]byte("hello"))
+		return apptheory.JSON(200, map[string]any{
+			"cache_control_ssr": apptheory.CacheControlSSR(),
+			"cache_control_ssg": apptheory.CacheControlSSG(),
+			"cache_control_isr": apptheory.CacheControlISR(60, 30),
+			"etag":              tag,
+			"if_none_match_hit": apptheory.MatchesIfNoneMatch(ctx.Request.Headers, tag),
+			"vary":              apptheory.Vary([]string{"origin"}, "accept-encoding", "Origin"),
+		})
+	},
+	"cloudfront_helpers": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"origin_url": apptheory.OriginURL(ctx.Request.Headers),
+			"client_ip":  apptheory.ClientIP(ctx.Request.Headers),
+		})
+	},
+	"stepfunctions_task_token_helpers": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		built := testkit.StepFunctionsTaskTokenEvent(testkit.StepFunctionsTaskTokenEventOptions{
+			TaskToken: " tok-built ",
+			Payload: map[string]any{
+				"foo":       "bar",
+				"taskToken": "ignored",
+			},
+		})
+
+		return apptheory.JSON(200, map[string]any{
+			"from_taskToken":  apptheory.StepFunctionsTaskToken(map[string]any{"taskToken": " tok-a "}),
+			"from_TaskToken":  apptheory.StepFunctionsTaskToken(map[string]any{"TaskToken": " tok-b "}),
+			"from_task_token": apptheory.StepFunctionsTaskToken(map[string]any{"task_token": " tok-c "}),
+			"from_precedence": apptheory.StepFunctionsTaskToken(map[string]any{
+				"TaskToken":  " tok-b ",
+				"task_token": " tok-c ",
+				"taskToken":  " tok-a ",
+			}),
+			"built": built,
+		})
 	},
 }
 

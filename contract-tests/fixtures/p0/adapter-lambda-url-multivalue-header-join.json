@@ -1,0 +1,47 @@
+{
+  "id": "p0.adapter.lambda_function_url.multivalue_header_join",
+  "tier": "p0",
+  "name": "Lambda Function URL: multi-value headers are joined by comma",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/mv", "handler": "header_multivalue" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/mv",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    },
+    "aws_event": {
+      "source": "lambda_function_url",
+      "event": {
+        "version": "2.0",
+        "rawPath": "/mv",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": {},
+        "queryStringParameters": null,
+        "requestContext": { "http": { "method": "GET", "path": "/mv" } },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["text/plain; charset=utf-8"],
+        "x-multi": ["a,b"]
+      },
+      "cookies": [],
+      "body": { "encoding": "utf8", "value": "ok" },
+      "is_base64": false
+    }
+  }
+}
+
