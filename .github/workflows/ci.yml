@@ -82,6 +82,8 @@ jobs:
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
           python-version: "3.14"
+      - name: Verify API snapshots
+        run: scripts/verify-api-snapshots.sh
       - name: Run contract tests
         run: scripts/verify-contract-tests.sh
 
