@@ -16,7 +16,7 @@ Until `bash gov-infra/verifiers/gov-verify-rubric.sh` is run in CI and archived,
 | Completeness | unknown | COM-1..COM-6 (not yet validated) |
 | Security | unknown | SEC-1..SEC-4 (not yet validated) |
 | Compliance Readiness | in-scope | CMP-1..CMP-3 (files exist once committed) |
-| Maintainability | unknown | MAI-1..MAI-3 (MAI-3 currently BLOCKED) |
+| Maintainability | unknown | MAI-1..MAI-3 (not yet validated) |
 | Docs | unknown | DOC-1..DOC-5 (not yet validated) |
 
 Evidence (refresh whenever behavior changes):
@@ -59,7 +59,7 @@ Evidence (refresh whenever behavior changes):
 | CMP-3 | planned | M0 |
 | MAI-1 | unknown | M4 |
 | MAI-2 | unknown | M4 |
-| MAI-3 | BLOCKED (not yet implemented) | M5 |
+| MAI-3 | unknown | M5 |
 | DOC-1 | planned | M0 |
 | DOC-2 | planned | M0 |
 | DOC-3 | planned | M0 |

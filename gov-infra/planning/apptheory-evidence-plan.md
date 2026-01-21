@@ -46,7 +46,7 @@ Every rubric ID maps to exactly one verifier and one primary evidence location.
 | CMP-3 | Threat model exists | `gov-infra/planning/apptheory-threat-model.md` | File existence check |
 | MAI-1 | File budget check | `gov-infra/evidence/MAI-1-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 | MAI-2 | Maintainability roadmap check | `gov-infra/evidence/MAI-2-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
-| MAI-3 | Singleton check | `gov-infra/evidence/MAI-3-output.log` | **BLOCKED** — canonical/singleton gate not yet implemented |
+| MAI-3 | Singleton check | `gov-infra/evidence/MAI-3-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 | DOC-1 | Threat model present | `gov-infra/planning/apptheory-threat-model.md` | File existence check |
 | DOC-2 | Evidence plan present | `gov-infra/planning/apptheory-evidence-plan.md` | File existence check |
 | DOC-3 | Rubric + roadmap present | `gov-infra/planning/apptheory-10of10-rubric.md` | File existence check |

@@ -81,7 +81,7 @@ Enforcement rule (anti-drift):
 | --- | ---: | --- | --- |
 | MAI-1 | 4 | File-size/complexity budgets enforced | `check_file_budgets` (inside `gov-verify-rubric.sh`) |
 | MAI-2 | 3 | Maintainability roadmap current | `check_maintainability_roadmap` (inside `gov-verify-rubric.sh`) |
-| MAI-3 | 3 | Canonical implementations (no duplicate semantics) | **BLOCKED** — canonical/singleton gate not yet implemented |
+| MAI-3 | 3 | Canonical implementations (no duplicate semantics) | `check_duplicate_semantics` (inside `gov-verify-rubric.sh`) |
 
 **10/10 definition:** MAI-1 through MAI-3 pass.
 

@@ -767,6 +767,42 @@ check_maintainability_roadmap() {
   echo "maintainability-roadmap: PASS"
 }
 
+check_duplicate_semantics() {
+  # MAI-3: canonical implementations / duplicate semantics (heuristic initial gate).
+  #
+  # Enforce duplicate detection for Go code using the `dupl` linter under the
+  # pinned golangci-lint toolchain. This is intentionally narrow and can be
+  # expanded later to additional languages/semantics as the pack evolves.
+
+  require_cmd_or_blocked go || return $?
+  ensure_golangci_lint_pinned || return $?
+
+  local cfg="${REPO_ROOT}/.golangci-v2.yml"
+  if [[ ! -f "${cfg}" ]]; then
+    echo "FAIL: missing ${cfg}" >&2
+    return 1
+  fi
+
+  grep -Eq '^[[:space:]]*- dupl[[:space:]]*$' "${cfg}" || {
+    echo "FAIL: ${cfg} does not enable 'dupl' (required for MAI-3)" >&2
+    return 1
+  }
+
+  if [[ ! -f "./go.mod" ]]; then
+    echo "FAIL: expected go.mod missing: ./go.mod" >&2
+    return 1
+  fi
+
+  # Scope note: we intentionally scan only the root Go module. CDK Go bindings
+  # under cdk-go/ are jsii-generated and contain large, mechanical duplication
+  # that would drown out meaningful signal for this gate.
+  echo "==> dupl scan: ."
+  golangci-lint run --timeout=5m --config "${cfg}" --enable-only=dupl ./...
+
+  echo "duplicate-semantics: PASS"
+  return 0
+}
+
 # --- Supply-chain checks (SEC-3) ---
 
 allowlist_has_id() {
@@ -1577,7 +1613,7 @@ CMD_P0="gov_cmd_p0"
 
 CMD_FILE_BUDGET="check_file_budgets"
 CMD_MAINTAINABILITY="check_maintainability_roadmap"
-CMD_SINGLETON="BLOCKED: duplicate-semantics (singleton) gate not yet implemented"
+CMD_SINGLETON="check_duplicate_semantics"
 
 CMD_DOC_INTEGRITY="check_doc_integrity"
 
