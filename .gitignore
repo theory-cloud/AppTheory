@@ -21,3 +21,10 @@ py/.venv/
 *.swp
 *~
 .theory
+
+# GovTheory generated artifacts
+gov-infra/.tools/
+gov-infra/evidence/*-output.log
+gov-infra/evidence/DOC-5-parity.log
+gov-infra/evidence/go-coverage.out
+gov-infra/evidence/go-coverage-summary.txt

@@ -425,9 +425,18 @@ check_security_config() {
 check_doc_integrity() {
   # Ensures governance docs are rendered (no leftover template tokens) and pack metadata is consistent.
 
-  if grep -R --line-number "{{" "${GOV_INFRA}" >/dev/null 2>&1; then
+  # Only scan governance artifacts (exclude verifier code, generated evidence, and pinned tools).
+  if grep -R --line-number --binary-files=without-match \
+    --exclude-dir="evidence" \
+    --exclude-dir="verifiers" \
+    --exclude-dir=".tools" \
+    "{{" "${GOV_INFRA}" >/dev/null 2>&1; then
     echo "FAIL: found unrendered template token(s) under gov-infra/" >&2
-    grep -R --line-number "{{" "${GOV_INFRA}" || true
+    grep -R --line-number --binary-files=without-match \
+      --exclude-dir="evidence" \
+      --exclude-dir="verifiers" \
+      --exclude-dir=".tools" \
+      "{{" "${GOV_INFRA}" || true
     return 1
   fi
 
