@@ -134,3 +134,25 @@ def build_sns_event(topic_arn: str, records: list[dict[str, Any]] | None = None)
             }
         )
     return {"Records": out_records}
+
+
+def stepfunctions_task_token(event: Any) -> str:
+    if not isinstance(event, dict):
+        return ""
+
+    for key in ("taskToken", "TaskToken", "task_token"):
+        raw = event.get(key)
+        if isinstance(raw, str):
+            token = raw.strip()
+            if token:
+                return token
+    return ""
+
+
+def build_stepfunctions_task_token_event(
+    task_token: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    out = dict(payload or {})
+    out["taskToken"] = str(task_token or "").strip()
+    return out
