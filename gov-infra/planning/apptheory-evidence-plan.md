@@ -36,9 +36,9 @@ Every rubric ID maps to exactly one verifier and one primary evidence location.
 | COM-3 | Lint config validation | `gov-infra/evidence/COM-3-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 | COM-4 | Coverage threshold floor check | `gov-infra/evidence/COM-4-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 | COM-5 | Security config validation | `gov-infra/evidence/COM-5-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
-| COM-6 | Logging standards check | `gov-infra/evidence/COM-6-output.log` | **BLOCKED** — logging standards gate not yet implemented |
+| COM-6 | Logging standards check | `gov-infra/evidence/COM-6-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 | SEC-1 | SAST/security lint output | `gov-infra/evidence/SEC-1-output.log` | `scripts/verify-go-lint.sh` |
-| SEC-2 | Vulnerability scan output | `gov-infra/evidence/SEC-2-output.log` | **BLOCKED** — pinned vulnerability scan not yet implemented |
+| SEC-2 | Vulnerability scan output | `gov-infra/evidence/SEC-2-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 | SEC-3 | Supply-chain verification | `gov-infra/evidence/SEC-3-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 | SEC-4 | Deterministic build verification | `gov-infra/evidence/SEC-4-output.log` | `scripts/verify-builds.sh` |
 | CMP-1 | Controls matrix exists | `gov-infra/planning/apptheory-controls-matrix.md` | File existence check |

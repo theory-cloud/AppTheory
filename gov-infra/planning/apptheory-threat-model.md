@@ -36,7 +36,7 @@ Threat IDs must be stable over time. When a new class of risk is discovered:
 | THR-2 | Streaming response correctness failure | Streaming responses truncate, leak data across requests, or violate platform expectations (Lambda/APIGW). | CON-3, QUA-2 | `scripts/verify-contract-tests.sh` |
 | THR-3 | Dependency or toolchain supply-chain compromise | Malicious dependency versions or lifecycle scripts execute during install/build, leaking tokens or modifying artifacts. | SEC-3, SEC-2, COM-2 | SEC-3 supply-chain gate (via `gov-verify-rubric.sh`) |
 | THR-4 | Non-reproducible builds / provenance drift | Artifacts differ per build environment or time; release tags do not correspond to source; tool versions drift. | COM-2, SEC-4 | `scripts/verify-builds.sh` |
-| THR-5 | Sensitive data exposure via logging | Raw payloads/headers/tokens get logged or included in errors, leaking secrets/PII. | COM-6 | **BLOCKED** — logging policy gate not yet implemented |
+| THR-5 | Sensitive data exposure via logging | Raw payloads/headers/tokens get logged or included in errors, leaking secrets/PII. | COM-6 | COM-6 logging-ops gate (via `gov-verify-rubric.sh`) |
 | THR-6 | Go correctness / safety regressions | Context misuse, ignored errors, unsafe conversions, or insecure patterns slip in. | CON-2, SEC-1, QUA-1 | `make lint` + `make test-unit` |
 | THR-7 | Input normalization vulnerabilities | Inconsistent normalization enables header injection, incorrect base64 handling, or request smuggling-ish behaviors. | CON-3, QUA-2 | `scripts/verify-contract-tests.sh` |
 | THR-8 | Install-time script execution | Postinstall/prepare scripts execute unexpected commands (curl|sh, token access, exfil). | SEC-3 | SEC-3 supply-chain gate (via `gov-verify-rubric.sh`) |

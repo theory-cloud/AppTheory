@@ -33,7 +33,7 @@ func (f *fakeNotifier) Entries() []observability.LogEntry {
 	return out
 }
 
-func TestZapLogger_SanitizesMessageAndFields(t *testing.T) {
+func TestOps_ZapLogger_SanitizesMessageAndFields(t *testing.T) {
 	core, observed := observer.New(zapcore.DebugLevel)
 	base := ubzap.New(core)
 
@@ -63,7 +63,7 @@ func TestZapLogger_SanitizesMessageAndFields(t *testing.T) {
 	}
 }
 
-func TestZapLogger_NotifierIncludesBaseFields(t *testing.T) {
+func TestOps_ZapLogger_NotifierIncludesBaseFields(t *testing.T) {
 	core, _ := observer.New(zapcore.DebugLevel)
 	base := ubzap.New(core)
 
@@ -99,5 +99,47 @@ func TestZapLogger_NotifierIncludesBaseFields(t *testing.T) {
 	}
 	if entries[0].Fields["operation"] != "charge" {
 		t.Fatalf("expected operation preserved, got %#v", entries[0].Fields["operation"])
+	}
+}
+
+func TestOps_ZapLogger_SanitizesIdentityFields(t *testing.T) {
+	core, observed := observer.New(zapcore.DebugLevel)
+	base := ubzap.New(core)
+
+	logger, err := NewZapLogger(observability.LoggerConfig{}, WithZapLogger(base))
+	if err != nil {
+		t.Fatalf("NewZapLogger: %v", err)
+	}
+
+	logger.
+		WithRequestID("req\r\n1").
+		WithTenantID("tenant\r\n1").
+		WithUserID("user\r\n1").
+		WithTraceID("trace\r\n1").
+		WithSpanID("span\r\n1").
+		Info("ok")
+
+	entries := observed.All()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	ctx := entries[0].ContextMap()
+
+	want := map[string]string{
+		"request_id": "req1",
+		"tenant_id":  "tenant1",
+		"user_id":    "user1",
+		"trace_id":   "trace1",
+		"span_id":    "span1",
+	}
+
+	for k, expected := range want {
+		v, ok := ctx[k].(string)
+		if !ok {
+			t.Fatalf("expected %s to be string, got %#v", k, ctx[k])
+		}
+		if v != expected {
+			t.Fatalf("expected %s sanitized to %q, got %q", k, expected, v)
+		}
 	}
 }
