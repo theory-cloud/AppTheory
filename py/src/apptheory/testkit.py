@@ -125,6 +125,12 @@ class TestEnv:
     ) -> dict[str, object]:
         return app.serve_dynamodb_stream(event, ctx=ctx)
 
+    def invoke_kinesis(self, app: App, event: dict[str, object], ctx: object | None = None) -> dict[str, object]:
+        return app.serve_kinesis(event, ctx=ctx)
+
+    def invoke_sns(self, app: App, event: dict[str, object], ctx: object | None = None) -> object:
+        return app.serve_sns(event, ctx=ctx)
+
     def invoke_websocket(self, app: App, event: dict[str, object], ctx: object | None = None) -> dict[str, object]:
         return app.serve_websocket(event, ctx=ctx)
 

@@ -13,7 +13,13 @@ from apptheory.app import (
     event_bridge_pattern,
     event_bridge_rule,
 )
-from apptheory.aws_events import build_dynamodb_stream_event, build_eventbridge_event, build_sqs_event
+from apptheory.aws_events import (
+    build_dynamodb_stream_event,
+    build_eventbridge_event,
+    build_kinesis_event,
+    build_sns_event,
+    build_sqs_event,
+)
 from apptheory.aws_http import build_alb_target_group_request, build_apigw_v2_request, build_lambda_function_url_request
 from apptheory.cache import cache_control_isr, cache_control_ssg, cache_control_ssr, etag, matches_if_none_match, vary
 from apptheory.clock import Clock, ManualClock, RealClock
@@ -75,7 +81,9 @@ __all__ = [
     "build_alb_target_group_request",
     "build_dynamodb_stream_event",
     "build_eventbridge_event",
+    "build_kinesis_event",
     "build_lambda_function_url_request",
+    "build_sns_event",
     "build_sqs_event",
     "build_websocket_event",
     "binary",

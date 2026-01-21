@@ -151,6 +151,73 @@ export interface DynamoDBStreamEventResponse {
   batchItemFailures: { itemIdentifier: string }[];
 }
 
+export interface KinesisEvent {
+  Records: KinesisEventRecord[];
+}
+
+export interface KinesisEventRecord {
+  eventID: string;
+  eventName?: string;
+  eventSource?: string;
+  eventSourceARN?: string;
+  awsRegion?: string;
+  eventVersion?: string;
+  invokeIdentityArn?: string;
+  kinesis?: KinesisRecord;
+  [key: string]: unknown;
+}
+
+export interface KinesisRecord {
+  data?: string;
+  partitionKey?: string;
+  sequenceNumber?: string;
+  kinesisSchemaVersion?: string;
+  [key: string]: unknown;
+}
+
+export type KinesisEventRecordInput = Partial<KinesisEventRecord> & {
+  data?: Uint8Array | string;
+  partitionKey?: string;
+  sequenceNumber?: string;
+  kinesis?: Partial<KinesisRecord> & { data?: Uint8Array | string };
+};
+
+export interface KinesisEventResponse {
+  batchItemFailures: { itemIdentifier: string }[];
+}
+
+export interface SNSEvent {
+  Records: SNSEventRecord[];
+}
+
+export interface SNSEventRecord {
+  EventSource?: string;
+  EventVersion?: string;
+  EventSubscriptionArn?: string;
+  Sns?: SNSEntity;
+  [key: string]: unknown;
+}
+
+export interface SNSEntity {
+  MessageId?: string;
+  TopicArn?: string;
+  Subject?: string;
+  Message?: string;
+  Timestamp?: string;
+  [key: string]: unknown;
+}
+
+export type SNSEventRecordInput = Partial<SNSEventRecord> & {
+  eventVersion?: string;
+  eventSubscriptionArn?: string;
+  messageId?: string;
+  topicArn?: string;
+  subject?: string;
+  message?: string;
+  sns?: Partial<SNSEntity>;
+  Sns?: Partial<SNSEntity>;
+};
+
 export interface EventBridgeEvent {
   version?: string;
   id?: string;
@@ -316,6 +383,10 @@ export declare class FakeWebSocketManagementClient implements WebSocketManagemen
 
 export type SQSHandler = (ctx: EventContext, message: SQSMessage) => void | Promise<void>;
 
+export type KinesisHandler = (ctx: EventContext, record: KinesisEventRecord) => void | Promise<void>;
+
+export type SNSHandler = (ctx: EventContext, record: SNSEventRecord) => unknown | Promise<unknown>;
+
 export type DynamoDBStreamHandler = (ctx: EventContext, record: DynamoDBStreamRecord) => void | Promise<void>;
 
 export type EventBridgeHandler = (ctx: EventContext, event: EventBridgeEvent) => unknown | Promise<unknown>;
@@ -396,6 +467,8 @@ export declare class App {
   useEvents(middleware: EventMiddleware): this;
   webSocket(routeKey: string, handler: Handler): this;
   sqs(queueName: string, handler: SQSHandler): this;
+  kinesis(streamName: string, handler: KinesisHandler): this;
+  sns(topicName: string, handler: SNSHandler): this;
   eventBridge(selector: EventBridgeSelector, handler: EventBridgeHandler): this;
   dynamoDB(tableName: string, handler: DynamoDBStreamHandler): this;
   serve(request: Request, ctx?: unknown): Promise<Response>;
@@ -405,6 +478,8 @@ export declare class App {
   serveALB(event: ALBTargetGroupRequest, ctx?: unknown): Promise<ALBTargetGroupResponse>;
   serveWebSocket(event: APIGatewayWebSocketProxyRequest, ctx?: unknown): Promise<APIGatewayProxyResponse>;
   serveSQSEvent(event: SQSEvent, ctx?: unknown): Promise<SQSEventResponse>;
+  serveKinesisEvent(event: KinesisEvent, ctx?: unknown): Promise<KinesisEventResponse>;
+  serveSNSEvent(event: SNSEvent, ctx?: unknown): Promise<unknown[]>;
   serveEventBridge(event: EventBridgeEvent, ctx?: unknown): Promise<unknown>;
   serveDynamoDBStream(event: DynamoDBStreamEvent, ctx?: unknown): Promise<DynamoDBStreamEventResponse>;
   handleLambda(event: unknown, ctx?: unknown): Promise<unknown>;
@@ -520,6 +595,8 @@ export declare class TestEnv {
   invokeAPIGatewayProxy(app: App, event: APIGatewayProxyRequest, ctx?: unknown): Promise<APIGatewayProxyResponse>;
   invokeALB(app: App, event: ALBTargetGroupRequest, ctx?: unknown): Promise<ALBTargetGroupResponse>;
   invokeSQS(app: App, event: SQSEvent, ctx?: unknown): Promise<SQSEventResponse>;
+  invokeKinesis(app: App, event: KinesisEvent, ctx?: unknown): Promise<KinesisEventResponse>;
+  invokeSNS(app: App, event: SNSEvent, ctx?: unknown): Promise<unknown[]>;
   invokeEventBridge(app: App, event: EventBridgeEvent, ctx?: unknown): Promise<unknown>;
   invokeDynamoDBStream(app: App, event: DynamoDBStreamEvent, ctx?: unknown): Promise<DynamoDBStreamEventResponse>;
   invokeLambda(app: App, event: unknown, ctx?: unknown): Promise<unknown>;
@@ -571,3 +648,7 @@ export declare function buildDynamoDBStreamEvent(
   streamArn: string,
   records?: Array<Partial<DynamoDBStreamRecord>>,
 ): DynamoDBStreamEvent;
+
+export declare function buildKinesisEvent(streamArn: string, records?: Array<KinesisEventRecordInput>): KinesisEvent;
+
+export declare function buildSNSEvent(topicArn: string, records?: Array<SNSEventRecordInput>): SNSEvent;

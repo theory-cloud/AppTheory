@@ -32,6 +32,24 @@ func runFixtureM1(f Fixture) error {
 		app.SQS(queue, handler)
 	}
 
+	for _, r := range f.Setup.Kinesis {
+		stream := strings.TrimSpace(r.Stream)
+		handler := builtInKinesisHandler(r.Handler)
+		if handler == nil {
+			return fmt.Errorf("unknown kinesis handler %q", r.Handler)
+		}
+		app.Kinesis(stream, handler)
+	}
+
+	for _, r := range f.Setup.SNS {
+		topic := strings.TrimSpace(r.Topic)
+		handler := builtInSNSHandler(r.Handler)
+		if handler == nil {
+			return fmt.Errorf("unknown sns handler %q", r.Handler)
+		}
+		app.SNS(topic, handler)
+	}
+
 	for _, r := range f.Setup.DynamoDB {
 		table := strings.TrimSpace(r.Table)
 		handler := builtInDynamoDBStreamHandler(r.Handler)
@@ -178,6 +196,50 @@ func builtInSQSHandler(name string) apptheory.SQSHandler {
 		return nil
 	}
 	return apptheory.SQSHandler(handler)
+}
+
+func builtInKinesisHandler(name string) apptheory.KinesisHandler {
+	if strings.TrimSpace(name) == "kinesis_requires_event_middleware" {
+		return func(ctx *apptheory.EventContext, _ events.KinesisEventRecord) error {
+			return requireEventMiddleware(ctx)
+		}
+	}
+
+	handler := builtInRecordHandler[events.KinesisEventRecord](
+		name,
+		"kinesis_noop",
+		"kinesis_always_fail",
+		"kinesis_fail_on_data",
+		func(record events.KinesisEventRecord) bool {
+			return strings.TrimSpace(string(record.Kinesis.Data)) == "fail"
+		},
+	)
+	if handler == nil {
+		return nil
+	}
+	return apptheory.KinesisHandler(handler)
+}
+
+func builtInSNSHandler(name string) apptheory.SNSHandler {
+	switch strings.TrimSpace(name) {
+	case "sns_static_a":
+		return func(_ *apptheory.EventContext, _ events.SNSEventRecord) (any, error) {
+			return map[string]any{"handler": "a"}, nil
+		}
+	case "sns_static_b":
+		return func(_ *apptheory.EventContext, _ events.SNSEventRecord) (any, error) {
+			return map[string]any{"handler": "b"}, nil
+		}
+	case "sns_echo_event_middleware":
+		return func(ctx *apptheory.EventContext, _ events.SNSEventRecord) (any, error) {
+			return map[string]any{
+				"mw":    ctx.Get("mw"),
+				"trace": ctx.Get("trace"),
+			}, nil
+		}
+	default:
+		return nil
+	}
 }
 
 func builtInDynamoDBStreamHandler(name string) apptheory.DynamoDBStreamHandler {

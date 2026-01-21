@@ -1,0 +1,34 @@
+{
+  "id": "m1.kinesis.event_middleware.ctx_bag",
+  "tier": "m1",
+  "name": "Kinesis: event middleware + ctx.Set/Get",
+  "setup": {
+    "middlewares": ["evt_mw_a", "evt_mw_b"],
+    "kinesis": [{ "stream": "stream-a", "handler": "kinesis_requires_event_middleware" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "kinesis",
+      "event": {
+        "Records": [
+          {
+            "eventID": "kin-1",
+            "eventName": "aws:kinesis:record",
+            "eventSource": "aws:kinesis",
+            "eventSourceARN": "arn:aws:kinesis:us-east-1:000000000000:stream/stream-a",
+            "eventVersion": "1.0",
+            "awsRegion": "us-east-1",
+            "kinesis": {
+              "partitionKey": "pk-1",
+              "sequenceNumber": "1",
+              "kinesisSchemaVersion": "1.0",
+              "data": "b2s="
+            }
+          }
+        ]
+      }
+    }
+  },
+  "expect": { "output_json": { "batchItemFailures": [] } }
+}
+

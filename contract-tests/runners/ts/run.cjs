@@ -962,6 +962,50 @@ function builtInSQSHandler(name) {
   }
 }
 
+function builtInKinesisHandler(name) {
+  switch (String(name ?? "").trim()) {
+    case "kinesis_noop":
+      return async () => {};
+    case "kinesis_always_fail":
+      return async () => {
+        throw new Error("fail");
+      };
+    case "kinesis_fail_on_data":
+      return async (_ctx, record) => {
+        const dataB64 = String(record?.kinesis?.data ?? "").trim();
+        const decoded = dataB64 ? Buffer.from(dataB64, "base64").toString("utf8") : "";
+        if (decoded.trim() === "fail") {
+          throw new Error("fail");
+        }
+      };
+    case "kinesis_requires_event_middleware":
+      return async (ctx) => {
+        if (ctx.get("mw") !== "ok") {
+          throw new Error("missing middleware value");
+        }
+        const trace = ctx.get("trace");
+        if (!Array.isArray(trace) || trace.join(",") !== "evt_mw_a,evt_mw_b") {
+          throw new Error("bad trace");
+        }
+      };
+    default:
+      return null;
+  }
+}
+
+function builtInSNSHandler(name) {
+  switch (String(name ?? "").trim()) {
+    case "sns_static_a":
+      return async () => ({ handler: "a" });
+    case "sns_static_b":
+      return async () => ({ handler: "b" });
+    case "sns_echo_event_middleware":
+      return async (ctx) => ({ mw: ctx.get("mw"), trace: ctx.get("trace") });
+    default:
+      return null;
+  }
+}
+
 function builtInDynamoDBStreamHandler(name) {
   switch (String(name ?? "").trim()) {
     case "ddb_noop":
@@ -1043,6 +1087,22 @@ async function runFixtureM1(fixture) {
       throw new Error(`unknown sqs handler ${JSON.stringify(route.handler)}`);
     }
     app.sqs(route.queue, handler);
+  }
+
+  for (const route of fixture.setup?.kinesis ?? []) {
+    const handler = builtInKinesisHandler(route.handler);
+    if (!handler) {
+      throw new Error(`unknown kinesis handler ${JSON.stringify(route.handler)}`);
+    }
+    app.kinesis(route.stream, handler);
+  }
+
+  for (const route of fixture.setup?.sns ?? []) {
+    const handler = builtInSNSHandler(route.handler);
+    if (!handler) {
+      throw new Error(`unknown sns handler ${JSON.stringify(route.handler)}`);
+    }
+    app.sns(route.topic, handler);
   }
 
   for (const route of fixture.setup?.dynamodb ?? []) {
