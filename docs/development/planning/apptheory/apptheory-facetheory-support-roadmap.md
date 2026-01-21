@@ -198,3 +198,11 @@ Implementation (AppTheory `m14`):
   - normalization helpers
   - testkit event builders
   - fixtures that lock semantics
+
+---
+
+Implementation (AppTheory `m14`):
+
+- ALB adapter support (Go/TS/Py) + contract fixtures
+- Kinesis/SNS routing + partial batch failure + fixtures (Go/TS/Py)
+- Step Functions task token helpers + fixtures (Go/TS/Py)
