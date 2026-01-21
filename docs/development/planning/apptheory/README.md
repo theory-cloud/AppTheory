@@ -18,6 +18,7 @@ Primary goals:
 ## Start here
 
 - `docs/development/planning/apptheory/apptheory-multilang-roadmap.md` (primary roadmap + acceptance criteria)
+- `docs/development/planning/apptheory/apptheory-full-alignment-roadmap.md` (union-of-capabilities parity plan + acceptance criteria)
 - `docs/development/planning/apptheory/apptheory-facetheory-support-roadmap.md` (FaceTheory enablement: Lambda URL + streaming SSR)
 - `docs/development/planning/apptheory/apptheory-gap-analysis.md` (current gaps + remediation roadmap)
 - `docs/development/planning/apptheory/apptheory-gap-analysis-lift-parity.md` (Lift parity gaps for Pay Theory: Autheory + K3, plus Lesser)
