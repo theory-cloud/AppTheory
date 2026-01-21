@@ -1143,6 +1143,48 @@ def _built_in_sqs_handler(name: str):
     return None
 
 
+def _built_in_kinesis_handler(name: str):
+    if name == "kinesis_noop":
+        return lambda _ctx, _record: None
+
+    if name == "kinesis_always_fail":
+        def handler(_ctx, _record):
+            raise RuntimeError("fail")
+
+        return handler
+
+    if name == "kinesis_fail_on_data":
+        def handler(_ctx, record):
+            data_b64 = str(((record or {}).get("kinesis") or {}).get("data") or "").strip()
+            decoded = base64.b64decode(data_b64) if data_b64 else b""
+            if decoded.decode("utf-8", errors="ignore").strip() == "fail":
+                raise RuntimeError("fail")
+
+        return handler
+
+    if name == "kinesis_requires_event_middleware":
+        def handler(ctx, _record):
+            if ctx.get("mw") != "ok":
+                raise RuntimeError("missing middleware value")
+            trace = ctx.get("trace")
+            if not isinstance(trace, list) or ",".join(trace) != "evt_mw_a,evt_mw_b":
+                raise RuntimeError("bad trace")
+
+        return handler
+
+    return None
+
+
+def _built_in_sns_handler(name: str):
+    if name == "sns_static_a":
+        return lambda _ctx, _record: {"handler": "a"}
+    if name == "sns_static_b":
+        return lambda _ctx, _record: {"handler": "b"}
+    if name == "sns_echo_event_middleware":
+        return lambda ctx, _record: {"mw": ctx.get("mw"), "trace": ctx.get("trace")}
+    return None
+
+
 def _built_in_dynamodb_stream_handler(name: str):
     if name == "ddb_noop":
         return lambda _ctx, _record: None
@@ -1311,6 +1353,18 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
         if handler is None:
             raise RuntimeError(f"unknown sqs handler {route.get('handler')!r}")
         app.sqs(str(route.get("queue") or ""), handler)
+
+    for route in setup.get("kinesis", []) or []:
+        handler = _built_in_kinesis_handler(str(route.get("handler") or ""))
+        if handler is None:
+            raise RuntimeError(f"unknown kinesis handler {route.get('handler')!r}")
+        app.kinesis(str(route.get("stream") or ""), handler)
+
+    for route in setup.get("sns", []) or []:
+        handler = _built_in_sns_handler(str(route.get("handler") or ""))
+        if handler is None:
+            raise RuntimeError(f"unknown sns handler {route.get('handler')!r}")
+        app.sns(str(route.get("topic") or ""), handler)
 
     for route in setup.get("dynamodb", []) or []:
         handler = _built_in_dynamodb_stream_handler(str(route.get("handler") or ""))

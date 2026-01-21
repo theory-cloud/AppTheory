@@ -210,6 +210,29 @@ func wrapEventRecordHandler[Record any](
 	}
 }
 
+func wrapEventRecordHandlerWithOutput[Record any](
+	a *App,
+	handler func(*EventContext, Record) (any, error),
+	coerce func(any) (Record, bool),
+	invalidTypeError string,
+) func(*EventContext, Record) (any, error) {
+	if a == nil || handler == nil || len(a.eventMiddlewares) == 0 || coerce == nil {
+		return handler
+	}
+
+	wrapped := a.applyEventMiddlewares(func(ctx *EventContext, event any) (any, error) {
+		record, ok := coerce(event)
+		if !ok {
+			return nil, errors.New(invalidTypeError)
+		}
+		return handler(ctx, record)
+	})
+
+	return func(ctx *EventContext, record Record) (any, error) {
+		return wrapped(ctx, record)
+	}
+}
+
 type batchEventSpec[Record any, Failure any, Response any] struct {
 	coerce              func(any) (Record, bool)
 	invalidTypeError    string
@@ -248,6 +271,168 @@ var sqsBatchSpec = batchEventSpec[events.SQSMessage, events.SQSBatchItemFailure,
 // If the queue is unrecognized, it fails closed by returning all messages as failures.
 func (a *App) ServeSQS(ctx context.Context, event events.SQSEvent) events.SQSEventResponse {
 	return serveBatchEvent(ctx, a, event.Records, a.sqsHandlerForEvent(event), sqsBatchSpec)
+}
+
+type KinesisHandler func(*EventContext, events.KinesisEventRecord) error
+
+type kinesisRoute struct {
+	StreamName string
+	Handler    KinesisHandler
+}
+
+// Kinesis registers a handler for a Kinesis stream by stream name.
+func (a *App) Kinesis(streamName string, handler KinesisHandler) *App {
+	if a == nil {
+		return a
+	}
+	streamName = strings.TrimSpace(streamName)
+	if streamName == "" || handler == nil {
+		return a
+	}
+	a.kinesisRoutes = append(a.kinesisRoutes, kinesisRoute{StreamName: streamName, Handler: handler})
+	return a
+}
+
+func kinesisStreamNameFromARN(arn string) string {
+	arn = strings.TrimSpace(arn)
+	if arn == "" {
+		return ""
+	}
+	parts := strings.Split(arn, ":")
+	if len(parts) == 0 {
+		return ""
+	}
+	last := parts[len(parts)-1]
+	_, name, ok := strings.Cut(last, "/")
+	if ok {
+		return strings.TrimSpace(name)
+	}
+	return strings.TrimSpace(last)
+}
+
+func (a *App) kinesisHandlerForEvent(event events.KinesisEvent) KinesisHandler {
+	if a == nil {
+		return nil
+	}
+	for _, record := range event.Records {
+		streamName := kinesisStreamNameFromARN(record.EventSourceArn)
+		if streamName == "" {
+			continue
+		}
+		for _, route := range a.kinesisRoutes {
+			if route.StreamName == streamName {
+				return route.Handler
+			}
+		}
+		break
+	}
+	return nil
+}
+
+var kinesisBatchSpec = batchEventSpec[events.KinesisEventRecord, events.KinesisBatchItemFailure, events.KinesisEventResponse]{
+	coerce: func(event any) (events.KinesisEventRecord, bool) {
+		record, ok := event.(events.KinesisEventRecord)
+		return record, ok
+	},
+	invalidTypeError: "apptheory: invalid kinesis record type",
+	recordID:         func(record events.KinesisEventRecord) string { return record.EventID },
+	failureForID: func(id string) events.KinesisBatchItemFailure {
+		return events.KinesisBatchItemFailure{ItemIdentifier: id}
+	},
+	responseForFailures: func(failures []events.KinesisBatchItemFailure) events.KinesisEventResponse {
+		return events.KinesisEventResponse{BatchItemFailures: failures}
+	},
+}
+
+// ServeKinesis routes a Kinesis event to the registered stream handler and returns a partial batch failure response.
+//
+// If the stream is unrecognized, it fails closed by returning all records as failures.
+func (a *App) ServeKinesis(ctx context.Context, event events.KinesisEvent) events.KinesisEventResponse {
+	return serveBatchEvent(ctx, a, event.Records, a.kinesisHandlerForEvent(event), kinesisBatchSpec)
+}
+
+type SNSHandler func(*EventContext, events.SNSEventRecord) (any, error)
+
+type snsRoute struct {
+	TopicName string
+	Handler   SNSHandler
+}
+
+// SNS registers a handler for an SNS topic by topic name.
+func (a *App) SNS(topicName string, handler SNSHandler) *App {
+	if a == nil {
+		return a
+	}
+	topicName = strings.TrimSpace(topicName)
+	if topicName == "" || handler == nil {
+		return a
+	}
+	a.snsRoutes = append(a.snsRoutes, snsRoute{TopicName: topicName, Handler: handler})
+	return a
+}
+
+func snsTopicNameFromARN(arn string) string {
+	arn = strings.TrimSpace(arn)
+	if arn == "" {
+		return ""
+	}
+	parts := strings.Split(arn, ":")
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[len(parts)-1])
+}
+
+func (a *App) snsHandlerForEvent(event events.SNSEvent) SNSHandler {
+	if a == nil {
+		return nil
+	}
+	for _, record := range event.Records {
+		topicName := snsTopicNameFromARN(record.SNS.TopicArn)
+		if topicName == "" {
+			continue
+		}
+		for _, route := range a.snsRoutes {
+			if route.TopicName == topicName {
+				return route.Handler
+			}
+		}
+		break
+	}
+	return nil
+}
+
+// ServeSNS routes an SNS event to the registered topic handler.
+//
+// If the topic is unrecognized, it fails closed by returning an error.
+//
+// The returned output value is ignored by AWS for SNS triggers, but is useful for tests and local invocation tooling.
+func (a *App) ServeSNS(ctx context.Context, event events.SNSEvent) ([]any, error) {
+	handler := a.snsHandlerForEvent(event)
+	if handler == nil {
+		return nil, errors.New("apptheory: unrecognized sns topic")
+	}
+
+	handler = wrapEventRecordHandlerWithOutput(
+		a,
+		handler,
+		func(event any) (events.SNSEventRecord, bool) {
+			record, ok := event.(events.SNSEventRecord)
+			return record, ok
+		},
+		"apptheory: invalid sns record type",
+	)
+
+	evtCtx := a.eventContext(ctx)
+	outputs := make([]any, 0, len(event.Records))
+	for _, record := range event.Records {
+		out, err := handler(evtCtx, record)
+		if err != nil {
+			return nil, err
+		}
+		outputs = append(outputs, out)
+	}
+	return outputs, nil
 }
 
 type EventBridgeSelector struct {
@@ -468,7 +653,8 @@ type lambdaEnvelope struct {
 }
 
 type recordProbe struct {
-	EventSource string `json:"eventSource"`
+	EventSource    string `json:"eventSource"`
+	EventSourceAlt string `json:"EventSource"`
 }
 
 func (a *App) handleLambdaRecords(ctx context.Context, event json.RawMessage, env lambdaEnvelope) (any, bool, error) {
@@ -481,7 +667,12 @@ func (a *App) handleLambdaRecords(ctx context.Context, event json.RawMessage, en
 		return nil, false, nil
 	}
 
-	switch strings.TrimSpace(probes[0].EventSource) {
+	source := strings.TrimSpace(probes[0].EventSource)
+	if source == "" {
+		source = strings.TrimSpace(probes[0].EventSourceAlt)
+	}
+
+	switch source {
 	case "aws:sqs":
 		var sqs events.SQSEvent
 		if err := json.Unmarshal(event, &sqs); err != nil {
@@ -494,6 +685,19 @@ func (a *App) handleLambdaRecords(ctx context.Context, event json.RawMessage, en
 			return nil, true, fmt.Errorf("apptheory: parse dynamodb stream event: %w", err)
 		}
 		return a.ServeDynamoDBStream(ctx, ddb), true, nil
+	case "aws:kinesis":
+		var kin events.KinesisEvent
+		if err := json.Unmarshal(event, &kin); err != nil {
+			return nil, true, fmt.Errorf("apptheory: parse kinesis event: %w", err)
+		}
+		return a.ServeKinesis(ctx, kin), true, nil
+	case "aws:sns":
+		var sns events.SNSEvent
+		if err := json.Unmarshal(event, &sns); err != nil {
+			return nil, true, fmt.Errorf("apptheory: parse sns event: %w", err)
+		}
+		out, err := a.ServeSNS(ctx, sns)
+		return out, true, err
 	default:
 		return nil, false, nil
 	}
@@ -583,6 +787,8 @@ func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMess
 // - Application Load Balancer (Target Group)
 // - Lambda Function URL
 // - SQS
+// - Kinesis
+// - SNS
 // - EventBridge
 // - DynamoDB Streams
 // - API Gateway v2 (WebSocket API)

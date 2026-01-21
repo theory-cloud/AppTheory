@@ -36,6 +36,8 @@ PolicyHook = Callable[[Context], "PolicyDecision | None"]
 EventHandler = Callable[[EventContext, dict[str, Any]], Any]
 EventMiddleware = Callable[[EventContext, dict[str, Any], Callable[[], Any]], Any]
 SQSHandler = Callable[[EventContext, dict[str, Any]], None]
+KinesisHandler = Callable[[EventContext, dict[str, Any]], None]
+SNSHandler = Callable[[EventContext, dict[str, Any]], Any]
 DynamoDBStreamHandler = Callable[[EventContext, dict[str, Any]], None]
 EventBridgeHandler = Callable[[EventContext, dict[str, Any]], Any]
 WebSocketHandler = Callable[[Context], Response]
@@ -125,6 +127,8 @@ class App:
     _observability: ObservabilityHooks
     _policy_hook: PolicyHook | None
     _sqs_routes: list[tuple[str, SQSHandler]]
+    _kinesis_routes: list[tuple[str, KinesisHandler]]
+    _sns_routes: list[tuple[str, SNSHandler]]
     _eventbridge_routes: list[tuple[EventBridgeSelector, EventBridgeHandler]]
     _dynamodb_routes: list[tuple[str, DynamoDBStreamHandler]]
     _ws_routes: dict[str, WebSocketHandler]
@@ -158,6 +162,8 @@ class App:
         self._observability = observability or ObservabilityHooks()
         self._policy_hook = policy_hook
         self._sqs_routes = []
+        self._kinesis_routes = []
+        self._sns_routes = []
         self._eventbridge_routes = []
         self._dynamodb_routes = []
         self._ws_routes = {}
@@ -186,6 +192,20 @@ class App:
         if not name:
             return self
         self._sqs_routes.append((name, handler))
+        return self
+
+    def kinesis(self, stream_name: str, handler: KinesisHandler) -> App:
+        name = str(stream_name or "").strip()
+        if not name:
+            return self
+        self._kinesis_routes.append((name, handler))
+        return self
+
+    def sns(self, topic_name: str, handler: SNSHandler) -> App:
+        name = str(topic_name or "").strip()
+        if not name:
+            return self
+        self._sns_routes.append((name, handler))
         return self
 
     def event_bridge(self, selector: EventBridgeSelector, handler: EventBridgeHandler) -> App:
@@ -727,6 +747,83 @@ class App:
 
         return {"batchItemFailures": failures}
 
+    def _kinesis_handler_for_event(self, event: dict[str, Any]) -> KinesisHandler | None:
+        records = event.get("Records") or []
+        if not isinstance(records, list) or not records:
+            return None
+        first = records[0] if isinstance(records[0], dict) else {}
+        stream_name = _kinesis_stream_name_from_arn(str(first.get("eventSourceARN") or ""))
+        if not stream_name:
+            return None
+        for name, handler in self._kinesis_routes:
+            if name == stream_name:
+                return handler
+        return None
+
+    def serve_kinesis(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        records = event.get("Records") or []
+        if not isinstance(records, list):
+            records = []
+
+        handler = self._kinesis_handler_for_event(event)
+        if handler is None:
+            failures = []
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                event_id = str(record.get("eventID") or "").strip()
+                if event_id:
+                    failures.append({"itemIdentifier": event_id})
+            return {"batchItemFailures": failures}
+
+        evt_ctx = self._event_context(ctx)
+        wrapped = self._apply_event_middlewares(handler)
+        failures = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            try:
+                wrapped(evt_ctx, record)
+            except Exception:  # noqa: BLE001
+                event_id = str(record.get("eventID") or "").strip()
+                if event_id:
+                    failures.append({"itemIdentifier": event_id})
+
+        return {"batchItemFailures": failures}
+
+    def _sns_handler_for_event(self, event: dict[str, Any]) -> SNSHandler | None:
+        records = event.get("Records") or []
+        if not isinstance(records, list) or not records:
+            return None
+        first = records[0] if isinstance(records[0], dict) else {}
+        sns = first.get("Sns") if isinstance(first.get("Sns"), dict) else {}
+        topic_name = _sns_topic_name_from_arn(str(sns.get("TopicArn") or ""))
+        if not topic_name:
+            return None
+        for name, handler in self._sns_routes:
+            if name == topic_name:
+                return handler
+        return None
+
+    def serve_sns(self, event: dict[str, Any], ctx: Any | None = None) -> Any:
+        records = event.get("Records") or []
+        if not isinstance(records, list):
+            records = []
+
+        handler = self._sns_handler_for_event(event)
+        if handler is None:
+            raise RuntimeError("apptheory: unrecognized sns topic")
+
+        evt_ctx = self._event_context(ctx)
+        wrapped = self._apply_event_middlewares(handler)
+        outputs: list[Any] = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            outputs.append(wrapped(evt_ctx, record))
+
+        return outputs
+
     def handle_lambda(self, event: Any, ctx: Any | None = None) -> Any:
         if not isinstance(event, dict):
             raise RuntimeError("apptheory: unknown event type")
@@ -734,11 +831,15 @@ class App:
         records = event.get("Records") or []
         if isinstance(records, list) and records:
             first = records[0] if isinstance(records[0], dict) else {}
-            source = str(first.get("eventSource") or "").strip()
+            source = str(first.get("eventSource") or first.get("EventSource") or "").strip()
             if source == "aws:sqs":
                 return self.serve_sqs(event, ctx=ctx)
             if source == "aws:dynamodb":
                 return self.serve_dynamodb_stream(event, ctx=ctx)
+            if source == "aws:kinesis":
+                return self.serve_kinesis(event, ctx=ctx)
+            if source == "aws:sns":
+                return self.serve_sns(event, ctx=ctx)
 
         if "detail-type" in event or "detailType" in event:
             return self.serve_eventbridge(event, ctx=ctx)
@@ -845,6 +946,27 @@ def _sqs_queue_name_from_arn(arn: str) -> str:
         return ""
     parts = value.split(":")
     return parts[-1] if parts else ""
+
+
+def _kinesis_stream_name_from_arn(arn: str) -> str:
+    value = str(arn or "").strip()
+    if not value:
+        return ""
+    parts = value.split(":")
+    last = parts[-1] if parts else ""
+    if not last:
+        return ""
+    if "/" in last:
+        return last.split("/", 1)[1].strip()
+    return last.strip()
+
+
+def _sns_topic_name_from_arn(arn: str) -> str:
+    value = str(arn or "").strip()
+    if not value:
+        return ""
+    parts = value.split(":")
+    return parts[-1].strip() if parts else ""
 
 
 def _eventbridge_rule_name_from_arn(arn: str) -> str:

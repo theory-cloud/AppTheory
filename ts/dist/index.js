@@ -908,6 +908,8 @@ export class App {
         ? webSocketClientFactory
         : (endpoint) => new WebSocketManagementClient({ endpoint });
     this._sqsRoutes = [];
+    this._kinesisRoutes = [];
+    this._snsRoutes = [];
     this._eventBridgeRoutes = [];
     this._dynamoDBRoutes = [];
     this._middlewares = [];
@@ -986,6 +988,20 @@ export class App {
     const name = String(queueName ?? "").trim();
     if (!name || typeof handler !== "function") return this;
     this._sqsRoutes.push({ queueName: name, handler });
+    return this;
+  }
+
+  kinesis(streamName, handler) {
+    const name = String(streamName ?? "").trim();
+    if (!name || typeof handler !== "function") return this;
+    this._kinesisRoutes.push({ streamName: name, handler });
+    return this;
+  }
+
+  sns(topicName, handler) {
+    const name = String(topicName ?? "").trim();
+    if (!name || typeof handler !== "function") return this;
+    this._snsRoutes.push({ topicName: name, handler });
     return this;
   }
 
@@ -1368,6 +1384,42 @@ export class App {
     return { batchItemFailures: failures };
   }
 
+  _kinesisHandlerForEvent(event) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    if (records.length === 0) return null;
+    const streamName = kinesisStreamNameFromArn(records[0]?.eventSourceARN);
+    if (!streamName) return null;
+    for (const route of this._kinesisRoutes) {
+      if (route.streamName === streamName) return route.handler;
+    }
+    return null;
+  }
+
+  async serveKinesisEvent(event, ctx) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    const handler = this._kinesisHandlerForEvent(event);
+    if (!handler) {
+      return {
+        batchItemFailures: records
+          .map((r) => ({ itemIdentifier: String(r?.eventID ?? "").trim() }))
+          .filter((f) => Boolean(f.itemIdentifier)),
+      };
+    }
+
+    const evtCtx = this._eventContext(ctx);
+    const wrapped = this._applyEventMiddlewares(handler);
+    const failures = [];
+    for (const record of records) {
+      try {
+        await wrapped(evtCtx, record);
+      } catch {
+        const id = String(record?.eventID ?? "").trim();
+        if (id) failures.push({ itemIdentifier: id });
+      }
+    }
+    return { batchItemFailures: failures };
+  }
+
   _eventBridgeHandlerForEvent(event) {
     const source = String(event?.source ?? "").trim();
     const detailType = String(event?.["detail-type"] ?? event?.detailType ?? "").trim();
@@ -1434,6 +1486,37 @@ export class App {
     return { batchItemFailures: failures };
   }
 
+  _snsHandlerForEvent(event) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    if (records.length === 0) return null;
+
+    const sns = records[0]?.Sns ?? records[0]?.SNS ?? records[0]?.sns ?? null;
+    const topicArn = String(sns?.TopicArn ?? sns?.topicArn ?? "").trim();
+    const topicName = snsTopicNameFromArn(topicArn);
+    if (!topicName) return null;
+
+    for (const route of this._snsRoutes) {
+      if (route.topicName === topicName) return route.handler;
+    }
+    return null;
+  }
+
+  async serveSNSEvent(event, ctx) {
+    const records = Array.isArray(event?.Records) ? event.Records : [];
+    const handler = this._snsHandlerForEvent(event);
+    if (!handler) {
+      throw new Error("apptheory: unrecognized sns topic");
+    }
+
+    const evtCtx = this._eventContext(ctx);
+    const wrapped = this._applyEventMiddlewares(handler);
+    const outputs = [];
+    for (const record of records) {
+      outputs.push(await wrapped(evtCtx, record));
+    }
+    return outputs;
+  }
+
   async handleLambda(event, ctx) {
     if (!event || typeof event !== "object") {
       throw new Error("apptheory: unknown event type");
@@ -1441,12 +1524,18 @@ export class App {
 
     const records = Array.isArray(event.Records) ? event.Records : [];
     if (records.length > 0) {
-      const source = String(records[0]?.eventSource ?? "").trim();
+      const source = String(records[0]?.eventSource ?? records[0]?.EventSource ?? "").trim();
       if (source === "aws:sqs") {
         return this.serveSQSEvent(event, ctx);
       }
       if (source === "aws:dynamodb") {
         return this.serveDynamoDBStream(event, ctx);
+      }
+      if (source === "aws:kinesis") {
+        return this.serveKinesisEvent(event, ctx);
+      }
+      if (source === "aws:sns") {
+        return this.serveSNSEvent(event, ctx);
       }
     }
 
@@ -1824,6 +1913,14 @@ export class TestEnv {
     return app.serveDynamoDBStream(event, ctx);
   }
 
+  invokeKinesis(app, event, ctx) {
+    return app.serveKinesisEvent(event, ctx);
+  }
+
+  invokeSNS(app, event, ctx) {
+    return app.serveSNSEvent(event, ctx);
+  }
+
   invokeLambda(app, event, ctx) {
     return app.handleLambda(event, ctx);
   }
@@ -1973,6 +2070,50 @@ export function buildDynamoDBStreamEvent(streamArn, records = []) {
       awsRegion: String(r?.awsRegion ?? "us-east-1"),
       dynamodb: r?.dynamodb ?? { SequenceNumber: String(idx + 1), SizeBytes: 1, StreamViewType: "NEW_AND_OLD_IMAGES" },
       eventSourceARN: String(r?.eventSourceARN ?? arn),
+    })),
+  };
+}
+
+export function buildKinesisEvent(streamArn, records = []) {
+  const arn = String(streamArn ?? "").trim();
+  return {
+    Records: records.map((r, idx) => {
+      const data = r?.kinesis?.data ?? r?.data ?? "";
+      const dataB64 =
+        typeof data === "string" ? data : Buffer.from(data ?? []).length > 0 ? Buffer.from(data ?? []).toString("base64") : "";
+      return {
+        eventID: String(r?.eventID ?? `kin-${idx + 1}`),
+        eventName: String(r?.eventName ?? "aws:kinesis:record"),
+        eventSource: "aws:kinesis",
+        eventSourceARN: String(r?.eventSourceARN ?? arn),
+        eventVersion: String(r?.eventVersion ?? "1.0"),
+        awsRegion: String(r?.awsRegion ?? "us-east-1"),
+        invokeIdentityArn: String(r?.invokeIdentityArn ?? ""),
+        kinesis: {
+          data: dataB64,
+          partitionKey: String(r?.kinesis?.partitionKey ?? r?.partitionKey ?? `pk-${idx + 1}`),
+          sequenceNumber: String(r?.kinesis?.sequenceNumber ?? r?.sequenceNumber ?? String(idx + 1)),
+          kinesisSchemaVersion: String(r?.kinesis?.kinesisSchemaVersion ?? "1.0"),
+        },
+      };
+    }),
+  };
+}
+
+export function buildSNSEvent(topicArn, records = []) {
+  const arn = String(topicArn ?? "").trim();
+  return {
+    Records: records.map((r, idx) => ({
+      EventSource: "aws:sns",
+      EventVersion: String(r?.EventVersion ?? r?.eventVersion ?? "1.0"),
+      EventSubscriptionArn: String(r?.EventSubscriptionArn ?? r?.eventSubscriptionArn ?? ""),
+      Sns: {
+        MessageId: String(r?.Sns?.MessageId ?? r?.sns?.MessageId ?? r?.messageId ?? `sns-${idx + 1}`),
+        TopicArn: String(r?.Sns?.TopicArn ?? r?.sns?.TopicArn ?? r?.topicArn ?? arn),
+        Subject: String(r?.Sns?.Subject ?? r?.sns?.Subject ?? r?.subject ?? ""),
+        Message: String(r?.Sns?.Message ?? r?.sns?.Message ?? r?.message ?? ""),
+        Timestamp: String(r?.Sns?.Timestamp ?? r?.sns?.Timestamp ?? "1970-01-01T00:00:00Z"),
+      },
     })),
   };
 }
@@ -2823,6 +2964,23 @@ function sqsQueueNameFromArn(arn) {
   if (!value) return "";
   const parts = value.split(":");
   return parts.length > 0 ? parts[parts.length - 1] : "";
+}
+
+function kinesisStreamNameFromArn(arn) {
+  const value = String(arn ?? "").trim();
+  if (!value) return "";
+  const parts = value.split(":");
+  const last = parts.length > 0 ? parts[parts.length - 1] : "";
+  if (!last) return "";
+  const idx = last.indexOf("/");
+  return idx >= 0 ? last.slice(idx + 1).trim() : last.trim();
+}
+
+function snsTopicNameFromArn(arn) {
+  const value = String(arn ?? "").trim();
+  if (!value) return "";
+  const parts = value.split(":");
+  return parts.length > 0 ? parts[parts.length - 1].trim() : "";
 }
 
 function eventBridgeRuleNameFromArn(arn) {

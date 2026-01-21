@@ -26,6 +26,8 @@ type FixtureSetup struct {
 	CORS        FixtureCORSConfig         `json:"cors,omitempty"`
 	WebSockets  []FixtureWebSocketRoute   `json:"websockets,omitempty"`
 	SQS         []FixtureSQSRoute         `json:"sqs,omitempty"`
+	Kinesis     []FixtureKinesisRoute     `json:"kinesis,omitempty"`
+	SNS         []FixtureSNSRoute         `json:"sns,omitempty"`
 	EventBridge []FixtureEventBridgeRoute `json:"eventbridge,omitempty"`
 	DynamoDB    []FixtureDynamoDBRoute    `json:"dynamodb,omitempty"`
 }
@@ -50,6 +52,16 @@ type FixtureWebSocketRoute struct {
 
 type FixtureSQSRoute struct {
 	Queue   string `json:"queue"`
+	Handler string `json:"handler"`
+}
+
+type FixtureKinesisRoute struct {
+	Stream  string `json:"stream"`
+	Handler string `json:"handler"`
+}
+
+type FixtureSNSRoute struct {
+	Topic   string `json:"topic"`
 	Handler string `json:"handler"`
 }
 
