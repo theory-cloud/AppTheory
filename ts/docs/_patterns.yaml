@@ -1,0 +1,25 @@
+# _patterns.yaml - Machine-readable patterns for AppTheory TypeScript
+
+patterns:
+  middleware_wraps_next:
+    name: "Middleware wraps next(ctx) and returns a Response"
+    problem: "Inconsistent middleware conventions create drift and subtle ordering bugs."
+    solution: "Always `await next(ctx)` and return the response."
+    correct_example: |
+      // CORRECT
+      app.use(async (ctx, next) => {
+        ctx.set("mw", "ok")
+        const resp = await next(ctx)
+        resp.headers["x-middleware"] = ["1"]
+        return resp
+      })
+    anti_patterns:
+      - name: "Forgetting to return the response"
+        why: "The runtime cannot infer a response; behavior becomes undefined."
+        incorrect_example: |
+          // INCORRECT
+          app.use(async (ctx, next) => { await next(ctx) })
+        consequences:
+          - "runtime errors"
+          - "difficult debugging"
+

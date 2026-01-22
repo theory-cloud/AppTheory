@@ -1,0 +1,20 @@
+# _patterns.yaml - Machine-readable patterns for AppTheory CDK
+
+patterns:
+  proxy_routes_then_route_in_app:
+    name: "Use proxy routes at the edge; route in AppTheory"
+    problem: "Duplicating routing logic between API Gateway and the app causes drift and inconsistent behavior."
+    solution: "Wire `/` + `/{proxy+}` (or equivalent) to a single handler; route inside AppTheory."
+    correct_example: |
+      // CORRECT (TypeScript)
+      new AppTheoryHttpApi(stack, "Api", { handler: fn })
+    anti_patterns:
+      - name: "Duplicating routing rules in API Gateway"
+        why: "Creates drift and breaks parity with other runtimes."
+        incorrect_example: |
+          // INCORRECT: per-path Lambda integrations for each route
+          // (prefer proxy routing + in-app router)
+        consequences:
+          - "inconsistent behavior"
+          - "higher operational burden"
+

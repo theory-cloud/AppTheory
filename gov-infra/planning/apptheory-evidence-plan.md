@@ -1,4 +1,4 @@
-# AppTheory Evidence Plan (Rubric v1.3.0)
+# AppTheory Evidence Plan (Rubric v1.4.0)
 
 Defines where evidence for rubric items is produced and how to regenerate it. Evidence should be reproducible from a commit SHA (no hand-assembled screenshots unless unavoidable).
 
@@ -52,6 +52,7 @@ Every rubric ID maps to exactly one verifier and one primary evidence location.
 | DOC-3 | Rubric + roadmap present | `gov-infra/planning/apptheory-10of10-rubric.md` | File existence check |
 | DOC-4 | Doc integrity (tokens, versions) | `gov-infra/evidence/DOC-4-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 | DOC-5 | Threat ↔ controls parity | `gov-infra/evidence/DOC-5-parity.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
+| DOC-6 | Pay Theory documentation standard | `gov-infra/evidence/DOC-6-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 
 ## Rubric Report (Fixed Location)
 The deterministic verifier (`gov-infra/verifiers/gov-verify-rubric.sh`) produces a machine-readable report at:

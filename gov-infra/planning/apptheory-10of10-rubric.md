@@ -4,11 +4,12 @@ This rubric defines what “10/10” means and how category grades are computed.
 “green by dilution” by making scoring **versioned, measurable, and repeatable**.
 
 ## Versioning (no moving goalposts)
-- **Rubric version:** `v1.3.0` (2026-01-22)
+- **Rubric version:** `v1.4.0` (2026-01-22)
 - **Comparability rule:** grades are comparable only within the same version.
 - **Change rule:** bump the version + changelog entry for any rubric change (what changed + why).
 
 ### Changelog
+- `v1.4.0`: Enforce the Pay Theory documentation standard across shipped packages (repo docs + TS/Py/CDK docs), including the YAML knowledge-base triad, via deterministic verification.
 - `v1.3.0`: Raise the coverage requirement to **≥ 90%** across all shipped runtimes (Go/TypeScript/Python) and enforce the same floor in the verifier.
 - `v1.2.0`: Raise the coverage requirement to **≥ 75%** across all shipped runtimes (Go/TypeScript/Python) and enforce the same floor in the verifier.
 - `v1.1.0`: Expand unit-test and coverage scope to **all shipped runtimes** (Go/TypeScript/Python). Previously the rubric and verifier only enforced Go coverage.
@@ -91,13 +92,14 @@ Enforcement rule (anti-drift):
 ## Docs (DOC) — integrity and parity
 | ID | Points | Requirement | How to verify |
 | --- | ---: | --- | --- |
-| DOC-1 | 2 | Threat model present | File exists: `gov-infra/planning/apptheory-threat-model.md` |
-| DOC-2 | 2 | Evidence plan present | File exists: `gov-infra/planning/apptheory-evidence-plan.md` |
-| DOC-3 | 2 | Rubric + roadmap present | Files exist: `gov-infra/planning/apptheory-10of10-rubric.md`, `gov-infra/planning/apptheory-10of10-roadmap.md` |
-| DOC-4 | 2 | Doc integrity (tokens, version claims) | `check_doc_integrity` (inside `gov-verify-rubric.sh`) |
+| DOC-1 | 1 | Threat model present | File exists: `gov-infra/planning/apptheory-threat-model.md` |
+| DOC-2 | 1 | Evidence plan present | File exists: `gov-infra/planning/apptheory-evidence-plan.md` |
+| DOC-3 | 1 | Rubric + roadmap present | Files exist: `gov-infra/planning/apptheory-10of10-rubric.md`, `gov-infra/planning/apptheory-10of10-roadmap.md` |
+| DOC-4 | 2 | Gov doc integrity (tokens, version claims) | `check_doc_integrity` (inside `gov-verify-rubric.sh`) |
 | DOC-5 | 2 | Threat ↔ controls parity | (built into verifier; writes `gov-infra/evidence/DOC-5-parity.log`) |
+| DOC-6 | 3 | Pay Theory documentation standard enforced (packages) | `check_docs_standard` (inside `gov-verify-rubric.sh`) |
 
-**10/10 definition:** DOC-1 through DOC-5 pass.
+**10/10 definition:** DOC-1 through DOC-6 pass.
 
 ## Maintaining 10/10 (recommended CI surface)
 Minimal command set CI should run in protected branches (no `latest` tools; pinned versions only):
