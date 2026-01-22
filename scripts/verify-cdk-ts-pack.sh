@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-expected_version="$(tr -d ' \t\r\n' < VERSION)"
+expected_version="$(./scripts/read-version.sh)"
 expected_tgz="theory-cloud-apptheory-cdk-${expected_version}.tgz"
 
 mkdir -p dist
