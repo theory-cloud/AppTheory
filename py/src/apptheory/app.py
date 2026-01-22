@@ -185,6 +185,12 @@ class App:
     def put(self, pattern: str, handler: Handler) -> App:
         return self.handle("PUT", pattern, handler)
 
+    def patch(self, pattern: str, handler: Handler) -> App:
+        return self.handle("PATCH", pattern, handler)
+
+    def options(self, pattern: str, handler: Handler) -> App:
+        return self.handle("OPTIONS", pattern, handler)
+
     def delete(self, pattern: str, handler: Handler) -> App:
         return self.handle("DELETE", pattern, handler)
 
