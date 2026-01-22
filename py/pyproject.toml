@@ -19,9 +19,36 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 120
+target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+select = [
+  # Core correctness
+  "E",
+  "F",
+  "I",
+
+  # Bug + security surface
+  "B",
+  "BLE",
+  "S",
+
+  # Modernize + simplify
+  "UP",
+  "C4",
+  "SIM",
+  "PIE",
+
+  # Performance + Ruff-specific hygiene
+  "PERF",
+  "RUF",
+
+  # Complexity
+  "C90",
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
 
 [tool.ruff.format]
 quote-style = "double"

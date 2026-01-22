@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from apptheory.aws_http import (
     alb_target_group_response_from_response,
@@ -316,6 +317,59 @@ class App:
 
         return normalize_response(resp)
 
+    def _policy_check(
+        self,
+        request_ctx: Context,
+        request_id: str,
+        *,
+        enable_p2: bool,
+    ) -> tuple[Response, str] | None:
+        if not enable_p2 or self._policy_hook is None:
+            return None
+
+        try:
+            decision = self._policy_hook(request_ctx)
+        except Exception as exc:  # noqa: BLE001
+            error_code = exc.code if isinstance(exc, AppError) else "app.internal"
+            return response_for_error_with_request_id(exc, request_id), error_code
+
+        if decision is None or not str(getattr(decision, "code", "")).strip():
+            return None
+
+        code = str(decision.code).strip()
+        message = str(getattr(decision, "message", "")).strip() or _default_policy_message(code)
+        resp = error_response_with_request_id(code, message, headers=decision.headers, request_id=request_id)
+        return resp, code
+
+    def _auth_check(
+        self,
+        request_ctx: Context,
+        *,
+        auth_required: bool,
+        request_id: str,
+        trace: list[str],
+    ) -> tuple[Response, str] | None:
+        if not auth_required:
+            return None
+
+        trace.append("auth")
+        if self._auth_hook is None:
+            resp = error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id)
+            return resp, "app.unauthorized"
+
+        try:
+            identity = self._auth_hook(request_ctx)
+        except Exception as exc:  # noqa: BLE001
+            error_code = exc.code if isinstance(exc, AppError) else "app.internal"
+            return response_for_error_with_request_id(exc, request_id), error_code
+
+        if not str(identity or "").strip():
+            resp = error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id)
+            return resp, "app.unauthorized"
+
+        request_ctx.auth_identity = str(identity)
+        return None
+
     def _serve_portable(self, request: Request, ctx: Any | None, *, enable_p2: bool) -> Response:
         pre_headers = canonicalize_headers(request.headers)
         pre_query = clone_query(request.query)
@@ -395,39 +449,20 @@ class App:
             middleware_trace=trace,
         )
 
-        if enable_p2 and self._policy_hook is not None:
-            try:
-                decision = self._policy_hook(request_ctx)
-            except Exception as exc:  # noqa: BLE001
-                error_code = exc.code if isinstance(exc, AppError) else "app.internal"
-                return finish(response_for_error_with_request_id(exc, request_id), error_code)
+        policy_outcome = self._policy_check(request_ctx, request_id, enable_p2=enable_p2)
+        if policy_outcome is not None:
+            resp, error_code = policy_outcome
+            return finish(resp, error_code)
 
-            if decision is not None and str(getattr(decision, "code", "")).strip():
-                code = str(decision.code).strip()
-                message = str(getattr(decision, "message", "")).strip() or _default_policy_message(code)
-                return finish(
-                    error_response_with_request_id(code, message, headers=decision.headers, request_id=request_id),
-                    code,
-                )
-
-        if match.auth_required:
-            trace.append("auth")
-            if self._auth_hook is None:
-                return finish(
-                    error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id),
-                    "app.unauthorized",
-                )
-            try:
-                identity = self._auth_hook(request_ctx)
-            except Exception as exc:  # noqa: BLE001
-                error_code = exc.code if isinstance(exc, AppError) else "app.internal"
-                return finish(response_for_error_with_request_id(exc, request_id), error_code)
-            if not str(identity or "").strip():
-                return finish(
-                    error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id),
-                    "app.unauthorized",
-                )
-            request_ctx.auth_identity = str(identity)
+        auth_outcome = self._auth_check(
+            request_ctx,
+            auth_required=match.auth_required,
+            request_id=request_id,
+            trace=trace,
+        )
+        if auth_outcome is not None:
+            resp, error_code = auth_outcome
+            return finish(resp, error_code)
 
         trace.append("handler")
 
@@ -929,10 +964,7 @@ def _websocket_management_endpoint(domain_name: str, stage: str) -> str:
     domain = str(domain_name or "").strip().strip("/")
     if not domain:
         return ""
-    if domain.startswith("https://") or domain.startswith("http://"):
-        base = domain
-    else:
-        base = "https://" + domain
+    base = domain if domain.startswith(("https://", "http://")) else "https://" + domain
 
     stage_value = str(stage or "").strip().strip("/")
     if not stage_value:
@@ -1070,10 +1102,7 @@ def _cors_origin_allowed(origin: str, cors: CORSConfig) -> bool:
     if not cors.allowed_origins:
         return False
 
-    for allowed in cors.allowed_origins:
-        if allowed == "*" or allowed == origin_value:
-            return True
-    return False
+    return any(allowed == "*" or allowed == origin_value for allowed in cors.allowed_origins)
 
 
 def _cors_allow_headers_value(cors: CORSConfig) -> str:

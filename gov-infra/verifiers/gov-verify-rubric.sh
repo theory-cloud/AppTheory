@@ -34,6 +34,8 @@ GOV_TOOLS_DIR="${GOV_INFRA}/.tools"
 GOV_TOOLS_BIN="${GOV_TOOLS_DIR}/bin"
 GOV_TOOLS_PY_DIR="${GOV_TOOLS_DIR}/py"
 GOV_TOOLS_PY_BIN="${GOV_TOOLS_PY_DIR}/bin"
+GOV_TOOLS_PY_COV_DIR="${GOV_TOOLS_DIR}/py-coverage"
+GOV_TOOLS_PY_COV_BIN="${GOV_TOOLS_PY_COV_DIR}/bin"
 mkdir -p "${GOV_TOOLS_BIN}"
 export PATH="${GOV_TOOLS_BIN}:${GOV_TOOLS_PY_BIN}:${PATH}"
 
@@ -43,6 +45,7 @@ PIN_GOLANGCI_LINT_VERSION="v2.8.0"
 PIN_GOVULNCHECK_VERSION="v1.1.4"
 PIN_OSV_SCANNER_VERSION="v1.9.2"
 PIN_PIP_AUDIT_VERSION="2.10.0"
+PIN_PY_COVERAGE_VERSION="7.6.10"
 
 # Optional feature flags (opt-in pack features).
 FEATURE_OSS_RELEASE="false"
@@ -59,7 +62,10 @@ rm -f \
   "${EVIDENCE_DIR}/"*-output.log \
   "${EVIDENCE_DIR}/DOC-5-parity.log" \
   "${EVIDENCE_DIR}/go-coverage.out" \
-  "${EVIDENCE_DIR}/go-coverage-summary.txt"
+  "${EVIDENCE_DIR}/go-coverage-summary.txt" \
+  "${EVIDENCE_DIR}/ts-coverage-summary.txt" \
+  "${EVIDENCE_DIR}/py-coverage-summary.txt" \
+  "${EVIDENCE_DIR}/py-coverage.data"
 
 # Initialize report structure
 REPORT_SCHEMA_VERSION=1
@@ -241,7 +247,13 @@ ensure_pip_audit_pinned() {
 
 gov_cmd_unit() {
   require_cmd_or_blocked go || return $?
+  require_cmd_or_blocked node || return $?
+  require_cmd_or_blocked python3 || return $?
+
   make test-unit
+
+  node --test contract-tests/runners/ts/fixtures.test.cjs
+  python3 contract-tests/runners/py/run.py
 }
 
 gov_cmd_integration() {
@@ -500,7 +512,10 @@ check_go_coverage() {
 
   echo "Generating Go coverage profile..."
   # ./... includes all packages in the root module.
-  go test -buildvcs=false ./... -coverprofile="${cover_out}"
+  if ! go test -buildvcs=false ./... -coverprofile="${cover_out}"; then
+    echo "FAIL: go tests failed during coverage run" >&2
+    return 1
+  fi
 
   if [[ ! -f "${cover_out}" ]]; then
     echo "FAIL: missing coverage profile output: ${cover_out}" >&2
@@ -520,10 +535,175 @@ check_go_coverage() {
     return 1
   fi
 
-  # Compare as decimal using awk.
-  awk -v pct="${pct}" -v thr="${COV_THRESHOLD}" 'BEGIN { if (pct+0 < thr+0) exit 1; exit 0 }'
+  # Compare as decimal using awk (do not rely on `set -e`, since callers may run with `set +e`).
+  if ! awk -v pct="${pct}" -v thr="${COV_THRESHOLD}" 'BEGIN { if (pct+0 < thr+0) exit 1; exit 0 }'; then
+    echo "FAIL: coverage below threshold (${pct}% < ${COV_THRESHOLD}%)" >&2
+    return 1
+  fi
 
   echo "coverage: PASS (${pct}% >= ${COV_THRESHOLD}%)"
+}
+
+ensure_py_coverage_pinned() {
+  # Install a pinned Coverage.py into a dedicated venv under gov-infra/.tools/.
+  require_cmd_or_blocked python3 || return $?
+
+  local v="${PIN_PY_COVERAGE_VERSION}"
+  local want="Coverage.py, version ${v}"
+
+  if [[ -x "${GOV_TOOLS_PY_COV_BIN}/coverage" ]]; then
+    if "${GOV_TOOLS_PY_COV_BIN}/coverage" --version 2>/dev/null | grep -Fq "${want}"; then
+      return 0
+    fi
+  fi
+
+  rm -rf "${GOV_TOOLS_PY_COV_DIR}"
+  echo "Installing Coverage.py ${v} into ${GOV_TOOLS_PY_COV_DIR}..." >&2
+  if ! python3 -m venv "${GOV_TOOLS_PY_COV_DIR}"; then
+    echo "BLOCKED: failed to create python venv at ${GOV_TOOLS_PY_COV_DIR}" >&2
+    return 2
+  fi
+  if ! "${GOV_TOOLS_PY_COV_BIN}/python" -m pip install --disable-pip-version-check --no-cache-dir "coverage==${v}"; then
+    echo "BLOCKED: failed to install pinned Coverage.py ${v}" >&2
+    return 2
+  fi
+
+  if ! "${GOV_TOOLS_PY_COV_BIN}/coverage" --version 2>/dev/null | grep -Fq "${want}"; then
+    echo "FAIL: installed Coverage.py does not match expected version ${v}" >&2
+    "${GOV_TOOLS_PY_COV_BIN}/coverage" --version 2>/dev/null || true
+    return 1
+  fi
+
+  return 0
+}
+
+check_ts_coverage() {
+  # Enforces TypeScript runtime coverage >= COV_THRESHOLD for the shipped JS under ts/dist/.
+  # Primary driver: contract fixtures (same semantics as CON-3), but measured against ts/dist/**.
+  require_cmd_or_blocked node || return $?
+
+  local summary="${EVIDENCE_DIR}/ts-coverage-summary.txt"
+  rm -f "${summary}"
+
+  if [[ ! -f "ts/dist/index.js" ]]; then
+    echo "FAIL: missing TypeScript dist entrypoint: ts/dist/index.js" >&2
+    return 1
+  fi
+
+  local test_file="contract-tests/runners/ts/fixtures.test.cjs"
+  if [[ ! -f "${test_file}" ]]; then
+    echo "FAIL: missing TS coverage test driver: ${test_file}" >&2
+    return 1
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+
+  # Notes:
+  # - Coverage thresholds are enforced by Node itself (no external coverage toolchain).
+  # - We include only shipped runtime output under ts/dist/** to prevent denominator games.
+  if ! NO_COLOR=1 node --test --experimental-test-coverage \
+    --test-coverage-lines="${COV_THRESHOLD}" \
+    --test-coverage-include="ts/dist/**/*.js" \
+    "${test_file}" >"${tmp}" 2>&1; then
+    cat "${tmp}"
+    if grep -i -F "all files" "${tmp}" > "${summary}"; then :; else tail -n 80 "${tmp}" > "${summary}"; fi
+    rm -f "${tmp}"
+    return 1
+  fi
+
+  cat "${tmp}"
+  if grep -i -F "all files" "${tmp}" > "${summary}"; then :; else tail -n 80 "${tmp}" > "${summary}"; fi
+  rm -f "${tmp}"
+  echo "ts-coverage: PASS (see ${summary})"
+}
+
+check_py_coverage() {
+  # Enforces Python runtime coverage >= COV_THRESHOLD for the shipped package under py/src/apptheory/.
+  # Primary driver: contract fixtures (same semantics as CON-3), but measured against py/src/apptheory/**.
+  require_cmd_or_blocked python3 || return $?
+  ensure_py_coverage_pinned || return $?
+
+  local summary="${EVIDENCE_DIR}/py-coverage-summary.txt"
+  local data="${EVIDENCE_DIR}/py-coverage.data"
+  rm -f "${summary}" "${data}"
+
+  if [[ ! -d "py/src/apptheory" ]]; then
+    echo "FAIL: missing Python runtime source dir: py/src/apptheory" >&2
+    return 1
+  fi
+  if [[ ! -f "contract-tests/runners/py/run.py" ]]; then
+    echo "FAIL: missing Python contract runner: contract-tests/runners/py/run.py" >&2
+    return 1
+  fi
+
+  local src_dir="${REPO_ROOT}/py/src/apptheory"
+  if ! COVERAGE_FILE="${data}" "${GOV_TOOLS_PY_COV_BIN}/python" -m coverage run \
+    --source="${src_dir}" \
+    contract-tests/runners/py/run.py; then
+    echo "FAIL: python coverage run failed" >&2
+    return 1
+  fi
+
+  if ! COVERAGE_FILE="${data}" "${GOV_TOOLS_PY_COV_BIN}/python" -m coverage report \
+    --fail-under="${COV_THRESHOLD}" \
+    --precision=1 > "${summary}" 2>&1; then
+    cat "${summary}" || true
+    echo "FAIL: python coverage below threshold (${COV_THRESHOLD}%)" >&2
+    return 1
+  fi
+
+  cat "${summary}"
+  echo "py-coverage: PASS (see ${summary})"
+}
+
+check_coverage() {
+  # Multi-language coverage gate (Go/TypeScript/Python).
+  local fail=0
+  local blocked=0
+
+  echo "==> coverage: Go"
+  set +e
+  check_go_coverage
+  local ec_go=$?
+  set -e
+  if [[ $ec_go -eq 2 ]]; then
+    blocked=1
+  elif [[ $ec_go -ne 0 ]]; then
+    fail=1
+  fi
+
+  echo ""
+  echo "==> coverage: TypeScript"
+  set +e
+  check_ts_coverage
+  local ec_ts=$?
+  set -e
+  if [[ $ec_ts -eq 2 ]]; then
+    blocked=1
+  elif [[ $ec_ts -ne 0 ]]; then
+    fail=1
+  fi
+
+  echo ""
+  echo "==> coverage: Python"
+  set +e
+  check_py_coverage
+  local ec_py=$?
+  set -e
+  if [[ $ec_py -eq 2 ]]; then
+    blocked=1
+  elif [[ $ec_py -ne 0 ]]; then
+    fail=1
+  fi
+
+  if [[ "${fail}" -ne 0 ]]; then
+    return 1
+  fi
+  if [[ "${blocked}" -ne 0 ]]; then
+    return 2
+  fi
+  return 0
 }
 
 check_security_config() {
@@ -760,8 +940,8 @@ check_maintainability_roadmap() {
     echo "FAIL: missing roadmap: ${roadmap}" >&2
     return 1
   fi
-  grep -q "Rubric v1.0.0" "${roadmap}" || {
-    echo "FAIL: roadmap does not reference current rubric version (v1.0.0)" >&2
+  grep -q "Rubric v1.1.0" "${roadmap}" || {
+    echo "FAIL: roadmap does not reference current rubric version (v1.1.0)" >&2
     return 1
   }
   echo "maintainability-roadmap: PASS"
@@ -1593,7 +1773,7 @@ normalize_feature_flags
 # Commands are centralized here so docs and verifier stay aligned.
 CMD_UNIT="gov_cmd_unit"
 CMD_INTEGRATION="gov_cmd_integration"
-CMD_COVERAGE="check_go_coverage"
+CMD_COVERAGE="check_coverage"
 
 CMD_FMT="gov_cmd_fmt"
 CMD_LINT="gov_cmd_lint"

@@ -11,8 +11,10 @@ from pathlib import Path
 EXPORT_DECL_RE = re.compile(
     r"^\s*export\s+(?:declare\s+)?(interface|class|function|type|const|let|var|enum|namespace)\s+([A-Za-z0-9_]+)\b"
 )
-EXPORT_LIST_RE = re.compile(r"^\s*export\s*\{([^}]*)\}\s*(?:from\s+['\"][^'\"]+['\"])?\s*;?\s*$")
-EXPORT_STAR_RE = re.compile(r"^\s*export\s+\*\s+from\s+['\"][^'\"]+['\"]\s*;?\s*$")
+EXPORT_LIST_RE = re.compile(
+    r"^\s*export\s+(?:type\s+)?\{([^}]*)\}\s*(?:from\s+['\"]([^'\"]+)['\"])?\s*;?\s*$"
+)
+EXPORT_STAR_RE = re.compile(r"^\s*export\s+\*\s+from\s+['\"]([^'\"]+)['\"]\s*;?\s*$")
 
 
 def sha256_hex(data: bytes) -> str:
@@ -21,42 +23,123 @@ def sha256_hex(data: bytes) -> str:
     return h.hexdigest()
 
 
-def parse_exports(text: str) -> tuple[list[tuple[str, str]], list[str]]:
-    exports: list[tuple[str, str]] = []
-    passthrough: list[str] = []
-
-    for line in text.splitlines():
-        m = EXPORT_DECL_RE.match(line)
-        if m:
-            kind = m.group(1)
-            name = m.group(2)
-            exports.append((name, kind))
+def _parse_export_list(raw: str) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
             continue
 
-        m = EXPORT_LIST_RE.match(line)
-        if m:
-            raw = m.group(1).strip()
-            if not raw:
+        if part.startswith("type "):
+            part = part[len("type ") :].strip()
+
+        if " as " in part:
+            name, alias = part.split(" as ", 1)
+            out.append((name.strip(), alias.strip()))
+        else:
+            out.append((part, part))
+    return out
+
+
+def _resolve_module_spec(from_file: Path, spec: str) -> Path | None:
+    if not spec.startswith("."):
+        return None
+    target = (from_file.parent / spec).resolve()
+    if target.suffix == ".js":
+        target = target.with_suffix(".d.ts")
+    elif target.suffix == ".mjs":
+        target = target.with_suffix(".d.ts")
+    elif target.suffix == "":
+        target = target.with_suffix(".d.ts")
+    return target
+
+
+def collect_exports(entry: Path) -> tuple[list[tuple[str, str]], list[str]]:
+    passthrough: set[str] = set()
+    cache: dict[Path, dict[str, set[str]]] = {}
+    stack: set[Path] = set()
+
+    def module_exports(file_path: Path) -> dict[str, set[str]]:
+        resolved = file_path.resolve()
+        cached = cache.get(resolved)
+        if cached is not None:
+            return cached
+        if resolved in stack:
+            return {}
+
+        stack.add(resolved)
+
+        out: dict[str, set[str]] = {}
+
+        def add(name: str, kind: str) -> None:
+            out.setdefault(name, set()).add(kind)
+
+        try:
+            text = resolved.read_text("utf-8")
+        except FileNotFoundError:
+            passthrough.add(f"# missing: {resolved.as_posix()}")
+            cache[resolved] = {}
+            stack.remove(resolved)
+            return {}
+
+        for line in text.splitlines():
+            m = EXPORT_DECL_RE.match(line)
+            if m:
+                add(m.group(2), m.group(1))
                 continue
-            for part in raw.split(","):
-                part = part.strip()
-                if not part:
+
+            m = EXPORT_STAR_RE.match(line)
+            if m:
+                spec = m.group(1)
+                target = _resolve_module_spec(resolved, spec)
+                if target is None:
+                    passthrough.add(line.strip())
                     continue
-                # `Foo as Bar` or just `Foo`
-                if " as " in part:
-                    _, alias = part.split(" as ", 1)
-                    name = alias.strip()
-                else:
-                    name = part
-                exports.append((name, "re-export"))
-            continue
+                for name, kinds in module_exports(target).items():
+                    out.setdefault(name, set()).update(kinds)
+                continue
 
-        if EXPORT_STAR_RE.match(line):
-            passthrough.append(line.strip())
+            m = EXPORT_LIST_RE.match(line)
+            if m:
+                raw = m.group(1).strip()
+                spec = m.group(2)
+                if not raw:
+                    continue
 
-    exports.sort(key=lambda x: (x[0], x[1]))
-    passthrough.sort()
-    return exports, passthrough
+                parts = _parse_export_list(raw)
+                if not spec:
+                    for _, alias in parts:
+                        add(alias, "re-export")
+                    continue
+
+                target = _resolve_module_spec(resolved, spec)
+                if target is None:
+                    for _, alias in parts:
+                        add(alias, "re-export")
+                    continue
+
+                target_exports = module_exports(target)
+                for original, alias in parts:
+                    kinds = target_exports.get(original)
+                    if not kinds:
+                        add(alias, "re-export")
+                        continue
+                    out.setdefault(alias, set()).update(kinds)
+
+        cache[resolved] = out
+        stack.remove(resolved)
+        return out
+
+    exports = module_exports(entry)
+
+    flattened: list[tuple[str, str]] = []
+    for name, kinds in exports.items():
+        for kind in kinds:
+            flattened.append((name, kind))
+
+    flattened.sort(key=lambda x: (x[0], x[1]))
+    passthrough_list = sorted(passthrough)
+    return flattened, passthrough_list
 
 
 def main() -> int:
@@ -64,7 +147,7 @@ def main() -> int:
     data = src.read_bytes()
     text = data.decode("utf-8")
 
-    exports, passthrough = parse_exports(text)
+    exports, passthrough = collect_exports(src)
 
     sys.stdout.write("# AppTheory TypeScript public API snapshot\n")
     sys.stdout.write(f"# Source: {src.as_posix()}\n")
@@ -86,4 +169,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

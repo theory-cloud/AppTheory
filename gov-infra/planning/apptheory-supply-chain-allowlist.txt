@@ -18,3 +18,7 @@
 #   GOV-SUPPLY:PYTHON:LINE:file=requirements.txt:rule=CUSTOM_INDEX:sha256=deadbeefcafe
 # - Go:
 #   GOV-SUPPLY:GO:REPLACE:rule=REMOTE_REPLACE:from=github.com/example/upstream@v1.2.3:to=github.com/example/fork@v1.2.3
+
+# eslint import tooling: prepublishOnly scripts reference `.npmrc` for publish-time packaging; not executed during install.
+GOV-SUPPLY:NODE:SCRIPT:pkg=eslint-import-resolver-node:ver=0.3.9:hook=prepublishOnly:rule=CRED_FILE_ACCESS
+GOV-SUPPLY:NODE:SCRIPT:pkg=eslint-module-utils:ver=2.12.1:hook=prepublishOnly:rule=CRED_FILE_ACCESS

@@ -1,4 +1,4 @@
-# AppTheory Controls Matrix (custom — v1.0.0)
+# AppTheory Controls Matrix (custom — v1.1.0)
 
 This matrix is the “requirements → controls → verifiers → evidence” backbone for AppTheory. It is intentionally
 engineering-focused: it does not claim compliance, but it makes security/quality assertions traceable and repeatable.
@@ -26,9 +26,9 @@ This table is the canonical mapping used by the rubric/roadmap/evidence plan.
 
 | Area | Threat IDs | Control ID | Requirement | Control (what we implement) | Verification (command/gate) | Evidence (artifact/location) |
 | --- | --- | --- | --- | --- | --- | --- |
-| Quality | THR-1, THR-2, THR-6 | QUA-1 | Unit tests prevent regressions | Go unit tests run for all packages in the root module. | `make test-unit` | `gov-infra/evidence/QUA-1-output.log` |
+| Quality | THR-1, THR-2, THR-6 | QUA-1 | Unit tests prevent regressions | Unit tests are run and enforced for Go/TypeScript/Python. | `gov_cmd_unit` (inside `gov-verify-rubric.sh`) | `gov-infra/evidence/QUA-1-output.log` |
 | Quality | THR-1, THR-2, THR-7, THR-10 | QUA-2 | Integration and runtime smoke tests stay green | Deterministic example/testkit runs validate “real runtime” behavior across languages. | `scripts/verify-testkit-examples.sh` | `gov-infra/evidence/QUA-2-output.log` |
-| Quality | THR-1, THR-6 | QUA-3 | Coverage threshold is enforced (no dilution) | Coverage is measured for Go code and a floor is enforced. | `check_go_coverage` (inside `gov-verify-rubric.sh`) | `gov-infra/evidence/QUA-3-output.log` + `gov-infra/evidence/go-coverage.out` |
+| Quality | THR-1, THR-6 | QUA-3 | Coverage threshold is enforced (no dilution) | Coverage is measured for Go/TypeScript/Python and a floor is enforced. | `check_coverage` (inside `gov-verify-rubric.sh`) | `gov-infra/evidence/QUA-3-output.log` + coverage summaries under `gov-infra/evidence/` |
 | Consistency | — | CON-1 | Formatting is clean (no diffs) | `gofmt` is enforced on tracked Go files. | `make fmt-check` | `gov-infra/evidence/CON-1-output.log` |
 | Consistency | THR-6 | CON-2 | Lint/static analysis is enforced (pinned toolchain) | Go lint (golangci-lint), TS lint (eslint), Python lint (ruff) all run and are enforced. | `make lint` | `gov-infra/evidence/CON-2-output.log` |
 | Consistency | THR-1, THR-2, THR-7, THR-9 | CON-3 | Public boundary contract parity (cross-language behavior) | Contract fixtures validate equivalent semantics across Go/TS/Python runners. | `scripts/verify-contract-tests.sh` | `gov-infra/evidence/CON-3-output.log` |

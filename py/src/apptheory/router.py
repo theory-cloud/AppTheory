@@ -62,10 +62,9 @@ class Router:
             if params is None:
                 continue
             allowed.append(route.method)
-            if route.method == method_value:
-                if best is None or _route_more_specific(route, best):
-                    best = route
-                    best_params = params
+            if route.method == method_value and (best is None or _route_more_specific(route, best)):
+                best = route
+                best_params = params
 
         if best is None or best_params is None:
             return None, allowed

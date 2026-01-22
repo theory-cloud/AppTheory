@@ -4,11 +4,12 @@ This rubric defines what “10/10” means and how category grades are computed.
 “green by dilution” by making scoring **versioned, measurable, and repeatable**.
 
 ## Versioning (no moving goalposts)
-- **Rubric version:** `v1.0.0` (2026-01-21)
+- **Rubric version:** `v1.1.0` (2026-01-22)
 - **Comparability rule:** grades are comparable only within the same version.
 - **Change rule:** bump the version + changelog entry for any rubric change (what changed + why).
 
 ### Changelog
+- `v1.1.0`: Expand unit-test and coverage scope to **all shipped runtimes** (Go/TypeScript/Python). Previously the rubric and verifier only enforced Go coverage.
 - `v1.0.0`: Initial GovTheory rubric for AppTheory (custom domain). Establishes cross-language contract parity, multi-module health, supply-chain checks, and anti-drift gates.
 
 ## Scoring (deterministic)
@@ -30,9 +31,9 @@ Enforcement rule (anti-drift):
 ## Quality (QUA) — reliable, testable, change-friendly
 | ID | Points | Requirement | How to verify |
 | --- | ---: | --- | --- |
-| QUA-1 | 4 | Unit tests stay green | `make test-unit` |
+| QUA-1 | 4 | Unit tests stay green (Go/TypeScript/Python) | `gov_cmd_unit` (inside `gov-verify-rubric.sh`) |
 | QUA-2 | 3 | Integration/runtime tests stay green | `scripts/verify-testkit-examples.sh` |
-| QUA-3 | 3 | Coverage ≥ 60% (no denominator games) | `check_go_coverage` (inside `gov-verify-rubric.sh`) |
+| QUA-3 | 3 | Coverage ≥ 60% (Go/TypeScript/Python; no denominator games) | `check_coverage` (inside `gov-verify-rubric.sh`) |
 
 **10/10 definition:** QUA-1 through QUA-3 pass.
 
