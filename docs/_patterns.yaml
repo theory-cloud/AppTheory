@@ -1,0 +1,40 @@
+# _patterns.yaml - Machine-readable patterns for AppTheory
+
+patterns:
+  headers_canonicalization:
+    name: "Treat headers case-insensitively; expect lowercase keys"
+    problem: "Header names are case-insensitive, but map keys are not. Drift can break tests and middleware."
+    solution: "Normalize inputs and write output header keys in lowercase for parity."
+    correct_example: |
+      // CORRECT (Go): read case-insensitively, set lowercase output keys
+      reqID := ctx.Header("X-Request-Id")
+      resp.Headers["x-request-id"] = []string{reqID}
+    anti_patterns:
+      - name: "Assuming mixed-case header keys are preserved"
+        why: "Map keys may be canonicalized; tests and cross-language parity will fail."
+        incorrect_example: |
+          // INCORRECT: relying on mixed-case keys in output
+          resp.Headers["X-Request-Id"] = []string{reqID}
+        consequences:
+          - "contract tests fail"
+          - "users observe inconsistent header casing"
+
+  router_specificity_order:
+    name: "Register specific routes first"
+    problem: "Equally-specific routes must resolve deterministically across languages."
+    solution: "Prefer earlier registration order when specificity ties; register specific routes before fallbacks."
+    correct_example: |
+      // CORRECT
+      app.Get("/users/me", handleMe)
+      app.Get("/users/{id}", handleUser)
+    anti_patterns:
+      - name: "Relying on unspecified tie-break behavior"
+        why: "Non-determinism becomes cross-language drift."
+        incorrect_example: |
+          // INCORRECT: assuming the last registered route wins
+          app.Get("/users/{id}", handleUser)
+          app.Get("/users/me", handleMe)
+        consequences:
+          - "route mismatch between runtimes"
+          - "hard-to-debug production behavior"
+

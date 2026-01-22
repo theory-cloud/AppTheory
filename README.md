@@ -36,6 +36,13 @@ Non-goals (near-term):
 - Node.js: `24`
 - Python: `3.14`
 
+## Documentation
+
+- Main docs index: `docs/README.md`
+- TypeScript package docs: `ts/docs/README.md`
+- Python package docs: `py/docs/README.md`
+- CDK package docs: `cdk/docs/README.md`
+
 ## Runtime tiers (P0/P1/P2)
 
 - **P0:** routing + request/response normalization + error envelope

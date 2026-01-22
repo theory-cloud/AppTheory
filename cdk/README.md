@@ -4,6 +4,11 @@ TS-first `jsii` constructs for deploying AppTheory apps with consistent defaults
 
 Status: early; start with a small “top 20%” set and grow based on real usage.
 
+## Documentation
+
+- CDK docs index: `cdk/docs/README.md`
+- Repo docs index: `docs/README.md`
+
 ## Constructs
 
 - `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).

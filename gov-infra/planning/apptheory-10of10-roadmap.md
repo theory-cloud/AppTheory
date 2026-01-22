@@ -1,8 +1,8 @@
-# AppTheory: 10/10 Roadmap (Rubric v1.3.0)
+# AppTheory: 10/10 Roadmap (Rubric v1.4.0)
 
 This roadmap maps milestones directly to rubric IDs with measurable acceptance criteria and verification commands.
 
-## Current scorecard (Rubric v1.3.0)
+## Current scorecard (Rubric v1.4.0)
 Scoring note: a check is only treated as “passing” if it is both green **and** enforced by a trustworthy verifier
 (pinned tooling, schema-valid configs, and no “green by dilution” shortcuts). Completeness failures invalidate “green by
 drift”.
@@ -17,7 +17,7 @@ Until `bash gov-infra/verifiers/gov-verify-rubric.sh` is run in CI and archived,
 | Security | unknown | SEC-1..SEC-4 (not yet validated) |
 | Compliance Readiness | in-scope | CMP-1..CMP-3 (files exist once committed) |
 | Maintainability | unknown | MAI-1..MAI-3 (not yet validated) |
-| Docs | unknown | DOC-1..DOC-5 (not yet validated) |
+| Docs | unknown | DOC-1..DOC-6 (not yet validated) |
 
 Evidence (refresh whenever behavior changes):
 - `gov_cmd_unit` (via verifier)
@@ -34,6 +34,7 @@ Evidence (refresh whenever behavior changes):
 - SEC-3 supply-chain gate (via verifier)
 - `scripts/verify-builds.sh`
 - `check_doc_integrity` (via verifier)
+- `check_docs_standard` (via verifier)
 
 ## Rubric-to-milestone mapping
 | Rubric ID | Status | Milestone |
@@ -65,6 +66,7 @@ Evidence (refresh whenever behavior changes):
 | DOC-3 | planned | M0 |
 | DOC-4 | unknown | M0 |
 | DOC-5 | unknown | M0 |
+| DOC-6 | unknown | M0 |
 
 ## Workstream tracking docs (when blockers require a dedicated plan)
 Large remediation workstreams usually need their own roadmaps so they can be executed in reviewable slices and keep the
@@ -76,7 +78,7 @@ main roadmap readable:
 ## Milestones (sequenced)
 
 ### M0 — Freeze rubric + planning artifacts (anti-drift baseline)
-**Closes:** CMP-1, CMP-2, CMP-3, DOC-1, DOC-2, DOC-3, DOC-4, DOC-5, COM-1, COM-2, COM-3
+**Closes:** CMP-1, CMP-2, CMP-3, DOC-1, DOC-2, DOC-3, DOC-4, DOC-5, DOC-6, COM-1, COM-2, COM-3
 
 **Goal:** prevent goalpost drift by making the definition of “good” explicit and versioned.
 

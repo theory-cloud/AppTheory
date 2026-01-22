@@ -1,0 +1,24 @@
+# _concepts.yaml - Machine-readable concept map for AppTheory Python
+
+concepts:
+  apptheory_py:
+    type: library
+    language: python
+    purpose: "Python runtime and adapters for AppTheory."
+    provides:
+      - app_router_middleware
+      - aws_event_builders
+      - response_helpers
+      - deterministic_test_env
+    requires:
+      - python_3_14
+    use_when:
+      - "You need AppTheory semantics in a Python Lambda."
+      - "You need contract-backed parity with Go/TypeScript."
+
+  test_env:
+    type: component
+    purpose: "Deterministic test environment used for unit tests and contract runners."
+    key_methods:
+      - create_test_env: "Creates a TestEnv with controllable clock and ID generator."
+

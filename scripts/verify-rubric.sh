@@ -19,5 +19,6 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ./scripts/verify-api-snapshots.sh
 ./scripts/verify-contract-tests.sh
 ./scripts/verify-testkit-examples.sh
+bash ./scripts/verify-docs-standard.sh
 
 echo "rubric: PASS"
