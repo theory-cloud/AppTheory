@@ -1,6 +1,6 @@
-# AppTheory: Coverage Roadmap (to 60%) (Rubric v1.1.0)
+# AppTheory: Coverage Roadmap (to 75%) (Rubric v1.2.0)
 
-Goal: raise and maintain meaningful coverage to **≥ 60%** across the shipped runtimes (Go/TypeScript/Python) as measured
+Goal: raise and maintain meaningful coverage to **≥ 75%** across the shipped runtimes (Go/TypeScript/Python) as measured
 by the rubric’s deterministic coverage gate, without reducing the measurement surface.
 
 This exists as a standalone roadmap because coverage improvements are usually multi-PR efforts that need clear
@@ -14,16 +14,16 @@ intermediate milestones, guardrails, and repeatable measurement.
 Snapshot (2026-01-22):
 - Coverage gate: `check_coverage` (via `bash gov-infra/verifiers/gov-verify-rubric.sh`)
 - Current result (baseline):
-  - Go: 61.7% (PASS)
-  - TypeScript: 65.5% (PASS; line coverage across `ts/dist/**`)
-  - Python: 69.6% (PASS; statement coverage across `py/src/apptheory/**`)
+  - Go: 61.7% (below 75%)
+  - TypeScript: 65.5% (below 75%; line coverage across `ts/dist/**`)
+  - Python: 69.6% (below 75%; statement coverage across `py/src/apptheory/**`)
 - Measurement surface (policy):
   - Go: all packages under the root Go module (`go test ./...`) excluding generated/vendor.
   - TypeScript: all runtime JS under `ts/dist/**` (output of `ts/src/**`), excluding tests and `node_modules`.
   - Python: all runtime modules under `py/src/apptheory/**`, excluding tests and caches.
 
 ## Progress snapshots
-- Baseline (2026-01-22): Go 61.7% / TS 65.5% / Py 69.6% (COV-4 achieved)
+- Baseline (2026-01-22): Go 61.7% / TS 65.5% / Py 69.6% (COV-4 achieved on v1.1.0; COV-5 pending)
 
 ## Guardrails (no denominator games)
 - Do not exclude additional production code from the coverage denominator to “hit the number”.
@@ -46,7 +46,8 @@ Suggested flow:
 - COV-1: remove “0% islands” (every in-scope package has at least a smoke test) — achieved (2026-01-22)
 - COV-2: broad floor (25%+ across in-scope packages) — achieved (2026-01-22)
 - COV-3: meaningful safety net (50%+) — achieved (2026-01-22)
-- COV-4: finish line (≥ 60% and gate is green) — achieved (2026-01-22)
+- COV-4: baseline gate (≥ 60% and gate is green) — achieved (2026-01-22; rubric v1.1.0)
+- COV-5: finish line (≥ 75% and gate is green) — planned
 
 ## Workstreams (target the highest-leverage paths first)
 - Hotspots: event normalization and response/streaming boundaries

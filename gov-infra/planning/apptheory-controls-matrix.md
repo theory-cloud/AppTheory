@@ -1,4 +1,4 @@
-# AppTheory Controls Matrix (custom — v1.1.0)
+# AppTheory Controls Matrix (custom — v1.2.0)
 
 This matrix is the “requirements → controls → verifiers → evidence” backbone for AppTheory. It is intentionally
 engineering-focused: it does not claim compliance, but it makes security/quality assertions traceable and repeatable.
@@ -35,7 +35,7 @@ This table is the canonical mapping used by the rubric/roadmap/evidence plan.
 | Completeness | THR-4, THR-10 | COM-1 | All modules compile (no “mystery meat”) | Root module, CDK Go module(s), and build outputs compile/test. | `check_multi_module_health` (inside `gov-verify-rubric.sh`) | `gov-infra/evidence/COM-1-output.log` |
 | Completeness | THR-4 | COM-2 | Toolchain pins align to repo expectations | CI pins (Go/Node/Python + golangci-lint) are consistent with repo declarations. | `check_toolchain_pins` (inside `gov-verify-rubric.sh`) | `gov-infra/evidence/COM-2-output.log` |
 | Completeness | THR-4, THR-6 | COM-3 | Lint config schema-valid (no silent skip) | Lint configs are validated, and lint runs use explicit config files. | `check_lint_config_valid` (inside `gov-verify-rubric.sh`) | `gov-infra/evidence/COM-3-output.log` |
-| Completeness | THR-4 | COM-4 | Coverage threshold not diluted (≥ 60%) | The rubric’s declared coverage threshold is ≥ 60% and matches the verifier floor. | `check_coverage_threshold_floor` (inside `gov-verify-rubric.sh`) | `gov-infra/evidence/COM-4-output.log` |
+| Completeness | THR-4 | COM-4 | Coverage threshold not diluted (≥ 75%) | The rubric’s declared coverage threshold is ≥ 75% and matches the verifier floor. | `check_coverage_threshold_floor` (inside `gov-verify-rubric.sh`) | `gov-infra/evidence/COM-4-output.log` |
 | Completeness | THR-3 | COM-5 | Security scan config not diluted (no excluded high-signal rules) | Go security lint (`gosec`) remains enabled; suppressions stay narrow. | `check_security_config` (inside `gov-verify-rubric.sh`) | `gov-infra/evidence/COM-5-output.log` |
 | Completeness | THR-5 | COM-6 | Logging/operational standards enforced (if applicable) | Logging policies (redaction/no raw payloads) are enforced by a deterministic verifier. | `check_logging_ops_standards` (inside `gov-verify-rubric.sh`) | `gov-infra/evidence/COM-6-output.log` |
 | Security | THR-6 | SEC-1 | Baseline SAST stays green | Static analysis includes security-focused rules (e.g., `gosec`) and stays green. | `scripts/verify-go-lint.sh` | `gov-infra/evidence/SEC-1-output.log` |

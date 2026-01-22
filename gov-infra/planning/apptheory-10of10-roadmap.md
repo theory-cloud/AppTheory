@@ -1,8 +1,8 @@
-# AppTheory: 10/10 Roadmap (Rubric v1.1.0)
+# AppTheory: 10/10 Roadmap (Rubric v1.2.0)
 
 This roadmap maps milestones directly to rubric IDs with measurable acceptance criteria and verification commands.
 
-## Current scorecard (Rubric v1.1.0)
+## Current scorecard (Rubric v1.2.0)
 Scoring note: a check is only treated as “passing” if it is both green **and** enforced by a trustworthy verifier
 (pinned tooling, schema-valid configs, and no “green by dilution” shortcuts). Completeness failures invalidate “green by
 drift”.
@@ -107,7 +107,7 @@ Tracking document: `gov-infra/planning/apptheory-lint-green-roadmap.md`
 Tracking document: `gov-infra/planning/apptheory-coverage-roadmap.md`
 
 **Acceptance criteria**
-- `check_coverage` passes with coverage ≥ 60% for Go/TypeScript/Python.
+- `check_coverage` passes with coverage ≥ 75% for Go/TypeScript/Python.
 - `check_coverage_threshold_floor` passes (threshold not diluted).
 - `scripts/verify-go-lint.sh` stays green (includes gosec).
 - `scripts/verify-builds.sh` passes (build determinism).

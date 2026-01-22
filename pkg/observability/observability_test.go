@@ -13,6 +13,18 @@ func TestNewNoOpLogger(t *testing.T) {
 	if logger == nil {
 		t.Fatal("expected non-nil logger")
 	}
+	logger.Debug("debug")
+	logger.Info("info")
+	logger.Warn("warn")
+	logger.Error("error")
+	logger = logger.
+		WithField("k", "v").
+		WithFields(map[string]any{"a": 1}).
+		WithRequestID("req_1").
+		WithTenantID("tenant_1").
+		WithUserID("user_1").
+		WithTraceID("trace_1").
+		WithSpanID("span_1")
 	if !logger.IsHealthy() {
 		t.Fatal("expected noop logger to be healthy")
 	}
