@@ -42,9 +42,20 @@ Non-goals (near-term):
 - **P1:** request-id, tenant extraction, auth hooks, CORS, size/time guardrails, middleware ordering
 - **P2 (default):** P1 + observability hooks + rate limiting / load shedding policy hooks
 
+## Security & production notes
+
+- CSRF protection and secure cookie flags are application concerns; set `Secure`/`HttpOnly`/`SameSite` explicitly in `Set-Cookie`.
+- Request IDs can be supplied via `x-request-id`; validate/override if your threat model requires it.
+- Retries/backoff for event sources are handled by AWS trigger settings (retry policies, DLQs/redrive), not by the runtime.
+
 ## Go runtime (P2 default)
 
 The Go runtime implements the fixture-backed contract across P0/P1/P2 tiers (default: P2).
+
+Notes:
+
+- Header names are case-insensitive, but `Request.Headers` / `Response.Headers` keys are canonicalized to lowercase.
+- If two routes are equally specific, the router prefers earlier registration order.
 
 Minimal local invocation:
 

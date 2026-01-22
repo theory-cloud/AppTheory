@@ -7,8 +7,12 @@ import (
 
 // Response is the canonical HTTP response model returned by AppTheory handlers.
 type Response struct {
-	Status     int
-	Headers    map[string][]string
+	Status int
+	// Headers are canonicalized to lowercase keys during response normalization.
+	// Treat header names as case-insensitive and prefer lowercase when accessing values.
+	Headers map[string][]string
+	// Cookies contains raw Set-Cookie header values. If you also provide a "set-cookie"
+	// header in Headers, normalization merges it into Cookies.
 	Cookies    []string
 	Body       []byte
 	BodyReader io.Reader

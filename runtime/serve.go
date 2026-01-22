@@ -37,6 +37,14 @@ func (a *App) Put(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("PUT", pattern, handler, opts...)
 }
 
+func (a *App) Patch(pattern string, handler Handler, opts ...RouteOption) *App {
+	return a.Handle("PATCH", pattern, handler, opts...)
+}
+
+func (a *App) Options(pattern string, handler Handler, opts ...RouteOption) *App {
+	return a.Handle("OPTIONS", pattern, handler, opts...)
+}
+
 func (a *App) Delete(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("DELETE", pattern, handler, opts...)
 }

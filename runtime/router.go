@@ -266,6 +266,7 @@ func routeMoreSpecific(a, b route) bool {
 	if len(a.Segments) != len(b.Segments) {
 		return len(a.Segments) > len(b.Segments)
 	}
+	// If two routes are equally specific, prefer earlier registration order.
 	return a.order < b.order
 }
 

@@ -8,9 +8,11 @@ import (
 
 // Request is the canonical HTTP request model used by the AppTheory runtime.
 type Request struct {
-	Method   string
-	Path     string
-	Query    map[string][]string
+	Method string
+	Path   string
+	Query  map[string][]string
+	// Headers are canonicalized to lowercase keys during request normalization.
+	// Treat header names as case-insensitive and prefer lowercase when accessing values.
 	Headers  map[string][]string
 	Cookies  map[string]string
 	Body     []byte
