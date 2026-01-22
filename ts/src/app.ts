@@ -271,6 +271,14 @@ export class App {
     return this.handle("PUT", pattern, handler);
   }
 
+  patch(pattern: string, handler: Handler): this {
+    return this.handle("PATCH", pattern, handler);
+  }
+
+  options(pattern: string, handler: Handler): this {
+    return this.handle("OPTIONS", pattern, handler);
+  }
+
   delete(pattern: string, handler: Handler): this {
     return this.handle("DELETE", pattern, handler);
   }

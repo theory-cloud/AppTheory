@@ -9,6 +9,8 @@ The portable runtime behavior is defined by the fixture-backed contract:
 
 To force the P0 core (minimal surface area), pass `tier: "p0"` when creating the app.
 
+Note: header names are case-insensitive, but response headers are emitted with lowercase keys.
+
 ```ts
 import { createTestEnv, text } from "@theory-cloud/apptheory";
 

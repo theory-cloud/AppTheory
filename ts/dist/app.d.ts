@@ -93,6 +93,8 @@ export declare class App {
     get(pattern: string, handler: Handler): this;
     post(pattern: string, handler: Handler): this;
     put(pattern: string, handler: Handler): this;
+    patch(pattern: string, handler: Handler): this;
+    options(pattern: string, handler: Handler): this;
     delete(pattern: string, handler: Handler): this;
     use(middleware: Middleware): this;
     useEvents(middleware: EventMiddleware): this;

@@ -794,6 +794,8 @@ func (*client) PostToConnection(context.Context, string, []byte) error
 
 ## github.com/theory-cloud/apptheory/runtime
 
+const RateLimitDecisionKey = "rate_limit_decision"
+
 const TierP0 Tier = "p0"
 
 const TierP1 Tier = "p1"
@@ -937,12 +939,27 @@ type PolicyHook func(*Context) (*PolicyDecision, error)
 
 type RandomIDGenerator struct{}
 
+type RateLimitConfig struct {
+	Limiter limited.RateLimiter
+
+	FailClosed bool
+
+	ExtractIdentifier func(*Context) string
+	ExtractResource   func(*Context) string
+	ExtractOperation  func(*Context) string
+
+	OnError     func(*Context, error)
+	OnSuccess   func(*Context, *limited.LimitDecision)
+	OnRateLimit func(*Context, *limited.LimitDecision)
+}
+
 type RealClock struct{}
 
 type Request struct {
-	Method   string
-	Path     string
-	Query    map[string][]string
+	Method string
+	Path   string
+	Query  map[string][]string
+
 	Headers  map[string][]string
 	Cookies  map[string]string
 	Body     []byte
@@ -950,8 +967,10 @@ type Request struct {
 }
 
 type Response struct {
-	Status     int
-	Headers    map[string][]string
+	Status int
+
+	Headers map[string][]string
+
 	Cookies    []string
 	Body       []byte
 	BodyReader io.Reader
@@ -1053,6 +1072,8 @@ func New(...Option) *App
 
 func OriginURL(map[string][]string) string
 
+func RateLimitMiddleware(RateLimitConfig) Middleware
+
 func RequireAuth() RouteOption
 
 func SSEResponse(int, ...SSEEvent) (*Response, error)
@@ -1108,6 +1129,10 @@ func (*App) HandleLambda(context.Context, json.RawMessage) (any, error)
 func (*App) IsLambda() bool
 
 func (*App) Kinesis(string, KinesisHandler) *App
+
+func (*App) Options(string, Handler, ...RouteOption) *App
+
+func (*App) Patch(string, Handler, ...RouteOption) *App
 
 func (*App) Post(string, Handler, ...RouteOption) *App
 
