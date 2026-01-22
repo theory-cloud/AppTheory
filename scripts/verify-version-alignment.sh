@@ -10,7 +10,7 @@ if [[ ! -f "VERSION" ]]; then
   exit 1
 fi
 
-expected_version="$(tr -d ' \t\r\n' < VERSION)"
+expected_version="$(./scripts/read-version.sh)"
 if [[ -z "${expected_version}" ]]; then
   echo "version-alignment: FAIL (empty VERSION)"
   exit 1
