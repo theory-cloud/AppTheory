@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-expected_version="$(tr -d ' \t\r\n' < VERSION)"
+expected_version="$(./scripts/read-version.sh)"
 expected_py_version="${expected_version}"
 if [[ "${expected_py_version}" == *"-rc."* ]]; then
   expected_py_version="${expected_py_version/-rc./rc}"

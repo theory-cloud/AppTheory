@@ -1,0 +1,42 @@
+{
+  "release-type": "go",
+  "include-v-in-tag": true,
+  "draft": true,
+  "bootstrap-sha": "aa8ae4ec7190bd30dcd4368d64def0cd9346f08c",
+  "versioning": "prerelease",
+  "prerelease-type": "rc",
+  "prerelease": true,
+  "packages": {
+    ".": {
+      "extra-files": [
+        { "type": "generic", "path": "VERSION" },
+        { "type": "json", "path": "ts/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "ts/package-lock.json", "jsonpath": "$.version" },
+        {
+          "type": "json",
+          "path": "ts/package-lock.json",
+          "jsonpath": "$.packages[''].version"
+        },
+        { "type": "json", "path": "cdk/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "cdk/package-lock.json", "jsonpath": "$.version" },
+        {
+          "type": "json",
+          "path": "cdk/package-lock.json",
+          "jsonpath": "$.packages[''].version"
+        },
+        { "type": "json", "path": "cdk/.jsii", "jsonpath": "$.version" },
+        { "type": "toml", "path": "py/pyproject.toml", "jsonpath": "$.project.version" },
+        {
+          "type": "json",
+          "path": "examples/cdk/multilang/package-lock.json",
+          "jsonpath": "$.packages['../../../cdk'].version"
+        },
+        {
+          "type": "json",
+          "path": "examples/cdk/ssr-site/package-lock.json",
+          "jsonpath": "$.packages['../../../cdk'].version"
+        }
+      ]
+    }
+  }
+}
