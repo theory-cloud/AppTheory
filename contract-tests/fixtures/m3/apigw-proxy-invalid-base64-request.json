@@ -1,0 +1,34 @@
+{
+  "id": "m3.apigw_proxy.invalid_base64_request_body",
+  "tier": "m3",
+  "name": "APIGW REST API v1: invalid base64 request body maps to app.bad_request",
+  "setup": {
+    "routes": [{ "method": "POST", "path": "/echo", "handler": "echo_request" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "apigw_proxy",
+      "event": {
+        "path": "/echo",
+        "httpMethod": "POST",
+        "headers": { "content-type": "application/octet-stream" },
+        "multiValueHeaders": {},
+        "queryStringParameters": {},
+        "multiValueQueryStringParameters": {},
+        "requestContext": { "requestId": "req-1", "path": "/echo", "httpMethod": "POST" },
+        "body": "AAE",
+        "isBase64Encoded": true
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": { "error": { "code": "app.bad_request", "message": "invalid base64" } },
+      "is_base64": false
+    }
+  }
+}
+

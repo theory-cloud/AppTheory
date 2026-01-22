@@ -828,7 +828,11 @@ export class App {
     const records = Array.isArray(event?.Records) ? event.Records : [];
     const handler = this._sqsHandlerForEvent(event);
     if (!handler) {
-      return { batchItemFailures: [] };
+      const failures = records
+        .map((r) => String(r?.messageId ?? "").trim())
+        .filter(Boolean)
+        .map((id) => ({ itemIdentifier: id }));
+      return { batchItemFailures: failures };
     }
 
     const eventCtx = this._eventContext(ctx);
@@ -873,7 +877,11 @@ export class App {
     const records = Array.isArray(event?.Records) ? event.Records : [];
     const handler = this._kinesisHandlerForEvent(event);
     if (!handler) {
-      return { batchItemFailures: [] };
+      const failures = records
+        .map((r) => String(r?.eventID ?? "").trim())
+        .filter(Boolean)
+        .map((id) => ({ itemIdentifier: id }));
+      return { batchItemFailures: failures };
     }
 
     const eventCtx = this._eventContext(ctx);
@@ -1006,7 +1014,11 @@ export class App {
     const records = Array.isArray(event?.Records) ? event.Records : [];
     const handler = this._dynamoDBHandlerForEvent(event);
     if (!handler) {
-      return { batchItemFailures: [] };
+      const failures = records
+        .map((r) => String(r?.eventID ?? "").trim())
+        .filter(Boolean)
+        .map((id) => ({ itemIdentifier: id }));
+      return { batchItemFailures: failures };
     }
 
     const eventCtx = this._eventContext(ctx);
