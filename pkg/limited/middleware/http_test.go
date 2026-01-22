@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,4 +105,21 @@ func TestMiddleware_FailsOpenOnLimiterError(t *testing.T) {
 	require.Equal(t, "0", rr.Header().Get("X-RateLimit-Limit"))
 	require.Equal(t, "0", rr.Header().Get("X-RateLimit-Remaining"))
 	require.Equal(t, "0", rr.Header().Get("X-RateLimit-Reset"))
+}
+
+func TestDefaultErrorHandler_Writes429JSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	rr := httptest.NewRecorder()
+
+	defaultErrorHandler(rr, req, nil)
+
+	require.Equal(t, http.StatusTooManyRequests, rr.Code)
+	require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
+	require.True(t, strings.Contains(rr.Body.String(), "rate_limit_exceeded"))
+}
+
+func TestWithIdentifier_SetsContextValueForDefaultExtractIdentifier(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "https://example.com/test", nil)
+	req = WithIdentifier(req, "user:123")
+	require.Equal(t, "user:123", defaultExtractIdentifier(req))
 }

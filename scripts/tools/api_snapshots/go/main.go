@@ -36,6 +36,8 @@ type exportDecl struct {
 	Decl string
 }
 
+const unknownReceiverType = "(unknown)"
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -355,13 +357,13 @@ func funcDeclName(d *ast.FuncDecl) string {
 
 func receiverTypeString(recv *ast.FieldList) string {
 	if recv == nil || len(recv.List) == 0 {
-		return "(unknown)"
+		return unknownReceiverType
 	}
 	var buf bytes.Buffer
 	// Omit receiver names for stability.
 	f := &ast.Field{Type: recv.List[0].Type}
 	if err := format.Node(&buf, token.NewFileSet(), f.Type); err != nil {
-		return "(unknown)"
+		return unknownReceiverType
 	}
 	return strings.TrimSpace(buf.String())
 }

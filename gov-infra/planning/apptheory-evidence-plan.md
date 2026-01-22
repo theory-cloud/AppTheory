@@ -1,4 +1,4 @@
-# AppTheory Evidence Plan (Rubric v1.1.0)
+# AppTheory Evidence Plan (Rubric v1.2.0)
 
 Defines where evidence for rubric items is produced and how to regenerate it. Evidence should be reproducible from a commit SHA (no hand-assembled screenshots unless unavoidable).
 

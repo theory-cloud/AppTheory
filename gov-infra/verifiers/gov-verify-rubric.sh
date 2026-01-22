@@ -51,7 +51,7 @@ PIN_PY_COVERAGE_VERSION="7.6.10"
 FEATURE_OSS_RELEASE="false"
 
 # Coverage threshold (anti-drift; must match rubric docs).
-COV_THRESHOLD="60"
+COV_THRESHOLD="75"
 
 # Ensure evidence directory exists
 mkdir -p "${EVIDENCE_DIR}"
@@ -254,6 +254,7 @@ gov_cmd_unit() {
 
   node --test contract-tests/runners/ts/fixtures.test.cjs
   python3 contract-tests/runners/py/run.py
+  PYTHONPATH="${REPO_ROOT}/py/src" python3 -m unittest discover -s py/tests -p "test_*.py"
 }
 
 gov_cmd_integration() {
@@ -478,8 +479,8 @@ check_lint_config_valid() {
 check_coverage_threshold_floor() {
   # Anti-drift: ensure the declared rubric threshold does not silently drop below the target.
 
-  if [[ "${COV_THRESHOLD}" -lt 60 ]]; then
-    echo "FAIL: verifier coverage threshold (${COV_THRESHOLD}) is below the required floor (60)" >&2
+  if [[ "${COV_THRESHOLD}" -lt 75 ]]; then
+    echo "FAIL: verifier coverage threshold (${COV_THRESHOLD}) is below the required floor (75)" >&2
     return 1
   fi
 
@@ -489,8 +490,8 @@ check_coverage_threshold_floor() {
     return 1
   fi
 
-  if ! grep -q "Coverage ≥ 60%" "${rubric}"; then
-    echo "FAIL: rubric does not declare 'Coverage ≥ 60%' (anti-drift)" >&2
+  if ! grep -q "Coverage ≥ 75%" "${rubric}"; then
+    echo "FAIL: rubric does not declare 'Coverage ≥ 75%' (anti-drift)" >&2
     return 1
   fi
 
@@ -638,10 +639,18 @@ check_py_coverage() {
   fi
 
   local src_dir="${REPO_ROOT}/py/src/apptheory"
-  if ! COVERAGE_FILE="${data}" "${GOV_TOOLS_PY_COV_BIN}/python" -m coverage run \
+  if ! PYTHONPATH="${REPO_ROOT}/py/src" COVERAGE_FILE="${data}" "${GOV_TOOLS_PY_COV_BIN}/python" -m coverage run \
     --source="${src_dir}" \
     contract-tests/runners/py/run.py; then
     echo "FAIL: python coverage run failed" >&2
+    return 1
+  fi
+
+  if ! PYTHONPATH="${REPO_ROOT}/py/src" COVERAGE_FILE="${data}" "${GOV_TOOLS_PY_COV_BIN}/python" -m coverage run \
+    --append \
+    --source="${src_dir}" \
+    -m unittest discover -s py/tests -p "test_*.py"; then
+    echo "FAIL: python unit tests failed during coverage run" >&2
     return 1
   fi
 
@@ -940,8 +949,8 @@ check_maintainability_roadmap() {
     echo "FAIL: missing roadmap: ${roadmap}" >&2
     return 1
   fi
-  grep -q "Rubric v1.1.0" "${roadmap}" || {
-    echo "FAIL: roadmap does not reference current rubric version (v1.1.0)" >&2
+  grep -q "Rubric v1.2.0" "${roadmap}" || {
+    echo "FAIL: roadmap does not reference current rubric version (v1.2.0)" >&2
     return 1
   }
   echo "maintainability-roadmap: PASS"
