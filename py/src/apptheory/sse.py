@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json as jsonlib
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any, Iterable, Iterator
+from typing import Any
 
 from apptheory.response import Response, normalize_response
 
@@ -41,8 +42,7 @@ def format_sse_event(event: SSEEvent) -> bytes:
     lines = data.split("\n") if data is not None else [""]
     if not lines:
         lines = [""]
-    for line in lines:
-        parts.append(f"data: {line}\n")
+    parts.extend(f"data: {line}\n" for line in lines)
 
     parts.append("\n")
     return "".join(parts).encode("utf-8")

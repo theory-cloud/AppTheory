@@ -1975,40 +1975,37 @@ function debugActualForExpected(actual, expected) {
 
 async function main() {
   const args = parseArgs(process.argv);
-  const fixtures = loadFixtures(args.fixtures);
 
-  const failed = [];
-  for (const fixture of fixtures) {
-    const result = await runFixture(fixture);
-    if (!result.ok) {
-      console.error(`FAIL ${fixture.id} — ${fixture.name}`);
-      console.error(`  ${result.reason}`);
-      if ("expected_output_json" in result) {
-        console.error(`  expected.output_json: ${stableStringify(result.expected_output_json)}`);
-        console.error(`  got.output_json: ${stableStringify(result.actual_output_json)}`);
-      } else {
-        console.error(`  expected: ${stableStringify(result.expected)}`);
-        console.error(`  got: ${stableStringify(debugActualForExpected(result.actual, result.expected))}`);
-      }
-      if ("expected_logs" in result) {
-        console.error(`  expected.logs: ${stableStringify(result.expected_logs)}`);
-        console.error(`  got.logs: ${stableStringify(result.actual_logs)}`);
-      }
-      if ("expected_metrics" in result) {
-        console.error(`  expected.metrics: ${stableStringify(result.expected_metrics)}`);
-        console.error(`  got.metrics: ${stableStringify(result.actual_metrics)}`);
-      }
-      if ("expected_spans" in result) {
-        console.error(`  expected.spans: ${stableStringify(result.expected_spans)}`);
-        console.error(`  got.spans: ${stableStringify(result.actual_spans)}`);
-      }
-      failed.push(fixture);
+  const { fixtures, failures } = await runAllFixtures({ fixturesRoot: args.fixtures });
+
+  for (const f of failures) {
+    const { fixture, result } = f;
+    console.error(`FAIL ${fixture.id} — ${fixture.name}`);
+    console.error(`  ${result.reason}`);
+    if ("expected_output_json" in result) {
+      console.error(`  expected.output_json: ${stableStringify(result.expected_output_json)}`);
+      console.error(`  got.output_json: ${stableStringify(result.actual_output_json)}`);
+    } else {
+      console.error(`  expected: ${stableStringify(result.expected)}`);
+      console.error(`  got: ${stableStringify(debugActualForExpected(result.actual, result.expected))}`);
+    }
+    if ("expected_logs" in result) {
+      console.error(`  expected.logs: ${stableStringify(result.expected_logs)}`);
+      console.error(`  got.logs: ${stableStringify(result.actual_logs)}`);
+    }
+    if ("expected_metrics" in result) {
+      console.error(`  expected.metrics: ${stableStringify(result.expected_metrics)}`);
+      console.error(`  got.metrics: ${stableStringify(result.actual_metrics)}`);
+    }
+    if ("expected_spans" in result) {
+      console.error(`  expected.spans: ${stableStringify(result.expected_spans)}`);
+      console.error(`  got.spans: ${stableStringify(result.actual_spans)}`);
     }
   }
 
-  if (failed.length > 0) {
+  if (failures.length > 0) {
     console.error("\nFailed fixtures:");
-    for (const f of failed.sort((a, b) => a.id.localeCompare(b.id))) {
+    for (const f of failures.map((x) => x.fixture).sort((a, b) => a.id.localeCompare(b.id))) {
       console.error(`- ${f.id}`);
     }
     process.exit(1);
@@ -2017,7 +2014,25 @@ async function main() {
   console.log(`contract-tests(ts): PASS (${fixtures.length} fixtures)`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(2);
-});
+async function runAllFixtures({ fixturesRoot } = {}) {
+  const fixtures = loadFixtures(fixturesRoot ?? "contract-tests/fixtures");
+
+  const failures = [];
+  for (const fixture of fixtures) {
+    const result = await runFixture(fixture);
+    if (!result.ok) failures.push({ fixture, result });
+  }
+
+  return { fixtures, failures };
+}
+
+module.exports = {
+  runAllFixtures,
+};
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(2);
+  });
+}

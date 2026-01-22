@@ -47,6 +47,8 @@ Non-goals:
 - Runtime support exists in Go/TS/Py (route registration, trigger routing, portable WebSocket context, management client).
 - Contract fixtures exist and are validated in CI (routing + message send via fakes): `contract-tests/fixtures/m2/`.
 - CDK support exists via `cdk/lib/websocket-api.ts` and is exercised in `examples/cdk/multilang`.
+- Known parity gap: TypeScript’s production management client currently uses env-only credentials + custom SigV4 signing.
+  Full alignment requires AWS SDK provider/credential chain behavior parity with Go (`aws-sdk-go-v2`) and Python (`boto3`).
 
 ## Milestones
 
@@ -100,3 +102,12 @@ Non-goals:
   - Lambda integrations for `$connect` / `$disconnect` / `$default`
   - required IAM permissions for management API sends
 - A multi-language example demonstrates message send behavior end-to-end.
+
+---
+
+### W5 — Credential/provider parity (TypeScript)
+
+**Acceptance criteria**
+- TS production management client uses AWS SDK credential/provider chain behavior (not env-only).
+- Missing endpoint/region/credentials error semantics are documented and fixture-backed.
+- No real AWS calls are required in unit tests (strict fakes).

@@ -7,6 +7,10 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	var fixturesRoot string
 	flag.StringVar(&fixturesRoot, "fixtures", "contract-tests/fixtures", "fixtures root directory")
 	flag.Parse()
@@ -14,7 +18,7 @@ func main() {
 	fixtures, err := loadFixtures(fixturesRoot)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+		return 2
 	}
 
 	var failed []Fixture
@@ -27,8 +31,9 @@ func main() {
 
 	if len(failed) > 0 {
 		summarizeFailures(failed)
-		os.Exit(1)
+		return 1
 	}
 
 	fmt.Printf("contract-tests(go): PASS (%d fixtures)\n", len(fixtures))
+	return 0
 }

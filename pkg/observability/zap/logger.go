@@ -12,9 +12,9 @@ import (
 	ubzap "go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/theory-cloud/apptheory"
 	"github.com/theory-cloud/apptheory/pkg/observability"
 	"github.com/theory-cloud/apptheory/pkg/sanitization"
+	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
 const (
@@ -160,7 +160,8 @@ func NewZapLogger(config observability.LoggerConfig, options ...Option) (observa
 			opts.bufferSize = 256
 		}
 		zcore.notifyCh = make(chan observability.LogEntry, opts.bufferSize)
-		go zcore.runNotifier()
+		notifyCh := zcore.notifyCh
+		go zcore.runNotifier(notifyCh)
 	}
 
 	return &Logger{
@@ -502,8 +503,11 @@ func (c *zapCore) enqueueNotification(entry observability.LogEntry) {
 	}
 }
 
-func (c *zapCore) runNotifier() {
-	for entry := range c.notifyCh {
+func (c *zapCore) runNotifier(ch <-chan observability.LogEntry) {
+	if ch == nil {
+		return
+	}
+	for entry := range ch {
 		if err := c.notifyWithRetries(entry); err != nil {
 			c.errorCount.Add(1)
 			c.lastError.Store(err.Error())

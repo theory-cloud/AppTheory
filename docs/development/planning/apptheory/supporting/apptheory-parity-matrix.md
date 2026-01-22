@@ -121,6 +121,22 @@ These are required for Lift parity (e.g. Lesser usage) and must become fixture-b
 | Rate limiting semantics (portable) | P2 | ✅ | ✅ | ✅ | target: match `limited` feature set (strategies, fail-open, stats) |
 | Load shedding semantics (portable) | P2 | ✅ | ✅ | ✅ | |
 
+## P2+ — App packages (full alignment targets)
+
+These are not part of the core runtime tiers, but they are required for “union-of-capabilities” alignment across
+Go/TypeScript/Python. The `FA-M*` fixture markers refer to milestones in
+`docs/development/planning/apptheory/apptheory-full-alignment-roadmap.md`.
+
+| Feature | Fixtures | Go | TS | Py | Notes |
+| --- | --- | --- | --- | --- | --- |
+| Services: EventBus (memory) | FA-M3 | ✅ | ⬜ | ⬜ | Go: `pkg/services`; TS/Py parity required |
+| Services: EventBus (DynamoDB) | FA-M3 | ✅ | ⬜ | ⬜ | TS uses AWS SDK; Py uses boto3; behavior fixture-backed |
+| Services: EventBus metrics hooks | FA-M3 | ✅ | ⬜ | ⬜ | stable metric names/tags/config across languages |
+| Limited: DynamoDB rate limiter | FA-M3 | ✅ | ⬜ | ⬜ | Go: `pkg/limited`; TS/Py parity required |
+| Limited: middleware integration | FA-M3 | ✅ | ⬜ | ⬜ | idiomatic per language; equivalent decisions/headers |
+| Runtime: Lambda URL response streaming entrypoint | FA-M4 | 🟨 | ✅ | 🟨 | TS has true streaming; Go/Py currently buffered adapter |
+| AWS: WebSocket management credential/provider chain | FA-M4 | ✅ | 🟨 | ✅ | TS currently env-only; align to Go/boto3 behavior |
+
 ## Go-only (must be explicit)
 
 | Feature | Go | Notes |

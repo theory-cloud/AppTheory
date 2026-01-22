@@ -16,14 +16,23 @@ import (
 	limitedmw "github.com/theory-cloud/apptheory/pkg/limited/middleware"
 )
 
-func main() {
-	region := os.Getenv("AWS_REGION")
+func resolveRegion(getenv func(string) string) string {
+	if getenv == nil {
+		return "us-east-1"
+	}
+
+	region := getenv("AWS_REGION")
 	if region == "" {
-		region = os.Getenv("AWS_DEFAULT_REGION")
+		region = getenv("AWS_DEFAULT_REGION")
 	}
 	if region == "" {
 		region = "us-east-1"
 	}
+	return region
+}
+
+func main() {
+	region := resolveRegion(os.Getenv)
 
 	endpoint := os.Getenv("DDB_ENDPOINT")
 

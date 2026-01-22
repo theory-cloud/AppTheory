@@ -11,7 +11,7 @@ def _normalize_endpoint(endpoint: str) -> str:
         return "https://" + value[len("wss://") :]
     if value.startswith("ws://"):
         return "http://" + value[len("ws://") :]
-    if value.startswith("https://") or value.startswith("http://"):
+    if value.startswith(("https://", "http://")):
         return value
     return "https://" + value
 
@@ -31,7 +31,7 @@ class Client:
 
         try:
             import boto3  # type: ignore
-        except Exception as exc:  # noqa: BLE001
+        except ImportError as exc:
             raise RuntimeError("apptheory: boto3 is required for websocket management client") from exc
 
         self._boto = boto3.client("apigatewaymanagementapi", endpoint_url=self.endpoint, region_name=self.region)

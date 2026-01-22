@@ -16,6 +16,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ./scripts/verify-cdk-python-build.sh
 ./scripts/verify-cdk-go.sh
 ./scripts/verify-cdk-synth.sh
+./scripts/verify-api-snapshots.sh
 ./scripts/verify-contract-tests.sh
 ./scripts/verify-testkit-examples.sh
 
