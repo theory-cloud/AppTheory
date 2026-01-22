@@ -1,0 +1,50 @@
+{
+  "id": "m1.sqs.unrecognized_queue_fails_closed",
+  "tier": "m1",
+  "name": "SQS: unrecognized queue fails closed (all records returned as failures)",
+  "setup": {
+    "sqs": [
+      { "queue": "queue-a", "handler": "sqs_noop" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "sqs",
+      "event": {
+        "Records": [
+          {
+            "messageId": "msg-1",
+            "receiptHandle": "rh-1",
+            "body": "ok",
+            "attributes": {},
+            "messageAttributes": {},
+            "md5OfBody": "",
+            "eventSource": "aws:sqs",
+            "eventSourceARN": "arn:aws:sqs:us-east-1:000000000000:queue-missing",
+            "awsRegion": "us-east-1"
+          },
+          {
+            "messageId": "msg-2",
+            "receiptHandle": "rh-2",
+            "body": "ok",
+            "attributes": {},
+            "messageAttributes": {},
+            "md5OfBody": "",
+            "eventSource": "aws:sqs",
+            "eventSourceARN": "arn:aws:sqs:us-east-1:000000000000:queue-missing",
+            "awsRegion": "us-east-1"
+          }
+        ]
+      }
+    }
+  },
+  "expect": {
+    "output_json": {
+      "batchItemFailures": [
+        { "itemIdentifier": "msg-1" },
+        { "itemIdentifier": "msg-2" }
+      ]
+    }
+  }
+}
+

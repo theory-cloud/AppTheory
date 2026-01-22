@@ -2,7 +2,6 @@ package apptheory
 
 import (
 	"encoding/base64"
-	"fmt"
 	"sort"
 	"strings"
 )
@@ -29,7 +28,7 @@ func normalizeRequest(in Request) (Request, error) {
 	if in.IsBase64 {
 		decoded, err := base64.StdEncoding.DecodeString(string(in.Body))
 		if err != nil {
-			return Request{}, &AppError{Code: errorCodeBadRequest, Message: fmt.Sprintf("invalid base64: %v", err)}
+			return Request{}, &AppError{Code: errorCodeBadRequest, Message: "invalid base64"}
 		}
 		out.Body = decoded
 	} else {
