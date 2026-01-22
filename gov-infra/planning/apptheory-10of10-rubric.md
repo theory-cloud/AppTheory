@@ -4,11 +4,12 @@ This rubric defines what “10/10” means and how category grades are computed.
 “green by dilution” by making scoring **versioned, measurable, and repeatable**.
 
 ## Versioning (no moving goalposts)
-- **Rubric version:** `v1.2.0` (2026-01-22)
+- **Rubric version:** `v1.3.0` (2026-01-22)
 - **Comparability rule:** grades are comparable only within the same version.
 - **Change rule:** bump the version + changelog entry for any rubric change (what changed + why).
 
 ### Changelog
+- `v1.3.0`: Raise the coverage requirement to **≥ 90%** across all shipped runtimes (Go/TypeScript/Python) and enforce the same floor in the verifier.
 - `v1.2.0`: Raise the coverage requirement to **≥ 75%** across all shipped runtimes (Go/TypeScript/Python) and enforce the same floor in the verifier.
 - `v1.1.0`: Expand unit-test and coverage scope to **all shipped runtimes** (Go/TypeScript/Python). Previously the rubric and verifier only enforced Go coverage.
 - `v1.0.0`: Initial GovTheory rubric for AppTheory (custom domain). Establishes cross-language contract parity, multi-module health, supply-chain checks, and anti-drift gates.
@@ -34,7 +35,7 @@ Enforcement rule (anti-drift):
 | --- | ---: | --- | --- |
 | QUA-1 | 4 | Unit tests stay green (Go/TypeScript/Python) | `gov_cmd_unit` (inside `gov-verify-rubric.sh`) |
 | QUA-2 | 3 | Integration/runtime tests stay green | `scripts/verify-testkit-examples.sh` |
-| QUA-3 | 3 | Coverage ≥ 75% (Go/TypeScript/Python; no denominator games) | `check_coverage` (inside `gov-verify-rubric.sh`) |
+| QUA-3 | 3 | Coverage ≥ 90% (Go/TypeScript/Python; no denominator games) | `check_coverage` (inside `gov-verify-rubric.sh`) |
 
 **10/10 definition:** QUA-1 through QUA-3 pass.
 
@@ -53,7 +54,7 @@ Enforcement rule (anti-drift):
 | COM-1 | 2 | All modules compile (no “mystery meat”) | `check_multi_module_health` (inside `gov-verify-rubric.sh`) |
 | COM-2 | 2 | Toolchain pins align to repo (Go/Node/Python + lint tools) | `check_toolchain_pins` (inside `gov-verify-rubric.sh`) |
 | COM-3 | 2 | Lint config schema-valid (no silent skip) | `check_lint_config_valid` (inside `gov-verify-rubric.sh`) |
-| COM-4 | 2 | Coverage threshold not diluted (≥ 75%) | `check_coverage_threshold_floor` (inside `gov-verify-rubric.sh`) |
+| COM-4 | 2 | Coverage threshold not diluted (≥ 90%) | `check_coverage_threshold_floor` (inside `gov-verify-rubric.sh`) |
 | COM-5 | 1 | Security scan config not diluted (no excluded high-signal rules) | `check_security_config` (inside `gov-verify-rubric.sh`) |
 | COM-6 | 1 | Logging/operational standards enforced (if applicable) | `check_logging_ops_standards` (inside `gov-verify-rubric.sh`) |
 
