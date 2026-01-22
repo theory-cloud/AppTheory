@@ -389,8 +389,7 @@ def _split_path_and_query(path: str, query: dict[str, list[str]] | None) -> tupl
     if query:
         items: list[tuple[str, str]] = []
         for key in sorted(query.keys()):
-            for value in query[key]:
-                items.append((str(key), str(value)))
+            items.extend((str(key), str(value)) for value in query[key])
         return normalized_path, urllib.parse.urlencode(items, doseq=True)
 
     return normalized_path, raw_query_from_path

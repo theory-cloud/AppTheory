@@ -88,10 +88,7 @@ class TestEnv:
                     chunks.append(b)
                     parts.append(b)
             except Exception as exc:  # noqa: BLE001
-                if isinstance(exc, AppError):
-                    stream_error_code = str(exc.code or "")
-                else:
-                    stream_error_code = "app.internal"
+                stream_error_code = str(exc.code or "") if isinstance(exc, AppError) else "app.internal"
 
         return StreamResult(
             status=int(resp.status),

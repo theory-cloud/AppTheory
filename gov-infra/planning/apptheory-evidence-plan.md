@@ -1,11 +1,11 @@
-# AppTheory Evidence Plan (Rubric v1.0.0)
+# AppTheory Evidence Plan (Rubric v1.1.0)
 
 Defines where evidence for rubric items is produced and how to regenerate it. Evidence should be reproducible from a commit SHA (no hand-assembled screenshots unless unavoidable).
 
 ## Evidence sources
 
 ### CI artifacts (preferred)
-- Coverage: `check_go_coverage` (via verifier) → `gov-infra/evidence/go-coverage.out` and `gov-infra/evidence/go-coverage-summary.txt`
+- Coverage: `check_coverage` (via verifier) → Go/TS/Python summaries under `gov-infra/evidence/`
 - Lint: `make lint` output (Go/TS/Python)
 - Security: `scripts/verify-go-lint.sh` output (includes `gosec` via golangci-lint)
 - Supply-chain: SEC-3 supply-chain gate (via verifier)
@@ -25,9 +25,9 @@ Every rubric ID maps to exactly one verifier and one primary evidence location.
 
 | Rubric ID | Primary evidence | Evidence path | How to refresh |
 | --- | --- | --- | --- |
-| QUA-1 | Unit test output | `gov-infra/evidence/QUA-1-output.log` | `make test-unit` |
+| QUA-1 | Unit test output | `gov-infra/evidence/QUA-1-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 | QUA-2 | Integration/runtime output | `gov-infra/evidence/QUA-2-output.log` | `scripts/verify-testkit-examples.sh` |
-| QUA-3 | Coverage profile + summary | `gov-infra/evidence/QUA-3-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
+| QUA-3 | Coverage summaries | `gov-infra/evidence/QUA-3-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 | CON-1 | Formatter diff list | `gov-infra/evidence/CON-1-output.log` | `make fmt-check` |
 | CON-2 | Lint output | `gov-infra/evidence/CON-2-output.log` | `make lint` |
 | CON-3 | Contract verification output | `gov-infra/evidence/CON-3-output.log` | `scripts/verify-contract-tests.sh` |

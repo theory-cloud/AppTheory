@@ -5,7 +5,11 @@
   "type": "module",
   "license": "Apache-2.0",
   "scripts": {
-    "lint": "eslint --max-warnings=0 \"dist/**/*.js\""
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint --max-warnings=0 --report-unused-disable-directives \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "check": "npm run typecheck && npm run lint && npm run format:check"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -23,8 +27,17 @@
   ],
   "devDependencies": {
     "@eslint/js": "9.39.2",
+    "@types/node": "25.0.9",
+    "@typescript-eslint/eslint-plugin": "8.53.1",
+    "@typescript-eslint/parser": "8.53.1",
     "eslint": "9.39.2",
-    "globals": "17.0.0"
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-import": "2.32.0",
+    "eslint-plugin-promise": "7.2.1",
+    "eslint-plugin-unicorn": "62.0.0",
+    "globals": "17.0.0",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3"
   },
   "engines": {
     "node": ">=24"
