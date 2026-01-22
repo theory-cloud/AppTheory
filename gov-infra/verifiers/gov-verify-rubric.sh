@@ -51,7 +51,7 @@ PIN_PY_COVERAGE_VERSION="7.6.10"
 FEATURE_OSS_RELEASE="false"
 
 # Coverage threshold (anti-drift; must match rubric docs).
-COV_THRESHOLD="75"
+COV_THRESHOLD="90"
 
 # Ensure evidence directory exists
 mkdir -p "${EVIDENCE_DIR}"
@@ -479,8 +479,8 @@ check_lint_config_valid() {
 check_coverage_threshold_floor() {
   # Anti-drift: ensure the declared rubric threshold does not silently drop below the target.
 
-  if [[ "${COV_THRESHOLD}" -lt 75 ]]; then
-    echo "FAIL: verifier coverage threshold (${COV_THRESHOLD}) is below the required floor (75)" >&2
+  if [[ "${COV_THRESHOLD}" -lt 90 ]]; then
+    echo "FAIL: verifier coverage threshold (${COV_THRESHOLD}) is below the required floor (90)" >&2
     return 1
   fi
 
@@ -490,8 +490,8 @@ check_coverage_threshold_floor() {
     return 1
   fi
 
-  if ! grep -q "Coverage ≥ 75%" "${rubric}"; then
-    echo "FAIL: rubric does not declare 'Coverage ≥ 75%' (anti-drift)" >&2
+  if ! grep -q "Coverage ≥ 90%" "${rubric}"; then
+    echo "FAIL: rubric does not declare 'Coverage ≥ 90%' (anti-drift)" >&2
     return 1
   fi
 
@@ -949,8 +949,22 @@ check_maintainability_roadmap() {
     echo "FAIL: missing roadmap: ${roadmap}" >&2
     return 1
   fi
-  grep -q "Rubric v1.2.0" "${roadmap}" || {
-    echo "FAIL: roadmap does not reference current rubric version (v1.2.0)" >&2
+
+  local rubric="${PLANNING_DIR}/apptheory-10of10-rubric.md"
+  if [[ ! -f "${rubric}" ]]; then
+    echo "FAIL: missing rubric: ${rubric}" >&2
+    return 1
+  fi
+
+  local rubric_version=""
+  rubric_version="$(awk -F'`' '/\\*\\*Rubric version:\\*\\*/ {print $2; exit}' "${rubric}" 2>/dev/null || true)"
+  if [[ -z "${rubric_version}" ]]; then
+    echo "FAIL: could not parse rubric version from ${rubric}" >&2
+    return 1
+  fi
+
+  grep -q "Rubric ${rubric_version}" "${roadmap}" || {
+    echo "FAIL: roadmap does not reference current rubric version (${rubric_version})" >&2
     return 1
   }
   echo "maintainability-roadmap: PASS"

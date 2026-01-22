@@ -89,3 +89,71 @@ func TestALBTargetGroupRequest_ParsesQueryAndMergesCookies(t *testing.T) {
 		t.Fatalf("expected multi header x, got %#v", got)
 	}
 }
+
+func TestLambdaFunctionURLRequest_Base64AndQuery(t *testing.T) {
+	body := []byte("hello")
+	event := testkit.LambdaFunctionURLRequest("post", "ping?x=y", testkit.HTTPEventOptions{
+		Query: map[string][]string{
+			"a": {"b"},
+		},
+		Body:     body,
+		IsBase64: true,
+	})
+
+	if event.RawPath != "/ping" {
+		t.Fatalf("expected rawPath /ping, got %q", event.RawPath)
+	}
+	if event.RawQueryString == "" {
+		t.Fatalf("expected rawQueryString to be set")
+	}
+	if event.Body != base64.StdEncoding.EncodeToString(body) {
+		t.Fatalf("expected base64 body, got %q", event.Body)
+	}
+	if event.QueryStringParameters["a"] != "b" {
+		t.Fatalf("expected query param a=b, got %#v", event.QueryStringParameters)
+	}
+	if event.RequestContext.HTTP.Method != "POST" {
+		t.Fatalf("expected method POST, got %q", event.RequestContext.HTTP.Method)
+	}
+}
+
+func TestALBTargetGroupRequest_InvalidQueryAndBase64AndEmptyBody(t *testing.T) {
+	invalidQuery := testkit.ALBTargetGroupRequest("GET", "/x?bad=%zz", testkit.HTTPEventOptions{})
+	if invalidQuery.QueryStringParameters != nil {
+		t.Fatalf("expected nil query string params for invalid query, got %#v", invalidQuery.QueryStringParameters)
+	}
+	if invalidQuery.MultiValueQueryStringParameters != nil {
+		t.Fatalf("expected nil multi query string params for invalid query, got %#v", invalidQuery.MultiValueQueryStringParameters)
+	}
+
+	base64Body := testkit.ALBTargetGroupRequest("GET", "/x", testkit.HTTPEventOptions{
+		Body:     []byte("ok"),
+		IsBase64: true,
+	})
+	if base64Body.Body != base64.StdEncoding.EncodeToString([]byte("ok")) {
+		t.Fatalf("expected base64 body, got %q", base64Body.Body)
+	}
+
+	empty := testkit.ALBTargetGroupRequest("GET", " ", testkit.HTTPEventOptions{
+		IsBase64: true,
+	})
+	if empty.Path != "/" {
+		t.Fatalf("expected default path /, got %q", empty.Path)
+	}
+	if empty.Body != "" {
+		t.Fatalf("expected empty body, got %q", empty.Body)
+	}
+}
+
+func TestALBTargetGroupRequest_MergeHeaders_CookieAlreadyPresent(t *testing.T) {
+	event := testkit.ALBTargetGroupRequest("GET", "/x", testkit.HTTPEventOptions{
+		MultiHeaders: map[string][]string{
+			"cookie": {"already"},
+		},
+		Cookies: []string{"cookie_a=1"},
+	})
+
+	if event.Headers["cookie"] != "already" {
+		t.Fatalf("expected cookie header from multivalue, got %#v", event.Headers)
+	}
+}
