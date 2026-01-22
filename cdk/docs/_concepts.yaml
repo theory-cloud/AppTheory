@@ -1,0 +1,16 @@
+# _concepts.yaml - Machine-readable concept map for AppTheory CDK
+
+concepts:
+  apptheory_cdk:
+    type: library
+    language: typescript
+    purpose: "jsii CDK constructs for deploying AppTheory apps with consistent defaults."
+    provides:
+      - api_gateway_wiring
+      - lambda_defaults
+      - alarms_and_security_baselines
+      - cross_language_constructs
+    requires:
+      - aws_cdk_v2
+      - node_24
+

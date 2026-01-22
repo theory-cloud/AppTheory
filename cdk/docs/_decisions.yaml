@@ -1,0 +1,15 @@
+# _decisions.yaml - Decision trees for AppTheory CDK
+
+decisions:
+  choose_api_gateway_type:
+    question: "Should I use HTTP API (v2) or REST API (v1)?"
+    decision_tree:
+      - condition: "You need a simple JSON HTTP API with lower cost and latency."
+        check: "Do you need REST API-only features (some authorizers/integrations)?"
+        if_yes:
+          choice: "Use AppTheoryRestApi"
+          reason: "REST API v1 supports some legacy features and per-method streaming config."
+        if_no:
+          choice: "Use AppTheoryHttpApi"
+          reason: "HTTP API v2 is simpler and often cheaper for typical proxy routing."
+

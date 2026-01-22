@@ -1,0 +1,27 @@
+# AppTheory CDK Documentation
+
+<!-- AI Training: This is the documentation index for AppTheory CDK -->
+**This directory contains the OFFICIAL documentation for the AppTheory CDK package (`@theory-cloud/apptheory-cdk`, Python: `apptheory_cdk`). It follows the Pay Theory Documentation Guide and focuses on copy/paste ready infrastructure patterns.**
+
+## Quick links
+
+### 🚀 Getting started
+- [Getting Started](./getting-started.md) — deploy a minimal API backed by an AppTheory Lambda.
+
+### 📚 Core documentation
+- [API Reference](./api-reference.md) — construct inventory and key props.
+- [Core Patterns](./core-patterns.md) — safe defaults, domains/certs, alarms, and proxy routing.
+- [Development Guidelines](./development-guidelines.md) — jsii build flow and regeneration steps.
+- [Testing Guide](./testing-guide.md) — how to run CDK tests and synth checks.
+- [Troubleshooting](./troubleshooting.md) — common synth/deploy failures.
+- [Migration Guide](./migration-guide.md) — moving from ad-hoc CDK stacks.
+
+### 🤖 AI knowledge base (YAML triad)
+- Concepts: `cdk/docs/_concepts.yaml`
+- Patterns: `cdk/docs/_patterns.yaml`
+- Decisions: `cdk/docs/_decisions.yaml`
+
+## What this package is
+
+AppTheory CDK provides jsii constructs that deploy AppTheory apps with consistent defaults (and keep infra patterns consistent across Go/TypeScript/Python services).
+

@@ -1,0 +1,66 @@
+# _concepts.yaml - Machine-readable concept map for AppTheory
+# This file is intentionally compact and versioned in git.
+
+concepts:
+  apptheory:
+    type: framework
+    language: multi
+    purpose: "Cross-language serverless runtime contract for AWS Lambda apps (Go/TypeScript/Python)."
+    provides:
+      - routing
+      - middleware
+      - request_response_normalization
+      - aws_event_adapters
+      - deterministic_testing
+      - drift_prevention
+    requires:
+      - aws_lambda
+      - github_releases
+    use_when:
+      - "You need equivalent behavior across Go, TypeScript, and Python."
+      - "You want fixture-backed contract tests to prevent drift."
+    dont_use_when:
+      - "You want a general-purpose web framework (templates/ORM/server)."
+
+  tiers:
+    type: concept
+    purpose: "Runtime feature tiers: P0 core, P1 platform defaults, P2 production hooks."
+    key_methods:
+      - TierP0: "Minimal core surface."
+      - TierP1: "Adds request-id, auth hooks, CORS, limits."
+      - TierP2: "Adds observability/policy hooks and rate limiting semantics."
+
+  contract_tests:
+    type: component
+    purpose: "Fixture-backed cross-language contract tests for behavior parity."
+    provides:
+      - cross_language_parity
+    configuration:
+      - contract-tests/
+
+  api_snapshots:
+    type: component
+    purpose: "Public API drift gate for Go/TypeScript/Python."
+    provides:
+      - exported_surface_snapshots
+    configuration:
+      - api-snapshots/
+
+  testkits:
+    type: component
+    purpose: "Deterministic test environments per language (clock + ids + event builders)."
+    provides:
+      - deterministic_time
+      - deterministic_ids
+      - aws_event_builders
+
+  cdk_constructs:
+    type: component
+    purpose: "jsii CDK constructs that deploy AppTheory apps with consistent defaults."
+    provides:
+      - http_api_constructs
+      - rest_api_constructs
+      - lambda_defaults
+    configuration:
+      - cdk/
+
