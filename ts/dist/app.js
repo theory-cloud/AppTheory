@@ -73,6 +73,12 @@ export class App {
     put(pattern, handler) {
         return this.handle("PUT", pattern, handler);
     }
+    patch(pattern, handler) {
+        return this.handle("PATCH", pattern, handler);
+    }
+    options(pattern, handler) {
+        return this.handle("OPTIONS", pattern, handler);
+    }
     delete(pattern, handler) {
         return this.handle("DELETE", pattern, handler);
     }
