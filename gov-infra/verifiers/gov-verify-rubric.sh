@@ -886,6 +886,11 @@ check_doc_integrity() {
   echo "doc-integrity: PASS"
 }
 
+check_docs_standard() {
+  # Ensures shipped packages follow the Pay Theory documentation standard (docs file set + YAML triad).
+  bash ./scripts/verify-docs-standard.sh
+}
+
 check_file_budgets() {
   # Maintainability heuristic: prevent "god files" from growing unchecked.
   # This is intentionally simple and deterministic.
@@ -1819,6 +1824,7 @@ CMD_MAINTAINABILITY="check_maintainability_roadmap"
 CMD_SINGLETON="check_duplicate_semantics"
 
 CMD_DOC_INTEGRITY="check_doc_integrity"
+CMD_DOCS_STANDARD="check_docs_standard"
 
 # === Quality (QUA) ===
 run_check "QUA-1" "Quality" "$CMD_UNIT"
@@ -1859,6 +1865,7 @@ check_file_exists "DOC-1" "Docs" "${PLANNING_DIR}/apptheory-threat-model.md"
 check_file_exists "DOC-2" "Docs" "${PLANNING_DIR}/apptheory-evidence-plan.md"
 check_file_exists "DOC-3" "Docs" "${PLANNING_DIR}/apptheory-10of10-rubric.md"
 run_check "DOC-4" "Docs" "$CMD_DOC_INTEGRITY"
+run_check "DOC-6" "Docs" "$CMD_DOCS_STANDARD"
 check_parity
 
 # === Release (REL) — optional ===

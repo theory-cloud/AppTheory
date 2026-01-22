@@ -5,6 +5,11 @@ This folder contains the TypeScript SDK/runtime for AppTheory.
 The portable runtime behavior is defined by the fixture-backed contract:
 `docs/development/planning/apptheory/supporting/apptheory-runtime-contract-v0.md`.
 
+## Documentation
+
+- TypeScript docs index: `ts/docs/README.md`
+- Repo docs index: `docs/README.md`
+
 ## Minimal local invocation (P2 default)
 
 To force the P0 core (minimal surface area), pass `tier: "p0"` when creating the app.

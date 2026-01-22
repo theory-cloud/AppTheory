@@ -1,0 +1,25 @@
+# _patterns.yaml - Machine-readable patterns for AppTheory Python
+
+patterns:
+  middleware_wraps_next:
+    name: "Middleware wraps next_handler(ctx) and returns a Response"
+    problem: "Inconsistent middleware conventions create drift and subtle ordering bugs."
+    solution: "Always call next_handler(ctx) and return the response."
+    correct_example: |
+      # CORRECT
+      def mw(ctx, next_handler):
+          ctx.set("mw", "ok")
+          resp = next_handler(ctx)
+          resp.headers["x-middleware"] = ["1"]
+          return resp
+    anti_patterns:
+      - name: "Not returning the response"
+        why: "The runtime cannot infer a response; behavior becomes undefined."
+        incorrect_example: |
+          # INCORRECT
+          def mw(ctx, next_handler):
+              next_handler(ctx)
+        consequences:
+          - "runtime errors"
+          - "hard-to-debug behavior"
+

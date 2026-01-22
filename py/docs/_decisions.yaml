@@ -1,0 +1,17 @@
+# _decisions.yaml - Decision trees for AppTheory Python
+
+decisions:
+  choose_test_strategy:
+    question: "How should I test handlers without AWS?"
+    decision_tree:
+      - condition: "You want deterministic tests and parity with contract fixtures."
+        check: "Can you structure your code around AppTheory handlers?"
+        if_yes:
+          choice: "Use create_test_env + build_*_request helpers"
+          reason: "Produces deterministic AWS-shaped events and responses."
+          example: |
+            # env = create_test_env(now=datetime(2026, 1, 1, tzinfo=UTC))
+        if_no:
+          choice: "Refactor to AppTheory handlers first"
+          reason: "Testing gets easier once handlers are pure and portable."
+
