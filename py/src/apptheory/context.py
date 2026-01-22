@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json as jsonlib
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from apptheory.clock import Clock, RealClock
 from apptheory.errors import AppError
@@ -211,7 +212,7 @@ class WebSocketContext:
 
         try:
             client = self.client_factory(self.management_endpoint, self.ctx)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._client_error = exc
             raise
 

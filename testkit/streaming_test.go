@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/theory-cloud/apptheory"
+	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
 func TestInvokeStreaming_Buffered(t *testing.T) {

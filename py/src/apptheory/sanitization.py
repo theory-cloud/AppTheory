@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json as jsonlib
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 _REDACTED_VALUE = "[REDACTED]"
 
@@ -131,10 +132,7 @@ def sanitize_json(json_bytes: bytes | str) -> str:
     if json_bytes is None:
         return "(empty)"
 
-    if isinstance(json_bytes, str):
-        raw = json_bytes.encode("utf-8")
-    else:
-        raw = bytes(json_bytes)
+    raw = json_bytes.encode("utf-8") if isinstance(json_bytes, str) else bytes(json_bytes)
 
     if not raw:
         return "(empty)"
@@ -164,6 +162,9 @@ def _sanitize_json_value(value: Any) -> Any:
         if key == "body" and isinstance(raw, str):
             try:
                 parsed = jsonlib.loads(raw)
+            except jsonlib.JSONDecodeError:
+                parsed = None
+            else:
                 out[key] = jsonlib.dumps(
                     _sanitize_json_value(parsed),
                     separators=(",", ":"),
@@ -171,8 +172,6 @@ def _sanitize_json_value(value: Any) -> Any:
                     sort_keys=True,
                 )
                 continue
-            except Exception:  # noqa: BLE001
-                pass
         out[str(key)] = sanitize_field_value(str(key), raw)
     return out
 
@@ -186,8 +185,9 @@ class XMLSanitizationPattern:
 
 def sanitize_xml(xml_string: str, patterns: list[XMLSanitizationPattern]) -> str:
     out = str(xml_string or "")
-    for p in patterns or []:
-        out = p.pattern.sub(lambda m: p.masking_func(m.group(0)), out)
+    for pattern in patterns or []:
+        masking_func = pattern.masking_func
+        out = pattern.pattern.sub(lambda m, masking_func=masking_func: masking_func(m.group(0)), out)
     return out
 
 

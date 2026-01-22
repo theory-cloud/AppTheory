@@ -8,7 +8,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	"github.com/theory-cloud/apptheory"
+	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
 // HTTPEventOptions configures synthetic HTTP events for local testing.

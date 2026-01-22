@@ -9,7 +9,8 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/theory-cloud/apptheory"
+
+	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
 func buildApp() *apptheory.App {

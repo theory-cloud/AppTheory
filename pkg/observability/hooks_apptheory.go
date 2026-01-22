@@ -1,6 +1,6 @@
 package observability
 
-import "github.com/theory-cloud/apptheory"
+import apptheory "github.com/theory-cloud/apptheory/runtime"
 
 func HooksFromLogger(logger StructuredLogger) apptheory.ObservabilityHooks {
 	if logger == nil {

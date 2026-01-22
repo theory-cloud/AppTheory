@@ -32,11 +32,10 @@ cp -a ts "${tmp_dir}/ts"
 
 (cd "${tmp_dir}/ts" && npm ci >/dev/null)
 
-if ! (cd "${tmp_dir}/ts" && npm run lint >"${tmp_log}" 2>&1); then
-  echo "ts-lint: FAIL (eslint failed)" >&2
+if ! (cd "${tmp_dir}/ts" && npm run check >"${tmp_log}" 2>&1); then
+  echo "ts-lint: FAIL (ts checks failed)" >&2
   cat "${tmp_log}" >&2
   exit 1
 fi
 
 echo "ts-lint: PASS"
-

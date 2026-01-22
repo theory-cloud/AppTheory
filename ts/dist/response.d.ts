@@ -1,0 +1,18 @@
+import type { Headers, Response } from "./types.js";
+export declare function text(status: number, body: string): Response;
+export declare function json(status: number, value: unknown): Response;
+export declare function binary(status: number, body: Uint8Array, contentType?: string): Response;
+export declare function html(status: number, body: Uint8Array | string): Response;
+type StreamableHTMLChunk = Uint8Array | string;
+type StreamableHTMLChunks = AsyncIterable<StreamableHTMLChunk> | Iterable<StreamableHTMLChunk>;
+export declare function htmlStream(status: number, chunks: StreamableHTMLChunks): Response;
+export declare function safeJSONForHTML(value: unknown): string;
+export declare function cacheControlSSR(): string;
+export declare function cacheControlSSG(): string;
+export declare function cacheControlISR(revalidateSeconds: number, staleWhileRevalidateSeconds?: number): string;
+export declare function etag(body: Uint8Array | string): string;
+export declare function matchesIfNoneMatch(headers: Headers, tag: string): boolean;
+export declare function vary(existing: string[] | null | undefined, ...add: string[]): string[];
+export declare function originURL(headers: Headers): string;
+export declare function clientIP(headers: Headers): string;
+export {};

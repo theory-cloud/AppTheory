@@ -41,13 +41,13 @@ def matches_if_none_match(headers: dict[str, Any] | None, etag_value: str) -> bo
 
     h = canonicalize_headers(headers)
     for raw in h.get("if-none-match", []):
-        for token in _split_comma_values(raw):
-            if token == "*":
+        for candidate in _split_comma_values(raw):
+            if candidate == "*":
                 return True
-            token = token.strip()
-            if token.lower().startswith("w/"):
-                token = token[2:].strip()
-            if token == tag:
+            value = candidate.strip()
+            if value.lower().startswith("w/"):
+                value = value[2:].strip()
+            if value == tag:
                 return True
     return False
 

@@ -233,7 +233,7 @@ func queryFromProxyEvent(single map[string]string, multi map[string][]string) ma
 	return out
 }
 
-func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsocketProxyRequest) events.APIGatewayProxyResponse {
+func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsocketProxyRequest) (proxy events.APIGatewayProxyResponse) {
 	if a == nil {
 		return apigatewayProxyResponseFromResponse(errorResponse(errorCodeInternal, errorMessageInternal, nil))
 	}
@@ -310,14 +310,13 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 		return apigatewayProxyResponseFromResponse(errorResponseWithRequestID(errorCodeNotFound, errorMessageNotFound, nil, requestID))
 	}
 
-	resp := Response{}
 	defer func() {
 		if r := recover(); r != nil {
 			if a.tier == TierP0 {
-				resp = errorResponse(errorCodeInternal, errorMessageInternal, nil)
-			} else {
-				resp = errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, requestID)
+				proxy = apigatewayProxyResponseFromResponse(errorResponse(errorCodeInternal, errorMessageInternal, nil))
+				return
 			}
+			proxy = apigatewayProxyResponseFromResponse(errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, requestID))
 		}
 	}()
 
@@ -336,6 +335,6 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 		return apigatewayProxyResponseFromResponse(errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, requestID))
 	}
 
-	resp = normalizeResponse(out)
+	resp := normalizeResponse(out)
 	return apigatewayProxyResponseFromResponse(resp)
 }

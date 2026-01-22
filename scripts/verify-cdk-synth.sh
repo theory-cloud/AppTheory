@@ -3,6 +3,16 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+epoch="${SOURCE_DATE_EPOCH:-}"
+if [[ -z "${epoch}" ]]; then
+  if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    epoch="$(git show -s --format=%ct HEAD)"
+  else
+    epoch="0"
+  fi
+fi
+export SOURCE_DATE_EPOCH="${epoch}"
+
 examples=(
   "examples/cdk/multilang|AppTheoryMultilangDemo"
   "examples/cdk/ssr-site|AppTheorySsrSiteDemo"
