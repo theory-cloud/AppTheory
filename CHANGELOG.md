@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0-rc.4](https://github.com/theory-cloud/AppTheory/compare/v0.2.0-rc.3...v0.2.0-rc.4) (2026-01-23)
+
+
+### Bug Fixes
+
+* address issue [#27](https://github.com/theory-cloud/AppTheory/issues/27) parity ([06f3434](https://github.com/theory-cloud/AppTheory/commit/06f3434e2a80317832f150c28b1426a844c91d31))
+* address issue [#27](https://github.com/theory-cloud/AppTheory/issues/27) parity ([b794697](https://github.com/theory-cloud/AppTheory/commit/b794697d5b1db95797058bb4b451c72bc5e550de))
+
 ## [0.2.0-rc.3](https://github.com/theory-cloud/AppTheory/compare/v0.2.0-rc.2...v0.2.0-rc.3) (2026-01-22)
 
 
