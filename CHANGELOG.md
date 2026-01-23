@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0-rc.6](https://github.com/theory-cloud/AppTheory/compare/v0.2.0-rc.5...v0.2.0-rc.6) (2026-01-23)
+
+
+### Bug Fixes
+
+* **cdk-go:** publish bindings via root module ([93d30a0](https://github.com/theory-cloud/AppTheory/commit/93d30a0263856723f6286f9e1df9ea88d747be4b))
+* **cdk-go:** publish bindings via root module ([9646f88](https://github.com/theory-cloud/AppTheory/commit/9646f88293f530d104b7921a3994b60a831ce587))
+
 ## [0.2.0-rc.5](https://github.com/theory-cloud/AppTheory/compare/v0.2.0-rc.4...v0.2.0-rc.5) (2026-01-23)
 
 
