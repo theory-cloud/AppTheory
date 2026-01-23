@@ -11,4 +11,3 @@ func validateAppTheoryDynamoTable_IsConstructParameters(x interface{}) error {
 func validateNewAppTheoryDynamoTableParameters(scope constructs.Construct, id *string, props *AppTheoryDynamoTableProps) error {
 	return nil
 }
-
