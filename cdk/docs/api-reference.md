@@ -11,12 +11,13 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryFunctionAlarms` (baseline alarms)
 - `AppTheoryHttpApi` (API Gateway v2 HTTP API + proxy routes)
 - `AppTheoryRestApi` (API Gateway REST API v1 + proxy routes)
-- `AppTheoryWebSocketApi` (WebSocket API + routes/permissions)
+- `AppTheoryWebSocketApi` (WebSocket API + routes/permissions; optional connection table + stage access logging)
 - `AppTheoryQueueProcessor` (SQS + Lambda consumer wiring)
 - `AppTheoryEventBridgeHandler` (EventBridge rule/schedule + Lambda target)
 - `AppTheoryDynamoDBStreamMapping` (Streams mapping + permissions)
+- `AppTheoryEventBusTable` (opinionated EventBus DynamoDB table + required GSIs)
+- `AppTheoryDynamoTable` (general-purpose DynamoDB table; schema-explicit + consistent defaults)
 - Domain/cert helpers (hosted zone, certificate, custom domains)
 - Higher-level “app”/SSR patterns (where present)
 
 For the exact list and prop types, read `cdk/lib/*.d.ts`.
-

@@ -4,26 +4,26 @@ import (
 	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
 	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/jsii"
 
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsevents"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
 
-type AppTheoryEventBridgeHandler interface {
+type AppTheoryDynamoTable interface {
 	constructs.Construct
 	// The tree node.
 	Node() constructs.Node
-	Rule() awsevents.Rule
+	Table() awsdynamodb.Table
 	// Returns a string representation of this construct.
 	ToString() *string
 }
 
-// The jsii proxy struct for AppTheoryEventBridgeHandler
-type jsiiProxy_AppTheoryEventBridgeHandler struct {
+// The jsii proxy struct for AppTheoryDynamoTable
+type jsiiProxy_AppTheoryDynamoTable struct {
 	internal.Type__constructsConstruct
 }
 
-func (j *jsiiProxy_AppTheoryEventBridgeHandler) Node() constructs.Node {
+func (j *jsiiProxy_AppTheoryDynamoTable) Node() constructs.Node {
 	var returns constructs.Node
 	_jsii_.Get(
 		j,
@@ -33,26 +33,26 @@ func (j *jsiiProxy_AppTheoryEventBridgeHandler) Node() constructs.Node {
 	return returns
 }
 
-func (j *jsiiProxy_AppTheoryEventBridgeHandler) Rule() awsevents.Rule {
-	var returns awsevents.Rule
+func (j *jsiiProxy_AppTheoryDynamoTable) Table() awsdynamodb.Table {
+	var returns awsdynamodb.Table
 	_jsii_.Get(
 		j,
-		"rule",
+		"table",
 		&returns,
 	)
 	return returns
 }
 
-func NewAppTheoryEventBridgeHandler(scope constructs.Construct, id *string, props *AppTheoryEventBridgeHandlerProps) AppTheoryEventBridgeHandler {
+func NewAppTheoryDynamoTable(scope constructs.Construct, id *string, props *AppTheoryDynamoTableProps) AppTheoryDynamoTable {
 	_init_.Initialize()
 
-	if err := validateNewAppTheoryEventBridgeHandlerParameters(scope, id, props); err != nil {
+	if err := validateNewAppTheoryDynamoTableParameters(scope, id, props); err != nil {
 		panic(err)
 	}
-	j := jsiiProxy_AppTheoryEventBridgeHandler{}
+	j := jsiiProxy_AppTheoryDynamoTable{}
 
 	_jsii_.Create(
-		"@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandler",
+		"@theory-cloud/apptheory-cdk.AppTheoryDynamoTable",
 		[]interface{}{scope, id, props},
 		&j,
 	)
@@ -60,11 +60,11 @@ func NewAppTheoryEventBridgeHandler(scope constructs.Construct, id *string, prop
 	return &j
 }
 
-func NewAppTheoryEventBridgeHandler_Override(a AppTheoryEventBridgeHandler, scope constructs.Construct, id *string, props *AppTheoryEventBridgeHandlerProps) {
+func NewAppTheoryDynamoTable_Override(a AppTheoryDynamoTable, scope constructs.Construct, id *string, props *AppTheoryDynamoTableProps) {
 	_init_.Initialize()
 
 	_jsii_.Create(
-		"@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandler",
+		"@theory-cloud/apptheory-cdk.AppTheoryDynamoTable",
 		[]interface{}{scope, id, props},
 		a,
 	)
@@ -87,16 +87,16 @@ func NewAppTheoryEventBridgeHandler_Override(a AppTheoryEventBridgeHandler, scop
 // this type-testing method instead.
 //
 // Returns: true if `x` is an object created from a class which extends `Construct`.
-func AppTheoryEventBridgeHandler_IsConstruct(x interface{}) *bool {
+func AppTheoryDynamoTable_IsConstruct(x interface{}) *bool {
 	_init_.Initialize()
 
-	if err := validateAppTheoryEventBridgeHandler_IsConstructParameters(x); err != nil {
+	if err := validateAppTheoryDynamoTable_IsConstructParameters(x); err != nil {
 		panic(err)
 	}
 	var returns *bool
 
 	_jsii_.StaticInvoke(
-		"@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandler",
+		"@theory-cloud/apptheory-cdk.AppTheoryDynamoTable",
 		"isConstruct",
 		[]interface{}{x},
 		&returns,
@@ -105,7 +105,7 @@ func AppTheoryEventBridgeHandler_IsConstruct(x interface{}) *bool {
 	return returns
 }
 
-func (a *jsiiProxy_AppTheoryEventBridgeHandler) ToString() *string {
+func (a *jsiiProxy_AppTheoryDynamoTable) ToString() *string {
 	var returns *string
 
 	_jsii_.Invoke(
