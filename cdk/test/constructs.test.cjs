@@ -301,6 +301,24 @@ test("AppTheoryDynamoTable synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryDynamoTable (no TTL) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryDynamoTable(stack, "Table", {
+    tableName: "apptheory-test-table",
+    partitionKeyName: "PK",
+    sortKeyName: "SK",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("dynamo-table-no-ttl", template);
+  } else {
+    expectSnapshot("dynamo-table-no-ttl", template);
+  }
+});
+
 test("AppTheoryHostedZone synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
