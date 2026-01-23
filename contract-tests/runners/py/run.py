@@ -1413,10 +1413,35 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
     if not isinstance(event, dict):
         raise RuntimeError("fixture missing input.aws_event.event")
 
-    actual_output = app.handle_lambda(event, ctx={})
+    actual_output = None
+    actual_error: Exception | None = None
+    try:
+        actual_output = app.handle_lambda(event, ctx={})
+    except Exception as exc:  # noqa: BLE001
+        actual_error = exc
     expect_obj = fixture.get("expect", {}) or {}
+    if "error" in expect_obj:
+        if "output_json" in expect_obj:
+            return (
+                False,
+                "fixture expect cannot set both error and output_json",
+                {"message": str(actual_error or "").strip()} if actual_error else None,
+                expect_obj.get("error"),
+                _DummyEffectsApp(),
+            )
+        expected_error = expect_obj.get("error") or {}
+        expected_msg = str((expected_error or {}).get("message") or "").strip()
+        if actual_error is None:
+            return False, "expected error, got none", actual_output, expected_error, _DummyEffectsApp()
+        actual_msg = str(actual_error).strip()
+        if expected_msg and actual_msg != expected_msg:
+            return False, "error mismatch", {"message": actual_msg}, expected_error, _DummyEffectsApp()
+        return True, "", {"message": actual_msg}, expected_error, _DummyEffectsApp()
+
     if "output_json" not in expect_obj:
-        return False, "missing expect.output_json", actual_output, None, _DummyEffectsApp()
+        return False, "missing expect.output_json or expect.error", actual_output, None, _DummyEffectsApp()
+    if actual_error is not None:
+        return False, "unexpected error", {"message": str(actual_error).strip()}, expect_obj.get("output_json"), _DummyEffectsApp()
 
     expected_output = expect_obj.get("output_json")
     if stable_json(expected_output) != stable_json(actual_output):
@@ -2138,9 +2163,17 @@ def main() -> int:
             continue
         print(f"FAIL {fixture['id']} — {fixture.get('name', '')}", file=sys.stderr)
         print(f"  {reason}", file=sys.stderr)
-        if "output_json" in (fixture.get("expect", {}) or {}):
-            print(f"  expected.output_json: {stable_json(expected)}", file=sys.stderr)
-            print(f"  got.output_json: {stable_json(actual)}", file=sys.stderr)
+        expect_obj = fixture.get("expect", {}) or {}
+        if "output_json" in expect_obj or "error" in expect_obj:
+            if "error" in expect_obj:
+                print(f"  expected.error: {stable_json(expected)}", file=sys.stderr)
+                print(f"  got.error: {stable_json(actual)}", file=sys.stderr)
+            else:
+                print(f"  expected.output_json: {stable_json(expected)}", file=sys.stderr)
+                if "error" in reason:
+                    print(f"  got.error: {stable_json(actual)}", file=sys.stderr)
+                else:
+                    print(f"  got.output_json: {stable_json(actual)}", file=sys.stderr)
         else:
             print(f"  expected: {stable_json(expected)}", file=sys.stderr)
             print(f"  got: {stable_json(debug_actual_for_expected(actual, expected))}", file=sys.stderr)

@@ -2,28 +2,212 @@ from __future__ import annotations
 
 import datetime as dt
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(slots=True)
 class RateLimitEntry:
-    pk: str = ""
-    sk: str = ""
+    pk: str = field(
+        default="",
+        metadata={
+            "theorydb": {
+                "name": "PK",
+                "roles": ["pk"],
+                "omitempty": False,
+                "set": False,
+                "json": False,
+                "binary": False,
+                "encrypted": False,
+                "converter": None,
+                "ignore": False,
+            }
+        },
+    )
+    sk: str = field(
+        default="",
+        metadata={
+            "theorydb": {
+                "name": "SK",
+                "roles": ["sk"],
+                "omitempty": False,
+                "set": False,
+                "json": False,
+                "binary": False,
+                "encrypted": False,
+                "converter": None,
+                "ignore": False,
+            }
+        },
+    )
 
-    identifier: str = ""
-    resource: str = ""
-    operation: str = ""
+    identifier: str = field(
+        default="",
+        metadata={
+            "theorydb": {
+                "name": "Identifier",
+                "omitempty": False,
+                "set": False,
+                "json": False,
+                "binary": False,
+                "encrypted": False,
+                "converter": None,
+                "ignore": False,
+            }
+        },
+    )
+    resource: str = field(
+        default="",
+        metadata={
+            "theorydb": {
+                "name": "Resource",
+                "omitempty": False,
+                "set": False,
+                "json": False,
+                "binary": False,
+                "encrypted": False,
+                "converter": None,
+                "ignore": False,
+            }
+        },
+    )
+    operation: str = field(
+        default="",
+        metadata={
+            "theorydb": {
+                "name": "Operation",
+                "omitempty": False,
+                "set": False,
+                "json": False,
+                "binary": False,
+                "encrypted": False,
+                "converter": None,
+                "ignore": False,
+            }
+        },
+    )
 
-    window_start: int = 0
-    window_type: str = ""
-    window_id: str = ""
+    window_start: int = field(
+        default=0,
+        metadata={
+            "theorydb": {
+                "name": "WindowStart",
+                "omitempty": False,
+                "set": False,
+                "json": False,
+                "binary": False,
+                "encrypted": False,
+                "converter": None,
+                "ignore": False,
+            }
+        },
+    )
+    window_type: str = field(
+        default="",
+        metadata={
+            "theorydb": {
+                "name": "WindowType",
+                "omitempty": False,
+                "set": False,
+                "json": False,
+                "binary": False,
+                "encrypted": False,
+                "converter": None,
+                "ignore": False,
+            }
+        },
+    )
+    window_id: str = field(
+        default="",
+        metadata={
+            "theorydb": {
+                "name": "WindowID",
+                "omitempty": False,
+                "set": False,
+                "json": False,
+                "binary": False,
+                "encrypted": False,
+                "converter": None,
+                "ignore": False,
+            }
+        },
+    )
 
-    count: int = 0
-    ttl: int = 0
+    count: int = field(
+        default=0,
+        metadata={
+            "theorydb": {
+                "name": "Count",
+                "omitempty": False,
+                "set": False,
+                "json": False,
+                "binary": False,
+                "encrypted": False,
+                "converter": None,
+                "ignore": False,
+            }
+        },
+    )
+    ttl: int = field(
+        default=0,
+        metadata={
+            "theorydb": {
+                "name": "TTL",
+                "omitempty": False,
+                "set": False,
+                "json": False,
+                "binary": False,
+                "encrypted": False,
+                "converter": None,
+                "ignore": False,
+            }
+        },
+    )
 
-    created_at: str = ""
-    updated_at: str = ""
-    metadata: dict[str, str] | None = None
+    created_at: str = field(
+        default="",
+        metadata={
+            "theorydb": {
+                "name": "CreatedAt",
+                "omitempty": False,
+                "set": False,
+                "json": False,
+                "binary": False,
+                "encrypted": False,
+                "converter": None,
+                "ignore": False,
+            }
+        },
+    )
+    updated_at: str = field(
+        default="",
+        metadata={
+            "theorydb": {
+                "name": "UpdatedAt",
+                "omitempty": False,
+                "set": False,
+                "json": False,
+                "binary": False,
+                "encrypted": False,
+                "converter": None,
+                "ignore": False,
+            }
+        },
+    )
+    metadata: dict[str, str] | None = field(
+        default=None,
+        metadata={
+            "theorydb": {
+                "name": "Metadata",
+                "omitempty": False,
+                "set": False,
+                "json": False,
+                "binary": False,
+                "encrypted": False,
+                "converter": None,
+                "ignore": False,
+            }
+        },
+    )
 
 
 def set_keys(entry: RateLimitEntry) -> None:

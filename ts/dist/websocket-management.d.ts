@@ -1,3 +1,4 @@
+import { ApiGatewayManagementApiClient } from "@aws-sdk/client-apigatewaymanagementapi";
 export interface WebSocketCall {
     op: "post_to_connection" | "get_connection" | "delete_connection";
     connectionId: string;
@@ -6,11 +7,14 @@ export interface WebSocketCall {
 export declare class WebSocketManagementClient {
     readonly endpoint: string;
     readonly region: string;
-    private readonly _credentials;
+    private readonly _client;
     constructor(options?: {
         endpoint?: string;
         region?: string;
         credentials?: unknown;
+        client?: {
+            send: ApiGatewayManagementApiClient["send"];
+        };
     });
     postToConnection(connectionId: string, data: Uint8Array): Promise<void>;
     getConnection(connectionId: string): Promise<unknown>;

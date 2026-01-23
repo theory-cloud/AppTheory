@@ -77,10 +77,7 @@ func runFixtureM1(f Fixture) error {
 	}
 
 	out, err := app.HandleLambda(context.Background(), f.Input.AWSEvent.Event)
-	if err != nil {
-		return err
-	}
-	return compareFixtureOutputJSON(f, out)
+	return compareFixtureM1Result(f, out, err)
 }
 
 func builtInM1EventMiddleware(name string) apptheory.EventMiddleware {
@@ -136,6 +133,29 @@ func compareFixtureOutputJSON(f Fixture, out any) error {
 		return fmt.Errorf("output_json mismatch")
 	}
 	return nil
+}
+
+func compareFixtureM1Result(f Fixture, out any, runErr error) error {
+	if f.Expect.Error != nil {
+		if len(f.Expect.Output) != 0 {
+			return errors.New("fixture expect cannot set both error and output_json")
+		}
+		if runErr == nil {
+			return errors.New("expected error, got nil")
+		}
+		expected := strings.TrimSpace(f.Expect.Error.Message)
+		if expected != "" && strings.TrimSpace(runErr.Error()) != expected {
+			return fmt.Errorf("error message mismatch: expected %q, got %q", expected, runErr.Error())
+		}
+		return nil
+	}
+	if len(f.Expect.Output) == 0 {
+		return errors.New("fixture missing expect.output_json or expect.error")
+	}
+	if runErr != nil {
+		return runErr
+	}
+	return compareFixtureOutputJSON(f, out)
 }
 
 func builtInRecordHandler[T any](

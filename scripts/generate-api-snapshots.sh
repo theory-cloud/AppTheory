@@ -31,7 +31,6 @@ mkdir -p "${out_dir}"
 
 go run ./scripts/tools/api_snapshots/go > "${out_dir}/go.txt"
 python3 ./scripts/tools/api_snapshots/ts_snapshot.py "ts/dist/index.d.ts" > "${out_dir}/ts.txt"
-python3 ./scripts/tools/api_snapshots/py_snapshot.py "py/src/apptheory/__init__.py" > "${out_dir}/py.txt"
+python3 ./scripts/tools/api_snapshots/py_snapshot.py --mode curated --root "py/src/apptheory" > "${out_dir}/py.txt"
 
 echo "api-snapshots: generated (${out_dir})"
-

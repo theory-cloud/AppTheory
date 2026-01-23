@@ -12,134 +12,177 @@ async function importDist(relPath) {
 
 function conditionalCheckFailed(message = "conditional check failed") {
   const err = new Error(message);
-  err.name = "ConditionalCheckFailedException";
+  err.name = "ErrConditionFailed";
+  err.code = "ErrConditionFailed";
   return err;
 }
 
-function transactionCanceled(message = "transaction canceled") {
-  const err = new Error(message);
-  err.name = "TransactionCanceledException";
-  return err;
+function cloneJson(value) {
+  return value ? JSON.parse(JSON.stringify(value)) : value;
 }
 
-class FakeDynamoDB {
+class FakeUpdateBuilder {
+  constructor(items, key) {
+    this._items = items;
+    this._key = { PK: String(key?.PK ?? ""), SK: String(key?.SK ?? "") };
+    this._adds = new Map();
+    this._sets = new Map();
+    this._setIfMissing = new Map();
+    this._andConditions = [];
+    this._orConditions = [];
+  }
+
+  add(field, value) {
+    this._adds.set(String(field), Number(value) || 0);
+    return this;
+  }
+
+  set(field, value) {
+    this._sets.set(String(field), value);
+    return this;
+  }
+
+  setIfNotExists(field, _value, defaultValue) {
+    this._setIfMissing.set(String(field), defaultValue);
+    return this;
+  }
+
+  condition(field, operator, value) {
+    const f = String(field);
+    const op = String(operator);
+    this._andConditions.push((item) => {
+      if (!(f in item)) return false;
+      const left = Number(item[f]);
+      const right = Number(value);
+      if (op === "<") return Number.isFinite(left) && Number.isFinite(right) && left < right;
+      return false;
+    });
+    return this;
+  }
+
+  conditionNotExists(field) {
+    const f = String(field);
+    this._orConditions.push((item) => !(f in item));
+    return this;
+  }
+
+  orCondition(field, operator, value) {
+    const f = String(field);
+    const op = String(operator);
+    this._orConditions.push((item) => {
+      if (!(f in item)) return false;
+      const left = Number(item[f]);
+      const right = Number(value);
+      if (op === "<") return Number.isFinite(left) && Number.isFinite(right) && left < right;
+      return false;
+    });
+    return this;
+  }
+
+  returnValues(_opt) {
+    return this;
+  }
+
+  async execute() {
+    return this._apply();
+  }
+
+  _apply() {
+    const pk = String(this._key.PK ?? "");
+    const sk = String(this._key.SK ?? "");
+    const keyId = `${pk}||${sk}`;
+    const existing = this._items.get(keyId);
+    const item = existing ? cloneJson(existing) : {};
+
+    if (pk) item.PK = pk;
+    if (sk) item.SK = sk;
+
+    const andOk = this._andConditions.every((fn) => fn(item));
+    const orOk = this._orConditions.length === 0 ? true : this._orConditions.some((fn) => fn(item));
+    if (!andOk || !orOk) {
+      throw conditionalCheckFailed();
+    }
+
+    for (const [field, inc] of this._adds.entries()) {
+      const current = Number(item[field] ?? 0);
+      item[field] = (Number.isFinite(current) ? current : 0) + inc;
+    }
+    for (const [field, value] of this._sets.entries()) {
+      item[field] = value;
+    }
+    for (const [field, value] of this._setIfMissing.entries()) {
+      if (!(field in item)) item[field] = value;
+    }
+
+    this._items.set(keyId, item);
+    return cloneJson(item);
+  }
+}
+
+class FakeTheorydb {
   constructor() {
     this.items = new Map();
+    this.failTransact = null;
+    this.batchGetError = null;
+    this.unprocessedKeys = [];
   }
 
   _key(pk, sk) {
     return `${pk}||${sk}`;
   }
 
-  _getS(av) {
-    return av && typeof av === "object" && "S" in av ? String(av.S) : "";
+  register() {
+    return this;
   }
 
-  _getN(av) {
-    if (!av || typeof av !== "object" || !("N" in av)) return 0;
-    const n = Number(av.N);
-    return Number.isFinite(n) ? Math.floor(n) : 0;
+  async batchGet(_modelName, keys, _opts) {
+    if (this.batchGetError) {
+      throw this.batchGetError;
+    }
+    const out = [];
+    for (const key of keys ?? []) {
+      const pk = String(key?.PK ?? "");
+      const sk = String(key?.SK ?? "");
+      const item = this.items.get(this._key(pk, sk));
+      if (item) out.push(cloneJson(item));
+    }
+    return { items: out, unprocessedKeys: Array.isArray(this.unprocessedKeys) ? this.unprocessedKeys.slice() : [] };
   }
 
-  _applyUpdate(map, input) {
-    const pk = this._getS(input?.Key?.PK);
-    const sk = this._getS(input?.Key?.SK);
+  async create(_modelName, item, opts) {
+    const pk = String(item?.PK ?? "");
+    const sk = String(item?.SK ?? "");
     const k = this._key(pk, sk);
-    const existing = map.get(k);
-    const item = existing ? JSON.parse(JSON.stringify(existing)) : {};
-
-    const eav = input?.ExpressionAttributeValues ?? {};
-    const inc = this._getN(eav[":inc"]);
-
-    const cond = String(input?.ConditionExpression ?? "");
-    if (cond.includes("#Count <")) {
-      if (!("Count" in item)) throw conditionalCheckFailed();
-      const limit = this._getN(eav[":limit"]);
-      const current = this._getN(item.Count);
-      if (!(current < limit)) throw conditionalCheckFailed();
-    }
-    if (cond.includes("attribute_not_exists") && cond.includes(":maxAllowed")) {
-      const maxAllowed = this._getN(eav[":maxAllowed"]);
-      const current = "Count" in item ? this._getN(item.Count) : 0;
-      if ("Count" in item && !(current < maxAllowed)) {
-        throw conditionalCheckFailed();
-      }
-    }
-
-    const update = String(input?.UpdateExpression ?? "");
-    if (update.includes("ADD #Count")) {
-      const current = "Count" in item ? this._getN(item.Count) : 0;
-      item.Count = { N: String(current + inc) };
-    }
-    if (":now" in eav) {
-      item.UpdatedAt = eav[":now"];
-    }
-    if (update.includes("if_not_exists")) {
-      const setIfMissing = (name, token) => {
-        if (!(name in item) && token in eav) item[name] = eav[token];
-      };
-      setIfMissing("WindowType", ":wt");
-      setIfMissing("WindowID", ":wid");
-      setIfMissing("Identifier", ":id");
-      setIfMissing("Resource", ":res");
-      setIfMissing("Operation", ":op");
-      setIfMissing("WindowStart", ":ws");
-      setIfMissing("TTL", ":ttl");
-      setIfMissing("CreatedAt", ":now");
-    }
-
-    map.set(k, item);
-
-    if (input?.ReturnValues === "ALL_NEW") {
-      return { Attributes: item };
-    }
-    return {};
-  }
-
-  async getItem(input) {
-    const pk = this._getS(input?.Key?.PK);
-    const sk = this._getS(input?.Key?.SK);
-    const item = this.items.get(this._key(pk, sk));
-    return item ? { Item: item } : {};
-  }
-
-  async putItem(input) {
-    const pk = this._getS(input?.Item?.PK);
-    const sk = this._getS(input?.Item?.SK);
-    const k = this._key(pk, sk);
-    if (input?.ConditionExpression && this.items.has(k)) {
+    if (opts?.ifNotExists && this.items.has(k)) {
       throw conditionalCheckFailed();
     }
-    this.items.set(k, input.Item);
-    return {};
+    this.items.set(k, cloneJson(item));
   }
 
-  async updateItem(input) {
-    return this._applyUpdate(this.items, input);
+  updateBuilder(_modelName, key) {
+    return new FakeUpdateBuilder(this.items, key);
   }
 
-  async transactWriteItems(input) {
-    const staged = new Map(this.items);
-    try {
-      for (const tx of input?.TransactItems ?? []) {
-        if (tx?.Update) this._applyUpdate(staged, tx.Update);
+  async transactWrite(actions) {
+    if (this.failTransact) {
+      throw this.failTransact;
+    }
+    const staged = new Map();
+    for (const [k, v] of this.items.entries()) staged.set(k, cloneJson(v));
+
+    for (const action of actions ?? []) {
+      if (!action || typeof action !== "object") continue;
+      if (action.kind === "update") {
+        const builder = new FakeUpdateBuilder(staged, action.key);
+        if (typeof action.updateFn === "function") {
+          // eslint-disable-next-line no-await-in-loop
+          await action.updateFn(builder);
+        }
+        builder._apply();
       }
-    } catch (err) {
-      if (err && err.name === "ConditionalCheckFailedException") {
-        throw transactionCanceled();
-      }
-      throw err;
     }
 
     this.items = staged;
-    return {};
-  }
-
-  withoutTransactions() {
-    const out = new FakeDynamoDB();
-    out.items = this.items;
-    out.transactWriteItems = undefined;
-    return out;
   }
 }
 
@@ -163,58 +206,14 @@ test("routing: handleStrict rejects invalid patterns", async () => {
   );
 });
 
-test("limited: dynamodb client sets x-amz-target and parses error type", async (t) => {
-  const { DynamoDBClient } = await importDist("internal/aws-dynamodb.js");
-
-  const prevFetch = globalThis.fetch;
-  t.after(() => {
-    globalThis.fetch = prevFetch;
-  });
-
-  const calls = [];
-  globalThis.fetch = async (url, init) => {
-    calls.push({ url: String(url), init: init ?? {} });
-    const target = String(init?.headers?.["x-amz-target"] ?? "");
-    if (target.includes("UpdateItem")) {
-      return new Response(
-        JSON.stringify({
-          __type: "com.amazonaws.dynamodb.v20120810#ConditionalCheckFailedException",
-          message: "nope",
-        }),
-        { status: 400 },
-      );
-    }
-    return new Response(JSON.stringify({}), { status: 200 });
-  };
-
-  const c = new DynamoDBClient({
-    region: "us-east-1",
-    credentials: { accessKeyId: "AKIA_TEST", secretAccessKey: "SECRET_TEST" },
-  });
-
-  await c.getItem({ TableName: "t", Key: { PK: { S: "pk" }, SK: { S: "sk" } } });
-  assert.ok(calls.length >= 1);
-  assert.ok(String(calls[0].init?.headers?.["x-amz-target"] ?? "").includes("GetItem"));
-
-  await assert.rejects(
-    () =>
-      c.updateItem({
-        TableName: "t",
-        Key: { PK: { S: "pk" }, SK: { S: "sk" } },
-        UpdateExpression: "ADD #Count :inc",
-      }),
-    (err) => err && err.name === "ConditionalCheckFailedException",
-  );
-});
-
 test("limited: checkAndIncrement creates and then denies", async () => {
   const { DynamoRateLimiter, FixedWindowStrategy } = await importDist("index.js");
 
-  const dynamo = new FakeDynamoDB();
+  const theorydb = new FakeTheorydb();
   // Avoid hour boundary where window starts can collide (minute/hour share the same window start).
   const clock = { now: () => new Date("2026-01-01T00:01:30.000Z") };
   const limiter = new DynamoRateLimiter({
-    dynamo,
+    theorydb,
     clock,
     config: { failOpen: false },
     strategy: new FixedWindowStrategy(60_000, 2),
@@ -235,10 +234,31 @@ test("limited: checkAndIncrement creates and then denies", async () => {
   assert.ok((d3.retryAfterMs ?? 0) >= 0);
 });
 
+test("limited: recordRequest uses updateBuilder and checkLimit denies at limit", async () => {
+  const { DynamoRateLimiter, FixedWindowStrategy } = await importDist("index.js");
+
+  const theorydb = new FakeTheorydb();
+  const clock = { now: () => new Date("2026-01-01T00:00:30.000Z") };
+  const limiter = new DynamoRateLimiter({
+    theorydb,
+    clock,
+    config: { failOpen: false },
+    strategy: new FixedWindowStrategy(60_000, 2),
+  });
+
+  const key = { identifier: "i1", resource: "/r", operation: "GET" };
+  await limiter.recordRequest(key);
+  await limiter.recordRequest(key);
+
+  const decision = await limiter.checkLimit(key);
+  assert.equal(decision.allowed, false);
+  assert.equal(decision.currentCount, 2);
+});
+
 test("limited: multiwindow transact increments and denies on window breach", async () => {
   const { DynamoRateLimiter, MultiWindowStrategy } = await importDist("index.js");
 
-  const dynamo = new FakeDynamoDB();
+  const theorydb = new FakeTheorydb();
   const clock = { now: () => new Date("2026-01-01T00:00:00.000Z") };
   const strategy = new MultiWindowStrategy([
     { durationMs: 60_000, maxRequests: 2 },
@@ -246,7 +266,7 @@ test("limited: multiwindow transact increments and denies on window breach", asy
   ]);
 
   const limiter = new DynamoRateLimiter({
-    dynamo,
+    theorydb,
     clock,
     config: { failOpen: false },
     strategy,
@@ -276,6 +296,27 @@ test("limited: error helpers preserve type and cause", async () => {
   assert.equal(e2.type, "internal_error");
   assert.equal(e2.message, "wrapped");
   assert.equal(e2.cause, cause);
+});
+
+test("limited: getUsage applies identifier overrides", async () => {
+  const { DynamoRateLimiter, FixedWindowStrategy } = await importDist("index.js");
+
+  const theorydb = new FakeTheorydb();
+  const clock = { now: () => new Date("2026-01-01T00:00:00.000Z") };
+  const limiter = new DynamoRateLimiter({
+    theorydb,
+    clock,
+    config: {
+      failOpen: false,
+      identifierLimits: { i1: { requestsPerMinute: 5, requestsPerHour: 6 } },
+    },
+    strategy: new FixedWindowStrategy(60_000, 1),
+  });
+
+  const key = { identifier: "i1", resource: "/r", operation: "GET" };
+  const usage = await limiter.getUsage(key);
+  assert.equal(usage.currentMinute.limit, 5);
+  assert.equal(usage.currentHour.limit, 6);
 });
 
 test("limited: models resolve table name and window helpers", async (t) => {
@@ -386,10 +427,10 @@ test("limited: strategies calculate windows and enforce limits", async () => {
 test("limited: checkLimit denies with retryAfter and getUsage reads counts", async () => {
   const { DynamoRateLimiter, FixedWindowStrategy } = await importDist("index.js");
 
-  const dynamo = new FakeDynamoDB();
+  const theorydb = new FakeTheorydb();
   const clock = { now: () => new Date("2026-01-01T00:00:00.000Z") };
   const limiter = new DynamoRateLimiter({
-    dynamo,
+    theorydb,
     clock,
     config: { failOpen: false },
     strategy: new FixedWindowStrategy(60_000, 2),
@@ -412,15 +453,37 @@ test("limited: checkLimit denies with retryAfter and getUsage reads counts", asy
   assert.equal(usage.currentHour.count, 2);
 });
 
-test("limited: multiwindow falls back without transactWriteItems", async () => {
-  const { DynamoRateLimiter, MultiWindowStrategy } = await importDist("index.js");
+test("limited: getUsage wraps unprocessedKeys as internal_error", async () => {
+  const { DynamoRateLimiter, FixedWindowStrategy, RateLimiterError } = await importDist("index.js");
 
-  const dynamo = new FakeDynamoDB().withoutTransactions();
-  const clock = { now: () => new Date("2026-01-01T00:01:30.000Z") };
+  const theorydb = new FakeTheorydb();
+  theorydb.unprocessedKeys = [{ PK: "x", SK: "y" }];
+  const clock = { now: () => new Date("2026-01-01T00:00:00.000Z") };
   const limiter = new DynamoRateLimiter({
-    dynamo,
+    theorydb,
     clock,
     config: { failOpen: false },
+    strategy: new FixedWindowStrategy(60_000, 2),
+  });
+
+  const key = { identifier: "i1", resource: "/r", operation: "GET" };
+  await assert.rejects(
+    () => limiter.getUsage(key),
+    (err) => err instanceof RateLimiterError && /failed to get minute usage/i.test(err.message),
+  );
+});
+
+test("limited: multiwindow fails open on transact error", async () => {
+  const { DynamoRateLimiter, MultiWindowStrategy } = await importDist("index.js");
+
+  const clock = { now: () => new Date("2026-01-01T00:01:30.000Z") };
+  const theorydb = new FakeTheorydb();
+  theorydb.failTransact = new Error("boom");
+
+  const limiter = new DynamoRateLimiter({
+    theorydb,
+    clock,
+    config: { failOpen: true },
     strategy: new MultiWindowStrategy([
       { durationMs: 60_000, maxRequests: 2 },
       { durationMs: 3_600_000, maxRequests: 10 },
@@ -430,97 +493,6 @@ test("limited: multiwindow falls back without transactWriteItems", async () => {
   const key = { identifier: "i1", resource: "/r", operation: "GET" };
   const d1 = await limiter.checkAndIncrement(key);
   assert.equal(d1.allowed, true);
-  const d2 = await limiter.checkAndIncrement(key);
-  assert.equal(d2.allowed, true);
-  const d3 = await limiter.checkAndIncrement(key);
-  assert.equal(d3.allowed, false);
-});
-
-test("aws-sigv4: loads env credentials and signs requests", async (t) => {
-  const { isAwsCredentials, loadEnvCredentials, signedFetch } = await importDist(
-    "internal/aws-sigv4.js",
-  );
-
-  assert.equal(isAwsCredentials(null), false);
-  assert.equal(isAwsCredentials({}), false);
-  assert.equal(
-    isAwsCredentials({ accessKeyId: "AKIA_TEST", secretAccessKey: "SECRET" }),
-    true,
-  );
-
-  const prevEnv = {
-    AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
-    AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
-    AWS_SESSION_TOKEN: process.env.AWS_SESSION_TOKEN,
-  };
-  t.after(() => {
-    process.env.AWS_ACCESS_KEY_ID = prevEnv.AWS_ACCESS_KEY_ID;
-    process.env.AWS_SECRET_ACCESS_KEY = prevEnv.AWS_SECRET_ACCESS_KEY;
-    process.env.AWS_SESSION_TOKEN = prevEnv.AWS_SESSION_TOKEN;
-  });
-
-  process.env.AWS_ACCESS_KEY_ID = "AKIA_ENV";
-  process.env.AWS_SECRET_ACCESS_KEY = "SECRET_ENV";
-  process.env.AWS_SESSION_TOKEN = "TOKEN_ENV";
-  const creds = loadEnvCredentials();
-  assert.equal(creds.accessKeyId, "AKIA_ENV");
-  assert.equal(creds.secretAccessKey, "SECRET_ENV");
-  assert.equal(creds.sessionToken, "TOKEN_ENV");
-
-  const prevFetch = globalThis.fetch;
-  t.after(() => {
-    globalThis.fetch = prevFetch;
-  });
-
-  let sawHeaders = null;
-  globalThis.fetch = async (_url, init) => {
-    sawHeaders = init?.headers ?? null;
-    return new Response("", { status: 200 });
-  };
-
-  await signedFetch({
-    method: "POST",
-    url: "https://example.com/x?y=1",
-    region: "us-east-1",
-    service: "dynamodb",
-    credentials: { accessKeyId: "AKIA_TEST", secretAccessKey: "SECRET_TEST" },
-    headers: { "x-test": "ok" },
-    body: new Uint8Array([1, 2, 3]),
-  });
-
-  assert.ok(sawHeaders);
-  assert.equal(String(sawHeaders.host ?? ""), "example.com");
-  assert.equal(String(sawHeaders["x-test"] ?? ""), "ok");
-  assert.ok(String(sawHeaders["x-amz-date"] ?? ""));
-  assert.match(
-    String(sawHeaders.authorization ?? ""),
-    /^AWS4-HMAC-SHA256 Credential=/,
-  );
-});
-
-test("aws-dynamodb: requires region when not provided", async (t) => {
-  const { DynamoDBClient } = await importDist("internal/aws-dynamodb.js");
-
-  const prevEnv = {
-    AWS_REGION: process.env.AWS_REGION,
-    AWS_DEFAULT_REGION: process.env.AWS_DEFAULT_REGION,
-  };
-  t.after(() => {
-    process.env.AWS_REGION = prevEnv.AWS_REGION;
-    process.env.AWS_DEFAULT_REGION = prevEnv.AWS_DEFAULT_REGION;
-  });
-
-  process.env.AWS_REGION = "";
-  process.env.AWS_DEFAULT_REGION = "";
-
-  assert.throws(
-    () =>
-      new DynamoDBClient({
-        region: "",
-        credentials: { accessKeyId: "AKIA_TEST", secretAccessKey: "SECRET" },
-      }),
-    /aws region is empty/i,
-  );
 });
 
 test("clock: ManualClock can set and advance", async () => {
@@ -679,41 +651,33 @@ test("websocket management: Fake client records calls and errors", async () => {
   assert.equal(ws.calls[3].op, "get_connection");
 });
 
-test("websocket management: WebSocketManagementClient builds requests and handles non-2xx responses", async (t) => {
+test("websocket management: WebSocketManagementClient delegates to AWS SDK client and wraps errors", async () => {
   const { WebSocketManagementClient } = await importDist("websocket-management.js");
 
-  const prevFetch = globalThis.fetch;
-  const prevEnv = {
-    AWS_REGION: process.env.AWS_REGION,
-    AWS_DEFAULT_REGION: process.env.AWS_DEFAULT_REGION,
-  };
-  t.after(() => {
-    globalThis.fetch = prevFetch;
-    process.env.AWS_REGION = prevEnv.AWS_REGION;
-    process.env.AWS_DEFAULT_REGION = prevEnv.AWS_DEFAULT_REGION;
-  });
-
-  process.env.AWS_REGION = "";
-  process.env.AWS_DEFAULT_REGION = "";
-
   const calls = [];
-  globalThis.fetch = async (url, init) => {
-    calls.push({ url: String(url), init: init ?? {} });
-    if (String(url).includes("@connections/bad")) {
-      return new Response("nope", { status: 500 });
-    }
-    if (String(url).includes("@connections/good") && String(init?.method) === "GET") {
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }
-    return new Response("", { status: 200 });
+  const client = {
+    send: async (command) => {
+      const name = String(command?.constructor?.name ?? "");
+      const input = command?.input ?? {};
+      calls.push({ name, input });
+
+      const id = String(input.ConnectionId ?? "");
+      if (id === "bad") {
+        const err = new Error("nope");
+        err.$metadata = { httpStatusCode: 500 };
+        throw err;
+      }
+
+      if (name === "GetConnectionCommand") {
+        return { $metadata: { httpStatusCode: 200 }, ok: true };
+      }
+      return { $metadata: { httpStatusCode: 200 } };
+    },
   };
 
   const c = new WebSocketManagementClient({
     endpoint: "wss://abc.execute-api.us-west-2.amazonaws.com/dev",
-    credentials: { accessKeyId: "AKIA_TEST", secretAccessKey: "SECRET_TEST" },
+    client,
   });
   assert.equal(c.region, "us-west-2");
   assert.equal(c.endpoint, "https://abc.execute-api.us-west-2.amazonaws.com/dev");
@@ -724,6 +688,53 @@ test("websocket management: WebSocketManagementClient builds requests and handle
 
   await assert.rejects(() => c.postToConnection("bad", new Uint8Array([0])), /post_to_connection failed/);
   assert.ok(calls.length >= 4);
+  assert.ok(calls.some((c) => c.name === "PostToConnectionCommand"));
+  assert.ok(calls.some((c) => c.name === "GetConnectionCommand"));
+  assert.ok(calls.some((c) => c.name === "DeleteConnectionCommand"));
+});
+
+test("websocket management: WebSocketManagementClient validates config and wraps get/delete errors", async (t) => {
+  const { WebSocketManagementClient } = await importDist("websocket-management.js");
+
+  assert.throws(() => new WebSocketManagementClient({ endpoint: "   " }), /endpoint is empty/i);
+
+  const prevAwsRegion = process.env.AWS_REGION;
+  const prevAwsDefaultRegion = process.env.AWS_DEFAULT_REGION;
+  t.after(() => {
+    process.env.AWS_REGION = prevAwsRegion;
+    process.env.AWS_DEFAULT_REGION = prevAwsDefaultRegion;
+  });
+  process.env.AWS_REGION = "";
+  process.env.AWS_DEFAULT_REGION = "";
+
+  assert.throws(
+    () => new WebSocketManagementClient({ endpoint: "https://example.com/dev", region: " " }),
+    /aws region is empty/i,
+  );
+
+  const client = {
+    send: async (command) => {
+      const name = String(command?.constructor?.name ?? "");
+      if (name === "GetConnectionCommand") {
+        throw { message: "gone", $metadata: { httpStatusCode: 410 } };
+      }
+      if (name === "DeleteConnectionCommand") {
+        throw "oops";
+      }
+      return { $metadata: { httpStatusCode: 200 } };
+    },
+  };
+
+  const c = new WebSocketManagementClient({
+    endpoint: "ws://abc.execute-api.us-east-1.amazonaws.com/dev",
+    credentials: { accessKeyId: "a", secretAccessKey: "b" },
+    client,
+  });
+  assert.equal(c.region, "us-east-1");
+  assert.equal(c.endpoint, "http://abc.execute-api.us-east-1.amazonaws.com/dev");
+
+  await assert.rejects(() => c.getConnection("c1"), /get_connection failed.*410.*gone/i);
+  await assert.rejects(() => c.deleteConnection("c1"), /delete_connection failed.*oops/i);
 });
 
 test("testkit: step functions task token helpers handle variants", async () => {
@@ -1176,9 +1187,9 @@ test("limited: metadata trimming, sliding currentCount, and failOpen behavior", 
   const { DynamoRateLimiter, FixedWindowStrategy, SlidingWindowStrategy } = await importDist("index.js");
 
   const clock = { now: () => new Date("2026-01-01T00:01:30.000Z") };
-  const dynamo = new FakeDynamoDB();
+  const theorydb = new FakeTheorydb();
   const limiter = new DynamoRateLimiter({
-    dynamo,
+    theorydb,
     clock,
     config: { failOpen: false },
     strategy: new FixedWindowStrategy(60_000, 2),
@@ -1191,10 +1202,10 @@ test("limited: metadata trimming, sliding currentCount, and failOpen behavior", 
     metadata: { "": "ignored", " ip ": "127.0.0.1" },
   });
 
-  const created = [...dynamo.items.values()][0];
-  assert.ok(created?.Metadata?.M);
-  assert.ok(!("" in created.Metadata.M));
-  assert.ok("ip" in created.Metadata.M);
+  const created = [...theorydb.items.values()][0];
+  assert.ok(created?.Metadata);
+  assert.ok(!("" in created.Metadata));
+  assert.ok("ip" in created.Metadata);
 
   const sliding = new SlidingWindowStrategy(120_000, 5, 60_000);
   const now = clock.now();
@@ -1205,11 +1216,11 @@ test("limited: metadata trimming, sliding currentCount, and failOpen behavior", 
     const count = idx + 1;
     expected += count;
     const pk = `i1#${Math.floor(w.start.valueOf() / 1000)}`;
-    dynamo.items.set(`${pk}||${sk}`, { PK: { S: pk }, SK: { S: sk }, Count: { N: String(count) } });
+    theorydb.items.set(`${pk}||${sk}`, { PK: pk, SK: sk, Count: count });
   });
 
   const slidingLimiter = new DynamoRateLimiter({
-    dynamo,
+    theorydb,
     clock,
     config: { failOpen: false },
     strategy: sliding,
@@ -1218,14 +1229,18 @@ test("limited: metadata trimming, sliding currentCount, and failOpen behavior", 
   assert.equal(decision.allowed, true);
   assert.equal(decision.currentCount, expected);
 
-  class FailingDynamoDB {
-    async updateItem() {
+  class FailingTheorydb {
+    register() {
+      return this;
+    }
+
+    updateBuilder() {
       throw new Error("boom");
     }
   }
 
   const failOpenLimiter = new DynamoRateLimiter({
-    dynamo: new FailingDynamoDB(),
+    theorydb: new FailingTheorydb(),
     clock,
     config: { failOpen: true },
     strategy: new FixedWindowStrategy(60_000, 2),
@@ -1234,7 +1249,7 @@ test("limited: metadata trimming, sliding currentCount, and failOpen behavior", 
   assert.equal(ok.allowed, true);
 
   const failClosedLimiter = new DynamoRateLimiter({
-    dynamo: new FailingDynamoDB(),
+    theorydb: new FailingTheorydb(),
     clock,
     config: { failOpen: false },
     strategy: new FixedWindowStrategy(60_000, 2),
