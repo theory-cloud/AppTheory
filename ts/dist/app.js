@@ -64,6 +64,10 @@ export class App {
         this._router.add(method, pattern, handler, options);
         return this;
     }
+    handleStrict(method, pattern, handler, options = {}) {
+        this._router.addStrict(method, pattern, handler, options);
+        return this;
+    }
     get(pattern, handler) {
         return this.handle("GET", pattern, handler);
     }

@@ -4,7 +4,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
-from apptheory.app import Context, Handler, Middleware
+from apptheory.app import Context, Middleware, NextHandler
 from apptheory.errors import AppError
 
 
@@ -19,7 +19,7 @@ class TimeoutConfig:
 def timeout_middleware(config: TimeoutConfig) -> Middleware:
     cfg = _normalize_timeout_config(config)
 
-    def mw(ctx: Context, next_handler: Handler) -> Any:
+    def mw(ctx: Context, next_handler: NextHandler) -> Any:
         timeout_ms = _timeout_for_context(ctx, cfg)
         if timeout_ms <= 0:
             return next_handler(ctx)

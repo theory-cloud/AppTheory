@@ -9,8 +9,7 @@ document focuses on the gaps that remain after the “runtime core parity” wor
 
 ## Decisions (frozen)
 
-- **TypeScript uses real AWS SDK dependencies** for AWS clients and credential/provider behavior (match Go `aws-sdk-go-v2`
-  and Python `boto3` grade behavior).
+- **TypeScript avoids runtime AWS SDK dependencies**; AWS calls use SigV4-signed `fetch` for deterministic portability.
 - **Parity means identical behavior with idiomatic naming per language.**
   - Names/modules can differ where it improves idiomatic DX.
   - Capabilities and externally observable behavior must match and be fixture-backed.
@@ -39,7 +38,7 @@ These are the specific “highest rung” capabilities we are aligning to:
   - environment-variable table-name compatibility (`APPTHEORY_EVENTBUS_TABLE_NAME` + migration-friendly fallbacks)
   - portable metrics hook behavior (names/tags, enable/disable)
 
-2) **`pkg/limited` (Go) → TS/Py parity**
+2) **`pkg/limited` (Go) → TS/Py parity** (core limiter ✅; middleware parity ⬜)
 - DynamoDB-backed rate limiter with the same core semantics/config:
   - fixed-window, sliding-window, and multi-window strategies
   - atomic check-and-increment behavior where supported

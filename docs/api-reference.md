@@ -42,3 +42,68 @@ AppTheory includes adapters/helpers for:
 
 See language-specific docs for the full list and examples.
 
+## Universal Lambda entrypoint (`HandleLambda` / `handleLambda` / `handle_lambda`)
+
+Problem: you want one Lambda handler that can accept many AWS triggers.
+
+Solution: delegate to the runtime’s “untyped event” router.
+
+✅ CORRECT (Go):
+```go
+func handler(ctx context.Context, event json.RawMessage) (any, error) {
+    return app.HandleLambda(ctx, event)
+}
+```
+
+✅ CORRECT (TypeScript):
+```ts
+export const handler = async (event: unknown, ctx: unknown) =>
+  app.handleLambda(event, ctx);
+```
+
+✅ CORRECT (Python):
+```py
+def handler(event, ctx):
+    return app.handle_lambda(event, ctx)
+```
+
+### Event shape → entrypoint mapping (high-level)
+
+| Event shape | Detection heuristic | Entry point called |
+| --- | --- | --- |
+| SQS | `Records[0].eventSource == "aws:sqs"` | `ServeSQS` / `serveSQSEvent` / `serve_sqs` |
+| DynamoDB Streams | `Records[0].eventSource == "aws:dynamodb"` | `ServeDynamoDBStream` / `serveDynamoDBStream` / `serve_dynamodb_stream` |
+| Kinesis | `Records[0].eventSource == "aws:kinesis"` | `ServeKinesis` / `serveKinesisEvent` / `serve_kinesis` |
+| SNS | `Records[0].Sns` (or `EventSource == "aws:sns"` in Python) | `ServeSNS` / `serveSNSEvent` / `serve_sns` |
+| EventBridge | `detail-type` or `detailType` | `ServeEventBridge` / `serveEventBridge` / `serve_eventbridge` |
+| WebSocket (APIGW v2) | `requestContext.connectionId` | `ServeWebSocket` / `serveWebSocket` / `serve_websocket` |
+| API Gateway v2 (HTTP API) | `requestContext.http` + `routeKey` | `ServeAPIGatewayV2` / `serveAPIGatewayV2` / `serve_apigw_v2` |
+| Lambda Function URL | `requestContext.http` + no `routeKey` | `ServeLambdaFunctionURL` / `serveLambdaFunctionURL` / `serve_lambda_function_url` |
+| ALB Target Group | `requestContext.elb.targetGroupArn` | `ServeALB` / `serveALB` / `serve_alb` |
+| API Gateway v1 (REST proxy) | `httpMethod` | `ServeAPIGatewayProxy` / `serveAPIGatewayProxy` / `serve_apigw_proxy` |
+
+Notes:
+- The dispatcher is intentionally strict: unknown shapes raise/throw.
+- Exact field casing varies by AWS integration; use the deterministic event builders in the `testkit`.
+
+## Strict route registration (`HandleStrict` / `handleStrict` / `handle_strict`)
+
+Invalid route patterns are fail-closed across runtimes. By default, registration is **silently ignored** to preserve
+backwards compatibility.
+
+✅ CORRECT: use the strict variant in tests/CI when you want fast feedback.
+
+Examples:
+- Go: `app.GetStrict("/users/{id}", h)` or `app.HandleStrict("GET", "/users/{id}", h)`
+- TypeScript: `app.handleStrict("GET", "/users/{id}", h)` (throws on invalid patterns)
+- Python: `app.handle_strict("GET", "/users/{id}", h)` (raises `ValueError`)
+
+## Rate limiting (`limited`)
+
+AppTheory includes a DynamoDB-backed rate limiter with portable semantics:
+- Go: `pkg/limited` (+ optional `runtime.RateLimitMiddleware`)
+- TypeScript: exported from `@theory-cloud/apptheory` as `limited/*`
+- Python: available as `apptheory.limited`
+
+Use it when you need **cross-instance** rate limiting (DynamoDB is the coordination layer). The portable response
+contract uses `app.rate_limited` with deterministic `Retry-After` when known.

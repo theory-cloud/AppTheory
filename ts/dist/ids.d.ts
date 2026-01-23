@@ -1,6 +1,7 @@
 export interface IdGenerator {
     newId(): string;
 }
+export type IDGenerator = IdGenerator;
 export declare class RandomIdGenerator implements IdGenerator {
     newId(): string;
 }

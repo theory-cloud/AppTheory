@@ -895,6 +895,8 @@ type IDGenerator interface {
 	NewID() string
 }
 
+type IdGenerator = IDGenerator
+
 type KinesisHandler func(*EventContext, events.KinesisEventRecord) error
 
 type Limits struct {
@@ -938,6 +940,8 @@ type PolicyDecision struct {
 type PolicyHook func(*Context) (*PolicyDecision, error)
 
 type RandomIDGenerator struct{}
+
+type RandomIdGenerator = RandomIDGenerator
 
 type RateLimitConfig struct {
 	Limiter limited.RateLimiter
@@ -1116,15 +1120,21 @@ func WithWebSocketSupport() Option
 
 func (*App) Delete(string, Handler, ...RouteOption) *App
 
+func (*App) DeleteStrict(string, Handler, ...RouteOption) (*App, error)
+
 func (*App) DynamoDB(string, DynamoDBStreamHandler) *App
 
 func (*App) EventBridge(EventBridgeSelector, EventBridgeHandler) *App
 
 func (*App) Get(string, Handler, ...RouteOption) *App
 
+func (*App) GetStrict(string, Handler, ...RouteOption) (*App, error)
+
 func (*App) Handle(string, string, Handler, ...RouteOption) *App
 
 func (*App) HandleLambda(context.Context, json.RawMessage) (any, error)
+
+func (*App) HandleStrict(string, string, Handler, ...RouteOption) (*App, error)
 
 func (*App) IsLambda() bool
 
@@ -1132,11 +1142,19 @@ func (*App) Kinesis(string, KinesisHandler) *App
 
 func (*App) Options(string, Handler, ...RouteOption) *App
 
+func (*App) OptionsStrict(string, Handler, ...RouteOption) (*App, error)
+
 func (*App) Patch(string, Handler, ...RouteOption) *App
+
+func (*App) PatchStrict(string, Handler, ...RouteOption) (*App, error)
 
 func (*App) Post(string, Handler, ...RouteOption) *App
 
+func (*App) PostStrict(string, Handler, ...RouteOption) (*App, error)
+
 func (*App) Put(string, Handler, ...RouteOption) *App
+
+func (*App) PutStrict(string, Handler, ...RouteOption) (*App, error)
 
 func (*App) SNS(string, SNSHandler) *App
 

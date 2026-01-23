@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import unittest
@@ -35,6 +36,35 @@ def _ok(_ctx) -> Response:
 
 
 class TestApp(unittest.TestCase):
+    def test_async_http_and_event_handlers_are_supported(self) -> None:
+        app = create_app(tier="p0")
+
+        async def ok_async(_ctx) -> Response:
+            await asyncio.sleep(0)
+            return Response(status=200, headers={}, cookies=[], body=b"ok", is_base64=False)
+
+        app.get("/", ok_async)
+        resp = app.serve(Request(method="GET", path="/", body=""))
+        self.assertEqual(resp.status, 200)
+
+        calls: list[str] = []
+
+        async def sqs_handler(_ctx, rec: dict) -> None:
+            await asyncio.sleep(0)
+            calls.append(str(rec.get("messageId") or ""))
+
+        app.sqs("q", sqs_handler)
+        out = app.handle_lambda(
+            {
+                "Records": [
+                    {"eventSource": "aws:sqs", "eventSourceARN": "arn:aws:sqs:us-east-1:0:q", "messageId": "m1"},
+                    {"eventSource": "aws:sqs", "messageId": "m2"},
+                ]
+            }
+        )
+        self.assertEqual(out, {"batchItemFailures": []})
+        self.assertEqual(calls, ["m1", "m2"])
+
     def test_tier_p0_routing_method_not_allowed_and_errors(self) -> None:
         app: App = create_app(tier="p0")
         app.get("/", _ok)
@@ -58,6 +88,11 @@ class TestApp(unittest.TestCase):
         app.get("/conflict", conflict)
         resp = app.serve(Request(method="GET", path="/conflict", body=""))
         self.assertEqual(resp.status, 409)
+
+    def test_handle_strict_rejects_invalid_patterns(self) -> None:
+        app: App = create_app(tier="p0")
+        with self.assertRaises(ValueError):
+            app.handle_strict("GET", "/{proxy+}/x", _ok)
 
     def test_tier_p2_preflight_policy_auth_and_limits(self) -> None:
         cors = CORSConfig(allowed_origins=["*"], allow_credentials=True, allow_headers=["X-One", " X-Two ", ""])

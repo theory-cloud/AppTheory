@@ -1,12 +1,15 @@
 import { normalizeMethod, normalizePath, splitPath } from "./http.js";
 export class Router {
     _routes = [];
-    add(method, pattern, handler, options = {}) {
+    addStrict(method, pattern, handler, options = {}) {
+        if (handler === null || handler === undefined) {
+            throw new Error("apptheory: route handler is nil");
+        }
         const normalizedMethod = normalizeMethod(method);
         const normalizedPattern = normalizePath(pattern);
         const parsed = parseRouteSegments(splitPath(normalizedPattern));
         if (!parsed.ok) {
-            return;
+            throw new Error(`apptheory: invalid route pattern: ${JSON.stringify(String(pattern))}: ${parsed.error}`);
         }
         const normalizedPatternValue = parsed.canonicalSegments.length > 0
             ? `/${parsed.canonicalSegments.join("/")}`
@@ -22,6 +25,14 @@ export class Router {
             hasProxy: parsed.hasProxy,
             order: this._routes.length,
         });
+    }
+    add(method, pattern, handler, options = {}) {
+        try {
+            this.addStrict(method, pattern, handler, options);
+        }
+        catch {
+            return;
+        }
     }
     match(method, path) {
         const normalizedMethod = normalizeMethod(method);
@@ -52,7 +63,7 @@ function parseRouteSegments(rawSegments) {
     for (let i = 0; i < rawSegments.length; i += 1) {
         let raw = String(rawSegments[i] ?? "").trim();
         if (!raw)
-            return { ok: false };
+            return { ok: false, error: "empty segment" };
         if (raw.startsWith(":") && raw.length > 1) {
             raw = `{${raw.slice(1)}}`;
         }
@@ -61,16 +72,16 @@ function parseRouteSegments(rawSegments) {
             if (inner.endsWith("+")) {
                 const name = inner.slice(0, -1).trim();
                 if (!name)
-                    return { ok: false };
+                    return { ok: false, error: "proxy name is empty" };
                 if (i !== rawSegments.length - 1)
-                    return { ok: false };
+                    return { ok: false, error: "proxy segment must be last" };
                 segments.push({ kind: "proxy", value: name });
                 canonicalSegments.push(`{${name}+}`);
                 hasProxy = true;
                 continue;
             }
             if (!inner)
-                return { ok: false };
+                return { ok: false, error: "param name is empty" };
             segments.push({ kind: "param", value: inner });
             canonicalSegments.push(`{${inner}}`);
             paramCount += 1;
