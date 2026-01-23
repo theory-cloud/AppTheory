@@ -258,7 +258,7 @@ class AppTheoryEnhancedSecurity extends constructs_1.Construct {
 }
 exports.AppTheoryEnhancedSecurity = AppTheoryEnhancedSecurity;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryEnhancedSecurity[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryEnhancedSecurity", version: "0.2.0-rc.3" };
+AppTheoryEnhancedSecurity[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryEnhancedSecurity", version: "0.2.0-rc.4" };
 function portForRule(port, protocol) {
     switch (protocol) {
         case ec2.Protocol.TCP:
