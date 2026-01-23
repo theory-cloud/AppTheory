@@ -88,6 +88,28 @@ func init() {
 		reflect.TypeOf((*AppTheoryDynamoDBStreamMappingProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryDynamoTable",
+		reflect.TypeOf((*AppTheoryDynamoTable)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "table", GoGetter: "Table"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryDynamoTable{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryDynamoTableGsiProps",
+		reflect.TypeOf((*AppTheoryDynamoTableGsiProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryDynamoTableProps",
+		reflect.TypeOf((*AppTheoryDynamoTableProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryEnhancedSecurity",
 		reflect.TypeOf((*AppTheoryEnhancedSecurity)(nil)).Elem(),
 		[]_jsii_.Member{
@@ -302,6 +324,30 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheorySecurityRule",
 		reflect.TypeOf((*AppTheorySecurityRule)(nil)).Elem(),
 	)
+	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheorySsrSite",
+		reflect.TypeOf((*AppTheorySsrSite)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "assetsBucket", GoGetter: "AssetsBucket"},
+			_jsii_.MemberProperty{JsiiProperty: "assetsKeyPrefix", GoGetter: "AssetsKeyPrefix"},
+			_jsii_.MemberProperty{JsiiProperty: "assetsManifestKey", GoGetter: "AssetsManifestKey"},
+			_jsii_.MemberProperty{JsiiProperty: "certificate", GoGetter: "Certificate"},
+			_jsii_.MemberProperty{JsiiProperty: "distribution", GoGetter: "Distribution"},
+			_jsii_.MemberProperty{JsiiProperty: "logsBucket", GoGetter: "LogsBucket"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "ssrUrl", GoGetter: "SsrUrl"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheorySsrSite{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheorySsrSiteProps",
+		reflect.TypeOf((*AppTheorySsrSiteProps)(nil)).Elem(),
+	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryVpcEndpointConfig",
 		reflect.TypeOf((*AppTheoryVpcEndpointConfig)(nil)).Elem(),
@@ -314,7 +360,9 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryWebSocketApi",
 		reflect.TypeOf((*AppTheoryWebSocketApi)(nil)).Elem(),
 		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "accessLogGroup", GoGetter: "AccessLogGroup"},
 			_jsii_.MemberProperty{JsiiProperty: "api", GoGetter: "Api"},
+			_jsii_.MemberProperty{JsiiProperty: "connectionTable", GoGetter: "ConnectionTable"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
 			_jsii_.MemberProperty{JsiiProperty: "stage", GoGetter: "Stage"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
