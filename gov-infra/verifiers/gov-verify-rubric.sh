@@ -245,6 +245,36 @@ ensure_pip_audit_pinned() {
   return 0
 }
 
+ensure_cdk_dist_go_bindings_generated() {
+  # Ensures the jsii-generated Go module exists under:
+  #   cdk/dist/go/apptheorycdk
+  #
+  # Note: `cdk/dist/**` is ignored by git and should be generated deterministically
+  # for checks that scan/compile it (COM-1, SEC-2, SEC-3).
+  require_cmd_or_blocked go || return $?
+  require_cmd_or_blocked node || return $?
+  require_cmd_or_blocked npm || return $?
+
+  if [[ ! -d "cdk" ]] || [[ ! -f "cdk/package-lock.json" ]]; then
+    echo "FAIL: expected CDK project missing for Go binding generation" >&2
+    return 1
+  fi
+
+  (cd cdk && npm ci >/dev/null)
+  (cd cdk && npm run build >/dev/null)
+  (cd cdk && npx jsii-pacmak -t go --code-only -o dist/go --force-subdirectory false --force >/dev/null)
+
+  if [[ ! -f "cdk/dist/go/apptheorycdk/go.mod" ]]; then
+    echo "FAIL: expected generated go.mod missing: cdk/dist/go/apptheorycdk/go.mod" >&2
+    return 1
+  fi
+
+  # Pacmak output can require a tidy pass to ensure the module graph is complete.
+  (cd cdk/dist/go/apptheorycdk && go mod tidy >/dev/null)
+
+  return 0
+}
+
 read_py_runtime_deps() {
   # Reads Python runtime dependencies from py/pyproject.toml (one requirement per line).
   if [[ ! -f "${REPO_ROOT}/py/pyproject.toml" ]]; then
@@ -406,9 +436,10 @@ gov_cmd_vuln() {
   ensure_osv_scanner_pinned || return $?
   ensure_pip_audit_pinned || return $?
 
+  ensure_cdk_dist_go_bindings_generated || return $?
+
   local -a go_mod_dirs=(
     "."
-    "cdk-go/apptheorycdk"
     "cdk/dist/go/apptheorycdk"
   )
 
@@ -477,12 +508,15 @@ gov_cmd_p0() {
 
 check_multi_module_health() {
   require_cmd_or_blocked go || return $?
+  require_cmd_or_blocked node || return $?
+  require_cmd_or_blocked npm || return $?
 
   echo "Multi-module health: root module (go test ./...)"
   go test -buildvcs=false ./...
 
+  ensure_cdk_dist_go_bindings_generated || return $?
+
   local -a mods=(
-    "cdk-go/apptheorycdk"
     "cdk/dist/go/apptheorycdk"
   )
 
@@ -614,8 +648,14 @@ check_go_coverage() {
   rm -f "${cover_out}" "${summary}"
 
   echo "Generating Go coverage profile..."
-  # ./... includes all packages in the root module.
-  if ! go test -buildvcs=false ./... -coverprofile="${cover_out}"; then
+  # We exclude generated CDK Go bindings from coverage math to avoid diluting runtime coverage.
+  # These bindings are compile-checked elsewhere (COM-1) but are not meaningful to unit test.
+  mapfile -t pkgs < <(go list ./... | grep -v '/cdk-go/')
+  if [[ "${#pkgs[@]}" -eq 0 ]]; then
+    echo "FAIL: no Go packages selected for coverage run" >&2
+    return 1
+  fi
+  if ! go test -buildvcs=false "${pkgs[@]}" -coverprofile="${cover_out}"; then
     echo "FAIL: go tests failed during coverage run" >&2
     return 1
   fi
@@ -1778,10 +1818,19 @@ check_supply_chain_apptheory() {
     cleanup_proj
   done
 
+  set +e
+  ensure_cdk_dist_go_bindings_generated
+  local ec_cdk_go=$?
+  set -e
+  if [[ $ec_cdk_go -eq 2 ]]; then
+    blocked=1
+  elif [[ $ec_cdk_go -ne 0 ]]; then
+    fail=1
+  fi
+
   # Go supply-chain scanning across in-scope go.mod files.
   local -a go_mods=(
     "${REPO_ROOT}/go.mod"
-    "${REPO_ROOT}/cdk-go/apptheorycdk/go.mod"
     "${REPO_ROOT}/cdk/dist/go/apptheorycdk/go.mod"
   )
 
