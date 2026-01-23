@@ -13,8 +13,14 @@ type IDGenerator interface {
 	NewID() string
 }
 
+// IdGenerator is an alias for IDGenerator (cross-language naming parity).
+type IdGenerator = IDGenerator
+
 // RandomIDGenerator generates IDs using cryptographic randomness.
 type RandomIDGenerator struct{}
+
+// RandomIdGenerator is an alias for RandomIDGenerator (cross-language naming parity).
+type RandomIdGenerator = RandomIDGenerator
 
 var fallbackIDCounter uint64
 

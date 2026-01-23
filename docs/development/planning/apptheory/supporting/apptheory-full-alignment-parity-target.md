@@ -9,7 +9,7 @@ testkits, ports) are implementable without “lowest rung” compromises.
 
 Decisions (frozen):
 
-- TypeScript uses **real AWS SDK dependencies** (v3) for AWS clients + credential/provider behavior.
+- TypeScript avoids runtime AWS SDK dependencies; AWS calls use SigV4-signed `fetch` for deterministic portability.
 - Parity means **identical behavior** with **idiomatic naming** per language.
 
 ## Public surface inventory (today)
@@ -35,7 +35,7 @@ Portable runtime (contract-backed):
 Go application packages (not part of the runtime contract; parity targets under full alignment):
 
 - `pkg/services` (`github.com/theory-cloud/apptheory/pkg/services`) — EventBus (memory + DynamoDB, currently Go-only)
-- `pkg/limited` (`github.com/theory-cloud/apptheory/pkg/limited`) — DynamoDB-backed rate limiter (currently Go-only)
+- `pkg/limited` (`github.com/theory-cloud/apptheory/pkg/limited`) — DynamoDB-backed rate limiter (portable; Go/TS/Py)
 - `pkg/limited/middleware` — net/http middleware adapter (migration-only; not portable)
 - `pkg/streamer` (`github.com/theory-cloud/apptheory/pkg/streamer`) — API Gateway WebSocket Management API client
 - `pkg/observability`, `pkg/observability/zap` — Go-only logger implementations layered on portable hooks
@@ -60,7 +60,6 @@ Core runtime and testkit (contract-backed) exports include:
 Known gaps (not exported today; parity targets under full alignment):
 
 - EventBus (memory + DynamoDB)
-- DynamoDB-backed rate limiter (`limited`)
 
 ### Python (`py/`)
 
@@ -80,7 +79,6 @@ Core runtime and testkit (contract-backed) exports include:
 Known gaps (not exported today; parity targets under full alignment):
 
 - EventBus (memory + DynamoDB)
-- DynamoDB-backed rate limiter (`limited`)
 - Lambda Function URL **response streaming entrypoint** (true streaming)
 
 ## Canonical superset (the parity target)
@@ -182,11 +180,11 @@ Source of truth today: Go implementation in `pkg/limited/`.
 - Go: `pkg/limited` (core), plus net/http adapter in `pkg/limited/middleware`
 - TypeScript: exported from `ts/dist/index.d.ts`
   - `RateLimiter` / `AtomicRateLimiter`, strategies, config, and a DynamoDB-backed implementation
-  - an AppTheory runtime `Middleware` factory for rate limiting (idiomatic TS integration)
-  - uses AWS SDK v3 for DynamoDB
-- Python: exported from `apptheory`
+  - (optional) an AppTheory runtime `middleware` factory for rate limiting (idiomatic TS integration)
+  - uses SigV4 + `fetch` for DynamoDB (no runtime deps)
+- Python: exported from `apptheory.limited` (and optionally re-exported from `apptheory`)
   - `RateLimiter` protocol, strategies, config, DynamoDB-backed implementation
-  - an AppTheory runtime middleware equivalent (idiomatic Py integration)
+  - (optional) an AppTheory runtime middleware equivalent (idiomatic Py integration)
   - uses `boto3` for DynamoDB
 
 ### 3) Lambda Function URL response streaming parity
@@ -237,4 +235,3 @@ Goal: align TS behavior to the same quality bar as Go (`aws-sdk-go-v2`) and Pyth
 - Go: `pkg/streamer.NewClient(...)` (already uses `awsconfig.LoadDefaultConfig`)
 - TypeScript: `WebSocketManagementClient` backed by AWS SDK v3 (replacing env-only + custom SigV4)
 - Python: `apptheory.streamer.Client` (already boto3-backed)
-

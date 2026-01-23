@@ -11,3 +11,4 @@ export * from "./sanitization.js";
 export * from "./app.js";
 export * from "./testkit.js";
 export * from "./websocket-management.js";
+export * from "./limited/index.js";

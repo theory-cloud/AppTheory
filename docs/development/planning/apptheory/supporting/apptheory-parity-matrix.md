@@ -27,7 +27,7 @@ These are the P1/P2 capabilities that MUST remain portable across Go/TypeScript/
 These capabilities are explicitly allowed to be Go-only until they have a cross-language design + fixtures:
 
 - provider-specific observability integrations (exporters, SDK wiring, OpenTelemetry SDK configuration)
-- storage-backed rate limiting backends (DynamoDB/Redis/etc) beyond the portable contract (hook/middleware is portable)
+- additional storage-backed rate limiting backends beyond DynamoDB (`limited`) (Redis/etc) and their provider wiring
 
 ## Tier definitions (portable surface area)
 
@@ -132,7 +132,7 @@ Go/TypeScript/Python. The `FA-M*` fixture markers refer to milestones in
 | Services: EventBus (memory) | FA-M3 | ✅ | ⬜ | ⬜ | Go: `pkg/services`; TS/Py parity required |
 | Services: EventBus (DynamoDB) | FA-M3 | ✅ | ⬜ | ⬜ | TS uses AWS SDK; Py uses boto3; behavior fixture-backed |
 | Services: EventBus metrics hooks | FA-M3 | ✅ | ⬜ | ⬜ | stable metric names/tags/config across languages |
-| Limited: DynamoDB rate limiter | FA-M3 | ✅ | ⬜ | ⬜ | Go: `pkg/limited`; TS/Py parity required |
+| Limited: DynamoDB rate limiter | FA-M3 | ✅ | ✅ | ✅ | Go: `pkg/limited`; TS: SigV4+fetch; Py: boto3 |
 | Limited: middleware integration | FA-M3 | ✅ | ⬜ | ⬜ | idiomatic per language; equivalent decisions/headers |
 | Runtime: Lambda URL response streaming entrypoint | FA-M4 | 🟨 | ✅ | 🟨 | TS has true streaming; Go/Py currently buffered adapter |
 | AWS: WebSocket management credential/provider chain | FA-M4 | ✅ | 🟨 | ✅ | TS currently env-only; align to Go/boto3 behavior |

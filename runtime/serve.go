@@ -25,28 +25,73 @@ func (a *App) Handle(method, pattern string, handler Handler, opts ...RouteOptio
 	return a
 }
 
+func (a *App) HandleStrict(method, pattern string, handler Handler, opts ...RouteOption) (*App, error) {
+	if a == nil {
+		return nil, errors.New("apptheory: app is nil")
+	}
+	if a.router == nil {
+		a.router = newRouter()
+	}
+	routeOpts := routeOptions{}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		opt(&routeOpts)
+	}
+
+	if err := a.router.addStrict(method, pattern, handler, routeOpts); err != nil {
+		return a, err
+	}
+	return a, nil
+}
+
 func (a *App) Get(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("GET", pattern, handler, opts...)
+}
+
+func (a *App) GetStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
+	return a.HandleStrict("GET", pattern, handler, opts...)
 }
 
 func (a *App) Post(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("POST", pattern, handler, opts...)
 }
 
+func (a *App) PostStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
+	return a.HandleStrict("POST", pattern, handler, opts...)
+}
+
 func (a *App) Put(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("PUT", pattern, handler, opts...)
+}
+
+func (a *App) PutStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
+	return a.HandleStrict("PUT", pattern, handler, opts...)
 }
 
 func (a *App) Patch(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("PATCH", pattern, handler, opts...)
 }
 
+func (a *App) PatchStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
+	return a.HandleStrict("PATCH", pattern, handler, opts...)
+}
+
 func (a *App) Options(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("OPTIONS", pattern, handler, opts...)
 }
 
+func (a *App) OptionsStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
+	return a.HandleStrict("OPTIONS", pattern, handler, opts...)
+}
+
 func (a *App) Delete(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("DELETE", pattern, handler, opts...)
+}
+
+func (a *App) DeleteStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
+	return a.HandleStrict("DELETE", pattern, handler, opts...)
 }
 
 func (a *App) Serve(ctx context.Context, req Request) (resp Response) {

@@ -1,6 +1,7 @@
 package apptheory
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -55,12 +56,21 @@ func newRouter() *router {
 }
 
 func (r *router) add(method, pattern string, handler Handler, opts routeOptions) {
+	if err := r.addStrict(method, pattern, handler, opts); err != nil {
+		return
+	}
+}
+
+func (r *router) addStrict(method, pattern string, handler Handler, opts routeOptions) error {
+	if handler == nil {
+		return fmt.Errorf("apptheory: route handler is nil")
+	}
 	method = strings.ToUpper(strings.TrimSpace(method))
 	pattern = normalizePath(pattern)
-	segments, canonicalSegments, ok := parseRouteSegments(splitPath(pattern))
-	if !ok {
+	segments, canonicalSegments, err := parseRouteSegments(splitPath(pattern))
+	if err != nil {
 		// Fail closed for invalid patterns.
-		return
+		return err
 	}
 
 	if len(canonicalSegments) == 0 {
@@ -94,6 +104,8 @@ func (r *router) add(method, pattern string, handler Handler, opts routeOptions)
 		hasProxy:     hasProxy,
 		order:        len(r.routes),
 	})
+
+	return nil
 }
 
 type routeMatch struct {
@@ -139,9 +151,9 @@ func splitPath(path string) []string {
 	return strings.Split(path, "/")
 }
 
-func parseRouteSegments(rawSegments []string) ([]routeSegment, []string, bool) {
+func parseRouteSegments(rawSegments []string) ([]routeSegment, []string, error) {
 	if len(rawSegments) == 0 {
-		return nil, nil, true
+		return nil, nil, nil
 	}
 
 	segments := make([]routeSegment, 0, len(rawSegments))
@@ -150,17 +162,17 @@ func parseRouteSegments(rawSegments []string) ([]routeSegment, []string, bool) {
 	for i, raw := range rawSegments {
 		seg, canon, ok := parseRouteSegment(raw)
 		if !ok {
-			return nil, nil, false
+			return nil, nil, fmt.Errorf("apptheory: invalid route segment: %q", raw)
 		}
 		if seg.Kind == routeSegmentProxy && i != len(rawSegments)-1 {
-			return nil, nil, false
+			return nil, nil, fmt.Errorf("apptheory: invalid route pattern: proxy segment must be last: %q", raw)
 		}
 
 		segments = append(segments, seg)
 		canonical = append(canonical, canon)
 	}
 
-	return segments, canonical, true
+	return segments, canonical, nil
 }
 
 func parseRouteSegment(raw string) (routeSegment, string, bool) {

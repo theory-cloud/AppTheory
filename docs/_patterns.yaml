@@ -38,3 +38,38 @@ patterns:
           - "route mismatch between runtimes"
           - "hard-to-debug production behavior"
 
+  strict_route_registration:
+    name: "Use strict route registration for fast feedback"
+    problem: "Invalid route patterns are fail-closed and may be silently ignored by default for backwards compatibility."
+    solution: "Use the strict variant during tests/CI to fail fast when a route pattern is invalid."
+    correct_example: |
+      // CORRECT (Go): fail fast on invalid patterns
+      if _, err := apptheory.New().HandleStrict(apptheory.GET, "/users/{id}", handleUser); err != nil {
+          panic(err)
+      }
+    anti_patterns:
+      - name: "Assuming all routes register successfully"
+        why: "Silent registration failures can lead to missing routes and unexpected 404s."
+        incorrect_example: |
+          // INCORRECT: this may not register, and you might not notice until runtime
+          app.Get("/{proxy+}/x", handleUser)
+        consequences:
+          - "unexpected 404s"
+          - "slow debugging cycles"
+
+  universal_lambda_dispatch:
+    name: "Delegate to HandleLambda/handleLambda/handle_lambda for mixed triggers"
+    problem: "A Lambda function may be triggered by many AWS event shapes; manual branching is error-prone."
+    solution: "Use the runtime's universal dispatcher so event routing stays contract-defined and tested."
+    correct_example: |
+      // CORRECT (TypeScript): keep the Lambda entrypoint thin
+      export const handler = async (event, ctx) => app.handleLambda(event, ctx)
+    anti_patterns:
+      - name: "Hand-rolling event shape detection"
+        why: "Custom branching quickly drifts from the contract and becomes untestable."
+        incorrect_example: |
+          // INCORRECT: partial detection logic that will drift
+          if (event?.requestContext?.http) return app.serveAPIGatewayV2(event)
+        consequences:
+          - "parity drift across languages"
+          - "missed edge cases (ALB/SNS/WebSockets)"

@@ -9,6 +9,9 @@ class IdGenerator(Protocol):
     def new_id(self) -> str: ...
 
 
+IDGenerator = IdGenerator
+
+
 @dataclass(slots=True)
 class RealIdGenerator:
     def new_id(self) -> str:

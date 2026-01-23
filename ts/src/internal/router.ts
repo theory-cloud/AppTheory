@@ -18,6 +18,11 @@ interface ParsedRoute {
   hasProxy: boolean;
 }
 
+interface ParsedRouteError {
+  ok: false;
+  error: string;
+}
+
 interface Route<THandler> {
   method: string;
   pattern: string;
@@ -39,17 +44,23 @@ export interface Match<THandler> {
 export class Router<THandler> {
   private readonly _routes: Array<Route<THandler>> = [];
 
-  add(
+  addStrict(
     method: string,
     pattern: string,
     handler: THandler,
     options: RouteOptions = {},
   ): void {
+    if (handler === null || handler === undefined) {
+      throw new Error("apptheory: route handler is nil");
+    }
+
     const normalizedMethod = normalizeMethod(method);
     const normalizedPattern = normalizePath(pattern);
     const parsed = parseRouteSegments(splitPath(normalizedPattern));
     if (!parsed.ok) {
-      return;
+      throw new Error(
+        `apptheory: invalid route pattern: ${JSON.stringify(String(pattern))}: ${parsed.error}`,
+      );
     }
 
     const normalizedPatternValue =
@@ -68,6 +79,19 @@ export class Router<THandler> {
       hasProxy: parsed.hasProxy,
       order: this._routes.length,
     });
+  }
+
+  add(
+    method: string,
+    pattern: string,
+    handler: THandler,
+    options: RouteOptions = {},
+  ): void {
+    try {
+      this.addStrict(method, pattern, handler, options);
+    } catch {
+      return;
+    }
   }
 
   match(
@@ -103,7 +127,7 @@ export class Router<THandler> {
 
 function parseRouteSegments(
   rawSegments: string[],
-): ParsedRoute | { ok: false } {
+): ParsedRoute | ParsedRouteError {
   const segments: ParsedRouteSegment[] = [];
   const canonicalSegments: string[] = [];
   let staticCount = 0;
@@ -112,7 +136,7 @@ function parseRouteSegments(
 
   for (let i = 0; i < rawSegments.length; i += 1) {
     let raw = String(rawSegments[i] ?? "").trim();
-    if (!raw) return { ok: false };
+    if (!raw) return { ok: false, error: "empty segment" };
 
     if (raw.startsWith(":") && raw.length > 1) {
       raw = `{${raw.slice(1)}}`;
@@ -122,15 +146,16 @@ function parseRouteSegments(
       const inner = raw.slice(1, -1).trim();
       if (inner.endsWith("+")) {
         const name = inner.slice(0, -1).trim();
-        if (!name) return { ok: false };
-        if (i !== rawSegments.length - 1) return { ok: false };
+        if (!name) return { ok: false, error: "proxy name is empty" };
+        if (i !== rawSegments.length - 1)
+          return { ok: false, error: "proxy segment must be last" };
         segments.push({ kind: "proxy", value: name });
         canonicalSegments.push(`{${name}+}`);
         hasProxy = true;
         continue;
       }
 
-      if (!inner) return { ok: false };
+      if (!inner) return { ok: false, error: "param name is empty" };
       segments.push({ kind: "param", value: inner });
       canonicalSegments.push(`{${inner}}`);
       paramCount += 1;
