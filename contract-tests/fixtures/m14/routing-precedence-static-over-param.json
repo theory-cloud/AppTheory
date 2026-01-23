@@ -1,0 +1,34 @@
+{
+  "id": "m14.routing.precedence.static_over_param",
+  "tier": "m14",
+  "name": "Router: static segments win over {param} (regardless of registration order)",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/foo/{id}", "handler": "echo_path_params" },
+      { "method": "GET", "path": "/foo/bar", "handler": "echo_path_params" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/foo/bar",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": { "params": {} },
+      "is_base64": false
+    }
+  }
+}
+

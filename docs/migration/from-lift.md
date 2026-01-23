@@ -20,6 +20,7 @@ functionality remains available for Go users** (portable subset + documented Go-
    - Apply: `./scripts/migrate-from-lift-go.sh -root path/to/service -apply`
 2. Replace Lift runtime wiring with `apptheory.New()` + route registration.
 3. Configure AWS entrypoint(s):
+   - If you used Lift as a single Lambda router across trigger types, prefer `app.HandleLambda`.
    - API Gateway v2 (HTTP API): `app.ServeAPIGatewayV2`
    - Lambda Function URL: `app.ServeLambdaFunctionURL`
 4. Run your service tests + `make rubric` in AppTheory for contract parity expectations.
@@ -31,7 +32,7 @@ functionality remains available for Go users** (portable subset + documented Go-
 Core import root:
 
 - Lift: `github.com/pay-theory/lift/...`
-- AppTheory: `github.com/theory-cloud/apptheory`
+- AppTheory: `github.com/theory-cloud/apptheory/runtime`
 
 Rate limiting:
 
@@ -84,10 +85,12 @@ Size limits:
 
 - Configure with `apptheory.WithLimits(apptheory.Limits{ MaxRequestBytes: ..., MaxResponseBytes: ... })`
 
-Custom middleware:
+Custom middleware (Lift parity):
 
-- AppTheory does not require a global middleware registration API to preserve ordering; wrap handlers locally when you
-  need additional behavior.
+- Register global middleware with `app.Use(mw)` (applied in registration order: `m1 -> m2 -> handler`).
+- Share request-scoped state across middleware + handlers with `ctx.Set(key, value)` / `ctx.Get(key)`.
+- Contract-defined built-ins still run in their fixed order; user middleware wraps the final handler stage so it doesn’t
+  reorder request-id/auth/CORS invariants.
 
 ### 4) Auth and protected routes
 
@@ -131,6 +134,28 @@ Reference example:
 
 - `examples/migration/rate-limited-http/README.md`
 
+### 6b) EventBus (Lift `pkg/services`) (Autheory)
+
+AppTheory ports the Lift EventBus surface needed by Autheory:
+
+- Lift: `github.com/pay-theory/lift/pkg/services`
+- AppTheory: `github.com/theory-cloud/apptheory/pkg/services`
+
+Key mapping:
+
+- `services.NewEvent(...)` → `services.NewEvent(...)`
+- `services.NewMemoryEventBus()` → `services.NewMemoryEventBus()` (tests/local)
+- `services.NewDynamoDBEventBus(...)` → `services.NewDynamoDBEventBus(...)` (production; TableTheory-backed)
+
+Notes:
+
+- DynamoDB backing uses **TableTheory** (no raw AWS SDK DynamoDB calls).
+- Table name can be set via `EventBusConfig.TableName` or env `APPTHEORY_EVENTBUS_TABLE_NAME` (migration-friendly fallbacks
+  exist for Autheory deployments).
+- Cursor pagination uses `EventQuery.LastEvaluatedKey["cursor"]` and returns `EventQuery.NextKey["cursor"]`.
+- `DynamoDBEventBus.Query(...)` requires `TenantID`; `MemoryEventBus.Query(...)` also supports event-type-only queries
+  (useful for adapter tests).
+
 ### 7) Observability (logs/metrics/traces)
 
 AppTheory’s portable observability surface is hook-based:
@@ -155,6 +180,97 @@ For local tests:
 
 - Go testkit: `apptheory/testkit` (build synthetic events; invoke adapters).
 
+### 9) AWS entrypoints (REST API v1 + SSE)
+
+REST API v1 (Lambda proxy integration) is supported for Lift parity and SSE endpoints.
+
+Go entrypoint:
+
+- `app.ServeAPIGatewayProxy(ctx, events.APIGatewayProxyRequest)`
+
+SSE responses:
+
+- Use `apptheory.SSEResponse(status, ...events)` (or `apptheory.MustSSEResponse`) to build a properly framed SSE response.
+- For API Gateway REST API v1 SSE, enable method-level streaming in infra (see CDK section below).
+
+Event-by-event SSE streaming (no full-body buffering):
+
+- Go: `apptheory.SSEStreamResponse(ctx, status, <-chan apptheory.SSEEvent)`
+- TS: `sseEventStream(AsyncIterable<SSEEvent>)` yields framed chunks
+- Py: `sse_event_stream(Iterable[SSEEvent])` yields framed chunks
+
+### 10) AWS entrypoints (WebSockets)
+
+Register WebSocket route handlers:
+
+- `app.WebSocket("$connect", handler)`
+- `app.WebSocket("$disconnect", handler)`
+- `app.WebSocket("$default", handler)`
+
+In handlers, access the WebSocket context:
+
+- `ws := ctx.AsWebSocket()`
+- `ws.SendMessage(...)` / `ws.SendJSONMessage(...)`
+
+Go entrypoint:
+
+- `app.ServeWebSocket(ctx, events.APIGatewayWebsocketProxyRequest)`
+
+For local tests:
+
+- Go testkit builder: `testkit.WebSocketEvent(...)`
+- Go fake management client: `testkit.NewFakeStreamerClient(endpoint)` + `apptheory.WithWebSocketClientFactory(...)`
+
+### 11) AWS entrypoints (SQS / EventBridge / DynamoDB Streams)
+
+Lift’s “single Lambda router” pattern across non-HTTP triggers maps to explicit registration in AppTheory.
+
+SQS:
+
+- Register: `app.SQS(queueName, handler)`
+- Entrypoint: `app.ServeSQS(ctx, events.SQSEvent)`
+
+EventBridge:
+
+- Register by rule: `app.EventBridge(apptheory.EventBridgeRule(ruleName), handler)`
+- Or by pattern: `app.EventBridge(apptheory.EventBridgePattern(source, detailType), handler)`
+- Entrypoint: `app.ServeEventBridge(ctx, events.EventBridgeEvent)`
+- Event shape: AppTheory accepts both `detail-type` (EventBridge native) and `detailType` (camelCase) for parity.
+
+DynamoDB Streams:
+
+- Register: `app.DynamoDB(tableName, handler)`
+- Entrypoint: `app.ServeDynamoDBStream(ctx, events.DynamoDBEvent)`
+
+For local tests:
+
+- Go testkit builders: `testkit.SQSEvent(...)`, `testkit.EventBridgeEvent(...)`, `testkit.DynamoDBStreamEvent(...)`
+
+### 12) One-entrypoint router (Lift-style)
+
+If your Lift app handled multiple AWS trigger types in a single Lambda, AppTheory provides the same posture via a single
+entrypoint:
+
+- Go: `app.HandleLambda(ctx, json.RawMessage)`
+
+This entrypoint routes:
+
+- Lambda URL, API Gateway v2, API Gateway REST v1
+- WebSockets (APIGW v2 WebSocket API)
+- SQS, EventBridge, DynamoDB Streams
+
+### 13) CDK migration notes (Lift constructs → AppTheory constructs)
+
+AppTheory ships TS-first `jsii` CDK constructs, consumable from Go/TS/Python.
+
+Common Lift construct mappings used by Lesser:
+
+- Lift REST API v1: `LiftRestAPI` → `AppTheoryRestApi` (supports per-method streaming toggles for SSE endpoints)
+- Lift schedules: EventBridge rule + Lambda target → `AppTheoryEventBridgeHandler`
+- Lift stream mappings: DynamoDB stream event source mapping → `AppTheoryDynamoDBStreamMapping`
+- Lift function defaults wrapper: `LiftFunction` → `AppTheoryFunction`
+- Lift EventBus table: `EventBusTable` → `AppTheoryEventBusTable` (DynamoDB schema for `pkg/services` EventBus)
+
 ## Practical Mapping Table (High-Leverage)
 
 This table is a migration-focused subset. For the broader mapping seed, see:
@@ -166,7 +282,17 @@ This table is a migration-focused subset. For the broader mapping seed, see:
 | `app.Get("/path", handler)` | `app.Get("/path", handler)` | handler signature changes to portable `*Context` |
 | Lift handler funcs | `apptheory.Handler` | `func(*apptheory.Context) (*apptheory.Response, error)` |
 | Lift JSON helpers | `ctx.JSONValue()` + `json.Unmarshal` | portable JSON parsing semantics are contract-defined |
+| `lift.SSEResponse` / `lift.SSEEvent` | `apptheory.SSEResponse` / `apptheory.SSEEvent` | REST API v1 + SSE helpers |
+| Lift `app.Use(...)` + `ctx.Set/Get` | `app.Use(...)` + `ctx.Set/Get` | global middleware pipeline + context value bag |
+| Lift `pkg/naming` | `pkg/naming` | deterministic naming helpers (stage/name builders) |
+| `app.WebSocket("$connect", handler)` | `app.WebSocket("$connect", handler)` | `ctx.AsWebSocket()` returns `*WebSocketContext` |
+| `wsCtx.SendJSONMessage(...)` | `ws.SendJSONMessage(...)` | uses API Gateway Management API via `pkg/streamer` |
+| `app.SQS(queue, handler)` | `app.SQS(queue, handler)` | SQS routing by queue name |
+| `app.EventBridge(...)` | `app.EventBridge(...)` | match by rule name or by source/detail-type |
+| `app.DynamoDB(table, handler)` | `app.DynamoDB(table, handler)` | DynamoDB Streams routing by table name |
 | `github.com/pay-theory/limited` | `apptheory/pkg/limited` | replicated feature set; TableTheory-backed |
+| Lift `pkg/services` (EventBus) | `apptheory/pkg/services` (EventBus) | Lift-compatible API; DynamoDB implementation uses TableTheory |
+| Lift `EventBusTable` (CDK) | `AppTheoryEventBusTable` (CDK) | provisions EventBus DynamoDB table schema + GSIs |
 | DynamORM usage | TableTheory | companion data framework for AppTheory |
 
 ## Known Differences (Intentional)

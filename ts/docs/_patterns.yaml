@@ -1,0 +1,59 @@
+# _patterns.yaml - Machine-readable patterns for AppTheory TypeScript
+
+patterns:
+  middleware_wraps_next:
+    name: "Middleware wraps next(ctx) and returns a Response"
+    problem: "Inconsistent middleware conventions create drift and subtle ordering bugs."
+    solution: "Always `await next(ctx)` and return the response."
+    correct_example: |
+      // CORRECT
+      app.use(async (ctx, next) => {
+        ctx.set("mw", "ok")
+        const resp = await next(ctx)
+        resp.headers["x-middleware"] = ["1"]
+        return resp
+      })
+    anti_patterns:
+      - name: "Forgetting to return the response"
+        why: "The runtime cannot infer a response; behavior becomes undefined."
+        incorrect_example: |
+          // INCORRECT
+          app.use(async (ctx, next) => { await next(ctx) })
+        consequences:
+          - "runtime errors"
+          - "difficult debugging"
+
+  strict_route_registration:
+    name: "Use app.handleStrict in tests/CI"
+    problem: "Invalid route patterns are fail-closed and may be silently ignored by default."
+    solution: "Prefer the strict registration variant during tests to catch mistakes immediately."
+    correct_example: |
+      // CORRECT
+      app.handleStrict("GET", "/users/{id}", async (ctx) => text(200, ctx.params.id))
+    anti_patterns:
+      - name: "Assuming a route registered"
+        why: "Silent failures lead to missing routes and unexpected 404s."
+        incorrect_example: |
+          // INCORRECT: invalid proxy placement may be ignored
+          app.get("/{proxy+}/x", async () => text(200, "ok"))
+        consequences:
+          - "unexpected 404s"
+          - "slow debugging cycles"
+
+  universal_lambda_dispatch:
+    name: "Delegate to app.handleLambda for mixed triggers"
+    problem: "Manually branching on AWS event shapes is brittle and will drift."
+    solution: "Use the universal dispatcher so routing stays contract-defined and tested."
+    correct_example: |
+      // CORRECT
+      export const handler = async (event: unknown, ctx: unknown) =>
+        app.handleLambda(event, ctx)
+    anti_patterns:
+      - name: "Hand-rolling detection logic"
+        why: "Partial detection misses edge cases (ALB/WebSockets) and diverges from other languages."
+        incorrect_example: |
+          // INCORRECT
+          if ((event as any)?.requestContext?.http) return app.serveAPIGatewayV2(event as any)
+        consequences:
+          - "parity drift"
+          - "production-only bugs"

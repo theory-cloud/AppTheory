@@ -1,0 +1,36 @@
+{
+  "id": "m14.html.helper_streaming",
+  "tier": "m14",
+  "name": "HTML helper: htmlStream produces streamed chunks with text/html",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/html-stream", "handler": "html_stream_two_chunks" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/html-stream",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["text/html; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "chunks": [
+        { "encoding": "utf8", "value": "<h1>" },
+        { "encoding": "utf8", "value": "Hello</h1>" }
+      ],
+      "is_base64": false
+    }
+  }
+}
+

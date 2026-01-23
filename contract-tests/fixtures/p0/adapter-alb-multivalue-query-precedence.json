@@ -1,0 +1,58 @@
+{
+  "id": "p0.adapter.alb.multivalue_query_precedence",
+  "tier": "p0",
+  "name": "ALB: multi-value query/headers take precedence over single maps",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/echo", "handler": "echo_request" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/echo",
+      "query": { "a": ["1", "2"], "b": ["x"] },
+      "headers": {
+        "X-Test": ["A", "B"],
+        "Cookie": ["c1=v1; c2=v2"]
+      },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    },
+    "aws_event": {
+      "source": "alb",
+      "event": {
+        "httpMethod": "GET",
+        "path": "/echo",
+        "queryStringParameters": { "a": "SHOULD_BE_IGNORED", "b": "x" },
+        "multiValueQueryStringParameters": { "a": ["1", "2"] },
+        "headers": { "Cookie": "c1=v1; c2=v2" },
+        "multiValueHeaders": { "X-Test": ["A", "B"] },
+        "requestContext": { "elb": { "targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/test/0000000000000000" } },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "method": "GET",
+        "path": "/echo",
+        "query": { "a": ["1", "2"], "b": ["x"] },
+        "headers": {
+          "cookie": ["c1=v1; c2=v2"],
+          "x-test": ["A", "B"]
+        },
+        "cookies": { "c1": "v1", "c2": "v2" },
+        "body_b64": "",
+        "is_base64": false
+      },
+      "is_base64": false
+    }
+  }
+}
+

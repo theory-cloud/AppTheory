@@ -16,9 +16,13 @@ class Match:
 class _Route:
     method: str
     pattern: str
-    segments: list[str]
+    segments: list[tuple[str, str]]
     handler: object
     auth_required: bool
+    static_count: int
+    param_count: int
+    has_proxy: bool
+    order: int
 
 
 class Router:
@@ -26,15 +30,29 @@ class Router:
         self._routes: list[_Route] = []
 
     def add(self, method: str, pattern: str, handler: object, *, auth_required: bool = False) -> None:
+        try:
+            self.add_strict(method, pattern, handler, auth_required=auth_required)
+        except ValueError:
+            return
+
+    def add_strict(self, method: str, pattern: str, handler: object, *, auth_required: bool = False) -> None:
+        if handler is None:
+            raise ValueError("apptheory: route handler is nil")
+
         method_value = str(method or "").strip().upper()
-        pattern_value = normalize_path(pattern)
+        segments, canonical_segments, static_count, param_count, has_proxy = _parse_route_segments(_split_path(pattern))
+        pattern_value = "/" + "/".join(canonical_segments) if canonical_segments else "/"
         self._routes.append(
             _Route(
                 method=method_value,
                 pattern=pattern_value,
-                segments=_split_path(pattern_value),
+                segments=segments,
                 handler=handler,
                 auth_required=bool(auth_required),
+                static_count=static_count,
+                param_count=param_count,
+                has_proxy=has_proxy,
+                order=len(self._routes),
             )
         )
 
@@ -43,15 +61,20 @@ class Router:
         path_segments = _split_path(normalize_path(path))
 
         allowed: list[str] = []
+        best: _Route | None = None
+        best_params: dict[str, str] | None = None
         for route in self._routes:
-            params = _match_path(route.segments, path_segments)
+            params = _match_route(route.segments, path_segments)
             if params is None:
                 continue
             allowed.append(route.method)
-            if route.method == method_value:
-                return Match(handler=route.handler, params=params, auth_required=route.auth_required), allowed
+            if route.method == method_value and (best is None or _route_more_specific(route, best)):
+                best = route
+                best_params = params
 
-        return None, allowed
+        if best is None or best_params is None:
+            return None, allowed
+        return Match(handler=best.handler, params=best_params, auth_required=best.auth_required), allowed
 
     @staticmethod
     def format_allow_header(methods: list[str]) -> str:
@@ -66,18 +89,100 @@ def _split_path(path: str) -> list[str]:
     return value.split("/")
 
 
-def _match_path(pattern_segments: list[str], path_segments: list[str]) -> dict[str, str] | None:
+def _parse_route_segments(
+    raw_segments: list[str],
+) -> tuple[list[tuple[str, str]], list[str], int, int, bool]:
+    segments: list[tuple[str, str]] = []
+    canonical: list[str] = []
+    static_count = 0
+    param_count = 0
+    has_proxy = False
+
+    for idx, raw in enumerate(raw_segments):
+        value = str(raw or "").strip()
+        if not value:
+            raise ValueError("apptheory: invalid route segment: empty")
+
+        if value.startswith(":") and len(value) > 1:
+            value = "{" + value[1:] + "}"
+
+        if value.startswith("{") and value.endswith("}") and len(value) > 2:
+            inner = value[1:-1].strip()
+            if inner.endswith("+"):
+                name = inner[:-1].strip()
+                if not name:
+                    raise ValueError("apptheory: invalid route segment: proxy name is empty")
+                if idx != len(raw_segments) - 1:
+                    raise ValueError("apptheory: invalid route pattern: proxy segment must be last")
+                segments.append(("proxy", name))
+                canonical.append("{" + name + "+}")
+                has_proxy = True
+                continue
+
+            if not inner:
+                raise ValueError("apptheory: invalid route segment: param name is empty")
+            segments.append(("param", inner))
+            canonical.append("{" + inner + "}")
+            param_count += 1
+            continue
+
+        segments.append(("static", value))
+        canonical.append(value)
+        static_count += 1
+
+    return segments, canonical, static_count, param_count, has_proxy
+
+
+def _match_route(pattern_segments: list[tuple[str, str]], path_segments: list[str]) -> dict[str, str] | None:
+    if not pattern_segments:
+        return {} if not path_segments else None
+
+    kind, name = pattern_segments[-1]
+    if kind == "proxy":
+        prefix_len = len(pattern_segments) - 1
+        if len(path_segments) <= prefix_len:
+            return None
+
+        params: dict[str, str] = {}
+        for (p_kind, p_value), seg in zip(pattern_segments[:prefix_len], path_segments[:prefix_len], strict=False):
+            if not seg:
+                return None
+            if p_kind == "static":
+                if p_value != seg:
+                    return None
+            elif p_kind == "param":
+                params[p_value] = seg
+            else:
+                return None
+
+        params[name] = "/".join(path_segments[prefix_len:])
+        return params
+
     if len(pattern_segments) != len(path_segments):
         return None
 
     params: dict[str, str] = {}
-    for pattern, segment in zip(pattern_segments, path_segments, strict=False):
-        if not segment:
+    for (p_kind, p_value), seg in zip(pattern_segments, path_segments, strict=False):
+        if not seg:
             return None
-        if pattern.startswith("{") and pattern.endswith("}") and len(pattern) > 2:
-            params[pattern[1:-1]] = segment
-            continue
-        if pattern != segment:
+        if p_kind == "static":
+            if p_value != seg:
+                return None
+        elif p_kind == "param":
+            params[p_value] = seg
+        else:
             return None
 
     return params
+
+
+def _route_more_specific(a: _Route, b: _Route) -> bool:
+    if a.static_count != b.static_count:
+        return a.static_count > b.static_count
+    if a.param_count != b.param_count:
+        return a.param_count > b.param_count
+    if a.has_proxy != b.has_proxy:
+        return (not a.has_proxy) and b.has_proxy
+    if len(a.segments) != len(b.segments):
+        return len(a.segments) > len(b.segments)
+    return a.order < b.order

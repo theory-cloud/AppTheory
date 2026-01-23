@@ -14,7 +14,7 @@ if [[ ! -f "VERSION" ]]; then
   exit 1
 fi
 
-expected_version="$(tr -d ' \t\r\n' < VERSION)"
+expected_version="$(./scripts/read-version.sh)"
 expected_tag="v${expected_version}"
 
 if [[ "${tag}" != "${expected_tag}" ]]; then

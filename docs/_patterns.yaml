@@ -1,0 +1,75 @@
+# _patterns.yaml - Machine-readable patterns for AppTheory
+
+patterns:
+  headers_canonicalization:
+    name: "Treat headers case-insensitively; expect lowercase keys"
+    problem: "Header names are case-insensitive, but map keys are not. Drift can break tests and middleware."
+    solution: "Normalize inputs and write output header keys in lowercase for parity."
+    correct_example: |
+      // CORRECT (Go): read case-insensitively, set lowercase output keys
+      reqID := ctx.Header("X-Request-Id")
+      resp.Headers["x-request-id"] = []string{reqID}
+    anti_patterns:
+      - name: "Assuming mixed-case header keys are preserved"
+        why: "Map keys may be canonicalized; tests and cross-language parity will fail."
+        incorrect_example: |
+          // INCORRECT: relying on mixed-case keys in output
+          resp.Headers["X-Request-Id"] = []string{reqID}
+        consequences:
+          - "contract tests fail"
+          - "users observe inconsistent header casing"
+
+  router_specificity_order:
+    name: "Register specific routes first"
+    problem: "Equally-specific routes must resolve deterministically across languages."
+    solution: "Prefer earlier registration order when specificity ties; register specific routes before fallbacks."
+    correct_example: |
+      // CORRECT
+      app.Get("/users/me", handleMe)
+      app.Get("/users/{id}", handleUser)
+    anti_patterns:
+      - name: "Relying on unspecified tie-break behavior"
+        why: "Non-determinism becomes cross-language drift."
+        incorrect_example: |
+          // INCORRECT: assuming the last registered route wins
+          app.Get("/users/{id}", handleUser)
+          app.Get("/users/me", handleMe)
+        consequences:
+          - "route mismatch between runtimes"
+          - "hard-to-debug production behavior"
+
+  strict_route_registration:
+    name: "Use strict route registration for fast feedback"
+    problem: "Invalid route patterns are fail-closed and may be silently ignored by default for backwards compatibility."
+    solution: "Use the strict variant during tests/CI to fail fast when a route pattern is invalid."
+    correct_example: |
+      // CORRECT (Go): fail fast on invalid patterns
+      if _, err := apptheory.New().HandleStrict(apptheory.GET, "/users/{id}", handleUser); err != nil {
+          panic(err)
+      }
+    anti_patterns:
+      - name: "Assuming all routes register successfully"
+        why: "Silent registration failures can lead to missing routes and unexpected 404s."
+        incorrect_example: |
+          // INCORRECT: this may not register, and you might not notice until runtime
+          app.Get("/{proxy+}/x", handleUser)
+        consequences:
+          - "unexpected 404s"
+          - "slow debugging cycles"
+
+  universal_lambda_dispatch:
+    name: "Delegate to HandleLambda/handleLambda/handle_lambda for mixed triggers"
+    problem: "A Lambda function may be triggered by many AWS event shapes; manual branching is error-prone."
+    solution: "Use the runtime's universal dispatcher so event routing stays contract-defined and tested."
+    correct_example: |
+      // CORRECT (TypeScript): keep the Lambda entrypoint thin
+      export const handler = async (event, ctx) => app.handleLambda(event, ctx)
+    anti_patterns:
+      - name: "Hand-rolling event shape detection"
+        why: "Custom branching quickly drifts from the contract and becomes untestable."
+        incorrect_example: |
+          // INCORRECT: partial detection logic that will drift
+          if (event?.requestContext?.http) return app.serveAPIGatewayV2(event)
+        consequences:
+          - "parity drift across languages"
+          - "missed edge cases (ALB/SNS/WebSockets)"

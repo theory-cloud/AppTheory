@@ -1,0 +1,12 @@
+import type { ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyRequest, APIGatewayProxyResponse, APIGatewayV2HTTPRequest, APIGatewayV2HTTPResponse, APIGatewayWebSocketProxyRequest, LambdaFunctionURLRequest, LambdaFunctionURLResponse } from "../aws-types.js";
+import type { Request, Response } from "../types.js";
+import { type NormalizedRequest } from "./request.js";
+export declare function requestFromWebSocketEvent(event: APIGatewayWebSocketProxyRequest): NormalizedRequest;
+export declare function requestFromAPIGatewayProxy(event: APIGatewayProxyRequest): Request;
+export declare function requestFromALBTargetGroup(event: ALBTargetGroupRequest): Request;
+export declare function requestFromAPIGatewayV2(event: APIGatewayV2HTTPRequest): Request;
+export declare function requestFromLambdaFunctionURL(event: LambdaFunctionURLRequest): Request;
+export declare function apigatewayV2ResponseFromResponse(resp: Response): APIGatewayV2HTTPResponse;
+export declare function lambdaFunctionURLResponseFromResponse(resp: Response): LambdaFunctionURLResponse;
+export declare function apigatewayProxyResponseFromResponse(resp: Response): APIGatewayProxyResponse;
+export declare function albTargetGroupResponseFromResponse(resp: Response): ALBTargetGroupResponse;

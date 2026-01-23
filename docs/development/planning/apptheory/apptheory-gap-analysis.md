@@ -1,9 +1,13 @@
 # AppTheory Gap Analysis & Remediation Roadmap
 
+For Lift parity gaps across real Lift apps (Pay Theory: Autheory + K3, plus Lesser), see:
+
+- `docs/development/planning/apptheory/apptheory-gap-analysis-lift-parity.md`
+
 Status snapshot:
 
 - Repo: `AppTheory/`
-- Commit: `v0.1.0` (tagged release commit)
+- Commit: `v0.2.0-rc.1` (tagged release candidate)
 - Toolchains: Go `1.25.6`, Node `24`, Python `3.14` (per `go.mod` + docs)
 - Current quality signal:
   - `make rubric`: PASS
@@ -15,6 +19,7 @@ end-to-end rubric gates, and proposes a concrete remediation roadmap to fully cl
 Primary roadmap reference:
 
 - `docs/development/planning/apptheory/apptheory-multilang-roadmap.md`
+- Lift parity gaps derived from a second real Lift app (Lesser): `docs/development/planning/apptheory/apptheory-gap-analysis-lesser.md`
 
 ## Remediation status (current)
 
@@ -38,7 +43,7 @@ Primary roadmap reference:
 - TS release packaging via `npm pack` (`scripts/verify-ts-pack.sh`)
 - Python wheel + sdist build (`scripts/verify-python-build.sh`)
 - CDK constructs tests + jsii packaging + Go bindings tests + synth drift gate (`scripts/verify-cdk-*.sh`)
-- Contract tests pass in Go/TS/Py (31 fixtures) (`scripts/verify-contract-tests.sh`)
+- Contract tests pass in Go/TS/Py (41 fixtures) (`scripts/verify-contract-tests.sh`)
 - Testkit examples run in TS + Py (`scripts/verify-testkit-examples.sh`)
 
 Release workflow exists and is aligned with the “GitHub Releases only” posture:

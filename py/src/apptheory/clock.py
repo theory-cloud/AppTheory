@@ -31,4 +31,3 @@ class ManualClock:
     def advance(self, delta: dt.timedelta) -> dt.datetime:
         self._now = self._now + delta
         return self._now
-

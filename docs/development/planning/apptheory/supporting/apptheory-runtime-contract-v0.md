@@ -22,7 +22,15 @@ Contract v0 covers **HTTP** events only:
 - AWS Lambda Function URL
 - API Gateway v2 (HTTP API)
 
-Other event sources (SQS, EventBridge, DynamoDB Streams, etc.) are out-of-scope until fixture-backed.
+Lift parity requires additional event sources (SQS, EventBridge, DynamoDB Streams, WebSockets, API Gateway REST v1/SSE).
+These are **required AppTheory capabilities**, but are versioned as follow-on contract work (contract v1+), so they can
+be specified and fixture-tested without destabilizing the already-shipped HTTP contract.
+
+Tracking:
+
+- `docs/development/planning/apptheory/subroadmaps/SR-EVENTSOURCES.md`
+- `docs/development/planning/apptheory/subroadmaps/SR-WEBSOCKETS.md`
+- `docs/development/planning/apptheory/subroadmaps/SR-SSE.md`
 
 ## Canonical request model (v0)
 
@@ -73,6 +81,32 @@ Response rules (v0):
 - For textual bodies, `is_base64` SHOULD be false.
 - For binary bodies, `is_base64` MUST be true and `body` is base64-encoded in the event response.
 - Implementations MUST have deterministic header/cookie behavior (ordering rules must be specified by fixtures).
+
+## Streaming response bodies (M14 extension)
+
+AppTheory handlers MAY return a streaming response body, represented as a **stream-of-bytes** in addition to (or instead
+of) a buffered body.
+
+Portable shape (conceptual):
+
+- `body`: bytes (optional, treated as a prefix when streaming)
+- `body_stream`: stream-of-bytes (optional, yields ordered chunks)
+
+Concatenation rules:
+
+- The effective response body bytes MUST be `body` (prefix) concatenated with each streamed chunk in order.
+- Streamed chunks MUST be treated as raw bytes (fixtures encode bytes as `utf8` or `base64` values in JSON).
+
+Header/cookie finalization rules:
+
+- For streaming responses, `status`, `headers`, and `cookies` MUST be finalized **before** the first chunk is emitted.
+- Mutations to headers/cookies after streaming begins MUST NOT affect the finalized output (fixture-backed).
+
+Late error rules:
+
+- If an error occurs **before** the first chunk, the runtime MAY return a normal error response (status/headers/body).
+- If an error occurs **after** the first chunk, the runtime MUST NOT change `status`/`headers`/`cookies`.
+  - Test harnesses MUST surface the late error as a deterministic `stream_error_code` (fixture-backed).
 
 ## Routing semantics (P0)
 

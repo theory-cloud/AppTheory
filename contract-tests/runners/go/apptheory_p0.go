@@ -8,10 +8,13 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 
-	"github.com/theory-cloud/apptheory"
+	"github.com/theory-cloud/apptheory/pkg/naming"
+	apptheory "github.com/theory-cloud/apptheory/runtime"
+	"github.com/theory-cloud/apptheory/testkit"
 )
 
 func runFixtureP0(f Fixture) error {
@@ -37,6 +40,9 @@ func serveFixtureP0(app *apptheory.App, f Fixture) (apptheory.Response, error) {
 		return serveFixtureP0AWS(app, f.Input.AWSEvent)
 	}
 
+	if f.Input.Request == nil {
+		return apptheory.Response{}, fmt.Errorf("fixture missing input.request")
+	}
 	bodyBytes, err := decodeFixtureBody(f.Input.Request.Body)
 	if err != nil {
 		return apptheory.Response{}, fmt.Errorf("decode request body: %w", err)
@@ -71,6 +77,13 @@ func serveFixtureP0AWS(app *apptheory.App, awsEvent *FixtureAWSEvent) (apptheory
 		}
 		out := app.ServeLambdaFunctionURL(context.Background(), event)
 		return responseFromLambdaFunctionURL(out)
+	case "alb":
+		var event events.ALBTargetGroupRequest
+		if err := json.Unmarshal(awsEvent.Event, &event); err != nil {
+			return apptheory.Response{}, fmt.Errorf("parse alb event: %w", err)
+		}
+		out := app.ServeALB(context.Background(), event)
+		return responseFromALBTargetGroup(out)
 	default:
 		return apptheory.Response{}, fmt.Errorf("unknown aws_event source %q", awsEvent.Source)
 	}
@@ -103,7 +116,7 @@ func printFailureP0(f Fixture) {
 		IsBase64: actual.IsBase64,
 	}
 
-	if len(f.Expect.Response.BodyJSON) > 0 {
+	if f.Expect.Response != nil && len(f.Expect.Response.BodyJSON) > 0 {
 		var actualJSON any
 		if json.Unmarshal(actual.Body, &actualJSON) == nil {
 			debug.BodyJSON = actualJSON
@@ -128,10 +141,14 @@ func printFailureP0(f Fixture) {
 }
 
 func printExpected(f Fixture) {
-	expected := f.Expect.Response
-	expected.Headers = canonicalizeHeaders(expected.Headers)
-	b := marshalIndentOrPlaceholder(expected)
-	fmt.Fprintf(os.Stderr, "  expected: %s\n", string(b))
+	if f.Expect.Response != nil {
+		expected := *f.Expect.Response
+		expected.Headers = canonicalizeHeaders(expected.Headers)
+		b := marshalIndentOrPlaceholder(expected)
+		fmt.Fprintf(os.Stderr, "  expected: %s\n", string(b))
+	} else {
+		fmt.Fprintf(os.Stderr, "  expected: <unavailable>\n")
+	}
 
 	logs := marshalIndentOrPlaceholder(f.Expect.Logs)
 	metrics := marshalIndentOrPlaceholder(f.Expect.Metrics)
@@ -195,80 +212,269 @@ func responseFromLambdaFunctionURL(resp events.LambdaFunctionURLResponse) (appth
 	}, nil
 }
 
+func responseFromALBTargetGroup(resp events.ALBTargetGroupResponse) (apptheory.Response, error) {
+	body := []byte(resp.Body)
+	if resp.IsBase64Encoded {
+		decoded, err := base64.StdEncoding.DecodeString(resp.Body)
+		if err != nil {
+			return apptheory.Response{}, fmt.Errorf("decode alb response body: %w", err)
+		}
+		body = decoded
+	}
+
+	headers := map[string][]string{}
+	if len(resp.MultiValueHeaders) > 0 {
+		for key, values := range resp.MultiValueHeaders {
+			headers[key] = append([]string(nil), values...)
+		}
+	} else {
+		for key, value := range resp.Headers {
+			headers[key] = []string{value}
+		}
+	}
+
+	headers = canonicalizeHeaders(headers)
+	cookies := append([]string(nil), headers["set-cookie"]...)
+	delete(headers, "set-cookie")
+
+	return apptheory.Response{
+		Status:   resp.StatusCode,
+		Headers:  headers,
+		Cookies:  cookies,
+		Body:     body,
+		IsBase64: resp.IsBase64Encoded,
+	}, nil
+}
+
+var builtInAppTheoryHandlers = map[string]apptheory.Handler{
+	"static_pong": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Text(200, "pong"), nil
+	},
+	"sleep_50ms": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		time.Sleep(50 * time.Millisecond)
+		return apptheory.Text(200, "done"), nil
+	},
+	"echo_path_params": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"params": ctx.Params,
+		})
+	},
+	"echo_request": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"method":    ctx.Request.Method,
+			"path":      ctx.Request.Path,
+			"query":     ctx.Request.Query,
+			"headers":   ctx.Request.Headers,
+			"cookies":   ctx.Request.Cookies,
+			"body_b64":  base64.StdEncoding.EncodeToString(ctx.Request.Body),
+			"is_base64": ctx.Request.IsBase64,
+		})
+	},
+	"parse_json_echo": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		value, err := ctx.JSONValue()
+		if err != nil {
+			return nil, err
+		}
+		return apptheory.JSON(200, value)
+	},
+	"panic": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		panic("boom")
+	},
+	"binary_body": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Binary(200, []byte{0x00, 0x01, 0x02}, "application/octet-stream"), nil
+	},
+	"echo_context": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"request_id":    ctx.RequestID,
+			"tenant_id":     ctx.TenantID,
+			"auth_identity": ctx.AuthIdentity,
+			"remaining_ms":  ctx.RemainingMS,
+		})
+	},
+	"echo_middleware_trace": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"trace": ctx.MiddlewareTrace,
+		})
+	},
+	"echo_ctx_value_and_trace": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"mw":    ctx.Get("mw"),
+			"trace": ctx.MiddlewareTrace,
+		})
+	},
+	"naming_helpers": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"normalized": map[string]string{
+				"prod":   naming.NormalizeStage("prod"),
+				"stg":    naming.NormalizeStage("stg"),
+				"custom": naming.NormalizeStage("  Foo_Bar  "),
+			},
+			"base":     naming.BaseName("Pay Theory", "prod", "Tenant_1"),
+			"resource": naming.ResourceName("Pay Theory", "WS Api", "prod", "Tenant_1"),
+		})
+	},
+	"unauthorized": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return nil, &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
+	},
+	"validation_failed": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return nil, &apptheory.AppError{Code: "app.validation_failed", Message: "validation failed"}
+	},
+	"large_response": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Text(200, "12345"), nil
+	},
+	"sse_single_event": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.SSEResponse(200, apptheory.SSEEvent{
+			ID:    "1",
+			Event: "message",
+			Data:  map[string]any{"ok": true},
+		})
+	},
+	"sse_stream_three_events": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		events := make(chan apptheory.SSEEvent, 3)
+		events <- apptheory.SSEEvent{ID: "1", Event: "message", Data: map[string]any{"a": 1, "b": 2}}
+		events <- apptheory.SSEEvent{Event: "note", Data: "hello\nworld"}
+		events <- apptheory.SSEEvent{ID: "3", Data: ""}
+		close(events)
+		return apptheory.SSEStreamResponse(ctx.Context(), 200, events)
+	},
+	"stream_mutate_headers_after_first_chunk": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		resp := &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"text/plain; charset=utf-8"},
+				"x-phase":      {"before"},
+			},
+			Cookies:  []string{"a=b; Path=/"},
+			Body:     nil,
+			IsBase64: false,
+		}
+
+		ch := make(chan apptheory.StreamChunk, 2)
+		resp.BodyStream = ch
+		go func() {
+			defer close(ch)
+			ch <- apptheory.StreamChunk{Bytes: []byte("a")}
+			resp.Headers["x-phase"] = []string{"after"}
+			resp.Cookies = append(resp.Cookies, "c=d; Path=/")
+			ch <- apptheory.StreamChunk{Bytes: []byte("b")}
+		}()
+		return resp, nil
+	},
+	"stream_error_after_first_chunk": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		resp := &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"text/plain; charset=utf-8"},
+			},
+			Cookies:  nil,
+			Body:     nil,
+			IsBase64: false,
+		}
+
+		ch := make(chan apptheory.StreamChunk, 2)
+		resp.BodyStream = ch
+		go func() {
+			defer close(ch)
+			ch <- apptheory.StreamChunk{Bytes: []byte("hello")}
+			ch <- apptheory.StreamChunk{Err: &apptheory.AppError{Code: "app.internal", Message: "boom"}}
+		}()
+		return resp, nil
+	},
+	"html_basic": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.HTML(200, "<h1>Hello</h1>"), nil
+	},
+	"html_stream_two_chunks": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.HTMLStream(200, apptheory.StreamBytes([]byte("<h1>"), []byte("Hello</h1>"))), nil
+	},
+	"safe_json_for_html": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		out, err := apptheory.SafeJSONForHTML(map[string]any{
+			"html": "</script><div>&</div><",
+			"amp":  "a&b",
+			"ls":   "line\u2028sep",
+			"ps":   "para\u2029sep",
+		})
+		if err != nil {
+			return nil, err
+		}
+		return apptheory.Text(200, out), nil
+	},
+	"cookies_from_set_cookie_header": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"text/plain; charset=utf-8"},
+				"set-cookie":   {"a=b; Path=/", "c=d; Path=/"},
+			},
+			Cookies:  []string{"e=f; Path=/"},
+			Body:     []byte("ok"),
+			IsBase64: false,
+		}, nil
+	},
+	"header_multivalue": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type": {"text/plain; charset=utf-8"},
+				"x-multi":      {"a", "b"},
+			},
+			Cookies:  nil,
+			Body:     []byte("ok"),
+			IsBase64: false,
+		}, nil
+	},
+	"cache_helpers": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		tag := apptheory.ETag([]byte("hello"))
+		return apptheory.JSON(200, map[string]any{
+			"cache_control_ssr": apptheory.CacheControlSSR(),
+			"cache_control_ssg": apptheory.CacheControlSSG(),
+			"cache_control_isr": apptheory.CacheControlISR(60, 30),
+			"etag":              tag,
+			"if_none_match_hit": apptheory.MatchesIfNoneMatch(ctx.Request.Headers, tag),
+			"vary":              apptheory.Vary([]string{"origin"}, "accept-encoding", "Origin"),
+		})
+	},
+	"cloudfront_helpers": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"origin_url": apptheory.OriginURL(ctx.Request.Headers),
+			"client_ip":  apptheory.ClientIP(ctx.Request.Headers),
+		})
+	},
+	"stepfunctions_task_token_helpers": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		built := testkit.StepFunctionsTaskTokenEvent(testkit.StepFunctionsTaskTokenEventOptions{
+			TaskToken: " tok-built ",
+			Payload: map[string]any{
+				"foo":       "bar",
+				"taskToken": "ignored",
+			},
+		})
+
+		return apptheory.JSON(200, map[string]any{
+			"from_taskToken":  apptheory.StepFunctionsTaskToken(map[string]any{"taskToken": " tok-a "}),
+			"from_TaskToken":  apptheory.StepFunctionsTaskToken(map[string]any{"TaskToken": " tok-b "}),
+			"from_task_token": apptheory.StepFunctionsTaskToken(map[string]any{"task_token": " tok-c "}),
+			"from_precedence": apptheory.StepFunctionsTaskToken(map[string]any{
+				"TaskToken":  " tok-b ",
+				"task_token": " tok-c ",
+				"taskToken":  " tok-a ",
+			}),
+			"built": built,
+		})
+	},
+}
+
 func builtInAppTheoryHandler(name string) apptheory.Handler {
-	switch name {
-	case "static_pong":
-		return func(_ *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.Text(200, "pong"), nil
-		}
-	case "echo_path_params":
-		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.JSON(200, map[string]any{
-				"params": ctx.Params,
-			})
-		}
-	case "echo_request":
-		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.JSON(200, map[string]any{
-				"method":    ctx.Request.Method,
-				"path":      ctx.Request.Path,
-				"query":     ctx.Request.Query,
-				"headers":   ctx.Request.Headers,
-				"cookies":   ctx.Request.Cookies,
-				"body_b64":  base64.StdEncoding.EncodeToString(ctx.Request.Body),
-				"is_base64": ctx.Request.IsBase64,
-			})
-		}
-	case "parse_json_echo":
-		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-			value, err := ctx.JSONValue()
-			if err != nil {
-				return nil, err
-			}
-			return apptheory.JSON(200, value)
-		}
-	case "panic":
-		return func(_ *apptheory.Context) (*apptheory.Response, error) {
-			panic("boom")
-		}
-	case "binary_body":
-		return func(_ *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.Binary(200, []byte{0x00, 0x01, 0x02}, "application/octet-stream"), nil
-		}
-	case "echo_context":
-		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.JSON(200, map[string]any{
-				"request_id":    ctx.RequestID,
-				"tenant_id":     ctx.TenantID,
-				"auth_identity": ctx.AuthIdentity,
-				"remaining_ms":  ctx.RemainingMS,
-			})
-		}
-	case "echo_middleware_trace":
-		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.JSON(200, map[string]any{
-				"trace": ctx.MiddlewareTrace,
-			})
-		}
-	case "unauthorized":
-		return func(_ *apptheory.Context) (*apptheory.Response, error) {
-			return nil, &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
-		}
-	case "validation_failed":
-		return func(_ *apptheory.Context) (*apptheory.Response, error) {
-			return nil, &apptheory.AppError{Code: "app.validation_failed", Message: "validation failed"}
-		}
-	case "large_response":
-		return func(_ *apptheory.Context) (*apptheory.Response, error) {
-			return apptheory.Text(200, "12345"), nil
-		}
-	default:
+	key := strings.TrimSpace(name)
+	if key == "" {
 		return nil
 	}
+	return builtInAppTheoryHandlers[key]
 }
 
 func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []FixtureLogRecord, metrics []FixtureMetricRecord, spans []FixtureSpanRecord) error {
-	expected := f.Expect.Response
+	if f.Expect.Response == nil {
+		return fmt.Errorf("fixture missing expect.response")
+	}
+	expected := *f.Expect.Response
 
 	expectedHeaders := canonicalizeHeaders(expected.Headers)
 	actualHeaders := canonicalizeHeaders(actual.Headers)

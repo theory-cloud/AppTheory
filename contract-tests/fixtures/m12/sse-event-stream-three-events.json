@@ -1,0 +1,35 @@
+{
+  "id": "m12.sse.event_stream_three_events",
+  "tier": "m12",
+  "name": "SSE: event-by-event stream framing (3 events)",
+  "setup": {
+    "routes": [{ "method": "GET", "path": "/sse-stream", "handler": "sse_stream_three_events" }]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/sse-stream",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["text/event-stream"],
+        "cache-control": ["no-cache"],
+        "connection": ["keep-alive"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body": {
+        "encoding": "utf8",
+        "value": "id: 1\nevent: message\ndata: {\"a\":1,\"b\":2}\n\nevent: note\ndata: hello\ndata: world\n\nid: 3\ndata: \n\n"
+      },
+      "is_base64": false
+    }
+  }
+}

@@ -27,11 +27,19 @@ This is a conceptual mapping to guide repo layout and migration docs.
 | `pkg/lift` | `pkg/apptheory` (or root entrypoint) | core app/router/handler surfaces |
 | `pkg/context` | `pkg/context` | portable context shape must match contract |
 | `pkg/middleware` | `pkg/middleware` | ordering must match contract |
+| `app.Use(...)` + `ctx.Set/Get` | portable middleware + context value bag | required for Lift parity (Autheory/K3/Lesser); see `subroadmaps/SR-MIDDLEWARE.md` |
 | `pkg/middleware/limited.go` + `github.com/pay-theory/limited` | `pkg/limited` (+ `pkg/limited/middleware`) | replicate `limited` feature set in-repo, backed by TableTheory |
 | `pkg/validation` | `pkg/validation` | portable validation behavior; error mapping |
 | `pkg/logger` / `pkg/observability` | `pkg/observability` | portable subset + hooks |
 | `pkg/testing` | `pkg/testkit` | deterministic testkit (align with SR-MOCKS) |
-| `pkg/cdk/constructs` | `cdk/` (TBD) | prefer jsii constructs for multi-language |
+| `pkg/streamer` | `streamer` (Go/TS/Py) | API Gateway Management API client + strict fakes (SR-WEBSOCKETS/SR-MOCKS) |
+| `pkg/naming` | `naming` (Go/TS/Py) | deterministic resource naming utilities (used by infra) |
+| `app.SQS/EventBridge/DynamoDB` | event-source router (Go/TS/Py) | non-HTTP trigger routing + fixtures (SR-EVENTSOURCES) |
+| `app.WebSocket` + `WebSocketContext` | WebSocket router + context (Go/TS/Py) | `$connect/$disconnect/$default` routing + send helpers (SR-WEBSOCKETS) |
+| `SSEResponse` / `SSEEvent` | SSE helpers (Go/TS/Py) | REST API v1 + response streaming + event-by-event streaming (SR-SSE) |
+| `pkg/cdk/constructs` | `cdk/` (jsii) | Lift construct parity for what our apps use (SR-CDK) |
+| `pkg/services` | services packages (start: EventBus) | required for Autheory; see `subroadmaps/SR-SERVICES.md` |
+| `pkg/utils/sanitization` | sanitization utilities (Go/TS/Py) | required for K3; see `subroadmaps/SR-SANITIZATION.md` |
 
 ## Feature mapping (seed)
 

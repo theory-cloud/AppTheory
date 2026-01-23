@@ -13,7 +13,8 @@ first-class in **Go, TypeScript, and Python**.
 Target audiences and use cases:
 
 - Platform and application teams building HTTP APIs on AWS Lambda (Lambda Function URL, API Gateway v2).
-- Event-driven workloads (SQS, EventBridge, etc.) once fixture-backed by contract tests.
+- Event-driven workloads (SQS, EventBridge, DynamoDB Streams) and WebSockets are required for Lift parity and are tracked
+  as remaining contract work (see `docs/development/planning/apptheory/apptheory-gap-analysis-lesser.md`).
 - Internal tooling and shared libraries that need consistent request/response semantics across languages.
 
 Non-goals (near-term):
@@ -24,6 +25,7 @@ Non-goals (near-term):
 ## Public Names (M0)
 
 - Go module path: `github.com/theory-cloud/apptheory`
+- Go runtime package: `github.com/theory-cloud/apptheory/runtime`
 - npm package: `@theory-cloud/apptheory`
 - Python distribution name: `apptheory`
 - Python import name: `apptheory`
@@ -34,15 +36,33 @@ Non-goals (near-term):
 - Node.js: `24`
 - Python: `3.14`
 
+## Documentation
+
+- Main docs index: `docs/README.md`
+- TypeScript package docs: `ts/docs/README.md`
+- Python package docs: `py/docs/README.md`
+- CDK package docs: `cdk/docs/README.md`
+
 ## Runtime tiers (P0/P1/P2)
 
 - **P0:** routing + request/response normalization + error envelope
 - **P1:** request-id, tenant extraction, auth hooks, CORS, size/time guardrails, middleware ordering
 - **P2 (default):** P1 + observability hooks + rate limiting / load shedding policy hooks
 
+## Security & production notes
+
+- CSRF protection and secure cookie flags are application concerns; set `Secure`/`HttpOnly`/`SameSite` explicitly in `Set-Cookie`.
+- Request IDs can be supplied via `x-request-id`; validate/override if your threat model requires it.
+- Retries/backoff for event sources are handled by AWS trigger settings (retry policies, DLQs/redrive), not by the runtime.
+
 ## Go runtime (P2 default)
 
 The Go runtime implements the fixture-backed contract across P0/P1/P2 tiers (default: P2).
+
+Notes:
+
+- Header names are case-insensitive, but `Request.Headers` / `Response.Headers` keys are canonicalized to lowercase.
+- If two routes are equally specific, the router prefers earlier registration order.
 
 Minimal local invocation:
 

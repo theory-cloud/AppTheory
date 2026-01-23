@@ -1,0 +1,29 @@
+{
+  "id": "m1.dynamodb.event_middleware.ctx_bag",
+  "tier": "m1",
+  "name": "DynamoDB Streams: event middleware + ctx.Set/Get",
+  "setup": {
+    "middlewares": ["evt_mw_a", "evt_mw_b"],
+    "dynamodb": [{ "table": "table-a", "handler": "ddb_requires_event_middleware" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "dynamodb",
+      "event": {
+        "Records": [
+          {
+            "eventID": "evt-1",
+            "eventName": "MODIFY",
+            "eventVersion": "1.1",
+            "eventSource": "aws:dynamodb",
+            "awsRegion": "us-east-1",
+            "dynamodb": { "SequenceNumber": "1", "SizeBytes": 1, "StreamViewType": "NEW_AND_OLD_IMAGES" },
+            "eventSourceARN": "arn:aws:dynamodb:us-east-1:000000000000:table/table-a/stream/1970-01-01T00:00:00.000"
+          }
+        ]
+      }
+    }
+  },
+  "expect": { "output_json": { "batchItemFailures": [] } }
+}
+

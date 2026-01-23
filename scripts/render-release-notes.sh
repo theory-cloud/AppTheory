@@ -10,6 +10,10 @@ if [[ -z "${tag}" ]]; then
 fi
 
 version="${tag#v}"
+python_version="${version}"
+if [[ "${python_version}" == *"-rc."* ]]; then
+  python_version="${python_version/-rc./rc}"
+fi
 
 repo="theory-cloud/AppTheory"
 repo_url="https://github.com/${repo}"
@@ -41,8 +45,8 @@ TypeScript:
 
 Python:
 
-- Download an \`apptheory-${version}-*.whl\` (or \`apptheory-${version}.tar.gz\`) from this release.
-- \`pip install ./apptheory-${version}-*.whl\`
+- Download an \`apptheory-${python_version}-*.whl\` (or \`apptheory-${python_version}.tar.gz\`) from this release.
+- \`pip install ./apptheory-${python_version}-*.whl\`
 
 ## Lift migration
 - Draft guide: ${docs_base}/docs/migration/from-lift.md

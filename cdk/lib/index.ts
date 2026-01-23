@@ -1,5 +1,16 @@
 export * from "./function";
 export * from "./function-alarms";
+export * from "./hosted-zone";
+export * from "./certificate";
+export * from "./api-domain";
+export * from "./kms-key";
+export * from "./enhanced-security";
+export * from "./app";
+export * from "./dynamodb-stream-mapping";
+export * from "./eventbus-table";
+export * from "./eventbridge-handler";
 export * from "./http-api";
 export * from "./queue-processor";
-
+export * from "./rest-api";
+export * from "./websocket-api";
+export * from "./ssr-site";

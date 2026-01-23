@@ -54,6 +54,10 @@ func (RateLimitEntry) TableName() string {
 	if name := os.Getenv("RATE_LIMIT_TABLE_NAME"); name != "" {
 		return name
 	}
+	// Back-compat for Lift's `LiftApp` env var naming.
+	if name := os.Getenv("RATE_LIMIT_TABLE"); name != "" {
+		return name
+	}
 	if name := os.Getenv("LIMITED_TABLE_NAME"); name != "" {
 		return name
 	}

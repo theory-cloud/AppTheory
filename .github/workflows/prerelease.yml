@@ -1,0 +1,119 @@
+name: Prerelease (premain)
+
+on:
+  push:
+    branches: ["premain"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release Please (Prerelease)
+        id: release
+        uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          target-branch: premain
+          config-file: release-please-config.premain.json
+          manifest-file: .release-please-manifest.premain.json
+          # Prevent release-please from opening the *next* prerelease PR on release commits.
+          # PR generation runs in prerelease-pr.yml.
+          skip-github-pull-request: true
+
+      - name: Checkout (for release assets)
+        if: steps.release.outputs.release_created == 'true'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Fetch main + premain (release branch verification)
+        if: steps.release.outputs.release_created == 'true'
+        run: git fetch origin main premain --force
+
+      - name: Verify tag was cut from the correct branch
+        if: steps.release.outputs.release_created == 'true'
+        run: scripts/verify-release-branch.sh "${{ steps.release.outputs.tag_name }}"
+
+      - name: Set SOURCE_DATE_EPOCH (deterministic artifacts)
+        if: steps.release.outputs.release_created == 'true'
+        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        if: steps.release.outputs.release_created == 'true'
+        with:
+          go-version: "1.25.6"
+
+      - name: Install golangci-lint (pinned)
+        if: steps.release.outputs.release_created == 'true'
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
+
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        if: steps.release.outputs.release_created == 'true'
+        with:
+          node-version: "24"
+
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        if: steps.release.outputs.release_created == 'true'
+        with:
+          python-version: "3.14"
+
+      - name: Build + verify
+        if: steps.release.outputs.release_created == 'true'
+        run: make rubric
+
+      - name: Generate SHA-256 checksums
+        if: steps.release.outputs.release_created == 'true'
+        run: scripts/generate-checksums.sh
+
+      - name: Render release notes template
+        if: steps.release.outputs.release_created == 'true'
+        run: scripts/render-release-notes.sh "${{ steps.release.outputs.tag_name }}"
+
+      - name: Upload release assets
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
+        run: |
+          if [[ -z "${TAG_NAME}" ]]; then
+            echo "release-assets: FAIL (missing tag_name output)"
+            exit 1
+          fi
+
+          mapfile -t existing_assets < <(gh release view "${TAG_NAME}" --json assets --jq '.assets[].name' 2>/dev/null || true)
+
+          assets=(
+            dist/theory-cloud-apptheory*.tgz
+            dist/apptheory*.whl
+            dist/apptheory*.tar.gz
+            dist/SHA256SUMS.txt
+          )
+
+          for asset_glob in "${assets[@]}"; do
+            for asset_path in ${asset_glob}; do
+              asset_name="$(basename "${asset_path}")"
+              if printf '%s\n' "${existing_assets[@]}" | grep -Fxq "${asset_name}"; then
+                echo "release-assets: skip existing ${asset_name}"
+                continue
+              fi
+              gh release upload "${TAG_NAME}" "${asset_path}"
+            done
+          done
+
+      - name: Publish prerelease (immutable)
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
+        run: |
+          if [[ -z "${TAG_NAME}" ]]; then
+            echo "release-assets: FAIL (missing tag_name output)"
+            exit 1
+          fi
+          gh release edit "${TAG_NAME}" --draft=false --prerelease --notes-file dist/RELEASE_NOTES.md

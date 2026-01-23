@@ -1,0 +1,55 @@
+{
+  "id": "m2.websocket.default_send_json",
+  "tier": "m2",
+  "name": "WebSocket: $default can send JSON via management client",
+  "setup": {
+    "websockets": [{ "route_key": "$default", "handler": "ws_default_send_json_ok" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "apigw_websocket",
+      "event": {
+        "path": "/",
+        "httpMethod": "POST",
+        "headers": { "content-type": "application/json" },
+        "queryStringParameters": {},
+        "requestContext": {
+          "stage": "dev",
+          "requestId": "ws-req-3",
+          "connectionId": "conn-3",
+          "domainName": "example.execute-api.us-east-1.amazonaws.com",
+          "eventType": "MESSAGE",
+          "routeKey": "$default"
+        },
+        "body": "ping",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "handler": "default",
+        "sent": true,
+        "route_key": "$default",
+        "event_type": "MESSAGE",
+        "connection_id": "conn-3",
+        "management_endpoint": "https://example.execute-api.us-east-1.amazonaws.com/dev",
+        "request_id": "ws-req-3"
+      },
+      "is_base64": false
+    },
+    "ws_calls": [
+      {
+        "op": "post_to_connection",
+        "endpoint": "https://example.execute-api.us-east-1.amazonaws.com/dev",
+        "connection_id": "conn-3",
+        "data": { "encoding": "utf8", "value": "{\"ok\":true}" }
+      }
+    ]
+  }
+}
+

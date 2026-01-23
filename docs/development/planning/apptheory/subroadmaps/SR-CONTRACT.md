@@ -20,7 +20,8 @@ Portable semantics only (P0/P1/P2 tiers):
 
 Non-goals (for contract v0):
 
-- Full AWS event-source surface area (SQS/EventBridge/etc) until fixture-backed.
+- Contract v0 is the **first slice** (HTTP). Lift parity requires expanding the contract (v1+) to cover non-HTTP triggers
+  and streaming/WebSockets, but those additions must ship with fixtures (fail closed) rather than as informal behavior.
 - Non-portable “power features” that cannot be made equivalent across languages.
 
 ## Artifacts (source of truth)
@@ -28,6 +29,16 @@ Non-goals (for contract v0):
 - Contract spec (human-readable): `docs/development/planning/apptheory/supporting/apptheory-runtime-contract-v0.md`
 - Fixtures (machine-readable): `contract-tests/` (to be created)
 - Runners (language-specific): `contract-tests/runners/{go,ts,py}` (to be created)
+
+## Current status (AppTheory `v0.2.0-rc.1`)
+
+- Contract fixtures exist and are validated in CI across Go/TS/Py for:
+  - P0 / P1 / P2 core tiers (`contract-tests/fixtures/p0|p1|p2`)
+  - Lift parity extensions (`contract-tests/fixtures/m1|m2|m3|m12`)
+- M12 fixtures cover:
+  - global middleware pipeline + `ctx.Set/Get` (`contract-tests/fixtures/m12/middleware-ctx-bag.json`)
+  - naming helpers (`contract-tests/fixtures/m12/naming-helpers.json`)
+  - SSE event-by-event streaming framing (`contract-tests/fixtures/m12/sse-event-stream-three-events.json`)
 
 ## Contract versioning rules (fail-closed)
 
@@ -125,6 +136,23 @@ Non-goals (for contract v0):
   - at least one implementation
 - A “contract change checklist” exists in contributing docs (or a PR template).
 
+---
+
+### C7 — Lift parity extensions (contract v1+)
+
+**Acceptance criteria**
+- New contract specs + fixtures exist for Lift-parity runtime surfaces beyond HTTP:
+  - SQS / EventBridge / DynamoDB Streams routing and semantics
+  - WebSocket trigger routing + portable WebSocket context shape
+  - API Gateway REST API v1 normalization and SSE streaming helpers
+- All three languages pass the new fixtures (no “Go first” exceptions for portable surfaces).
+
+Tracking sub-roadmaps:
+
+- `docs/development/planning/apptheory/subroadmaps/SR-EVENTSOURCES.md`
+- `docs/development/planning/apptheory/subroadmaps/SR-WEBSOCKETS.md`
+- `docs/development/planning/apptheory/subroadmaps/SR-SSE.md`
+
 ## Risks and mitigation
 
 - **Event source complexity creep:** keep contract v0 narrowly scoped to HTTP events; add new event sources only when
@@ -132,4 +160,3 @@ Non-goals (for contract v0):
 - **Fixture ambiguity:** avoid “fuzzy” expectations; prefer exact expected outputs.
 - **Language mismatch pressure:** if a semantics choice is hard in one language, redesign contract to be portable or
   explicitly mark as Go-only.
-

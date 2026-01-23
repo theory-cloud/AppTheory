@@ -1,0 +1,46 @@
+{
+  "id": "m1.dynamodb_stream.unrecognized_table_fails_closed",
+  "tier": "m1",
+  "name": "DynamoDB Streams: unrecognized table fails closed (all records returned as failures)",
+  "setup": {
+    "dynamodb": [
+      { "table": "TableA", "handler": "ddb_noop" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "dynamodb_streams",
+      "event": {
+        "Records": [
+          {
+            "eventID": "evt-1",
+            "eventName": "MODIFY",
+            "eventVersion": "1.1",
+            "eventSource": "aws:dynamodb",
+            "awsRegion": "us-east-1",
+            "dynamodb": { "SequenceNumber": "1", "SizeBytes": 1, "StreamViewType": "NEW_AND_OLD_IMAGES" },
+            "eventSourceARN": "arn:aws:dynamodb:us-east-1:000000000000:table/TableMissing/stream/2020-01-01T00:00:00.000"
+          },
+          {
+            "eventID": "evt-2",
+            "eventName": "MODIFY",
+            "eventVersion": "1.1",
+            "eventSource": "aws:dynamodb",
+            "awsRegion": "us-east-1",
+            "dynamodb": { "SequenceNumber": "2", "SizeBytes": 1, "StreamViewType": "NEW_AND_OLD_IMAGES" },
+            "eventSourceARN": "arn:aws:dynamodb:us-east-1:000000000000:table/TableMissing/stream/2020-01-01T00:00:00.000"
+          }
+        ]
+      }
+    }
+  },
+  "expect": {
+    "output_json": {
+      "batchItemFailures": [
+        { "itemIdentifier": "evt-1" },
+        { "itemIdentifier": "evt-2" }
+      ]
+    }
+  }
+}
+

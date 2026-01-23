@@ -1,0 +1,42 @@
+{
+  "id": "m1.dynamodb_stream.partial_batch_failure",
+  "tier": "m1",
+  "name": "DynamoDB Streams: route by table name + partial batch failure",
+  "setup": {
+    "dynamodb": [
+      { "table": "TableA", "handler": "ddb_fail_on_event_name_remove" },
+      { "table": "TableB", "handler": "ddb_always_fail" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "dynamodb_streams",
+      "event": {
+        "Records": [
+          {
+            "eventID": "evt-1",
+            "eventName": "MODIFY",
+            "eventVersion": "1.1",
+            "eventSource": "aws:dynamodb",
+            "awsRegion": "us-east-1",
+            "dynamodb": { "SequenceNumber": "1", "SizeBytes": 1, "StreamViewType": "NEW_AND_OLD_IMAGES" },
+            "eventSourceARN": "arn:aws:dynamodb:us-east-1:000000000000:table/TableA/stream/2020-01-01T00:00:00.000"
+          },
+          {
+            "eventID": "evt-2",
+            "eventName": "REMOVE",
+            "eventVersion": "1.1",
+            "eventSource": "aws:dynamodb",
+            "awsRegion": "us-east-1",
+            "dynamodb": { "SequenceNumber": "2", "SizeBytes": 1, "StreamViewType": "NEW_AND_OLD_IMAGES" },
+            "eventSourceARN": "arn:aws:dynamodb:us-east-1:000000000000:table/TableA/stream/2020-01-01T00:00:00.000"
+          }
+        ]
+      }
+    }
+  },
+  "expect": {
+    "output_json": { "batchItemFailures": [{ "itemIdentifier": "evt-2" }] }
+  }
+}
+
