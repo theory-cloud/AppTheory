@@ -36,4 +36,3 @@ func validateNewAppTheorySsrSiteParameters(scope constructs.Construct, id *strin
 
 	return nil
 }
-

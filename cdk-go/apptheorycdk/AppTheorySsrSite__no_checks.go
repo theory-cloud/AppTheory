@@ -11,4 +11,3 @@ func validateAppTheorySsrSite_IsConstructParameters(x interface{}) error {
 func validateNewAppTheorySsrSiteParameters(scope constructs.Construct, id *string, props *AppTheorySsrSiteProps) error {
 	return nil
 }
-
