@@ -588,7 +588,7 @@ export class App {
         const records = Array.isArray(event?.Records) ? event.Records : [];
         const handler = this._snsHandlerForEvent(event);
         if (!handler) {
-            return [];
+            throw new Error("apptheory: unrecognized sns topic");
         }
         const eventCtx = this._eventContext(ctx);
         const out = [];
@@ -600,22 +600,15 @@ export class App {
     }
     _eventBridgeHandlerForEvent(event) {
         const resources = Array.isArray(event?.resources) ? event.resources : [];
-        if (resources.length === 0)
-            return null;
-        const ruleName = resources
-            .map((r) => String(r ?? "").trim())
-            .filter(Boolean)
-            .map((r) => eventBridgeRuleNameFromArn(r))
-            .filter(Boolean)[0];
         const source = String(event?.source ?? "").trim();
         const detailType = String(event["detail-type"] ??
             event?.detailType ??
             "").trim();
-        if (!ruleName && !source && !detailType)
+        if (resources.length === 0 && !source && !detailType)
             return null;
         for (const route of this._eventBridgeRoutes) {
             const sel = route.selector ?? {};
-            if (sel.ruleName && ruleName) {
+            if (sel.ruleName) {
                 let matched = false;
                 for (const resource of resources) {
                     if (eventBridgeRuleNameFromArn(resource) === sel.ruleName) {
@@ -625,10 +618,11 @@ export class App {
                 }
                 if (!matched)
                     continue;
+                return route.handler;
             }
-            if (sel.source && source && sel.source !== source)
+            if (sel.source && sel.source !== source)
                 continue;
-            if (sel.detailType && detailType && sel.detailType !== detailType)
+            if (sel.detailType && sel.detailType !== detailType)
                 continue;
             return route.handler;
         }

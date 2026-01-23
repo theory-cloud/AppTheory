@@ -13,7 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sns v1.39.11
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/stretchr/testify v1.11.1
-	github.com/theory-cloud/tabletheory v1.2.0
+	github.com/theory-cloud/tabletheory v1.2.1
 	go.uber.org/zap v1.27.1
 )
 

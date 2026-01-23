@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -282,9 +283,30 @@ func TestHandleLambdaRecords_AndRequestContext_ErrorPathsAndWebSocketEnablement(
 		t.Fatalf("expected eventbridge parse error, got ok=%v err=%v", ok, bridgeErr)
 	}
 
+	// EventBridge: support detailType alias for dispatch and selector matching.
+	app.EventBridge(EventBridgePattern("src", "dt"), func(_ *EventContext, _ events.EventBridgeEvent) (any, error) {
+		return "ok", nil
+	})
+	ebAlias := json.RawMessage(`{"detailType":"dt","source":"src","resources":[]}`)
+	var ebAliasEnv lambdaEnvelope
+	if unmarshalErr := json.Unmarshal(ebAlias, &ebAliasEnv); unmarshalErr != nil {
+		t.Fatalf("unmarshal eventbridge alias env: %v", unmarshalErr)
+	}
+	outAny, ok, bridgeErr := app.handleLambdaEventBridge(context.Background(), ebAlias, ebAliasEnv)
+	if bridgeErr != nil || !ok || outAny == nil {
+		t.Fatalf("expected eventbridge alias dispatch, got out=%v ok=%v err=%v", outAny, ok, bridgeErr)
+	}
+	outStr, ok := outAny.(string)
+	if !ok {
+		t.Fatalf("expected string handler output, got %T", outAny)
+	}
+	if got := strings.TrimSpace(outStr); got != "ok" {
+		t.Fatalf("expected handler output %q, got %q", "ok", got)
+	}
+
 	// Default: ensure unknown record source does not claim handling.
 	env = lambdaEnvelope{Records: json.RawMessage(`[{"eventSource":"aws:unknown"}]`)}
-	outAny, ok, err := app.handleLambdaRecords(context.Background(), json.RawMessage(`{"Records":[{"eventSource":"aws:unknown"}]}`), env)
+	outAny, ok, err = app.handleLambdaRecords(context.Background(), json.RawMessage(`{"Records":[{"eventSource":"aws:unknown"}]}`), env)
 	if err != nil || ok || outAny != nil {
 		t.Fatalf("expected unknown source to return (nil,false,nil), got out=%v ok=%v err=%v", outAny, ok, err)
 	}

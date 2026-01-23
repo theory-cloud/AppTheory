@@ -10,6 +10,9 @@ description = "AppTheory — multi-language serverless application framework (Py
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
+dependencies = [
+  "tabletheory-py @ https://github.com/theory-cloud/TableTheory/releases/download/v1.2.1/tabletheory_py-1.2.1-py3-none-any.whl",
+]
 
 [tool.setuptools]
 package-dir = { "" = "src" }
