@@ -30,11 +30,17 @@ class Router:
         self._routes: list[_Route] = []
 
     def add(self, method: str, pattern: str, handler: object, *, auth_required: bool = False) -> None:
-        method_value = str(method or "").strip().upper()
-        parsed = _parse_route_segments(_split_path(pattern))
-        if parsed is None:
+        try:
+            self.add_strict(method, pattern, handler, auth_required=auth_required)
+        except ValueError:
             return
-        segments, canonical_segments, static_count, param_count, has_proxy = parsed
+
+    def add_strict(self, method: str, pattern: str, handler: object, *, auth_required: bool = False) -> None:
+        if handler is None:
+            raise ValueError("apptheory: route handler is nil")
+
+        method_value = str(method or "").strip().upper()
+        segments, canonical_segments, static_count, param_count, has_proxy = _parse_route_segments(_split_path(pattern))
         pattern_value = "/" + "/".join(canonical_segments) if canonical_segments else "/"
         self._routes.append(
             _Route(
@@ -85,7 +91,7 @@ def _split_path(path: str) -> list[str]:
 
 def _parse_route_segments(
     raw_segments: list[str],
-) -> tuple[list[tuple[str, str]], list[str], int, int, bool] | None:
+) -> tuple[list[tuple[str, str]], list[str], int, int, bool]:
     segments: list[tuple[str, str]] = []
     canonical: list[str] = []
     static_count = 0
@@ -95,7 +101,7 @@ def _parse_route_segments(
     for idx, raw in enumerate(raw_segments):
         value = str(raw or "").strip()
         if not value:
-            return None
+            raise ValueError("apptheory: invalid route segment: empty")
 
         if value.startswith(":") and len(value) > 1:
             value = "{" + value[1:] + "}"
@@ -105,16 +111,16 @@ def _parse_route_segments(
             if inner.endswith("+"):
                 name = inner[:-1].strip()
                 if not name:
-                    return None
+                    raise ValueError("apptheory: invalid route segment: proxy name is empty")
                 if idx != len(raw_segments) - 1:
-                    return None
+                    raise ValueError("apptheory: invalid route pattern: proxy segment must be last")
                 segments.append(("proxy", name))
                 canonical.append("{" + name + "+}")
                 has_proxy = True
                 continue
 
             if not inner:
-                return None
+                raise ValueError("apptheory: invalid route segment: param name is empty")
             segments.append(("param", inner))
             canonical.append("{" + inner + "}")
             param_count += 1

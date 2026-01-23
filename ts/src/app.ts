@@ -259,6 +259,16 @@ export class App {
     return this;
   }
 
+  handleStrict(
+    method: string,
+    pattern: string,
+    handler: Handler,
+    options: RouteOptions = {},
+  ): this {
+    this._router.addStrict(method, pattern, handler, options);
+    return this;
+  }
+
   get(pattern: string, handler: Handler): this {
     return this.handle("GET", pattern, handler);
   }

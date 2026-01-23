@@ -22,3 +22,11 @@ concepts:
     key_methods:
       - create_test_env: "Creates a TestEnv with controllable clock and ID generator."
 
+  limited_rate_limiting:
+    type: component
+    purpose: "DynamoDB-backed rate limiting (ported from Go `limited`) for cross-instance enforcement."
+    provides:
+      - DynamoRateLimiter
+      - FixedWindowStrategy
+      - SlidingWindowStrategy
+      - MultiWindowStrategy

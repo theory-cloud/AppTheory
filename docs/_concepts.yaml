@@ -54,6 +54,29 @@ concepts:
       - deterministic_ids
       - aws_event_builders
 
+  handle_lambda_dispatch:
+    type: component
+    purpose: "Universal Lambda entrypoint that dispatches untyped AWS events to the correct adapter."
+    key_methods:
+      - HandleLambda: "Go universal dispatcher (json.RawMessage)."
+      - handleLambda: "TypeScript universal dispatcher (unknown event)."
+      - handle_lambda: "Python universal dispatcher (dict event)."
+    provides:
+      - event_shape_detection
+      - single_lambda_entrypoint
+
+  limited_rate_limiting:
+    type: component
+    purpose: "DynamoDB-backed rate limiting (the `limited` feature set) with equivalent capabilities across languages."
+    provides:
+      - fixed_window_limits
+      - sliding_window_limits
+      - multi_window_limits
+      - fail_open_or_closed
+      - usage_stats
+    configuration:
+      - "DynamoDB table: rate-limits (default)"
+
   cdk_constructs:
     type: component
     purpose: "jsii CDK constructs that deploy AppTheory apps with consistent defaults."
@@ -63,4 +86,3 @@ concepts:
       - lambda_defaults
     configuration:
       - cdk/
-

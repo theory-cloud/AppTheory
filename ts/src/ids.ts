@@ -4,6 +4,8 @@ export interface IdGenerator {
   newId(): string;
 }
 
+export type IDGenerator = IdGenerator;
+
 export class RandomIdGenerator implements IdGenerator {
   newId(): string {
     return randomUUID();

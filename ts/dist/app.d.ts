@@ -90,6 +90,7 @@ export declare class App {
         webSocketClientFactory?: WebSocketClientFactory;
     });
     handle(method: string, pattern: string, handler: Handler, options?: RouteOptions): this;
+    handleStrict(method: string, pattern: string, handler: Handler, options?: RouteOptions): this;
     get(pattern: string, handler: Handler): this;
     post(pattern: string, handler: Handler): this;
     put(pattern: string, handler: Handler): this;
