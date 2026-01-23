@@ -4,8 +4,17 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Any
 
+from theorydb_py import (
+    ConditionFailedError,
+    ModelDefinition,
+    NotFoundError,
+    Table,
+    TransactUpdate,
+    UpdateAdd,
+    UpdateSetIfNotExists,
+)
+
 from apptheory.clock import Clock, RealClock
-from apptheory.limited.dynamodb import DynamoDBClient
 from apptheory.limited.errors import RateLimiterError, new_error, wrap_error
 from apptheory.limited.models import (
     RateLimitEntry,
@@ -70,45 +79,7 @@ def _validate_key(key: RateLimitKey) -> None:
 
 
 def _is_condition_failed(exc: Exception) -> bool:
-    name = str(getattr(exc, "__class__", type("x", (), {})).__name__)
-    if name in {"ConditionalCheckFailedException", "TransactionCanceledException"}:
-        return True
-    resp = getattr(exc, "response", None)
-    if isinstance(resp, dict):
-        err = resp.get("Error") if isinstance(resp.get("Error"), dict) else {}
-        code = str(err.get("Code") or "").strip()
-        return code in {"ConditionalCheckFailedException", "TransactionCanceledException"}
-    return False
-
-
-def _av_s(value: str) -> dict[str, str]:
-    return {"S": str(value)}
-
-
-def _av_n(value: int) -> dict[str, str]:
-    return {"N": str(int(value))}
-
-
-def _av_string_map(value: dict[str, str] | None) -> dict[str, Any]:
-    m: dict[str, Any] = {}
-    for k, v in (value or {}).items():
-        key = str(k).strip()
-        if not key:
-            continue
-        m[key] = _av_s(str(v))
-    return {"M": m}
-
-
-def _get_number(item: dict[str, Any] | None, key: str) -> int:
-    if not isinstance(item, dict):
-        return 0
-    av = item.get(key)
-    if not isinstance(av, dict) or "N" not in av:
-        return 0
-    try:
-        return int(float(str(av.get("N") or "0")))
-    except Exception:  # noqa: BLE001
-        return 0
+    return isinstance(exc, ConditionFailedError)
 
 
 def _count_for_primary_window(strategy: RateLimitStrategy, windows: list[TimeWindow], counts: dict[str, int]) -> int:
@@ -117,6 +88,16 @@ def _count_for_primary_window(strategy: RateLimitStrategy, windows: list[TimeWin
     if isinstance(strategy, SlidingWindowStrategy):
         return sum(int(v) for v in counts.values())
     return int(counts.get(windows[0].key, 0))
+
+
+def _sanitize_metadata(metadata: dict[str, str] | None) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for k, v in (metadata or {}).items():
+        key = str(k).strip()
+        if not key:
+            continue
+        out[key] = str(v)
+    return out
 
 
 def _max_requests_for_window(strategy: MultiWindowStrategy, window: TimeWindow) -> int:
@@ -159,9 +140,17 @@ def _reset_time_for_decision(
     return max_reset
 
 
+_RATE_LIMIT_MODEL = ModelDefinition.from_dataclass(RateLimitEntry, table_name=None)
+
+
+def _resolve_table_name(config: Config) -> str:
+    value = str(getattr(config, "table_name", "") or "").strip()
+    return value or rate_limit_table_name()
+
+
 @dataclass(slots=True)
 class DynamoRateLimiter:
-    dynamo: Any
+    table: Any
     config: Config
     strategy: RateLimitStrategy
     clock: Clock
@@ -169,14 +158,14 @@ class DynamoRateLimiter:
     def __init__(
         self,
         *,
-        dynamo: Any | None = None,
+        table: Any | None = None,
         config: Config | None = None,
         strategy: RateLimitStrategy | None = None,
         clock: Clock | None = None,
     ) -> None:
         self.config = _normalize_config(config)
         self.strategy = strategy or FixedWindowStrategy(dt.timedelta(hours=1), self.config.default_requests_per_hour)
-        self.dynamo = dynamo or DynamoDBClient()
+        self.table = table or Table(_RATE_LIMIT_MODEL, table_name=_resolve_table_name(self.config))
         self.clock = clock or RealClock()
 
     def set_clock(self, clock: Clock | None) -> None:
@@ -192,9 +181,9 @@ class DynamoRateLimiter:
             raise new_error("internal_error", "no windows calculated")
 
         cfg = self.config
-        table = cfg.table_name or rate_limit_table_name()
 
-        counts: dict[str, int] = {}
+        keys: list[tuple[str, str]] = []
+        key_by_window: dict[str, tuple[str, str]] = {}
         for window in windows:
             entry = RateLimitEntry(
                 identifier=k.identifier,
@@ -203,24 +192,28 @@ class DynamoRateLimiter:
                 window_start=unix_seconds(window.start),
             )
             set_keys(entry)
-            try:
-                out = self.dynamo.get_item(
-                    TableName=table,
-                    Key={"PK": _av_s(entry.pk), "SK": _av_s(entry.sk)},
-                    ConsistentRead=bool(cfg.consistent_read),
-                )
-            except Exception as exc:
-                if cfg.fail_open:
-                    return LimitDecision(
-                        allowed=True,
-                        current_count=0,
-                        limit=int(self.strategy.get_limit(k)),
-                        resets_at=windows[0].end,
-                    )
-                raise wrap_error(exc, "internal_error", "failed to check rate limit") from exc
+            keys.append((entry.pk, entry.sk))
+            key_by_window[window.key] = (entry.pk, entry.sk)
 
-            item = out.get("Item") if isinstance(out, dict) else None
-            counts[window.key] = _get_number(item, "Count")
+        try:
+            items = self.table.batch_get(keys, consistent_read=bool(cfg.consistent_read))
+        except Exception as exc:
+            if cfg.fail_open:
+                return LimitDecision(
+                    allowed=True,
+                    current_count=0,
+                    limit=int(self.strategy.get_limit(k)),
+                    resets_at=windows[0].end,
+                )
+            raise wrap_error(exc, "internal_error", "failed to check rate limit") from exc
+
+        by_key: dict[tuple[str, str], RateLimitEntry] = {(it.pk, it.sk): it for it in items}
+
+        counts: dict[str, int] = {}
+        for window in windows:
+            pk_sk = key_by_window.get(window.key)
+            item = by_key.get(pk_sk) if pk_sk is not None else None
+            counts[window.key] = int(item.count) if item is not None else 0
 
         limit = int(self.strategy.get_limit(k))
         allowed = bool(self.strategy.should_allow(counts, limit))
@@ -245,7 +238,6 @@ class DynamoRateLimiter:
             raise new_error("internal_error", "no windows calculated")
 
         cfg = self.config
-        table = cfg.table_name or rate_limit_table_name()
 
         target_windows = windows if isinstance(self.strategy, MultiWindowStrategy) else windows[:1]
 
@@ -263,42 +255,20 @@ class DynamoRateLimiter:
             window_id = format_window_id(window.start)
 
             try:
-                self.dynamo.update_item(
-                    TableName=table,
-                    Key={"PK": _av_s(entry.pk), "SK": _av_s(entry.sk)},
-                    UpdateExpression=(
-                        "ADD #Count :inc SET #UpdatedAt=:now, "
-                        "#WindowType=if_not_exists(#WindowType,:wt), "
-                        "#WindowID=if_not_exists(#WindowID,:wid), "
-                        "#Identifier=if_not_exists(#Identifier,:id), "
-                        "#Resource=if_not_exists(#Resource,:res), "
-                        "#Operation=if_not_exists(#Operation,:op), "
-                        "#WindowStart=if_not_exists(#WindowStart,:ws), "
-                        "#TTL=if_not_exists(#TTL,:ttl), "
-                        "#CreatedAt=if_not_exists(#CreatedAt,:now)"
-                    ),
-                    ExpressionAttributeNames={
-                        "#Count": "Count",
-                        "#UpdatedAt": "UpdatedAt",
-                        "#WindowType": "WindowType",
-                        "#WindowID": "WindowID",
-                        "#Identifier": "Identifier",
-                        "#Resource": "Resource",
-                        "#Operation": "Operation",
-                        "#WindowStart": "WindowStart",
-                        "#TTL": "TTL",
-                        "#CreatedAt": "CreatedAt",
-                    },
-                    ExpressionAttributeValues={
-                        ":inc": _av_n(1),
-                        ":now": _av_s(now_str),
-                        ":wt": _av_s(window.key),
-                        ":wid": _av_s(window_id),
-                        ":id": _av_s(k.identifier),
-                        ":res": _av_s(k.resource),
-                        ":op": _av_s(k.operation),
-                        ":ws": _av_n(unix_seconds(window.start)),
-                        ":ttl": _av_n(ttl),
+                self.table.update(
+                    entry.pk,
+                    entry.sk,
+                    {
+                        "count": UpdateAdd(1),
+                        "updated_at": now_str,
+                        "window_type": UpdateSetIfNotExists(window.key),
+                        "window_id": UpdateSetIfNotExists(window_id),
+                        "identifier": UpdateSetIfNotExists(k.identifier),
+                        "resource": UpdateSetIfNotExists(k.resource),
+                        "operation": UpdateSetIfNotExists(k.operation),
+                        "window_start": UpdateSetIfNotExists(unix_seconds(window.start)),
+                        "ttl": UpdateSetIfNotExists(ttl),
+                        "created_at": UpdateSetIfNotExists(now_str),
                     },
                 )
             except Exception as exc:
@@ -313,7 +283,6 @@ class DynamoRateLimiter:
         hour_window = get_hour_window(now)
 
         cfg = self.config
-        table = cfg.table_name or rate_limit_table_name()
 
         minute_limit = int(cfg.default_requests_per_minute)
         hour_limit = int(cfg.default_requests_per_hour)
@@ -332,13 +301,11 @@ class DynamoRateLimiter:
                 window_start=unix_seconds(window_start),
             )
             set_keys(entry)
-            out = self.dynamo.get_item(
-                TableName=table,
-                Key={"PK": _av_s(entry.pk), "SK": _av_s(entry.sk)},
-                ConsistentRead=bool(cfg.consistent_read),
-            )
-            item = out.get("Item") if isinstance(out, dict) else None
-            return _get_number(item, "Count")
+            try:
+                out = self.table.get(entry.pk, entry.sk, consistent_read=bool(cfg.consistent_read))
+            except NotFoundError:
+                return 0
+            return int(out.count)
 
         try:
             minute_count = load_count(minute_window.start)
@@ -387,7 +354,6 @@ class DynamoRateLimiter:
         limit = int(self.strategy.get_limit(key))
 
         cfg = self.config
-        table = cfg.table_name or rate_limit_table_name()
 
         entry = RateLimitEntry(
             identifier=key.identifier,
@@ -398,22 +364,15 @@ class DynamoRateLimiter:
         set_keys(entry)
 
         try:
-            out = self.dynamo.update_item(
-                TableName=table,
-                Key={"PK": _av_s(entry.pk), "SK": _av_s(entry.sk)},
-                UpdateExpression="ADD #Count :inc SET #UpdatedAt=:now",
-                ConditionExpression="#Count < :limit",
-                ExpressionAttributeNames={"#Count": "Count", "#UpdatedAt": "UpdatedAt"},
-                ExpressionAttributeValues={
-                    ":inc": _av_n(1),
-                    ":now": _av_s(format_rfc3339_nano(now)),
-                    ":limit": _av_n(limit),
-                },
-                ReturnValues="ALL_NEW",
+            out = self.table.update(
+                entry.pk,
+                entry.sk,
+                {"count": UpdateAdd(1), "updated_at": format_rfc3339_nano(now)},
+                condition_expression="#Count < :limit",
+                expression_attribute_names={"#Count": "Count"},
+                expression_attribute_values={":limit": limit},
             )
-            attrs = out.get("Attributes") if isinstance(out, dict) else None
-            count = _get_number(attrs, "Count")
-            return LimitDecision(allowed=True, current_count=int(count), limit=int(limit), resets_at=window.end)
+            return LimitDecision(allowed=True, current_count=int(out.count), limit=int(limit), resets_at=window.end)
         except RateLimiterError:
             raise
         except Exception as exc:
@@ -432,31 +391,23 @@ class DynamoRateLimiter:
         entry: RateLimitEntry,
     ) -> LimitDecision:
         cfg = self.config
-        table = cfg.table_name or rate_limit_table_name()
 
         try:
-            out = self.dynamo.get_item(
-                TableName=table,
-                Key={"PK": _av_s(entry.pk), "SK": _av_s(entry.sk)},
-                ConsistentRead=bool(cfg.consistent_read),
-            )
+            out = self.table.get(entry.pk, entry.sk, consistent_read=bool(cfg.consistent_read))
+        except NotFoundError:
+            return self._create_single_window_entry(key, now, window, limit)
         except Exception as exc:
             if cfg.fail_open:
                 return LimitDecision(allowed=True, current_count=0, limit=int(limit), resets_at=window.end)
             raise wrap_error(exc, "internal_error", "failed to load rate limit entry") from exc
 
-        item = out.get("Item") if isinstance(out, dict) else None
-        if isinstance(item, dict):
-            count = _get_number(item, "Count")
-            return LimitDecision(
-                allowed=False,
-                current_count=int(count),
-                limit=int(limit),
-                resets_at=window.end,
-                retry_after_ms=max(0, int((window.end - now).total_seconds() * 1000)),
-            )
-
-        return self._create_single_window_entry(key, now, window, limit)
+        return LimitDecision(
+            allowed=False,
+            current_count=int(out.count),
+            limit=int(limit),
+            resets_at=window.end,
+            retry_after_ms=max(0, int((window.end - now).total_seconds() * 1000)),
+        )
 
     def _create_single_window_entry(
         self,
@@ -466,7 +417,6 @@ class DynamoRateLimiter:
         limit: int,
     ) -> LimitDecision:
         cfg = self.config
-        table = cfg.table_name or rate_limit_table_name()
 
         if limit <= 0:
             return LimitDecision(
@@ -488,32 +438,15 @@ class DynamoRateLimiter:
             created_at=format_rfc3339_nano(now),
             updated_at=format_rfc3339_nano(now),
             ttl=unix_seconds(window.end) + int(cfg.ttl_hours) * 3600,
-            metadata=dict(key.metadata or {}) if key.metadata is not None else {},
+            metadata=_sanitize_metadata(key.metadata),
         )
         set_keys(entry)
 
-        item = {
-            "PK": _av_s(entry.pk),
-            "SK": _av_s(entry.sk),
-            "Identifier": _av_s(entry.identifier),
-            "Resource": _av_s(entry.resource),
-            "Operation": _av_s(entry.operation),
-            "WindowStart": _av_n(entry.window_start),
-            "WindowType": _av_s(entry.window_type),
-            "WindowID": _av_s(entry.window_id),
-            "Count": _av_n(entry.count),
-            "TTL": _av_n(entry.ttl),
-            "CreatedAt": _av_s(entry.created_at),
-            "UpdatedAt": _av_s(entry.updated_at),
-            "Metadata": _av_string_map(entry.metadata),
-        }
-
         try:
-            self.dynamo.put_item(
-                TableName=table,
-                Item=item,
-                ConditionExpression="attribute_not_exists(#PK)",
-                ExpressionAttributeNames={"#PK": "PK"},
+            self.table.put(
+                entry,
+                condition_expression="attribute_not_exists(#PK)",
+                expression_attribute_names={"#PK": "PK"},
             )
             return LimitDecision(allowed=True, current_count=1, limit=int(limit), resets_at=window.end)
         except Exception as exc:
@@ -544,10 +477,9 @@ class DynamoRateLimiter:
             )
 
         cfg = self.config
-        table = cfg.table_name or rate_limit_table_name()
 
         now_str = format_rfc3339_nano(now)
-        transact_items: list[dict[str, Any]] = []
+        actions: list[TransactUpdate] = []
         for window in windows:
             max_allowed = _max_requests_for_window(strategy, window)
             if max_allowed <= 0:
@@ -570,53 +502,30 @@ class DynamoRateLimiter:
             ttl = unix_seconds(window.end) + int(cfg.ttl_hours) * 3600
             window_id = format_window_id(window.start)
 
-            transact_items.append(
-                {
-                    "Update": {
-                        "TableName": table,
-                        "Key": {"PK": _av_s(entry.pk), "SK": _av_s(entry.sk)},
-                        "UpdateExpression": (
-                            "ADD #Count :inc SET #UpdatedAt=:now, "
-                            "#WindowType=if_not_exists(#WindowType,:wt), "
-                            "#WindowID=if_not_exists(#WindowID,:wid), "
-                            "#Identifier=if_not_exists(#Identifier,:id), "
-                            "#Resource=if_not_exists(#Resource,:res), "
-                            "#Operation=if_not_exists(#Operation,:op), "
-                            "#WindowStart=if_not_exists(#WindowStart,:ws), "
-                            "#TTL=if_not_exists(#TTL,:ttl), "
-                            "#CreatedAt=if_not_exists(#CreatedAt,:now)"
-                        ),
-                        "ConditionExpression": "attribute_not_exists(#Count) OR #Count < :maxAllowed",
-                        "ExpressionAttributeNames": {
-                            "#Count": "Count",
-                            "#UpdatedAt": "UpdatedAt",
-                            "#WindowType": "WindowType",
-                            "#WindowID": "WindowID",
-                            "#Identifier": "Identifier",
-                            "#Resource": "Resource",
-                            "#Operation": "Operation",
-                            "#WindowStart": "WindowStart",
-                            "#TTL": "TTL",
-                            "#CreatedAt": "CreatedAt",
-                        },
-                        "ExpressionAttributeValues": {
-                            ":inc": _av_n(1),
-                            ":now": _av_s(now_str),
-                            ":wt": _av_s(window.key),
-                            ":wid": _av_s(window_id),
-                            ":id": _av_s(key.identifier),
-                            ":res": _av_s(key.resource),
-                            ":op": _av_s(key.operation),
-                            ":ws": _av_n(unix_seconds(window.start)),
-                            ":ttl": _av_n(ttl),
-                            ":maxAllowed": _av_n(int(max_allowed)),
-                        },
-                    }
-                }
+            actions.append(
+                TransactUpdate(
+                    pk=entry.pk,
+                    sk=entry.sk,
+                    updates={
+                        "count": UpdateAdd(1),
+                        "updated_at": now_str,
+                        "window_type": UpdateSetIfNotExists(window.key),
+                        "window_id": UpdateSetIfNotExists(window_id),
+                        "identifier": UpdateSetIfNotExists(key.identifier),
+                        "resource": UpdateSetIfNotExists(key.resource),
+                        "operation": UpdateSetIfNotExists(key.operation),
+                        "window_start": UpdateSetIfNotExists(unix_seconds(window.start)),
+                        "ttl": UpdateSetIfNotExists(ttl),
+                        "created_at": UpdateSetIfNotExists(now_str),
+                    },
+                    condition_expression="attribute_not_exists(#Count) OR #Count < :maxAllowed",
+                    expression_attribute_names={"#Count": "Count"},
+                    expression_attribute_values={":maxAllowed": int(max_allowed)},
+                )
             )
 
         try:
-            self.dynamo.transact_write_items(TransactItems=transact_items)
+            self.table.transact_write(actions)
         except Exception as exc:
             if _is_condition_failed(exc):
                 decision = self.check_limit(key)
@@ -640,13 +549,8 @@ class DynamoRateLimiter:
         )
         set_keys(primary_entry)
         try:
-            out = self.dynamo.get_item(
-                TableName=table,
-                Key={"PK": _av_s(primary_entry.pk), "SK": _av_s(primary_entry.sk)},
-                ConsistentRead=bool(cfg.consistent_read),
-            )
-            item = out.get("Item") if isinstance(out, dict) else None
-            count = _get_number(item, "Count")
+            out = self.table.get(primary_entry.pk, primary_entry.sk, consistent_read=bool(cfg.consistent_read))
+            count = int(out.count)
         except Exception as exc:
             if cfg.fail_open:
                 return LimitDecision(allowed=True, current_count=0, limit=int(primary_limit), resets_at=primary.end)

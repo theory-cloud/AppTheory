@@ -22,3 +22,6 @@
 # eslint import tooling: prepublishOnly scripts reference `.npmrc` for publish-time packaging; not executed during install.
 GOV-SUPPLY:NODE:SCRIPT:pkg=eslint-import-resolver-node:ver=0.3.9:hook=prepublishOnly:rule=CRED_FILE_ACCESS
 GOV-SUPPLY:NODE:SCRIPT:pkg=eslint-module-utils:ver=2.12.1:hook=prepublishOnly:rule=CRED_FILE_ACCESS
+
+# TableTheory wheel is hosted as a GitHub Release asset; AppTheory/TableTheory releases are coordinated and pinned.
+GOV-SUPPLY:PYTHON:LINE:file=py/pyproject.toml:rule=VCS_OR_URL_DEP:sha256=b899af91d07a

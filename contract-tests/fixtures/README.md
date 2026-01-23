@@ -34,6 +34,9 @@ Each fixture is a single JSON object.
 - `expect.response` (object): expected canonical response.
   - `chunks` (array, optional): expected streamed response chunks (when using the streaming test harness).
   - `stream_error_code` (string, optional): expected error code when an error occurs after streaming begins.
+- `expect.output_json` (any, optional): expected output value for non-HTTP fixtures (for example: `m1`).
+- `expect.error` (object, optional): expected thrown error (for example: fail-closed `m1` routing).
+  - `message` (string): error message to match.
 - `expect.logs` (array, optional): expected structured log records (P2 portable envelope).
 - `expect.metrics` (array, optional): expected metric emissions (portable subset).
 - `expect.spans` (array, optional): expected trace span emissions (portable subset).

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -30,6 +31,50 @@ func TestCompareFixtureOutputJSON_CoversAllErrorBranches(t *testing.T) {
 
 	if err := compareFixtureOutputJSON(Fixture{Expect: FixtureExpect{Output: []byte(`{"ok":true}`)}}, map[string]any{"ok": true}); err != nil {
 		t.Fatalf("expected output_json match, got %v", err)
+	}
+}
+
+func TestCompareFixtureM1Result_ErrorBranches(t *testing.T) {
+	t.Parallel()
+
+	if err := compareFixtureM1Result(
+		Fixture{Expect: FixtureExpect{Error: &FixtureError{Message: "boom"}, Output: []byte(`{"ok":true}`)}},
+		nil,
+		errors.New("boom"),
+	); err == nil || !strings.Contains(err.Error(), "cannot set both") {
+		t.Fatalf("expected conflicting expect error, got %v", err)
+	}
+
+	if err := compareFixtureM1Result(
+		Fixture{Expect: FixtureExpect{Error: &FixtureError{Message: "boom"}}},
+		nil,
+		nil,
+	); err == nil || !strings.Contains(err.Error(), "expected error") {
+		t.Fatalf("expected missing error failure, got %v", err)
+	}
+
+	if err := compareFixtureM1Result(
+		Fixture{Expect: FixtureExpect{Error: &FixtureError{Message: "expected"}}},
+		nil,
+		errors.New("got"),
+	); err == nil || !strings.Contains(err.Error(), "error message mismatch") {
+		t.Fatalf("expected error message mismatch, got %v", err)
+	}
+
+	if err := compareFixtureM1Result(
+		Fixture{Expect: FixtureExpect{Error: &FixtureError{Message: "boom"}}},
+		nil,
+		errors.New("boom"),
+	); err != nil {
+		t.Fatalf("expected error match, got %v", err)
+	}
+
+	if err := compareFixtureM1Result(
+		Fixture{Expect: FixtureExpect{}},
+		map[string]any{"ok": true},
+		nil,
+	); err == nil || !strings.Contains(err.Error(), "missing expect.output_json or expect.error") {
+		t.Fatalf("expected missing expectation error, got %v", err)
 	}
 }
 

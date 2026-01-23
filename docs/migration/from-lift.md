@@ -235,6 +235,7 @@ EventBridge:
 - Register by rule: `app.EventBridge(apptheory.EventBridgeRule(ruleName), handler)`
 - Or by pattern: `app.EventBridge(apptheory.EventBridgePattern(source, detailType), handler)`
 - Entrypoint: `app.ServeEventBridge(ctx, events.EventBridgeEvent)`
+- Event shape: AppTheory accepts both `detail-type` (EventBridge native) and `detailType` (camelCase) for parity.
 
 DynamoDB Streams:
 

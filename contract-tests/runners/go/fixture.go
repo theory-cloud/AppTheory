@@ -104,10 +104,15 @@ type FixtureRequest struct {
 type FixtureExpect struct {
 	Response       *FixtureResponse       `json:"response,omitempty"`
 	Output         json.RawMessage        `json:"output_json,omitempty"`
+	Error          *FixtureError          `json:"error,omitempty"`
 	WebSocketCalls []FixtureWebSocketCall `json:"ws_calls,omitempty"`
 	Logs           []FixtureLogRecord     `json:"logs,omitempty"`
 	Metrics        []FixtureMetricRecord  `json:"metrics,omitempty"`
 	Spans          []FixtureSpanRecord    `json:"spans,omitempty"`
+}
+
+type FixtureError struct {
+	Message string `json:"message"`
 }
 
 type FixtureResponse struct {

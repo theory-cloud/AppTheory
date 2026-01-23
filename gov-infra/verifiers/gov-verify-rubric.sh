@@ -36,8 +36,10 @@ GOV_TOOLS_PY_DIR="${GOV_TOOLS_DIR}/py"
 GOV_TOOLS_PY_BIN="${GOV_TOOLS_PY_DIR}/bin"
 GOV_TOOLS_PY_COV_DIR="${GOV_TOOLS_DIR}/py-coverage"
 GOV_TOOLS_PY_COV_BIN="${GOV_TOOLS_PY_COV_DIR}/bin"
+GOV_TOOLS_PY_RUNTIME_DIR="${GOV_TOOLS_DIR}/py-runtime"
+GOV_TOOLS_PY_RUNTIME_BIN="${GOV_TOOLS_PY_RUNTIME_DIR}/bin"
 mkdir -p "${GOV_TOOLS_BIN}"
-export PATH="${GOV_TOOLS_BIN}:${GOV_TOOLS_PY_BIN}:${PATH}"
+export PATH="${GOV_TOOLS_BIN}:${GOV_TOOLS_PY_BIN}:${GOV_TOOLS_PY_RUNTIME_BIN}:${PATH}"
 
 # Tool pins (optional; populated by gov.init when possible).
 # If these remain unset, checks that depend on them should be marked BLOCKED (never "use whatever is installed").
@@ -243,6 +245,105 @@ ensure_pip_audit_pinned() {
   return 0
 }
 
+read_py_runtime_deps() {
+  # Reads Python runtime dependencies from py/pyproject.toml (one requirement per line).
+  if [[ ! -f "${REPO_ROOT}/py/pyproject.toml" ]]; then
+    echo "FAIL: missing Python pyproject: py/pyproject.toml" >&2
+    return 1
+  fi
+
+  local deps
+  deps="$(
+    python3 - <<'PY'
+from __future__ import annotations
+
+import pathlib
+
+try:
+    import tomllib  # py311+
+except Exception as exc:  # noqa: BLE001
+    raise SystemExit(f"missing tomllib: {exc}")
+
+p = pathlib.Path("py/pyproject.toml")
+data = tomllib.loads(p.read_text(encoding="utf-8"))
+deps = data.get("project", {}).get("dependencies", []) or []
+for dep in deps:
+    if str(dep).strip():
+        print(dep)
+PY
+  )" || {
+    echo "BLOCKED: failed to parse py/pyproject.toml (requires python>=3.11 with tomllib)" >&2
+    return 2
+  }
+
+  printf '%s\n' "${deps}"
+}
+
+ensure_py_runtime_deps_installed_into() {
+  # Installs pinned Python runtime deps into the interpreter's environment.
+  local python_bin="$1"
+  if [[ -z "${python_bin//[[:space:]]/}" ]] || [[ ! -x "${python_bin}" ]]; then
+    echo "FAIL: expected python executable: ${python_bin}" >&2
+    return 1
+  fi
+
+  local deps_raw
+  deps_raw="$(read_py_runtime_deps)" || return $?
+
+  local -a deps=()
+  local dep
+  while IFS= read -r dep; do
+    [[ -n "${dep//[[:space:]]/}" ]] || continue
+    if [[ "${dep}" != *"=="* ]] && [[ "${dep}" != *"@"* ]]; then
+      echo "BLOCKED: unpinned Python runtime dependency: ${dep}" >&2
+      return 2
+    fi
+    deps+=("${dep}")
+  done <<< "${deps_raw}"
+
+  local venv_dir
+  venv_dir="$(cd "$(dirname "${python_bin}")/.." && pwd)"
+  local stamp="${venv_dir}/.gov-py-runtime-deps.txt"
+  local want
+  want="$(printf '%s\n' "${deps[@]}")"
+
+  if [[ -f "${stamp}" ]]; then
+    local have
+    have="$(cat "${stamp}" 2>/dev/null || true)"
+    if [[ "${have}" == "${want}" ]]; then
+      return 0
+    fi
+  fi
+
+  if [[ "${#deps[@]}" -gt 0 ]]; then
+    echo "Installing Python runtime deps into ${venv_dir}..." >&2
+    if ! "${python_bin}" -m pip install --disable-pip-version-check --no-cache-dir "${deps[@]}"; then
+      echo "BLOCKED: failed to install Python runtime dependencies (check network/toolchain)" >&2
+      return 2
+    fi
+  fi
+
+  printf '%s\n' "${deps[@]}" > "${stamp}"
+  return 0
+}
+
+ensure_py_runtime_deps_installed() {
+  require_cmd_or_blocked python3 || return $?
+
+  if [[ -x "${GOV_TOOLS_PY_RUNTIME_BIN}/python" ]]; then
+    ensure_py_runtime_deps_installed_into "${GOV_TOOLS_PY_RUNTIME_BIN}/python" && return 0
+  fi
+
+  rm -rf "${GOV_TOOLS_PY_RUNTIME_DIR}"
+  echo "Creating Python runtime venv at ${GOV_TOOLS_PY_RUNTIME_DIR}..." >&2
+  if ! python3 -m venv "${GOV_TOOLS_PY_RUNTIME_DIR}"; then
+    echo "BLOCKED: failed to create python venv at ${GOV_TOOLS_PY_RUNTIME_DIR}" >&2
+    return 2
+  fi
+
+  ensure_py_runtime_deps_installed_into "${GOV_TOOLS_PY_RUNTIME_BIN}/python"
+}
+
 # --- Repo-specific verifiers (functions called by CMD_* below) ---
 
 gov_cmd_unit() {
@@ -253,8 +354,9 @@ gov_cmd_unit() {
   make test-unit
 
   node --test contract-tests/runners/ts/fixtures.test.cjs
-  python3 contract-tests/runners/py/run.py
-  PYTHONPATH="${REPO_ROOT}/py/src" python3 -m unittest discover -s py/tests -p "test_*.py"
+  ensure_py_runtime_deps_installed || return $?
+  "${GOV_TOOLS_PY_RUNTIME_BIN}/python" contract-tests/runners/py/run.py
+  PYTHONPATH="${REPO_ROOT}/py/src" "${GOV_TOOLS_PY_RUNTIME_BIN}/python" -m unittest discover -s py/tests -p "test_*.py"
 }
 
 gov_cmd_integration() {
@@ -624,6 +726,7 @@ check_py_coverage() {
   # Primary driver: contract fixtures (same semantics as CON-3), but measured against py/src/apptheory/**.
   require_cmd_or_blocked python3 || return $?
   ensure_py_coverage_pinned || return $?
+  ensure_py_runtime_deps_installed_into "${GOV_TOOLS_PY_COV_BIN}/python" || return $?
 
   local summary="${EVIDENCE_DIR}/py-coverage-summary.txt"
   local data="${EVIDENCE_DIR}/py-coverage.data"
