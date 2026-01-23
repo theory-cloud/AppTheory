@@ -2,11 +2,6 @@
 
 package apptheorycdk
 
-import (
-	"github.com/aws/aws-cdk-go/awscdk/v2"
-	"github.com/aws/constructs-go/constructs/v10"
-)
-
 // Building without runtime type checking enabled, so all the below just return nil
 
 func (a *jsiiProxy_AppTheoryHostedZone) validateAddCnameRecordParameters(recordName *string, domainName *string, ttl awscdk.Duration) error {

@@ -8476,7 +8476,7 @@
   },
   "name": "@theory-cloud/apptheory-cdk",
   "readme": {
-    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring.\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
+    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring.\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n- `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs).\n- `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).\n- `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).\n- `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + domain/cert helpers).\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
   },
   "repository": {
     "directory": "cdk",
@@ -9403,6 +9403,487 @@
         }
       ],
       "symbolId": "lib/dynamodb-stream-mapping:AppTheoryDynamoDBStreamMappingProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryDynamoTable": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryDynamoTable",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/dynamo-table.ts",
+          "line": 46
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryDynamoTableProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/dynamo-table.ts",
+        "line": 43
+      },
+      "name": "AppTheoryDynamoTable",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 44
+          },
+          "name": "table",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.Table"
+          }
+        }
+      ],
+      "symbolId": "lib/dynamo-table:AppTheoryDynamoTable"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryDynamoTableGsiProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryDynamoTableGsiProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/dynamo-table.ts",
+        "line": 7
+      },
+      "name": "AppTheoryDynamoTableGsiProps",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 8
+          },
+          "name": "indexName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 9
+          },
+          "name": "partitionKeyName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 14
+          },
+          "name": "nonKeyAttributes",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 10
+          },
+          "name": "partitionKeyType",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.AttributeType"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 13
+          },
+          "name": "projectionType",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.ProjectionType"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 15
+          },
+          "name": "readCapacity",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 11
+          },
+          "name": "sortKeyName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 12
+          },
+          "name": "sortKeyType",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.AttributeType"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 16
+          },
+          "name": "writeCapacity",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/dynamo-table:AppTheoryDynamoTableGsiProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryDynamoTableProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryDynamoTableProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/dynamo-table.ts",
+        "line": 19
+      },
+      "name": "AppTheoryDynamoTableProps",
+      "properties": [
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 21
+          },
+          "name": "partitionKeyName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 23
+          },
+          "name": "sortKeyName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 20
+          },
+          "name": "tableName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 26
+          },
+          "name": "billingMode",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.BillingMode"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 30
+          },
+          "name": "enablePointInTimeRecovery",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 33
+          },
+          "name": "enableStream",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 31
+          },
+          "name": "encryption",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.TableEncryption"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 32
+          },
+          "name": "encryptionKey",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kms.IKey"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 35
+          },
+          "name": "globalSecondaryIndexes",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryDynamoTableGsiProps"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 37
+          },
+          "name": "grantReadTo",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 39
+          },
+          "name": "grantReadWriteTo",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 40
+          },
+          "name": "grantStreamReadTo",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 38
+          },
+          "name": "grantWriteTo",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 22
+          },
+          "name": "partitionKeyType",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.AttributeType"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 27
+          },
+          "name": "readCapacity",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 29
+          },
+          "name": "removalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 24
+          },
+          "name": "sortKeyType",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.AttributeType"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 34
+          },
+          "name": "streamViewType",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.StreamViewType"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 25
+          },
+          "name": "timeToLiveAttribute",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 28
+          },
+          "name": "writeCapacity",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/dynamo-table:AppTheoryDynamoTableProps"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryEnhancedSecurity": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -12105,7 +12586,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/websocket-api.ts",
-          "line": 16
+          "line": 38
         },
         "parameters": [
           {
@@ -12131,7 +12612,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/websocket-api.ts",
-        "line": 12
+        "line": 32
       },
       "name": "AppTheoryWebSocketApi",
       "properties": [
@@ -12139,7 +12620,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 13
+            "line": 33
           },
           "name": "api",
           "type": {
@@ -12150,11 +12631,35 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 14
+            "line": 34
           },
           "name": "stage",
           "type": {
             "fqn": "aws-cdk-lib.aws_apigatewayv2.WebSocketStage"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 36
+          },
+          "name": "accessLogGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.ILogGroup"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 35
+          },
+          "name": "connectionTable",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.ITable"
           }
         }
       ],
@@ -12167,7 +12672,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/websocket-api.ts",
-        "line": 6
+        "line": 11
       },
       "name": "AppTheoryWebSocketApiProps",
       "properties": [
@@ -12176,7 +12681,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 7
+            "line": 12
           },
           "name": "handler",
           "type": {
@@ -12188,7 +12693,59 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 8
+            "line": 29
+          },
+          "name": "accessLogFormat",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.AccessLogFormat"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 26
+          },
+          "name": "accessLogGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.ILogGroup"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 28
+          },
+          "name": "accessLogRemovalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 27
+          },
+          "name": "accessLogRetention",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.RetentionDays"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 13
           },
           "name": "apiName",
           "optional": true,
@@ -12201,7 +12758,124 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 9
+            "line": 16
+          },
+          "name": "connectionTable",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.ITable"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 23
+          },
+          "name": "connectionTableEnablePointInTimeRecovery",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 18
+          },
+          "name": "connectionTableName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 19
+          },
+          "name": "connectionTablePartitionKeyName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 22
+          },
+          "name": "connectionTableRemovalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 20
+          },
+          "name": "connectionTableSortKeyName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 21
+          },
+          "name": "connectionTableTimeToLiveAttribute",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 25
+          },
+          "name": "enableAccessLogging",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 17
+          },
+          "name": "enableConnectionTable",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 14
           },
           "name": "stageName",
           "optional": true,
@@ -12214,5 +12888,5 @@
     }
   },
   "version": "0.2.1",
-  "fingerprint": "utF4D6kFG1Ym9NG1LxYg33MHKBVsCnjh3ON9gKNN2KY="
+  "fingerprint": "vg7WJ0E9JhUIo6vQOB0rnJ9dMgjH1bDhG2WbG2fqOvs="
 }

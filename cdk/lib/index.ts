@@ -8,6 +8,7 @@ export * from "./enhanced-security";
 export * from "./app";
 export * from "./dynamodb-stream-mapping";
 export * from "./eventbus-table";
+export * from "./dynamo-table";
 export * from "./eventbridge-handler";
 export * from "./http-api";
 export * from "./queue-processor";
