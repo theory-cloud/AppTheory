@@ -1,15 +1,49 @@
 import {
-  type AwsCredentials,
-  isAwsCredentials,
-  loadEnvCredentials,
-  signedFetch,
-} from "./internal/aws-sigv4.js";
+  ApiGatewayManagementApiClient,
+  DeleteConnectionCommand,
+  GetConnectionCommand,
+  PostToConnectionCommand,
+} from "@aws-sdk/client-apigatewaymanagementapi";
+
 import { toBuffer } from "./internal/http.js";
 
 export interface WebSocketCall {
   op: "post_to_connection" | "get_connection" | "delete_connection";
   connectionId: string;
   data: Uint8Array | null;
+}
+
+type AwsCredentials = {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+};
+
+function isAwsCredentials(value: unknown): value is AwsCredentials {
+  if (!value || typeof value !== "object") return false;
+  const rec = value as Record<string, unknown>;
+  return (
+    typeof rec["accessKeyId"] === "string" &&
+    typeof rec["secretAccessKey"] === "string"
+  );
+}
+
+function awsStatusCode(err: unknown): number | null {
+  if (!err || typeof err !== "object") return null;
+  const rec = err as Record<string, unknown>;
+  const meta = rec["$metadata"];
+  if (!meta || typeof meta !== "object") return null;
+  const code = (meta as Record<string, unknown>)["httpStatusCode"];
+  return typeof code === "number" ? code : null;
+}
+
+function errorMessage(err: unknown): string {
+  if (!err) return "";
+  if (err instanceof Error) return err.message;
+  if (typeof err === "object" && "message" in err) {
+    return String((err as Record<string, unknown>)["message"] ?? "");
+  }
+  return String(err);
 }
 
 function inferRegionFromDomainName(domainName: unknown): string {
@@ -33,10 +67,15 @@ function normalizeWebSocketManagementEndpoint(endpoint: unknown): string {
 export class WebSocketManagementClient {
   readonly endpoint: string;
   readonly region: string;
-  private readonly _credentials: AwsCredentials;
+  private readonly _client: { send: ApiGatewayManagementApiClient["send"] };
 
   constructor(
-    options: { endpoint?: string; region?: string; credentials?: unknown } = {},
+    options: {
+      endpoint?: string;
+      region?: string;
+      credentials?: unknown;
+      client?: { send: ApiGatewayManagementApiClient["send"] };
+    } = {},
   ) {
     this.endpoint = normalizeWebSocketManagementEndpoint(options.endpoint);
     if (!this.endpoint) {
@@ -54,17 +93,16 @@ export class WebSocketManagementClient {
       throw new Error("apptheory: aws region is empty");
     }
 
-    this._credentials = isAwsCredentials(options.credentials)
+    const credentials = isAwsCredentials(options.credentials)
       ? options.credentials
-      : (() => {
-          try {
-            return loadEnvCredentials();
-          } catch {
-            throw new Error(
-              "apptheory: missing aws credentials for websocket management client",
-            );
-          }
-        })();
+      : undefined;
+    this._client =
+      options.client ??
+      new ApiGatewayManagementApiClient({
+        endpoint: this.endpoint,
+        region: this.region,
+        ...(credentials ? { credentials } : {}),
+      });
   }
 
   async postToConnection(
@@ -74,26 +112,22 @@ export class WebSocketManagementClient {
     const id = String(connectionId ?? "").trim();
     if (!id) throw new Error("apptheory: websocket connection id is empty");
 
-    const base = new URL(this.endpoint);
-    const basePath = base.pathname.replace(/\/+$/, "");
-    const url = `${base.origin}${basePath}/@connections/${encodeURIComponent(id)}`;
     const body = toBuffer(data);
 
-    const resp = await signedFetch({
-      method: "POST",
-      url,
-      region: this.region,
-      service: "execute-api",
-      credentials: this._credentials,
-      headers: { "content-type": "application/octet-stream" },
-      body,
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      throw new Error(
-        `apptheory: post_to_connection failed (${resp.status}) ${text}`.trim(),
+    try {
+      await this._client.send(
+        new PostToConnectionCommand({
+          ConnectionId: id,
+          Data: body,
+        }),
       );
+    } catch (err) {
+      const status = awsStatusCode(err);
+      const suffix = [status ? `(${status})` : "", errorMessage(err)]
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join(" ");
+      throw new Error(`apptheory: post_to_connection failed ${suffix}`.trim());
     }
   }
 
@@ -101,51 +135,37 @@ export class WebSocketManagementClient {
     const id = String(connectionId ?? "").trim();
     if (!id) throw new Error("apptheory: websocket connection id is empty");
 
-    const base = new URL(this.endpoint);
-    const basePath = base.pathname.replace(/\/+$/, "");
-    const url = `${base.origin}${basePath}/@connections/${encodeURIComponent(id)}`;
-
-    const resp = await signedFetch({
-      method: "GET",
-      url,
-      region: this.region,
-      service: "execute-api",
-      credentials: this._credentials,
-      headers: {},
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      throw new Error(
-        `apptheory: get_connection failed (${resp.status}) ${text}`.trim(),
+    try {
+      const resp = await this._client.send(
+        new GetConnectionCommand({ ConnectionId: id }),
       );
+      const { $metadata: _metadata, ...rest } = resp;
+      return rest;
+    } catch (err) {
+      const status = awsStatusCode(err);
+      const suffix = [status ? `(${status})` : "", errorMessage(err)]
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join(" ");
+      throw new Error(`apptheory: get_connection failed ${suffix}`.trim());
     }
-
-    return (await resp.json()) as unknown;
   }
 
   async deleteConnection(connectionId: string): Promise<void> {
     const id = String(connectionId ?? "").trim();
     if (!id) throw new Error("apptheory: websocket connection id is empty");
 
-    const base = new URL(this.endpoint);
-    const basePath = base.pathname.replace(/\/+$/, "");
-    const url = `${base.origin}${basePath}/@connections/${encodeURIComponent(id)}`;
-
-    const resp = await signedFetch({
-      method: "DELETE",
-      url,
-      region: this.region,
-      service: "execute-api",
-      credentials: this._credentials,
-      headers: {},
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      throw new Error(
-        `apptheory: delete_connection failed (${resp.status}) ${text}`.trim(),
+    try {
+      await this._client.send(
+        new DeleteConnectionCommand({ ConnectionId: id }),
       );
+    } catch (err) {
+      const status = awsStatusCode(err);
+      const suffix = [status ? `(${status})` : "", errorMessage(err)]
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join(" ");
+      throw new Error(`apptheory: delete_connection failed ${suffix}`.trim());
     }
   }
 }

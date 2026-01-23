@@ -1,39 +1,62 @@
+import { TheorydbClient, TheorydbError, defineModel, getLambdaDynamoDBClient, } from "@theory-cloud/tabletheory-ts";
 import { RealClock } from "../clock.js";
-import { DynamoDBClient } from "../internal/aws-dynamodb.js";
 import { newError, wrapError } from "./errors.js";
-import { formatRfc3339Nano, formatWindowId, getHourWindow, getMinuteWindow, rateLimitTableName, setKeys, unixSeconds, } from "./models.js";
+import { formatRfc3339Nano, formatWindowId, getHourWindow, getMinuteWindow, setKeys, unixSeconds, } from "./models.js";
 import { FixedWindowStrategy, MultiWindowStrategy, SlidingWindowStrategy, } from "./strategies.js";
 function isConditionalCheckFailed(err) {
-    if (!err)
+    if (err instanceof TheorydbError) {
+        return String(err.code ?? "").trim() === "ErrConditionFailed";
+    }
+    if (!err || typeof err !== "object")
         return false;
-    const name = String(err.name ?? "").trim();
-    return (name === "ConditionalCheckFailedException" ||
-        name === "TransactionCanceledException");
+    const rec = err;
+    return (String(rec["code"] ?? "").trim() === "ErrConditionFailed" ||
+        String(rec["name"] ?? "").trim() === "ErrConditionFailed");
 }
-function getNumber(item, key) {
-    if (!item)
-        return 0;
-    const av = item[key];
-    if (!av || !("N" in av))
-        return 0;
-    const n = Number(av.N);
+function getCount(item) {
+    const n = Number(item?.["Count"] ?? 0);
     return Number.isFinite(n) ? Math.floor(n) : 0;
 }
-function avS(value) {
-    return { S: String(value) };
+function normalizeKeyId(pk, sk) {
+    const p = String(pk ?? "").trim();
+    const s = String(sk ?? "").trim();
+    return p && s ? `${p}\n${s}` : "";
 }
-function avN(value) {
-    return { N: String(Math.floor(Number(value) || 0)) };
-}
-function avStringMap(map) {
-    const m = {};
-    for (const [k, v] of Object.entries(map ?? {})) {
+function sanitizeMetadata(metadata) {
+    const out = {};
+    for (const [k, v] of Object.entries(metadata ?? {})) {
         const key = String(k).trim();
         if (!key)
             continue;
-        m[key] = avS(String(v));
+        out[key] = String(v);
     }
-    return { M: m };
+    return out;
+}
+const rateLimitModelName = "RateLimitEntry";
+function rateLimitModel(tableName) {
+    return defineModel({
+        name: rateLimitModelName,
+        table: { name: tableName },
+        keys: {
+            partition: { attribute: "PK", type: "S" },
+            sort: { attribute: "SK", type: "S" },
+        },
+        attributes: [
+            { attribute: "PK", type: "S" },
+            { attribute: "SK", type: "S" },
+            { attribute: "Identifier", type: "S" },
+            { attribute: "Resource", type: "S" },
+            { attribute: "Operation", type: "S" },
+            { attribute: "WindowStart", type: "N" },
+            { attribute: "WindowType", type: "S" },
+            { attribute: "WindowID", type: "S" },
+            { attribute: "Count", type: "N" },
+            { attribute: "TTL", type: "N" },
+            { attribute: "CreatedAt", type: "S" },
+            { attribute: "UpdatedAt", type: "S" },
+            { attribute: "Metadata", type: "M", optional: true },
+        ],
+    });
 }
 export function defaultConfig() {
     return {
@@ -153,7 +176,7 @@ function resetTimeForDecision(strategy, now, windows, counts, allowed) {
     return maxReset;
 }
 export class DynamoRateLimiter {
-    _dynamo;
+    _theorydb;
     _config;
     _strategy;
     _clock;
@@ -162,7 +185,10 @@ export class DynamoRateLimiter {
         this._strategy =
             options.strategy ??
                 new FixedWindowStrategy(3_600_000, this._config.defaultRequestsPerHour);
-        this._dynamo = options.dynamo ?? new DynamoDBClient();
+        const model = rateLimitModel(this._config.tableName);
+        this._theorydb =
+            options.theorydb ?? new TheorydbClient(getLambdaDynamoDBClient());
+        this._theorydb.register(model);
         this._clock = options.clock ?? new RealClock();
     }
     setClock(clock) {
@@ -181,8 +207,9 @@ export class DynamoRateLimiter {
             throw newError("internal_error", "no windows calculated");
         }
         const cfg = this._config;
-        const tableName = cfg.tableName || rateLimitTableName();
         const counts = {};
+        const keys = [];
+        const keyIdByWindow = new Map();
         for (const window of windows) {
             const entry = {
                 Identifier: k.identifier,
@@ -191,26 +218,41 @@ export class DynamoRateLimiter {
                 Operation: k.operation,
             };
             setKeysStrict(entry);
-            let out;
-            try {
-                out = await this._dynamo.getItem({
-                    TableName: tableName,
-                    Key: { PK: avS(entry.PK), SK: avS(entry.SK) },
-                    ConsistentRead: cfg.consistentRead,
-                });
+            const key = { PK: entry.PK, SK: entry.SK };
+            keys.push(key);
+            keyIdByWindow.set(window.key, normalizeKeyId(key.PK, key.SK));
+        }
+        let items;
+        try {
+            const resp = await this._theorydb.batchGet(rateLimitModelName, keys, {
+                consistentRead: cfg.consistentRead,
+            });
+            if (resp.unprocessedKeys.length > 0) {
+                throw new Error("apptheory: unprocessed rate limit keys");
             }
-            catch (err) {
-                if (cfg.failOpen) {
-                    return {
-                        allowed: true,
-                        currentCount: 0,
-                        limit: this._strategy.getLimit(k),
-                        resetsAt: primary.end,
-                    };
-                }
-                throw wrapError(err, "internal_error", "failed to check rate limit");
+            items = resp.items;
+        }
+        catch (err) {
+            if (cfg.failOpen) {
+                return {
+                    allowed: true,
+                    currentCount: 0,
+                    limit: this._strategy.getLimit(k),
+                    resetsAt: primary.end,
+                };
             }
-            counts[window.key] = getNumber(out.Item, "Count");
+            throw wrapError(err, "internal_error", "failed to check rate limit");
+        }
+        const byKeyId = new Map();
+        for (const item of items) {
+            const id = normalizeKeyId(item["PK"], item["SK"]);
+            if (!id)
+                continue;
+            byKeyId.set(id, item);
+        }
+        for (const window of windows) {
+            const id = keyIdByWindow.get(window.key) ?? "";
+            counts[window.key] = getCount(id ? byKeyId.get(id) : undefined);
         }
         const limit = Math.floor(Number(this._strategy.getLimit(k)) || 0);
         const allowed = this._strategy.shouldAllow(counts, limit);
@@ -236,7 +278,6 @@ export class DynamoRateLimiter {
             throw newError("internal_error", "no windows calculated");
         }
         const cfg = this._config;
-        const tableName = cfg.tableName || rateLimitTableName();
         const targetWindows = this._strategy instanceof MultiWindowStrategy
             ? windows
             : windows.slice(0, 1);
@@ -252,34 +293,21 @@ export class DynamoRateLimiter {
             const nowStr = formatRfc3339Nano(now);
             const windowId = formatWindowId(window.start);
             try {
-                await this._dynamo.updateItem({
-                    TableName: tableName,
-                    Key: { PK: avS(entry.PK), SK: avS(entry.SK) },
-                    UpdateExpression: "ADD #Count :inc SET #UpdatedAt=:now, #WindowType=if_not_exists(#WindowType,:wt), #WindowID=if_not_exists(#WindowID,:wid), #Identifier=if_not_exists(#Identifier,:id), #Resource=if_not_exists(#Resource,:res), #Operation=if_not_exists(#Operation,:op), #WindowStart=if_not_exists(#WindowStart,:ws), #TTL=if_not_exists(#TTL,:ttl), #CreatedAt=if_not_exists(#CreatedAt,:now)",
-                    ExpressionAttributeNames: {
-                        "#Count": "Count",
-                        "#UpdatedAt": "UpdatedAt",
-                        "#WindowType": "WindowType",
-                        "#WindowID": "WindowID",
-                        "#Identifier": "Identifier",
-                        "#Resource": "Resource",
-                        "#Operation": "Operation",
-                        "#WindowStart": "WindowStart",
-                        "#TTL": "TTL",
-                        "#CreatedAt": "CreatedAt",
-                    },
-                    ExpressionAttributeValues: {
-                        ":inc": avN(1),
-                        ":now": avS(nowStr),
-                        ":wt": avS(window.key),
-                        ":wid": avS(windowId),
-                        ":id": avS(k.identifier),
-                        ":res": avS(k.resource),
-                        ":op": avS(k.operation),
-                        ":ws": avN(unixSeconds(window.start)),
-                        ":ttl": avN(ttl),
-                    },
+                const builder = this._theorydb.updateBuilder(rateLimitModelName, {
+                    PK: entry.PK,
+                    SK: entry.SK,
                 });
+                builder.add("Count", 1);
+                builder.set("UpdatedAt", nowStr);
+                builder.setIfNotExists("WindowType", null, window.key);
+                builder.setIfNotExists("WindowID", null, windowId);
+                builder.setIfNotExists("Identifier", null, k.identifier);
+                builder.setIfNotExists("Resource", null, k.resource);
+                builder.setIfNotExists("Operation", null, k.operation);
+                builder.setIfNotExists("WindowStart", null, unixSeconds(window.start));
+                builder.setIfNotExists("TTL", null, ttl);
+                builder.setIfNotExists("CreatedAt", null, nowStr);
+                await builder.execute();
             }
             catch (err) {
                 throw wrapError(err, "internal_error", "failed to record request");
@@ -293,7 +321,6 @@ export class DynamoRateLimiter {
         const minuteWindow = getMinuteWindow(now);
         const hourWindow = getHourWindow(now);
         const cfg = this._config;
-        const tableName = cfg.tableName || rateLimitTableName();
         let minuteLimit = cfg.defaultRequestsPerMinute;
         let hourLimit = cfg.defaultRequestsPerHour;
         const override = cfg.identifierLimits[k.identifier];
@@ -317,30 +344,20 @@ export class DynamoRateLimiter {
             Operation: k.operation,
         };
         setKeysStrict(hourEntry);
-        let minuteCount = 0;
-        let hourCount = 0;
-        try {
-            const minuteOut = await this._dynamo.getItem({
-                TableName: tableName,
-                Key: { PK: avS(minuteEntry.PK), SK: avS(minuteEntry.SK) },
-                ConsistentRead: cfg.consistentRead,
-            });
-            minuteCount = getNumber(minuteOut.Item, "Count");
-        }
-        catch (err) {
-            throw wrapError(err, "internal_error", "failed to get minute usage");
-        }
-        try {
-            const hourOut = await this._dynamo.getItem({
-                TableName: tableName,
-                Key: { PK: avS(hourEntry.PK), SK: avS(hourEntry.SK) },
-                ConsistentRead: cfg.consistentRead,
-            });
-            hourCount = getNumber(hourOut.Item, "Count");
-        }
-        catch (err) {
-            throw wrapError(err, "internal_error", "failed to get hour usage");
-        }
+        const loadCount = async (pk, sk, errMsg) => {
+            try {
+                const resp = await this._theorydb.batchGet(rateLimitModelName, [{ PK: pk, SK: sk }], { consistentRead: cfg.consistentRead });
+                if (resp.unprocessedKeys.length > 0) {
+                    throw new Error("apptheory: unprocessed rate limit key");
+                }
+                return resp.items.length > 0 ? getCount(resp.items[0]) : 0;
+            }
+            catch (err) {
+                throw wrapError(err, "internal_error", errMsg);
+            }
+        };
+        const minuteCount = await loadCount(minuteEntry.PK, minuteEntry.SK, "failed to get minute usage");
+        const hourCount = await loadCount(hourEntry.PK, hourEntry.SK, "failed to get hour usage");
         return {
             identifier: k.identifier,
             resource: k.resource,
@@ -380,7 +397,6 @@ export class DynamoRateLimiter {
         }
         const limit = Math.floor(Number(this._strategy.getLimit(key)) || 0);
         const cfg = this._config;
-        const tableName = cfg.tableName || rateLimitTableName();
         const entry = {
             Identifier: key.identifier,
             WindowStart: unixSeconds(window.start),
@@ -390,25 +406,17 @@ export class DynamoRateLimiter {
         setKeysStrict(entry);
         const nowStr = formatRfc3339Nano(now);
         try {
-            const out = await this._dynamo.updateItem({
-                TableName: tableName,
-                Key: { PK: avS(entry.PK), SK: avS(entry.SK) },
-                UpdateExpression: "ADD #Count :inc SET #UpdatedAt=:now",
-                ConditionExpression: "#Count < :limit",
-                ExpressionAttributeNames: {
-                    "#Count": "Count",
-                    "#UpdatedAt": "UpdatedAt",
-                },
-                ExpressionAttributeValues: {
-                    ":inc": avN(1),
-                    ":now": avS(nowStr),
-                    ":limit": avN(limit),
-                },
-                ReturnValues: "ALL_NEW",
+            const builder = this._theorydb.updateBuilder(rateLimitModelName, {
+                PK: entry.PK,
+                SK: entry.SK,
             });
+            builder.add("Count", 1);
+            builder.set("UpdatedAt", nowStr);
+            builder.condition("Count", "<", limit);
+            builder.returnValues("ALL_NEW");
             return {
                 allowed: true,
-                currentCount: getNumber(out.Attributes, "Count"),
+                currentCount: getCount(await builder.execute()),
                 limit,
                 resetsAt: window.end,
             };
@@ -425,14 +433,13 @@ export class DynamoRateLimiter {
     }
     async _handleSingleWindowConditionFailed(key, now, window, limit, entry) {
         const cfg = this._config;
-        const tableName = cfg.tableName || rateLimitTableName();
-        let out;
+        let items;
         try {
-            out = await this._dynamo.getItem({
-                TableName: tableName,
-                Key: { PK: avS(entry.PK), SK: avS(entry.SK) },
-                ConsistentRead: cfg.consistentRead,
-            });
+            const resp = await this._theorydb.batchGet(rateLimitModelName, [{ PK: entry.PK, SK: entry.SK }], { consistentRead: cfg.consistentRead });
+            if (resp.unprocessedKeys.length > 0) {
+                throw new Error("apptheory: unprocessed rate limit key");
+            }
+            items = resp.items;
         }
         catch (err) {
             if (cfg.failOpen) {
@@ -440,8 +447,9 @@ export class DynamoRateLimiter {
             }
             throw wrapError(err, "internal_error", "failed to load rate limit entry");
         }
-        if (out.Item) {
-            const currentCount = getNumber(out.Item, "Count");
+        const item = items[0];
+        if (item) {
+            const currentCount = getCount(item);
             return {
                 allowed: false,
                 currentCount,
@@ -454,7 +462,6 @@ export class DynamoRateLimiter {
     }
     async _createSingleWindowEntry(key, now, window, limit) {
         const cfg = this._config;
-        const tableName = cfg.tableName || rateLimitTableName();
         if (limit <= 0) {
             return {
                 allowed: false,
@@ -475,31 +482,25 @@ export class DynamoRateLimiter {
             CreatedAt: formatRfc3339Nano(now),
             UpdatedAt: formatRfc3339Nano(now),
             TTL: unixSeconds(window.end) + cfg.ttlHours * 3600,
-            Metadata: key.metadata ?? {},
+            Metadata: sanitizeMetadata(key.metadata),
         };
         setKeysStrict(entry);
-        const item = {
-            PK: avS(entry.PK),
-            SK: avS(entry.SK),
-            Identifier: avS(entry.Identifier),
-            Resource: avS(entry.Resource),
-            Operation: avS(entry.Operation),
-            WindowStart: avN(entry.WindowStart),
-            WindowType: avS(entry.WindowType),
-            WindowID: avS(entry.WindowID),
-            Count: avN(entry.Count),
-            TTL: avN(entry.TTL),
-            CreatedAt: avS(entry.CreatedAt),
-            UpdatedAt: avS(entry.UpdatedAt),
-            Metadata: avStringMap(entry.Metadata),
-        };
         try {
-            await this._dynamo.putItem({
-                TableName: tableName,
-                Item: item,
-                ConditionExpression: "attribute_not_exists(#PK)",
-                ExpressionAttributeNames: { "#PK": "PK" },
-            });
+            await this._theorydb.create(rateLimitModelName, {
+                PK: entry.PK,
+                SK: entry.SK,
+                Identifier: entry.Identifier,
+                Resource: entry.Resource,
+                Operation: entry.Operation,
+                WindowStart: entry.WindowStart,
+                WindowType: entry.WindowType,
+                WindowID: entry.WindowID,
+                Count: entry.Count,
+                TTL: entry.TTL,
+                CreatedAt: entry.CreatedAt,
+                UpdatedAt: entry.UpdatedAt,
+                Metadata: entry.Metadata,
+            }, { ifNotExists: true });
             return { allowed: true, currentCount: 1, limit, resetsAt: window.end };
         }
         catch (err) {
@@ -532,18 +533,12 @@ export class DynamoRateLimiter {
             };
         }
         const cfg = this._config;
-        const tableName = cfg.tableName || rateLimitTableName();
-        if (typeof this._dynamo
-            .transactWriteItems !== "function") {
-            return await this._checkAndIncrementMultiWindowFallback(key);
-        }
         const nowStr = formatRfc3339Nano(now);
-        const transactItems = [];
+        const transactActions = [];
         for (const window of windows) {
             const maxAllowed = maxRequestsForWindow(strategy, window);
             if (maxAllowed <= 0) {
-                const err = new Error("apptheory: max_allowed is 0");
-                err.name = "ConditionalCheckFailedException";
+                const err = new TheorydbError("ErrConditionFailed", "apptheory: max_allowed is 0");
                 return await this._handleMultiWindowIncrementError(key, now, windows, primaryLimit, err);
             }
             const entry = {
@@ -555,44 +550,28 @@ export class DynamoRateLimiter {
             setKeysStrict(entry);
             const ttl = unixSeconds(window.end) + cfg.ttlHours * 3600;
             const windowId = formatWindowId(window.start);
-            transactItems.push({
-                Update: {
-                    TableName: tableName,
-                    Key: {
-                        PK: avS(entry.PK),
-                        SK: avS(entry.SK),
-                    },
-                    UpdateExpression: "ADD #Count :inc SET #UpdatedAt=:now, #WindowType=if_not_exists(#WindowType,:wt), #WindowID=if_not_exists(#WindowID,:wid), #Identifier=if_not_exists(#Identifier,:id), #Resource=if_not_exists(#Resource,:res), #Operation=if_not_exists(#Operation,:op), #WindowStart=if_not_exists(#WindowStart,:ws), #TTL=if_not_exists(#TTL,:ttl), #CreatedAt=if_not_exists(#CreatedAt,:now)",
-                    ConditionExpression: "attribute_not_exists(#Count) OR #Count < :maxAllowed",
-                    ExpressionAttributeNames: {
-                        "#Count": "Count",
-                        "#UpdatedAt": "UpdatedAt",
-                        "#WindowType": "WindowType",
-                        "#WindowID": "WindowID",
-                        "#Identifier": "Identifier",
-                        "#Resource": "Resource",
-                        "#Operation": "Operation",
-                        "#WindowStart": "WindowStart",
-                        "#TTL": "TTL",
-                        "#CreatedAt": "CreatedAt",
-                    },
-                    ExpressionAttributeValues: {
-                        ":inc": avN(1),
-                        ":now": avS(nowStr),
-                        ":wt": avS(window.key),
-                        ":wid": avS(windowId),
-                        ":id": avS(key.identifier),
-                        ":res": avS(key.resource),
-                        ":op": avS(key.operation),
-                        ":ws": avN(unixSeconds(window.start)),
-                        ":ttl": avN(ttl),
-                        ":maxAllowed": avN(maxAllowed),
-                    },
+            transactActions.push({
+                kind: "update",
+                model: rateLimitModelName,
+                key: { PK: entry.PK, SK: entry.SK },
+                updateFn: (builder) => {
+                    builder.add("Count", 1);
+                    builder.set("UpdatedAt", nowStr);
+                    builder.setIfNotExists("WindowType", null, window.key);
+                    builder.setIfNotExists("WindowID", null, windowId);
+                    builder.setIfNotExists("Identifier", null, key.identifier);
+                    builder.setIfNotExists("Resource", null, key.resource);
+                    builder.setIfNotExists("Operation", null, key.operation);
+                    builder.setIfNotExists("WindowStart", null, unixSeconds(window.start));
+                    builder.setIfNotExists("TTL", null, ttl);
+                    builder.setIfNotExists("CreatedAt", null, nowStr);
+                    builder.conditionNotExists("Count");
+                    builder.orCondition("Count", "<", maxAllowed);
                 },
             });
         }
         try {
-            await this._dynamo.transactWriteItems({ TransactItems: transactItems });
+            await this._theorydb.transactWrite(transactActions);
         }
         catch (err) {
             return await this._handleMultiWindowIncrementError(key, now, windows, primaryLimit, err);
@@ -610,12 +589,11 @@ export class DynamoRateLimiter {
                 Operation: key.operation,
             };
             setKeysStrict(entry);
-            const out = await this._dynamo.getItem({
-                TableName: tableName,
-                Key: { PK: avS(entry.PK), SK: avS(entry.SK) },
-                ConsistentRead: cfg.consistentRead,
-            });
-            currentCount = getNumber(out.Item, "Count");
+            const resp = await this._theorydb.batchGet(rateLimitModelName, [{ PK: entry.PK, SK: entry.SK }], { consistentRead: cfg.consistentRead });
+            if (resp.unprocessedKeys.length > 0) {
+                throw new Error("apptheory: unprocessed rate limit key");
+            }
+            currentCount = resp.items.length > 0 ? getCount(resp.items[0]) : 0;
         }
         catch (err) {
             if (cfg.failOpen) {
@@ -634,20 +612,6 @@ export class DynamoRateLimiter {
             limit: primaryLimit,
             resetsAt: primaryWindow.end,
         };
-    }
-    async _checkAndIncrementMultiWindowFallback(key) {
-        const decision = await this.checkLimit(key);
-        if (!decision.allowed)
-            return decision;
-        try {
-            await this.recordRequest(key);
-        }
-        catch (err) {
-            if (!this._config.failOpen) {
-                throw wrapError(err, "internal_error", "failed to record request");
-            }
-        }
-        return { ...decision, currentCount: decision.currentCount + 1 };
     }
     async _handleMultiWindowIncrementError(key, now, windows, primaryLimit, err) {
         const primary = windows[0];

@@ -652,6 +652,7 @@ type lambdaEnvelope struct {
 	RequestContext json.RawMessage `json:"requestContext"`
 	RouteKey       *string         `json:"routeKey"`
 	DetailType     *string         `json:"detail-type"`
+	DetailTypeAlt  *string         `json:"detailType"`
 }
 
 type recordProbe struct {
@@ -706,13 +707,16 @@ func (a *App) handleLambdaRecords(ctx context.Context, event json.RawMessage, en
 }
 
 func (a *App) handleLambdaEventBridge(ctx context.Context, event json.RawMessage, env lambdaEnvelope) (any, bool, error) {
-	if env.DetailType == nil {
+	if env.DetailType == nil && env.DetailTypeAlt == nil {
 		return nil, false, nil
 	}
 
 	var ev events.EventBridgeEvent
 	if err := json.Unmarshal(event, &ev); err != nil {
 		return nil, true, fmt.Errorf("apptheory: parse eventbridge event: %w", err)
+	}
+	if strings.TrimSpace(ev.DetailType) == "" && env.DetailTypeAlt != nil {
+		ev.DetailType = strings.TrimSpace(*env.DetailTypeAlt)
 	}
 	out, err := a.ServeEventBridge(ctx, ev)
 	return out, true, err

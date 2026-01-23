@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from apptheory.limited.dynamodb import DynamoDBClient
 from apptheory.limited.errors import ErrorType, RateLimiterError, new_error, wrap_error
 from apptheory.limited.limiter import DynamoRateLimiter, default_config
 from apptheory.limited.models import (
@@ -34,7 +33,6 @@ from apptheory.limited.types import (
 __all__ = [
     "AtomicRateLimiter",
     "Config",
-    "DynamoDBClient",
     "DynamoRateLimiter",
     "ErrorType",
     "FixedWindowStrategy",

@@ -617,8 +617,8 @@ async function runFixture(fixture) {
     return compareFixture(fixture, actual, effects);
   }
   if (tier === "m1") {
-    const { actualOutput } = await runFixtureM1(fixture);
-    return compareFixtureOutputJson(fixture, actualOutput);
+    const { actualOutput, actualError } = await runFixtureM1(fixture);
+    return compareFixtureM1Result(fixture, { actualOutput, actualError });
   }
   if (tier === "m2") {
     const { actual, wsCalls } = await runFixtureM2(fixture);
@@ -882,6 +882,59 @@ function compareFixtureOutputJson(fixture, actualOutput) {
   return { ok: true };
 }
 
+function compareFixtureM1Result(fixture, { actualOutput, actualError }) {
+  const expect = fixture.expect ?? {};
+  const hasError = Object.prototype.hasOwnProperty.call(expect, "error");
+  const hasOutputJson = Object.prototype.hasOwnProperty.call(expect, "output_json");
+
+  if (hasError) {
+    if (hasOutputJson) {
+      return {
+        ok: false,
+        reason: "fixture expect cannot set both error and output_json",
+        expected_error: expect.error,
+        actual_error: actualError ? { message: String(actualError.message ?? actualError) } : null,
+      };
+    }
+
+    if (!actualError) {
+      return { ok: false, reason: "expected error, got none", expected_error: expect.error, actual_error: null };
+    }
+
+    const expectedMsg = String(expect.error?.message ?? "").trim();
+    const actualMsg = String(actualError.message ?? actualError).trim();
+    if (expectedMsg && actualMsg !== expectedMsg) {
+      return {
+        ok: false,
+        reason: "error mismatch",
+        expected_error: expect.error,
+        actual_error: { message: actualMsg },
+      };
+    }
+    return { ok: true };
+  }
+
+  if (!hasOutputJson) {
+    return {
+      ok: false,
+      reason: "missing expect.output_json or expect.error",
+      expected_output_json: null,
+      actual_output_json: actualOutput,
+      actual_error: actualError ? { message: String(actualError.message ?? actualError) } : null,
+    };
+  }
+  if (actualError) {
+    return {
+      ok: false,
+      reason: "unexpected error",
+      expected_output_json: expect.output_json,
+      actual_output_json: actualOutput,
+      actual_error: { message: String(actualError.message ?? actualError) },
+    };
+  }
+  return compareFixtureOutputJson(fixture, actualOutput);
+}
+
 function compareWebSocketCalls(fixture, wsCalls) {
   const expected = fixture.expect?.ws_calls ?? [];
   const actual = wsCalls?.calls ?? [];
@@ -1126,8 +1179,14 @@ async function runFixtureM1(fixture) {
     throw new Error("fixture missing input.aws_event");
   }
 
-  const actualOutput = await app.handleLambda(awsEvent.event ?? {}, {});
-  return { actualOutput };
+  let actualOutput = null;
+  let actualError = null;
+  try {
+    actualOutput = await app.handleLambda(awsEvent.event ?? {}, {});
+  } catch (err) {
+    actualError = err;
+  }
+  return { actualOutput, actualError };
 }
 
 function builtInWebSocketHandler(runtime, name) {
@@ -1982,9 +2041,18 @@ async function main() {
     const { fixture, result } = f;
     console.error(`FAIL ${fixture.id} — ${fixture.name}`);
     console.error(`  ${result.reason}`);
-    if ("expected_output_json" in result) {
-      console.error(`  expected.output_json: ${stableStringify(result.expected_output_json)}`);
-      console.error(`  got.output_json: ${stableStringify(result.actual_output_json)}`);
+    if ("expected_error" in result || "expected_output_json" in result) {
+      if ("expected_error" in result) {
+        console.error(`  expected.error: ${stableStringify(result.expected_error)}`);
+        console.error(`  got.error: ${stableStringify(result.actual_error)}`);
+      }
+      if ("expected_output_json" in result) {
+        console.error(`  expected.output_json: ${stableStringify(result.expected_output_json)}`);
+        console.error(`  got.output_json: ${stableStringify(result.actual_output_json)}`);
+      }
+      if ("actual_error" in result && !("expected_error" in result)) {
+        console.error(`  got.error: ${stableStringify(result.actual_error)}`);
+      }
     } else {
       console.error(`  expected: ${stableStringify(result.expected)}`);
       console.error(`  got: ${stableStringify(debugActualForExpected(result.actual, result.expected))}`);

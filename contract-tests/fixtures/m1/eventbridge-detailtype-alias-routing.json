@@ -1,0 +1,29 @@
+{
+  "id": "m1.eventbridge.detailtype_alias_routing",
+  "tier": "m1",
+  "name": "EventBridge: route by source/detailType when detailType is camelCase",
+  "setup": {
+    "eventbridge": [
+      { "source": "aws.events", "detail_type": "Scheduled Event", "handler": "eventbridge_static_a" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "eventbridge",
+      "event": {
+        "version": "0",
+        "id": "evt-1",
+        "detailType": "Scheduled Event",
+        "source": "aws.events",
+        "account": "000000000000",
+        "time": "1970-01-01T00:00:00Z",
+        "region": "us-east-1",
+        "resources": [],
+        "detail": {}
+      }
+    }
+  },
+  "expect": {
+    "output_json": { "handler": "a" }
+  }
+}
