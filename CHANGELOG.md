@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0-rc.5](https://github.com/theory-cloud/AppTheory/compare/v0.2.0-rc.4...v0.2.0-rc.5) (2026-01-23)
+
+
+### Features
+
+* TableTheory v1.2.1 + hard drift prevention ([d89b679](https://github.com/theory-cloud/AppTheory/commit/d89b67921649b4cff7d95c69304ce8b58558f791))
+
 ## [0.2.0-rc.4](https://github.com/theory-cloud/AppTheory/compare/v0.2.0-rc.3...v0.2.0-rc.4) (2026-01-23)
 
 
