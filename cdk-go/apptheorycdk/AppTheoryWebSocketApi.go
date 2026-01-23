@@ -2,18 +2,20 @@ package apptheorycdk
 
 import (
 	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
-
 	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/jsii"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigatewayv2"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
 	"github.com/aws/constructs-go/constructs/v10"
-
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
 
 type AppTheoryWebSocketApi interface {
 	constructs.Construct
+	AccessLogGroup() awslogs.ILogGroup
 	Api() awsapigatewayv2.WebSocketApi
+	ConnectionTable() awsdynamodb.ITable
 	// The tree node.
 	Node() constructs.Node
 	Stage() awsapigatewayv2.WebSocketStage
@@ -26,11 +28,31 @@ type jsiiProxy_AppTheoryWebSocketApi struct {
 	internal.Type__constructsConstruct
 }
 
+func (j *jsiiProxy_AppTheoryWebSocketApi) AccessLogGroup() awslogs.ILogGroup {
+	var returns awslogs.ILogGroup
+	_jsii_.Get(
+		j,
+		"accessLogGroup",
+		&returns,
+	)
+	return returns
+}
+
 func (j *jsiiProxy_AppTheoryWebSocketApi) Api() awsapigatewayv2.WebSocketApi {
 	var returns awsapigatewayv2.WebSocketApi
 	_jsii_.Get(
 		j,
 		"api",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryWebSocketApi) ConnectionTable() awsdynamodb.ITable {
+	var returns awsdynamodb.ITable
+	_jsii_.Get(
+		j,
+		"connectionTable",
 		&returns,
 	)
 	return returns

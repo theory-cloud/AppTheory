@@ -10,6 +10,7 @@ const ec2 = require("aws-cdk-lib/aws-ec2");
 const events = require("aws-cdk-lib/aws-events");
 const kms = require("aws-cdk-lib/aws-kms");
 const lambda = require("aws-cdk-lib/aws-lambda");
+const logs = require("aws-cdk-lib/aws-logs");
 const route53 = require("aws-cdk-lib/aws-route53");
 
 const apptheory = require("../lib");
@@ -105,6 +106,33 @@ test("AppTheoryWebSocketApi synthesizes expected template", () => {
     writeSnapshot("websocket-api", template);
   } else {
     expectSnapshot("websocket-api", template);
+  }
+});
+
+test("AppTheoryWebSocketApi (parity) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryWebSocketApi(stack, "WebSocketApi", {
+    handler: fn,
+    apiName: "apptheory-test",
+    stageName: "dev",
+    enableConnectionTable: true,
+    enableAccessLogging: true,
+    accessLogRetention: logs.RetentionDays.ONE_WEEK,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("websocket-api-parity", template);
+  } else {
+    expectSnapshot("websocket-api-parity", template);
   }
 });
 
@@ -230,6 +258,46 @@ test("AppTheoryEventBusTable synthesizes expected template", () => {
     writeSnapshot("eventbus-table", template);
   } else {
     expectSnapshot("eventbus-table", template);
+  }
+});
+
+test("AppTheoryDynamoTable synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryDynamoTable(stack, "Table", {
+    tableName: "apptheory-test-table",
+    partitionKeyName: "PK",
+    sortKeyName: "SK",
+    timeToLiveAttribute: "ttl",
+    enableStream: true,
+    streamViewType: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+    globalSecondaryIndexes: [
+      {
+        indexName: "tenant-timestamp-index",
+        partitionKeyName: "tenant_id",
+        sortKeyName: "published_at",
+      },
+      {
+        indexName: "event-id-index",
+        partitionKeyName: "id",
+      },
+    ],
+    grantReadWriteTo: [fn],
+    grantStreamReadTo: [fn],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("dynamo-table", template);
+  } else {
+    expectSnapshot("dynamo-table", template);
   }
 });
 
