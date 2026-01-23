@@ -4,71 +4,95 @@ import (
 	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
 	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/jsii"
 
-	"github.com/aws/aws-cdk-go/awscdk/v2/awskms"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsssm"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awscertificatemanager"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awscloudfront"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
 
-type AppTheoryKmsKey interface {
+type AppTheorySsrSite interface {
 	constructs.Construct
-	Alias() awskms.Alias
-	Key() awskms.IKey
-	KeyArn() *string
-	KeyId() *string
+	AssetsBucket() awss3.IBucket
+	AssetsKeyPrefix() *string
+	AssetsManifestKey() *string
+	Certificate() awscertificatemanager.ICertificate
+	Distribution() awscloudfront.Distribution
+	LogsBucket() awss3.IBucket
 	// The tree node.
 	Node() constructs.Node
-	SsmParameter() awsssm.StringParameter
+	SsrUrl() awslambda.FunctionUrl
 	// Returns a string representation of this construct.
 	ToString() *string
 }
 
-// The jsii proxy struct for AppTheoryKmsKey
-type jsiiProxy_AppTheoryKmsKey struct {
+// The jsii proxy struct for AppTheorySsrSite
+type jsiiProxy_AppTheorySsrSite struct {
 	internal.Type__constructsConstruct
 }
 
-func (j *jsiiProxy_AppTheoryKmsKey) Alias() awskms.Alias {
-	var returns awskms.Alias
+func (j *jsiiProxy_AppTheorySsrSite) AssetsBucket() awss3.IBucket {
+	var returns awss3.IBucket
 	_jsii_.Get(
 		j,
-		"alias",
+		"assetsBucket",
 		&returns,
 	)
 	return returns
 }
 
-func (j *jsiiProxy_AppTheoryKmsKey) Key() awskms.IKey {
-	var returns awskms.IKey
-	_jsii_.Get(
-		j,
-		"key",
-		&returns,
-	)
-	return returns
-}
-
-func (j *jsiiProxy_AppTheoryKmsKey) KeyArn() *string {
+func (j *jsiiProxy_AppTheorySsrSite) AssetsKeyPrefix() *string {
 	var returns *string
 	_jsii_.Get(
 		j,
-		"keyArn",
+		"assetsKeyPrefix",
 		&returns,
 	)
 	return returns
 }
 
-func (j *jsiiProxy_AppTheoryKmsKey) KeyId() *string {
+func (j *jsiiProxy_AppTheorySsrSite) AssetsManifestKey() *string {
 	var returns *string
 	_jsii_.Get(
 		j,
-		"keyId",
+		"assetsManifestKey",
 		&returns,
 	)
 	return returns
 }
 
-func (j *jsiiProxy_AppTheoryKmsKey) Node() constructs.Node {
+func (j *jsiiProxy_AppTheorySsrSite) Certificate() awscertificatemanager.ICertificate {
+	var returns awscertificatemanager.ICertificate
+	_jsii_.Get(
+		j,
+		"certificate",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheorySsrSite) Distribution() awscloudfront.Distribution {
+	var returns awscloudfront.Distribution
+	_jsii_.Get(
+		j,
+		"distribution",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheorySsrSite) LogsBucket() awss3.IBucket {
+	var returns awss3.IBucket
+	_jsii_.Get(
+		j,
+		"logsBucket",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheorySsrSite) Node() constructs.Node {
 	var returns constructs.Node
 	_jsii_.Get(
 		j,
@@ -78,26 +102,27 @@ func (j *jsiiProxy_AppTheoryKmsKey) Node() constructs.Node {
 	return returns
 }
 
-func (j *jsiiProxy_AppTheoryKmsKey) SsmParameter() awsssm.StringParameter {
-	var returns awsssm.StringParameter
+func (j *jsiiProxy_AppTheorySsrSite) SsrUrl() awslambda.FunctionUrl {
+	var returns awslambda.FunctionUrl
 	_jsii_.Get(
 		j,
-		"ssmParameter",
+		"ssrUrl",
 		&returns,
 	)
 	return returns
 }
 
-func NewAppTheoryKmsKey(scope constructs.Construct, id *string, props *AppTheoryKmsKeyProps) AppTheoryKmsKey {
+
+func NewAppTheorySsrSite(scope constructs.Construct, id *string, props *AppTheorySsrSiteProps) AppTheorySsrSite {
 	_init_.Initialize()
 
-	if err := validateNewAppTheoryKmsKeyParameters(scope, id, props); err != nil {
+	if err := validateNewAppTheorySsrSiteParameters(scope, id, props); err != nil {
 		panic(err)
 	}
-	j := jsiiProxy_AppTheoryKmsKey{}
+	j := jsiiProxy_AppTheorySsrSite{}
 
 	_jsii_.Create(
-		"@theory-cloud/apptheory-cdk.AppTheoryKmsKey",
+		"@theory-cloud/apptheory-cdk.AppTheorySsrSite",
 		[]interface{}{scope, id, props},
 		&j,
 	)
@@ -105,11 +130,11 @@ func NewAppTheoryKmsKey(scope constructs.Construct, id *string, props *AppTheory
 	return &j
 }
 
-func NewAppTheoryKmsKey_Override(a AppTheoryKmsKey, scope constructs.Construct, id *string, props *AppTheoryKmsKeyProps) {
+func NewAppTheorySsrSite_Override(a AppTheorySsrSite, scope constructs.Construct, id *string, props *AppTheorySsrSiteProps) {
 	_init_.Initialize()
 
 	_jsii_.Create(
-		"@theory-cloud/apptheory-cdk.AppTheoryKmsKey",
+		"@theory-cloud/apptheory-cdk.AppTheorySsrSite",
 		[]interface{}{scope, id, props},
 		a,
 	)
@@ -132,16 +157,16 @@ func NewAppTheoryKmsKey_Override(a AppTheoryKmsKey, scope constructs.Construct, 
 // this type-testing method instead.
 //
 // Returns: true if `x` is an object created from a class which extends `Construct`.
-func AppTheoryKmsKey_IsConstruct(x interface{}) *bool {
+func AppTheorySsrSite_IsConstruct(x interface{}) *bool {
 	_init_.Initialize()
 
-	if err := validateAppTheoryKmsKey_IsConstructParameters(x); err != nil {
+	if err := validateAppTheorySsrSite_IsConstructParameters(x); err != nil {
 		panic(err)
 	}
 	var returns *bool
 
 	_jsii_.StaticInvoke(
-		"@theory-cloud/apptheory-cdk.AppTheoryKmsKey",
+		"@theory-cloud/apptheory-cdk.AppTheorySsrSite",
 		"isConstruct",
 		[]interface{}{x},
 		&returns,
@@ -150,7 +175,7 @@ func AppTheoryKmsKey_IsConstruct(x interface{}) *bool {
 	return returns
 }
 
-func (a *jsiiProxy_AppTheoryKmsKey) ToString() *string {
+func (a *jsiiProxy_AppTheorySsrSite) ToString() *string {
 	var returns *string
 
 	_jsii_.Invoke(
@@ -162,3 +187,4 @@ func (a *jsiiProxy_AppTheoryKmsKey) ToString() *string {
 
 	return returns
 }
+
