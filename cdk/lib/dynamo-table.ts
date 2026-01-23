@@ -48,10 +48,15 @@ export class AppTheoryDynamoTable extends Construct {
 
     const billingMode = props.billingMode ?? dynamodb.BillingMode.PAY_PER_REQUEST;
     const removalPolicy = props.removalPolicy ?? RemovalPolicy.RETAIN;
-    const ttlAttribute = props.timeToLiveAttribute ?? "ttl";
+    const ttlAttribute =
+      props.timeToLiveAttribute === undefined ? undefined : String(props.timeToLiveAttribute).trim();
     const enablePITR = props.enablePointInTimeRecovery ?? true;
     const encryption = props.encryption ?? dynamodb.TableEncryption.AWS_MANAGED;
     const enableStream = props.enableStream ?? false;
+
+    if (props.timeToLiveAttribute !== undefined && !ttlAttribute) {
+      throw new Error("AppTheoryDynamoTable requires timeToLiveAttribute to be a non-empty string when provided");
+    }
 
     if (encryption === dynamodb.TableEncryption.CUSTOMER_MANAGED && !props.encryptionKey) {
       throw new Error("AppTheoryDynamoTable requires encryptionKey when encryption is CUSTOMER_MANAGED");
@@ -72,7 +77,7 @@ export class AppTheoryDynamoTable extends Construct {
         name: props.sortKeyName,
         type: props.sortKeyType ?? dynamodb.AttributeType.STRING,
       },
-      timeToLiveAttribute: ttlAttribute,
+      ...(ttlAttribute ? { timeToLiveAttribute: ttlAttribute } : {}),
       removalPolicy,
       pointInTimeRecovery: enablePITR,
       encryption,
@@ -127,4 +132,3 @@ export class AppTheoryDynamoTable extends Construct {
     }
   }
 }
-
