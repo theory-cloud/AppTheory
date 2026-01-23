@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/theory-cloud/AppTheory/compare/v0.2.1...v0.3.0) (2026-01-23)
+
+
+### Features
+
+* **cdk:** add DynamoTable + websocket parity ([a243db3](https://github.com/theory-cloud/AppTheory/commit/a243db3f93f5dbe29af88104a4ad38e0e0dcc381))
+* **cdk:** Lift parity (WebSocket + DynamoDB tables) ([b1b3c66](https://github.com/theory-cloud/AppTheory/commit/b1b3c6666f75d51faa7306e19f4ce306c2ffdb24))
+
 ## [0.2.0-rc.7](https://github.com/theory-cloud/AppTheory/compare/v0.2.0-rc.6...v0.2.0-rc.7) (2026-01-23)
 
 
