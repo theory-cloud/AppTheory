@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+import inspect
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 from apptheory.aws_http import (
     alb_target_group_response_from_response,
@@ -30,18 +32,38 @@ from apptheory.response import Response, normalize_response
 from apptheory.router import Router
 from apptheory.util import canonicalize_headers, clone_query
 
-Handler = Callable[[Context], Response]
-Middleware = Callable[[Context, Handler], Response]
-AuthHook = Callable[[Context], str]
-PolicyHook = Callable[[Context], "PolicyDecision | None"]
-EventHandler = Callable[[EventContext, dict[str, Any]], Any]
-EventMiddleware = Callable[[EventContext, dict[str, Any], Callable[[], Any]], Any]
-SQSHandler = Callable[[EventContext, dict[str, Any]], None]
-KinesisHandler = Callable[[EventContext, dict[str, Any]], None]
-SNSHandler = Callable[[EventContext, dict[str, Any]], Any]
-DynamoDBStreamHandler = Callable[[EventContext, dict[str, Any]], None]
-EventBridgeHandler = Callable[[EventContext, dict[str, Any]], Any]
-WebSocketHandler = Callable[[Context], Response]
+T = TypeVar("T")
+
+
+def _resolve(value: T | Awaitable[T]) -> T:
+    if not inspect.isawaitable(value):
+        return value
+
+    async def _await_any(awaitable: Awaitable[T]) -> T:
+        return await awaitable
+
+    try:
+        return asyncio.run(_await_any(value))
+    except RuntimeError as exc:  # pragma: no cover
+        raise RuntimeError(
+            "apptheory: cannot resolve awaitable from sync code while an event loop is running; "
+            "call App.serve()/handle_lambda() from a synchronous entrypoint"
+        ) from exc
+
+
+Handler = Callable[[Context], Response | Awaitable[Response]]
+NextHandler = Callable[[Context], Response]
+Middleware = Callable[[Context, NextHandler], Response | Awaitable[Response]]
+AuthHook = Callable[[Context], str | Awaitable[str]]
+PolicyHook = Callable[[Context], "PolicyDecision | None | Awaitable[PolicyDecision | None]"]
+EventHandler = Callable[[EventContext, dict[str, Any]], object | Awaitable[object]]
+EventMiddleware = Callable[[EventContext, dict[str, Any], Callable[[], object]], object | Awaitable[object]]
+SQSHandler = Callable[[EventContext, dict[str, Any]], None | Awaitable[None]]
+KinesisHandler = Callable[[EventContext, dict[str, Any]], None | Awaitable[None]]
+SNSHandler = Callable[[EventContext, dict[str, Any]], object | Awaitable[object]]
+DynamoDBStreamHandler = Callable[[EventContext, dict[str, Any]], None | Awaitable[None]]
+EventBridgeHandler = Callable[[EventContext, dict[str, Any]], object | Awaitable[object]]
+WebSocketHandler = Callable[[Context], Response | Awaitable[Response]]
 
 
 @dataclass(slots=True)
@@ -176,6 +198,10 @@ class App:
         self._router.add(method, pattern, handler, auth_required=auth_required)
         return self
 
+    def handle_strict(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
+        self._router.add_strict(method, pattern, handler, auth_required=auth_required)
+        return self
+
     def get(self, pattern: str, handler: Handler) -> App:
         return self.handle("GET", pattern, handler)
 
@@ -261,8 +287,11 @@ class App:
                 continue
 
             def apply_one(next_handler: Handler, mw: Middleware = middleware) -> Handler:
-                def _wrapped(ctx: Context) -> Response:
-                    return mw(ctx, next_handler)
+                def _wrapped(ctx: Context) -> Response | Awaitable[Response]:
+                    def next_sync(inner_ctx: Context) -> Response:
+                        return _resolve(next_handler(inner_ctx))
+
+                    return mw(ctx, next_sync)
 
                 return _wrapped
 
@@ -277,7 +306,7 @@ class App:
 
             def apply_one(next_handler: EventHandler, mw: EventMiddleware = middleware) -> EventHandler:
                 def _wrapped(ctx: EventContext, event: dict[str, Any]) -> Any:
-                    return mw(ctx, event, lambda: next_handler(ctx, event))
+                    return mw(ctx, event, lambda: _resolve(next_handler(ctx, event)))
 
                 return _wrapped
 
@@ -315,7 +344,7 @@ class App:
 
         handler = self._apply_middlewares(match.handler)
         try:
-            resp = handler(request_ctx)
+            resp = _resolve(handler(request_ctx))
         except AppError as exc:
             return error_response(exc.code, exc.message)
         except Exception:  # noqa: BLE001
@@ -334,7 +363,7 @@ class App:
             return None
 
         try:
-            decision = self._policy_hook(request_ctx)
+            decision = _resolve(self._policy_hook(request_ctx))
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, AppError) else "app.internal"
             return response_for_error_with_request_id(exc, request_id), error_code
@@ -364,7 +393,7 @@ class App:
             return resp, "app.unauthorized"
 
         try:
-            identity = self._auth_hook(request_ctx)
+            identity = _resolve(self._auth_hook(request_ctx))
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, AppError) else "app.internal"
             return response_for_error_with_request_id(exc, request_id), error_code
@@ -474,7 +503,7 @@ class App:
 
         handler = self._apply_middlewares(match.handler)
         try:
-            resp = handler(request_ctx)
+            resp = _resolve(handler(request_ctx))
         except AppError as exc:
             return finish(error_response_with_request_id(exc.code, exc.message, request_id=request_id), exc.code)
         except Exception as exc:  # noqa: BLE001
@@ -652,7 +681,7 @@ class App:
         )
 
         try:
-            resp = handler(request_ctx)
+            resp = _resolve(handler(request_ctx))
         except Exception as exc:  # noqa: BLE001
             return apigw_proxy_response_from_response(response_for_error(exc))
 
@@ -708,7 +737,7 @@ class App:
             if not isinstance(record, dict):
                 continue
             try:
-                wrapped(evt_ctx, record)
+                _resolve(wrapped(evt_ctx, record))
             except Exception:  # noqa: BLE001
                 msg_id = str(record.get("messageId") or "").strip()
                 if msg_id:
@@ -742,7 +771,7 @@ class App:
         if handler is None:
             return None
         wrapped = self._apply_event_middlewares(handler)
-        return wrapped(self._event_context(ctx), event)
+        return _resolve(wrapped(self._event_context(ctx), event))
 
     def _dynamodb_handler_for_event(self, event: dict[str, Any]) -> DynamoDBStreamHandler | None:
         records = event.get("Records") or []
@@ -780,7 +809,7 @@ class App:
             if not isinstance(record, dict):
                 continue
             try:
-                wrapped(evt_ctx, record)
+                _resolve(wrapped(evt_ctx, record))
             except Exception:  # noqa: BLE001
                 event_id = str(record.get("eventID") or "").strip()
                 if event_id:
@@ -824,7 +853,7 @@ class App:
             if not isinstance(record, dict):
                 continue
             try:
-                wrapped(evt_ctx, record)
+                _resolve(wrapped(evt_ctx, record))
             except Exception:  # noqa: BLE001
                 event_id = str(record.get("eventID") or "").strip()
                 if event_id:
@@ -861,7 +890,7 @@ class App:
         for record in records:
             if not isinstance(record, dict):
                 continue
-            outputs.append(wrapped(evt_ctx, record))
+            outputs.append(_resolve(wrapped(evt_ctx, record)))
 
         return outputs
 

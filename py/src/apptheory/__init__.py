@@ -28,7 +28,7 @@ from apptheory.clock import Clock, ManualClock, RealClock
 from apptheory.cloudfront import client_ip, origin_url
 from apptheory.context import Context, EventContext, WebSocketContext
 from apptheory.errors import AppError
-from apptheory.ids import IdGenerator, ManualIdGenerator, RealIdGenerator
+from apptheory.ids import IDGenerator, IdGenerator, ManualIdGenerator, RealIdGenerator
 from apptheory.middleware import TimeoutConfig, timeout_middleware
 from apptheory.naming import base_name, normalize_stage, resource_name
 from apptheory.request import Request
@@ -63,6 +63,7 @@ __all__ = [
     "EventContext",
     "FakeWebSocketClientFactory",
     "FakeWebSocketManagementClient",
+    "IDGenerator",
     "IdGenerator",
     "Limits",
     "ManualClock",

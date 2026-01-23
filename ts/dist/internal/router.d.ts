@@ -23,6 +23,7 @@ export interface Match<THandler> {
 }
 export declare class Router<THandler> {
     private readonly _routes;
+    addStrict(method: string, pattern: string, handler: THandler, options?: RouteOptions): void;
     add(method: string, pattern: string, handler: THandler, options?: RouteOptions): void;
     match(method: string, path: string): {
         match: {

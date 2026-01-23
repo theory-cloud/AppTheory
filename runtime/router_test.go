@@ -35,7 +35,7 @@ func TestParseRouteSegment(t *testing.T) {
 }
 
 func TestParseRouteSegments_RejectsProxyNotLast(t *testing.T) {
-	if _, _, ok := parseRouteSegments([]string{"{proxy+}", "x"}); ok {
+	if _, _, err := parseRouteSegments([]string{"{proxy+}", "x"}); err == nil {
 		t.Fatal("expected proxy segment not last to be rejected")
 	}
 }
@@ -74,5 +74,17 @@ func TestFormatAllowHeader_DedupAndSort(t *testing.T) {
 	got := formatAllowHeader([]string{"post", "GET", "  ", "get"})
 	if got != "GET, POST" {
 		t.Fatalf("unexpected allow header: %q", got)
+	}
+}
+
+func TestRouterAddStrict_RejectsInvalidPatterns(t *testing.T) {
+	r := newRouter()
+
+	err := r.addStrict("GET", "/{proxy+}/x", func(*Context) (*Response, error) { return Text(200, "ok"), nil }, routeOptions{})
+	if err == nil {
+		t.Fatal("expected addStrict to reject invalid proxy-not-last pattern")
+	}
+	if len(r.routes) != 0 {
+		t.Fatalf("expected router to have 0 routes after failed addStrict, got %d", len(r.routes))
 	}
 }
