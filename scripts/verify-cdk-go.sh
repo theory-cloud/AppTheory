@@ -12,7 +12,6 @@ if [[ ! -d "cdk-go/apptheorycdk" ]]; then
   exit 1
 fi
 
-(cd cdk-go/apptheorycdk && go test ./... >/dev/null)
+go test ./cdk-go/apptheorycdk/... >/dev/null
 
 echo "cdk-go: PASS"
-
