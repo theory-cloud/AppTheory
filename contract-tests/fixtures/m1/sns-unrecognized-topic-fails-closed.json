@@ -1,0 +1,32 @@
+{
+  "id": "m1.sns.unrecognized_topic_fails_closed",
+  "tier": "m1",
+  "name": "SNS: unrecognized topic fails closed (error)",
+  "setup": {
+    "sns": [{ "topic": "topic-a", "handler": "sns_static_a" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "sns",
+      "event": {
+        "Records": [
+          {
+            "EventSource": "aws:sns",
+            "EventVersion": "1.0",
+            "EventSubscriptionArn": "",
+            "Sns": {
+              "MessageId": "sns-1",
+              "TopicArn": "arn:aws:sns:us-east-1:000000000000:topic-b",
+              "Subject": "subject",
+              "Message": "hello",
+              "Timestamp": "1970-01-01T00:00:00Z"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "expect": {
+    "error": { "message": "apptheory: unrecognized sns topic" }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": "m14.streaming.headers_finalized_after_first_chunk",
+  "tier": "m14",
+  "name": "Streaming: headers/cookies are finalized before first chunk",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/stream", "handler": "stream_mutate_headers_after_first_chunk" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/stream",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["text/plain; charset=utf-8"],
+        "x-phase": ["before"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": ["a=b; Path=/"],
+      "chunks": [
+        { "encoding": "utf8", "value": "a" },
+        { "encoding": "utf8", "value": "b" }
+      ],
+      "is_base64": false
+    }
+  }
+}
+

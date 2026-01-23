@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from apptheory.response import Response, normalize_response
+from apptheory.util import canonicalize_headers
 
 
 @dataclass(slots=True)
@@ -32,6 +33,8 @@ def status_for_error_code(code: str) -> int:
             return 409
         case "app.too_large":
             return 413
+        case "app.timeout":
+            return 408
         case "app.rate_limited":
             return 429
         case "app.overloaded":
@@ -43,7 +46,7 @@ def status_for_error_code(code: str) -> int:
 
 
 def error_response(code: str, message: str, *, headers: dict[str, Any] | None = None) -> Response:
-    headers_out: dict[str, Any] = dict(headers or {})
+    headers_out = canonicalize_headers(headers or {})
     headers_out["content-type"] = ["application/json; charset=utf-8"]
 
     body = json.dumps(
@@ -70,7 +73,7 @@ def error_response_with_request_id(
     headers: dict[str, Any] | None = None,
     request_id: str = "",
 ) -> Response:
-    headers_out: dict[str, Any] = dict(headers or {})
+    headers_out = canonicalize_headers(headers or {})
     headers_out["content-type"] = ["application/json; charset=utf-8"]
 
     error: dict[str, Any] = {"code": code, "message": message}

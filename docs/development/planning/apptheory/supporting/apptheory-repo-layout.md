@@ -8,23 +8,24 @@ Status: frozen for milestone `M0`.
 ## Top-level layout
 
 ```text
-/                       # Go SDK/runtime (Go toolchain 1.25.6)
+/                       # monorepo root (Go module + TS + Python)
   docs/                    # documentation + planning (stable)
   contract-tests/          # shared fixtures + runners (stable)
   examples/                # deployable demos (CDK, templates)
   scripts/                 # repo verifiers (build/lint/test/release checks)
 
+  runtime/                 # Go SDK/runtime package (Go toolchain 1.25.6)
+  testkit/                 # Go test helpers for the runtime contract
   ts/                      # TypeScript SDK/runtime (Node.js 24)
   py/                      # Python SDK/runtime (Python 3.14)
 
-  internal/                # Go internal implementation (not part of public API)
   pkg/                     # Go public packages (stable API surface)
   cmd/                     # Go CLIs (optional)
 ```
 
 Conventions:
 
-- Go “user entrypoint” re-exports live at repo root (example: `apptheory.go`) and delegate to `internal/...`.
+- Go runtime lives at `runtime/` (`import "github.com/theory-cloud/apptheory/runtime"`).
 - TypeScript is ESM-first. Python uses `src/` layout with `pyproject.toml`.
 - Contract fixtures are language-neutral and owned by `contract-tests/`.
 

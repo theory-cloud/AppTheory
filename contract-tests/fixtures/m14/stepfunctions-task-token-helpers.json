@@ -1,0 +1,43 @@
+{
+  "id": "m14.stepfunctions.task_token_helpers",
+  "tier": "m14",
+  "name": "Step Functions task token helpers: extraction + event builder",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/sfn-task-token",
+        "handler": "stepfunctions_task_token_helpers"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/sfn-task-token",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "from_taskToken": "tok-a",
+        "from_TaskToken": "tok-b",
+        "from_task_token": "tok-c",
+        "from_precedence": "tok-a",
+        "built": { "foo": "bar", "taskToken": "tok-built" }
+      },
+      "is_base64": false
+    }
+  }
+}
+

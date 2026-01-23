@@ -3,7 +3,11 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-expected_version="$(tr -d ' \t\r\n' < VERSION)"
+expected_version="$(./scripts/read-version.sh)"
+expected_py_version="${expected_version}"
+if [[ "${expected_py_version}" == *"-rc."* ]]; then
+  expected_py_version="${expected_py_version/-rc./rc}"
+fi
 
 epoch="${SOURCE_DATE_EPOCH:-}"
 if [[ -z "${epoch}" ]]; then
@@ -42,17 +46,17 @@ for file_path in Path(os.environ["TMP_PY_DIR"]).rglob("*"):
 PY
 fi
 
-rm -f "dist/apptheory-${expected_version}-"*.whl
-rm -f "dist/apptheory-${expected_version}.tar.gz"
+rm -f "dist/apptheory-${expected_py_version}-"*.whl
+rm -f "dist/apptheory-${expected_py_version}.tar.gz"
 
 py/.venv/bin/python -m build --no-isolation "${tmp_dir}/py" --outdir dist >/dev/null
 
-if ! ls "dist/apptheory-${expected_version}-"*.whl >/dev/null 2>&1; then
+if ! ls "dist/apptheory-${expected_py_version}-"*.whl >/dev/null 2>&1; then
   echo "python-build: FAIL (missing wheel for ${expected_version})"
   exit 1
 fi
 
-wheel_path="$(ls "dist/apptheory-${expected_version}-"*.whl | head -n 1)"
+wheel_path="$(ls "dist/apptheory-${expected_py_version}-"*.whl | head -n 1)"
 WHEEL_PATH="${wheel_path}" python3 - <<'PY'
 import zipfile
 from pathlib import Path
@@ -70,12 +74,12 @@ if not matches:
   raise SystemExit(f"python-build: FAIL (wheel missing LICENSE file: {wheel.name})")
 PY
 
-if [[ ! -f "dist/apptheory-${expected_version}.tar.gz" ]]; then
+if [[ ! -f "dist/apptheory-${expected_py_version}.tar.gz" ]]; then
   echo "python-build: FAIL (missing sdist for ${expected_version})"
   exit 1
 fi
 
-TMP_SDIST_PATH="dist/apptheory-${expected_version}.tar.gz" python3 - <<'PY'
+TMP_SDIST_PATH="dist/apptheory-${expected_py_version}.tar.gz" python3 - <<'PY'
 import gzip
 import os
 import shutil
@@ -140,7 +144,7 @@ tmp_out.replace(sdist)
 shutil.rmtree(extract_dir, ignore_errors=True)
 PY
 
-tar -tzf "dist/apptheory-${expected_version}.tar.gz" | grep "^apptheory-${expected_version}/LICENSE$" >/dev/null || {
+tar -tzf "dist/apptheory-${expected_py_version}.tar.gz" | grep "^apptheory-${expected_py_version}/LICENSE$" >/dev/null || {
   echo "python-build: FAIL (sdist missing LICENSE for ${expected_version})"
   exit 1
 }

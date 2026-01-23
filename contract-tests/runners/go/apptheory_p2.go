@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/theory-cloud/apptheory"
+	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
 func runFixtureP2(f Fixture) error {
@@ -22,6 +22,11 @@ func runFixtureP2(f Fixture) error {
 		apptheory.WithLimits(apptheory.Limits{
 			MaxRequestBytes:  f.Setup.Limits.MaxRequestBytes,
 			MaxResponseBytes: f.Setup.Limits.MaxResponseBytes,
+		}),
+		apptheory.WithCORS(apptheory.CORSConfig{
+			AllowedOrigins:   f.Setup.CORS.AllowedOrigins,
+			AllowCredentials: f.Setup.CORS.AllowCredentials,
+			AllowHeaders:     f.Setup.CORS.AllowHeaders,
 		}),
 		apptheory.WithAuthHook(func(ctx *apptheory.Context) (string, error) {
 			authz := strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "authorization"))
@@ -58,6 +63,13 @@ func runFixtureP2(f Fixture) error {
 			},
 		}),
 		apptheory.WithPolicyHook(func(ctx *apptheory.Context) (*apptheory.PolicyDecision, error) {
+			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-rate-limit-content-type")) != "" {
+				return &apptheory.PolicyDecision{
+					Code:    "app.rate_limited",
+					Message: "rate limited",
+					Headers: map[string][]string{"retry-after": {"1"}, "Content-Type": {"text/plain; charset=utf-8"}},
+				}, nil
+			}
 			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-rate-limit")) != "" {
 				return &apptheory.PolicyDecision{
 					Code:    "app.rate_limited",
@@ -86,6 +98,10 @@ func runFixtureP2(f Fixture) error {
 			opts = append(opts, apptheory.RequireAuth())
 		}
 		app.Handle(r.Method, r.Path, handler, opts...)
+	}
+
+	if f.Input.Request == nil {
+		return &apptheory.AppError{Code: "app.internal", Message: "internal error"}
 	}
 
 	bodyBytes, err := decodeFixtureBody(f.Input.Request.Body)

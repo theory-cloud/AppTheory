@@ -1,0 +1,17 @@
+# _decisions.yaml - Decision trees for AppTheory TypeScript
+
+decisions:
+  choose_test_strategy:
+    question: "How should I test handlers without AWS?"
+    decision_tree:
+      - condition: "You want deterministic tests and parity with contract fixtures."
+        check: "Can you structure your code around AppTheory handlers?"
+        if_yes:
+          choice: "Use createTestEnv + build*Request helpers"
+          reason: "Produces deterministic AWS-shaped events and responses."
+          example: |
+            // const env = createTestEnv({ now: new Date("2026-01-01Z") })
+        if_no:
+          choice: "Refactor to AppTheory handlers first"
+          reason: "Testing gets easier once handlers are pure and portable."
+

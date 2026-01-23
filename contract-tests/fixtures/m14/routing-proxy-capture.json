@@ -1,0 +1,33 @@
+{
+  "id": "m14.routing.proxy.capture_slashes",
+  "tier": "m14",
+  "name": "Router: terminal {proxy+} captures the remainder with / separators",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/assets/{proxy+}", "handler": "echo_path_params" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/assets/a/b/c",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": { "params": { "proxy": "a/b/c" } },
+      "is_base64": false
+    }
+  }
+}
+

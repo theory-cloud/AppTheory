@@ -22,6 +22,8 @@ test-unit:
 
 lint:
 	@./scripts/verify-go-lint.sh
+	@./scripts/verify-ts-lint.sh
+	@./scripts/verify-python-lint.sh
 
 fmt:
 	@files="$$(git ls-files '*.go' | while read -r f; do if [ -f "$$f" ]; then echo "$$f"; fi; done)"; \

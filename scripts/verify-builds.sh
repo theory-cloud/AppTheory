@@ -15,7 +15,15 @@ build_once() {
   local tmp_dir
   tmp_dir="$(mktemp -d)"
 
-  git archive --format=tar HEAD | tar -xf - -C "${tmp_dir}"
+  # Snapshot the repo contents deterministically from the working tree (tracked + non-ignored).
+  #
+  # Rationale: this verifier is used both in CI and locally. Using `git archive HEAD`
+  # makes local verification misleading when changes are uncommitted, and it also
+  # excludes new (but non-ignored) files. Using `git ls-files` keeps the snapshot
+  # scoped to the repo surface area while still reflecting the current state.
+  git ls-files -z --cached --others --exclude-standard \
+    | tar --ignore-failed-read --null -T - -cf - \
+    | tar -xf - -C "${tmp_dir}"
 
   (
     cd "${tmp_dir}"
@@ -42,4 +50,3 @@ if ! diff -u "${tmp_a}" "${tmp_b}" >/dev/null; then
 fi
 
 echo "verify-builds: PASS (SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH})"
-

@@ -1,0 +1,80 @@
+# _patterns.yaml - Machine-readable patterns for AppTheory Python
+
+patterns:
+  middleware_wraps_next:
+    name: "Middleware wraps next_handler(ctx) and returns a Response"
+    problem: "Inconsistent middleware conventions create drift and subtle ordering bugs."
+    solution: "Always call next_handler(ctx) and return the response."
+    correct_example: |
+      # CORRECT
+      def mw(ctx, next_handler):
+          ctx.set("mw", "ok")
+          resp = next_handler(ctx)
+          resp.headers["x-middleware"] = ["1"]
+          return resp
+    anti_patterns:
+      - name: "Not returning the response"
+        why: "The runtime cannot infer a response; behavior becomes undefined."
+        incorrect_example: |
+          # INCORRECT
+          def mw(ctx, next_handler):
+              next_handler(ctx)
+        consequences:
+          - "runtime errors"
+          - "hard-to-debug behavior"
+
+  async_handlers:
+    name: "Prefer async handlers for I/O-bound work"
+    problem: "Sync-only handlers can make I/O-heavy workloads harder to write cleanly."
+    solution: "Handlers may be `def` or `async def`; AppTheory resolves awaitables for you."
+    correct_example: |
+      # CORRECT
+      async def handler(ctx):
+          return text(200, "ok")
+    anti_patterns:
+      - name: "Returning an un-awaited coroutine from custom code"
+        why: "If you bypass AppTheory entrypoints, coroutines won't be executed."
+        incorrect_example: |
+          # INCORRECT
+          async def handler(ctx):
+              return text(200, "ok")
+          handler(ctx)  # coroutine created but never awaited
+        consequences:
+          - "handler never runs"
+          - "missing side effects and timeouts"
+
+  strict_route_registration:
+    name: "Use app.handle_strict in tests/CI"
+    problem: "Invalid route patterns are fail-closed and may be silently ignored by default."
+    solution: "Prefer the strict registration variant during tests to catch mistakes immediately."
+    correct_example: |
+      # CORRECT
+      app.handle_strict("GET", "/users/{id}", handler)
+    anti_patterns:
+      - name: "Assuming a route registered"
+        why: "Silent failures lead to missing routes and unexpected 404s."
+        incorrect_example: |
+          # INCORRECT: invalid proxy placement may be ignored
+          app.get("/{proxy+}/x", handler)
+        consequences:
+          - "unexpected 404s"
+          - "slow debugging cycles"
+
+  universal_lambda_dispatch:
+    name: "Delegate to app.handle_lambda for mixed triggers"
+    problem: "Manually branching on AWS event shapes is brittle and will drift."
+    solution: "Use the universal dispatcher so routing stays contract-defined and tested."
+    correct_example: |
+      # CORRECT
+      def handler(event, ctx):
+          return app.handle_lambda(event, ctx)
+    anti_patterns:
+      - name: "Hand-rolling detection logic"
+        why: "Partial detection misses edge cases (ALB/WebSockets) and diverges from other languages."
+        incorrect_example: |
+          # INCORRECT
+          if "httpMethod" in event:
+              return app.serve_apigw_proxy(event)
+        consequences:
+          - "parity drift"
+          - "production-only bugs"

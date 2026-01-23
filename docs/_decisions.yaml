@@ -1,0 +1,25 @@
+# _decisions.yaml - Decision trees for AppTheory
+
+decisions:
+  choose_tier:
+    question: "Which tier should I use (P0/P1/P2)?"
+    decision_tree:
+      - condition: "You want the smallest surface area and are building platform features yourself."
+        check: "Do you need built-in auth hooks, CORS, or size limits?"
+        if_yes:
+          choice: "Use TierP1"
+          reason: "P1 adds common platform defaults while staying contract-defined."
+          example: |
+            // Go: apptheory.New(apptheory.WithTier(apptheory.TierP1))
+        if_no:
+          choice: "Use TierP0"
+          reason: "P0 keeps the core minimal for custom runtimes."
+      - condition: "You want production hooks (observability/policy/rate limiting semantics)."
+        check: "Is your threat model okay with fail-open rate limiting during dependency outages?"
+        if_yes:
+          choice: "Use TierP2 + fail-open policy"
+          reason: "Improves availability while still enforcing limits when the backend is healthy."
+        if_no:
+          choice: "Use TierP2 + fail-closed policy"
+          reason: "Prefer strict enforcement when limits are a security boundary."
+

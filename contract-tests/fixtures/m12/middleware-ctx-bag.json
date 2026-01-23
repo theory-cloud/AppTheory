@@ -1,0 +1,35 @@
+{
+  "id": "m12.middleware.ctx_bag",
+  "tier": "m12",
+  "name": "Middleware: app.Use chain + ctx.Set/Get",
+  "setup": {
+    "middlewares": ["mw_a", "mw_b"],
+    "routes": [{ "method": "GET", "path": "/mw", "handler": "echo_ctx_value_and_trace" }]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/mw",
+      "query": {},
+      "headers": {},
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-middleware": ["1"],
+        "x-request-id": ["req_test_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "mw": "ok",
+        "trace": ["request_id", "recovery", "logging", "handler", "mw_a", "mw_b"]
+      },
+      "is_base64": false
+    }
+  }
+}

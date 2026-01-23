@@ -81,3 +81,95 @@ To move from package-level inventory to feature-level precision:
   constructs or only as templates/examples.
 - Confirm which “advanced” subsystems are relied upon (circuit breaker, bulkheads, adaptive load shedding, idempotency)
   and whether they must be portable or can be Go-only initially.
+
+## Supplemental: Lift usage in Lesser (`github.com/equaltoai/lesser`)
+
+Lesser is a second real Lift consumer that exercises Lift surfaces that are not covered by AppTheory’s current HTTP-only
+contract slice.
+
+Snapshot inputs:
+
+- Repo: `lesser/` (local workspace)
+- Lift version: `github.com/pay-theory/lift v1.0.82` (`lesser/go.mod`)
+
+Observed Lift imports (Lesser):
+
+- `github.com/pay-theory/lift/pkg/lift`
+- `github.com/pay-theory/lift/pkg/lift/adapters`
+- `github.com/pay-theory/lift/pkg/middleware`
+- `github.com/pay-theory/lift/pkg/streamer`
+- `github.com/pay-theory/lift/pkg/testing`
+- `github.com/pay-theory/lift/pkg/naming`
+- `github.com/pay-theory/lift/pkg/cdk/constructs`
+
+Observed Lift runtime trigger surfaces (Lesser):
+
+- HTTP:
+  - API Gateway v2 (HTTP API) routing (`app.GET/POST/...`)
+- Non-HTTP triggers:
+  - `app.SQS(...)`
+  - `app.EventBridge(...)`
+  - `app.DynamoDB(...)` (Streams)
+- WebSockets:
+  - `lift.WithWebSocketSupport()`
+  - `app.WebSocket(...)`
+  - `ctx.AsWebSocket()` + `wsCtx.SendJSONMessage(...)`
+- SSE (REST API v1 response streaming):
+  - `lift.SSEResponse(...)`
+  - `lift.SSEEvent`
+
+Observed Lift CDK construct usage (Lesser):
+
+- REST API v1 construct: `LiftRestAPI` (including per-method streaming toggles)
+- EventBridge schedule helper: `EventBridgeHandler`
+- DynamoDB stream mapping: `LiftEventSourceMapping`
+- Lambda wrapper: `LiftFunction`
+
+Tracking: `docs/development/planning/apptheory/apptheory-gap-analysis-lesser.md`
+
+## Supplemental: Lift usage in Autheory (Pay Theory)
+
+Snapshot inputs (local workspace):
+
+- Repo: `autheory/`
+- Lift imports (observed):
+  - `github.com/pay-theory/lift/pkg/lift`
+  - `github.com/pay-theory/lift/pkg/middleware`
+  - `github.com/pay-theory/lift/pkg/services` (EventBus)
+  - `github.com/pay-theory/lift/pkg/lift/adapters` (tests)
+  - `github.com/pay-theory/lift/pkg/cdk/constructs`
+  - `github.com/pay-theory/lift/pkg/cdk/patterns`
+
+Observed Lift runtime patterns (Autheory):
+
+- Global middleware chain (`app.Use(...)`) for tracing, CORS, auth, audit logging.
+- Lift-style route patterns (`:id` segments) across many routes.
+- Durable EventBus via `lift/pkg/services` (DynamoDB-backed + replay tooling).
+
+Tracking:
+
+- `docs/development/planning/apptheory/apptheory-gap-analysis-lift-parity.md`
+
+## Supplemental: Lift usage in K3 (Pay Theory)
+
+Snapshot inputs (local workspace):
+
+- Repo: `k3/`
+- Lift imports (observed):
+  - `github.com/pay-theory/lift/pkg/lift`
+  - `github.com/pay-theory/lift/pkg/observability`
+  - `github.com/pay-theory/lift/pkg/observability/zap`
+  - `github.com/pay-theory/lift/pkg/utils/sanitization`
+  - `github.com/pay-theory/lift/pkg/lift/adapters` (tests)
+  - `github.com/pay-theory/lift/pkg/cdk/constructs`
+
+Observed Lift runtime patterns (K3):
+
+- Global middleware chain (`app.Use(...)`) for request-id, security headers, rate limiting, request logging, and
+  dependency injection (`ctx.Set`/`ctx.Get`).
+- Lift observability packages for structured logging (zap integration) and lifecycle (`Close()`).
+- Sanitization helpers for safe logging of raw AWS event payloads.
+
+Tracking:
+
+- `docs/development/planning/apptheory/apptheory-gap-analysis-lift-parity.md`

@@ -1,0 +1,52 @@
+{
+  "id": "m1.kinesis.partial_batch_failure",
+  "tier": "m1",
+  "name": "Kinesis: route by stream name + partial batch failure",
+  "setup": {
+    "kinesis": [
+      { "stream": "stream-a", "handler": "kinesis_fail_on_data" },
+      { "stream": "stream-b", "handler": "kinesis_always_fail" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "kinesis",
+      "event": {
+        "Records": [
+          {
+            "eventID": "kin-1",
+            "eventName": "aws:kinesis:record",
+            "eventSource": "aws:kinesis",
+            "eventSourceARN": "arn:aws:kinesis:us-east-1:000000000000:stream/stream-a",
+            "eventVersion": "1.0",
+            "awsRegion": "us-east-1",
+            "kinesis": {
+              "partitionKey": "pk-1",
+              "sequenceNumber": "1",
+              "kinesisSchemaVersion": "1.0",
+              "data": "b2s="
+            }
+          },
+          {
+            "eventID": "kin-2",
+            "eventName": "aws:kinesis:record",
+            "eventSource": "aws:kinesis",
+            "eventSourceARN": "arn:aws:kinesis:us-east-1:000000000000:stream/stream-a",
+            "eventVersion": "1.0",
+            "awsRegion": "us-east-1",
+            "kinesis": {
+              "partitionKey": "pk-2",
+              "sequenceNumber": "2",
+              "kinesisSchemaVersion": "1.0",
+              "data": "ZmFpbA=="
+            }
+          }
+        ]
+      }
+    }
+  },
+  "expect": {
+    "output_json": { "batchItemFailures": [{ "itemIdentifier": "kin-2" }] }
+  }
+}
+

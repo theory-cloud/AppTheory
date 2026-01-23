@@ -69,4 +69,3 @@ def to_bytes(value: Any) -> bytes:
     if isinstance(value, str):
         return value.encode("utf-8")
     raise TypeError("body must be bytes-like or str")
-

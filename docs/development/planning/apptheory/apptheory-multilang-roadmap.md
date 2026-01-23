@@ -72,9 +72,19 @@ Deep workstreams are tracked in dedicated sub-roadmaps:
 - Contract tests: `subroadmaps/SR-CONTRACT.md`
 - Releases and supply-chain: `subroadmaps/SR-RELEASE.md`
 - CDK strategy: `subroadmaps/SR-CDK.md`
+- Streaming responses: `subroadmaps/SR-STREAMING.md`
+- SSR infrastructure: `subroadmaps/SR-SSR-INFRA.md`
 - Testkits + mocks: `subroadmaps/SR-MOCKS.md`
 - Prod features parity: `subroadmaps/SR-PROD-FEATURES.md`
+- Middleware + extensibility: `subroadmaps/SR-MIDDLEWARE.md`
+- Lift services parity: `subroadmaps/SR-SERVICES.md`
+- Sanitization utilities: `subroadmaps/SR-SANITIZATION.md`
+- Naming utilities: `subroadmaps/SR-NAMING.md`
 - Lift migration: `subroadmaps/SR-MIGRATION.md`
+- Non-HTTP event sources: `subroadmaps/SR-EVENTSOURCES.md`
+- WebSockets: `subroadmaps/SR-WEBSOCKETS.md`
+- API Gateway REST v1 + SSE: `subroadmaps/SR-SSE.md`
+- Lint parity: `subroadmaps/SR-LINT.md`
 
 ## Milestones
 
@@ -267,6 +277,69 @@ Deep workstreams are tracked in dedicated sub-roadmaps:
   - CDK synth (for examples/constructs)
 - `make rubric` (or equivalent single command) proves the repo is v0.1.0-ready.
 
+---
+
+### M12 — Lift parity completion (event sources, WebSockets, SSE/REST v1)
+
+**Goal:** AppTheory is a Lift replacement for **Lesser-class** apps across Go/TS/Py (not “HTTP-only Lift”).
+
+**Complex enough for sub-roadmaps:** yes.
+
+Tracking:
+
+- `subroadmaps/SR-EVENTSOURCES.md` (SQS/EventBridge/DynamoDB Streams)
+- `subroadmaps/SR-WEBSOCKETS.md` (WebSocket runtime + `streamer`)
+- `subroadmaps/SR-SSE.md` (API Gateway REST v1 + SSE streaming)
+- `subroadmaps/SR-MIDDLEWARE.md` (middleware pipeline + `ctx.Set/Get` parity)
+- `subroadmaps/SR-NAMING.md` (Lift `pkg/naming` parity)
+- `subroadmaps/SR-MOCKS.md` (Lift `pkg/testing`-style harness parity)
+- `subroadmaps/SR-CDK.md` (construct parity for these surfaces)
+- `subroadmaps/SR-CONTRACT.md` (contract v1+ fixtures)
+- `subroadmaps/SR-MIGRATION.md` (migration guide updates for these surfaces)
+
+**Acceptance criteria**
+- Parity matrix P0+ items are implemented and fixture-backed in Go/TS/Py:
+  - REST API v1 adapter
+  - SSE helpers + streaming (including event-by-event “true streaming” parity)
+  - SQS/EventBridge/DynamoDB Streams routing
+  - WebSocket routing + management client
+- Lift DX parity required by real apps is available (portable where feasible):
+  - middleware pipeline + context value bag (`ctx.Set/Get`)
+  - naming helpers
+  - unit-test harness helpers for handlers/middleware
+- CDK story supports deploying these capabilities (examples and/or constructs) in a multi-language way.
+- `make rubric` includes the new contract fixtures and example gates (fails closed).
+
+---
+
+### M13 — Lift parity completion (Pay Theory: Autheory + K3)
+
+**Goal:** AppTheory fully replaces Lift for Pay Theory’s hardest real apps (Autheory + K3) and is a robust improvement
+on Lift (not a minimal subset).
+
+**Complex enough for sub-roadmaps:** yes.
+
+Tracking:
+
+- `subroadmaps/SR-MIDDLEWARE.md` (middleware pipeline + context mutation, events story)
+- `subroadmaps/SR-SERVICES.md` (Lift `pkg/services` parity; start: EventBus)
+- `subroadmaps/SR-PROD-FEATURES.md` (logger implementation packages + integration guidance)
+- `subroadmaps/SR-SANITIZATION.md` (Lift `pkg/utils/sanitization` parity)
+- `subroadmaps/SR-CDK.md` (Autheory + K3 construct parity or template-first equivalents)
+- `subroadmaps/SR-MOCKS.md` (test harness parity)
+- `subroadmaps/SR-MIGRATION.md` (Autheory/K3 migration playbooks + checklists)
+
+**Acceptance criteria**
+- AppTheory provides supported replacements (portable when feasible; Go-only when required and explicitly documented) for
+  the Lift surfaces Autheory + K3 actually use:
+  - global middleware pipeline (`app.Use`) and `ctx.Set/Get` patterns
+  - EventBus (`lift/pkg/services`) used by Autheory
+  - structured logging integrations (`lift/pkg/observability` + `observability/zap`) used by K3
+  - sanitization utilities (`lift/pkg/utils/sanitization`) used by K3
+- CDK story can deploy Autheory/K3-class stacks without long-term dependency on Lift constructs (construct parity and/or
+  first-class templates/examples, still consumable from GitHub Releases).
+- Migration docs include Autheory + K3 focused guidance and capture known non-drop-in differences explicitly.
+
 ## Notes on governance artifacts (`hgm-infra/`)
 
 Hypergenium’s applied outputs often live under `hgm-infra/` today, but that structure is expected to evolve as migrations
@@ -276,3 +349,26 @@ Roadmap rule: keep this plan and core engineering artifacts in `docs/` so they r
 infrastructure is reworked.
 
 See: `docs/development/planning/apptheory/supporting/apptheory-governance-note.md`
+
+---
+
+### M14 — FaceTheory enablement (Lambda URL streaming SSR)
+
+**Goal:** make AppTheory a strong foundation for FaceTheory-style SSR/SSG/ISR sites on AWS, centered on **Lambda Function
+URL + response streaming** and CloudFront/S3 integration patterns.
+
+**Complex enough for dedicated roadmaps:** yes.
+
+Tracking:
+
+- `docs/development/planning/apptheory/apptheory-facetheory-support-roadmap.md` (milestones + acceptance criteria)
+- `subroadmaps/SR-STREAMING.md` (streaming contract + Lambda URL streaming + streaming testkit)
+- `subroadmaps/SR-SSR-INFRA.md` (CloudFront + S3 + Lambda URL deployment pattern)
+
+**Acceptance criteria**
+- FaceTheory P0/P1 dependency wishlist items in AppTheory are shipped with contract coverage:
+  - Lambda Function URL response streaming (TS first) + streaming-aware testkit
+  - router catch-all routes (`/{proxy+}`) with precedence rules
+  - HTML helpers + hydration-safe serialization helpers
+  - explicit header/cookie merge semantics (streaming-aware)
+  - cache header + CloudFront request normalization helpers
