@@ -13,11 +13,16 @@ Status: early; start with a small “top 20%” set and grow based on real usage
 
 * `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).
 * `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).
+* `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).
 * `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.
 * `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.
 * `AppTheoryQueueProcessor` — SQS queue + consumer wiring.
 * `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.
 * `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.
+* `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs).
+* `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).
+* `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).
+* `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + domain/cert helpers).
 
 ## Minimal example
 
