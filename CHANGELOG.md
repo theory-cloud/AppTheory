@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.1](https://github.com/theory-cloud/AppTheory/compare/v0.3.0...v0.3.1) (2026-01-24)
+
+
+### Bug Fixes
+
+* **cdk:** make DynamoTable TTL optional ([3c789fd](https://github.com/theory-cloud/AppTheory/commit/3c789fd1dee87f4076cbe86855c50bfcaa706f8d))
+* **cdk:** make DynamoTable TTL optional ([e9b5bf1](https://github.com/theory-cloud/AppTheory/commit/e9b5bf13390eb11bac18d1285105ec3c722a8b22))
+
+## [0.2.0-rc.8](https://github.com/theory-cloud/AppTheory/compare/v0.2.0-rc.7...v0.2.0-rc.8) (2026-01-24)
+
+
+### Bug Fixes
+
+* **cdk:** make DynamoTable TTL optional ([3c789fd](https://github.com/theory-cloud/AppTheory/commit/3c789fd1dee87f4076cbe86855c50bfcaa706f8d))
+* **cdk:** make DynamoTable TTL optional ([e9b5bf1](https://github.com/theory-cloud/AppTheory/commit/e9b5bf13390eb11bac18d1285105ec3c722a8b22))
+
 ## [0.3.0](https://github.com/theory-cloud/AppTheory/compare/v0.2.1...v0.3.0) (2026-01-23)
 
 
