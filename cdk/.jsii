@@ -9257,7 +9257,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/dynamodb-stream-mapping.ts",
-          "line": 19
+          "line": 21
         },
         "parameters": [
           {
@@ -9283,7 +9283,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/dynamodb-stream-mapping.ts",
-        "line": 18
+        "line": 20
       },
       "name": "AppTheoryDynamoDBStreamMapping",
       "symbolId": "lib/dynamodb-stream-mapping:AppTheoryDynamoDBStreamMapping"
@@ -9354,7 +9354,20 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamodb-stream-mapping.ts",
-            "line": 14
+            "line": 15
+          },
+          "name": "maxBatchingWindow",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamodb-stream-mapping.ts",
+            "line": 16
           },
           "name": "maxRecordAge",
           "optional": true,
@@ -9367,7 +9380,20 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamodb-stream-mapping.ts",
-            "line": 15
+            "line": 13
+          },
+          "name": "parallelizationFactor",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamodb-stream-mapping.ts",
+            "line": 17
           },
           "name": "reportBatchItemFailures",
           "optional": true,
@@ -9380,7 +9406,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamodb-stream-mapping.ts",
-            "line": 13
+            "line": 14
           },
           "name": "retryAttempts",
           "optional": true,
@@ -12586,7 +12612,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/websocket-api.ts",
-          "line": 38
+          "line": 41
         },
         "parameters": [
           {
@@ -12612,7 +12638,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/websocket-api.ts",
-        "line": 32
+        "line": 35
       },
       "name": "AppTheoryWebSocketApi",
       "properties": [
@@ -12620,7 +12646,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 33
+            "line": 36
           },
           "name": "api",
           "type": {
@@ -12631,7 +12657,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 34
+            "line": 37
           },
           "name": "stage",
           "type": {
@@ -12642,7 +12668,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 36
+            "line": 39
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -12654,7 +12680,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 35
+            "line": 38
           },
           "name": "connectionTable",
           "optional": true,
@@ -12693,7 +12719,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 29
+            "line": 32
           },
           "name": "accessLogFormat",
           "optional": true,
@@ -12706,7 +12732,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 26
+            "line": 29
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -12719,7 +12745,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 28
+            "line": 31
           },
           "name": "accessLogRemovalPolicy",
           "optional": true,
@@ -12732,7 +12758,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 27
+            "line": 30
           },
           "name": "accessLogRetention",
           "optional": true,
@@ -12745,7 +12771,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 13
+            "line": 16
           },
           "name": "apiName",
           "optional": true,
@@ -12758,7 +12784,20 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 16
+            "line": 13
+          },
+          "name": "connectHandler",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 19
           },
           "name": "connectionTable",
           "optional": true,
@@ -12771,7 +12810,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 23
+            "line": 26
           },
           "name": "connectionTableEnablePointInTimeRecovery",
           "optional": true,
@@ -12784,7 +12823,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 18
+            "line": 21
           },
           "name": "connectionTableName",
           "optional": true,
@@ -12797,7 +12836,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 19
+            "line": 22
           },
           "name": "connectionTablePartitionKeyName",
           "optional": true,
@@ -12810,7 +12849,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 22
+            "line": 25
           },
           "name": "connectionTableRemovalPolicy",
           "optional": true,
@@ -12823,7 +12862,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 20
+            "line": 23
           },
           "name": "connectionTableSortKeyName",
           "optional": true,
@@ -12836,7 +12875,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 21
+            "line": 24
           },
           "name": "connectionTableTimeToLiveAttribute",
           "optional": true,
@@ -12849,7 +12888,33 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 25
+            "line": 15
+          },
+          "name": "defaultHandler",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 14
+          },
+          "name": "disconnectHandler",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/websocket-api.ts",
+            "line": 28
           },
           "name": "enableAccessLogging",
           "optional": true,
@@ -12862,7 +12927,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 17
+            "line": 20
           },
           "name": "enableConnectionTable",
           "optional": true,
@@ -12875,7 +12940,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/websocket-api.ts",
-            "line": 14
+            "line": 17
           },
           "name": "stageName",
           "optional": true,
@@ -12888,5 +12953,5 @@
     }
   },
   "version": "0.3.1",
-  "fingerprint": "E2qPCLbhdeLnh2rI1eZdLGNP+Xk1AEgTkToATp1pblk="
+  "fingerprint": "FnwemCr4ufseJepaZb1NfkJYd7Jou3gFXnFf86VF3Oc="
 }

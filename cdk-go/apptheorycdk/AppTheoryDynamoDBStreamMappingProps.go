@@ -11,7 +11,9 @@ type AppTheoryDynamoDBStreamMappingProps struct {
 	Table                   awsdynamodb.ITable         `field:"required" json:"table" yaml:"table"`
 	BatchSize               *float64                   `field:"optional" json:"batchSize" yaml:"batchSize"`
 	BisectBatchOnError      *bool                      `field:"optional" json:"bisectBatchOnError" yaml:"bisectBatchOnError"`
+	MaxBatchingWindow       awscdk.Duration            `field:"optional" json:"maxBatchingWindow" yaml:"maxBatchingWindow"`
 	MaxRecordAge            awscdk.Duration            `field:"optional" json:"maxRecordAge" yaml:"maxRecordAge"`
+	ParallelizationFactor   *float64                   `field:"optional" json:"parallelizationFactor" yaml:"parallelizationFactor"`
 	ReportBatchItemFailures *bool                      `field:"optional" json:"reportBatchItemFailures" yaml:"reportBatchItemFailures"`
 	RetryAttempts           *float64                   `field:"optional" json:"retryAttempts" yaml:"retryAttempts"`
 	StartingPosition        awslambda.StartingPosition `field:"optional" json:"startingPosition" yaml:"startingPosition"`
