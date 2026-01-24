@@ -15,6 +15,7 @@ type AppTheoryWebSocketApiProps struct {
 	AccessLogRemovalPolicy                   awscdk.RemovalPolicy          `field:"optional" json:"accessLogRemovalPolicy" yaml:"accessLogRemovalPolicy"`
 	AccessLogRetention                       awslogs.RetentionDays         `field:"optional" json:"accessLogRetention" yaml:"accessLogRetention"`
 	ApiName                                  *string                       `field:"optional" json:"apiName" yaml:"apiName"`
+	ConnectHandler                           awslambda.IFunction           `field:"optional" json:"connectHandler" yaml:"connectHandler"`
 	ConnectionTable                          awsdynamodb.ITable            `field:"optional" json:"connectionTable" yaml:"connectionTable"`
 	ConnectionTableEnablePointInTimeRecovery *bool                         `field:"optional" json:"connectionTableEnablePointInTimeRecovery" yaml:"connectionTableEnablePointInTimeRecovery"`
 	ConnectionTableName                      *string                       `field:"optional" json:"connectionTableName" yaml:"connectionTableName"`
@@ -22,6 +23,8 @@ type AppTheoryWebSocketApiProps struct {
 	ConnectionTableRemovalPolicy             awscdk.RemovalPolicy          `field:"optional" json:"connectionTableRemovalPolicy" yaml:"connectionTableRemovalPolicy"`
 	ConnectionTableSortKeyName               *string                       `field:"optional" json:"connectionTableSortKeyName" yaml:"connectionTableSortKeyName"`
 	ConnectionTableTimeToLiveAttribute       *string                       `field:"optional" json:"connectionTableTimeToLiveAttribute" yaml:"connectionTableTimeToLiveAttribute"`
+	DefaultHandler                           awslambda.IFunction           `field:"optional" json:"defaultHandler" yaml:"defaultHandler"`
+	DisconnectHandler                        awslambda.IFunction           `field:"optional" json:"disconnectHandler" yaml:"disconnectHandler"`
 	EnableAccessLogging                      *bool                         `field:"optional" json:"enableAccessLogging" yaml:"enableAccessLogging"`
 	EnableConnectionTable                    *bool                         `field:"optional" json:"enableConnectionTable" yaml:"enableConnectionTable"`
 	StageName                                *string                       `field:"optional" json:"stageName" yaml:"stageName"`
