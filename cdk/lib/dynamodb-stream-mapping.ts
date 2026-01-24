@@ -10,7 +10,9 @@ export interface AppTheoryDynamoDBStreamMappingProps {
   readonly startingPosition?: lambda.StartingPosition;
   readonly batchSize?: number;
   readonly bisectBatchOnError?: boolean;
+  readonly parallelizationFactor?: number;
   readonly retryAttempts?: number;
+  readonly maxBatchingWindow?: Duration;
   readonly maxRecordAge?: Duration;
   readonly reportBatchItemFailures?: boolean;
 }
@@ -24,7 +26,9 @@ export class AppTheoryDynamoDBStreamMapping extends Construct {
         startingPosition: props.startingPosition ?? lambda.StartingPosition.LATEST,
         batchSize: props.batchSize,
         bisectBatchOnError: props.bisectBatchOnError,
+        parallelizationFactor: props.parallelizationFactor,
         retryAttempts: props.retryAttempts,
+        maxBatchingWindow: props.maxBatchingWindow,
         maxRecordAge: props.maxRecordAge,
         reportBatchItemFailures: props.reportBatchItemFailures ?? true,
       }),
@@ -33,4 +37,3 @@ export class AppTheoryDynamoDBStreamMapping extends Construct {
     props.table.grantStreamRead(props.consumer);
   }
 }
-

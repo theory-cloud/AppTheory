@@ -10,6 +10,9 @@ import { Construct } from "constructs";
 
 export interface AppTheoryWebSocketApiProps {
   readonly handler: lambda.IFunction;
+  readonly connectHandler?: lambda.IFunction;
+  readonly disconnectHandler?: lambda.IFunction;
+  readonly defaultHandler?: lambda.IFunction;
   readonly apiName?: string;
   readonly stageName?: string;
 
@@ -39,16 +42,34 @@ export class AppTheoryWebSocketApi extends Construct {
     super(scope, id);
 
     const stageName = String(props.stageName ?? "dev").trim() || "dev";
+    const connectHandler = props.connectHandler ?? props.handler;
+    const disconnectHandler = props.disconnectHandler ?? props.handler;
+    const defaultHandler = props.defaultHandler ?? props.handler;
 
     this.api = new apigwv2.WebSocketApi(this, "Api", {
       apiName: props.apiName,
     });
 
-    const integration = new apigwv2Integrations.WebSocketLambdaIntegration("Handler", props.handler);
+    const useRouteSpecificHandlers =
+      Boolean(props.connectHandler) || Boolean(props.disconnectHandler) || Boolean(props.defaultHandler);
+    if (useRouteSpecificHandlers) {
+      const connectIntegration = new apigwv2Integrations.WebSocketLambdaIntegration("ConnectHandler", connectHandler);
+      const disconnectIntegration = new apigwv2Integrations.WebSocketLambdaIntegration(
+        "DisconnectHandler",
+        disconnectHandler,
+      );
+      const defaultIntegration = new apigwv2Integrations.WebSocketLambdaIntegration("DefaultHandler", defaultHandler);
 
-    this.api.addRoute("$connect", { integration });
-    this.api.addRoute("$disconnect", { integration });
-    this.api.addRoute("$default", { integration });
+      this.api.addRoute("$connect", { integration: connectIntegration });
+      this.api.addRoute("$disconnect", { integration: disconnectIntegration });
+      this.api.addRoute("$default", { integration: defaultIntegration });
+    } else {
+      const integration = new apigwv2Integrations.WebSocketLambdaIntegration("Handler", props.handler);
+
+      this.api.addRoute("$connect", { integration });
+      this.api.addRoute("$disconnect", { integration });
+      this.api.addRoute("$default", { integration });
+    }
 
     const shouldCreateConnectionTable =
       (props.enableConnectionTable ?? false) || Boolean(props.connectionTableName);
@@ -80,7 +101,10 @@ export class AppTheoryWebSocketApi extends Construct {
     }
 
     if (this.connectionTable) {
-      this.connectionTable.grantReadWriteData(props.handler);
+      const handlers = new Set<lambda.IFunction>([connectHandler, disconnectHandler, defaultHandler]);
+      for (const handler of handlers) {
+        this.connectionTable.grantReadWriteData(handler);
+      }
     }
 
     let accessLogSettings: apigwv2.IAccessLogSettings | undefined;
@@ -131,6 +155,11 @@ export class AppTheoryWebSocketApi extends Construct {
       accessLogSettings,
     });
 
-    this.stage.grantManagementApiAccess(props.handler);
+    {
+      const handlers = new Set<lambda.IFunction>([connectHandler, disconnectHandler, defaultHandler]);
+      for (const handler of handlers) {
+        this.stage.grantManagementApiAccess(handler);
+      }
+    }
   }
 }
