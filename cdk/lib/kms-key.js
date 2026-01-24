@@ -90,7 +90,7 @@ class AppTheoryKmsKey extends constructs_1.Construct {
 }
 exports.AppTheoryKmsKey = AppTheoryKmsKey;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryKmsKey[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryKmsKey", version: "0.3.0" };
+AppTheoryKmsKey[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryKmsKey", version: "0.3.1" };
 function createDefaultReplicaKeyPolicy(scope) {
     const stack = aws_cdk_lib_1.Stack.of(scope);
     const accountId = stack.account;

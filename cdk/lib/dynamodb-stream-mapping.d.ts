@@ -8,7 +8,9 @@ export interface AppTheoryDynamoDBStreamMappingProps {
     readonly startingPosition?: lambda.StartingPosition;
     readonly batchSize?: number;
     readonly bisectBatchOnError?: boolean;
+    readonly parallelizationFactor?: number;
     readonly retryAttempts?: number;
+    readonly maxBatchingWindow?: Duration;
     readonly maxRecordAge?: Duration;
     readonly reportBatchItemFailures?: boolean;
 }
