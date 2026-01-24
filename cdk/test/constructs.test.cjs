@@ -136,6 +136,43 @@ test("AppTheoryWebSocketApi (parity) synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryWebSocketApi (route handlers) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const connectFn = new lambda.Function(stack, "ConnectFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const disconnectFn = new lambda.Function(stack, "DisconnectFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const defaultFn = new lambda.Function(stack, "DefaultFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryWebSocketApi(stack, "WebSocketApi", {
+    handler: defaultFn,
+    connectHandler: connectFn,
+    disconnectHandler: disconnectFn,
+    defaultHandler: defaultFn,
+    apiName: "apptheory-test",
+    stageName: "dev",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("websocket-api-route-handlers", template);
+  } else {
+    expectSnapshot("websocket-api-route-handlers", template);
+  }
+});
+
 test("AppTheoryQueueProcessor synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -244,6 +281,37 @@ test("AppTheoryDynamoDBStreamMapping synthesizes expected template", () => {
     writeSnapshot("dynamodb-stream-mapping", template);
   } else {
     expectSnapshot("dynamodb-stream-mapping", template);
+  }
+});
+
+test("AppTheoryDynamoDBStreamMapping (parallelization + batching window) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const table = new dynamodb.Table(stack, "Table", {
+    billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+    stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+  });
+
+  new apptheory.AppTheoryDynamoDBStreamMapping(stack, "Stream", {
+    consumer: fn,
+    table,
+    parallelizationFactor: 2,
+    maxBatchingWindow: cdk.Duration.seconds(0),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("dynamodb-stream-mapping-options", template);
+  } else {
+    expectSnapshot("dynamodb-stream-mapping-options", template);
   }
 });
 

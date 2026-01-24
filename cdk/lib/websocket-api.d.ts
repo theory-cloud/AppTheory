@@ -7,6 +7,9 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
 export interface AppTheoryWebSocketApiProps {
     readonly handler: lambda.IFunction;
+    readonly connectHandler?: lambda.IFunction;
+    readonly disconnectHandler?: lambda.IFunction;
+    readonly defaultHandler?: lambda.IFunction;
     readonly apiName?: string;
     readonly stageName?: string;
     readonly connectionTable?: dynamodb.ITable;
