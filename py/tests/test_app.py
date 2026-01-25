@@ -249,9 +249,16 @@ class TestApp(unittest.TestCase):
         resp = app.serve_websocket(evt)
         self.assertEqual(resp["statusCode"], 404)
 
-        self.assertEqual(_websocket_management_endpoint("", "dev"), "")
-        self.assertEqual(_websocket_management_endpoint("example.com", ""), "https://example.com")
-        self.assertEqual(_websocket_management_endpoint("https://example.com/", "dev/"), "https://example.com/dev")
+        self.assertEqual(_websocket_management_endpoint("", "dev", "/"), "")
+        self.assertEqual(
+            _websocket_management_endpoint("example.execute-api.us-east-1.amazonaws.com", "dev", "/"),
+            "https://example.execute-api.us-east-1.amazonaws.com/dev",
+        )
+        self.assertEqual(_websocket_management_endpoint("example.com", "production", "/"), "https://example.com")
+        self.assertEqual(
+            _websocket_management_endpoint("https://example.com/", "production", "/socket/"),
+            "https://example.com/socket",
+        )
 
     def test_lambda_event_routing_and_failure_shapes(self) -> None:
         app = create_app(tier="p2")

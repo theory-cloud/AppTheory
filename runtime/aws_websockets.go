@@ -162,18 +162,40 @@ func (c *WebSocketContext) SendJSONMessage(value any) error {
 	return c.SendMessage(b)
 }
 
-func webSocketManagementEndpoint(domainName, stage string) string {
+func webSocketManagementEndpoint(domainName, stage, path string) string {
 	domainName = strings.TrimSpace(domainName)
-	stage = strings.TrimSpace(stage)
-	if domainName == "" || stage == "" {
+	if domainName == "" {
 		return ""
 	}
-	stage = strings.TrimPrefix(stage, "/")
-	stage = strings.TrimSuffix(stage, "/")
-	if stage == "" {
+
+	domainName = strings.TrimPrefix(domainName, "https://")
+	domainName = strings.TrimPrefix(domainName, "http://")
+	domainName = strings.TrimSuffix(domainName, "/")
+	if domainName == "" {
 		return ""
 	}
-	return "https://" + domainName + "/" + stage
+
+	hostLower := strings.ToLower(domainName)
+	if strings.Contains(hostLower, ".execute-api.") {
+		stage = strings.TrimSpace(stage)
+		if stage == "" {
+			return ""
+		}
+		stage = strings.TrimPrefix(stage, "/")
+		stage = strings.TrimSuffix(stage, "/")
+		if stage == "" {
+			return ""
+		}
+		return "https://" + domainName + "/" + stage
+	}
+
+	basePath := strings.TrimSpace(path)
+	basePath = strings.TrimPrefix(basePath, "/")
+	basePath = strings.TrimSuffix(basePath, "/")
+	if basePath == "" {
+		return "https://" + domainName
+	}
+	return "https://" + domainName + "/" + basePath
 }
 
 func apigatewayProxyResponseFromResponse(resp Response) events.APIGatewayProxyResponse {
@@ -273,7 +295,7 @@ func (a *App) ServeWebSocket(ctx context.Context, event events.APIGatewayWebsock
 
 	domainName := strings.TrimSpace(event.RequestContext.DomainName)
 	stage := strings.TrimSpace(event.RequestContext.Stage)
-	managementEndpoint := webSocketManagementEndpoint(domainName, stage)
+	managementEndpoint := webSocketManagementEndpoint(domainName, stage, event.Path)
 
 	wsCtx := &WebSocketContext{
 		ctx:                ctx,
