@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.1](https://github.com/theory-cloud/AppTheory/compare/v0.4.0...v0.4.1) (2026-01-25)
+
+
+### Bug Fixes
+
+* **ws:** management endpoint for custom domains ([0b2f5ad](https://github.com/theory-cloud/AppTheory/commit/0b2f5ad6aa562b0e55e49e0e2ca83bf2222b699e))
+* **ws:** management endpoint for custom domains ([2ccf42b](https://github.com/theory-cloud/AppTheory/commit/2ccf42b3e581a825187422577e7331f82fc7fc2a))
+
+## [0.2.0-rc.10](https://github.com/theory-cloud/AppTheory/compare/v0.2.0-rc.9...v0.2.0-rc.10) (2026-01-25)
+
+
+### Bug Fixes
+
+* **ws:** management endpoint for custom domains ([0b2f5ad](https://github.com/theory-cloud/AppTheory/commit/0b2f5ad6aa562b0e55e49e0e2ca83bf2222b699e))
+* **ws:** management endpoint for custom domains ([2ccf42b](https://github.com/theory-cloud/AppTheory/commit/2ccf42b3e581a825187422577e7331f82fc7fc2a))
+
 ## [0.4.0](https://github.com/theory-cloud/AppTheory/compare/v0.3.1...v0.4.0) (2026-01-24)
 
 
