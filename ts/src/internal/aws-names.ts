@@ -57,12 +57,28 @@ export function dynamoDBTableNameFromStreamArn(arn: string): string {
 export function webSocketManagementEndpoint(
   domainName: string,
   stage: string,
+  path: string,
 ): string {
-  const dn = String(domainName ?? "").trim();
-  const st = String(stage ?? "")
+  const dnRaw = String(domainName ?? "").trim();
+  if (!dnRaw) return "";
+
+  const host = dnRaw.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  if (!host) return "";
+
+  const isExecuteApi = host.toLowerCase().includes(".execute-api.");
+  if (isExecuteApi) {
+    const st = String(stage ?? "")
+      .trim()
+      .replace(/^\/+/, "")
+      .replace(/\/+$/, "");
+    if (!st) return "";
+    return `https://${host}/${st}`;
+  }
+
+  const basePath = String(path ?? "")
     .trim()
     .replace(/^\/+/, "")
     .replace(/\/+$/, "");
-  if (!dn || !st) return "";
-  return `https://${dn}/${st}`;
+  if (!basePath) return `https://${host}`;
+  return `https://${host}/${basePath}`;
 }

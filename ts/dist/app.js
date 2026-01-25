@@ -428,7 +428,7 @@ export class App {
             domainName,
             stage,
             eventType: String(event?.requestContext?.eventType ?? "").trim(),
-            managementEndpoint: webSocketManagementEndpoint(domainName, stage),
+            managementEndpoint: webSocketManagementEndpoint(domainName, stage, String(event?.path ?? "").trim()),
             body: request.body,
             clientFactory: this._webSocketClientFactory,
         });
