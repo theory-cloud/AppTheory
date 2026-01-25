@@ -31,10 +31,19 @@ func (f *fakeStreamerClient) GetConnection(_ context.Context, _ string) (streame
 func (f *fakeStreamerClient) DeleteConnection(_ context.Context, _ string) error { return nil }
 
 func TestWebSocketManagementEndpoint(t *testing.T) {
-	if got := webSocketManagementEndpoint("", "dev"); got != "" {
+	if got := webSocketManagementEndpoint("", "dev", "/"); got != "" {
 		t.Fatalf("expected empty endpoint, got %q", got)
 	}
-	if got := webSocketManagementEndpoint("example.com", "/dev/"); got != "https://example.com/dev" {
+
+	if got := webSocketManagementEndpoint("example.execute-api.us-east-1.amazonaws.com", "/dev/", "/"); got != "https://example.execute-api.us-east-1.amazonaws.com/dev" {
+		t.Fatalf("unexpected endpoint: %q", got)
+	}
+
+	if got := webSocketManagementEndpoint("ws.example.com", "production", "/"); got != "https://ws.example.com" {
+		t.Fatalf("unexpected endpoint: %q", got)
+	}
+
+	if got := webSocketManagementEndpoint("ws.example.com", "production", "/socket"); got != "https://ws.example.com/socket" {
 		t.Fatalf("unexpected endpoint: %q", got)
 	}
 }
