@@ -648,7 +648,7 @@ class App:
 
         domain_name = str(request_context.get("domainName") or "").strip()
         stage = str(request_context.get("stage") or "").strip()
-        management_endpoint = _websocket_management_endpoint(domain_name, stage)
+        management_endpoint = _websocket_management_endpoint(domain_name, stage, str(event.get("path") or ""))
 
         ws_ctx = WebSocketContext(
             clock=self._clock,
@@ -995,16 +995,25 @@ def _request_from_websocket_event(event: dict[str, Any]) -> Request:
     )
 
 
-def _websocket_management_endpoint(domain_name: str, stage: str) -> str:
+def _websocket_management_endpoint(domain_name: str, stage: str, path: str = "") -> str:
     domain = str(domain_name or "").strip().strip("/")
     if not domain:
         return ""
-    base = domain if domain.startswith(("https://", "http://")) else "https://" + domain
+    domain = domain.removeprefix("https://").removeprefix("http://").rstrip("/")
+    if not domain:
+        return ""
 
-    stage_value = str(stage or "").strip().strip("/")
-    if not stage_value:
-        return base
-    return base + "/" + stage_value
+    host_lower = domain.lower()
+    if ".execute-api." in host_lower:
+        stage_value = str(stage or "").strip().strip("/")
+        if not stage_value:
+            return ""
+        return "https://" + domain + "/" + stage_value
+
+    base_path = str(path or "").strip().strip("/")
+    if not base_path:
+        return "https://" + domain
+    return "https://" + domain + "/" + base_path
 
 
 def _sqs_queue_name_from_arn(arn: str) -> str:
