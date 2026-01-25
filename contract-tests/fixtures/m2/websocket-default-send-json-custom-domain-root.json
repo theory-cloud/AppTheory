@@ -1,0 +1,55 @@
+{
+  "id": "m2.websocket.default_send_json_custom_domain_root",
+  "tier": "m2",
+  "name": "WebSocket: custom domain root mapping omits stage in management endpoint",
+  "setup": {
+    "websockets": [{ "route_key": "$default", "handler": "ws_default_send_json_ok" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "apigw_websocket",
+      "event": {
+        "path": "/",
+        "httpMethod": "POST",
+        "headers": { "content-type": "application/json" },
+        "queryStringParameters": {},
+        "requestContext": {
+          "stage": "production",
+          "requestId": "ws-req-custom-1",
+          "connectionId": "conn-custom-1",
+          "domainName": "ws.example.com",
+          "eventType": "MESSAGE",
+          "routeKey": "$default"
+        },
+        "body": "ping",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "handler": "default",
+        "sent": true,
+        "route_key": "$default",
+        "event_type": "MESSAGE",
+        "connection_id": "conn-custom-1",
+        "management_endpoint": "https://ws.example.com",
+        "request_id": "ws-req-custom-1"
+      },
+      "is_base64": false
+    },
+    "ws_calls": [
+      {
+        "op": "post_to_connection",
+        "endpoint": "https://ws.example.com",
+        "connection_id": "conn-custom-1",
+        "data": { "encoding": "utf8", "value": "{\"ok\":true}" }
+      }
+    ]
+  }
+}
+
