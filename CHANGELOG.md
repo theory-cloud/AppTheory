@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0](https://github.com/theory-cloud/AppTheory/compare/v0.3.1...v0.4.0) (2026-01-24)
+
+
+### Features
+
+* **cdk:** add stream mapping tuning + ws route handlers ([756314f](https://github.com/theory-cloud/AppTheory/commit/756314f77b8fc8b8da37d14b2815d76cfc9cbf3e))
+* **cdk:** stream mapping tuning + websocket route handlers ([fd310a5](https://github.com/theory-cloud/AppTheory/commit/fd310a57cb76d028bcf8fddb8d24bb2a2c4194ef))
+
+## [0.2.0-rc.9](https://github.com/theory-cloud/AppTheory/compare/v0.2.0-rc.8...v0.2.0-rc.9) (2026-01-24)
+
+
+### Features
+
+* **cdk:** add stream mapping tuning + ws route handlers ([756314f](https://github.com/theory-cloud/AppTheory/commit/756314f77b8fc8b8da37d14b2815d76cfc9cbf3e))
+* **cdk:** stream mapping tuning + websocket route handlers ([fd310a5](https://github.com/theory-cloud/AppTheory/commit/fd310a57cb76d028bcf8fddb8d24bb2a2c4194ef))
+
 ## [0.3.1](https://github.com/theory-cloud/AppTheory/compare/v0.3.0...v0.3.1) (2026-01-24)
 
 
