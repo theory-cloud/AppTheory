@@ -16,8 +16,8 @@ if [[ -z "${expected_version}" ]]; then
   exit 1
 fi
 
-if [[ ! "${expected_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
-  echo "version-alignment: FAIL (VERSION '${expected_version}' must match X.Y.Z or X.Y.Z-rc.N)"
+if [[ ! "${expected_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc(\.[0-9]+)?)?$ ]]; then
+  echo "version-alignment: FAIL (VERSION '${expected_version}' must match X.Y.Z, X.Y.Z-rc, or X.Y.Z-rc.N)"
   exit 1
 fi
 
