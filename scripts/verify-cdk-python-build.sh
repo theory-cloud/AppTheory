@@ -6,7 +6,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 expected_version="$(./scripts/read-version.sh)"
 expected_py_version="${expected_version}"
 if [[ "${expected_py_version}" == *"-rc."* ]]; then
+  # `X.Y.Z-rc.N` -> `X.Y.ZrcN` (PEP 440 normalized wheel/sdist version)
   expected_py_version="${expected_py_version/-rc./rc}"
+elif [[ "${expected_py_version}" == *"-rc" ]]; then
+  # `X.Y.Z-rc` -> `X.Y.Zrc0` (TableTheory pattern)
+  expected_py_version="${expected_py_version/-rc/rc0}"
 fi
 
 epoch="${SOURCE_DATE_EPOCH:-}"
