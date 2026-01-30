@@ -73,22 +73,34 @@ jobs:
       - name: Release Please (PR only) (aligned)
         if: steps.version.outputs.release_as != ''
         id: release_aligned
-        uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4
-        with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          target-branch: main
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-          release-as: ${{ steps.version.outputs.release_as }}
-          skip-github-release: true
+        env:
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_AS: ${{ steps.version.outputs.release_as }}
+        run: |
+          set -euo pipefail
+
+          # NOTE: release-please-action currently does not apply `release-as` when using
+          # `config-file`+`manifest-file` (manifest mode). Use the CLI so the stable
+          # release PR can be forced to the premain RC baseline.
+          npx -y release-please@17.1.3 release-pr \
+            --token "${RELEASE_PLEASE_TOKEN}" \
+            --repo-url "${GITHUB_REPOSITORY}" \
+            --target-branch main \
+            --config-file release-please-config.json \
+            --manifest-file .release-please-manifest.json \
+            --release-as "${RELEASE_AS}"
 
       - name: Release Please (PR only)
         if: steps.version.outputs.release_as == ''
         id: release_default
-        uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4
-        with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          target-branch: main
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-          skip-github-release: true
+        env:
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          npx -y release-please@17.1.3 release-pr \
+            --token "${RELEASE_PLEASE_TOKEN}" \
+            --repo-url "${GITHUB_REPOSITORY}" \
+            --target-branch main \
+            --config-file release-please-config.json \
+            --manifest-file .release-please-manifest.json
