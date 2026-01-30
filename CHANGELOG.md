@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v0.5.0-rc...v0.5.0-rc.1) (2026-01-30)
+
+
+### Bug Fixes
+
+* **ci:** allow release-pr CLI ([aeb4a32](https://github.com/theory-cloud/AppTheory/commit/aeb4a32ff31d6670b5eccd8f51ca717d8cde561c))
+* **ci:** honor main release-as ([8c49083](https://github.com/theory-cloud/AppTheory/commit/8c4908369a4328c83e3127dfb3dd5ca71a47fbac))
+* **ci:** honor main release-as ([27fe861](https://github.com/theory-cloud/AppTheory/commit/27fe861b2b204289365bc9f6d88b5472ae5e8839))
+* **contract-tests:** deflake streaming headers fixture ([042cc71](https://github.com/theory-cloud/AppTheory/commit/042cc71705fbeebf62e986292526ecf94b8a2862))
+* **contract-tests:** deflake streaming headers fixture ([50a5fda](https://github.com/theory-cloud/AppTheory/commit/50a5fda3e1c2e49eda3fd8c099991d171d7becd1))
+
 ## [0.5.0-rc](https://github.com/theory-cloud/AppTheory/compare/v0.4.2-rc...v0.5.0-rc) (2026-01-30)
 
 
