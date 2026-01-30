@@ -33,6 +33,13 @@ Important: release automation is driven by **Conventional Commits**. Commits typ
 and will advance the release line; `chore:` commits may be ignored by release-please. If a change must ship, prefer `fix(<scope>): ...`
 or `feat(<scope>): ...` (this matches TableTheory’s release flow expectations).
 
+## Troubleshooting
+
+- If a prerelease/release PR was merged but no new `vX.Y.Z-rc...` (or `vX.Y.Z`) tag exists, check the corresponding GitHub Actions run:
+  `Prerelease (premain)` or `Release (main)`.
+- The release workflows may delete failed *draft* releases/tags to avoid leaving broken remnants; after fixing the underlying build/gate,
+  re-run the workflow (or merge the next release-please PR) to cut a new RC/release.
+
 ## Branch/version invariants (enforced)
 
 AppTheory follows the TableTheory invariant set so prereleases cannot get “stuck” on an old semver track:
