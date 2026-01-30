@@ -12,7 +12,11 @@ fi
 version="${tag#v}"
 python_version="${version}"
 if [[ "${python_version}" == *"-rc."* ]]; then
+  # `X.Y.Z-rc.N` -> `X.Y.ZrcN` (PEP 440 normalized wheel/sdist version)
   python_version="${python_version/-rc./rc}"
+elif [[ "${python_version}" == *"-rc" ]]; then
+  # `X.Y.Z-rc` -> `X.Y.Zrc0` (TableTheory pattern)
+  python_version="${python_version/-rc/rc0}"
 fi
 
 repo="theory-cloud/AppTheory"
