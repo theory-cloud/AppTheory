@@ -26,8 +26,65 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Compute release-as (align to premain RC)
+        id: version
+        run: |
+          set -euo pipefail
+
+          release_as="$(
+            python3 - <<'PY'
+import json
+from pathlib import Path
+
+
+def parse_base(v: str) -> tuple[int, int, int]:
+    v = v.strip()
+    if v.startswith("v"):
+        v = v[1:]
+    v = v.split("+", 1)[0]
+    base = v.split("-", 1)[0]
+    parts = base.split(".")
+    if len(parts) != 3:
+        raise ValueError(f"invalid semver base: {v}")
+    return (int(parts[0]), int(parts[1]), int(parts[2]))
+
+
+stable = json.loads(Path(".release-please-manifest.json").read_text(encoding="utf-8")).get(".", "")
+premain = json.loads(Path(".release-please-manifest.premain.json").read_text(encoding="utf-8")).get(".", "")
+
+if not stable or not premain:
+    raise SystemExit("")
+
+premain_base = premain.split("+", 1)[0].split("-", 1)[0]
+
+# If premain is already on a higher major/minor/patch line (e.g., 0.5.0-rc.1),
+# force the stable Release PR to promote that baseline (e.g., 0.5.0).
+if parse_base(premain_base) > parse_base(stable):
+    print(premain_base)
+PY
+          )"
+
+          echo "release_as=${release_as}" >> "${GITHUB_OUTPUT}"
+          echo "release-as: ${release_as:-}"
+
+      - name: Release Please (PR only) (aligned)
+        if: steps.version.outputs.release_as != ''
+        id: release_aligned
+        uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          release-as: ${{ steps.version.outputs.release_as }}
+          skip-github-release: true
+
       - name: Release Please (PR only)
-        id: release
+        if: steps.version.outputs.release_as == ''
+        id: release_default
         uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
