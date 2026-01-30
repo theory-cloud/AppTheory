@@ -133,3 +133,24 @@ jobs:
           fi
 
           gh release edit "${TAG_NAME}" --draft=false --prerelease --notes-file dist/RELEASE_NOTES.md
+
+      - name: Cleanup failed draft prerelease (no remnants)
+        if: failure() && steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
+        run: |
+          if [[ -z "${TAG_NAME}" ]]; then
+            echo "release-cleanup: SKIP (missing tag_name output)"
+            exit 0
+          fi
+
+          # Only delete draft releases. If it's already published, do nothing.
+          is_draft="$(gh release view "${TAG_NAME}" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
+          if [[ "${is_draft}" != "true" ]]; then
+            echo "release-cleanup: SKIP (release not draft or not found)"
+            exit 0
+          fi
+
+          echo "release-cleanup: deleting draft release and tag ${TAG_NAME}"
+          gh release delete "${TAG_NAME}" --yes --cleanup-tag
