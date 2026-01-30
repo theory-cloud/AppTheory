@@ -16,7 +16,7 @@ require (
 	github.com/aws/jsii-runtime-go v1.125.0
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/stretchr/testify v1.11.1
-	github.com/theory-cloud/tabletheory v1.2.1
+	github.com/theory-cloud/tabletheory v1.3.0
 	go.uber.org/zap v1.27.1
 )
 
