@@ -160,22 +160,34 @@ if [[ -f ".github/workflows/release-pr.yml" ]]; then
     echo "branch-release: release-pr workflow must target main"
     failures=$((failures + 1))
   }
-  grep -Eq 'googleapis/release-please-action@[0-9a-fA-F]{40}.*\bv4\b' ".github/workflows/release-pr.yml" || {
-    echo "branch-release: release-pr workflow must pin release-please v4 by commit SHA"
+  if grep -Eq 'googleapis/release-please-action@[0-9a-fA-F]{40}.*\bv4\b' ".github/workflows/release-pr.yml"; then
+    grep -Eq 'config-file:\s*release-please-config\.json' ".github/workflows/release-pr.yml" || {
+      echo "branch-release: release-pr workflow must reference release-please-config.json"
+      failures=$((failures + 1))
+    }
+    grep -Eq 'manifest-file:\s*\.release-please-manifest\.json' ".github/workflows/release-pr.yml" || {
+      echo "branch-release: release-pr workflow must reference .release-please-manifest.json"
+      failures=$((failures + 1))
+    }
+    grep -Eq 'skip-github-release:\s*true' ".github/workflows/release-pr.yml" || {
+      echo "branch-release: release-pr workflow must set skip-github-release: true"
+      failures=$((failures + 1))
+    }
+  elif grep -Eq 'release-please@[0-9]+\.[0-9]+\.[0-9]+' ".github/workflows/release-pr.yml"; then
+    # `release-please-action` does not currently apply `release-as` in manifest mode,
+    # so we allow using the pinned CLI for stable Release PR generation.
+    grep -Eq -- '--config-file\s+release-please-config\.json' ".github/workflows/release-pr.yml" || {
+      echo "branch-release: release-pr workflow must pass --config-file release-please-config.json"
+      failures=$((failures + 1))
+    }
+    grep -Eq -- '--manifest-file\s+\.release-please-manifest\.json' ".github/workflows/release-pr.yml" || {
+      echo "branch-release: release-pr workflow must pass --manifest-file .release-please-manifest.json"
+      failures=$((failures + 1))
+    }
+  else
+    echo "branch-release: release-pr workflow must pin release-please (action SHA or CLI version)"
     failures=$((failures + 1))
-  }
-  grep -Eq 'config-file:\s*release-please-config\.json' ".github/workflows/release-pr.yml" || {
-    echo "branch-release: release-pr workflow must reference release-please-config.json"
-    failures=$((failures + 1))
-  }
-  grep -Eq 'manifest-file:\s*\.release-please-manifest\.json' ".github/workflows/release-pr.yml" || {
-    echo "branch-release: release-pr workflow must reference .release-please-manifest.json"
-    failures=$((failures + 1))
-  }
-  grep -Eq 'skip-github-release:\s*true' ".github/workflows/release-pr.yml" || {
-    echo "branch-release: release-pr workflow must set skip-github-release: true"
-    failures=$((failures + 1))
-  }
+  fi
 
   # Ensure stable releases can promote the RC baseline on premain (e.g., 0.5.0-rc.1 -> 0.5.0),
   # so the stable line never lags behind the prerelease line on promotion.
