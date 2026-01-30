@@ -6,7 +6,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 expected_version="$(./scripts/read-version.sh)"
 expected_py_version="${expected_version}"
 if [[ "${expected_py_version}" == *"-rc."* ]]; then
+  # `X.Y.Z-rc.N` -> `X.Y.ZrcN` (PEP 440 normalized wheel/sdist version)
   expected_py_version="${expected_py_version/-rc./rc}"
+elif [[ "${expected_py_version}" == *"-rc" ]]; then
+  # `X.Y.Z-rc` -> `X.Y.Zrc0` (TableTheory pattern)
+  expected_py_version="${expected_py_version/-rc/rc0}"
 fi
 
 epoch="${SOURCE_DATE_EPOCH:-}"
@@ -38,6 +42,44 @@ cleanup() {
 trap cleanup EXIT
 
 cp -a cdk "${tmp_dir}/cdk"
+
+jsii_version="${expected_version}"
+# jsii-pacmak requires prerelease labels to be followed by an integer for Python
+# mapping (e.g., `0.4.2-rc.0`, not `0.4.2-rc`).
+if [[ "${jsii_version}" =~ -rc$ ]]; then
+  jsii_version="${jsii_version}.0"
+fi
+
+TMP_CDK_DIR="${tmp_dir}/cdk" JSII_VERSION="${jsii_version}" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ["TMP_CDK_DIR"])
+version = os.environ["JSII_VERSION"]
+
+# Patch the copied CDK package versions for jsii-pacmak compatibility.
+package_json = root / "package.json"
+if package_json.exists():
+  data = json.loads(package_json.read_text(encoding="utf-8"))
+  data["version"] = version
+  package_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+package_lock = root / "package-lock.json"
+if package_lock.exists():
+  data = json.loads(package_lock.read_text(encoding="utf-8"))
+  data["version"] = version
+  packages = data.get("packages", {})
+  if isinstance(packages, dict) and "" in packages and isinstance(packages[""], dict):
+    packages[""]["version"] = version
+  package_lock.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+jsii = root / ".jsii"
+if jsii.exists():
+  data = json.loads(jsii.read_text(encoding="utf-8"))
+  data["version"] = version
+  jsii.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PY
 
 TMP_CDK_DIR="${tmp_dir}/cdk" python3 - <<'PY'
 import os
