@@ -349,7 +349,10 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 			IsBase64: false,
 		}
 
-		ch := make(chan apptheory.StreamChunk, 2)
+		// Use an unbuffered channel so the first send blocks until the runtime starts
+		// consuming the stream. This prevents a race where the goroutine mutates
+		// headers/cookies before the response is normalized (flake in CI).
+		ch := make(chan apptheory.StreamChunk)
 		resp.BodyStream = ch
 		go func() {
 			defer close(ch)
