@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.2-rc](https://github.com/theory-cloud/AppTheory/compare/v0.4.1...v0.4.2-rc) (2026-01-30)
+
+
+### Bug Fixes
+
+* **ci:** skip branch version sync outside git repo ([24f59b4](https://github.com/theory-cloud/AppTheory/commit/24f59b4c2e2bcf9ede8739117bbbaec4f720c238))
+* **ci:** skip branch version sync outside git repo ([3dd7f81](https://github.com/theory-cloud/AppTheory/commit/3dd7f81484f36a0516fa188b70fbc017faedc749))
+* **release:** align branch release flow to TableTheory ([d100614](https://github.com/theory-cloud/AppTheory/commit/d10061460551952bcfc33753f1308c47bf42caed))
+* **release:** align branch release flow to TableTheory ([26ba236](https://github.com/theory-cloud/AppTheory/commit/26ba236db0f9797a1ba1a590e9a52b5c02f36d11))
+
 ## [0.4.1](https://github.com/theory-cloud/AppTheory/compare/v0.4.0...v0.4.1) (2026-01-25)
 
 
