@@ -86,6 +86,14 @@ jobs:
             exit 1
           fi
 
+          # Immutable releases block asset changes after publication.
+          # release-please creates the GitHub release as a draft; assert that before uploading.
+          is_draft="$(gh release view "${TAG_NAME}" --json isDraft --jq '.isDraft')"
+          if [[ "${is_draft}" != "true" ]]; then
+            echo "release-assets: FAIL (release is already published; cannot upload assets/notes under immutable releases)"
+            exit 1
+          fi
+
           mapfile -t existing_assets < <(gh release view "${TAG_NAME}" --json assets --jq '.assets[].name' 2>/dev/null || true)
 
           assets=(
@@ -116,4 +124,12 @@ jobs:
             echo "release-assets: FAIL (missing tag_name output)"
             exit 1
           fi
+
+          # If the release is already published, it is immutable (no edits allowed). Treat as no-op.
+          is_draft="$(gh release view "${TAG_NAME}" --json isDraft --jq '.isDraft')"
+          if [[ "${is_draft}" != "true" ]]; then
+            echo "release-assets: skip publish (already published)"
+            exit 0
+          fi
+
           gh release edit "${TAG_NAME}" --draft=false --prerelease --notes-file dist/RELEASE_NOTES.md
