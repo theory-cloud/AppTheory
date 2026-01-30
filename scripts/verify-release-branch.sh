@@ -41,7 +41,10 @@ fi
 
 commit="$(git rev-parse HEAD)"
 
-if [[ "${expected_version}" == *"-rc."* ]]; then
+# release-please uses `prerelease-type: rc` and may emit either:
+# - `X.Y.Z-rc` (first RC on a new track)
+# - `X.Y.Z-rc.N` (subsequent RCs)
+if [[ "${expected_version}" =~ -rc(\.|$) ]]; then
   if ! git merge-base --is-ancestor "${commit}" "${premain_ref}"; then
     echo "release-branch: FAIL (${expected_tag} must be tagged from ${premain_branch})"
     exit 1

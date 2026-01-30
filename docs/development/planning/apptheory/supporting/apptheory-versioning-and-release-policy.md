@@ -14,14 +14,44 @@ Status: frozen for milestone `M11` (`SR-RELEASE` R0).
 
 ## Branch model
 
-- `main` is the default branch and is kept releasable (green).
-- `premain` is used for release-candidate hardening and pre-release automation.
-- Day-to-day work lands via feature branches and PRs into `main`.
-- RC releases are cut by tagging a commit on `premain`:
-  - pre-release: `vX.Y.Z-rc.N`
-- Stable releases are cut by tagging a commit on `main`:
-  - stable: `vX.Y.Z`
-- If/when needed for backports, use short-lived `release/vX.Y` branches; otherwise prefer forward-only on `main`.
+- `staging` is the integration branch (all day-to-day work lands here first).
+- `premain` is the prerelease branch (RCs like `vX.Y.Z-rc.N`).
+- `main` is the stable release branch (stable tags like `vX.Y.Z`).
+
+Release flow (TableTheory pattern):
+
+- **staging → premain**: merge a PR from `staging` into `premain` to start the prerelease pipeline.
+  - The `Prerelease PR (premain)` workflow opens/updates a **release-please PR** (branch `release-please--branches--premain`).
+  - **Merging the release-please PR** is what cuts the RC tag + GitHub prerelease.
+- **premain → main**: merge a PR from `premain` into `main` to promote an RC line to stable.
+  - The `Release PR (main)` workflow aligns stable releases to the premain RC baseline (via `release-as`), then opens the stable
+    release-please PR.
+  - **Merging the stable release-please PR** cuts the stable tag + GitHub release.
+- **post-release sync**: back-merge `main` into `staging` (and `premain` as needed) so the next cycle starts from the latest stable baseline.
+
+Important: release automation is driven by **Conventional Commits**. Commits typed as `fix:` / `feat:` are treated as user-facing
+and will advance the release line; `chore:` commits may be ignored by release-please. If a change must ship, prefer `fix(<scope>): ...`
+or `feat(<scope>): ...` (this matches TableTheory’s release flow expectations).
+
+## Troubleshooting
+
+- If a prerelease/release PR was merged but no new `vX.Y.Z-rc...` (or `vX.Y.Z`) tag exists, check the corresponding GitHub Actions run:
+  `Prerelease (premain)` or `Release (main)`.
+- The release workflows may delete failed *draft* releases/tags to avoid leaving broken remnants; after fixing the underlying build/gate,
+  re-run the workflow (or merge the next release-please PR) to cut a new RC/release.
+
+## Branch/version invariants (enforced)
+
+AppTheory follows the TableTheory invariant set so prereleases cannot get “stuck” on an old semver track:
+
+- `premain` must stay aligned to the latest stable version on `main`:
+  - `.release-please-manifest.json` on `premain` must match `main`.
+  - The prerelease track in `.release-please-manifest.premain.json` must not be behind `main`’s stable semver base.
+
+These are enforced in the rubric via:
+
+- `bash scripts/verify-branch-release-supply-chain.sh`
+- `bash scripts/verify-branch-version-sync.sh`
 
 ## Version scheme
 
