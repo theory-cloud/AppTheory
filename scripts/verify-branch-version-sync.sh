@@ -8,6 +8,12 @@ set -euo pipefail
 # - `premain` cuts prereleases using `.release-please-manifest.premain.json`
 # If `premain` doesn't regularly back-merge `main`, prereleases can get stuck on an old major/minor track.
 
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  # `scripts/verify-builds.sh` runs rubric in git-less working copies; this verifier needs git metadata.
+  echo "branch-version-sync: SKIP (not a git repository)"
+  exit 0
+fi
+
 git_fetch_retry() {
   local remote="$1"
   shift
