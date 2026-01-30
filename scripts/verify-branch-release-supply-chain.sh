@@ -11,6 +11,7 @@ failures=0
 
 required_files=(
   "docs/development/planning/apptheory/supporting/apptheory-versioning-and-release-policy.md"
+  ".github/workflows/ci.yml"
   ".github/workflows/prerelease.yml"
   ".github/workflows/prerelease-pr.yml"
   ".github/workflows/release.yml"
@@ -28,6 +29,26 @@ for f in "${required_files[@]}"; do
     failures=$((failures + 1))
   fi
 done
+
+if [[ -f ".github/workflows/ci.yml" ]]; then
+  # Staging is the integration branch in the documented TableTheory-style flow; it must run CI on merge.
+  grep -Eq 'branches:' ".github/workflows/ci.yml" || {
+    echo "branch-release: ci workflow must define push branches"
+    failures=$((failures + 1))
+  }
+  grep -Eq '^\s*-\s*staging\s*$' ".github/workflows/ci.yml" || {
+    echo "branch-release: ci workflow must run on staging pushes"
+    failures=$((failures + 1))
+  }
+  grep -Eq '^\s*-\s*premain\s*$' ".github/workflows/ci.yml" || {
+    echo "branch-release: ci workflow must run on premain pushes"
+    failures=$((failures + 1))
+  }
+  grep -Eq '^\s*-\s*main\s*$' ".github/workflows/ci.yml" || {
+    echo "branch-release: ci workflow must run on main pushes"
+    failures=$((failures + 1))
+  }
+fi
 
 if [[ -f ".github/workflows/prerelease.yml" ]]; then
   grep -Eq 'branches:.*premain' ".github/workflows/prerelease.yml" || {
@@ -229,4 +250,3 @@ if [[ "${failures}" -ne 0 ]]; then
 fi
 
 echo "branch-release: PASS"
-
