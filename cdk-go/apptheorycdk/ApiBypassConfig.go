@@ -15,4 +15,3 @@ type ApiBypassConfig struct {
 	// Optional origin request policy override.
 	OriginRequestPolicy awscloudfront.IOriginRequestPolicy `field:"optional" json:"originRequestPolicy" yaml:"originRequestPolicy"`
 }
-

@@ -66,4 +66,3 @@ func validateNewAppTheoryLambdaRoleParameters(scope constructs.Construct, id *st
 
 	return nil
 }
-
