@@ -441,6 +441,7 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryRestApiRouter",
 		reflect.TypeOf((*AppTheoryRestApiRouter)(nil)).Elem(),
 		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "aaaaRecord", GoGetter: "AaaaRecord"},
 			_jsii_.MemberProperty{JsiiProperty: "accessLogGroup", GoGetter: "AccessLogGroup"},
 			_jsii_.MemberMethod{JsiiMethod: "addLambdaIntegration", GoMethod: "AddLambdaIntegration"},
 			_jsii_.MemberProperty{JsiiProperty: "api", GoGetter: "Api"},
@@ -484,6 +485,14 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheorySecurityRule",
 		reflect.TypeOf((*AppTheorySecurityRule)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheorySpaRewriteMode",
+		reflect.TypeOf((*AppTheorySpaRewriteMode)(nil)).Elem(),
+		map[string]interface{}{
+			"SPA":  AppTheorySpaRewriteMode_SPA,
+			"NONE": AppTheorySpaRewriteMode_NONE,
+		},
 	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheorySsrSite",

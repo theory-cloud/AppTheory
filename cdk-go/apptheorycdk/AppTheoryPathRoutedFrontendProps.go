@@ -13,8 +13,14 @@ type AppTheoryPathRoutedFrontendProps struct {
 	//
 	// These are evaluated before SPA paths due to CloudFront behavior precedence.
 	ApiBypassPaths *[]*ApiBypassConfig `field:"optional" json:"apiBypassPaths" yaml:"apiBypassPaths"`
+	// Default response headers policy for API bypass behaviors.
+	//
+	// Can be overridden per bypass via `ApiBypassConfig.responseHeadersPolicy`.
+	ApiBypassResponseHeadersPolicy awscloudfront.IResponseHeadersPolicy `field:"optional" json:"apiBypassResponseHeadersPolicy" yaml:"apiBypassResponseHeadersPolicy"`
 	// Origin request policy for the API origin (default behavior).
 	ApiOriginRequestPolicy awscloudfront.IOriginRequestPolicy `field:"optional" json:"apiOriginRequestPolicy" yaml:"apiOriginRequestPolicy"`
+	// Response headers policy for the API origin default behavior.
+	ApiResponseHeadersPolicy awscloudfront.IResponseHeadersPolicy `field:"optional" json:"apiResponseHeadersPolicy" yaml:"apiResponseHeadersPolicy"`
 	// Whether to auto-delete objects in created buckets on stack deletion.
 	//
 	// Only applies when removalPolicy is DESTROY.
@@ -41,12 +47,19 @@ type AppTheoryPathRoutedFrontendProps struct {
 	// Default: RemovalPolicy.RETAIN
 	//
 	RemovalPolicy awscdk.RemovalPolicy `field:"optional" json:"removalPolicy" yaml:"removalPolicy"`
-	// Response headers policy to apply to all behaviors.
+	// Response headers policy to apply to all behaviors (legacy).
+	//
+	// Prefer using `apiResponseHeadersPolicy`, `spaResponseHeadersPolicy`, and
+	// `apiBypassResponseHeadersPolicy` for behavior-scoped control.
 	ResponseHeadersPolicy awscloudfront.IResponseHeadersPolicy `field:"optional" json:"responseHeadersPolicy" yaml:"responseHeadersPolicy"`
 	// SPA origins with their path patterns.
 	//
 	// Each SPA will be served via CloudFront with SPA rewrite support.
 	SpaOrigins *[]*SpaOriginConfig `field:"optional" json:"spaOrigins" yaml:"spaOrigins"`
+	// Default response headers policy for SPA behaviors.
+	//
+	// Can be overridden per SPA via `SpaOriginConfig.responseHeadersPolicy`.
+	SpaResponseHeadersPolicy awscloudfront.IResponseHeadersPolicy `field:"optional" json:"spaResponseHeadersPolicy" yaml:"spaResponseHeadersPolicy"`
 	// Optional web ACL ID for AWS WAF integration.
 	WebAclId *string `field:"optional" json:"webAclId" yaml:"webAclId"`
 }

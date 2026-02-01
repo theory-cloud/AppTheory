@@ -4,6 +4,16 @@ import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
+export declare enum AppTheorySpaRewriteMode {
+    /**
+     * Rewrite extensionless routes to `index.html` within the SPA prefix.
+     */
+    SPA = "spa",
+    /**
+     * Do not rewrite routes. Useful for multi-page/static sites.
+     */
+    NONE = "none"
+}
 /**
  * Configuration for an SPA origin routed by path prefix.
  */
@@ -21,6 +31,32 @@ export interface SpaOriginConfig {
      * Optional cache policy override. Defaults to CACHING_OPTIMIZED.
      */
     readonly cachePolicy?: cloudfront.ICachePolicy;
+    /**
+     * Response headers policy for this SPA behavior.
+     * Overrides `spaResponseHeadersPolicy` and `responseHeadersPolicy` (legacy).
+     */
+    readonly responseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
+    /**
+     * Whether to strip the SPA prefix before forwarding to the S3 origin.
+     *
+     * Example:
+     * - Request: `/auth/assets/app.js`
+     * - With `stripPrefixBeforeOrigin=true`, S3 receives: `/assets/app.js`
+     *
+     * This allows laying out the SPA bucket at root while still serving it under a prefix.
+     *
+     * @default false
+     */
+    readonly stripPrefixBeforeOrigin?: boolean;
+    /**
+     * SPA rewrite mode.
+     *
+     * - `SPA`: rewrite extensionless routes to the SPA's `index.html`
+     * - `NONE`: do not rewrite routes (useful for multi-page sites)
+     *
+     * @default AppTheorySpaRewriteMode.SPA
+     */
+    readonly rewriteMode?: AppTheorySpaRewriteMode;
 }
 /**
  * Configuration for path patterns that should bypass SPA routing and go directly to the API origin.
@@ -38,6 +74,11 @@ export interface ApiBypassConfig {
      * Optional origin request policy override.
      */
     readonly originRequestPolicy?: cloudfront.IOriginRequestPolicy;
+    /**
+     * Response headers policy for this API bypass behavior.
+     * Overrides `apiBypassResponseHeadersPolicy` and `responseHeadersPolicy` (legacy).
+     */
+    readonly responseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
 }
 /**
  * Domain configuration for the CloudFront distribution.
@@ -60,6 +101,11 @@ export interface PathRoutedFrontendDomainConfig {
      * When provided, an A record alias will be created for the domain.
      */
     readonly hostedZone?: route53.IHostedZone;
+    /**
+     * Whether to create an AAAA alias record in addition to the A alias record.
+     * @default false
+     */
+    readonly createAAAARecord?: boolean;
 }
 export interface AppTheoryPathRoutedFrontendProps {
     /**
@@ -83,9 +129,26 @@ export interface AppTheoryPathRoutedFrontendProps {
      */
     readonly domain?: PathRoutedFrontendDomainConfig;
     /**
-     * Response headers policy to apply to all behaviors.
+     * Response headers policy to apply to all behaviors (legacy).
+     *
+     * Prefer using `apiResponseHeadersPolicy`, `spaResponseHeadersPolicy`, and
+     * `apiBypassResponseHeadersPolicy` for behavior-scoped control.
      */
     readonly responseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
+    /**
+     * Response headers policy for the API origin default behavior.
+     */
+    readonly apiResponseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
+    /**
+     * Default response headers policy for SPA behaviors.
+     * Can be overridden per SPA via `SpaOriginConfig.responseHeadersPolicy`.
+     */
+    readonly spaResponseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
+    /**
+     * Default response headers policy for API bypass behaviors.
+     * Can be overridden per bypass via `ApiBypassConfig.responseHeadersPolicy`.
+     */
+    readonly apiBypassResponseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
     /**
      * Origin request policy for the API origin (default behavior).
      */

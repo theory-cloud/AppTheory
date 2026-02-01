@@ -102,6 +102,12 @@ export interface AppTheoryRestApiRouterDomainOptions {
      */
     readonly hostedZone?: route53.IHostedZone;
     /**
+     * Whether to create an AAAA alias record in addition to the A alias record.
+     * Only applies when `hostedZone` is provided.
+     * @default false
+     */
+    readonly createAAAARecord?: boolean;
+    /**
      * The base path mapping for the API under this domain.
      * @default undefined (maps to the root)
      */
@@ -249,6 +255,10 @@ export declare class AppTheoryRestApiRouter extends Construct {
      * The Route53 A record (if domain and hostedZone are configured).
      */
     readonly aRecord?: route53.ARecord;
+    /**
+     * The Route53 AAAA record (if domain, hostedZone, and createAAAARecord are configured).
+     */
+    readonly aaaaRecord?: route53.AaaaRecord;
     /**
      * The access log group (if access logging is enabled).
      */
