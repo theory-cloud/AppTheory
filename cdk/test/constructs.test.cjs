@@ -1186,3 +1186,143 @@ test("AppTheoryMediaCdn (full options) synthesizes expected template", () => {
     expectSnapshot("media-cdn-full-options", template);
   }
 });
+
+// ============================================================================
+// AppTheoryLambdaRole tests
+// ============================================================================
+
+test("AppTheoryLambdaRole (baseline) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryLambdaRole(stack, "LambdaRole", {
+    roleName: "apptheory-test-role",
+    description: "Test Lambda execution role",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify: role exists with Lambda as trusted entity
+  const roles = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::IAM::Role",
+  );
+  assert.ok(roles.length >= 1, "Should have IAM Role");
+
+  // Verify: baseline managed policy (AWSLambdaBasicExecutionRole) is attached
+  const [roleKey, roleResource] = roles[0];
+  const managedPolicies = roleResource.Properties?.ManagedPolicyArns || [];
+  const hasBasicExecution = managedPolicies.some(
+    (p) =>
+      (typeof p === "string" && p.includes("AWSLambdaBasicExecutionRole")) ||
+      (p["Fn::Join"] && JSON.stringify(p).includes("AWSLambdaBasicExecutionRole")),
+  );
+  assert.ok(hasBasicExecution, "Should have AWSLambdaBasicExecutionRole managed policy");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("lambda-role-baseline", template);
+  } else {
+    expectSnapshot("lambda-role-baseline", template);
+  }
+});
+
+test("AppTheoryLambdaRole (with X-Ray) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryLambdaRole(stack, "LambdaRole", {
+    enableXRay: true,
+    tags: { Environment: "test" },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify: X-Ray managed policy is attached
+  const roles = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::IAM::Role",
+  );
+  const [roleKey, roleResource] = roles[0];
+  const managedPolicies = roleResource.Properties?.ManagedPolicyArns || [];
+  const hasXRay = managedPolicies.some(
+    (p) =>
+      (typeof p === "string" && p.includes("AWSXRayDaemonWriteAccess")) ||
+      (p["Fn::Join"] && JSON.stringify(p).includes("AWSXRayDaemonWriteAccess")),
+  );
+  assert.ok(hasXRay, "Should have AWSXRayDaemonWriteAccess managed policy");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("lambda-role-xray", template);
+  } else {
+    expectSnapshot("lambda-role-xray", template);
+  }
+});
+
+test("AppTheoryLambdaRole (with KMS permissions) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  // Create KMS keys for testing
+  const envKey = new kms.Key(stack, "EnvKey", {
+    description: "Environment encryption key",
+  });
+
+  const appKey = new kms.Key(stack, "AppKey", {
+    description: "Application encryption key",
+  });
+
+  new apptheory.AppTheoryLambdaRole(stack, "LambdaRole", {
+    roleName: "apptheory-kms-role",
+    enableXRay: true,
+    environmentEncryptionKeys: [envKey],
+    applicationKmsKeys: [appKey],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify: KMS policies are created for both environment and application keys
+  const policies = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::IAM::Policy",
+  );
+  assert.ok(policies.length >= 1, "Should have inline policies for KMS permissions");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("lambda-role-kms", template);
+  } else {
+    expectSnapshot("lambda-role-kms", template);
+  }
+});
+
+test("AppTheoryLambdaRole (with additional statements) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const iam = require("aws-cdk-lib/aws-iam");
+
+  new apptheory.AppTheoryLambdaRole(stack, "LambdaRole", {
+    roleName: "apptheory-custom-role",
+    additionalStatements: [
+      new iam.PolicyStatement({
+        actions: ["s3:GetObject", "s3:PutObject"],
+        resources: ["arn:aws:s3:::my-bucket/*"],
+      }),
+      new iam.PolicyStatement({
+        actions: ["dynamodb:GetItem", "dynamodb:PutItem"],
+        resources: ["arn:aws:dynamodb:*:*:table/my-table"],
+      }),
+    ],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify: Additional inline policies are attached
+  const policies = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::IAM::Policy",
+  );
+  assert.ok(policies.length >= 1, "Should have inline policy for additional statements");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("lambda-role-additional-statements", template);
+  } else {
+    expectSnapshot("lambda-role-additional-statements", template);
+  }
+});
+

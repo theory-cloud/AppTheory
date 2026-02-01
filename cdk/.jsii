@@ -11658,6 +11658,339 @@
       ],
       "symbolId": "lib/kms-key:AppTheoryKmsKeyProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryLambdaRole": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "example": "const role = new AppTheoryLambdaRole(this, 'LambdaRole', {\n  roleName: 'my-lambda-role',\n  enableXRay: true,\n  environmentEncryptionKeys: [envKey],\n  applicationKmsKeys: [dataKey],\n  additionalStatements: [\n    new iam.PolicyStatement({\n      actions: ['s3:GetObject'],\n      resources: ['arn:aws:s3:::my-bucket/*'],\n    }),\n  ],\n});",
+        "remarks": "Creates an IAM role suitable for Lambda execution with:\n- Basic Lambda execution permissions (CloudWatch Logs)\n- Optional X-Ray tracing permissions\n- Optional KMS permissions for environment encryption\n- Optional KMS permissions for application-level encryption\n- Escape hatch for additional inline policy statements",
+        "summary": "A Lambda execution role construct with baseline permissions and optional enhancements."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryLambdaRole",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/lambda-role.ts",
+          "line": 90
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "optional": true,
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryLambdaRoleProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/lambda-role.ts",
+        "line": 74
+      },
+      "methods": [
+        {
+          "docs": {
+            "summary": "Add a managed policy to this role."
+          },
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 170
+          },
+          "name": "addManagedPolicy",
+          "parameters": [
+            {
+              "name": "policy",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.IManagedPolicy"
+              }
+            }
+          ]
+        },
+        {
+          "docs": {
+            "summary": "Add an inline policy statement to this role."
+          },
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 177
+          },
+          "name": "addToPolicy",
+          "parameters": [
+            {
+              "name": "statement",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.PolicyStatement"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "boolean"
+            }
+          }
+        },
+        {
+          "docs": {
+            "remarks": "This is useful when you need to allow another entity to assume this role.",
+            "summary": "Grant this role to a grantable principal."
+          },
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 155
+          },
+          "name": "grantAssumeRole",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.IPrincipal"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_iam.Grant"
+            }
+          }
+        },
+        {
+          "docs": {
+            "remarks": "This is required when a service needs to pass this role to Lambda.",
+            "summary": "Grant permissions to pass this role."
+          },
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 163
+          },
+          "name": "grantPassRole",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.IPrincipal"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_iam.Grant"
+            }
+          }
+        }
+      ],
+      "name": "AppTheoryLambdaRole",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The underlying IAM Role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 78
+          },
+          "name": "role",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_iam.Role"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The ARN of the IAM Role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 83
+          },
+          "name": "roleArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The name of the IAM Role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 88
+          },
+          "name": "roleName",
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/lambda-role:AppTheoryLambdaRole"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryLambdaRoleProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for AppTheoryLambdaRole."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryLambdaRoleProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/lambda-role.ts",
+        "line": 9
+      },
+      "name": "AppTheoryLambdaRoleProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Use this escape hatch for any additional permissions not covered by the construct.",
+            "summary": "Additional inline policy statements to attach to the role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 42
+          },
+          "name": "additionalStatements",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.PolicyStatement"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Grants the role full encrypt/decrypt permissions on these keys.",
+            "summary": "KMS key(s) for application-level KMS usage (encrypt/decrypt data at runtime)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 36
+          },
+          "name": "applicationKmsKeys",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_kms.IKey"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Optional description for the IAM role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 18
+          },
+          "name": "description",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Enable X-Ray tracing permissions by attaching AWSXRayDaemonWriteAccess managed policy."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 24
+          },
+          "name": "enableXRay",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Grants the role permission to decrypt environment variables encrypted with these keys.",
+            "summary": "KMS key(s) for Lambda environment variable encryption."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 30
+          },
+          "name": "environmentEncryptionKeys",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_kms.IKey"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "If not provided, CloudFormation will generate a unique name.",
+            "summary": "Optional role name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 13
+          },
+          "name": "roleName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Tags to apply to the IAM role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 47
+          },
+          "name": "tags",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "map"
+            }
+          }
+        }
+      ],
+      "symbolId": "lib/lambda-role:AppTheoryLambdaRoleProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryMediaCdn": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -15921,5 +16254,5 @@
     }
   },
   "version": "0.5.0",
-  "fingerprint": "UdO8GXuovokgW26M5GihOlnhCQq+uulpJvKsuD9zP/s="
+  "fingerprint": "3aUvecSTCkF45PE3R7OVyyqP9fNop8mIPoYmxSWfmhc="
 }
