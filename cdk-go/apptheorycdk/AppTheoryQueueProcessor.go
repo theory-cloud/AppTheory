@@ -9,11 +9,35 @@ import (
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
 
+// A combined queue + consumer construct for SQS processing workflows.
+//
+// This is a convenience construct that combines AppTheoryQueue and AppTheoryQueueConsumer
+// into a single, easy-to-use pattern. For more control, use the individual constructs.
+//
+// Example:
+//
+//	// Processor with full options
+//	new AppTheoryQueueProcessor(stack, 'Processor', {
+//	  consumer: myFunction,
+//	  queueName: 'my-queue',
+//	  enableDlq: true,
+//	  batchSize: 100,
+//	  maxBatchingWindow: Duration.seconds(10),
+//	  reportBatchItemFailures: true,
+//	  maxConcurrency: 50,
+//	});
 type AppTheoryQueueProcessor interface {
 	constructs.Construct
+	// The underlying AppTheoryQueueConsumer construct.
+	ConsumerConstruct() AppTheoryQueueConsumer
+	// The Dead Letter Queue, if enabled.
+	DeadLetterQueue() awssqs.Queue
 	// The tree node.
 	Node() constructs.Node
-	Queue() awssqs.Queue
+	// The main SQS queue.
+	Queue() awssqs.IQueue
+	// The underlying AppTheoryQueue construct.
+	QueueConstruct() AppTheoryQueue
 	// Returns a string representation of this construct.
 	ToString() *string
 }
@@ -21,6 +45,26 @@ type AppTheoryQueueProcessor interface {
 // The jsii proxy struct for AppTheoryQueueProcessor
 type jsiiProxy_AppTheoryQueueProcessor struct {
 	internal.Type__constructsConstruct
+}
+
+func (j *jsiiProxy_AppTheoryQueueProcessor) ConsumerConstruct() AppTheoryQueueConsumer {
+	var returns AppTheoryQueueConsumer
+	_jsii_.Get(
+		j,
+		"consumerConstruct",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryQueueProcessor) DeadLetterQueue() awssqs.Queue {
+	var returns awssqs.Queue
+	_jsii_.Get(
+		j,
+		"deadLetterQueue",
+		&returns,
+	)
+	return returns
 }
 
 func (j *jsiiProxy_AppTheoryQueueProcessor) Node() constructs.Node {
@@ -33,11 +77,21 @@ func (j *jsiiProxy_AppTheoryQueueProcessor) Node() constructs.Node {
 	return returns
 }
 
-func (j *jsiiProxy_AppTheoryQueueProcessor) Queue() awssqs.Queue {
-	var returns awssqs.Queue
+func (j *jsiiProxy_AppTheoryQueueProcessor) Queue() awssqs.IQueue {
+	var returns awssqs.IQueue
 	_jsii_.Get(
 		j,
 		"queue",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryQueueProcessor) QueueConstruct() AppTheoryQueue {
+	var returns AppTheoryQueue
+	_jsii_.Get(
+		j,
+		"queueConstruct",
 		&returns,
 	)
 	return returns
