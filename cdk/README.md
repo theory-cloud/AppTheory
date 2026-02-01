@@ -24,6 +24,8 @@ Status: early; start with a small “top 20%” set and grow based on real usage
 - `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.
 - `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs).
 - `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).
+- `AppTheoryPathRoutedFrontend` — CloudFront distribution for multi-SPA routing + API origin (stage domain pattern).
+- `AppTheoryMediaCdn` — CloudFront distribution for an S3-backed media CDN (optional private media via key groups).
 - `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).
 - `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + domain/cert helpers).
 

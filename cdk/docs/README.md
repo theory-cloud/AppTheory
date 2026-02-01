@@ -19,6 +19,8 @@
 ### 🧭 Guides (copy/paste patterns)
 - [REST API v1 Router + Streaming](./rest-api-router-streaming.md) — multi-Lambda REST API v1 + full response streaming parity.
 - [SQS Queue + Consumer Patterns](./sqs-queue-consumer.md) — queue-only, queue+consumer, and processor patterns (DLQs + partial batch failures).
+- [CloudFront Path-Routed Frontend Distribution](./path-routed-frontend.md) — multi-SPA routing behind one stage domain.
+- [Media CDN Pattern](./media-cdn.md) — S3 + CloudFront distribution for media subdomains (optional private media).
 
 ### 🤖 AI knowledge base (YAML triad)
 - Concepts: `cdk/docs/_concepts.yaml`

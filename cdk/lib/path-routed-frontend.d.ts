@@ -157,5 +157,5 @@ export declare class AppTheoryPathRoutedFrontend extends Construct {
     /**
      * Extracts the domain name from a URL (e.g., "https://api.example.com/path" -> "api.example.com").
      */
-    private extractDomainFromUrl;
+    private parseOriginFromUrl;
 }

@@ -20,6 +20,8 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryDynamoDBStreamMapping` (Streams mapping + permissions)
 - `AppTheoryEventBusTable` (opinionated EventBus DynamoDB table + required GSIs)
 - `AppTheoryDynamoTable` (general-purpose DynamoDB table; schema-explicit + consistent defaults)
+- `AppTheoryPathRoutedFrontend` (CloudFront distribution: multi-SPA routing + API origin + SPA rewrite)
+- `AppTheoryMediaCdn` (CloudFront distribution: S3-backed media CDN; optional private media via key groups)
 - Domain/cert helpers (hosted zone, certificate, custom domains)
 - Higher-level “app”/SSR patterns (where present)
 

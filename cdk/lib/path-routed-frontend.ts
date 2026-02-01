@@ -253,10 +253,11 @@ export class AppTheoryPathRoutedFrontend extends Construct {
                 });
         }
 
-        // Parse the API origin URL to create an HttpOrigin
-        const apiOriginDomainName = this.extractDomainFromUrl(props.apiOriginUrl);
-        const apiOrigin = new origins.HttpOrigin(apiOriginDomainName, {
+        // Parse the API origin URL to create an HttpOrigin (domain + optional originPath)
+        const apiOriginParsed = this.parseOriginFromUrl(props.apiOriginUrl);
+        const apiOrigin = new origins.HttpOrigin(apiOriginParsed.domainName, {
             protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+            ...(apiOriginParsed.originPath ? { originPath: apiOriginParsed.originPath } : {}),
         });
 
         // Handle domain configuration
@@ -387,14 +388,37 @@ export class AppTheoryPathRoutedFrontend extends Construct {
     /**
      * Extracts the domain name from a URL (e.g., "https://api.example.com/path" -> "api.example.com").
      */
-    private extractDomainFromUrl(url: string): string {
-        // Handle both full URLs and bare domain names
-        const urlStr = String(url).trim();
-        if (urlStr.includes("://")) {
-            const withoutProtocol = urlStr.split("://")[1];
-            return (withoutProtocol.split("/")[0] || withoutProtocol).replace(/:\d+$/, "");
+    private parseOriginFromUrl(url: string): { domainName: string; originPath?: string } {
+        const urlStr = String(url ?? "").trim();
+        if (!urlStr) {
+            throw new Error("AppTheoryPathRoutedFrontend requires a non-empty apiOriginUrl");
         }
-        // Already a domain name
-        return urlStr.split("/")[0].replace(/:\d+$/, "");
+
+        // Full URL (recommended): https://api.example.com/prod
+        if (urlStr.includes("://")) {
+            const parsed = new URL(urlStr);
+            const domainName = String(parsed.hostname ?? "").trim();
+            if (!domainName) {
+                throw new Error(`AppTheoryPathRoutedFrontend could not parse domain from apiOriginUrl: ${urlStr}`);
+            }
+
+            const path = String(parsed.pathname ?? "").trim();
+            const originPath = path && path !== "/" ? path.replace(/\/+$/, "") : undefined;
+            return { domainName, ...(originPath ? { originPath } : {}) };
+        }
+
+        // Bare domain (or domain + path): api.example.com or api.example.com/prod
+        const withoutQuery = urlStr.split("?")[0]?.split("#")[0] ?? urlStr;
+        const firstSlashIndex = withoutQuery.indexOf("/");
+        const domainPart = (firstSlashIndex >= 0 ? withoutQuery.slice(0, firstSlashIndex) : withoutQuery)
+            .trim()
+            .replace(/:\d+$/, "");
+        if (!domainPart) {
+            throw new Error(`AppTheoryPathRoutedFrontend could not parse domain from apiOriginUrl: ${urlStr}`);
+        }
+
+        const pathPart = firstSlashIndex >= 0 ? withoutQuery.slice(firstSlashIndex) : "";
+        const originPath = pathPart && pathPart !== "/" ? pathPart.replace(/\/+$/, "") : undefined;
+        return { domainName: domainPart, ...(originPath ? { originPath } : {}) };
     }
 }

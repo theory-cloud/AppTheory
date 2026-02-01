@@ -42,25 +42,22 @@ const mediaCdn = new AppTheoryMediaCdn(this, 'MediaCdn', {
 ### With Certificate and Route53
 
 ```typescript
-import { AppTheoryMediaCdn, AppTheoryCertificate } from '@theory-cloud/apptheory-cdk';
+import { AppTheoryMediaCdn } from '@theory-cloud/apptheory-cdk';
 
 const zone = route53.HostedZone.fromLookup(this, 'Zone', {
     domainName: 'example.com',
 });
 
-const cert = new AppTheoryCertificate(this, 'Cert', {
-    domainName: 'media.example.com',
-    hostedZone: zone,
-});
-
 const mediaCdn = new AppTheoryMediaCdn(this, 'MediaCdn', {
     domain: {
         domainName: 'media.example.com',
-        certificate: cert.certificate,
-        hostedZone: zone, // Creates Route53 A record
+        hostedZone: zone, // Creates Route53 A record + DNS-validated cert in us-east-1
     },
 });
 ```
+
+Note: CloudFront requires ACM certificates in `us-east-1`. When you provide `hostedZone` without a certificate, this
+construct creates a DNS-validated certificate in `us-east-1` automatically.
 
 ### With Certificate ARN
 
@@ -160,7 +157,6 @@ const mediaCdn = new AppTheoryMediaCdn(this, 'MediaCdn', {
     // Domain configuration
     domain: {
         domainName: 'media.example.com',
-        certificate: cert.certificate,
         hostedZone: zone,
     },
     

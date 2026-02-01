@@ -882,6 +882,36 @@ test("AppTheoryPathRoutedFrontend (basic) synthesizes expected template", () => 
   }
 });
 
+test("AppTheoryPathRoutedFrontend (api origin with path) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+    apiOriginUrl: "https://api.example.com/prod",
+    enableLogging: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify originPath is applied to the API origin
+  const distributions = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::CloudFront::Distribution",
+  );
+  assert.ok(distributions.length >= 1, "Should have CloudFront Distribution");
+
+  const distribution = distributions[0][1];
+  const origins = distribution.Properties?.DistributionConfig?.Origins ?? [];
+  const apiOrigin = origins.find((o) => o.DomainName === "api.example.com");
+  assert.ok(apiOrigin, "Should have API origin configured");
+  assert.equal(apiOrigin.OriginPath, "/prod", "API origin should have originPath '/prod'");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("path-routed-frontend-api-origin-path", template);
+  } else {
+    expectSnapshot("path-routed-frontend-api-origin-path", template);
+  }
+});
+
 test("AppTheoryPathRoutedFrontend (multi-SPA) synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -1156,4 +1186,3 @@ test("AppTheoryMediaCdn (full options) synthesizes expected template", () => {
     expectSnapshot("media-cdn-full-options", template);
   }
 });
-
