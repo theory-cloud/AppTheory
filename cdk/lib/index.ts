@@ -11,6 +11,8 @@ export * from "./eventbus-table";
 export * from "./dynamo-table";
 export * from "./eventbridge-handler";
 export * from "./http-api";
+export * from "./queue";
+export * from "./queue-consumer";
 export * from "./queue-processor";
 export * from "./rest-api";
 export * from "./rest-api-router";

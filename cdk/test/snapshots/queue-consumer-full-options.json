@@ -42,7 +42,7 @@
               "Effect": "Allow",
               "Resource": {
                 "Fn::GetAtt": [
-                  "QueueAppTheoryQueue49060A4E",
+                  "Queue381943A6",
                   "Arn"
                 ]
               }
@@ -90,24 +90,54 @@
       },
       "Type": "AWS::IAM::Role"
     },
-    "ConsumerSqsEventSourceTestStackQueueAppTheoryQueueB2291404563509C3": {
+    "ConsumerSqsEventSourceTestStackQueueEBDD0FF50AC1CF43": {
       "Properties": {
-        "BatchSize": 10,
+        "BatchSize": 100,
         "Enabled": true,
         "EventSourceArn": {
           "Fn::GetAtt": [
-            "QueueAppTheoryQueue49060A4E",
+            "Queue381943A6",
             "Arn"
           ]
         },
         "FunctionName": {
           "Ref": "Consumer8D6BE417"
+        },
+        "FunctionResponseTypes": [
+          "ReportBatchItemFailures"
+        ],
+        "MaximumBatchingWindowInSeconds": 10,
+        "ScalingConfig": {
+          "MaximumConcurrency": 50
         }
       },
       "Type": "AWS::Lambda::EventSourceMapping"
     },
-    "QueueAppTheoryQueue49060A4E": {
+    "Queue381943A6": {
       "DeletionPolicy": "Delete",
+      "Properties": {
+        "QueueName": "apptheory-queue",
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "QueueDeadLetterQueue27D1B28A",
+              "Arn"
+            ]
+          },
+          "maxReceiveCount": 3
+        },
+        "VisibilityTimeout": 60
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete"
+    },
+    "QueueDeadLetterQueue27D1B28A": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "QueueName": "apptheory-queue-dlq",
+        "VisibilityTimeout": 60
+      },
       "Type": "AWS::SQS::Queue",
       "UpdateReplacePolicy": "Delete"
     }

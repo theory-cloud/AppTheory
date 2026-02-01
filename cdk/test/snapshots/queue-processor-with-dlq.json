@@ -92,7 +92,7 @@
     },
     "ConsumerSqsEventSourceTestStackQueueAppTheoryQueueB2291404563509C3": {
       "Properties": {
-        "BatchSize": 10,
+        "BatchSize": 50,
         "Enabled": true,
         "EventSourceArn": {
           "Fn::GetAtt": [
@@ -102,12 +102,40 @@
         },
         "FunctionName": {
           "Ref": "Consumer8D6BE417"
+        },
+        "FunctionResponseTypes": [
+          "ReportBatchItemFailures"
+        ],
+        "MaximumBatchingWindowInSeconds": 5,
+        "ScalingConfig": {
+          "MaximumConcurrency": 10
         }
       },
       "Type": "AWS::Lambda::EventSourceMapping"
     },
     "QueueAppTheoryQueue49060A4E": {
       "DeletionPolicy": "Delete",
+      "Properties": {
+        "QueueName": "apptheory-processor-queue",
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "QueueAppTheoryQueueDeadLetterQueueCCDA89A6",
+              "Arn"
+            ]
+          },
+          "maxReceiveCount": 5
+        }
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete"
+    },
+    "QueueAppTheoryQueueDeadLetterQueueCCDA89A6": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "QueueName": "apptheory-processor-queue-dlq"
+      },
       "Type": "AWS::SQS::Queue",
       "UpdateReplacePolicy": "Delete"
     }
