@@ -36,6 +36,13 @@ export interface AppTheoryQueueProcessorProps {
   readonly visibilityTimeout?: Duration;
 
   /**
+   * The amount of time for which a ReceiveMessage call will wait for a message to arrive in the queue
+   * before returning. Used for SQS long polling.
+   * @default undefined
+   */
+  readonly receiveMessageWaitTime?: Duration;
+
+  /**
    * Whether to enable a Dead Letter Queue (DLQ).
    * @default false (for backwards compatibility with original behavior)
    */
@@ -153,6 +160,9 @@ export class AppTheoryQueueProcessor extends Construct {
       visibilityTimeout: useLegacyProps
         ? props.queueProps?.visibilityTimeout
         : props.visibilityTimeout,
+      receiveMessageWaitTime: useLegacyProps
+        ? props.queueProps?.receiveMessageWaitTime
+        : props.receiveMessageWaitTime,
       enableDlq: props.enableDlq ?? false, // Backwards compatible: no DLQ by default
       maxReceiveCount: props.maxReceiveCount,
       removalPolicy: props.removalPolicy,
@@ -174,4 +184,3 @@ export class AppTheoryQueueProcessor extends Construct {
     });
   }
 }
-

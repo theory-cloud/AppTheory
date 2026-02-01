@@ -26,6 +26,13 @@ export interface AppTheoryQueueProps {
     readonly retentionPeriod?: Duration;
 
     /**
+     * The amount of time for which a ReceiveMessage call will wait for a message to arrive in the queue
+     * before returning. Used for SQS long polling.
+     * @default undefined
+     */
+    readonly receiveMessageWaitTime?: Duration;
+
+    /**
      * Whether to enable a Dead Letter Queue (DLQ).
      * @default true
      */
@@ -161,6 +168,7 @@ export class AppTheoryQueue extends Construct {
             queueName: props.fifo && props.queueName ? `${props.queueName}.fifo` : props.queueName,
             visibilityTimeout: props.visibilityTimeout,
             retentionPeriod: props.retentionPeriod,
+            receiveMessageWaitTime: props.receiveMessageWaitTime,
             encryption: props.encryption,
             fifo: props.fifo,
             contentBasedDeduplication: props.fifo ? props.contentBasedDeduplication : undefined,

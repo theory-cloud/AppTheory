@@ -7,6 +7,18 @@ import * as targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 
+export enum AppTheorySpaRewriteMode {
+    /**
+     * Rewrite extensionless routes to `index.html` within the SPA prefix.
+     */
+    SPA = "spa",
+
+    /**
+     * Do not rewrite routes. Useful for multi-page/static sites.
+     */
+    NONE = "none",
+}
+
 /**
  * Configuration for an SPA origin routed by path prefix.
  */
@@ -26,6 +38,35 @@ export interface SpaOriginConfig {
      * Optional cache policy override. Defaults to CACHING_OPTIMIZED.
      */
     readonly cachePolicy?: cloudfront.ICachePolicy;
+
+    /**
+     * Response headers policy for this SPA behavior.
+     * Overrides `spaResponseHeadersPolicy` and `responseHeadersPolicy` (legacy).
+     */
+    readonly responseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
+
+    /**
+     * Whether to strip the SPA prefix before forwarding to the S3 origin.
+     *
+     * Example:
+     * - Request: `/auth/assets/app.js`
+     * - With `stripPrefixBeforeOrigin=true`, S3 receives: `/assets/app.js`
+     *
+     * This allows laying out the SPA bucket at root while still serving it under a prefix.
+     *
+     * @default false
+     */
+    readonly stripPrefixBeforeOrigin?: boolean;
+
+    /**
+     * SPA rewrite mode.
+     *
+     * - `SPA`: rewrite extensionless routes to the SPA's `index.html`
+     * - `NONE`: do not rewrite routes (useful for multi-page sites)
+     *
+     * @default AppTheorySpaRewriteMode.SPA
+     */
+    readonly rewriteMode?: AppTheorySpaRewriteMode;
 }
 
 /**
@@ -46,6 +87,12 @@ export interface ApiBypassConfig {
      * Optional origin request policy override.
      */
     readonly originRequestPolicy?: cloudfront.IOriginRequestPolicy;
+
+    /**
+     * Response headers policy for this API bypass behavior.
+     * Overrides `apiBypassResponseHeadersPolicy` and `responseHeadersPolicy` (legacy).
+     */
+    readonly responseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
 }
 
 /**
@@ -72,6 +119,12 @@ export interface PathRoutedFrontendDomainConfig {
      * When provided, an A record alias will be created for the domain.
      */
     readonly hostedZone?: route53.IHostedZone;
+
+    /**
+     * Whether to create an AAAA alias record in addition to the A alias record.
+     * @default false
+     */
+    readonly createAAAARecord?: boolean;
 }
 
 export interface AppTheoryPathRoutedFrontendProps {
@@ -100,9 +153,29 @@ export interface AppTheoryPathRoutedFrontendProps {
     readonly domain?: PathRoutedFrontendDomainConfig;
 
     /**
-     * Response headers policy to apply to all behaviors.
+     * Response headers policy to apply to all behaviors (legacy).
+     *
+     * Prefer using `apiResponseHeadersPolicy`, `spaResponseHeadersPolicy`, and
+     * `apiBypassResponseHeadersPolicy` for behavior-scoped control.
      */
     readonly responseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
+
+    /**
+     * Response headers policy for the API origin default behavior.
+     */
+    readonly apiResponseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
+
+    /**
+     * Default response headers policy for SPA behaviors.
+     * Can be overridden per SPA via `SpaOriginConfig.responseHeadersPolicy`.
+     */
+    readonly spaResponseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
+
+    /**
+     * Default response headers policy for API bypass behaviors.
+     * Can be overridden per bypass via `ApiBypassConfig.responseHeadersPolicy`.
+     */
+    readonly apiBypassResponseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
 
     /**
      * Origin request policy for the API origin (default behavior).
@@ -155,45 +228,75 @@ export interface AppTheoryPathRoutedFrontendProps {
  * CloudFront Function code for SPA viewer-request rewrite.
  * Rewrites requests without file extensions to the index.html within the prefix.
  */
-function generateSpaRewriteFunctionCode(spaPathPrefixes: string[]): string {
-    const prefixMatches = spaPathPrefixes
-        .map((prefix) => {
-            const cleanPrefix = prefix.replace(/\/\*$/, "");
-            return `{ prefix: '${cleanPrefix}/', indexPath: '${cleanPrefix}/index.html' }`;
+function generateSpaRewriteFunctionCode(
+    spaOrigins: SpaOriginConfig[],
+): string {
+    const configs = spaOrigins
+        .map((spa) => {
+            const cleanPrefix = spa.pathPattern.replace(/\/\*$/, "");
+            const prefix = `${cleanPrefix}/`;
+            const rewriteMode = spa.rewriteMode ?? AppTheorySpaRewriteMode.SPA;
+            const stripPrefixBeforeOrigin = spa.stripPrefixBeforeOrigin === true;
+            const indexPath = `${cleanPrefix}/index.html`;
+            return {
+                cleanPrefix,
+                prefix,
+                rewriteMode,
+                stripPrefixBeforeOrigin,
+                indexPath,
+            };
+        })
+        // Ensure more specific prefixes match first to avoid overlap issues.
+        .sort((a, b) => b.cleanPrefix.length - a.cleanPrefix.length);
+
+    const prefixMatches = configs
+        .map((cfg) => {
+            return `{ cleanPrefix: '${cfg.cleanPrefix}', prefix: '${cfg.prefix}', rewriteMode: '${cfg.rewriteMode}', stripPrefixBeforeOrigin: ${cfg.stripPrefixBeforeOrigin}, indexPath: '${cfg.indexPath}' }`;
         })
         .join(",\n      ");
 
     return `
-function handler(event) {
-  var request = event.request;
-  var uri = request.uri;
+	function handler(event) {
+	  var request = event.request;
+	  var uri = request.uri;
 
-  // SPA prefix configurations
-  var spaPrefixes = [
-      ${prefixMatches}
-  ];
+	  // SPA prefix configurations
+	  var spaPrefixes = [
+	      ${prefixMatches}
+	  ];
 
-  // Check if this is an SPA path
-  for (var i = 0; i < spaPrefixes.length; i++) {
-    var spa = spaPrefixes[i];
-    if (uri.startsWith(spa.prefix)) {
-      // If the URI doesn't have an extension (no file), rewrite to index.html
-      var uriWithoutPrefix = uri.substring(spa.prefix.length);
-      // Check if it has a file extension (contains a dot in the last path segment)
-      var lastSlash = uriWithoutPrefix.lastIndexOf('/');
-      var lastSegment = lastSlash >= 0 ? uriWithoutPrefix.substring(lastSlash + 1) : uriWithoutPrefix;
-      
-      // If no extension in the last segment, serve index.html
-      if (lastSegment.indexOf('.') === -1) {
-        request.uri = spa.indexPath;
-      }
-      break;
-    }
-  }
+	  // Check if this is an SPA path
+	  for (var i = 0; i < spaPrefixes.length; i++) {
+	    var spa = spaPrefixes[i];
+	    if (uri.startsWith(spa.prefix)) {
+	      var uriWithoutPrefix = uri.substring(spa.prefix.length);
 
-  return request;
-}
-`.trim();
+	      if (spa.rewriteMode === 'spa') {
+	        // If the URI doesn't have an extension (no file), rewrite to index.html
+	        // Check if it has a file extension (contains a dot in the last path segment)
+	        var lastSlash = uriWithoutPrefix.lastIndexOf('/');
+	        var lastSegment = lastSlash >= 0 ? uriWithoutPrefix.substring(lastSlash + 1) : uriWithoutPrefix;
+	        
+	        // If no extension in the last segment, serve index.html
+	        if (lastSegment.indexOf('.') === -1) {
+	          request.uri = spa.indexPath;
+	        }
+	      }
+
+	      // Optionally strip the prefix before forwarding to the origin.
+	      if (spa.stripPrefixBeforeOrigin) {
+	        var cleanPrefixWithSlash = spa.cleanPrefix + '/';
+	        if (request.uri.startsWith(cleanPrefixWithSlash)) {
+	          request.uri = request.uri.substring(spa.cleanPrefix.length);
+	        }
+	      }
+	      break;
+	    }
+	  }
+
+	  return request;
+	}
+	`.trim();
 }
 
 /**
@@ -296,9 +399,13 @@ export class AppTheoryPathRoutedFrontend extends Construct {
 
         // Create CloudFront Function for SPA rewrite if SPA origins are configured
         const spaOrigins = props.spaOrigins ?? [];
-        if (spaOrigins.length > 0) {
-            const spaPathPrefixes = spaOrigins.map((spa) => spa.pathPattern);
-            const functionCode = generateSpaRewriteFunctionCode(spaPathPrefixes);
+        if (
+            spaOrigins.some((spa) => {
+                const rewriteMode = spa.rewriteMode ?? AppTheorySpaRewriteMode.SPA;
+                return rewriteMode !== AppTheorySpaRewriteMode.NONE || spa.stripPrefixBeforeOrigin === true;
+            })
+        ) {
+            const functionCode = generateSpaRewriteFunctionCode(spaOrigins);
 
             this.spaRewriteFunction = new cloudfront.Function(this, "SpaRewriteFunction", {
                 code: cloudfront.FunctionCode.fromInline(functionCode),
@@ -312,6 +419,11 @@ export class AppTheoryPathRoutedFrontend extends Construct {
 
         // Add API bypass paths first (higher precedence in CloudFront)
         for (const bypassConfig of props.apiBypassPaths ?? []) {
+            const responseHeadersPolicy =
+                bypassConfig.responseHeadersPolicy ??
+                props.apiBypassResponseHeadersPolicy ??
+                props.responseHeadersPolicy;
+
             additionalBehaviors[bypassConfig.pathPattern] = {
                 origin: apiOrigin,
                 viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -319,14 +431,23 @@ export class AppTheoryPathRoutedFrontend extends Construct {
                 cachePolicy: bypassConfig.cachePolicy ?? cloudfront.CachePolicy.CACHING_DISABLED,
                 originRequestPolicy:
                     bypassConfig.originRequestPolicy ?? props.apiOriginRequestPolicy,
-                ...(props.responseHeadersPolicy
-                    ? { responseHeadersPolicy: props.responseHeadersPolicy }
+                ...(responseHeadersPolicy
+                    ? { responseHeadersPolicy }
                     : {}),
             };
         }
 
         // Add SPA origin behaviors
         for (const spaConfig of spaOrigins) {
+            const responseHeadersPolicy =
+                spaConfig.responseHeadersPolicy ??
+                props.spaResponseHeadersPolicy ??
+                props.responseHeadersPolicy;
+            const rewriteMode = spaConfig.rewriteMode ?? AppTheorySpaRewriteMode.SPA;
+            const needsFunction =
+                this.spaRewriteFunction &&
+                (rewriteMode !== AppTheorySpaRewriteMode.NONE || spaConfig.stripPrefixBeforeOrigin === true);
+
             const spaOrigin = origins.S3BucketOrigin.withOriginAccessControl(spaConfig.bucket);
 
             additionalBehaviors[spaConfig.pathPattern] = {
@@ -335,7 +456,7 @@ export class AppTheoryPathRoutedFrontend extends Construct {
                 allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
                 cachePolicy: spaConfig.cachePolicy ?? cloudfront.CachePolicy.CACHING_OPTIMIZED,
                 compress: true,
-                ...(this.spaRewriteFunction
+                ...(needsFunction
                     ? {
                         functionAssociations: [
                             {
@@ -345,13 +466,17 @@ export class AppTheoryPathRoutedFrontend extends Construct {
                         ],
                     }
                     : {}),
-                ...(props.responseHeadersPolicy
-                    ? { responseHeadersPolicy: props.responseHeadersPolicy }
+                ...(responseHeadersPolicy
+                    ? { responseHeadersPolicy }
                     : {}),
             };
         }
 
         // Create the distribution
+        const defaultResponseHeadersPolicy =
+            props.apiResponseHeadersPolicy ??
+            props.responseHeadersPolicy;
+
         this.distribution = new cloudfront.Distribution(this, "Distribution", {
             ...(enableLogging && this.logsBucket
                 ? { enableLogging: true, logBucket: this.logsBucket, logFilePrefix: "cloudfront/" }
@@ -365,8 +490,8 @@ export class AppTheoryPathRoutedFrontend extends Construct {
                 allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
                 cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
                 originRequestPolicy: props.apiOriginRequestPolicy,
-                ...(props.responseHeadersPolicy
-                    ? { responseHeadersPolicy: props.responseHeadersPolicy }
+                ...(defaultResponseHeadersPolicy
+                    ? { responseHeadersPolicy: defaultResponseHeadersPolicy }
                     : {}),
             },
             additionalBehaviors,
@@ -382,6 +507,14 @@ export class AppTheoryPathRoutedFrontend extends Construct {
                 recordName: props.domain.domainName,
                 target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(this.distribution)),
             });
+
+            if (props.domain.createAAAARecord === true) {
+                new route53.AaaaRecord(this, "AliasRecordAAAA", {
+                    zone: props.domain.hostedZone,
+                    recordName: props.domain.domainName,
+                    target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(this.distribution)),
+                });
+            }
         }
     }
 
