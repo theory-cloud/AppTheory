@@ -30,10 +30,11 @@ cat > dist/RELEASE_NOTES.md <<EOF
 
 ## Highlights
 - Multi-language runtime (Go/TypeScript/Python) with fixture-backed contract tests.
+- Multi-language CDK (jsii) constructs (TypeScript/Python + Go bindings).
 - Deterministic, verifiable release artifacts (checksums + reproducibility gates).
 
 ## Breaking changes
-- None (initial release).
+- See \`CHANGELOG.md\` for details.
 
 ## Upgrade steps
 - Fresh install (no registry publishing; install from GitHub Release assets).
@@ -41,16 +42,25 @@ cat > dist/RELEASE_NOTES.md <<EOF
 Go:
 
 - \`go get github.com/theory-cloud/apptheory@${tag}\`
+- CDK bindings: import \`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk\` (included in the same module/tag).
 
 TypeScript:
 
-- Download \`theory-cloud-apptheory-${version}.tgz\` from this release.
-- \`npm i ./theory-cloud-apptheory-${version}.tgz\`
+- Runtime:
+  - Download \`theory-cloud-apptheory-${version}.tgz\` from this release.
+  - \`npm i ./theory-cloud-apptheory-${version}.tgz\`
+- CDK:
+  - Download \`theory-cloud-apptheory-cdk-${version}.tgz\` from this release.
+  - \`npm i ./theory-cloud-apptheory-cdk-${version}.tgz\`
 
 Python:
 
-- Download an \`apptheory-${python_version}-*.whl\` (or \`apptheory-${python_version}.tar.gz\`) from this release.
-- \`pip install ./apptheory-${python_version}-*.whl\`
+- Runtime:
+  - Download \`apptheory-${python_version}-*.whl\` (or \`apptheory-${python_version}.tar.gz\`) from this release.
+  - \`pip install ./apptheory-${python_version}-*.whl\`
+- CDK:
+  - Download \`apptheory_cdk-${python_version}-*.whl\` (or \`apptheory_cdk-${python_version}.tar.gz\`) from this release.
+  - \`pip install ./apptheory_cdk-${python_version}-*.whl\`
 
 ## Lift migration
 - Draft guide: ${docs_base}/docs/migration/from-lift.md
