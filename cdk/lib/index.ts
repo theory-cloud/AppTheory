@@ -18,3 +18,4 @@ export * from "./rest-api";
 export * from "./rest-api-router";
 export * from "./websocket-api";
 export * from "./ssr-site";
+export * from "./path-routed-frontend";

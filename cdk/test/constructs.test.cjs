@@ -858,3 +858,101 @@ test("AppTheoryRestApiRouter (domain + Route53) synthesizes expected template", 
     expectSnapshot("rest-api-router-domain", template);
   }
 });
+
+// ============================================================================
+// AppTheoryPathRoutedFrontend tests
+// ============================================================================
+
+const s3 = require("aws-cdk-lib/aws-s3");
+
+test("AppTheoryPathRoutedFrontend (basic) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+    apiOriginUrl: "https://api.example.com",
+    enableLogging: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("path-routed-frontend-basic", template);
+  } else {
+    expectSnapshot("path-routed-frontend-basic", template);
+  }
+});
+
+test("AppTheoryPathRoutedFrontend (multi-SPA) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const clientBucket = new s3.Bucket(stack, "ClientBucket");
+  const authBucket = new s3.Bucket(stack, "AuthBucket");
+
+  new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+    apiOriginUrl: "https://api.example.com",
+    spaOrigins: [
+      { bucket: clientBucket, pathPattern: "/l/*" },
+      { bucket: authBucket, pathPattern: "/auth/*" },
+    ],
+    apiBypassPaths: [{ pathPattern: "/auth/wallet/*" }],
+    enableLogging: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify CloudFront Function is created
+  const functions = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::CloudFront::Function",
+  );
+  assert.ok(functions.length >= 1, "Should have at least 1 CloudFront Function for SPA rewrite");
+
+  // Verify additional behaviors are configured
+  const distributions = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::CloudFront::Distribution",
+  );
+  assert.ok(distributions.length >= 1, "Should have CloudFront Distribution");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("path-routed-frontend-multi-spa", template);
+  } else {
+    expectSnapshot("path-routed-frontend-multi-spa", template);
+  }
+});
+
+test("AppTheoryPathRoutedFrontend (domain + Route53) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const clientBucket = new s3.Bucket(stack, "ClientBucket");
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+  const cert = new apptheory.AppTheoryCertificate(stack, "Cert", {
+    domainName: "app.example.com",
+    hostedZone: zone,
+  });
+
+  new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+    apiOriginUrl: "https://api.example.com",
+    spaOrigins: [{ bucket: clientBucket, pathPattern: "/l/*" }],
+    domain: {
+      domainName: "app.example.com",
+      certificate: cert.certificate,
+      hostedZone: zone,
+    },
+    enableLogging: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify Route53 A record is created
+  const aRecords = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::Route53::RecordSet",
+  );
+  assert.ok(aRecords.length >= 1, "Should have Route53 A record");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("path-routed-frontend-domain", template);
+  } else {
+    expectSnapshot("path-routed-frontend-domain", template);
+  }
+});

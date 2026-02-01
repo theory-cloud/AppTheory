@@ -170,7 +170,16 @@ Non-goals:
 
 This milestone is intentionally **pattern-focused** (like Lift), not a “CloudFront primitives” wrapper.
 
-#### M4A — Path-routed frontend distribution (multi-SPA + API behind one stage domain)
+#### M4A — Path-routed frontend distribution (multi-SPA + API behind one stage domain) ✅ COMPLETE
+
+**Status**: Implemented 2026-02-01
+
+**Implementation**:
+- New construct: `AppTheoryPathRoutedFrontend` in `cdk/lib/path-routed-frontend.ts`
+- Exports via `cdk/lib/index.ts`
+- Snapshot tests: `cdk/test/snapshots/path-routed-frontend-*.json`
+- Documentation: `cdk/docs/path-routed-frontend.md`
+- Example: `examples/cdk/path-routed-frontend/`
 
 **Deliverables**
 - New construct (name flexible): `AppTheoryPathRoutedFrontend` (or similar).

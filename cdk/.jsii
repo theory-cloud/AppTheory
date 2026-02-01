@@ -8498,6 +8498,71 @@
     }
   },
   "types": {
+    "@theory-cloud/apptheory-cdk.ApiBypassConfig": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Configuration for path patterns that should bypass SPA routing and go directly to the API origin."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.ApiBypassConfig",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/path-routed-frontend.ts",
+        "line": 34
+      },
+      "name": "ApiBypassConfig",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Path pattern that should route to the API origin instead of SPA (e.g., \"/auth/wallet/*\")."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 38
+          },
+          "name": "pathPattern",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Defaults to CACHING_DISABLED.",
+            "summary": "Optional cache policy override."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 43
+          },
+          "name": "cachePolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.ICachePolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Optional origin request policy override."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 48
+          },
+          "name": "originRequestPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IOriginRequestPolicy"
+          }
+        }
+      ],
+      "symbolId": "lib/path-routed-frontend:ApiBypassConfig"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryApiDomain": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -11592,6 +11657,348 @@
         }
       ],
       "symbolId": "lib/kms-key:AppTheoryKmsKeyProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontend": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "This construct creates a CloudFront distribution that routes requests to:\n- SPA origins (S3 buckets) based on path prefixes (e.g., /l/*, /auth/*)\n- API origin (default behavior) for all other paths\n- API bypass paths for specific paths that should skip SPA routing\n\nA CloudFront Function handles viewer-request rewriting for SPA routing,\nensuring that paths without file extensions are rewritten to index.html.",
+        "summary": "A CloudFront distribution for path-routed multi-SPA + API deployments."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontend",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/path-routed-frontend.ts",
+          "line": 231
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontendProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/path-routed-frontend.ts",
+        "line": 210
+      },
+      "name": "AppTheoryPathRoutedFrontend",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The CloudFront distribution."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 214
+          },
+          "name": "distribution",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.Distribution"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The certificate used for the distribution (if custom domain is configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 229
+          },
+          "name": "certificate",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_certificatemanager.ICertificate"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The CloudFront access logs bucket (if logging is enabled)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 224
+          },
+          "name": "logsBucket",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.IBucket"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The CloudFront Function for SPA rewrite (if SPA origins are configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 219
+          },
+          "name": "spaRewriteFunction",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.Function"
+          }
+        }
+      ],
+      "symbolId": "lib/path-routed-frontend:AppTheoryPathRoutedFrontend"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontendProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontendProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/path-routed-frontend.ts",
+        "line": 77
+      },
+      "name": "AppTheoryPathRoutedFrontendProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The primary API origin URL (e.g., the API Gateway invoke URL or Lambda function URL). This is used for the default behavior and any API bypass paths."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 82
+          },
+          "name": "apiOriginUrl",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "These are evaluated before SPA paths due to CloudFront behavior precedence.",
+            "summary": "API bypass configurations for paths that should go directly to the API origin even though they might match an SPA path prefix."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 95
+          },
+          "name": "apiBypassPaths",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.ApiBypassConfig"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Origin request policy for the API origin (default behavior)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 110
+          },
+          "name": "apiOriginRequestPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IOriginRequestPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "Only applies when removalPolicy is DESTROY.",
+            "summary": "Whether to auto-delete objects in created buckets on stack deletion."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 135
+          },
+          "name": "autoDeleteObjects",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "An optional name/comment for the distribution."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 151
+          },
+          "name": "comment",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Domain configuration for custom domain, certificate, and Route53."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 100
+          },
+          "name": "domain",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.PathRoutedFrontendDomainConfig"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Enable CloudFront access logging."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 116
+          },
+          "name": "enableLogging",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "If not provided and enableLogging is true, a new bucket will be created.",
+            "summary": "Optional S3 bucket for CloudFront access logs."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 122
+          },
+          "name": "logsBucket",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.IBucket"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "PriceClass.PRICE_CLASS_ALL",
+            "summary": "Price class for the CloudFront distribution."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 146
+          },
+          "name": "priceClass",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.PriceClass"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "RemovalPolicy.RETAIN",
+            "summary": "Removal policy for created resources."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 128
+          },
+          "name": "removalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Response headers policy to apply to all behaviors."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 105
+          },
+          "name": "responseHeadersPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Each SPA will be served via CloudFront with SPA rewrite support.",
+            "summary": "SPA origins with their path patterns."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 88
+          },
+          "name": "spaOrigins",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.SpaOriginConfig"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Optional web ACL ID for AWS WAF integration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 140
+          },
+          "name": "webAclId",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/path-routed-frontend:AppTheoryPathRoutedFrontendProps"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryQueue": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -14749,8 +15156,154 @@
         }
       ],
       "symbolId": "lib/websocket-api:AppTheoryWebSocketApiProps"
+    },
+    "@theory-cloud/apptheory-cdk.PathRoutedFrontendDomainConfig": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Domain configuration for the CloudFront distribution."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.PathRoutedFrontendDomainConfig",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/path-routed-frontend.ts",
+        "line": 54
+      },
+      "name": "PathRoutedFrontendDomainConfig",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The domain name for the distribution (e.g., \"app.example.com\")."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 58
+          },
+          "name": "domainName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Must be in us-east-1 for CloudFront.",
+            "summary": "ACM certificate for HTTPS."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 63
+          },
+          "name": "certificate",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_certificatemanager.ICertificate"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "ARN of an existing ACM certificate."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 68
+          },
+          "name": "certificateArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "When provided, an A record alias will be created for the domain.",
+            "summary": "Route53 hosted zone for DNS record creation."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 74
+          },
+          "name": "hostedZone",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.IHostedZone"
+          }
+        }
+      ],
+      "symbolId": "lib/path-routed-frontend:PathRoutedFrontendDomainConfig"
+    },
+    "@theory-cloud/apptheory-cdk.SpaOriginConfig": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Configuration for an SPA origin routed by path prefix."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.SpaOriginConfig",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/path-routed-frontend.ts",
+        "line": 13
+      },
+      "name": "SpaOriginConfig",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "S3 bucket containing the SPA assets."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 17
+          },
+          "name": "bucket",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.IBucket"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Path pattern to route to this SPA (e.g., \"/l/*\", \"/auth/*\"). Must include the trailing wildcard."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 23
+          },
+          "name": "pathPattern",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Defaults to CACHING_OPTIMIZED.",
+            "summary": "Optional cache policy override."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 28
+          },
+          "name": "cachePolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.ICachePolicy"
+          }
+        }
+      ],
+      "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
   "version": "0.5.0",
-  "fingerprint": "MASOGK3WhTeNHVuRCHkUNJZdqYoerD8tqApwSsfNNTY="
+  "fingerprint": "ircdnsNYK/gbO5yNlAF0KMfduGeW4Ojg5me6ixTI0vw="
 }
