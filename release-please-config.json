@@ -32,6 +32,11 @@
           "type": "json",
           "path": "examples/cdk/ssr-site/package-lock.json",
           "jsonpath": "$.packages['../../../cdk'].version"
+        },
+        {
+          "type": "json",
+          "path": "examples/cdk/lesser-parity/package-lock.json",
+          "jsonpath": "$.packages['../../../cdk'].version"
         }
       ]
     }

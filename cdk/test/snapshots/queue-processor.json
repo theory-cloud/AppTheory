@@ -27,6 +27,22 @@
       },
       "Type": "AWS::Lambda::Function"
     },
+    "ConsumerEventSourceMapping81A5AC58": {
+      "Properties": {
+        "BatchSize": 10,
+        "Enabled": true,
+        "EventSourceArn": {
+          "Fn::GetAtt": [
+            "QueueAppTheoryQueue49060A4E",
+            "Arn"
+          ]
+        },
+        "FunctionName": {
+          "Ref": "Consumer8D6BE417"
+        }
+      },
+      "Type": "AWS::Lambda::EventSourceMapping"
+    },
     "ConsumerServiceRoleDefaultPolicy0717ECC4": {
       "Properties": {
         "PolicyDocument": {
@@ -42,7 +58,7 @@
               "Effect": "Allow",
               "Resource": {
                 "Fn::GetAtt": [
-                  "Queue381943A6",
+                  "QueueAppTheoryQueue49060A4E",
                   "Arn"
                 ]
               }
@@ -90,22 +106,7 @@
       },
       "Type": "AWS::IAM::Role"
     },
-    "ConsumerSqsEventSourceTestStackQueueEBDD0FF50AC1CF43": {
-      "Properties": {
-        "BatchSize": 10,
-        "EventSourceArn": {
-          "Fn::GetAtt": [
-            "Queue381943A6",
-            "Arn"
-          ]
-        },
-        "FunctionName": {
-          "Ref": "Consumer8D6BE417"
-        }
-      },
-      "Type": "AWS::Lambda::EventSourceMapping"
-    },
-    "Queue381943A6": {
+    "QueueAppTheoryQueue49060A4E": {
       "DeletionPolicy": "Delete",
       "Type": "AWS::SQS::Queue",
       "UpdateReplacePolicy": "Delete"
