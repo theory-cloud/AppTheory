@@ -232,23 +232,37 @@ This milestone is intentionally **pattern-focused** (like Lift), not a “CloudF
 
 ---
 
-### M5 — IAM: `AppTheoryLambdaRole` helper (LiftLambdaRole replacement)
+### M5 — IAM: `AppTheoryLambdaRole` helper (LiftLambdaRole replacement) ✅ COMPLETE
+
+**Status**: Implemented 2026-02-01
+
+**Implementation**:
+- New construct: `AppTheoryLambdaRole` in `cdk/lib/lambda-role.ts`
+- Exports via `cdk/lib/index.ts`
+- Snapshot tests: `cdk/test/snapshots/lambda-role-*.json` (4 test scenarios)
+- Documentation: `cdk/docs/lambda-role.md`
+- Example: `examples/cdk/lambda-role/`
 
 **Deliverables**
 - New construct `AppTheoryLambdaRole` (minimal, explicit).
 - Inputs:
   - optional `roleName`
-  - optional X-Ray enablement (managed policy)
-  - optional KMS key grants for environment encryption and app-level KMS usage
-  - escape hatch to attach extra inline policy statements (common real-world need)
+  - optional `description`
+  - optional X-Ray enablement (`enableXRay`) attaching `AWSXRayDaemonWriteAccess` managed policy
+  - optional KMS key grants for environment encryption (`environmentEncryptionKeys`)
+  - optional KMS key grants for app-level KMS usage (`applicationKmsKeys`)
+  - escape hatch to attach extra inline policy statements (`additionalStatements`)
+  - optional `tags` for custom tagging
 
 **Tests**
 - Snapshot tests verifying:
-  - the role exists with baseline Lambda execution permissions
-  - optional X-Ray and KMS permissions render correctly
+  - baseline role with Lambda execution permissions (`lambda-role-baseline.json`)
+  - X-Ray permissions render correctly (`lambda-role-xray.json`)
+  - KMS permissions for environment and application keys (`lambda-role-kms.json`)
+  - additional statements escape hatch (`lambda-role-additional-statements.json`)
 
 **Acceptance criteria**
-- Application stacks can stop using Lift role constructs for “basic + encryption” Lambda execution roles.
+- Application stacks can stop using Lift role constructs for "basic + encryption" Lambda execution roles.
 
 ---
 
