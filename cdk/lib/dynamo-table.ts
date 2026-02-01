@@ -27,6 +27,7 @@ export interface AppTheoryDynamoTableProps {
   readonly readCapacity?: number;
   readonly writeCapacity?: number;
   readonly removalPolicy?: RemovalPolicy;
+  readonly deletionProtection?: boolean;
   readonly enablePointInTimeRecovery?: boolean;
   readonly encryption?: dynamodb.TableEncryption;
   readonly encryptionKey?: kms.IKey;
@@ -79,15 +80,16 @@ export class AppTheoryDynamoTable extends Construct {
       },
       ...(ttlAttribute ? { timeToLiveAttribute: ttlAttribute } : {}),
       removalPolicy,
+      deletionProtection: props.deletionProtection,
       pointInTimeRecovery: enablePITR,
       encryption,
       encryptionKey: props.encryptionKey,
       stream,
       ...(billingMode === dynamodb.BillingMode.PROVISIONED
         ? {
-            readCapacity: props.readCapacity ?? 5,
-            writeCapacity: props.writeCapacity ?? 5,
-          }
+          readCapacity: props.readCapacity ?? 5,
+          writeCapacity: props.writeCapacity ?? 5,
+        }
         : {}),
     });
 
@@ -100,17 +102,17 @@ export class AppTheoryDynamoTable extends Construct {
         },
         sortKey: gsi.sortKeyName
           ? {
-              name: gsi.sortKeyName,
-              type: gsi.sortKeyType ?? dynamodb.AttributeType.STRING,
-            }
+            name: gsi.sortKeyName,
+            type: gsi.sortKeyType ?? dynamodb.AttributeType.STRING,
+          }
           : undefined,
         projectionType: gsi.projectionType ?? dynamodb.ProjectionType.ALL,
         nonKeyAttributes: gsi.nonKeyAttributes,
         ...(billingMode === dynamodb.BillingMode.PROVISIONED
           ? {
-              readCapacity: gsi.readCapacity ?? 5,
-              writeCapacity: gsi.writeCapacity ?? 5,
-            }
+            readCapacity: gsi.readCapacity ?? 5,
+            writeCapacity: gsi.writeCapacity ?? 5,
+          }
           : {}),
       });
     }

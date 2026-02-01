@@ -143,7 +143,14 @@ Non-goals:
 
 ---
 
-### M3 — DynamoDB table `DeletionProtection` support
+### M3 — DynamoDB table `DeletionProtection` support ✅ COMPLETE
+
+**Status**: Implemented 2026-02-01
+
+**Implementation**:
+- Added `deletionProtection?: boolean` to `AppTheoryDynamoTableProps` in `cdk/lib/dynamo-table.ts`
+- The construct passes `deletionProtection` to the underlying `dynamodb.Table` (supported in pinned `aws-cdk-lib@2.235.1`)
+- Snapshot test: `cdk/test/snapshots/dynamo-table-deletion-protection.json`
 
 **Deliverables**
 - Add `deletionProtection?: boolean` to `AppTheoryDynamoTableProps`.
