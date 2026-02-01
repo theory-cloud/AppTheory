@@ -1,0 +1,343 @@
+{
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "AuthBucketF2C7C592": {
+      "DeletionPolicy": "Retain",
+      "Type": "AWS::S3::Bucket",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "AuthBucketPolicyF0AEEA27": {
+      "Properties": {
+        "Bucket": {
+          "Ref": "AuthBucketF2C7C592"
+        },
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "s3:GetObject",
+              "Condition": {
+                "StringEquals": {
+                  "AWS:SourceArn": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:",
+                        {
+                          "Ref": "AWS::Partition"
+                        },
+                        ":cloudfront::",
+                        {
+                          "Ref": "AWS::AccountId"
+                        },
+                        ":distribution/",
+                        {
+                          "Ref": "FrontendDistributionC0C89627"
+                        }
+                      ]
+                    ]
+                  }
+                }
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudfront.amazonaws.com"
+              },
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    {
+                      "Fn::GetAtt": [
+                        "AuthBucketF2C7C592",
+                        "Arn"
+                      ]
+                    },
+                    "/*"
+                  ]
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        }
+      },
+      "Type": "AWS::S3::BucketPolicy"
+    },
+    "ClientBucketB0EC996F": {
+      "DeletionPolicy": "Retain",
+      "Type": "AWS::S3::Bucket",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "ClientBucketPolicy9ED057B2": {
+      "Properties": {
+        "Bucket": {
+          "Ref": "ClientBucketB0EC996F"
+        },
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "s3:GetObject",
+              "Condition": {
+                "StringEquals": {
+                  "AWS:SourceArn": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:",
+                        {
+                          "Ref": "AWS::Partition"
+                        },
+                        ":cloudfront::",
+                        {
+                          "Ref": "AWS::AccountId"
+                        },
+                        ":distribution/",
+                        {
+                          "Ref": "FrontendDistributionC0C89627"
+                        }
+                      ]
+                    ]
+                  }
+                }
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudfront.amazonaws.com"
+              },
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    {
+                      "Fn::GetAtt": [
+                        "ClientBucketB0EC996F",
+                        "Arn"
+                      ]
+                    },
+                    "/*"
+                  ]
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        }
+      },
+      "Type": "AWS::S3::BucketPolicy"
+    },
+    "FrontendDistributionC0C89627": {
+      "Properties": {
+        "DistributionConfig": {
+          "CacheBehaviors": [
+            {
+              "AllowedMethods": [
+                "GET",
+                "HEAD",
+                "OPTIONS",
+                "PUT",
+                "PATCH",
+                "POST",
+                "DELETE"
+              ],
+              "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+              "Compress": true,
+              "PathPattern": "/auth/wallet/*",
+              "TargetOriginId": "TestStackFrontendDistributionOrigin11D5442FE",
+              "ViewerProtocolPolicy": "redirect-to-https"
+            },
+            {
+              "AllowedMethods": [
+                "GET",
+                "HEAD",
+                "OPTIONS"
+              ],
+              "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+              "Compress": true,
+              "FunctionAssociations": [
+                {
+                  "EventType": "viewer-request",
+                  "FunctionARN": {
+                    "Fn::GetAtt": [
+                      "FrontendSpaRewriteFunctionACB652FA",
+                      "FunctionARN"
+                    ]
+                  }
+                }
+              ],
+              "PathPattern": "/l/*",
+              "TargetOriginId": "TestStackFrontendDistributionOrigin2DAC0E02F",
+              "ViewerProtocolPolicy": "redirect-to-https"
+            },
+            {
+              "AllowedMethods": [
+                "GET",
+                "HEAD",
+                "OPTIONS"
+              ],
+              "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+              "Compress": true,
+              "FunctionAssociations": [
+                {
+                  "EventType": "viewer-request",
+                  "FunctionARN": {
+                    "Fn::GetAtt": [
+                      "FrontendSpaRewriteFunctionACB652FA",
+                      "FunctionARN"
+                    ]
+                  }
+                }
+              ],
+              "PathPattern": "/auth/*",
+              "TargetOriginId": "TestStackFrontendDistributionOrigin3C319D684",
+              "ViewerProtocolPolicy": "redirect-to-https"
+            }
+          ],
+          "DefaultCacheBehavior": {
+            "AllowedMethods": [
+              "GET",
+              "HEAD",
+              "OPTIONS",
+              "PUT",
+              "PATCH",
+              "POST",
+              "DELETE"
+            ],
+            "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+            "Compress": true,
+            "TargetOriginId": "TestStackFrontendDistributionOrigin11D5442FE",
+            "ViewerProtocolPolicy": "redirect-to-https"
+          },
+          "Enabled": true,
+          "HttpVersion": "http2",
+          "IPV6Enabled": true,
+          "Origins": [
+            {
+              "CustomOriginConfig": {
+                "OriginProtocolPolicy": "https-only",
+                "OriginSSLProtocols": [
+                  "TLSv1.2"
+                ]
+              },
+              "DomainName": "api.example.com",
+              "Id": "TestStackFrontendDistributionOrigin11D5442FE"
+            },
+            {
+              "DomainName": {
+                "Fn::GetAtt": [
+                  "ClientBucketB0EC996F",
+                  "RegionalDomainName"
+                ]
+              },
+              "Id": "TestStackFrontendDistributionOrigin2DAC0E02F",
+              "OriginAccessControlId": {
+                "Fn::GetAtt": [
+                  "FrontendDistributionOrigin2S3OriginAccessControl881919BC",
+                  "Id"
+                ]
+              },
+              "S3OriginConfig": {
+                "OriginAccessIdentity": ""
+              }
+            },
+            {
+              "DomainName": {
+                "Fn::GetAtt": [
+                  "AuthBucketF2C7C592",
+                  "RegionalDomainName"
+                ]
+              },
+              "Id": "TestStackFrontendDistributionOrigin3C319D684",
+              "OriginAccessControlId": {
+                "Fn::GetAtt": [
+                  "FrontendDistributionOrigin3S3OriginAccessControlEDF40B4A",
+                  "Id"
+                ]
+              },
+              "S3OriginConfig": {
+                "OriginAccessIdentity": ""
+              }
+            }
+          ]
+        }
+      },
+      "Type": "AWS::CloudFront::Distribution"
+    },
+    "FrontendDistributionOrigin2S3OriginAccessControl881919BC": {
+      "Properties": {
+        "OriginAccessControlConfig": {
+          "Name": "TestStackFrontendDistributioOrigin2S3OriginAccessControl3DD9F082",
+          "OriginAccessControlOriginType": "s3",
+          "SigningBehavior": "always",
+          "SigningProtocol": "sigv4"
+        }
+      },
+      "Type": "AWS::CloudFront::OriginAccessControl"
+    },
+    "FrontendDistributionOrigin3S3OriginAccessControlEDF40B4A": {
+      "Properties": {
+        "OriginAccessControlConfig": {
+          "Name": "TestStackFrontendDistributioOrigin3S3OriginAccessControlCB916F38",
+          "OriginAccessControlOriginType": "s3",
+          "SigningBehavior": "always",
+          "SigningProtocol": "sigv4"
+        }
+      },
+      "Type": "AWS::CloudFront::OriginAccessControl"
+    },
+    "FrontendSpaRewriteFunctionACB652FA": {
+      "Properties": {
+        "AutoPublish": true,
+        "FunctionCode": "function handler(event) {\n  var request = event.request;\n  var uri = request.uri;\n\n  // SPA prefix configurations\n  var spaPrefixes = [\n      { prefix: '/l/', indexPath: '/l/index.html' },\n      { prefix: '/auth/', indexPath: '/auth/index.html' }\n  ];\n\n  // Check if this is an SPA path\n  for (var i = 0; i < spaPrefixes.length; i++) {\n    var spa = spaPrefixes[i];\n    if (uri.startsWith(spa.prefix)) {\n      // If the URI doesn't have an extension (no file), rewrite to index.html\n      var uriWithoutPrefix = uri.substring(spa.prefix.length);\n      // Check if it has a file extension (contains a dot in the last path segment)\n      var lastSlash = uriWithoutPrefix.lastIndexOf('/');\n      var lastSegment = lastSlash >= 0 ? uriWithoutPrefix.substring(lastSlash + 1) : uriWithoutPrefix;\n      \n      // If no extension in the last segment, serve index.html\n      if (lastSegment.indexOf('.') === -1) {\n        request.uri = spa.indexPath;\n      }\n      break;\n    }\n  }\n\n  return request;\n}",
+        "FunctionConfig": {
+          "Comment": "SPA viewer-request rewrite for path-routed frontend",
+          "Runtime": "cloudfront-js-2.0"
+        },
+        "Name": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::Region"
+              },
+              "TestStackFrontenaRewriteFunctionB0FBEC9E"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::CloudFront::Function"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}
