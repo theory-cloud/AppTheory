@@ -27,6 +27,29 @@
       },
       "Type": "AWS::Lambda::Function"
     },
+    "ConsumerEventSourceMapping81A5AC58": {
+      "Properties": {
+        "BatchSize": 50,
+        "Enabled": true,
+        "EventSourceArn": {
+          "Fn::GetAtt": [
+            "QueueAppTheoryQueue49060A4E",
+            "Arn"
+          ]
+        },
+        "FunctionName": {
+          "Ref": "Consumer8D6BE417"
+        },
+        "FunctionResponseTypes": [
+          "ReportBatchItemFailures"
+        ],
+        "MaximumBatchingWindowInSeconds": 5,
+        "ScalingConfig": {
+          "MaximumConcurrency": 10
+        }
+      },
+      "Type": "AWS::Lambda::EventSourceMapping"
+    },
     "ConsumerServiceRoleDefaultPolicy0717ECC4": {
       "Properties": {
         "PolicyDocument": {
@@ -89,29 +112,6 @@
         ]
       },
       "Type": "AWS::IAM::Role"
-    },
-    "ConsumerSqsEventSourceTestStackQueueAppTheoryQueueB2291404563509C3": {
-      "Properties": {
-        "BatchSize": 50,
-        "Enabled": true,
-        "EventSourceArn": {
-          "Fn::GetAtt": [
-            "QueueAppTheoryQueue49060A4E",
-            "Arn"
-          ]
-        },
-        "FunctionName": {
-          "Ref": "Consumer8D6BE417"
-        },
-        "FunctionResponseTypes": [
-          "ReportBatchItemFailures"
-        ],
-        "MaximumBatchingWindowInSeconds": 5,
-        "ScalingConfig": {
-          "MaximumConcurrency": 10
-        }
-      },
-      "Type": "AWS::Lambda::EventSourceMapping"
     },
     "QueueAppTheoryQueue49060A4E": {
       "DeletionPolicy": "Delete",

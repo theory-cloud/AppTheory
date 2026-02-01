@@ -16,6 +16,10 @@
 - [Troubleshooting](./troubleshooting.md) — common synth/deploy failures.
 - [Migration Guide](./migration-guide.md) — moving from ad-hoc CDK stacks.
 
+### 🧭 Guides (copy/paste patterns)
+- [REST API v1 Router + Streaming](./rest-api-router-streaming.md) — multi-Lambda REST API v1 + full response streaming parity.
+- [SQS Queue + Consumer Patterns](./sqs-queue-consumer.md) — queue-only, queue+consumer, and processor patterns (DLQs + partial batch failures).
+
 ### 🤖 AI knowledge base (YAML triad)
 - Concepts: `cdk/docs/_concepts.yaml`
 - Patterns: `cdk/docs/_patterns.yaml`
@@ -24,4 +28,3 @@
 ## What this package is
 
 AppTheory CDK provides jsii constructs that deploy AppTheory apps with consistent defaults (and keep infra patterns consistent across Go/TypeScript/Python services).
-

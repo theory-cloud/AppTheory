@@ -1,6 +1,5 @@
 import { Duration } from "aws-cdk-lib";
 import * as lambda from "aws-cdk-lib/aws-lambda";
-import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
 import type * as sqs from "aws-cdk-lib/aws-sqs";
 import { Construct } from "constructs";
 
@@ -109,8 +108,8 @@ export class AppTheoryQueueConsumer extends Construct {
         this.consumer = props.consumer;
         this.queue = props.queue;
 
-        // Create the event source with all options
-        const eventSource = new lambdaEventSources.SqsEventSource(props.queue, {
+        this.eventSourceMapping = props.consumer.addEventSourceMapping("EventSourceMapping", {
+            eventSourceArn: props.queue.queueArn,
             batchSize: props.batchSize ?? 10,
             maxBatchingWindow: props.maxBatchingWindow,
             reportBatchItemFailures: props.reportBatchItemFailures,
@@ -118,26 +117,6 @@ export class AppTheoryQueueConsumer extends Construct {
             enabled: props.enabled !== false,
             filters: props.filters,
         });
-
-        // Add the event source to the Lambda
-        if (props.consumer instanceof lambda.Function) {
-            props.consumer.addEventSource(eventSource);
-        } else {
-            // For IFunction, we need to use the abstract function pattern
-            lambda.Function.fromFunctionArn(
-                this,
-                "ConsumerFn",
-                props.consumer.functionArn,
-            );
-            // Re-add with explicit cast since this is typically used with actual functions
-            (props.consumer as lambda.Function).addEventSource(eventSource);
-        }
-
-        // Store the event source mapping for reference
-        // Note: The eventSourceMapping is created internally by the SqsEventSource
-        this.eventSourceMapping = eventSource.eventSourceMappingId
-            ? (eventSource as unknown as { eventSourceMapping: lambda.EventSourceMapping }).eventSourceMapping
-            : ({} as lambda.EventSourceMapping);
 
         // Grant consume permissions by default
         if (props.grantConsumeMessages !== false) {
