@@ -13,6 +13,7 @@ Status: early; start with a small “top 20%” set and grow based on real usage
 
 - `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).
 - `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).
+- `AppTheoryRestApiRouter` — REST API v1 multi-Lambda router with full streaming parity + stage controls + domain wiring.
 - `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).
 - `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.
 - `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.

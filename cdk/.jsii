@@ -8476,7 +8476,7 @@
   },
   "name": "@theory-cloud/apptheory-cdk",
   "readme": {
-    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring.\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n- `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs).\n- `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).\n- `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).\n- `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + domain/cert helpers).\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
+    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryRestApiRouter` — REST API v1 multi-Lambda router with full streaming parity + stage controls + domain wiring.\n- `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring.\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n- `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs).\n- `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).\n- `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).\n- `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + domain/cert helpers).\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
   },
   "repository": {
     "directory": "cdk",
@@ -11849,6 +11849,908 @@
       ],
       "symbolId": "lib/rest-api:AppTheoryRestApiRouteOptions"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouter": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "example": "const router = new AppTheoryRestApiRouter(this, 'Router', {\n  apiName: 'my-api',\n  stage: { stageName: 'prod', accessLogging: true, detailedMetrics: true },\n  cors: true,\n});\n\nrouter.addLambdaIntegration('/sse', ['GET'], sseFn, { streaming: true });\nrouter.addLambdaIntegration('/api/graphql', ['POST'], graphqlFn);\nrouter.addLambdaIntegration('/{proxy+}', ['ANY'], apiFn);",
+        "remarks": "This construct addresses the gaps in AppTheoryRestApi by allowing:\n- Multiple Lambda functions attached to different routes\n- Complete response streaming integration (responseTransferMode, URI suffix, timeout)\n- Stage controls (access logging, metrics, throttling, CORS)\n- Custom domain wiring with optional Route53 record",
+        "summary": "A REST API v1 router that supports multi-Lambda routing with full streaming parity."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouter",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/rest-api-router.ts",
+          "line": 299
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "optional": true,
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/rest-api-router.ts",
+        "line": 265
+      },
+      "methods": [
+        {
+          "docs": {
+            "summary": "Add a Lambda integration for the specified path and HTTP methods."
+          },
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 345
+          },
+          "name": "addLambdaIntegration",
+          "parameters": [
+            {
+              "docs": {
+                "summary": "- The resource path (e.g., \"/sse\", \"/api/graphql\", \"/{proxy+}\")."
+              },
+              "name": "path",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "docs": {
+                "summary": "- Array of HTTP methods (e.g., [\"GET\", \"POST\"] or [\"ANY\"])."
+              },
+              "name": "methods",
+              "type": {
+                "collection": {
+                  "elementtype": {
+                    "primitive": "string"
+                  },
+                  "kind": "array"
+                }
+              }
+            },
+            {
+              "docs": {
+                "summary": "- The Lambda function to integrate."
+              },
+              "name": "handler",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+              }
+            },
+            {
+              "docs": {
+                "summary": "- Integration options including streaming configuration."
+              },
+              "name": "options",
+              "optional": true,
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterIntegrationOptions"
+              }
+            }
+          ]
+        }
+      ],
+      "name": "AppTheoryRestApiRouter",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The underlying API Gateway REST API."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 269
+          },
+          "name": "api",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.RestApi"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The deployment stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 274
+          },
+          "name": "stage",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.Stage"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The access log group (if access logging is enabled)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 294
+          },
+          "name": "accessLogGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.ILogGroup"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The Route53 A record (if domain and hostedZone are configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 289
+          },
+          "name": "aRecord",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.ARecord"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The base path mapping (if domain is configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 284
+          },
+          "name": "basePathMapping",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.BasePathMapping"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The custom domain name (if configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 279
+          },
+          "name": "domainName",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.DomainName"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-api-router:AppTheoryRestApiRouter"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterCorsOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "CORS configuration for the REST API router."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterCorsOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/rest-api-router.ts",
+        "line": 13
+      },
+      "name": "AppTheoryRestApiRouterCorsOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Whether to allow credentials."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 36
+          },
+          "name": "allowCredentials",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "['Content-Type', 'Authorization', 'X-Amz-Date', 'X-Api-Key', 'X-Amz-Security-Token']",
+            "summary": "Allowed headers."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 30
+          },
+          "name": "allowHeaders",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'HEAD']",
+            "summary": "Allowed HTTP methods."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 24
+          },
+          "name": "allowMethods",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "['*']",
+            "summary": "Allowed origins."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 18
+          },
+          "name": "allowOrigins",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "600",
+            "summary": "Max age for preflight cache in seconds."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 42
+          },
+          "name": "maxAge",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-api-router:AppTheoryRestApiRouterCorsOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterDomainOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Custom domain configuration for the REST API router."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterDomainOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/rest-api-router.ts",
+        "line": 98
+      },
+      "name": "AppTheoryRestApiRouterDomainOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The custom domain name (e.g., \"api.example.com\")."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 102
+          },
+          "name": "domainName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (maps to the root)",
+            "summary": "The base path mapping for the API under this domain."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 126
+          },
+          "name": "basePath",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Provide either certificate or certificateArn.",
+            "summary": "ACM certificate (must be in us-east-1 for edge endpoints, same region for regional)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 108
+          },
+          "name": "certificate",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_certificatemanager.ICertificate"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Provide either certificate or certificateArn.",
+            "summary": "ACM certificate ARN."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 113
+          },
+          "name": "certificateArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "REGIONAL",
+            "summary": "Endpoint type for the domain."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 132
+          },
+          "name": "endpointType",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.EndpointType"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no DNS record created)",
+            "remarks": "If provided, an A record (alias) will be created pointing to the API Gateway domain.",
+            "summary": "Route53 hosted zone for automatic DNS record creation."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 120
+          },
+          "name": "hostedZone",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.IHostedZone"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "TLS_1_2",
+            "summary": "Security policy for the domain."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 138
+          },
+          "name": "securityPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.SecurityPolicy"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-api-router:AppTheoryRestApiRouterDomainOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterIntegrationOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Options for adding a Lambda integration to a route."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterIntegrationOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/rest-api-router.ts",
+        "line": 144
+      },
+      "name": "AppTheoryRestApiRouterIntegrationOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "WHEN_NO_MATCH",
+            "summary": "Passthrough behavior for the integration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 172
+          },
+          "name": "passthroughBehavior",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.PassthroughBehavior"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (use Lambda proxy integration)",
+            "summary": "Request templates for the integration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 166
+          },
+          "name": "requestTemplates",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "map"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "When enabled:\n- ResponseTransferMode is set to STREAM\n- The Lambda invocation URI uses /response-streaming-invocations\n- Timeout is set to 15 minutes (900000ms)",
+            "summary": "Enable response streaming for this route."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 153
+          },
+          "name": "streaming",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "For streaming routes, defaults to 15 minutes.\nFor non-streaming routes, defaults to 29 seconds.",
+            "summary": "Custom integration timeout."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 160
+          },
+          "name": "timeout",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-api-router:AppTheoryRestApiRouterIntegrationOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Props for the AppTheoryRestApiRouter construct."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/rest-api-router.ts",
+        "line": 178
+      },
+      "name": "AppTheoryRestApiRouterProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "HEADER",
+            "summary": "API key source type."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 242
+          },
+          "name": "apiKeySourceType",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.ApiKeySourceType"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Name of the REST API."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 182
+          },
+          "name": "apiName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "Specify media types that should be treated as binary.",
+            "summary": "Whether the REST API uses binary media types."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 218
+          },
+          "name": "binaryMediaTypes",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no CORS)",
+            "remarks": "Set to true for sensible defaults,\nor provide custom options.",
+            "summary": "CORS configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 199
+          },
+          "name": "cors",
+          "optional": true,
+          "type": {
+            "union": {
+              "types": [
+                {
+                  "primitive": "boolean"
+                },
+                {
+                  "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterCorsOptions"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Enable deploy on construct creation."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 230
+          },
+          "name": "deploy",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Description of the REST API."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 187
+          },
+          "name": "description",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no custom domain)",
+            "summary": "Custom domain configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 205
+          },
+          "name": "domain",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterDomainOptions"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[REGIONAL]",
+            "summary": "Endpoint types for the REST API."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 211
+          },
+          "name": "endpointTypes",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_apigateway.EndpointType"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no compression)",
+            "summary": "Minimum compression size in bytes."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 224
+          },
+          "name": "minimumCompressionSize",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Retain deployment history when deployments change."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 236
+          },
+          "name": "retainDeployments",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Stage configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 192
+          },
+          "name": "stage",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterStageOptions"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-api-router:AppTheoryRestApiRouterProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterStageOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Stage-level configuration for the REST API router."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterStageOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/rest-api-router.ts",
+        "line": 48
+      },
+      "name": "AppTheoryRestApiRouterStageOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "AccessLogFormat.clf() (Common Log Format)",
+            "summary": "Access log format."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 74
+          },
+          "name": "accessLogFormat",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.AccessLogFormat"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "If true, a log group will be created automatically.\nProvide a LogGroup for custom logging configuration.",
+            "summary": "Enable CloudWatch access logging for the stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 61
+          },
+          "name": "accessLogging",
+          "optional": true,
+          "type": {
+            "union": {
+              "types": [
+                {
+                  "primitive": "boolean"
+                },
+                {
+                  "fqn": "aws-cdk-lib.aws_logs.ILogGroup"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "logs.RetentionDays.ONE_MONTH",
+            "remarks": "Only applies when accessLogging is true (boolean).",
+            "summary": "Retention period for auto-created access log group."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 68
+          },
+          "name": "accessLogRetention",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.RetentionDays"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Enable detailed CloudWatch metrics at method/resource level."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 80
+          },
+          "name": "detailedMetrics",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "'prod'",
+            "summary": "Stage name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 53
+          },
+          "name": "stageName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no throttling)",
+            "summary": "Throttling burst limit for the stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 92
+          },
+          "name": "throttlingBurstLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no throttling)",
+            "summary": "Throttling rate limit (requests per second) for the stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 86
+          },
+          "name": "throttlingRateLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-api-router:AppTheoryRestApiRouterStageOptions"
+    },
     "@theory-cloud/apptheory-cdk.AppTheorySecretConfig": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "datatype": true,
@@ -12953,5 +13855,5 @@
     }
   },
   "version": "0.5.0",
-  "fingerprint": "Jx7U8rKfIUxc2pp5eD8SirRF1+S46qZm8lw1QM9+i3Q="
+  "fingerprint": "/lyzxvrCU7kquPQZiRzcrLP2b40sw6wd8G22lrzDsQ8="
 }
