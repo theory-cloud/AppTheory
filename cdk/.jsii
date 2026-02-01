@@ -8508,7 +8508,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 34
+        "line": 75
       },
       "name": "ApiBypassConfig",
       "properties": [
@@ -8520,7 +8520,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 38
+            "line": 79
           },
           "name": "pathPattern",
           "type": {
@@ -8536,7 +8536,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 43
+            "line": 84
           },
           "name": "cachePolicy",
           "optional": true,
@@ -8552,12 +8552,29 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 48
+            "line": 89
           },
           "name": "originRequestPolicy",
           "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.aws_cloudfront.IOriginRequestPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Overrides `apiBypassResponseHeadersPolicy` and `responseHeadersPolicy` (legacy).",
+            "summary": "Response headers policy for this API bypass behavior."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 95
+          },
+          "name": "responseHeadersPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
           }
         }
       ],
@@ -10384,7 +10401,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/eventbridge-handler.ts",
-          "line": 17
+          "line": 22
         },
         "parameters": [
           {
@@ -10410,7 +10427,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/eventbridge-handler.ts",
-        "line": 14
+        "line": 19
       },
       "name": "AppTheoryEventBridgeHandler",
       "properties": [
@@ -10418,7 +10435,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbridge-handler.ts",
-            "line": 15
+            "line": 20
           },
           "name": "rule",
           "type": {
@@ -10500,6 +10517,23 @@
           "optional": true,
           "type": {
             "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Passed through to `aws-events-targets.LambdaFunction`.",
+            "summary": "Optional configuration for the Lambda target (DLQ, input, retries, max event age, etc)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-handler.ts",
+            "line": 16
+          },
+          "name": "targetProps",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_events_targets.LambdaFunctionProps"
           }
         }
       ],
@@ -12002,7 +12036,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/media-cdn.ts",
-          "line": 213
+          "line": 219
         },
         "parameters": [
           {
@@ -12028,7 +12062,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/media-cdn.ts",
-        "line": 182
+        "line": 188
       },
       "name": "AppTheoryMediaCdn",
       "properties": [
@@ -12039,7 +12073,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 191
+            "line": 197
           },
           "name": "bucket",
           "type": {
@@ -12053,7 +12087,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 186
+            "line": 192
           },
           "name": "distribution",
           "type": {
@@ -12067,7 +12101,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 201
+            "line": 207
           },
           "name": "certificate",
           "optional": true,
@@ -12082,7 +12116,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 206
+            "line": 212
           },
           "name": "keyGroup",
           "optional": true,
@@ -12097,7 +12131,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 196
+            "line": 202
           },
           "name": "logsBucket",
           "optional": true,
@@ -12112,7 +12146,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 211
+            "line": 217
           },
           "name": "publicKey",
           "optional": true,
@@ -12130,7 +12164,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/media-cdn.ts",
-        "line": 70
+        "line": 76
       },
       "name": "AppTheoryMediaCdnProps",
       "properties": [
@@ -12143,7 +12177,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 164
+            "line": 170
           },
           "name": "allowedMethods",
           "optional": true,
@@ -12161,7 +12195,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 126
+            "line": 132
           },
           "name": "autoDeleteObjects",
           "optional": true,
@@ -12178,7 +12212,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 75
+            "line": 81
           },
           "name": "bucket",
           "optional": true,
@@ -12194,7 +12228,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 80
+            "line": 86
           },
           "name": "bucketName",
           "optional": true,
@@ -12211,7 +12245,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 148
+            "line": 154
           },
           "name": "cachePolicy",
           "optional": true,
@@ -12227,7 +12261,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 142
+            "line": 148
           },
           "name": "comment",
           "optional": true,
@@ -12243,7 +12277,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 101
+            "line": 107
           },
           "name": "defaultRootObject",
           "optional": true,
@@ -12259,7 +12293,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 85
+            "line": 91
           },
           "name": "domain",
           "optional": true,
@@ -12276,7 +12310,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 107
+            "line": 113
           },
           "name": "enableLogging",
           "optional": true,
@@ -12292,7 +12326,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 158
+            "line": 164
           },
           "name": "errorResponses",
           "optional": true,
@@ -12314,7 +12348,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 113
+            "line": 119
           },
           "name": "logsBucket",
           "optional": true,
@@ -12330,7 +12364,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 153
+            "line": 159
           },
           "name": "originRequestPolicy",
           "optional": true,
@@ -12347,7 +12381,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 137
+            "line": 143
           },
           "name": "priceClass",
           "optional": true,
@@ -12364,7 +12398,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 96
+            "line": 102
           },
           "name": "privateMedia",
           "optional": true,
@@ -12381,7 +12415,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 119
+            "line": 125
           },
           "name": "removalPolicy",
           "optional": true,
@@ -12397,7 +12431,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 90
+            "line": 96
           },
           "name": "responseHeadersPolicy",
           "optional": true,
@@ -12413,7 +12447,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 131
+            "line": 137
           },
           "name": "webAclId",
           "optional": true,
@@ -12435,7 +12469,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/path-routed-frontend.ts",
-          "line": 231
+          "line": 334
         },
         "parameters": [
           {
@@ -12461,7 +12495,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 210
+        "line": 313
       },
       "name": "AppTheoryPathRoutedFrontend",
       "properties": [
@@ -12472,7 +12506,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 214
+            "line": 317
           },
           "name": "distribution",
           "type": {
@@ -12486,7 +12520,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 229
+            "line": 332
           },
           "name": "certificate",
           "optional": true,
@@ -12501,7 +12535,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 224
+            "line": 327
           },
           "name": "logsBucket",
           "optional": true,
@@ -12516,7 +12550,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 219
+            "line": 322
           },
           "name": "spaRewriteFunction",
           "optional": true,
@@ -12534,7 +12568,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 77
+        "line": 130
       },
       "name": "AppTheoryPathRoutedFrontendProps",
       "properties": [
@@ -12546,7 +12580,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 82
+            "line": 135
           },
           "name": "apiOriginUrl",
           "type": {
@@ -12562,7 +12596,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 95
+            "line": 148
           },
           "name": "apiBypassPaths",
           "optional": true,
@@ -12578,17 +12612,50 @@
         {
           "abstract": true,
           "docs": {
+            "remarks": "Can be overridden per bypass via `ApiBypassConfig.responseHeadersPolicy`.",
+            "summary": "Default response headers policy for API bypass behaviors."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 178
+          },
+          "name": "apiBypassResponseHeadersPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
             "summary": "Origin request policy for the API origin (default behavior)."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 110
+            "line": 183
           },
           "name": "apiOriginRequestPolicy",
           "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.aws_cloudfront.IOriginRequestPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Response headers policy for the API origin default behavior."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 166
+          },
+          "name": "apiResponseHeadersPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
           }
         },
         {
@@ -12601,7 +12668,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 135
+            "line": 208
           },
           "name": "autoDeleteObjects",
           "optional": true,
@@ -12617,7 +12684,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 151
+            "line": 224
           },
           "name": "comment",
           "optional": true,
@@ -12633,7 +12700,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 100
+            "line": 153
           },
           "name": "domain",
           "optional": true,
@@ -12650,7 +12717,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 116
+            "line": 189
           },
           "name": "enableLogging",
           "optional": true,
@@ -12667,7 +12734,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 122
+            "line": 195
           },
           "name": "logsBucket",
           "optional": true,
@@ -12684,7 +12751,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 146
+            "line": 219
           },
           "name": "priceClass",
           "optional": true,
@@ -12701,7 +12768,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 128
+            "line": 201
           },
           "name": "removalPolicy",
           "optional": true,
@@ -12712,12 +12779,13 @@
         {
           "abstract": true,
           "docs": {
-            "summary": "Response headers policy to apply to all behaviors."
+            "remarks": "Prefer using `apiResponseHeadersPolicy`, `spaResponseHeadersPolicy`, and\n`apiBypassResponseHeadersPolicy` for behavior-scoped control.",
+            "summary": "Response headers policy to apply to all behaviors (legacy)."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 105
+            "line": 161
           },
           "name": "responseHeadersPolicy",
           "optional": true,
@@ -12734,7 +12802,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 88
+            "line": 141
           },
           "name": "spaOrigins",
           "optional": true,
@@ -12750,12 +12818,29 @@
         {
           "abstract": true,
           "docs": {
+            "remarks": "Can be overridden per SPA via `SpaOriginConfig.responseHeadersPolicy`.",
+            "summary": "Default response headers policy for SPA behaviors."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 172
+          },
+          "name": "spaResponseHeadersPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
             "summary": "Optional web ACL ID for AWS WAF integration."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 140
+            "line": 213
           },
           "name": "webAclId",
           "optional": true,
@@ -12778,7 +12863,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/queue.ts",
-          "line": 139
+          "line": 146
         },
         "parameters": [
           {
@@ -12805,7 +12890,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/queue.ts",
-        "line": 113
+        "line": 120
       },
       "methods": [
         {
@@ -12814,7 +12899,7 @@
           },
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 199
+            "line": 207
           },
           "name": "grantConsumeMessages",
           "parameters": [
@@ -12832,7 +12917,7 @@
           },
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 206
+            "line": 214
           },
           "name": "grantPurge",
           "parameters": [
@@ -12850,7 +12935,7 @@
           },
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 192
+            "line": 200
           },
           "name": "grantSendMessages",
           "parameters": [
@@ -12872,7 +12957,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 117
+            "line": 124
           },
           "name": "queue",
           "type": {
@@ -12886,7 +12971,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 127
+            "line": 134
           },
           "name": "queueArn",
           "type": {
@@ -12900,7 +12985,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 137
+            "line": 144
           },
           "name": "queueName",
           "type": {
@@ -12914,7 +12999,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 132
+            "line": 139
           },
           "name": "queueUrl",
           "type": {
@@ -12928,7 +13013,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 122
+            "line": 129
           },
           "name": "deadLetterQueue",
           "optional": true,
@@ -13224,7 +13309,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/queue-processor.ts",
-          "line": 143
+          "line": 150
         },
         "parameters": [
           {
@@ -13250,7 +13335,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/queue-processor.ts",
-        "line": 122
+        "line": 129
       },
       "name": "AppTheoryQueueProcessor",
       "properties": [
@@ -13261,7 +13346,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 136
+            "line": 143
           },
           "name": "consumerConstruct",
           "type": {
@@ -13275,7 +13360,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 126
+            "line": 133
           },
           "name": "queue",
           "type": {
@@ -13289,7 +13374,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 131
+            "line": 138
           },
           "name": "queueConstruct",
           "type": {
@@ -13303,7 +13388,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 141
+            "line": 148
           },
           "name": "deadLetterQueue",
           "optional": true,
@@ -13353,7 +13438,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 55
+            "line": 62
           },
           "name": "batchSize",
           "optional": true,
@@ -13370,7 +13455,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 81
+            "line": 88
           },
           "name": "enabled",
           "optional": true,
@@ -13387,7 +13472,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 42
+            "line": 49
           },
           "name": "enableDlq",
           "optional": true,
@@ -13404,7 +13489,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 61
+            "line": 68
           },
           "name": "maxBatchingWindow",
           "optional": true,
@@ -13422,7 +13507,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 75
+            "line": 82
           },
           "name": "maxConcurrency",
           "optional": true,
@@ -13440,7 +13525,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 49
+            "line": 56
           },
           "name": "maxReceiveCount",
           "optional": true,
@@ -13486,13 +13571,31 @@
         {
           "abstract": true,
           "docs": {
+            "default": "undefined",
+            "remarks": "Used for SQS long polling.",
+            "summary": "The amount of time for which a ReceiveMessage call will wait for a message to arrive in the queue before returning."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 43
+          },
+          "name": "receiveMessageWaitTime",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
             "default": "RemovalPolicy.DESTROY",
             "summary": "The removal policy for the queue(s)."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 87
+            "line": 94
           },
           "name": "removalPolicy",
           "optional": true,
@@ -13510,7 +13613,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 68
+            "line": 75
           },
           "name": "reportBatchItemFailures",
           "optional": true,
@@ -13562,7 +13665,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 64
+            "line": 71
           },
           "name": "contentBasedDeduplication",
           "optional": true,
@@ -13579,7 +13682,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 51
+            "line": 58
           },
           "name": "dlqRetentionPeriod",
           "optional": true,
@@ -13596,7 +13699,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 45
+            "line": 52
           },
           "name": "dlqVisibilityTimeout",
           "optional": true,
@@ -13613,7 +13716,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 32
+            "line": 39
           },
           "name": "enableDlq",
           "optional": true,
@@ -13630,7 +13733,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 57
+            "line": 64
           },
           "name": "encryption",
           "optional": true,
@@ -13647,7 +13750,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 70
+            "line": 77
           },
           "name": "fifo",
           "optional": true,
@@ -13664,7 +13767,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 76
+            "line": 83
           },
           "name": "grantSendMessagesTo",
           "optional": true,
@@ -13687,7 +13790,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 39
+            "line": 46
           },
           "name": "maxReceiveCount",
           "optional": true,
@@ -13715,13 +13818,31 @@
         {
           "abstract": true,
           "docs": {
+            "default": "undefined",
+            "remarks": "Used for SQS long polling.",
+            "summary": "The amount of time for which a ReceiveMessage call will wait for a message to arrive in the queue before returning."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 33
+          },
+          "name": "receiveMessageWaitTime",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
             "default": "RemovalPolicy.DESTROY",
             "summary": "The removal policy for the queue(s)."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue.ts",
-            "line": 82
+            "line": 89
           },
           "name": "removalPolicy",
           "optional": true,
@@ -13931,7 +14052,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/rest-api-router.ts",
-          "line": 299
+          "line": 311
         },
         "parameters": [
           {
@@ -13958,7 +14079,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/rest-api-router.ts",
-        "line": 265
+        "line": 272
       },
       "methods": [
         {
@@ -13967,7 +14088,7 @@
           },
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 345
+            "line": 357
           },
           "name": "addLambdaIntegration",
           "parameters": [
@@ -14025,7 +14146,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 269
+            "line": 276
           },
           "name": "api",
           "type": {
@@ -14039,11 +14160,26 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 274
+            "line": 281
           },
           "name": "stage",
           "type": {
             "fqn": "aws-cdk-lib.aws_apigateway.Stage"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The Route53 AAAA record (if domain, hostedZone, and createAAAARecord are configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 301
+          },
+          "name": "aaaaRecord",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.AaaaRecord"
           }
         },
         {
@@ -14053,7 +14189,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 294
+            "line": 306
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -14068,7 +14204,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 289
+            "line": 296
           },
           "name": "aRecord",
           "optional": true,
@@ -14083,7 +14219,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 284
+            "line": 291
           },
           "name": "basePathMapping",
           "optional": true,
@@ -14098,7 +14234,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 279
+            "line": 286
           },
           "name": "domainName",
           "optional": true,
@@ -14264,7 +14400,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 126
+            "line": 133
           },
           "name": "basePath",
           "optional": true,
@@ -14309,13 +14445,31 @@
         {
           "abstract": true,
           "docs": {
+            "default": "false",
+            "remarks": "Only applies when `hostedZone` is provided.",
+            "summary": "Whether to create an AAAA alias record in addition to the A alias record."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 127
+          },
+          "name": "createAAAARecord",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
             "default": "REGIONAL",
             "summary": "Endpoint type for the domain."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 132
+            "line": 139
           },
           "name": "endpointType",
           "optional": true,
@@ -14350,7 +14504,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 138
+            "line": 145
           },
           "name": "securityPolicy",
           "optional": true,
@@ -14371,7 +14525,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/rest-api-router.ts",
-        "line": 144
+        "line": 151
       },
       "name": "AppTheoryRestApiRouterIntegrationOptions",
       "properties": [
@@ -14384,7 +14538,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 172
+            "line": 179
           },
           "name": "passthroughBehavior",
           "optional": true,
@@ -14401,7 +14555,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 166
+            "line": 173
           },
           "name": "requestTemplates",
           "optional": true,
@@ -14424,7 +14578,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 153
+            "line": 160
           },
           "name": "streaming",
           "optional": true,
@@ -14441,7 +14595,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 160
+            "line": 167
           },
           "name": "timeout",
           "optional": true,
@@ -14462,7 +14616,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/rest-api-router.ts",
-        "line": 178
+        "line": 185
       },
       "name": "AppTheoryRestApiRouterProps",
       "properties": [
@@ -14475,7 +14629,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 242
+            "line": 249
           },
           "name": "apiKeySourceType",
           "optional": true,
@@ -14491,7 +14645,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 182
+            "line": 189
           },
           "name": "apiName",
           "optional": true,
@@ -14509,7 +14663,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 218
+            "line": 225
           },
           "name": "binaryMediaTypes",
           "optional": true,
@@ -14532,7 +14686,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 199
+            "line": 206
           },
           "name": "cors",
           "optional": true,
@@ -14558,7 +14712,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 230
+            "line": 237
           },
           "name": "deploy",
           "optional": true,
@@ -14574,7 +14728,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 187
+            "line": 194
           },
           "name": "description",
           "optional": true,
@@ -14591,7 +14745,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 205
+            "line": 212
           },
           "name": "domain",
           "optional": true,
@@ -14608,7 +14762,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 211
+            "line": 218
           },
           "name": "endpointTypes",
           "optional": true,
@@ -14630,7 +14784,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 224
+            "line": 231
           },
           "name": "minimumCompressionSize",
           "optional": true,
@@ -14647,7 +14801,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 236
+            "line": 243
           },
           "name": "retainDeployments",
           "optional": true,
@@ -14663,7 +14817,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 192
+            "line": 199
           },
           "name": "stage",
           "optional": true,
@@ -15011,6 +15165,32 @@
         }
       ],
       "symbolId": "lib/enhanced-security:AppTheorySecurityRule"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheorySpaRewriteMode": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheorySpaRewriteMode",
+      "kind": "enum",
+      "locationInModule": {
+        "filename": "lib/path-routed-frontend.ts",
+        "line": 10
+      },
+      "members": [
+        {
+          "docs": {
+            "summary": "Rewrite extensionless routes to `index.html` within the SPA prefix."
+          },
+          "name": "SPA"
+        },
+        {
+          "docs": {
+            "remarks": "Useful for multi-page/static sites.",
+            "summary": "Do not rewrite routes."
+          },
+          "name": "NONE"
+        }
+      ],
+      "name": "AppTheorySpaRewriteMode",
+      "symbolId": "lib/path-routed-frontend:AppTheorySpaRewriteMode"
     },
     "@theory-cloud/apptheory-cdk.AppTheorySsrSite": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -15988,6 +16168,23 @@
         {
           "abstract": true,
           "docs": {
+            "default": "false",
+            "summary": "Whether to create an AAAA alias record in addition to the A alias record."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 39
+          },
+          "name": "createAAAARecord",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
             "remarks": "When provided, an A record alias will be created for the domain.",
             "summary": "Route53 hosted zone for DNS record creation."
           },
@@ -16015,7 +16212,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 54
+        "line": 101
       },
       "name": "PathRoutedFrontendDomainConfig",
       "properties": [
@@ -16027,7 +16224,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 58
+            "line": 105
           },
           "name": "domainName",
           "type": {
@@ -16043,7 +16240,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 63
+            "line": 110
           },
           "name": "certificate",
           "optional": true,
@@ -16059,12 +16256,29 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 68
+            "line": 115
           },
           "name": "certificateArn",
           "optional": true,
           "type": {
             "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Whether to create an AAAA alias record in addition to the A alias record."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 127
+          },
+          "name": "createAAAARecord",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
           }
         },
         {
@@ -16076,7 +16290,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 74
+            "line": 121
           },
           "name": "hostedZone",
           "optional": true,
@@ -16097,7 +16311,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/media-cdn.ts",
-        "line": 39
+        "line": 45
       },
       "name": "PrivateMediaConfig",
       "properties": [
@@ -16110,7 +16324,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 44
+            "line": 50
           },
           "name": "keyGroup",
           "optional": true,
@@ -16126,7 +16340,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 67
+            "line": 73
           },
           "name": "keyGroupComment",
           "optional": true,
@@ -16143,7 +16357,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 62
+            "line": 68
           },
           "name": "keyGroupName",
           "optional": true,
@@ -16160,7 +16374,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 56
+            "line": 62
           },
           "name": "publicKeyName",
           "optional": true,
@@ -16177,7 +16391,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 50
+            "line": 56
           },
           "name": "publicKeyPem",
           "optional": true,
@@ -16198,7 +16412,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 13
+        "line": 25
       },
       "name": "SpaOriginConfig",
       "properties": [
@@ -16210,7 +16424,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 17
+            "line": 29
           },
           "name": "bucket",
           "type": {
@@ -16225,7 +16439,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 23
+            "line": 35
           },
           "name": "pathPattern",
           "type": {
@@ -16241,18 +16455,71 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 28
+            "line": 40
           },
           "name": "cachePolicy",
           "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.aws_cloudfront.ICachePolicy"
           }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Overrides `spaResponseHeadersPolicy` and `responseHeadersPolicy` (legacy).",
+            "summary": "Response headers policy for this SPA behavior."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 46
+          },
+          "name": "responseHeadersPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "AppTheorySpaRewriteMode.SPA",
+            "remarks": "- `SPA`: rewrite extensionless routes to the SPA's `index.html`\n- `NONE`: do not rewrite routes (useful for multi-page sites)",
+            "summary": "SPA rewrite mode."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 69
+          },
+          "name": "rewriteMode",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheorySpaRewriteMode"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "Example:\n- Request: `/auth/assets/app.js`\n- With `stripPrefixBeforeOrigin=true`, S3 receives: `/assets/app.js`\n\nThis allows laying out the SPA bucket at root while still serving it under a prefix.",
+            "summary": "Whether to strip the SPA prefix before forwarding to the S3 origin."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 59
+          },
+          "name": "stripPrefixBeforeOrigin",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
         }
       ],
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "0.5.0-rc.3",
-  "fingerprint": "0HfL/dmJhE05qIVJi2+8e5Ec7GjfviiSiOX0gdG+3QM="
+  "version": "0.5.0-rc.4",
+  "fingerprint": "g071HOqPaJvpabK/10o6v6TPU/SI87RiNISu4tVaXnM="
 }

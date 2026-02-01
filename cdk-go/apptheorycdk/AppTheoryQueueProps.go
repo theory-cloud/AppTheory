@@ -48,6 +48,12 @@ type AppTheoryQueueProps struct {
 	// Default: - CloudFormation-generated name.
 	//
 	QueueName *string `field:"optional" json:"queueName" yaml:"queueName"`
+	// The amount of time for which a ReceiveMessage call will wait for a message to arrive in the queue before returning.
+	//
+	// Used for SQS long polling.
+	// Default: undefined.
+	//
+	ReceiveMessageWaitTime awscdk.Duration `field:"optional" json:"receiveMessageWaitTime" yaml:"receiveMessageWaitTime"`
 	// The removal policy for the queue(s).
 	// Default: RemovalPolicy.DESTROY
 	//

@@ -48,6 +48,12 @@ type AppTheoryQueueProcessorProps struct {
 	// Properties for the underlying SQS queue.
 	// Deprecated: Use queueName, visibilityTimeout, and other specific props instead.
 	QueueProps *awssqs.QueueProps `field:"optional" json:"queueProps" yaml:"queueProps"`
+	// The amount of time for which a ReceiveMessage call will wait for a message to arrive in the queue before returning.
+	//
+	// Used for SQS long polling.
+	// Default: undefined.
+	//
+	ReceiveMessageWaitTime awscdk.Duration `field:"optional" json:"receiveMessageWaitTime" yaml:"receiveMessageWaitTime"`
 	// The removal policy for the queue(s).
 	// Default: RemovalPolicy.DESTROY
 	//

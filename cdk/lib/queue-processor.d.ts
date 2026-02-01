@@ -31,6 +31,12 @@ export interface AppTheoryQueueProcessorProps {
      */
     readonly visibilityTimeout?: Duration;
     /**
+     * The amount of time for which a ReceiveMessage call will wait for a message to arrive in the queue
+     * before returning. Used for SQS long polling.
+     * @default undefined
+     */
+    readonly receiveMessageWaitTime?: Duration;
+    /**
      * Whether to enable a Dead Letter Queue (DLQ).
      * @default false (for backwards compatibility with original behavior)
      */

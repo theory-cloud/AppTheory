@@ -22,6 +22,12 @@ type AppTheoryRestApiRouterDomainOptions struct {
 	//
 	// Provide either certificate or certificateArn.
 	CertificateArn *string `field:"optional" json:"certificateArn" yaml:"certificateArn"`
+	// Whether to create an AAAA alias record in addition to the A alias record.
+	//
+	// Only applies when `hostedZone` is provided.
+	// Default: false.
+	//
+	CreateAAAARecord *bool `field:"optional" json:"createAAAARecord" yaml:"createAAAARecord"`
 	// Endpoint type for the domain.
 	// Default: REGIONAL.
 	//
