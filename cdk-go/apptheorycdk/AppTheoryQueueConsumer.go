@@ -16,16 +16,16 @@ import (
 // with full control over batching, concurrency, and failure reporting.
 //
 // Example:
-//   // Consumer with full configuration
-//   new AppTheoryQueueConsumer(stack, 'Consumer', {
-//     queue: myQueue.queue,
-//     consumer: myFunction,
-//     batchSize: 100,
-//     maxBatchingWindow: Duration.seconds(10),
-//     reportBatchItemFailures: true,
-//     maxConcurrency: 50,
-//   });
 //
+//	// Consumer with full configuration
+//	new AppTheoryQueueConsumer(stack, 'Consumer', {
+//	  queue: myQueue.queue,
+//	  consumer: myFunction,
+//	  batchSize: 100,
+//	  maxBatchingWindow: Duration.seconds(10),
+//	  reportBatchItemFailures: true,
+//	  maxConcurrency: 50,
+//	});
 type AppTheoryQueueConsumer interface {
 	constructs.Construct
 	// The consumer Lambda function.
@@ -88,7 +88,6 @@ func (j *jsiiProxy_AppTheoryQueueConsumer) Queue() awssqs.IQueue {
 	)
 	return returns
 }
-
 
 func NewAppTheoryQueueConsumer(scope constructs.Construct, id *string, props *AppTheoryQueueConsumerProps) AppTheoryQueueConsumer {
 	_init_.Initialize()
@@ -172,4 +171,3 @@ func (a *jsiiProxy_AppTheoryQueueConsumer) ToString() *string {
 
 	return returns
 }
-

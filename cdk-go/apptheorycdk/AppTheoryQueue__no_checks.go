@@ -23,4 +23,3 @@ func validateAppTheoryQueue_IsConstructParameters(x interface{}) error {
 func validateNewAppTheoryQueueParameters(scope constructs.Construct, id *string, props *AppTheoryQueueProps) error {
 	return nil
 }
-
