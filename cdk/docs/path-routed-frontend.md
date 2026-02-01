@@ -46,12 +46,35 @@ The construct automatically creates a CloudFront Function that:
 - Rewrites requests without file extensions to `index.html` within the SPA prefix
 - Preserves requests for static assets (`.js`, `.css`, `.png`, etc.)
 - Handles SPA client-side routing correctly
+- Optionally strips the SPA prefix before forwarding to the S3 origin (per SPA)
 
 Example rewrite behavior:
 ```
 /l/dashboard      → /l/index.html  (no extension, SPA route)
 /l/assets/app.js  → /l/assets/app.js  (has extension, served as-is)
 /auth/login       → /auth/index.html  (no extension, SPA route)
+```
+
+You can also disable SPA rewrites for a given SPA (multi-page mode), and/or strip the prefix before forwarding to S3:
+
+```typescript
+import { AppTheoryPathRoutedFrontend, AppTheorySpaRewriteMode } from '@theory-cloud/apptheory-cdk';
+
+new AppTheoryPathRoutedFrontend(stack, 'Frontend', {
+  apiOriginUrl: 'https://api.example.com',
+  spaOrigins: [
+    // Bucket layout includes /l/** so we keep prefix + SPA rewrites (default)
+    { bucket: clientBucket, pathPattern: '/l/*' },
+
+    // Bucket layout is at root, so we strip '/auth' before S3, and we can choose SPA or multi-page mode
+    {
+      bucket: authBucket,
+      pathPattern: '/auth/*',
+      stripPrefixBeforeOrigin: true,
+      rewriteMode: AppTheorySpaRewriteMode.SPA,
+    },
+  ],
+});
 ```
 
 ### 3. API Bypass Paths
@@ -90,7 +113,7 @@ new AppTheoryPathRoutedFrontend(stack, 'Frontend', {
   ],
   domain: {
     domainName: 'app.example.com',
-    hostedZone: zone,  // Creates Route53 A record + DNS-validated cert in us-east-1
+    hostedZone: zone,  // Creates Route53 A record (and optionally AAAA) + DNS-validated cert in us-east-1
   },
 });
 ```
@@ -100,7 +123,7 @@ construct creates a DNS-validated certificate in `us-east-1` automatically.
 
 ### 5. Response Headers Policy
 
-Apply a response headers policy to all behaviors:
+Apply a response headers policy (legacy) to all behaviors:
 
 ```typescript
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
@@ -111,6 +134,26 @@ new AppTheoryPathRoutedFrontend(stack, 'Frontend', {
     { bucket: clientBucket, pathPattern: '/l/*' },
   ],
   responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.CORS_ALLOW_ALL_ORIGINS_WITH_PREFLIGHT,
+});
+```
+
+Behavior-scoped policies (recommended):
+
+```typescript
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+
+new AppTheoryPathRoutedFrontend(stack, 'Frontend', {
+  apiOriginUrl: 'https://api.example.com',
+  spaOrigins: [
+    { bucket: clientBucket, pathPattern: '/l/*' },
+    { bucket: authBucket, pathPattern: '/auth/*' },
+  ],
+  apiBypassPaths: [
+    { pathPattern: '/auth/wallet/*' },
+  ],
+
+  // Apply headers policy only to SPA behaviors (e.g., strict CSP for static assets)
+  spaResponseHeadersPolicy: cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS,
 });
 ```
 
@@ -181,7 +224,10 @@ new cdk.CfnOutput(stack, 'AuthBucketName', {
 | `spaOrigins` | `SpaOriginConfig[]` | ❌ | `[]` | SPA origins with path patterns |
 | `apiBypassPaths` | `ApiBypassConfig[]` | ❌ | `[]` | Paths that bypass SPA routing |
 | `domain` | `PathRoutedFrontendDomainConfig` | ❌ | - | Custom domain configuration |
-| `responseHeadersPolicy` | `IResponseHeadersPolicy` | ❌ | - | Response headers policy |
+| `responseHeadersPolicy` | `IResponseHeadersPolicy` | ❌ | - | Response headers policy (legacy, applies to all behaviors) |
+| `apiResponseHeadersPolicy` | `IResponseHeadersPolicy` | ❌ | - | Response headers policy for the API default behavior |
+| `spaResponseHeadersPolicy` | `IResponseHeadersPolicy` | ❌ | - | Default response headers policy for SPA behaviors |
+| `apiBypassResponseHeadersPolicy` | `IResponseHeadersPolicy` | ❌ | - | Default response headers policy for API bypass behaviors |
 | `apiOriginRequestPolicy` | `IOriginRequestPolicy` | ❌ | - | Origin request policy for API |
 | `enableLogging` | `boolean` | ❌ | `true` | Enable CloudFront access logs |
 | `logsBucket` | `IBucket` | ❌ | Auto-created | S3 bucket for logs |

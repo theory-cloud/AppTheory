@@ -25,6 +25,11 @@ export interface MediaCdnDomainConfig {
      * When provided, an A record alias will be created for the domain.
      */
     readonly hostedZone?: route53.IHostedZone;
+    /**
+     * Whether to create an AAAA alias record in addition to the A alias record.
+     * @default false
+     */
+    readonly createAAAARecord?: boolean;
 }
 /**
  * Configuration for private media access using CloudFront signed URLs/cookies.

@@ -9,6 +9,11 @@ export interface AppTheoryEventBridgeHandlerProps {
   readonly ruleName?: string;
   readonly enabled?: boolean;
   readonly description?: string;
+  /**
+   * Optional configuration for the Lambda target (DLQ, input, retries, max event age, etc).
+   * Passed through to `aws-events-targets.LambdaFunction`.
+   */
+  readonly targetProps?: targets.LambdaFunctionProps;
 }
 
 export class AppTheoryEventBridgeHandler extends Construct {
@@ -24,7 +29,6 @@ export class AppTheoryEventBridgeHandler extends Construct {
       enabled: props.enabled,
     });
 
-    this.rule.addTarget(new targets.LambdaFunction(props.handler));
+    this.rule.addTarget(new targets.LambdaFunction(props.handler, props.targetProps));
   }
 }
-
