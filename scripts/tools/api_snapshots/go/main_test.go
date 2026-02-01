@@ -49,7 +49,7 @@ func TestNormalizeFieldList(t *testing.T) {
 
 func TestFuncDeclKindAndName(t *testing.T) {
 	fn := &ast.FuncDecl{Name: ast.NewIdent("Foo"), Type: &ast.FuncType{}}
-	if got := funcDeclKind(fn); got != "func" {
+	if got := funcDeclKind(fn); got != exportKindFunc {
 		t.Fatalf("expected kind func, got %q", got)
 	}
 	if got := funcDeclName(fn); got != "Foo" {
@@ -65,7 +65,7 @@ func TestFuncDeclKindAndName(t *testing.T) {
 			},
 		},
 	}
-	if got := funcDeclKind(m); got != "method" {
+	if got := funcDeclKind(m); got != exportKindMethod {
 		t.Fatalf("expected kind method, got %q", got)
 	}
 	if got := funcDeclName(m); got != "*T.Meth" {
@@ -85,7 +85,7 @@ func TestFormatValueSpecExports(t *testing.T) {
 	if len(out) != 1 {
 		t.Fatalf("expected 1 export, got %d", len(out))
 	}
-	if out[0].Kind != "const" || out[0].Name != "Foo" {
+	if out[0].Kind != exportKindConst || out[0].Name != "Foo" {
 		t.Fatalf("unexpected export: %#v", out[0])
 	}
 	if !strings.HasPrefix(out[0].Decl, "const Foo") {
@@ -104,7 +104,7 @@ func TestFormatValueSpecExports(t *testing.T) {
 	if len(out) != 1 {
 		t.Fatalf("expected 1 export, got %d", len(out))
 	}
-	if out[0].Kind != "var" || out[0].Name != "Foo" {
+	if out[0].Kind != exportKindVar || out[0].Name != "Foo" {
 		t.Fatalf("unexpected export: %#v", out[0])
 	}
 
