@@ -16,4 +16,3 @@ type SpaOriginConfig struct {
 	// Defaults to CACHING_OPTIMIZED.
 	CachePolicy awscloudfront.ICachePolicy `field:"optional" json:"cachePolicy" yaml:"cachePolicy"`
 }
-

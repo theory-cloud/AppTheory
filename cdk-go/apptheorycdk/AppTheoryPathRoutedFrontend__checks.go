@@ -36,4 +36,3 @@ func validateNewAppTheoryPathRoutedFrontendParameters(scope constructs.Construct
 
 	return nil
 }
-

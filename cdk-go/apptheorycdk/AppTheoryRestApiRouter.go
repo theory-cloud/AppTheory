@@ -21,16 +21,16 @@ import (
 // - Custom domain wiring with optional Route53 record.
 //
 // Example:
-//   const router = new AppTheoryRestApiRouter(this, 'Router', {
-//     apiName: 'my-api',
-//     stage: { stageName: 'prod', accessLogging: true, detailedMetrics: true },
-//     cors: true,
-//   });
 //
-//   router.addLambdaIntegration('/sse', ['GET'], sseFn, { streaming: true });
-//   router.addLambdaIntegration('/api/graphql', ['POST'], graphqlFn);
-//   router.addLambdaIntegration('/{proxy+}', ['ANY'], apiFn);
+//	const router = new AppTheoryRestApiRouter(this, 'Router', {
+//	  apiName: 'my-api',
+//	  stage: { stageName: 'prod', accessLogging: true, detailedMetrics: true },
+//	  cors: true,
+//	});
 //
+//	router.addLambdaIntegration('/sse', ['GET'], sseFn, { streaming: true });
+//	router.addLambdaIntegration('/api/graphql', ['POST'], graphqlFn);
+//	router.addLambdaIntegration('/{proxy+}', ['ANY'], apiFn);
 type AppTheoryRestApiRouter interface {
 	constructs.Construct
 	// The access log group (if access logging is enabled).
@@ -128,7 +128,6 @@ func (j *jsiiProxy_AppTheoryRestApiRouter) Stage() awsapigateway.Stage {
 	return returns
 }
 
-
 func NewAppTheoryRestApiRouter(scope constructs.Construct, id *string, props *AppTheoryRestApiRouterProps) AppTheoryRestApiRouter {
 	_init_.Initialize()
 
@@ -214,4 +213,3 @@ func (a *jsiiProxy_AppTheoryRestApiRouter) ToString() *string {
 
 	return returns
 }
-

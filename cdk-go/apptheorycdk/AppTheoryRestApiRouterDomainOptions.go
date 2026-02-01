@@ -37,4 +37,3 @@ type AppTheoryRestApiRouterDomainOptions struct {
 	//
 	SecurityPolicy awsapigateway.SecurityPolicy `field:"optional" json:"securityPolicy" yaml:"securityPolicy"`
 }
-
