@@ -488,6 +488,25 @@ test("AppTheoryDynamoTable (no TTL) synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryDynamoTable (deletion protection) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryDynamoTable(stack, "Table", {
+    tableName: "apptheory-test-table-protected",
+    partitionKeyName: "PK",
+    sortKeyName: "SK",
+    deletionProtection: true,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("dynamo-table-deletion-protection", template);
+  } else {
+    expectSnapshot("dynamo-table-deletion-protection", template);
+  }
+});
+
 test("AppTheoryHostedZone synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");

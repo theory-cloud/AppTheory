@@ -9437,7 +9437,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/dynamo-table.ts",
-          "line": 46
+          "line": 47
         },
         "parameters": [
           {
@@ -9463,7 +9463,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/dynamo-table.ts",
-        "line": 43
+        "line": 44
       },
       "name": "AppTheoryDynamoTable",
       "properties": [
@@ -9471,7 +9471,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 44
+            "line": 45
           },
           "name": "table",
           "type": {
@@ -9682,20 +9682,7 @@
             "filename": "lib/dynamo-table.ts",
             "line": 30
           },
-          "name": "enablePointInTimeRecovery",
-          "optional": true,
-          "type": {
-            "primitive": "boolean"
-          }
-        },
-        {
-          "abstract": true,
-          "immutable": true,
-          "locationInModule": {
-            "filename": "lib/dynamo-table.ts",
-            "line": 33
-          },
-          "name": "enableStream",
+          "name": "deletionProtection",
           "optional": true,
           "type": {
             "primitive": "boolean"
@@ -9708,6 +9695,32 @@
             "filename": "lib/dynamo-table.ts",
             "line": 31
           },
+          "name": "enablePointInTimeRecovery",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 34
+          },
+          "name": "enableStream",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 32
+          },
           "name": "encryption",
           "optional": true,
           "type": {
@@ -9719,7 +9732,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 32
+            "line": 33
           },
           "name": "encryptionKey",
           "optional": true,
@@ -9732,7 +9745,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 35
+            "line": 36
           },
           "name": "globalSecondaryIndexes",
           "optional": true,
@@ -9750,7 +9763,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 37
+            "line": 38
           },
           "name": "grantReadTo",
           "optional": true,
@@ -9768,7 +9781,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 39
+            "line": 40
           },
           "name": "grantReadWriteTo",
           "optional": true,
@@ -9786,7 +9799,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 40
+            "line": 41
           },
           "name": "grantStreamReadTo",
           "optional": true,
@@ -9804,7 +9817,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 38
+            "line": 39
           },
           "name": "grantWriteTo",
           "optional": true,
@@ -9874,7 +9887,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 34
+            "line": 35
           },
           "name": "streamViewType",
           "optional": true,
@@ -14739,5 +14752,5 @@
     }
   },
   "version": "0.5.0",
-  "fingerprint": "yhD37dchW05OaJMff39R2PSOVuQTm8u+mOpYevzy2pc="
+  "fingerprint": "MASOGK3WhTeNHVuRCHkUNJZdqYoerD8tqApwSsfNNTY="
 }
