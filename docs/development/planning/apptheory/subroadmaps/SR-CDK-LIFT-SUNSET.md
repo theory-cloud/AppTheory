@@ -199,7 +199,16 @@ This milestone is intentionally **pattern-focused** (like Lift), not a “CloudF
   - the CloudFront Function is created and associated on the correct behaviors
   - optional domain/cert/Route53 wiring synthesizes
 
-#### M4B — Media CDN
+#### M4B — Media CDN ✅ COMPLETE
+
+**Status**: Implemented 2026-02-01
+
+**Implementation**:
+- New construct: `AppTheoryMediaCdn` in `cdk/lib/media-cdn.ts`
+- Exports via `cdk/lib/index.ts`
+- Snapshot tests: `cdk/test/snapshots/media-cdn-*.json` (6 test scenarios)
+- Documentation: `cdk/docs/media-cdn.md`
+- Example: `examples/cdk/media-cdn/`
 
 **Deliverables**
 - New construct (name flexible): `AppTheoryMediaCdn`.
@@ -208,6 +217,15 @@ This milestone is intentionally **pattern-focused** (like Lift), not a “CloudF
   - response headers policy input
   - optional private media:
     - accept `cloudfront.IKeyGroup` (or inputs to create one) and set `trustedKeyGroups`
+
+**Tests**
+- Snapshot tests covering:
+  - Basic media CDN (new bucket created)
+  - Existing bucket usage
+  - Domain + Route53 configuration
+  - Private media with existing key group
+  - Private media with PEM (creates key group)
+  - Full options (all configurations combined)
 
 **Acceptance criteria**
 - Lesser’s “stage domain + routed SPAs + media subdomain CDN” can be deployed using AppTheory constructs/patterns.
