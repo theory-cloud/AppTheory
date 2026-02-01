@@ -956,3 +956,204 @@ test("AppTheoryPathRoutedFrontend (domain + Route53) synthesizes expected templa
     expectSnapshot("path-routed-frontend-domain", template);
   }
 });
+
+// ============================================================================
+// AppTheoryMediaCdn tests
+// ============================================================================
+
+const cloudfront = require("aws-cdk-lib/aws-cloudfront");
+
+test("AppTheoryMediaCdn (basic) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+    comment: "Basic media CDN",
+    enableLogging: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("media-cdn-basic", template);
+  } else {
+    expectSnapshot("media-cdn-basic", template);
+  }
+});
+
+test("AppTheoryMediaCdn (existing bucket) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const existingBucket = new s3.Bucket(stack, "ExistingBucket");
+
+  new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+    bucket: existingBucket,
+    enableLogging: false,
+    comment: "Media CDN with existing bucket",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("media-cdn-existing-bucket", template);
+  } else {
+    expectSnapshot("media-cdn-existing-bucket", template);
+  }
+});
+
+test("AppTheoryMediaCdn (domain + Route53) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+  const cert = new apptheory.AppTheoryCertificate(stack, "Cert", {
+    domainName: "media.example.com",
+    hostedZone: zone,
+  });
+
+  new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+    domain: {
+      domainName: "media.example.com",
+      certificate: cert.certificate,
+      hostedZone: zone,
+    },
+    enableLogging: false,
+    comment: "Media CDN with custom domain",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify Route53 A record is created
+  const aRecords = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::Route53::RecordSet",
+  );
+  assert.ok(aRecords.length >= 1, "Should have Route53 A record");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("media-cdn-domain", template);
+  } else {
+    expectSnapshot("media-cdn-domain", template);
+  }
+});
+
+test("AppTheoryMediaCdn (private media with key group) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  // Create a public key and key group for testing
+  const publicKey = new cloudfront.PublicKey(stack, "TestPublicKey", {
+    encodedKey: `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAudf8/iNkQgdvjEdm6xYS
+JAyxd/kGTbJfQNg9YhInb7TSm0dGu0yx8yZ3fnpmH2FBYXZ+NFVW/yfM8xU3FO+e
+bykZ3JCsmEbHMEqDnDqPWy1x7a/0XN1+0R/v6bPQ7EHLa6k7VlZjP+zLBbt2T2V0
+O0cv9LVGFG/rpwB3g7OXI8DKMc4m50eDFyZN/1lCvF5oIGlgm4pjdD48sUBk3X9S
+kSvhVXPl0JNHoGg+Gn4FPK0xQTSzv0r4EfxXPw0fU6zfFHclm0k+K6B9Lb/k0z5d
+8Yn8c3JqtXu3F/EzLxVjfWQ2pRHlI9E0q9EuS7UOFD4FD0D3sLfXd8ZNpQ/hdnT1
+7wIDAQAB
+-----END PUBLIC KEY-----`,
+    publicKeyName: "test-public-key",
+  });
+
+  const keyGroup = new cloudfront.KeyGroup(stack, "TestKeyGroup", {
+    items: [publicKey],
+    keyGroupName: "test-key-group",
+  });
+
+  new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+    privateMedia: {
+      keyGroup: keyGroup,
+    },
+    enableLogging: false,
+    comment: "Private media CDN with key group",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify the distribution has trusted key groups configured
+  const distributions = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::CloudFront::Distribution",
+  );
+  assert.ok(distributions.length >= 1, "Should have CloudFront Distribution");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("media-cdn-private-keygroup", template);
+  } else {
+    expectSnapshot("media-cdn-private-keygroup", template);
+  }
+});
+
+test("AppTheoryMediaCdn (private media with PEM) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+    privateMedia: {
+      publicKeyPem: `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAudf8/iNkQgdvjEdm6xYS
+JAyxd/kGTbJfQNg9YhInb7TSm0dGu0yx8yZ3fnpmH2FBYXZ+NFVW/yfM8xU3FO+e
+bykZ3JCsmEbHMEqDnDqPWy1x7a/0XN1+0R/v6bPQ7EHLa6k7VlZjP+zLBbt2T2V0
+O0cv9LVGFG/rpwB3g7OXI8DKMc4m50eDFyZN/1lCvF5oIGlgm4pjdD48sUBk3X9S
+kSvhVXPl0JNHoGg+Gn4FPK0xQTSzv0r4EfxXPw0fU6zfFHclm0k+K6B9Lb/k0z5d
+8Yn8c3JqtXu3F/EzLxVjfWQ2pRHlI9E0q9EuS7UOFD4FD0D3sLfXd8ZNpQ/hdnT1
+7wIDAQAB
+-----END PUBLIC KEY-----`,
+      publicKeyName: "media-cdn-public-key",
+      keyGroupName: "media-cdn-key-group",
+      keyGroupComment: "Key group for private media access",
+    },
+    enableLogging: false,
+    comment: "Private media CDN with PEM key",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify that a public key and key group were created
+  const publicKeys = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::CloudFront::PublicKey",
+  );
+  assert.ok(publicKeys.length >= 1, "Should have CloudFront PublicKey");
+
+  const keyGroups = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::CloudFront::KeyGroup",
+  );
+  assert.ok(keyGroups.length >= 1, "Should have CloudFront KeyGroup");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("media-cdn-private-pem", template);
+  } else {
+    expectSnapshot("media-cdn-private-pem", template);
+  }
+});
+
+test("AppTheoryMediaCdn (full options) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+  const cert = new apptheory.AppTheoryCertificate(stack, "Cert", {
+    domainName: "media.example.com",
+    hostedZone: zone,
+  });
+
+  new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+    bucketName: "my-media-bucket",
+    domain: {
+      domainName: "media.example.com",
+      certificate: cert.certificate,
+      hostedZone: zone,
+    },
+    enableLogging: true,
+    priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
+    defaultRootObject: "index.html",
+    comment: "Full options media CDN",
+    removalPolicy: cdk.RemovalPolicy.DESTROY,
+    autoDeleteObjects: true,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("media-cdn-full-options", template);
+  } else {
+    expectSnapshot("media-cdn-full-options", template);
+  }
+});
+
