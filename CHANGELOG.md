@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.5.0](https://github.com/theory-cloud/AppTheory/compare/v0.4.1...v0.5.0) (2026-01-30)
+
+
+### Bug Fixes
+
+* **ci:** allow release-pr CLI ([aeb4a32](https://github.com/theory-cloud/AppTheory/commit/aeb4a32ff31d6670b5eccd8f51ca717d8cde561c))
+* **ci:** auto-clean failed prerelease drafts ([4965915](https://github.com/theory-cloud/AppTheory/commit/4965915a0db4711fbe98711910b7efb107d7b2d7))
+* **ci:** honor main release-as ([8c49083](https://github.com/theory-cloud/AppTheory/commit/8c4908369a4328c83e3127dfb3dd5ca71a47fbac))
+* **ci:** honor main release-as ([27fe861](https://github.com/theory-cloud/AppTheory/commit/27fe861b2b204289365bc9f6d88b5472ae5e8839))
+* **ci:** make jsii-pacmak compatible with -rc tags ([fd7e341](https://github.com/theory-cloud/AppTheory/commit/fd7e341a5d485b4877dcff4f77150a3db03b40c3))
+* **ci:** make jsii-pacmak compatible with -rc tags ([abed83d](https://github.com/theory-cloud/AppTheory/commit/abed83d26f9c4143b3dccae3c49a89ea2e350ad8))
+* **ci:** repair release-pr workflow yaml ([9ce5d80](https://github.com/theory-cloud/AppTheory/commit/9ce5d803733aeced05603df51cb6cb2a885d6ad8))
+* **ci:** repair release-pr workflow yaml ([877ca72](https://github.com/theory-cloud/AppTheory/commit/877ca726c013fdecef106b643f2edbe8695db1cd))
+* **ci:** run CI on staging pushes ([d218268](https://github.com/theory-cloud/AppTheory/commit/d218268f8915d8032205687306861e89d8b552fe))
+* **ci:** run CI on staging pushes ([c3b6ce3](https://github.com/theory-cloud/AppTheory/commit/c3b6ce30172c827a7de02fdcd7a7cfeddcafe9c7))
+* **ci:** skip branch version sync outside git repo ([24f59b4](https://github.com/theory-cloud/AppTheory/commit/24f59b4c2e2bcf9ede8739117bbbaec4f720c238))
+* **ci:** skip branch version sync outside git repo ([3dd7f81](https://github.com/theory-cloud/AppTheory/commit/3dd7f81484f36a0516fa188b70fbc017faedc749))
+* **ci:** support X.Y.Z-rc prerelease versions ([91c8d4c](https://github.com/theory-cloud/AppTheory/commit/91c8d4ce8290e88a18269ca1d00126dfd71190ae))
+* **ci:** support X.Y.Z-rc prerelease versions ([9a6abf8](https://github.com/theory-cloud/AppTheory/commit/9a6abf881d6e292b03e46f96fff42cd33a7279d1))
+* **contract-tests:** deflake streaming headers fixture ([042cc71](https://github.com/theory-cloud/AppTheory/commit/042cc71705fbeebf62e986292526ecf94b8a2862))
+* **contract-tests:** deflake streaming headers fixture ([50a5fda](https://github.com/theory-cloud/AppTheory/commit/50a5fda3e1c2e49eda3fd8c099991d171d7becd1))
+* **release:** align branch release flow to TableTheory ([d100614](https://github.com/theory-cloud/AppTheory/commit/d10061460551952bcfc33753f1308c47bf42caed))
+* **release:** align branch release flow to TableTheory ([26ba236](https://github.com/theory-cloud/AppTheory/commit/26ba236db0f9797a1ba1a590e9a52b5c02f36d11))
+* **release:** support vX.Y.Z-rc tags ([6fee719](https://github.com/theory-cloud/AppTheory/commit/6fee719f90db4646182aa4983c259b0c91e9508a))
+* **release:** support vX.Y.Z-rc tags ([380fd45](https://github.com/theory-cloud/AppTheory/commit/380fd450f94d9d2e09230c3404f29f08d2d0e725))
+
 ## [0.5.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v0.5.0-rc...v0.5.0-rc.1) (2026-01-30)
 
 

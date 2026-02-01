@@ -1,0 +1,1166 @@
+{
+  "Outputs": {
+    "RouterApiEndpoint2408998C": {
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "https://",
+            {
+              "Ref": "RouterApi30C329D4"
+            },
+            ".execute-api.",
+            {
+              "Ref": "AWS::Region"
+            },
+            ".",
+            {
+              "Ref": "AWS::URLSuffix"
+            },
+            "/",
+            {
+              "Ref": "RouterApiDeploymentStageprod83159A95"
+            },
+            "/"
+          ]
+        ]
+      }
+    }
+  },
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "ApiFnE0725F78": {
+      "DependsOn": [
+        "ApiFnServiceRoleD18AAE0E"
+      ],
+      "Properties": {
+        "Code": {
+          "ZipFile": "exports.handler = async () => ({ statusCode: 200, body: 'api' });"
+        },
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "ApiFnServiceRoleD18AAE0E",
+            "Arn"
+          ]
+        },
+        "Runtime": "nodejs24.x"
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "ApiFnServiceRoleD18AAE0E": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+              ]
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "GraphqlFn018D1285": {
+      "DependsOn": [
+        "GraphqlFnServiceRole64237BF6"
+      ],
+      "Properties": {
+        "Code": {
+          "ZipFile": "exports.handler = async () => ({ statusCode: 200, body: 'graphql' });"
+        },
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "GraphqlFnServiceRole64237BF6",
+            "Arn"
+          ]
+        },
+        "Runtime": "nodejs24.x"
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "GraphqlFnServiceRole64237BF6": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+              ]
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "InventoryFnF76C5ADF": {
+      "DependsOn": [
+        "InventoryFnServiceRole7B0D854E"
+      ],
+      "Properties": {
+        "Code": {
+          "ZipFile": "exports.handler = async () => ({ statusCode: 200, body: 'inventory' });"
+        },
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "InventoryFnServiceRole7B0D854E",
+            "Arn"
+          ]
+        },
+        "Runtime": "nodejs24.x"
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "InventoryFnServiceRole7B0D854E": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+              ]
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "RouterApi30C329D4": {
+      "Properties": {
+        "EndpointConfiguration": {
+          "Types": [
+            "REGIONAL"
+          ]
+        },
+        "Name": "apptheory-router-test"
+      },
+      "Type": "AWS::ApiGateway::RestApi"
+    },
+    "RouterApiAccountD5E11F08": {
+      "DeletionPolicy": "Retain",
+      "DependsOn": [
+        "RouterApi30C329D4"
+      ],
+      "Properties": {
+        "CloudWatchRoleArn": {
+          "Fn::GetAtt": [
+            "RouterApiCloudWatchRole98CD244A",
+            "Arn"
+          ]
+        }
+      },
+      "Type": "AWS::ApiGateway::Account",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "RouterApiCloudWatchRole98CD244A": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "apigateway.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+              ]
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "RouterApiDeploymentD829DC8480a1aa561592d58ed5469e45e2e01381": {
+      "DependsOn": [
+        "RouterApiproxyANYFB4CCB02",
+        "RouterApiproxyA005E440",
+        "RouterApiapigraphqlPOST872B7AA1",
+        "RouterApiapigraphqlC52D7435",
+        "RouterApiapi3B5DD84F",
+        "RouterApiinventoryidDELETEE3C08A35",
+        "RouterApiinventoryidGET6346EC8D",
+        "RouterApiinventoryidPUT3F9F70DB",
+        "RouterApiinventoryidAB510DB0",
+        "RouterApiinventory3712D9C1",
+        "RouterApisseGET9A367915",
+        "RouterApisseF30E4971"
+      ],
+      "Metadata": {
+        "aws:cdk:do-not-refactor": true
+      },
+      "Properties": {
+        "Description": "Automatically created by the RestApi construct",
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Deployment"
+    },
+    "RouterApiDeploymentStageprod83159A95": {
+      "DependsOn": [
+        "RouterApiAccountD5E11F08"
+      ],
+      "Properties": {
+        "DeploymentId": {
+          "Ref": "RouterApiDeploymentD829DC8480a1aa561592d58ed5469e45e2e01381"
+        },
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        },
+        "StageName": "prod"
+      },
+      "Type": "AWS::ApiGateway::Stage"
+    },
+    "RouterApiapi3B5DD84F": {
+      "Properties": {
+        "ParentId": {
+          "Fn::GetAtt": [
+            "RouterApi30C329D4",
+            "RootResourceId"
+          ]
+        },
+        "PathPart": "api",
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Resource"
+    },
+    "RouterApiapigraphqlC52D7435": {
+      "Properties": {
+        "ParentId": {
+          "Ref": "RouterApiapi3B5DD84F"
+        },
+        "PathPart": "graphql",
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Resource"
+    },
+    "RouterApiapigraphqlPOST872B7AA1": {
+      "Properties": {
+        "AuthorizationType": "NONE",
+        "HttpMethod": "POST",
+        "Integration": {
+          "IntegrationHttpMethod": "POST",
+          "ResponseTransferMode": "BUFFERED",
+          "Type": "AWS_PROXY",
+          "Uri": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":apigateway:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":lambda:path/2015-03-31/functions/",
+                {
+                  "Fn::GetAtt": [
+                    "GraphqlFn018D1285",
+                    "Arn"
+                  ]
+                },
+                "/invocations"
+              ]
+            ]
+          }
+        },
+        "ResourceId": {
+          "Ref": "RouterApiapigraphqlC52D7435"
+        },
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Method"
+    },
+    "RouterApiapigraphqlPOSTApiPermissionTestStackRouterApi516CB159POSTapigraphql5DBDF062": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "GraphqlFn018D1285",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RouterApi30C329D4"
+              },
+              "/",
+              {
+                "Ref": "RouterApiDeploymentStageprod83159A95"
+              },
+              "/POST/api/graphql"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RouterApiapigraphqlPOSTApiPermissionTestTestStackRouterApi516CB159POSTapigraphql44622C82": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "GraphqlFn018D1285",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RouterApi30C329D4"
+              },
+              "/test-invoke-stage/POST/api/graphql"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RouterApiinventory3712D9C1": {
+      "Properties": {
+        "ParentId": {
+          "Fn::GetAtt": [
+            "RouterApi30C329D4",
+            "RootResourceId"
+          ]
+        },
+        "PathPart": "inventory",
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Resource"
+    },
+    "RouterApiinventoryidAB510DB0": {
+      "Properties": {
+        "ParentId": {
+          "Ref": "RouterApiinventory3712D9C1"
+        },
+        "PathPart": "{id}",
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Resource"
+    },
+    "RouterApiinventoryidDELETEApiPermissionTestStackRouterApi516CB159DELETEinventoryid76E103AD": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "InventoryFnF76C5ADF",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RouterApi30C329D4"
+              },
+              "/",
+              {
+                "Ref": "RouterApiDeploymentStageprod83159A95"
+              },
+              "/DELETE/inventory/*"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RouterApiinventoryidDELETEApiPermissionTestTestStackRouterApi516CB159DELETEinventoryidDABE43C7": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "InventoryFnF76C5ADF",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RouterApi30C329D4"
+              },
+              "/test-invoke-stage/DELETE/inventory/*"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RouterApiinventoryidDELETEE3C08A35": {
+      "Properties": {
+        "AuthorizationType": "NONE",
+        "HttpMethod": "DELETE",
+        "Integration": {
+          "IntegrationHttpMethod": "POST",
+          "ResponseTransferMode": "BUFFERED",
+          "Type": "AWS_PROXY",
+          "Uri": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":apigateway:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":lambda:path/2015-03-31/functions/",
+                {
+                  "Fn::GetAtt": [
+                    "InventoryFnF76C5ADF",
+                    "Arn"
+                  ]
+                },
+                "/invocations"
+              ]
+            ]
+          }
+        },
+        "ResourceId": {
+          "Ref": "RouterApiinventoryidAB510DB0"
+        },
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Method"
+    },
+    "RouterApiinventoryidGET6346EC8D": {
+      "Properties": {
+        "AuthorizationType": "NONE",
+        "HttpMethod": "GET",
+        "Integration": {
+          "IntegrationHttpMethod": "POST",
+          "ResponseTransferMode": "BUFFERED",
+          "Type": "AWS_PROXY",
+          "Uri": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":apigateway:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":lambda:path/2015-03-31/functions/",
+                {
+                  "Fn::GetAtt": [
+                    "InventoryFnF76C5ADF",
+                    "Arn"
+                  ]
+                },
+                "/invocations"
+              ]
+            ]
+          }
+        },
+        "ResourceId": {
+          "Ref": "RouterApiinventoryidAB510DB0"
+        },
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Method"
+    },
+    "RouterApiinventoryidGETApiPermissionTestStackRouterApi516CB159GETinventoryid3CE61639": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "InventoryFnF76C5ADF",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RouterApi30C329D4"
+              },
+              "/",
+              {
+                "Ref": "RouterApiDeploymentStageprod83159A95"
+              },
+              "/GET/inventory/*"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RouterApiinventoryidGETApiPermissionTestTestStackRouterApi516CB159GETinventoryid4402EC8F": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "InventoryFnF76C5ADF",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RouterApi30C329D4"
+              },
+              "/test-invoke-stage/GET/inventory/*"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RouterApiinventoryidPUT3F9F70DB": {
+      "Properties": {
+        "AuthorizationType": "NONE",
+        "HttpMethod": "PUT",
+        "Integration": {
+          "IntegrationHttpMethod": "POST",
+          "ResponseTransferMode": "BUFFERED",
+          "Type": "AWS_PROXY",
+          "Uri": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":apigateway:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":lambda:path/2015-03-31/functions/",
+                {
+                  "Fn::GetAtt": [
+                    "InventoryFnF76C5ADF",
+                    "Arn"
+                  ]
+                },
+                "/invocations"
+              ]
+            ]
+          }
+        },
+        "ResourceId": {
+          "Ref": "RouterApiinventoryidAB510DB0"
+        },
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Method"
+    },
+    "RouterApiinventoryidPUTApiPermissionTestStackRouterApi516CB159PUTinventoryid233D7BA6": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "InventoryFnF76C5ADF",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RouterApi30C329D4"
+              },
+              "/",
+              {
+                "Ref": "RouterApiDeploymentStageprod83159A95"
+              },
+              "/PUT/inventory/*"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RouterApiinventoryidPUTApiPermissionTestTestStackRouterApi516CB159PUTinventoryidDC93A983": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "InventoryFnF76C5ADF",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RouterApi30C329D4"
+              },
+              "/test-invoke-stage/PUT/inventory/*"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RouterApiproxyA005E440": {
+      "Properties": {
+        "ParentId": {
+          "Fn::GetAtt": [
+            "RouterApi30C329D4",
+            "RootResourceId"
+          ]
+        },
+        "PathPart": "{proxy+}",
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Resource"
+    },
+    "RouterApiproxyANYApiPermissionTestStackRouterApi516CB159ANYproxyCBD42725": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "ApiFnE0725F78",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RouterApi30C329D4"
+              },
+              "/",
+              {
+                "Ref": "RouterApiDeploymentStageprod83159A95"
+              },
+              "/*/*"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RouterApiproxyANYApiPermissionTestTestStackRouterApi516CB159ANYproxyA1E2A67B": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "ApiFnE0725F78",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RouterApi30C329D4"
+              },
+              "/test-invoke-stage/*/*"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RouterApiproxyANYFB4CCB02": {
+      "Properties": {
+        "AuthorizationType": "NONE",
+        "HttpMethod": "ANY",
+        "Integration": {
+          "IntegrationHttpMethod": "POST",
+          "ResponseTransferMode": "BUFFERED",
+          "Type": "AWS_PROXY",
+          "Uri": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":apigateway:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":lambda:path/2015-03-31/functions/",
+                {
+                  "Fn::GetAtt": [
+                    "ApiFnE0725F78",
+                    "Arn"
+                  ]
+                },
+                "/invocations"
+              ]
+            ]
+          }
+        },
+        "ResourceId": {
+          "Ref": "RouterApiproxyA005E440"
+        },
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Method"
+    },
+    "RouterApisseF30E4971": {
+      "Properties": {
+        "ParentId": {
+          "Fn::GetAtt": [
+            "RouterApi30C329D4",
+            "RootResourceId"
+          ]
+        },
+        "PathPart": "sse",
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Resource"
+    },
+    "RouterApisseGET9A367915": {
+      "Properties": {
+        "AuthorizationType": "NONE",
+        "HttpMethod": "GET",
+        "Integration": {
+          "IntegrationHttpMethod": "POST",
+          "ResponseTransferMode": "STREAM",
+          "TimeoutInMillis": 900000,
+          "Type": "AWS_PROXY",
+          "Uri": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":apigateway:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":lambda:path/2021-11-15/functions/",
+                {
+                  "Fn::GetAtt": [
+                    "SseFn3518E41C",
+                    "Arn"
+                  ]
+                },
+                "/response-streaming-invocations"
+              ]
+            ]
+          }
+        },
+        "ResourceId": {
+          "Ref": "RouterApisseF30E4971"
+        },
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Method"
+    },
+    "RouterApisseGETApiPermissionTestStackRouterApi516CB159GETsse23CF3642": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "SseFn3518E41C",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RouterApi30C329D4"
+              },
+              "/",
+              {
+                "Ref": "RouterApiDeploymentStageprod83159A95"
+              },
+              "/GET/sse"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RouterApisseGETApiPermissionTestTestStackRouterApi516CB159GETsse80D0C5DA": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "SseFn3518E41C",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RouterApi30C329D4"
+              },
+              "/test-invoke-stage/GET/sse"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "SseFn3518E41C": {
+      "DependsOn": [
+        "SseFnServiceRoleE05E4B03"
+      ],
+      "Properties": {
+        "Code": {
+          "ZipFile": "exports.handler = async () => ({ statusCode: 200, body: 'sse' });"
+        },
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "SseFnServiceRoleE05E4B03",
+            "Arn"
+          ]
+        },
+        "Runtime": "nodejs24.x"
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "SseFnServiceRoleE05E4B03": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+              ]
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}

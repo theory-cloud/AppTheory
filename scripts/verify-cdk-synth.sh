@@ -16,6 +16,7 @@ export SOURCE_DATE_EPOCH="${epoch}"
 examples=(
   "examples/cdk/multilang|AppTheoryMultilangDemo"
   "examples/cdk/ssr-site|AppTheorySsrSiteDemo"
+  "examples/cdk/lesser-parity|LesserParityExample"
 )
 
 if ! command -v node >/dev/null 2>&1; then

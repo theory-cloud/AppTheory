@@ -30,6 +30,10 @@ if [[ ! -d "py/.venv" ]]; then
   python3 -m venv py/.venv
 fi
 
+if ! py/.venv/bin/python -c "import pip" >/dev/null 2>&1; then
+  py/.venv/bin/python -m ensurepip --upgrade >/dev/null
+fi
+
 py/.venv/bin/python -m pip install --upgrade pip >/dev/null
 py/.venv/bin/python -m pip install --requirement py/requirements-build.txt >/dev/null
 
@@ -45,6 +49,10 @@ from pathlib import Path
 
 epoch = int(os.environ["SOURCE_DATE_EPOCH"])
 for file_path in Path(os.environ["TMP_PY_DIR"]).rglob("*"):
+  # venvs can contain symlinks (depending on platform/config). We don't want to
+  # mutate timestamps of symlink targets outside the temp tree.
+  if file_path.is_symlink():
+    continue
   if file_path.is_file():
     os.utime(file_path, (epoch, epoch))
 PY
