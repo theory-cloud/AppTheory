@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.0-rc.4](https://github.com/theory-cloud/AppTheory/compare/v0.5.0-rc.3...v0.5.0-rc.4) (2026-02-01)
+
+
+### Bug Fixes
+
+* **cdk-go:** regenerate bindings for new constructs ([ed38899](https://github.com/theory-cloud/AppTheory/commit/ed38899a22d1ad8a95cc95633e37e904ec04c238))
+* **cdk-go:** regenerate bindings for new constructs ([e25ad1c](https://github.com/theory-cloud/AppTheory/commit/e25ad1c3dfb57519586331955a732c20f73e650d))
+* **release:** stop release-please PR churn ([346bb3e](https://github.com/theory-cloud/AppTheory/commit/346bb3e8f373a9331c100da0d46b4c82fc3f052d))
+
 ## [0.5.0-rc.3](https://github.com/theory-cloud/AppTheory/compare/v0.5.0-rc.2...v0.5.0-rc.3) (2026-02-01)
 
 
