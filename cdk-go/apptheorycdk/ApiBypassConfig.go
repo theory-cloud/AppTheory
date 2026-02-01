@@ -14,4 +14,8 @@ type ApiBypassConfig struct {
 	CachePolicy awscloudfront.ICachePolicy `field:"optional" json:"cachePolicy" yaml:"cachePolicy"`
 	// Optional origin request policy override.
 	OriginRequestPolicy awscloudfront.IOriginRequestPolicy `field:"optional" json:"originRequestPolicy" yaml:"originRequestPolicy"`
+	// Response headers policy for this API bypass behavior.
+	//
+	// Overrides `apiBypassResponseHeadersPolicy` and `responseHeadersPolicy` (legacy).
+	ResponseHeadersPolicy awscloudfront.IResponseHeadersPolicy `field:"optional" json:"responseHeadersPolicy" yaml:"responseHeadersPolicy"`
 }
