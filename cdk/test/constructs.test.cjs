@@ -193,6 +193,107 @@ test("AppTheoryQueueProcessor synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryQueue (without DLQ) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryQueue(stack, "Queue", {
+    queueName: "apptheory-queue",
+    enableDlq: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("queue-only-no-dlq", template);
+  } else {
+    expectSnapshot("queue-only-no-dlq", template);
+  }
+});
+
+test("AppTheoryQueue (with DLQ) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryQueue(stack, "Queue", {
+    queueName: "apptheory-queue",
+    enableDlq: true,
+    maxReceiveCount: 5,
+    visibilityTimeout: cdk.Duration.seconds(60),
+    dlqRetentionPeriod: cdk.Duration.days(14),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("queue-only-with-dlq", template);
+  } else {
+    expectSnapshot("queue-only-with-dlq", template);
+  }
+});
+
+test("AppTheoryQueue + AppTheoryQueueConsumer (full options) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const consumer = new lambda.Function(stack, "Consumer", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const queue = new apptheory.AppTheoryQueue(stack, "Queue", {
+    queueName: "apptheory-queue",
+    enableDlq: true,
+    maxReceiveCount: 3,
+    visibilityTimeout: cdk.Duration.seconds(60),
+  });
+
+  new apptheory.AppTheoryQueueConsumer(stack, "QueueConsumer", {
+    queue: queue.queue,
+    consumer: consumer,
+    batchSize: 100,
+    maxBatchingWindow: cdk.Duration.seconds(10),
+    reportBatchItemFailures: true,
+    maxConcurrency: 50,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("queue-consumer-full-options", template);
+  } else {
+    expectSnapshot("queue-consumer-full-options", template);
+  }
+});
+
+test("AppTheoryQueueProcessor (with DLQ) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const consumer = new lambda.Function(stack, "Consumer", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryQueueProcessor(stack, "Queue", {
+    consumer,
+    queueName: "apptheory-processor-queue",
+    enableDlq: true,
+    maxReceiveCount: 5,
+    batchSize: 50,
+    maxBatchingWindow: cdk.Duration.seconds(5),
+    reportBatchItemFailures: true,
+    maxConcurrency: 10,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("queue-processor-with-dlq", template);
+  } else {
+    expectSnapshot("queue-processor-with-dlq", template);
+  }
+});
+
+
 test("AppTheoryFunctionAlarms synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");

@@ -11580,14 +11580,465 @@
       ],
       "symbolId": "lib/kms-key:AppTheoryKmsKeyProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryQueue": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "example": "// Queue with custom DLQ configuration\nconst queue = new AppTheoryQueue(stack, 'Queue', {\n  queueName: 'my-queue',\n  maxReceiveCount: 5,\n  dlqRetentionPeriod: Duration.days(14),\n});",
+        "remarks": "This construct creates an SQS queue with optional Dead Letter Queue (DLQ) configuration.\nIt can be used standalone (for manual message production/consumption) or composed\nwith AppTheoryQueueConsumer for Lambda integration.",
+        "summary": "A composable SQS queue construct with optional DLQ support."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueue",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/queue.ts",
+          "line": 139
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "optional": true,
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/queue.ts",
+        "line": 113
+      },
+      "methods": [
+        {
+          "docs": {
+            "summary": "Grant consume messages permission to a Lambda function."
+          },
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 199
+          },
+          "name": "grantConsumeMessages",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+              }
+            }
+          ]
+        },
+        {
+          "docs": {
+            "summary": "Grant purge messages permission to a Lambda function."
+          },
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 206
+          },
+          "name": "grantPurge",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+              }
+            }
+          ]
+        },
+        {
+          "docs": {
+            "summary": "Grant send messages permission to a Lambda function."
+          },
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 192
+          },
+          "name": "grantSendMessages",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+              }
+            }
+          ]
+        }
+      ],
+      "name": "AppTheoryQueue",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The main SQS queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 117
+          },
+          "name": "queue",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_sqs.Queue"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The ARN of the main queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 127
+          },
+          "name": "queueArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The name of the main queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 137
+          },
+          "name": "queueName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The URL of the main queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 132
+          },
+          "name": "queueUrl",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The Dead Letter Queue, if enabled."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 122
+          },
+          "name": "deadLetterQueue",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_sqs.Queue"
+          }
+        }
+      ],
+      "symbolId": "lib/queue:AppTheoryQueue"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryQueueConsumer": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "example": "// Consumer with full configuration\nnew AppTheoryQueueConsumer(stack, 'Consumer', {\n  queue: myQueue.queue,\n  consumer: myFunction,\n  batchSize: 100,\n  maxBatchingWindow: Duration.seconds(10),\n  reportBatchItemFailures: true,\n  maxConcurrency: 50,\n});",
+        "remarks": "This construct creates an event source mapping between an SQS queue and a Lambda function,\nwith full control over batching, concurrency, and failure reporting.",
+        "summary": "A composable SQS consumer construct that wires a Lambda function to an SQS queue."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueConsumer",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/queue-consumer.ts",
+          "line": 106
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueConsumerProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/queue-consumer.ts",
+        "line": 90
+      },
+      "methods": [
+        {
+          "docs": {
+            "remarks": "This can be used for circuit breaker patterns.",
+            "summary": "Disable the event source mapping."
+          },
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 152
+          },
+          "name": "disable"
+        }
+      ],
+      "name": "AppTheoryQueueConsumer",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The consumer Lambda function."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 99
+          },
+          "name": "consumer",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The event source mapping."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 94
+          },
+          "name": "eventSourceMapping",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.EventSourceMapping"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The SQS queue being consumed."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 104
+          },
+          "name": "queue",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_sqs.IQueue"
+          }
+        }
+      ],
+      "symbolId": "lib/queue-consumer:AppTheoryQueueConsumer"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryQueueConsumerProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for AppTheoryQueueConsumer construct."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueConsumerProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/queue-consumer.ts",
+        "line": 10
+      },
+      "name": "AppTheoryQueueConsumerProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The Lambda function that will process messages."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 19
+          },
+          "name": "consumer",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The SQS queue to consume messages from."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 14
+          },
+          "name": "queue",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_sqs.IQueue"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "10",
+            "summary": "The maximum number of records to retrieve per batch."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 25
+          },
+          "name": "batchSize",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Whether the event source mapping is enabled."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 51
+          },
+          "name": "enabled",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- All messages trigger the Lambda",
+            "summary": "Optional filters to control which messages trigger the Lambda."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 63
+          },
+          "name": "filters",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_lambda.FilterCriteria"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Whether to automatically grant consume permissions to the Lambda function."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 57
+          },
+          "name": "grantConsumeMessages",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- No batching window (messages processed immediately)",
+            "summary": "The maximum amount of time to wait for a batch to be gathered."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 31
+          },
+          "name": "maxBatchingWindow",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- No concurrency limit",
+            "remarks": "Valid range: 2-1000.",
+            "summary": "The maximum concurrency setting limits the number of concurrent instances of the function."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 45
+          },
+          "name": "maxConcurrency",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "When enabled, the function should return a partial failure response.",
+            "summary": "Whether to report batch item failures."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 38
+          },
+          "name": "reportBatchItemFailures",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        }
+      ],
+      "symbolId": "lib/queue-consumer:AppTheoryQueueConsumerProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
+      "docs": {
+        "example": "// Processor with full options\nnew AppTheoryQueueProcessor(stack, 'Processor', {\n  consumer: myFunction,\n  queueName: 'my-queue',\n  enableDlq: true,\n  batchSize: 100,\n  maxBatchingWindow: Duration.seconds(10),\n  reportBatchItemFailures: true,\n  maxConcurrency: 50,\n});",
+        "remarks": "This is a convenience construct that combines AppTheoryQueue and AppTheoryQueueConsumer\ninto a single, easy-to-use pattern. For more control, use the individual constructs.",
+        "summary": "A combined queue + consumer construct for SQS processing workflows."
+      },
       "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor",
       "initializer": {
         "locationInModule": {
           "filename": "lib/queue-processor.ts",
-          "line": 17
+          "line": 143
         },
         "parameters": [
           {
@@ -11613,17 +12064,63 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/queue-processor.ts",
-        "line": 14
+        "line": 122
       },
       "name": "AppTheoryQueueProcessor",
       "properties": [
         {
+          "docs": {
+            "summary": "The underlying AppTheoryQueueConsumer construct."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 15
+            "line": 136
+          },
+          "name": "consumerConstruct",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueConsumer"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The main SQS queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 126
           },
           "name": "queue",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_sqs.IQueue"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The underlying AppTheoryQueue construct."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 131
+          },
+          "name": "queueConstruct",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueue"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The Dead Letter Queue, if enabled."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 141
+          },
+          "name": "deadLetterQueue",
+          "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.aws_sqs.Queue"
           }
@@ -11634,32 +12131,43 @@
     "@theory-cloud/apptheory-cdk.AppTheoryQueueProcessorProps": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "datatype": true,
+      "docs": {
+        "remarks": "This construct maintains backwards compatibility with the original API\nwhile leveraging the new composable AppTheoryQueue and AppTheoryQueueConsumer constructs.",
+        "summary": "Properties for the AppTheoryQueueProcessor construct."
+      },
       "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueProcessorProps",
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/queue-processor.ts",
-        "line": 7
+        "line": 14
       },
       "name": "AppTheoryQueueProcessorProps",
       "properties": [
         {
           "abstract": true,
+          "docs": {
+            "summary": "The Lambda function that will consume messages from the queue."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 8
+            "line": 18
           },
           "name": "consumer",
           "type": {
-            "fqn": "aws-cdk-lib.aws_lambda.Function"
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
           }
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "10",
+            "summary": "The maximum number of records to retrieve per batch."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 10
+            "line": 55
           },
           "name": "batchSize",
           "optional": true,
@@ -11669,10 +12177,48 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Whether the event source mapping is enabled."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 11
+            "line": 81
+          },
+          "name": "enabled",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false (for backwards compatibility with original behavior)",
+            "summary": "Whether to enable a Dead Letter Queue (DLQ)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 42
+          },
+          "name": "enableDlq",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- No batching window",
+            "summary": "The maximum amount of time to wait for a batch to be gathered."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 61
           },
           "name": "maxBatchingWindow",
           "optional": true,
@@ -11682,19 +12228,357 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "- No concurrency limit",
+            "remarks": "Valid range: 2-1000.",
+            "summary": "The maximum concurrency setting limits the number of concurrent instances of the function."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 9
+            "line": 75
+          },
+          "name": "maxConcurrency",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "3",
+            "remarks": "Only applicable when enableDlq is true.",
+            "summary": "The maximum number of times a message can be received before being sent to the DLQ."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 49
+          },
+          "name": "maxReceiveCount",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- CloudFormation-generated name",
+            "summary": "The name of the queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 30
+          },
+          "name": "queueName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "deprecated": "Use queueName, visibilityTimeout, and other specific props instead",
+            "stability": "deprecated",
+            "summary": "Properties for the underlying SQS queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 24
           },
           "name": "queueProps",
           "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.aws_sqs.QueueProps"
           }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "RemovalPolicy.DESTROY",
+            "summary": "The removal policy for the queue(s)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 87
+          },
+          "name": "removalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "When enabled, the function should return a partial failure response.",
+            "summary": "Whether to report batch item failures."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 68
+          },
+          "name": "reportBatchItemFailures",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "Duration.seconds(30)",
+            "summary": "The visibility timeout for messages in the queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 36
+          },
+          "name": "visibilityTimeout",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
         }
       ],
       "symbolId": "lib/queue-processor:AppTheoryQueueProcessorProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryQueueProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for AppTheoryQueue construct."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/queue.ts",
+        "line": 9
+      },
+      "name": "AppTheoryQueueProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "Only applicable for FIFO queues.",
+            "summary": "Whether to enable content-based deduplication for FIFO queues."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 64
+          },
+          "name": "contentBasedDeduplication",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "Duration.days(14)",
+            "summary": "The retention period for the DLQ."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 51
+          },
+          "name": "dlqRetentionPeriod",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- Same as the main queue",
+            "summary": "The visibility timeout for the DLQ."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 45
+          },
+          "name": "dlqVisibilityTimeout",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Whether to enable a Dead Letter Queue (DLQ)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 32
+          },
+          "name": "enableDlq",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS managed encryption is used",
+            "summary": "Whether messages delivered to the queue will be encrypted."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 57
+          },
+          "name": "encryption",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_sqs.QueueEncryption"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Whether the queue is a FIFO queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 70
+          },
+          "name": "fifo",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- No additional principals",
+            "summary": "Principals to grant send messages permission to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 76
+          },
+          "name": "grantSendMessagesTo",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "3",
+            "remarks": "Only applicable when enableDlq is true.",
+            "summary": "The maximum number of times a message can be received before being sent to the DLQ."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 39
+          },
+          "name": "maxReceiveCount",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- CloudFormation-generated name",
+            "summary": "The name of the queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 14
+          },
+          "name": "queueName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "RemovalPolicy.DESTROY",
+            "summary": "The removal policy for the queue(s)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 82
+          },
+          "name": "removalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "Duration.days(4)",
+            "summary": "The number of seconds that Amazon SQS retains a message."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 26
+          },
+          "name": "retentionPeriod",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "Duration.seconds(30)",
+            "summary": "The visibility timeout for messages in the queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 20
+          },
+          "name": "visibilityTimeout",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        }
+      ],
+      "symbolId": "lib/queue:AppTheoryQueueProps"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryRestApi": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -13855,5 +14739,5 @@
     }
   },
   "version": "0.5.0",
-  "fingerprint": "/lyzxvrCU7kquPQZiRzcrLP2b40sw6wd8G22lrzDsQ8="
+  "fingerprint": "D+SAPg8IhTno2+jVYZZ2cib3i1xk98/OxrUdIdnUQE4="
 }

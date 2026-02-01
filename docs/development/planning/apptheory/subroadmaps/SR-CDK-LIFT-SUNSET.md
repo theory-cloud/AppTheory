@@ -90,7 +90,18 @@ Non-goals:
 
 ---
 
-### M2 — SQS queue + DLQ + optional consumer wiring (composable)
+### M2 — SQS queue + DLQ + optional consumer wiring (composable) ✅ COMPLETE
+
+**Status**: Implemented 2026-02-01
+
+**Implementation**:
+- New construct: `AppTheoryQueue` in `cdk/lib/queue.ts`
+- New construct: `AppTheoryQueueConsumer` in `cdk/lib/queue-consumer.ts`
+- Refactored: `AppTheoryQueueProcessor` as wrapper over composable constructs
+- Exports via `cdk/lib/index.ts`
+- Snapshot tests: `cdk/test/snapshots/queue-*.json`
+- Documentation: `cdk/docs/sqs-queue-consumer.md`
+- Example: `examples/cdk/sqs-queue/`
 
 **Design decision**
 - Prefer **composition** over a monolithic “processor”:
