@@ -25,6 +25,7 @@ export interface AppTheoryDynamoTableProps {
     readonly readCapacity?: number;
     readonly writeCapacity?: number;
     readonly removalPolicy?: RemovalPolicy;
+    readonly deletionProtection?: boolean;
     readonly enablePointInTimeRecovery?: boolean;
     readonly encryption?: dynamodb.TableEncryption;
     readonly encryptionKey?: kms.IKey;

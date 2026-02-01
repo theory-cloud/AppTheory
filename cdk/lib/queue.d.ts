@@ -1,0 +1,134 @@
+import { Duration, RemovalPolicy } from "aws-cdk-lib";
+import type * as lambda from "aws-cdk-lib/aws-lambda";
+import * as sqs from "aws-cdk-lib/aws-sqs";
+import { Construct } from "constructs";
+/**
+ * Properties for AppTheoryQueue construct.
+ */
+export interface AppTheoryQueueProps {
+    /**
+     * The name of the queue.
+     * @default - CloudFormation-generated name
+     */
+    readonly queueName?: string;
+    /**
+     * The visibility timeout for messages in the queue.
+     * @default Duration.seconds(30)
+     */
+    readonly visibilityTimeout?: Duration;
+    /**
+     * The number of seconds that Amazon SQS retains a message.
+     * @default Duration.days(4)
+     */
+    readonly retentionPeriod?: Duration;
+    /**
+     * Whether to enable a Dead Letter Queue (DLQ).
+     * @default true
+     */
+    readonly enableDlq?: boolean;
+    /**
+     * The maximum number of times a message can be received before being sent to the DLQ.
+     * Only applicable when enableDlq is true.
+     * @default 3
+     */
+    readonly maxReceiveCount?: number;
+    /**
+     * The visibility timeout for the DLQ.
+     * @default - Same as the main queue
+     */
+    readonly dlqVisibilityTimeout?: Duration;
+    /**
+     * The retention period for the DLQ.
+     * @default Duration.days(14)
+     */
+    readonly dlqRetentionPeriod?: Duration;
+    /**
+     * Whether messages delivered to the queue will be encrypted.
+     * @default - AWS managed encryption is used
+     */
+    readonly encryption?: sqs.QueueEncryption;
+    /**
+     * Whether to enable content-based deduplication for FIFO queues.
+     * Only applicable for FIFO queues.
+     * @default false
+     */
+    readonly contentBasedDeduplication?: boolean;
+    /**
+     * Whether the queue is a FIFO queue.
+     * @default false
+     */
+    readonly fifo?: boolean;
+    /**
+     * Principals to grant send messages permission to.
+     * @default - No additional principals
+     */
+    readonly grantSendMessagesTo?: lambda.IFunction[];
+    /**
+     * The removal policy for the queue(s).
+     * @default RemovalPolicy.DESTROY
+     */
+    readonly removalPolicy?: RemovalPolicy;
+}
+/**
+ * A composable SQS queue construct with optional DLQ support.
+ *
+ * This construct creates an SQS queue with optional Dead Letter Queue (DLQ) configuration.
+ * It can be used standalone (for manual message production/consumption) or composed
+ * with AppTheoryQueueConsumer for Lambda integration.
+ *
+ * @example
+ * // Queue with DLQ (default)
+ * const queue = new AppTheoryQueue(stack, 'Queue', {
+ *   queueName: 'my-queue',
+ * });
+ *
+ * @example
+ * // Queue without DLQ
+ * const queue = new AppTheoryQueue(stack, 'Queue', {
+ *   queueName: 'my-queue',
+ *   enableDlq: false,
+ * });
+ *
+ * @example
+ * // Queue with custom DLQ configuration
+ * const queue = new AppTheoryQueue(stack, 'Queue', {
+ *   queueName: 'my-queue',
+ *   maxReceiveCount: 5,
+ *   dlqRetentionPeriod: Duration.days(14),
+ * });
+ */
+export declare class AppTheoryQueue extends Construct {
+    /**
+     * The main SQS queue.
+     */
+    readonly queue: sqs.Queue;
+    /**
+     * The Dead Letter Queue, if enabled.
+     */
+    readonly deadLetterQueue?: sqs.Queue;
+    /**
+     * The ARN of the main queue.
+     */
+    readonly queueArn: string;
+    /**
+     * The URL of the main queue.
+     */
+    readonly queueUrl: string;
+    /**
+     * The name of the main queue.
+     */
+    readonly queueName: string;
+    constructor(scope: Construct, id: string, props?: AppTheoryQueueProps);
+    /**
+     * Grant send messages permission to a Lambda function.
+     */
+    grantSendMessages(grantee: lambda.IFunction): void;
+    /**
+     * Grant consume messages permission to a Lambda function.
+     */
+    grantConsumeMessages(grantee: lambda.IFunction): void;
+    /**
+     * Grant purge messages permission to a Lambda function.
+     */
+    grantPurge(grantee: lambda.IFunction): void;
+}
