@@ -12,6 +12,7 @@ type AppTheoryDynamoTableProps struct {
 	SortKeyName               *string                          `field:"required" json:"sortKeyName" yaml:"sortKeyName"`
 	TableName                 *string                          `field:"required" json:"tableName" yaml:"tableName"`
 	BillingMode               awsdynamodb.BillingMode          `field:"optional" json:"billingMode" yaml:"billingMode"`
+	DeletionProtection        *bool                            `field:"optional" json:"deletionProtection" yaml:"deletionProtection"`
 	EnablePointInTimeRecovery *bool                            `field:"optional" json:"enablePointInTimeRecovery" yaml:"enablePointInTimeRecovery"`
 	EnableStream              *bool                            `field:"optional" json:"enableStream" yaml:"enableStream"`
 	Encryption                awsdynamodb.TableEncryption      `field:"optional" json:"encryption" yaml:"encryption"`
