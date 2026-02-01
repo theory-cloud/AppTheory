@@ -266,20 +266,30 @@ This milestone is intentionally **pattern-focused** (like Lift), not a “CloudF
 
 ---
 
-### M6 — Lesser parity example + migration validation gate
+### M6 — Lesser parity example + migration validation gate ✅ COMPLETE
+
+**Status**: Implemented 2026-02-01
+
+**Implementation**:
+- New example: `examples/cdk/lesser-parity/`
+- Stack: `LesserParityStack` demonstrating all M1-M5 constructs in a single cohesive example
+- Handlers: `api.mjs`, `graphql.mjs`, `sse.mjs`, `worker.mjs`
+- Snapshot: `snapshots/LesserParityExample.template.sha256`
+- Verification: Added to `scripts/verify-cdk-synth.sh`
+- Documentation: `README.md` with full usage guide
 
 **Deliverables**
-- Add a CDK example that intentionally mirrors Lesser’s infra patterns at a high level:
-  - REST API v1 router with multiple Lambdas + SSE streaming route
-  - SQS with DLQ + optional consumer wiring
-  - DynamoDB table with deletion protection
-  - CloudFront distribution with multi-SPA routing + separate media CDN
-  - Lambda roles created via `AppTheoryLambdaRole`
-- Add/extend deterministic synth verification for this example (fits the existing `verify-cdk-synth` posture).
+- Add a CDK example that intentionally mirrors Lesser's infra patterns at a high level:
+  - ✅ REST API v1 router with multiple Lambdas + SSE streaming route
+  - ✅ SQS with DLQ + optional consumer wiring
+  - ✅ DynamoDB table with deletion protection
+  - ✅ CloudFront distribution with multi-SPA routing + separate media CDN
+  - ✅ Lambda roles created via `AppTheoryLambdaRole`
+- ✅ Add/extend deterministic synth verification for this example (fits the existing `verify-cdk-synth` posture).
 
 **Acceptance criteria**
-- The example contains **no** Lift CDK imports.
-- The example’s synth output is pinned and verified in CI/`make rubric`.
+- ✅ The example contains **no** Lift CDK imports.
+- ✅ The example's synth output is pinned and verified in CI/`make rubric`.
 
 ---
 
