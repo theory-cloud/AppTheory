@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.0-rc.2](https://github.com/theory-cloud/AppTheory/compare/v0.5.0-rc.1...v0.5.0-rc.2) (2026-02-01)
+
+
+### Features
+
+* **cdk:** add DeletionProtection support to AppTheoryDynamoTable (M3) ([f81db79](https://github.com/theory-cloud/AppTheory/commit/f81db79ebf9d9f98c352e9f6a645a1f87f7fba79))
+* **cdk:** close Lift CDK parity gaps (issue [#102](https://github.com/theory-cloud/AppTheory/issues/102)) ([beec62b](https://github.com/theory-cloud/AppTheory/commit/beec62b4bbc358f01c1d9cc3207282f5ee89d348))
+* **cdk:** implement AppTheoryLambdaRole construct (M5) ([6eee048](https://github.com/theory-cloud/AppTheory/commit/6eee048c90e92daa1ad126050a0736d167f1e96c))
+* **cdk:** implement AppTheoryMediaCdn construct (M4B) ([c87afc6](https://github.com/theory-cloud/AppTheory/commit/c87afc6a4a4e30ad05c6d2339edf2f32215824bf))
+* **cdk:** implement AppTheoryPathRoutedFrontend (M4A) ([7a08876](https://github.com/theory-cloud/AppTheory/commit/7a088762985707f3871cc95244814e9e582699d7))
+* **cdk:** implement AppTheoryRestApiRouter for M1 (SR-CDK-LIFT-SUNSET) ([f5eb28b](https://github.com/theory-cloud/AppTheory/commit/f5eb28b76da505005fc780661fe9080656611602))
+* **cdk:** implement M2 - SQS queue + DLQ + optional consumer wiring ([8a46a88](https://github.com/theory-cloud/AppTheory/commit/8a46a88ba382596b0c5915a33b5f16bbd5b63fa5))
+* **cdk:** implement M6 - Lesser parity example + migration validation gate ([038b73e](https://github.com/theory-cloud/AppTheory/commit/038b73ecb2a38c388019c12858199a219118f92b))
+* Parse API origin URL to include originPath for CloudFront HttpOrigin ([e357995](https://github.com/theory-cloud/AppTheory/commit/e357995deb88bc94379fd32ab1b73d78e241440f))
+
+
+### Bug Fixes
+
+* ensure pip is installed in virtual environments and skip symlinks when setting file timestamps. ([f244777](https://github.com/theory-cloud/AppTheory/commit/f24477740e35fd75ebc6d83027943ea801e1f6d9))
+* **release:** ensure CDK artifacts are versioned ([8a1c12e](https://github.com/theory-cloud/AppTheory/commit/8a1c12efdb434d9b5ea930a018365606ef8fe97a))
+
 ## [0.5.0](https://github.com/theory-cloud/AppTheory/compare/v0.4.1...v0.5.0) (2026-01-30)
 
 
