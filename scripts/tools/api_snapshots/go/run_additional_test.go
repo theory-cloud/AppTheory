@@ -104,7 +104,7 @@ func TestCollectDeclExports_CoversValueSpecAndUnexportedFunc(t *testing.T) {
 		},
 	}
 	exports := collectGenDeclExports(fset, g)
-	if len(exports) != 1 || exports[0].Kind != "var" || exports[0].Name != "Foo" {
+	if len(exports) != 1 || exports[0].Kind != exportKindVar || exports[0].Name != "Foo" {
 		t.Fatalf("unexpected exports: %#v", exports)
 	}
 
@@ -115,11 +115,11 @@ func TestCollectDeclExports_CoversValueSpecAndUnexportedFunc(t *testing.T) {
 
 func TestSortExports_OrdersKindThenNameThenDecl(t *testing.T) {
 	exports := []exportDecl{
-		{Kind: "func", Name: "B", Decl: "func B()"},
-		{Kind: "type", Name: "A", Decl: "type A struct{}"},
-		{Kind: "var", Name: "Z", Decl: "var Z = 1"},
-		{Kind: "const", Name: "Y", Decl: "const Y = 1"},
-		{Kind: "func", Name: "A", Decl: "func A()"},
+		{Kind: exportKindFunc, Name: "B", Decl: "func B()"},
+		{Kind: exportKindType, Name: "A", Decl: "type A struct{}"},
+		{Kind: exportKindVar, Name: "Z", Decl: "var Z = 1"},
+		{Kind: exportKindConst, Name: "Y", Decl: "const Y = 1"},
+		{Kind: exportKindFunc, Name: "A", Decl: "func A()"},
 	}
 	sortExports(exports)
 
