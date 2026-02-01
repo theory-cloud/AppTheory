@@ -31,6 +31,12 @@ export interface MediaCdnDomainConfig {
      * When provided, an A record alias will be created for the domain.
      */
     readonly hostedZone?: route53.IHostedZone;
+
+    /**
+     * Whether to create an AAAA alias record in addition to the A alias record.
+     * @default false
+     */
+    readonly createAAAARecord?: boolean;
 }
 
 /**
@@ -340,6 +346,14 @@ export class AppTheoryMediaCdn extends Construct {
                 recordName: props.domain.domainName,
                 target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(this.distribution)),
             });
+
+            if (props.domain.createAAAARecord === true) {
+                new route53.AaaaRecord(this, "AliasRecordAAAA", {
+                    zone: props.domain.hostedZone,
+                    recordName: props.domain.domainName,
+                    target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(this.distribution)),
+                });
+            }
         }
     }
 }

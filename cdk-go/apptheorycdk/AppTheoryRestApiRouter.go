@@ -33,6 +33,8 @@ import (
 //	router.addLambdaIntegration('/{proxy+}', ['ANY'], apiFn);
 type AppTheoryRestApiRouter interface {
 	constructs.Construct
+	// The Route53 AAAA record (if domain, hostedZone, and createAAAARecord are configured).
+	AaaaRecord() awsroute53.AaaaRecord
 	// The access log group (if access logging is enabled).
 	AccessLogGroup() awslogs.ILogGroup
 	// The underlying API Gateway REST API.
@@ -56,6 +58,16 @@ type AppTheoryRestApiRouter interface {
 // The jsii proxy struct for AppTheoryRestApiRouter
 type jsiiProxy_AppTheoryRestApiRouter struct {
 	internal.Type__constructsConstruct
+}
+
+func (j *jsiiProxy_AppTheoryRestApiRouter) AaaaRecord() awsroute53.AaaaRecord {
+	var returns awsroute53.AaaaRecord
+	_jsii_.Get(
+		j,
+		"aaaaRecord",
+		&returns,
+	)
+	return returns
 }
 
 func (j *jsiiProxy_AppTheoryRestApiRouter) AccessLogGroup() awslogs.ILogGroup {
