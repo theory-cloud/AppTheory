@@ -13,5 +13,6 @@ export * from "./eventbridge-handler";
 export * from "./http-api";
 export * from "./queue-processor";
 export * from "./rest-api";
+export * from "./rest-api-router";
 export * from "./websocket-api";
 export * from "./ssr-site";

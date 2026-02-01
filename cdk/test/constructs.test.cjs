@@ -552,11 +552,189 @@ test("AppTheorySsrSite synthesizes expected template", () => {
   });
 
   new apptheory.AppTheorySsrSite(stack, "Site", { ssrFunction: fn });
-
   const template = assertions.Template.fromStack(stack).toJSON();
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("ssr-site", template);
   } else {
     expectSnapshot("ssr-site", template);
+  }
+});
+
+// ============================================================================
+// AppTheoryRestApiRouter tests
+// ============================================================================
+
+test("AppTheoryRestApiRouter (multi-Lambda) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const sseFn = new lambda.Function(stack, "SseFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'sse' });"),
+  });
+
+  const graphqlFn = new lambda.Function(stack, "GraphqlFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'graphql' });"),
+  });
+
+  const apiFn = new lambda.Function(stack, "ApiFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'api' });"),
+  });
+
+  const inventoryFn = new lambda.Function(stack, "InventoryFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'inventory' });"),
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-router-test",
+  });
+
+  // SSE streaming
+  router.addLambdaIntegration("/sse", ["GET"], sseFn, { streaming: true });
+
+  // GraphQL
+  router.addLambdaIntegration("/api/graphql", ["POST"], graphqlFn);
+
+  // Proxy catch-all
+  router.addLambdaIntegration("/{proxy+}", ["ANY"], apiFn);
+
+  // Inventory-driven path (proof of multi-Lambda scaling)
+  router.addLambdaIntegration("/inventory/{id}", ["GET", "PUT", "DELETE"], inventoryFn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("rest-api-router-multi-lambda", template);
+  } else {
+    expectSnapshot("rest-api-router-multi-lambda", template);
+  }
+});
+
+test("AppTheoryRestApiRouter (streaming parity) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-streaming-test",
+  });
+
+  // Add a streaming route
+  router.addLambdaIntegration("/sse", ["GET"], fn, { streaming: true });
+  router.addLambdaIntegration("/events", ["GET"], fn, { streaming: true });
+
+  // Add a non-streaming route for comparison
+  router.addLambdaIntegration("/api", ["GET", "POST"], fn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify the streaming routes have the correct configuration
+  const methods = template.Resources;
+  let streamingMethodCount = 0;
+
+  for (const [key, resource] of Object.entries(methods)) {
+    if (resource.Type === "AWS::ApiGateway::Method") {
+      const integration = resource.Properties?.Integration;
+      if (integration?.ResponseTransferMode === "STREAM") {
+        streamingMethodCount++;
+        // Verify URI contains /response-streaming-invocations
+        const uri = integration.Uri;
+        if (uri && uri["Fn::Join"]) {
+          const uriParts = uri["Fn::Join"][1];
+          const hasStreamingUri = uriParts.some(
+            (p) => typeof p === "string" && p.includes("/response-streaming-invocations"),
+          );
+          assert.ok(hasStreamingUri, `Method ${key} should have streaming invocation URI`);
+        }
+        // Verify timeout is 900000ms (15 minutes)
+        assert.equal(integration.TimeoutInMillis, 900000, `Method ${key} should have 15min timeout`);
+      }
+    }
+  }
+
+  assert.ok(streamingMethodCount >= 2, "Should have at least 2 streaming methods");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("rest-api-router-streaming", template);
+  } else {
+    expectSnapshot("rest-api-router-streaming", template);
+  }
+});
+
+test("AppTheoryRestApiRouter (stage options) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-stage-test",
+    stage: {
+      stageName: "dev",
+      accessLogging: true,
+      accessLogRetention: logs.RetentionDays.ONE_WEEK,
+      detailedMetrics: true,
+      throttlingRateLimit: 100,
+      throttlingBurstLimit: 200,
+    },
+  });
+
+  router.addLambdaIntegration("/api/{proxy+}", ["ANY"], fn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("rest-api-router-stage", template);
+  } else {
+    expectSnapshot("rest-api-router-stage", template);
+  }
+});
+
+test("AppTheoryRestApiRouter (domain + Route53) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+  const cert = new apptheory.AppTheoryCertificate(stack, "Cert", {
+    domainName: "api.example.com",
+    hostedZone: zone,
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-domain-test",
+    domain: {
+      domainName: "api.example.com",
+      certificate: cert.certificate,
+      hostedZone: zone,
+    },
+  });
+
+  router.addLambdaIntegration("/{proxy+}", ["ANY"], fn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("rest-api-router-domain", template);
+  } else {
+    expectSnapshot("rest-api-router-domain", template);
   }
 });
