@@ -19,19 +19,19 @@ import (
 // - Escape hatch for additional inline policy statements.
 //
 // Example:
-//   const role = new AppTheoryLambdaRole(this, 'LambdaRole', {
-//     roleName: 'my-lambda-role',
-//     enableXRay: true,
-//     environmentEncryptionKeys: [envKey],
-//     applicationKmsKeys: [dataKey],
-//     additionalStatements: [
-//       new iam.PolicyStatement({
-//         actions: ['s3:GetObject'],
-//         resources: ['arn:aws:s3:::my-bucket/*'],
-//       }),
-//     ],
-//   });
 //
+//	const role = new AppTheoryLambdaRole(this, 'LambdaRole', {
+//	  roleName: 'my-lambda-role',
+//	  enableXRay: true,
+//	  environmentEncryptionKeys: [envKey],
+//	  applicationKmsKeys: [dataKey],
+//	  additionalStatements: [
+//	    new iam.PolicyStatement({
+//	      actions: ['s3:GetObject'],
+//	      resources: ['arn:aws:s3:::my-bucket/*'],
+//	    }),
+//	  ],
+//	});
 type AppTheoryLambdaRole interface {
 	constructs.Construct
 	// The tree node.
@@ -102,7 +102,6 @@ func (j *jsiiProxy_AppTheoryLambdaRole) RoleName() *string {
 	)
 	return returns
 }
-
 
 func NewAppTheoryLambdaRole(scope constructs.Construct, id *string, props *AppTheoryLambdaRoleProps) AppTheoryLambdaRole {
 	_init_.Initialize()
@@ -237,4 +236,3 @@ func (a *jsiiProxy_AppTheoryLambdaRole) ToString() *string {
 
 	return returns
 }
-

@@ -11,4 +11,3 @@ func validateAppTheoryMediaCdn_IsConstructParameters(x interface{}) error {
 func validateNewAppTheoryMediaCdnParameters(scope constructs.Construct, id *string, props *AppTheoryMediaCdnProps) error {
 	return nil
 }
-
