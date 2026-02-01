@@ -4,70 +4,72 @@ import (
 	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
 	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/jsii"
 
+	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awssqs"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
 
-// A combined queue + consumer construct for SQS processing workflows.
+// A composable SQS consumer construct that wires a Lambda function to an SQS queue.
 //
-// This is a convenience construct that combines AppTheoryQueue and AppTheoryQueueConsumer
-// into a single, easy-to-use pattern. For more control, use the individual constructs.
+// This construct creates an event source mapping between an SQS queue and a Lambda function,
+// with full control over batching, concurrency, and failure reporting.
 //
 // Example:
 //
-//	// Processor with full options
-//	new AppTheoryQueueProcessor(stack, 'Processor', {
+//	// Consumer with full configuration
+//	new AppTheoryQueueConsumer(stack, 'Consumer', {
+//	  queue: myQueue.queue,
 //	  consumer: myFunction,
-//	  queueName: 'my-queue',
-//	  enableDlq: true,
 //	  batchSize: 100,
 //	  maxBatchingWindow: Duration.seconds(10),
 //	  reportBatchItemFailures: true,
 //	  maxConcurrency: 50,
 //	});
-type AppTheoryQueueProcessor interface {
+type AppTheoryQueueConsumer interface {
 	constructs.Construct
-	// The underlying AppTheoryQueueConsumer construct.
-	ConsumerConstruct() AppTheoryQueueConsumer
-	// The Dead Letter Queue, if enabled.
-	DeadLetterQueue() awssqs.Queue
+	// The consumer Lambda function.
+	Consumer() awslambda.IFunction
+	// The event source mapping.
+	EventSourceMapping() awslambda.EventSourceMapping
 	// The tree node.
 	Node() constructs.Node
-	// The main SQS queue.
+	// The SQS queue being consumed.
 	Queue() awssqs.IQueue
-	// The underlying AppTheoryQueue construct.
-	QueueConstruct() AppTheoryQueue
+	// Disable the event source mapping.
+	//
+	// This can be used for circuit breaker patterns.
+	Disable()
 	// Returns a string representation of this construct.
 	ToString() *string
 }
 
-// The jsii proxy struct for AppTheoryQueueProcessor
-type jsiiProxy_AppTheoryQueueProcessor struct {
+// The jsii proxy struct for AppTheoryQueueConsumer
+type jsiiProxy_AppTheoryQueueConsumer struct {
 	internal.Type__constructsConstruct
 }
 
-func (j *jsiiProxy_AppTheoryQueueProcessor) ConsumerConstruct() AppTheoryQueueConsumer {
-	var returns AppTheoryQueueConsumer
+func (j *jsiiProxy_AppTheoryQueueConsumer) Consumer() awslambda.IFunction {
+	var returns awslambda.IFunction
 	_jsii_.Get(
 		j,
-		"consumerConstruct",
+		"consumer",
 		&returns,
 	)
 	return returns
 }
 
-func (j *jsiiProxy_AppTheoryQueueProcessor) DeadLetterQueue() awssqs.Queue {
-	var returns awssqs.Queue
+func (j *jsiiProxy_AppTheoryQueueConsumer) EventSourceMapping() awslambda.EventSourceMapping {
+	var returns awslambda.EventSourceMapping
 	_jsii_.Get(
 		j,
-		"deadLetterQueue",
+		"eventSourceMapping",
 		&returns,
 	)
 	return returns
 }
 
-func (j *jsiiProxy_AppTheoryQueueProcessor) Node() constructs.Node {
+func (j *jsiiProxy_AppTheoryQueueConsumer) Node() constructs.Node {
 	var returns constructs.Node
 	_jsii_.Get(
 		j,
@@ -77,7 +79,7 @@ func (j *jsiiProxy_AppTheoryQueueProcessor) Node() constructs.Node {
 	return returns
 }
 
-func (j *jsiiProxy_AppTheoryQueueProcessor) Queue() awssqs.IQueue {
+func (j *jsiiProxy_AppTheoryQueueConsumer) Queue() awssqs.IQueue {
 	var returns awssqs.IQueue
 	_jsii_.Get(
 		j,
@@ -87,26 +89,16 @@ func (j *jsiiProxy_AppTheoryQueueProcessor) Queue() awssqs.IQueue {
 	return returns
 }
 
-func (j *jsiiProxy_AppTheoryQueueProcessor) QueueConstruct() AppTheoryQueue {
-	var returns AppTheoryQueue
-	_jsii_.Get(
-		j,
-		"queueConstruct",
-		&returns,
-	)
-	return returns
-}
-
-func NewAppTheoryQueueProcessor(scope constructs.Construct, id *string, props *AppTheoryQueueProcessorProps) AppTheoryQueueProcessor {
+func NewAppTheoryQueueConsumer(scope constructs.Construct, id *string, props *AppTheoryQueueConsumerProps) AppTheoryQueueConsumer {
 	_init_.Initialize()
 
-	if err := validateNewAppTheoryQueueProcessorParameters(scope, id, props); err != nil {
+	if err := validateNewAppTheoryQueueConsumerParameters(scope, id, props); err != nil {
 		panic(err)
 	}
-	j := jsiiProxy_AppTheoryQueueProcessor{}
+	j := jsiiProxy_AppTheoryQueueConsumer{}
 
 	_jsii_.Create(
-		"@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor",
+		"@theory-cloud/apptheory-cdk.AppTheoryQueueConsumer",
 		[]interface{}{scope, id, props},
 		&j,
 	)
@@ -114,11 +106,11 @@ func NewAppTheoryQueueProcessor(scope constructs.Construct, id *string, props *A
 	return &j
 }
 
-func NewAppTheoryQueueProcessor_Override(a AppTheoryQueueProcessor, scope constructs.Construct, id *string, props *AppTheoryQueueProcessorProps) {
+func NewAppTheoryQueueConsumer_Override(a AppTheoryQueueConsumer, scope constructs.Construct, id *string, props *AppTheoryQueueConsumerProps) {
 	_init_.Initialize()
 
 	_jsii_.Create(
-		"@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor",
+		"@theory-cloud/apptheory-cdk.AppTheoryQueueConsumer",
 		[]interface{}{scope, id, props},
 		a,
 	)
@@ -141,16 +133,16 @@ func NewAppTheoryQueueProcessor_Override(a AppTheoryQueueProcessor, scope constr
 // this type-testing method instead.
 //
 // Returns: true if `x` is an object created from a class which extends `Construct`.
-func AppTheoryQueueProcessor_IsConstruct(x interface{}) *bool {
+func AppTheoryQueueConsumer_IsConstruct(x interface{}) *bool {
 	_init_.Initialize()
 
-	if err := validateAppTheoryQueueProcessor_IsConstructParameters(x); err != nil {
+	if err := validateAppTheoryQueueConsumer_IsConstructParameters(x); err != nil {
 		panic(err)
 	}
 	var returns *bool
 
 	_jsii_.StaticInvoke(
-		"@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor",
+		"@theory-cloud/apptheory-cdk.AppTheoryQueueConsumer",
 		"isConstruct",
 		[]interface{}{x},
 		&returns,
@@ -159,7 +151,15 @@ func AppTheoryQueueProcessor_IsConstruct(x interface{}) *bool {
 	return returns
 }
 
-func (a *jsiiProxy_AppTheoryQueueProcessor) ToString() *string {
+func (a *jsiiProxy_AppTheoryQueueConsumer) Disable() {
+	_jsii_.InvokeVoid(
+		a,
+		"disable",
+		nil, // no parameters
+	)
+}
+
+func (a *jsiiProxy_AppTheoryQueueConsumer) ToString() *string {
 	var returns *string
 
 	_jsii_.Invoke(
