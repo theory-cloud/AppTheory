@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0-rc.5](https://github.com/theory-cloud/AppTheory/compare/v0.5.0-rc.4...v0.5.0-rc.5) (2026-02-01)
+
+
+### Features
+
+* **cdk:** close lift parity gaps ([#102](https://github.com/theory-cloud/AppTheory/issues/102)) ([72d4451](https://github.com/theory-cloud/AppTheory/commit/72d44515a7cdce8d74db36f10825df13969e03b4))
+* **cdk:** close lift parity gaps ([#102](https://github.com/theory-cloud/AppTheory/issues/102)) ([2e7b719](https://github.com/theory-cloud/AppTheory/commit/2e7b719d7d07949d7b2c2543ccf1fd3f30d9c4a9))
+
 ## [0.5.0-rc.4](https://github.com/theory-cloud/AppTheory/compare/v0.5.0-rc.3...v0.5.0-rc.4) (2026-02-01)
 
 
