@@ -17,7 +17,9 @@ Status: early; start with a small “top 20%” set and grow based on real usage
 - `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).
 - `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.
 - `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.
-- `AppTheoryQueueProcessor` — SQS queue + consumer wiring.
+- `AppTheoryQueue` — SQS queue with optional DLQ (queue-only friendly).
+- `AppTheoryQueueConsumer` — SQS → Lambda event source mapping with full knobs.
+- `AppTheoryQueueProcessor` — SQS queue + consumer wiring (convenience wrapper over `AppTheoryQueue` + `AppTheoryQueueConsumer`).
 - `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.
 - `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.
 - `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs).
