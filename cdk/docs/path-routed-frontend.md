@@ -31,7 +31,7 @@ const clientBucket = new s3.Bucket(stack, 'ClientBucket');
 const authBucket = new s3.Bucket(stack, 'AuthBucket');
 
 new AppTheoryPathRoutedFrontend(stack, 'Frontend', {
-  apiOriginUrl: 'https://api.example.com',
+  apiOriginUrl: 'https://api.example.com', // may include an origin path (e.g. API Gateway stage URL)
   spaOrigins: [
     { bucket: clientBucket, pathPattern: '/l/*' },
     { bucket: authBucket, pathPattern: '/auth/*' },
@@ -77,15 +77,10 @@ Configure a custom domain with ACM certificate and Route53:
 
 ```typescript
 import * as route53 from 'aws-cdk-lib/aws-route53';
-import { AppTheoryCertificate, AppTheoryPathRoutedFrontend } from '@theory-cloud/apptheory-cdk';
+import { AppTheoryPathRoutedFrontend } from '@theory-cloud/apptheory-cdk';
 
 const zone = route53.PublicHostedZone.fromLookup(stack, 'Zone', {
   domainName: 'example.com',
-});
-
-const cert = new AppTheoryCertificate(stack, 'Cert', {
-  domainName: 'app.example.com',
-  hostedZone: zone,
 });
 
 new AppTheoryPathRoutedFrontend(stack, 'Frontend', {
@@ -95,11 +90,13 @@ new AppTheoryPathRoutedFrontend(stack, 'Frontend', {
   ],
   domain: {
     domainName: 'app.example.com',
-    certificate: cert.certificate,
-    hostedZone: zone,  // Creates Route53 A record
+    hostedZone: zone,  // Creates Route53 A record + DNS-validated cert in us-east-1
   },
 });
 ```
+
+Note: CloudFront requires ACM certificates in `us-east-1`. When you provide `hostedZone` without a certificate, this
+construct creates a DNS-validated certificate in `us-east-1` automatically.
 
 ### 5. Response Headers Policy
 
@@ -124,7 +121,6 @@ import * as cdk from 'aws-cdk-lib';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { 
-  AppTheoryCertificate,
   AppTheoryPathRoutedFrontend 
 } from '@theory-cloud/apptheory-cdk';
 
@@ -147,11 +143,6 @@ const zone = route53.PublicHostedZone.fromLookup(stack, 'Zone', {
   domainName: 'example.com',
 });
 
-const cert = new AppTheoryCertificate(stack, 'Cert', {
-  domainName: 'app.example.com',
-  hostedZone: zone,
-});
-
 // Path-routed frontend
 const frontend = new AppTheoryPathRoutedFrontend(stack, 'Frontend', {
   apiOriginUrl: 'https://api.example.com',
@@ -164,7 +155,6 @@ const frontend = new AppTheoryPathRoutedFrontend(stack, 'Frontend', {
   ],
   domain: {
     domainName: 'app.example.com',
-    certificate: cert.certificate,
     hostedZone: zone,
   },
   comment: 'Multi-SPA frontend distribution',
