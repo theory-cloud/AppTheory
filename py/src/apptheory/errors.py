@@ -146,13 +146,62 @@ def error_response_with_request_id(
     )
 
 
+def error_response_from_app_theory_error(
+    exc: AppTheoryError,
+    *,
+    headers: dict[str, Any] | None = None,
+    request_id: str = "",
+) -> Response:
+    headers_out = canonicalize_headers(headers or {})
+    headers_out["content-type"] = ["application/json; charset=utf-8"]
+
+    code = str(exc.code or "").strip() or "app.internal"
+    status = int(exc.status_code) if exc.status_code and exc.status_code > 0 else status_for_error_code(code)
+
+    error: dict[str, Any] = {"code": code, "message": str(exc.message)}
+    if exc.status_code and exc.status_code > 0:
+        error["status_code"] = int(exc.status_code)
+    if exc.details is not None:
+        error["details"] = exc.details
+
+    resolved_request_id = str(exc.request_id or "").strip() or str(request_id or "").strip()
+    if resolved_request_id:
+        error["request_id"] = resolved_request_id
+    if str(exc.trace_id or "").strip():
+        error["trace_id"] = str(exc.trace_id)
+    if str(exc.timestamp or "").strip():
+        error["timestamp"] = str(exc.timestamp)
+    if str(exc.stack_trace or "").strip():
+        error["stack_trace"] = str(exc.stack_trace)
+
+    body = json.dumps(
+        {"error": error},
+        ensure_ascii=False,
+        sort_keys=True,
+    ).encode("utf-8")
+
+    return normalize_response(
+        Response(
+            status=status,
+            headers=headers_out,
+            cookies=[],
+            body=body,
+            is_base64=False,
+        )
+    )
+
+
 def response_for_error(exc: Exception) -> Response:
+    if isinstance(exc, AppTheoryError):
+        return error_response_from_app_theory_error(exc)
     if isinstance(exc, AppError):
         return error_response(exc.code, exc.message)
     return error_response("app.internal", "internal error")
 
 
 def response_for_error_with_request_id(exc: Exception, request_id: str) -> Response:
+    if isinstance(exc, AppTheoryError):
+        return error_response_from_app_theory_error(exc, request_id=request_id)
     if isinstance(exc, AppError):
         return error_response_with_request_id(exc.code, exc.message, request_id=request_id)
     return error_response_with_request_id("app.internal", "internal error", request_id=request_id)

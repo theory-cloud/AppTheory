@@ -32,7 +32,7 @@ import type {
   Middleware,
   WebSocketClientFactory,
 } from "./context.js";
-import { AppError } from "./errors.js";
+import { AppError, AppTheoryError } from "./errors.js";
 import { RandomIdGenerator, type IdGenerator } from "./ids.js";
 import {
   albTargetGroupResponseFromResponse,
@@ -100,6 +100,18 @@ export interface PolicyDecision {
   code: string;
   message?: string;
   headers?: Headers;
+}
+
+function errorCodeFrom(err: unknown): string {
+  if (err instanceof AppTheoryError) {
+    const code = String(err.code ?? "").trim();
+    return code || "app.internal";
+  }
+  if (err instanceof AppError) {
+    const code = String(err.code ?? "").trim();
+    return code || "app.internal";
+  }
+  return "app.internal";
 }
 
 export type PolicyHook = (
@@ -487,7 +499,7 @@ export class App {
     try {
       normalized = normalizeRequest(request);
     } catch (err) {
-      const code = err instanceof AppError ? err.code : "app.internal";
+      const code = errorCodeFrom(err);
       return finish(responseForErrorWithRequestId(err, requestId), code);
     }
 
@@ -549,7 +561,7 @@ export class App {
       try {
         decision = await this._policyHook(requestCtx);
       } catch (err) {
-        const code = err instanceof AppError ? err.code : "app.internal";
+        const code = errorCodeFrom(err);
         return finish(responseForErrorWithRequestId(err, requestId), code);
       }
 
@@ -581,7 +593,7 @@ export class App {
         }
         requestCtx.authIdentity = String(identity);
       } catch (err) {
-        const code = err instanceof AppError ? err.code : "app.internal";
+        const code = errorCodeFrom(err);
         return finish(responseForErrorWithRequestId(err, requestId), code);
       }
     }
@@ -593,7 +605,7 @@ export class App {
       const handler = this._applyMiddlewares(match.route.handler) as Handler;
       out = await handler(requestCtx);
     } catch (err) {
-      const code = err instanceof AppError ? err.code : "app.internal";
+      const code = errorCodeFrom(err);
       return finish(responseForErrorWithRequestId(err, requestId), code);
     }
 
@@ -613,7 +625,7 @@ export class App {
     try {
       resp = normalizeResponse(out);
     } catch (err) {
-      const code = err instanceof AppError ? err.code : "app.internal";
+      const code = errorCodeFrom(err);
       return finish(responseForErrorWithRequestId(err, requestId), code);
     }
 

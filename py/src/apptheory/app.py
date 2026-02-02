@@ -21,6 +21,7 @@ from apptheory.clock import Clock, RealClock
 from apptheory.context import Context, EventContext, WebSocketClientFactory, WebSocketContext
 from apptheory.errors import (
     AppError,
+    AppTheoryError,
     error_response,
     error_response_with_request_id,
     response_for_error,
@@ -345,10 +346,8 @@ class App:
         handler = self._apply_middlewares(match.handler)
         try:
             resp = _resolve(handler(request_ctx))
-        except AppError as exc:
-            return error_response(exc.code, exc.message)
-        except Exception:  # noqa: BLE001
-            return error_response("app.internal", "internal error")
+        except Exception as exc:  # noqa: BLE001
+            return response_for_error(exc)
 
         return normalize_response(resp)
 
@@ -365,7 +364,7 @@ class App:
         try:
             decision = _resolve(self._policy_hook(request_ctx))
         except Exception as exc:  # noqa: BLE001
-            error_code = exc.code if isinstance(exc, AppError) else "app.internal"
+            error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
             return response_for_error_with_request_id(exc, request_id), error_code
 
         if decision is None or not str(getattr(decision, "code", "")).strip():
@@ -395,7 +394,7 @@ class App:
         try:
             identity = _resolve(self._auth_hook(request_ctx))
         except Exception as exc:  # noqa: BLE001
-            error_code = exc.code if isinstance(exc, AppError) else "app.internal"
+            error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
             return response_for_error_with_request_id(exc, request_id), error_code
 
         if not str(identity or "").strip():
@@ -441,7 +440,7 @@ class App:
         try:
             normalized = normalize_request(request)
         except Exception as exc:  # noqa: BLE001
-            error_code = exc.code if isinstance(exc, AppError) else "app.internal"
+            error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
             return finish(response_for_error_with_request_id(exc, request_id), error_code)
 
         method = normalized.method
@@ -504,10 +503,9 @@ class App:
         handler = self._apply_middlewares(match.handler)
         try:
             resp = _resolve(handler(request_ctx))
-        except AppError as exc:
-            return finish(error_response_with_request_id(exc.code, exc.message, request_id=request_id), exc.code)
         except Exception as exc:  # noqa: BLE001
-            return finish(response_for_error_with_request_id(exc, request_id), "app.internal")
+            error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
+            return finish(response_for_error_with_request_id(exc, request_id), error_code)
 
         resp = normalize_response(resp)
         if (
