@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 
 import type { LambdaFunctionURLRequest } from "../aws-types.js";
-import { AppError } from "../errors.js";
+import { AppError, AppTheoryError } from "../errors.js";
 import type { Request, Response } from "../types.js";
 
 import { requestFromLambdaFunctionURL } from "./aws-http.js";
@@ -74,6 +74,9 @@ function httpResponseStreamFrom(
 
 function streamErrorCodeForError(err: unknown): string {
   if (!err) return "";
+  if (err instanceof AppTheoryError && String(err.code ?? "").trim()) {
+    return String(err.code).trim();
+  }
   if (err instanceof AppError && String(err.code ?? "").trim()) {
     return String(err.code).trim();
   }
