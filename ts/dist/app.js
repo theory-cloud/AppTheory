@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { RealClock } from "./clock.js";
 import { Context, EventContext, WebSocketContext } from "./context.js";
-import { AppError } from "./errors.js";
+import { AppError, AppTheoryError } from "./errors.js";
 import { RandomIdGenerator } from "./ids.js";
 import { albTargetGroupResponseFromResponse, apigatewayProxyResponseFromResponse, apigatewayV2ResponseFromResponse, lambdaFunctionURLResponseFromResponse, requestFromALBTargetGroup, requestFromAPIGatewayProxy, requestFromAPIGatewayV2, requestFromLambdaFunctionURL, requestFromWebSocketEvent, } from "./internal/aws-http.js";
 import { serveLambdaFunctionURLStreaming, } from "./internal/aws-lambda-streaming.js";
@@ -12,6 +12,17 @@ import { errorResponse, errorResponseWithRequestId, normalizeResponse, responseF
 import { Router } from "./internal/router.js";
 import { vary } from "./response.js";
 import { WebSocketManagementClient } from "./websocket-management.js";
+function errorCodeFrom(err) {
+    if (err instanceof AppTheoryError) {
+        const code = String(err.code ?? "").trim();
+        return code || "app.internal";
+    }
+    if (err instanceof AppError) {
+        const code = String(err.code ?? "").trim();
+        return code || "app.internal";
+    }
+    return "app.internal";
+}
 export class App {
     _router;
     _clock;
@@ -253,7 +264,7 @@ export class App {
             normalized = normalizeRequest(request);
         }
         catch (err) {
-            const code = err instanceof AppError ? err.code : "app.internal";
+            const code = errorCodeFrom(err);
             return finish(responseForErrorWithRequestId(err, requestId), code);
         }
         method = normalized.method;
@@ -287,7 +298,7 @@ export class App {
                 decision = await this._policyHook(requestCtx);
             }
             catch (err) {
-                const code = err instanceof AppError ? err.code : "app.internal";
+                const code = errorCodeFrom(err);
                 return finish(responseForErrorWithRequestId(err, requestId), code);
             }
             const code = String(decision?.code ?? "").trim();
@@ -309,7 +320,7 @@ export class App {
                 requestCtx.authIdentity = String(identity);
             }
             catch (err) {
-                const code = err instanceof AppError ? err.code : "app.internal";
+                const code = errorCodeFrom(err);
                 return finish(responseForErrorWithRequestId(err, requestId), code);
             }
         }
@@ -320,7 +331,7 @@ export class App {
             out = await handler(requestCtx);
         }
         catch (err) {
-            const code = err instanceof AppError ? err.code : "app.internal";
+            const code = errorCodeFrom(err);
             return finish(responseForErrorWithRequestId(err, requestId), code);
         }
         if (!out) {
@@ -331,7 +342,7 @@ export class App {
             resp = normalizeResponse(out);
         }
         catch (err) {
-            const code = err instanceof AppError ? err.code : "app.internal";
+            const code = errorCodeFrom(err);
             return finish(responseForErrorWithRequestId(err, requestId), code);
         }
         if (this._limits.maxResponseBytes > 0 &&
