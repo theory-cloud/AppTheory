@@ -17,6 +17,55 @@ class AppError(Exception):
         return f"{self.code}: {self.message}"
 
 
+@dataclass(slots=True)
+class AppTheoryError(Exception):
+    code: str
+    message: str
+    status_code: int | None = None
+    details: dict[str, Any] | None = None
+    request_id: str = ""
+    trace_id: str = ""
+    timestamp: str = ""
+    stack_trace: str = ""
+    cause: Exception | None = None
+
+    def __str__(self) -> str:
+        return f"{self.code}: {self.message}"
+
+    def with_details(self, details: dict[str, Any]) -> AppTheoryError:
+        self.details = details
+        return self
+
+    def with_request_id(self, request_id: str) -> AppTheoryError:
+        self.request_id = str(request_id)
+        return self
+
+    def with_trace_id(self, trace_id: str) -> AppTheoryError:
+        self.trace_id = str(trace_id)
+        return self
+
+    def with_timestamp(self, timestamp: str) -> AppTheoryError:
+        self.timestamp = str(timestamp)
+        return self
+
+    def with_stack_trace(self, stack_trace: str) -> AppTheoryError:
+        self.stack_trace = str(stack_trace)
+        return self
+
+    def with_status_code(self, status_code: int) -> AppTheoryError:
+        self.status_code = int(status_code)
+        return self
+
+    def with_cause(self, cause: Exception) -> AppTheoryError:
+        self.cause = cause
+        self.__cause__ = cause
+        return self
+
+
+def app_theory_error_from_app_error(exc: AppError) -> AppTheoryError:
+    return AppTheoryError(code=exc.code, message=exc.message)
+
+
 def status_for_error_code(code: str) -> int:
     match code:
         case "app.bad_request" | "app.validation_failed":
