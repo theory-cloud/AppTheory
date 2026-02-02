@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { AppError } from "../errors.js";
+import { AppError, AppTheoryError } from "../errors.js";
 import { requestFromLambdaFunctionURL } from "./aws-http.js";
 import { firstHeaderValue } from "./http.js";
 import { responseForError, responseForErrorWithRequestId } from "./response.js";
@@ -31,6 +31,9 @@ function httpResponseStreamFrom(responseStream, meta) {
 function streamErrorCodeForError(err) {
     if (!err)
         return "";
+    if (err instanceof AppTheoryError && String(err.code ?? "").trim()) {
+        return String(err.code).trim();
+    }
     if (err instanceof AppError && String(err.code ?? "").trim()) {
         return String(err.code).trim();
     }

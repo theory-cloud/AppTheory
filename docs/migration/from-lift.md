@@ -164,6 +164,80 @@ AppTheory’s portable observability surface is hook-based:
 
 Portable schema is fixture-backed (see parity matrix and contract tests).
 
+### 7a) Error handling (LiftError parity)
+
+Lift’s `LiftError` maps to AppTheory’s portable error type:
+
+- Go: `apptheory.AppTheoryError` (constructor + fluent helpers)
+- TS: `AppTheoryError`
+- Py: `AppTheoryError`
+
+Go example:
+
+```go
+return nil, apptheory.NewAppTheoryError("app.conflict", "conflict").
+  WithStatusCode(409).
+  WithDetails(map[string]any{"field": "email", "retryable": false}).
+  WithTraceID("trace_123")
+```
+
+TypeScript example:
+
+```ts
+throw new AppTheoryError("app.conflict", "conflict", {
+  statusCode: 409,
+  details: { field: "email", retryable: false },
+  traceId: "trace_123",
+});
+```
+
+Python example:
+
+```py
+raise AppTheoryError(
+    code="app.conflict",
+    message="conflict",
+    status_code=409,
+    details={"field": "email", "retryable": False},
+    trace_id="trace_123",
+)
+```
+
+Notes:
+
+- `AppError` remains supported for simple code/message responses.
+- `request_id` is automatically injected from the runtime when available; you can override it on the error if needed.
+- `stack_trace` is opt-in and never emitted by default.
+
+### 7b) Global logger singleton (LiftLogger parity)
+
+AppTheory provides a global, no-op-by-default logger that mirrors Lift’s singleton usage pattern.
+
+Go (uses `observability.StructuredLogger`):
+
+```go
+zapLogger, _ := zap.NewZapLogger(observability.LoggerConfig{})
+logger.SetLogger(zapLogger)
+logger.Logger().Info("request", map[string]any{"request_id": ctx.RequestID})
+```
+
+TypeScript:
+
+```ts
+setLogger(myLogger)
+getLogger().info("request", { request_id: ctx.requestId })
+```
+
+Python:
+
+```py
+set_logger(my_logger)
+get_logger().info("request", {"request_id": ctx.request_id})
+```
+
+Sanitization helpers are exposed alongside the logger (Go: `logger.SanitizeJSON`, `logger.SanitizeLogString`,
+`logger.PaymentXMLPatterns`; TS/Py: re-exports from the logger module).
+
 ### 8) AWS entrypoints (HTTP)
 
 Contract v0 covers AWS HTTP events:
