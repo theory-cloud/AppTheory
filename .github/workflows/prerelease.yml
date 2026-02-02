@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   release-please:
-    runs-on: theory-runner
+    runs-on: ubuntu-latest
     steps:
       - name: Release Please (Prerelease)
         id: release
