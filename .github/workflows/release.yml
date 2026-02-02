@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   release-please:
-    runs-on: ubuntu-latest
+    runs-on: theory-runner
     steps:
       - name: Checkout (for tag-triggered assets)
         if: startsWith(github.ref, 'refs/tags/') || inputs.tag_name != ''
