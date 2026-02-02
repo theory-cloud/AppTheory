@@ -14,6 +14,9 @@ APIGatewayV2HTTPResponse	interface
 APIGatewayWebSocketProxyRequest	interface
 App	class
 AppError	class
+AppTheoryError	class
+AppTheoryErrorDetails	type
+AppTheoryErrorOptions	type
 AtomicRateLimiter	interface
 AuthHook	type
 CORSConfig	interface
@@ -97,6 +100,7 @@ WebSocketManagementClientLike	interface
 WindowConfig	type
 WindowLimit	interface
 XMLSanitizationPattern	interface
+appTheoryErrorFromAppError	const
 baseName	function
 binary	function
 buildALBTargetGroupRequest	function
@@ -125,6 +129,7 @@ getHourWindow	function
 getMinuteWindow	function
 html	function
 htmlStream	function
+isAppTheoryError	const
 json	function
 matchesIfNoneMatch	function
 newError	function

@@ -831,6 +831,18 @@ type AppError struct {
 	Message string
 }
 
+type AppTheoryError struct {
+	Code       string
+	Message    string
+	StatusCode int
+	Details    map[string]any
+	RequestID  string
+	TraceID    string
+	Timestamp  time.Time
+	StackTrace string
+	Cause      error
+}
+
 type AuthHook func(*Context) (string, error)
 
 type BodyStream <-chan StreamChunk
@@ -1040,6 +1052,10 @@ type WebSocketContext struct {
 
 type WebSocketHandler func(*Context) (*Response, error)
 
+func AppTheoryErrorFromAppError(*AppError) *AppTheoryError
+
+func AsAppTheoryError(error) (*AppTheoryError, bool)
+
 func Binary(int, []byte, string) *Response
 
 func CacheControlISR(int, int) string
@@ -1073,6 +1089,8 @@ func MustJSON(int, any) *Response
 func MustSSEResponse(int, ...SSEEvent) *Response
 
 func New(...Option) *App
+
+func NewAppTheoryError(string, string) *AppTheoryError
 
 func OriginURL(map[string][]string) string
 
@@ -1189,6 +1207,24 @@ func (*App) UseEvents(EventMiddleware) *App
 func (*App) WebSocket(string, WebSocketHandler) *App
 
 func (*AppError) Error() string
+
+func (*AppTheoryError) Error() string
+
+func (*AppTheoryError) Unwrap() error
+
+func (*AppTheoryError) WithCause(error) *AppTheoryError
+
+func (*AppTheoryError) WithDetails(map[string]any) *AppTheoryError
+
+func (*AppTheoryError) WithRequestID(string) *AppTheoryError
+
+func (*AppTheoryError) WithStackTrace(string) *AppTheoryError
+
+func (*AppTheoryError) WithStatusCode(int) *AppTheoryError
+
+func (*AppTheoryError) WithTimestamp(time.Time) *AppTheoryError
+
+func (*AppTheoryError) WithTraceID(string) *AppTheoryError
 
 func (*Context) AsWebSocket() *WebSocketContext
 

@@ -27,7 +27,7 @@ from apptheory.cache import cache_control_isr, cache_control_ssg, cache_control_
 from apptheory.clock import Clock, ManualClock, RealClock
 from apptheory.cloudfront import client_ip, origin_url
 from apptheory.context import Context, EventContext, WebSocketContext
-from apptheory.errors import AppError
+from apptheory.errors import AppError, AppTheoryError
 from apptheory.ids import IDGenerator, IdGenerator, ManualIdGenerator, RealIdGenerator
 from apptheory.middleware import TimeoutConfig, timeout_middleware
 from apptheory.naming import base_name, normalize_stage, resource_name
@@ -56,6 +56,7 @@ from apptheory.testkit import (
 __all__ = [
     "App",
     "AppError",
+    "AppTheoryError",
     "CORSConfig",
     "Clock",
     "Context",
