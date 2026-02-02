@@ -72,25 +72,36 @@ Breaking changes:
 
 Each GitHub Release must attach:
 
-- TypeScript package tarball (`npm pack` output from `ts/`)
-- Python wheel + sdist (built from `py/`)
-- Checksums (at least SHA-256) for each attached asset
+- TypeScript runtime tarball (`npm pack` output from `ts/`)
+- TypeScript CDK tarball (`npm pack` output from `cdk/`)
+- Python runtime wheel + sdist (built from `py/`)
+- Python CDK wheel + sdist (built from `cdk/` via jsii/pacmak)
+- Checksums (at least SHA-256) for each attached asset (see `dist/SHA256SUMS.txt`)
 
 ## Install guidance (from release assets)
 
 TypeScript:
 
-- Download the `.tgz` from the GitHub Release.
-- Install via file path: `npm i ./theory-cloud-apptheory-<version>.tgz`
+- Runtime:
+  - Download `theory-cloud-apptheory-<version>.tgz` from the GitHub Release.
+  - Install via file path: `npm i ./theory-cloud-apptheory-<version>.tgz`
+- CDK (jsii constructs):
+  - Download `theory-cloud-apptheory-cdk-<version>.tgz` from the GitHub Release.
+  - Install via file path: `npm i ./theory-cloud-apptheory-cdk-<version>.tgz`
 
 Python:
 
-- Download the wheel from the GitHub Release.
-- Install via file path: `pip install ./apptheory-<version>-py3-none-any.whl`
+- Runtime:
+  - Download the wheel from the GitHub Release.
+  - Install via file path: `pip install ./apptheory-<version>-py3-none-any.whl`
+- CDK (jsii constructs):
+  - Download the wheel from the GitHub Release.
+  - Install via file path: `pip install ./apptheory_cdk-<version>-py3-none-any.whl`
 
 Go:
 
 - Install by tag: `go get github.com/theory-cloud/apptheory@vX.Y.Z`
+- CDK Go bindings live under `github.com/theory-cloud/apptheory/cdk-go/apptheorycdk`.
 
 ## CI/CD rules (no dangerous tokens)
 

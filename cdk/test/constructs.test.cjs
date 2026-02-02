@@ -193,6 +193,107 @@ test("AppTheoryQueueProcessor synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryQueue (without DLQ) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryQueue(stack, "Queue", {
+    queueName: "apptheory-queue",
+    enableDlq: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("queue-only-no-dlq", template);
+  } else {
+    expectSnapshot("queue-only-no-dlq", template);
+  }
+});
+
+test("AppTheoryQueue (with DLQ) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryQueue(stack, "Queue", {
+    queueName: "apptheory-queue",
+    enableDlq: true,
+    maxReceiveCount: 5,
+    visibilityTimeout: cdk.Duration.seconds(60),
+    dlqRetentionPeriod: cdk.Duration.days(14),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("queue-only-with-dlq", template);
+  } else {
+    expectSnapshot("queue-only-with-dlq", template);
+  }
+});
+
+test("AppTheoryQueue + AppTheoryQueueConsumer (full options) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const consumer = new lambda.Function(stack, "Consumer", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const queue = new apptheory.AppTheoryQueue(stack, "Queue", {
+    queueName: "apptheory-queue",
+    enableDlq: true,
+    maxReceiveCount: 3,
+    visibilityTimeout: cdk.Duration.seconds(60),
+  });
+
+  new apptheory.AppTheoryQueueConsumer(stack, "QueueConsumer", {
+    queue: queue.queue,
+    consumer: consumer,
+    batchSize: 100,
+    maxBatchingWindow: cdk.Duration.seconds(10),
+    reportBatchItemFailures: true,
+    maxConcurrency: 50,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("queue-consumer-full-options", template);
+  } else {
+    expectSnapshot("queue-consumer-full-options", template);
+  }
+});
+
+test("AppTheoryQueueProcessor (with DLQ) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const consumer = new lambda.Function(stack, "Consumer", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryQueueProcessor(stack, "Queue", {
+    consumer,
+    queueName: "apptheory-processor-queue",
+    enableDlq: true,
+    maxReceiveCount: 5,
+    batchSize: 50,
+    maxBatchingWindow: cdk.Duration.seconds(5),
+    reportBatchItemFailures: true,
+    maxConcurrency: 10,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("queue-processor-with-dlq", template);
+  } else {
+    expectSnapshot("queue-processor-with-dlq", template);
+  }
+});
+
+
 test("AppTheoryFunctionAlarms synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -387,6 +488,25 @@ test("AppTheoryDynamoTable (no TTL) synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryDynamoTable (deletion protection) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryDynamoTable(stack, "Table", {
+    tableName: "apptheory-test-table-protected",
+    partitionKeyName: "PK",
+    sortKeyName: "SK",
+    deletionProtection: true,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("dynamo-table-deletion-protection", template);
+  } else {
+    expectSnapshot("dynamo-table-deletion-protection", template);
+  }
+});
+
 test("AppTheoryHostedZone synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -552,7 +672,6 @@ test("AppTheorySsrSite synthesizes expected template", () => {
   });
 
   new apptheory.AppTheorySsrSite(stack, "Site", { ssrFunction: fn });
-
   const template = assertions.Template.fromStack(stack).toJSON();
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("ssr-site", template);
@@ -560,3 +679,650 @@ test("AppTheorySsrSite synthesizes expected template", () => {
     expectSnapshot("ssr-site", template);
   }
 });
+
+// ============================================================================
+// AppTheoryRestApiRouter tests
+// ============================================================================
+
+test("AppTheoryRestApiRouter (multi-Lambda) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const sseFn = new lambda.Function(stack, "SseFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'sse' });"),
+  });
+
+  const graphqlFn = new lambda.Function(stack, "GraphqlFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'graphql' });"),
+  });
+
+  const apiFn = new lambda.Function(stack, "ApiFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'api' });"),
+  });
+
+  const inventoryFn = new lambda.Function(stack, "InventoryFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'inventory' });"),
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-router-test",
+  });
+
+  // SSE streaming
+  router.addLambdaIntegration("/sse", ["GET"], sseFn, { streaming: true });
+
+  // GraphQL
+  router.addLambdaIntegration("/api/graphql", ["POST"], graphqlFn);
+
+  // Proxy catch-all
+  router.addLambdaIntegration("/{proxy+}", ["ANY"], apiFn);
+
+  // Inventory-driven path (proof of multi-Lambda scaling)
+  router.addLambdaIntegration("/inventory/{id}", ["GET", "PUT", "DELETE"], inventoryFn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("rest-api-router-multi-lambda", template);
+  } else {
+    expectSnapshot("rest-api-router-multi-lambda", template);
+  }
+});
+
+test("AppTheoryRestApiRouter (streaming parity) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-streaming-test",
+  });
+
+  // Add a streaming route
+  router.addLambdaIntegration("/sse", ["GET"], fn, { streaming: true });
+  router.addLambdaIntegration("/events", ["GET"], fn, { streaming: true });
+
+  // Add a non-streaming route for comparison
+  router.addLambdaIntegration("/api", ["GET", "POST"], fn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify the streaming routes have the correct configuration
+  const methods = template.Resources;
+  let streamingMethodCount = 0;
+
+  for (const [key, resource] of Object.entries(methods)) {
+    if (resource.Type === "AWS::ApiGateway::Method") {
+      const integration = resource.Properties?.Integration;
+      if (integration?.ResponseTransferMode === "STREAM") {
+        streamingMethodCount++;
+        // Verify URI contains /response-streaming-invocations
+        const uri = integration.Uri;
+        if (uri && uri["Fn::Join"]) {
+          const uriParts = uri["Fn::Join"][1];
+          const hasStreamingUri = uriParts.some(
+            (p) => typeof p === "string" && p.includes("/response-streaming-invocations"),
+          );
+          assert.ok(hasStreamingUri, `Method ${key} should have streaming invocation URI`);
+        }
+        // Verify timeout is 900000ms (15 minutes)
+        assert.equal(integration.TimeoutInMillis, 900000, `Method ${key} should have 15min timeout`);
+      }
+    }
+  }
+
+  assert.ok(streamingMethodCount >= 2, "Should have at least 2 streaming methods");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("rest-api-router-streaming", template);
+  } else {
+    expectSnapshot("rest-api-router-streaming", template);
+  }
+});
+
+test("AppTheoryRestApiRouter (stage options) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-stage-test",
+    stage: {
+      stageName: "dev",
+      accessLogging: true,
+      accessLogRetention: logs.RetentionDays.ONE_WEEK,
+      detailedMetrics: true,
+      throttlingRateLimit: 100,
+      throttlingBurstLimit: 200,
+    },
+  });
+
+  router.addLambdaIntegration("/api/{proxy+}", ["ANY"], fn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("rest-api-router-stage", template);
+  } else {
+    expectSnapshot("rest-api-router-stage", template);
+  }
+});
+
+test("AppTheoryRestApiRouter (domain + Route53) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+  const cert = new apptheory.AppTheoryCertificate(stack, "Cert", {
+    domainName: "api.example.com",
+    hostedZone: zone,
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-domain-test",
+    domain: {
+      domainName: "api.example.com",
+      certificate: cert.certificate,
+      hostedZone: zone,
+    },
+  });
+
+  router.addLambdaIntegration("/{proxy+}", ["ANY"], fn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("rest-api-router-domain", template);
+  } else {
+    expectSnapshot("rest-api-router-domain", template);
+  }
+});
+
+// ============================================================================
+// AppTheoryPathRoutedFrontend tests
+// ============================================================================
+
+const s3 = require("aws-cdk-lib/aws-s3");
+
+test("AppTheoryPathRoutedFrontend (basic) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+    apiOriginUrl: "https://api.example.com",
+    enableLogging: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("path-routed-frontend-basic", template);
+  } else {
+    expectSnapshot("path-routed-frontend-basic", template);
+  }
+});
+
+test("AppTheoryPathRoutedFrontend (api origin with path) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+    apiOriginUrl: "https://api.example.com/prod",
+    enableLogging: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify originPath is applied to the API origin
+  const distributions = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::CloudFront::Distribution",
+  );
+  assert.ok(distributions.length >= 1, "Should have CloudFront Distribution");
+
+  const distribution = distributions[0][1];
+  const origins = distribution.Properties?.DistributionConfig?.Origins ?? [];
+  const apiOrigin = origins.find((o) => o.DomainName === "api.example.com");
+  assert.ok(apiOrigin, "Should have API origin configured");
+  assert.equal(apiOrigin.OriginPath, "/prod", "API origin should have originPath '/prod'");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("path-routed-frontend-api-origin-path", template);
+  } else {
+    expectSnapshot("path-routed-frontend-api-origin-path", template);
+  }
+});
+
+test("AppTheoryPathRoutedFrontend (multi-SPA) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const clientBucket = new s3.Bucket(stack, "ClientBucket");
+  const authBucket = new s3.Bucket(stack, "AuthBucket");
+
+  new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+    apiOriginUrl: "https://api.example.com",
+    spaOrigins: [
+      { bucket: clientBucket, pathPattern: "/l/*" },
+      { bucket: authBucket, pathPattern: "/auth/*" },
+    ],
+    apiBypassPaths: [{ pathPattern: "/auth/wallet/*" }],
+    enableLogging: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify CloudFront Function is created
+  const functions = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::CloudFront::Function",
+  );
+  assert.ok(functions.length >= 1, "Should have at least 1 CloudFront Function for SPA rewrite");
+
+  // Verify additional behaviors are configured
+  const distributions = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::CloudFront::Distribution",
+  );
+  assert.ok(distributions.length >= 1, "Should have CloudFront Distribution");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("path-routed-frontend-multi-spa", template);
+  } else {
+    expectSnapshot("path-routed-frontend-multi-spa", template);
+  }
+});
+
+test("AppTheoryPathRoutedFrontend (domain + Route53) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const clientBucket = new s3.Bucket(stack, "ClientBucket");
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+  const cert = new apptheory.AppTheoryCertificate(stack, "Cert", {
+    domainName: "app.example.com",
+    hostedZone: zone,
+  });
+
+  new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+    apiOriginUrl: "https://api.example.com",
+    spaOrigins: [{ bucket: clientBucket, pathPattern: "/l/*" }],
+    domain: {
+      domainName: "app.example.com",
+      certificate: cert.certificate,
+      hostedZone: zone,
+    },
+    enableLogging: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify Route53 A record is created
+  const aRecords = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::Route53::RecordSet",
+  );
+  assert.ok(aRecords.length >= 1, "Should have Route53 A record");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("path-routed-frontend-domain", template);
+  } else {
+    expectSnapshot("path-routed-frontend-domain", template);
+  }
+});
+
+// ============================================================================
+// AppTheoryMediaCdn tests
+// ============================================================================
+
+const cloudfront = require("aws-cdk-lib/aws-cloudfront");
+
+test("AppTheoryMediaCdn (basic) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+    comment: "Basic media CDN",
+    enableLogging: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("media-cdn-basic", template);
+  } else {
+    expectSnapshot("media-cdn-basic", template);
+  }
+});
+
+test("AppTheoryMediaCdn (existing bucket) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const existingBucket = new s3.Bucket(stack, "ExistingBucket");
+
+  new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+    bucket: existingBucket,
+    enableLogging: false,
+    comment: "Media CDN with existing bucket",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("media-cdn-existing-bucket", template);
+  } else {
+    expectSnapshot("media-cdn-existing-bucket", template);
+  }
+});
+
+test("AppTheoryMediaCdn (domain + Route53) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+  const cert = new apptheory.AppTheoryCertificate(stack, "Cert", {
+    domainName: "media.example.com",
+    hostedZone: zone,
+  });
+
+  new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+    domain: {
+      domainName: "media.example.com",
+      certificate: cert.certificate,
+      hostedZone: zone,
+    },
+    enableLogging: false,
+    comment: "Media CDN with custom domain",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify Route53 A record is created
+  const aRecords = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::Route53::RecordSet",
+  );
+  assert.ok(aRecords.length >= 1, "Should have Route53 A record");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("media-cdn-domain", template);
+  } else {
+    expectSnapshot("media-cdn-domain", template);
+  }
+});
+
+test("AppTheoryMediaCdn (private media with key group) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  // Create a public key and key group for testing
+  const publicKey = new cloudfront.PublicKey(stack, "TestPublicKey", {
+    encodedKey: `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAudf8/iNkQgdvjEdm6xYS
+JAyxd/kGTbJfQNg9YhInb7TSm0dGu0yx8yZ3fnpmH2FBYXZ+NFVW/yfM8xU3FO+e
+bykZ3JCsmEbHMEqDnDqPWy1x7a/0XN1+0R/v6bPQ7EHLa6k7VlZjP+zLBbt2T2V0
+O0cv9LVGFG/rpwB3g7OXI8DKMc4m50eDFyZN/1lCvF5oIGlgm4pjdD48sUBk3X9S
+kSvhVXPl0JNHoGg+Gn4FPK0xQTSzv0r4EfxXPw0fU6zfFHclm0k+K6B9Lb/k0z5d
+8Yn8c3JqtXu3F/EzLxVjfWQ2pRHlI9E0q9EuS7UOFD4FD0D3sLfXd8ZNpQ/hdnT1
+7wIDAQAB
+-----END PUBLIC KEY-----`,
+    publicKeyName: "test-public-key",
+  });
+
+  const keyGroup = new cloudfront.KeyGroup(stack, "TestKeyGroup", {
+    items: [publicKey],
+    keyGroupName: "test-key-group",
+  });
+
+  new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+    privateMedia: {
+      keyGroup: keyGroup,
+    },
+    enableLogging: false,
+    comment: "Private media CDN with key group",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify the distribution has trusted key groups configured
+  const distributions = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::CloudFront::Distribution",
+  );
+  assert.ok(distributions.length >= 1, "Should have CloudFront Distribution");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("media-cdn-private-keygroup", template);
+  } else {
+    expectSnapshot("media-cdn-private-keygroup", template);
+  }
+});
+
+test("AppTheoryMediaCdn (private media with PEM) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+    privateMedia: {
+      publicKeyPem: `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAudf8/iNkQgdvjEdm6xYS
+JAyxd/kGTbJfQNg9YhInb7TSm0dGu0yx8yZ3fnpmH2FBYXZ+NFVW/yfM8xU3FO+e
+bykZ3JCsmEbHMEqDnDqPWy1x7a/0XN1+0R/v6bPQ7EHLa6k7VlZjP+zLBbt2T2V0
+O0cv9LVGFG/rpwB3g7OXI8DKMc4m50eDFyZN/1lCvF5oIGlgm4pjdD48sUBk3X9S
+kSvhVXPl0JNHoGg+Gn4FPK0xQTSzv0r4EfxXPw0fU6zfFHclm0k+K6B9Lb/k0z5d
+8Yn8c3JqtXu3F/EzLxVjfWQ2pRHlI9E0q9EuS7UOFD4FD0D3sLfXd8ZNpQ/hdnT1
+7wIDAQAB
+-----END PUBLIC KEY-----`,
+      publicKeyName: "media-cdn-public-key",
+      keyGroupName: "media-cdn-key-group",
+      keyGroupComment: "Key group for private media access",
+    },
+    enableLogging: false,
+    comment: "Private media CDN with PEM key",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify that a public key and key group were created
+  const publicKeys = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::CloudFront::PublicKey",
+  );
+  assert.ok(publicKeys.length >= 1, "Should have CloudFront PublicKey");
+
+  const keyGroups = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::CloudFront::KeyGroup",
+  );
+  assert.ok(keyGroups.length >= 1, "Should have CloudFront KeyGroup");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("media-cdn-private-pem", template);
+  } else {
+    expectSnapshot("media-cdn-private-pem", template);
+  }
+});
+
+test("AppTheoryMediaCdn (full options) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+  const cert = new apptheory.AppTheoryCertificate(stack, "Cert", {
+    domainName: "media.example.com",
+    hostedZone: zone,
+  });
+
+  new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+    bucketName: "my-media-bucket",
+    domain: {
+      domainName: "media.example.com",
+      certificate: cert.certificate,
+      hostedZone: zone,
+    },
+    enableLogging: true,
+    priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
+    defaultRootObject: "index.html",
+    comment: "Full options media CDN",
+    removalPolicy: cdk.RemovalPolicy.DESTROY,
+    autoDeleteObjects: true,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("media-cdn-full-options", template);
+  } else {
+    expectSnapshot("media-cdn-full-options", template);
+  }
+});
+
+// ============================================================================
+// AppTheoryLambdaRole tests
+// ============================================================================
+
+test("AppTheoryLambdaRole (baseline) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryLambdaRole(stack, "LambdaRole", {
+    roleName: "apptheory-test-role",
+    description: "Test Lambda execution role",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify: role exists with Lambda as trusted entity
+  const roles = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::IAM::Role",
+  );
+  assert.ok(roles.length >= 1, "Should have IAM Role");
+
+  // Verify: baseline managed policy (AWSLambdaBasicExecutionRole) is attached
+  const [roleKey, roleResource] = roles[0];
+  const managedPolicies = roleResource.Properties?.ManagedPolicyArns || [];
+  const hasBasicExecution = managedPolicies.some(
+    (p) =>
+      (typeof p === "string" && p.includes("AWSLambdaBasicExecutionRole")) ||
+      (p["Fn::Join"] && JSON.stringify(p).includes("AWSLambdaBasicExecutionRole")),
+  );
+  assert.ok(hasBasicExecution, "Should have AWSLambdaBasicExecutionRole managed policy");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("lambda-role-baseline", template);
+  } else {
+    expectSnapshot("lambda-role-baseline", template);
+  }
+});
+
+test("AppTheoryLambdaRole (with X-Ray) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryLambdaRole(stack, "LambdaRole", {
+    enableXRay: true,
+    tags: { Environment: "test" },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify: X-Ray managed policy is attached
+  const roles = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::IAM::Role",
+  );
+  const [roleKey, roleResource] = roles[0];
+  const managedPolicies = roleResource.Properties?.ManagedPolicyArns || [];
+  const hasXRay = managedPolicies.some(
+    (p) =>
+      (typeof p === "string" && p.includes("AWSXRayDaemonWriteAccess")) ||
+      (p["Fn::Join"] && JSON.stringify(p).includes("AWSXRayDaemonWriteAccess")),
+  );
+  assert.ok(hasXRay, "Should have AWSXRayDaemonWriteAccess managed policy");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("lambda-role-xray", template);
+  } else {
+    expectSnapshot("lambda-role-xray", template);
+  }
+});
+
+test("AppTheoryLambdaRole (with KMS permissions) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  // Create KMS keys for testing
+  const envKey = new kms.Key(stack, "EnvKey", {
+    description: "Environment encryption key",
+  });
+
+  const appKey = new kms.Key(stack, "AppKey", {
+    description: "Application encryption key",
+  });
+
+  new apptheory.AppTheoryLambdaRole(stack, "LambdaRole", {
+    roleName: "apptheory-kms-role",
+    enableXRay: true,
+    environmentEncryptionKeys: [envKey],
+    applicationKmsKeys: [appKey],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify: KMS policies are created for both environment and application keys
+  const policies = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::IAM::Policy",
+  );
+  assert.ok(policies.length >= 1, "Should have inline policies for KMS permissions");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("lambda-role-kms", template);
+  } else {
+    expectSnapshot("lambda-role-kms", template);
+  }
+});
+
+test("AppTheoryLambdaRole (with additional statements) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const iam = require("aws-cdk-lib/aws-iam");
+
+  new apptheory.AppTheoryLambdaRole(stack, "LambdaRole", {
+    roleName: "apptheory-custom-role",
+    additionalStatements: [
+      new iam.PolicyStatement({
+        actions: ["s3:GetObject", "s3:PutObject"],
+        resources: ["arn:aws:s3:::my-bucket/*"],
+      }),
+      new iam.PolicyStatement({
+        actions: ["dynamodb:GetItem", "dynamodb:PutItem"],
+        resources: ["arn:aws:dynamodb:*:*:table/my-table"],
+      }),
+    ],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify: Additional inline policies are attached
+  const policies = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::IAM::Policy",
+  );
+  assert.ok(policies.length >= 1, "Should have inline policy for additional statements");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("lambda-role-additional-statements", template);
+  } else {
+    expectSnapshot("lambda-role-additional-statements", template);
+  }
+});
+

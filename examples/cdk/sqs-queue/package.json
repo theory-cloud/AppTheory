@@ -1,0 +1,19 @@
+{
+    "name": "sqs-queue-example",
+    "version": "1.0.0",
+    "private": true,
+    "scripts": {
+        "build": "tsc",
+        "synth": "cdk synth",
+        "deploy": "cdk deploy",
+        "destroy": "cdk destroy"
+    },
+    "dependencies": {
+        "@theory-cloud/apptheory-cdk": "file:../../..",
+        "aws-cdk-lib": "^2.175.0",
+        "constructs": "^10.4.2"
+    },
+    "devDependencies": {
+        "typescript": "^5.7.2"
+    }
+}
