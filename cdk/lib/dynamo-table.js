@@ -37,6 +37,7 @@ class AppTheoryDynamoTable extends constructs_1.Construct {
             },
             ...(ttlAttribute ? { timeToLiveAttribute: ttlAttribute } : {}),
             removalPolicy,
+            deletionProtection: props.deletionProtection,
             pointInTimeRecovery: enablePITR,
             encryption,
             encryptionKey: props.encryptionKey,

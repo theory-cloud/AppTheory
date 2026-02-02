@@ -36,7 +36,15 @@ type exportDecl struct {
 	Decl string
 }
 
-const unknownReceiverType = "(unknown)"
+const (
+	exportKindConst  = "const"
+	exportKindVar    = "var"
+	exportKindType   = "type"
+	exportKindFunc   = "func"
+	exportKindMethod = "method"
+
+	unknownReceiverType = "(unknown)"
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -255,7 +263,7 @@ func collectTypeSpecExports(fset *token.FileSet, d *ast.GenDecl) []exportDecl {
 			continue
 		}
 		exports = append(exports, exportDecl{
-			Kind: "type",
+			Kind: exportKindType,
 			Name: ts.Name.Name,
 			Decl: formatTypeSpec(fset, ts),
 		})
@@ -291,11 +299,11 @@ func dedupeExports(exports []exportDecl) []exportDecl {
 
 func sortExports(exports []exportDecl) {
 	kindOrder := map[string]int{
-		"const":  1,
-		"var":    2,
-		"type":   3,
-		"func":   4,
-		"method": 5,
+		exportKindConst:  1,
+		exportKindVar:    2,
+		exportKindType:   3,
+		exportKindFunc:   4,
+		exportKindMethod: 5,
 	}
 	sort.Slice(exports, func(i, j int) bool {
 		ki, kj := kindOrder[exports[i].Kind], kindOrder[exports[j].Kind]
@@ -342,9 +350,9 @@ func normalizeFieldList(list *ast.FieldList) *ast.FieldList {
 
 func funcDeclKind(d *ast.FuncDecl) string {
 	if d.Recv == nil {
-		return "func"
+		return exportKindFunc
 	}
-	return "method"
+	return exportKindMethod
 }
 
 func funcDeclName(d *ast.FuncDecl) string {
@@ -413,9 +421,9 @@ func formatValueSpecExports(fset *token.FileSet, tok token.Token, vs *ast.ValueS
 		return nil
 	}
 
-	kind := "var"
+	kind := exportKindVar
 	if tok == token.CONST {
-		kind = "const"
+		kind = exportKindConst
 	}
 
 	if len(vs.Names) == 1 {
