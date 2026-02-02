@@ -148,11 +148,7 @@ func (a *App) serveP0(ctx context.Context, req Request) (resp Response) {
 	handler := a.applyMiddlewares(match.Route.Handler)
 	out, handlerErr := handler(requestCtx)
 	if handlerErr != nil {
-		var appErr *AppError
-		if errors.As(handlerErr, &appErr) {
-			return errorResponse(appErr.Code, appErr.Message, nil)
-		}
-		return errorResponse(errorCodeInternal, errorMessageInternal, nil)
+		return responseForError(handlerErr)
 	}
 
 	return normalizeResponse(out)
@@ -267,13 +263,8 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 	handler := a.applyMiddlewares(match.Route.Handler)
 	out, handlerErr := handler(requestCtx)
 	if handlerErr != nil {
-		var appErr *AppError
-		if errors.As(handlerErr, &appErr) {
-			state.errorCode = appErr.Code
-			return errorResponseWithRequestID(appErr.Code, appErr.Message, nil, state.requestID)
-		}
-		state.errorCode = errorCodeInternal
-		return errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, state.requestID)
+		state.errorCode = errorCodeForError(handlerErr)
+		return responseForErrorWithRequestID(handlerErr, state.requestID)
 	}
 
 	if out == nil {
@@ -309,6 +300,13 @@ func preflightResponse(headers map[string][]string) Response {
 }
 
 func errorCodeForError(err error) string {
+	var portableErr *AppTheoryError
+	if errors.As(err, &portableErr) {
+		if strings.TrimSpace(portableErr.Code) != "" {
+			return portableErr.Code
+		}
+		return errorCodeInternal
+	}
 	var appErr *AppError
 	if errors.As(err, &appErr) {
 		return appErr.Code

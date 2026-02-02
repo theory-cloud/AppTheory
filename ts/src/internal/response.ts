@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 
-import { AppError } from "../errors.js";
+import { AppError, AppTheoryError } from "../errors.js";
 import type { BodyStream, Headers, Response } from "../types.js";
 
 import { canonicalizeHeaders, normalizeBodyStream, toBuffer } from "./http.js";
@@ -87,6 +87,67 @@ function statusForErrorCode(code: string): number {
   }
 }
 
+function errorBodyFromAppTheoryError(
+  err: AppTheoryError,
+  requestId: string,
+): Record<string, unknown> {
+  const code = String(err.code ?? "").trim() || "app.internal";
+  const error: Record<string, unknown> = {
+    code,
+    message: String(err.message ?? ""),
+  };
+
+  if (typeof err.statusCode === "number" && err.statusCode > 0) {
+    error["status_code"] = err.statusCode;
+  }
+  if (err.details !== undefined) {
+    error["details"] = err.details;
+  }
+
+  const resolvedRequestId =
+    String(err.requestId ?? "").trim() || String(requestId ?? "").trim();
+  if (resolvedRequestId) {
+    error["request_id"] = resolvedRequestId;
+  }
+  if (String(err.traceId ?? "").trim()) {
+    error["trace_id"] = String(err.traceId);
+  }
+  if (String(err.timestamp ?? "").trim()) {
+    error["timestamp"] = String(err.timestamp);
+  }
+  if (String(err.stackTrace ?? "").trim()) {
+    error["stack_trace"] = String(err.stackTrace);
+  }
+
+  return error;
+}
+
+function errorResponseFromAppTheoryError(
+  err: AppTheoryError,
+  headers: Headers = {},
+  requestId: string = "",
+): NormalizedResponse {
+  const outHeaders = { ...canonicalizeHeaders(headers) };
+  outHeaders["content-type"] = ["application/json; charset=utf-8"];
+
+  const code = String(err.code ?? "").trim() || "app.internal";
+  const status =
+    typeof err.statusCode === "number" && err.statusCode > 0
+      ? err.statusCode
+      : statusForErrorCode(code);
+
+  return normalizeResponse({
+    status,
+    headers: outHeaders,
+    cookies: [],
+    body: Buffer.from(
+      JSON.stringify({ error: errorBodyFromAppTheoryError(err, requestId) }),
+      "utf8",
+    ),
+    isBase64: false,
+  });
+}
+
 export function errorResponse(
   code: string,
   message: string,
@@ -128,6 +189,9 @@ export function errorResponseWithRequestId(
 }
 
 export function responseForError(err: unknown): NormalizedResponse {
+  if (err instanceof AppTheoryError) {
+    return errorResponseFromAppTheoryError(err);
+  }
   if (err instanceof AppError) {
     return errorResponse(err.code, err.message);
   }
@@ -138,6 +202,9 @@ export function responseForErrorWithRequestId(
   err: unknown,
   requestId: string,
 ): NormalizedResponse {
+  if (err instanceof AppTheoryError) {
+    return errorResponseFromAppTheoryError(err, {}, requestId);
+  }
   if (err instanceof AppError) {
     return errorResponseWithRequestId(err.code, err.message, {}, requestId);
   }
