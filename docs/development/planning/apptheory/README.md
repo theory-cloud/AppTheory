@@ -32,6 +32,7 @@ Primary goals:
 - `docs/development/planning/apptheory/subroadmaps/SR-CDK-LIFT-SUNSET.md` (CDK gaps blocking full Lift CDK sunset; Lesser)
 - `docs/development/planning/apptheory/subroadmaps/SR-MOCKS.md` (AWS mocks + local testkits per language)
 - `docs/development/planning/apptheory/subroadmaps/SR-PROD-FEATURES.md` (multi-tenant/auth/observability/rate limits)
+- `docs/development/planning/apptheory/subroadmaps/SR-ERRORS-LOGGER.md` (portable error + logger parity for Lift migrations)
 - `docs/development/planning/apptheory/subroadmaps/SR-MIDDLEWARE.md` (middleware pipeline + `ctx.Set/Get` parity)
 - `docs/development/planning/apptheory/subroadmaps/SR-SERVICES.md` (Lift `pkg/services` parity; start: EventBus)
 - `docs/development/planning/apptheory/subroadmaps/SR-SANITIZATION.md` (safe logging + redaction utilities)

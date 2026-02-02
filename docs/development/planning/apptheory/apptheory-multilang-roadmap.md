@@ -76,6 +76,7 @@ Deep workstreams are tracked in dedicated sub-roadmaps:
 - SSR infrastructure: `subroadmaps/SR-SSR-INFRA.md`
 - Testkits + mocks: `subroadmaps/SR-MOCKS.md`
 - Prod features parity: `subroadmaps/SR-PROD-FEATURES.md`
+- Portable errors + logger parity: `subroadmaps/SR-ERRORS-LOGGER.md`
 - Middleware + extensibility: `subroadmaps/SR-MIDDLEWARE.md`
 - Lift services parity: `subroadmaps/SR-SERVICES.md`
 - Sanitization utilities: `subroadmaps/SR-SANITIZATION.md`

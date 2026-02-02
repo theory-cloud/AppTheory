@@ -1,10 +1,21 @@
 import { Buffer } from "node:buffer";
 import { createApp } from "./app.js";
 import { ManualClock } from "./clock.js";
-import { AppError } from "./errors.js";
+import { AppError, AppTheoryError } from "./errors.js";
 import { ManualIdGenerator } from "./ids.js";
 import { CapturedHttpResponseStream, serveLambdaFunctionURLStreaming, } from "./internal/aws-lambda-streaming.js";
 import { cloneQuery, firstQueryValues, normalizeMethod, parseRawQueryString, splitPathAndQuery, toBuffer, } from "./internal/http.js";
+function streamErrorCodeFrom(err) {
+    if (err instanceof AppTheoryError) {
+        const code = String(err.code ?? "");
+        return code || "app.internal";
+    }
+    if (err instanceof AppError) {
+        const code = String(err.code ?? "");
+        return code || "app.internal";
+    }
+    return "app.internal";
+}
 export class TestEnv {
     clock;
     ids;
@@ -46,8 +57,7 @@ export class TestEnv {
                 }
             }
             catch (err) {
-                streamErrorCode =
-                    err instanceof AppError ? String(err.code ?? "") : "app.internal";
+                streamErrorCode = streamErrorCodeFrom(err);
             }
         }
         return {
