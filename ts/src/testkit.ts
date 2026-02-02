@@ -24,7 +24,7 @@ import type {
   SQSMessage,
 } from "./aws-types.js";
 import { ManualClock } from "./clock.js";
-import { AppError } from "./errors.js";
+import { AppError, AppTheoryError } from "./errors.js";
 import { ManualIdGenerator } from "./ids.js";
 import {
   CapturedHttpResponseStream,
@@ -39,6 +39,18 @@ import {
   toBuffer,
 } from "./internal/http.js";
 import type { Headers, Query, Request, Response } from "./types.js";
+
+function streamErrorCodeFrom(err: unknown): string {
+  if (err instanceof AppTheoryError) {
+    const code = String(err.code ?? "");
+    return code || "app.internal";
+  }
+  if (err instanceof AppError) {
+    const code = String(err.code ?? "");
+    return code || "app.internal";
+  }
+  return "app.internal";
+}
 
 export class TestEnv {
   readonly clock: ManualClock;
@@ -101,8 +113,7 @@ export class TestEnv {
           buffers.push(b);
         }
       } catch (err) {
-        streamErrorCode =
-          err instanceof AppError ? String(err.code ?? "") : "app.internal";
+        streamErrorCode = streamErrorCodeFrom(err);
       }
     }
 

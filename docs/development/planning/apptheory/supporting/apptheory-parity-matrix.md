@@ -81,7 +81,7 @@ Legend:
 | JSON parsing + content-type rules | P0 | ✅ | ✅ | ✅ | |
 | Headers normalization | P0 | ✅ | ✅ | ✅ | case-insensitive lookups |
 | Cookies normalization | P0 | ✅ | ✅ | ✅ | |
-| Error envelope + taxonomy | P0 | ✅ | ✅ | ✅ | stable error codes |
+| Error envelope + taxonomy | P0 | ✅ | ✅ | ✅ | stable error codes; optional fields: status_code/details/request_id/trace_id/timestamp/stack_trace |
 
 ## P0+ — Lift parity extensions (required)
 

@@ -1827,6 +1827,16 @@ function builtInAppTheoryHandler(runtime, name) {
       return () => {
         throw new runtime.AppError("app.validation_failed", "validation failed");
       };
+    case "portable_error":
+      return () => {
+        throw new runtime.AppTheoryError("app.conflict", "conflict", {
+          statusCode: 409,
+          details: { field: "email", retryable: false },
+          traceId: "trace_456",
+          timestamp: "2024-01-02T03:04:05Z",
+          stackTrace: "stack:line",
+        });
+      };
     case "echo_context":
       return (ctx) =>
         runtime.json(200, {
