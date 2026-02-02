@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.6.0](https://github.com/theory-cloud/AppTheory/compare/v0.5.0...v0.6.0) (2026-02-02)
+
+
+### Features
+
+* **cdk:** add DeletionProtection support to AppTheoryDynamoTable (M3) ([f81db79](https://github.com/theory-cloud/AppTheory/commit/f81db79ebf9d9f98c352e9f6a645a1f87f7fba79))
+* **cdk:** close Lift CDK parity gaps (issue [#102](https://github.com/theory-cloud/AppTheory/issues/102)) ([beec62b](https://github.com/theory-cloud/AppTheory/commit/beec62b4bbc358f01c1d9cc3207282f5ee89d348))
+* **cdk:** close lift parity gaps ([#102](https://github.com/theory-cloud/AppTheory/issues/102)) ([72d4451](https://github.com/theory-cloud/AppTheory/commit/72d44515a7cdce8d74db36f10825df13969e03b4))
+* **cdk:** close lift parity gaps ([#102](https://github.com/theory-cloud/AppTheory/issues/102)) ([2e7b719](https://github.com/theory-cloud/AppTheory/commit/2e7b719d7d07949d7b2c2543ccf1fd3f30d9c4a9))
+* **cdk:** implement AppTheoryLambdaRole construct (M5) ([6eee048](https://github.com/theory-cloud/AppTheory/commit/6eee048c90e92daa1ad126050a0736d167f1e96c))
+* **cdk:** implement AppTheoryMediaCdn construct (M4B) ([c87afc6](https://github.com/theory-cloud/AppTheory/commit/c87afc6a4a4e30ad05c6d2339edf2f32215824bf))
+* **cdk:** implement AppTheoryPathRoutedFrontend (M4A) ([7a08876](https://github.com/theory-cloud/AppTheory/commit/7a088762985707f3871cc95244814e9e582699d7))
+* **cdk:** implement AppTheoryRestApiRouter for M1 (SR-CDK-LIFT-SUNSET) ([f5eb28b](https://github.com/theory-cloud/AppTheory/commit/f5eb28b76da505005fc780661fe9080656611602))
+* **cdk:** implement M2 - SQS queue + DLQ + optional consumer wiring ([8a46a88](https://github.com/theory-cloud/AppTheory/commit/8a46a88ba382596b0c5915a33b5f16bbd5b63fa5))
+* **cdk:** implement M6 - Lesser parity example + migration validation gate ([038b73e](https://github.com/theory-cloud/AppTheory/commit/038b73ecb2a38c388019c12858199a219118f92b))
+* Parse API origin URL to include originPath for CloudFront HttpOrigin ([e357995](https://github.com/theory-cloud/AppTheory/commit/e357995deb88bc94379fd32ab1b73d78e241440f))
+
+
+### Bug Fixes
+
+* **cdk-go:** regenerate bindings for new constructs ([ed38899](https://github.com/theory-cloud/AppTheory/commit/ed38899a22d1ad8a95cc95633e37e904ec04c238))
+* **cdk-go:** regenerate bindings for new constructs ([e25ad1c](https://github.com/theory-cloud/AppTheory/commit/e25ad1c3dfb57519586331955a732c20f73e650d))
+* ensure pip is installed in virtual environments and skip symlinks when setting file timestamps. ([f244777](https://github.com/theory-cloud/AppTheory/commit/f24477740e35fd75ebc6d83027943ea801e1f6d9))
+* **go-lint:** deflake prerelease by removing goconst warning ([c824b9d](https://github.com/theory-cloud/AppTheory/commit/c824b9d0127e5f88257af5f078e8aab5dd087511))
+* **go-lint:** unblock prerelease build ([7f640fb](https://github.com/theory-cloud/AppTheory/commit/7f640fbd8b89967d17b5d73bf8e84ed592236626))
+* **release:** ensure CDK artifacts are versioned ([8a1c12e](https://github.com/theory-cloud/AppTheory/commit/8a1c12efdb434d9b5ea930a018365606ef8fe97a))
+* **release:** stop release-please PR churn ([346bb3e](https://github.com/theory-cloud/AppTheory/commit/346bb3e8f373a9331c100da0d46b4c82fc3f052d))
+
+## [0.5.0-rc.5](https://github.com/theory-cloud/AppTheory/compare/v0.5.0-rc.4...v0.5.0-rc.5) (2026-02-01)
+
+
+### Features
+
+* **cdk:** close lift parity gaps ([#102](https://github.com/theory-cloud/AppTheory/issues/102)) ([72d4451](https://github.com/theory-cloud/AppTheory/commit/72d44515a7cdce8d74db36f10825df13969e03b4))
+* **cdk:** close lift parity gaps ([#102](https://github.com/theory-cloud/AppTheory/issues/102)) ([2e7b719](https://github.com/theory-cloud/AppTheory/commit/2e7b719d7d07949d7b2c2543ccf1fd3f30d9c4a9))
+
 ## [0.5.0-rc.4](https://github.com/theory-cloud/AppTheory/compare/v0.5.0-rc.3...v0.5.0-rc.4) (2026-02-01)
 
 
