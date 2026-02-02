@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/theory-cloud/apptheory/pkg/observability"
+	obszap "github.com/theory-cloud/apptheory/pkg/observability/zap"
 )
 
 type stubLogger struct{}
@@ -54,4 +55,19 @@ func TestLogger_SetLogger(t *testing.T) {
 	if Logger() == stub {
 		t.Fatal("expected Logger() to reset away from the previous logger")
 	}
+}
+
+func TestLogger_SetLoggerAcceptsZap(t *testing.T) {
+	zapLogger, err := obszap.NewZapLogger(observability.LoggerConfig{})
+	if err != nil {
+		t.Fatalf("NewZapLogger: %v", err)
+	}
+
+	SetLogger(zapLogger)
+	Logger().Info("hello")
+
+	if err := Logger().Close(); err != nil {
+		t.Logf("Close: %v", err)
+	}
+	SetLogger(nil)
 }
