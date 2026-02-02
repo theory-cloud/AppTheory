@@ -319,6 +319,18 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 	"validation_failed": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		return nil, &apptheory.AppError{Code: "app.validation_failed", Message: "validation failed"}
 	},
+	"portable_error": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		err := apptheory.NewAppTheoryError("app.conflict", "conflict").
+			WithStatusCode(409).
+			WithDetails(map[string]any{
+				"field":     "email",
+				"retryable": false,
+			}).
+			WithTraceID("trace_456").
+			WithTimestamp(time.Date(2024, time.January, 2, 3, 4, 5, 0, time.UTC)).
+			WithStackTrace("stack:line")
+		return nil, err
+	},
 	"large_response": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		return apptheory.Text(200, "12345"), nil
 	},

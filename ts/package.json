@@ -1,6 +1,6 @@
 {
   "name": "@theory-cloud/apptheory",
-  "version": "0.6.0",
+  "version": "0.7.0-rc",
   "description": "AppTheory — multi-language serverless application framework (TypeScript package)",
   "type": "module",
   "license": "Apache-2.0",

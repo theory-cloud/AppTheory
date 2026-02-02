@@ -849,6 +849,20 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
 
         return handler
 
+    if name == "portable_error":
+        def handler(_ctx):
+            raise runtime.AppTheoryError(
+                code="app.conflict",
+                message="conflict",
+                status_code=409,
+                details={"field": "email", "retryable": False},
+                trace_id="trace_456",
+                timestamp="2024-01-02T03:04:05Z",
+                stack_trace="stack:line",
+            )
+
+        return handler
+
     if name == "echo_context":
         def handler(ctx):
             return runtime.json(

@@ -7,7 +7,7 @@ from typing import Any
 from apptheory.app import App, AuthHook, Limits, ObservabilityHooks, PolicyHook, create_app
 from apptheory.clock import ManualClock
 from apptheory.context import WebSocketClientFactory
-from apptheory.errors import AppError
+from apptheory.errors import AppError, AppTheoryError
 from apptheory.ids import IdGenerator, ManualIdGenerator
 from apptheory.request import Request
 from apptheory.response import Response
@@ -88,7 +88,9 @@ class TestEnv:
                     chunks.append(b)
                     parts.append(b)
             except Exception as exc:  # noqa: BLE001
-                stream_error_code = str(exc.code or "") if isinstance(exc, AppError) else "app.internal"
+                stream_error_code = (
+                    str(exc.code or "") if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
+                )
 
         return StreamResult(
             status=int(resp.status),
