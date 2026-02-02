@@ -29,6 +29,7 @@ from apptheory.cloudfront import client_ip, origin_url
 from apptheory.context import Context, EventContext, WebSocketContext
 from apptheory.errors import AppError, AppTheoryError
 from apptheory.ids import IDGenerator, IdGenerator, ManualIdGenerator, RealIdGenerator
+from apptheory.logger import NoOpLogger, StructuredLogger, get_logger, set_logger
 from apptheory.middleware import TimeoutConfig, timeout_middleware
 from apptheory.naming import base_name, normalize_stage, resource_name
 from apptheory.request import Request
@@ -69,6 +70,7 @@ __all__ = [
     "Limits",
     "ManualClock",
     "ManualIdGenerator",
+    "NoOpLogger",
     "ObservabilityHooks",
     "PolicyDecision",
     "RealClock",
@@ -77,6 +79,7 @@ __all__ = [
     "Response",
     "SSEEvent",
     "StreamResult",
+    "StructuredLogger",
     "TestEnv",
     "TimeoutConfig",
     "WebSocketCall",
@@ -103,6 +106,7 @@ __all__ = [
     "etag",
     "event_bridge_pattern",
     "event_bridge_rule",
+    "get_logger",
     "html",
     "html_stream",
     "json",
@@ -117,6 +121,7 @@ __all__ = [
     "sanitize_json",
     "sanitize_log_string",
     "sanitize_xml",
+    "set_logger",
     "sse",
     "sse_event_stream",
     "stepfunctions_task_token",
