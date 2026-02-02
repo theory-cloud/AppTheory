@@ -270,6 +270,24 @@ func Middleware(Options) func(http.HandlerFunc) http.HandlerFunc
 
 func WithIdentifier(*http.Request, string) *http.Request
 
+## github.com/theory-cloud/apptheory/pkg/logger
+
+var PaymentXMLPatterns = sanitization.PaymentXMLPatterns
+
+var RapidConnectXMLPatterns = sanitization.RapidConnectXMLPatterns
+
+func Logger() observability.StructuredLogger
+
+func SanitizeFieldValue(string, any) any
+
+func SanitizeJSON([]byte) string
+
+func SanitizeLogString(string) string
+
+func SanitizeXML(string, []sanitization.XMLSanitizationPattern) string
+
+func SetLogger(observability.StructuredLogger)
+
 ## github.com/theory-cloud/apptheory/pkg/naming
 
 func BaseName(string, string, string) string
