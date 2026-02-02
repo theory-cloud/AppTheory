@@ -225,6 +225,14 @@ Error response envelope (v0) MUST include:
 - `error.message` (string, safe for clients)
 - optional `error.request_id` (string)
 
+Portable optional fields (v0 extension; present when available):
+
+- `error.status_code` (number): HTTP status used for the response.
+- `error.details` (object): client-safe structured details (must be JSON-serializable).
+- `error.trace_id` (string): trace/correlation identifier.
+- `error.timestamp` (string): RFC 3339 timestamp (UTC preferred).
+- `error.stack_trace` (string): debug-only, explicitly opt-in.
+
 Internal errors MUST NOT leak stack traces by default.
 
 Status mapping (v0):
