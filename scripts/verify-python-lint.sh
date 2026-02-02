@@ -20,6 +20,10 @@ if [[ ! -d "py/.venv" ]]; then
   python3 -m venv py/.venv
 fi
 
+if ! py/.venv/bin/python -c "import pip" >/dev/null 2>&1; then
+  py/.venv/bin/python -m ensurepip --upgrade >/dev/null
+fi
+
 py/.venv/bin/python -m pip install --upgrade pip >/dev/null
 py/.venv/bin/python -m pip install --requirement py/requirements-lint.txt >/dev/null
 
@@ -27,4 +31,3 @@ py/.venv/bin/ruff check py/src
 py/.venv/bin/ruff format --check py/src
 
 echo "python-lint: PASS"
-

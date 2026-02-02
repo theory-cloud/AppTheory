@@ -8476,7 +8476,7 @@
   },
   "name": "@theory-cloud/apptheory-cdk",
   "readme": {
-    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring.\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n- `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs).\n- `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).\n- `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).\n- `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + domain/cert helpers).\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
+    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryRestApiRouter` — REST API v1 multi-Lambda router with full streaming parity + stage controls + domain wiring.\n- `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueue` — SQS queue with optional DLQ (queue-only friendly).\n- `AppTheoryQueueConsumer` — SQS → Lambda event source mapping with full knobs.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring (convenience wrapper over `AppTheoryQueue` + `AppTheoryQueueConsumer`).\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n- `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs).\n- `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).\n- `AppTheoryLambdaRole` — Lambda execution role helper (baseline + X-Ray + KMS + escape hatches).\n- `AppTheoryPathRoutedFrontend` — CloudFront distribution for multi-SPA routing + API origin (stage domain pattern).\n- `AppTheoryMediaCdn` — CloudFront distribution for an S3-backed media CDN (optional private media via key groups).\n- `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).\n- `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + domain/cert helpers).\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
   },
   "repository": {
     "directory": "cdk",
@@ -8498,6 +8498,88 @@
     }
   },
   "types": {
+    "@theory-cloud/apptheory-cdk.ApiBypassConfig": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Configuration for path patterns that should bypass SPA routing and go directly to the API origin."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.ApiBypassConfig",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/path-routed-frontend.ts",
+        "line": 75
+      },
+      "name": "ApiBypassConfig",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Path pattern that should route to the API origin instead of SPA (e.g., \"/auth/wallet/*\")."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 79
+          },
+          "name": "pathPattern",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Defaults to CACHING_DISABLED.",
+            "summary": "Optional cache policy override."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 84
+          },
+          "name": "cachePolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.ICachePolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Optional origin request policy override."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 89
+          },
+          "name": "originRequestPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IOriginRequestPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Overrides `apiBypassResponseHeadersPolicy` and `responseHeadersPolicy` (legacy).",
+            "summary": "Response headers policy for this API bypass behavior."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 95
+          },
+          "name": "responseHeadersPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
+          }
+        }
+      ],
+      "symbolId": "lib/path-routed-frontend:ApiBypassConfig"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryApiDomain": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -9437,7 +9519,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/dynamo-table.ts",
-          "line": 46
+          "line": 47
         },
         "parameters": [
           {
@@ -9463,7 +9545,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/dynamo-table.ts",
-        "line": 43
+        "line": 44
       },
       "name": "AppTheoryDynamoTable",
       "properties": [
@@ -9471,7 +9553,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 44
+            "line": 45
           },
           "name": "table",
           "type": {
@@ -9682,20 +9764,7 @@
             "filename": "lib/dynamo-table.ts",
             "line": 30
           },
-          "name": "enablePointInTimeRecovery",
-          "optional": true,
-          "type": {
-            "primitive": "boolean"
-          }
-        },
-        {
-          "abstract": true,
-          "immutable": true,
-          "locationInModule": {
-            "filename": "lib/dynamo-table.ts",
-            "line": 33
-          },
-          "name": "enableStream",
+          "name": "deletionProtection",
           "optional": true,
           "type": {
             "primitive": "boolean"
@@ -9708,6 +9777,32 @@
             "filename": "lib/dynamo-table.ts",
             "line": 31
           },
+          "name": "enablePointInTimeRecovery",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 34
+          },
+          "name": "enableStream",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/dynamo-table.ts",
+            "line": 32
+          },
           "name": "encryption",
           "optional": true,
           "type": {
@@ -9719,7 +9814,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 32
+            "line": 33
           },
           "name": "encryptionKey",
           "optional": true,
@@ -9732,7 +9827,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 35
+            "line": 36
           },
           "name": "globalSecondaryIndexes",
           "optional": true,
@@ -9750,7 +9845,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 37
+            "line": 38
           },
           "name": "grantReadTo",
           "optional": true,
@@ -9768,7 +9863,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 39
+            "line": 40
           },
           "name": "grantReadWriteTo",
           "optional": true,
@@ -9786,7 +9881,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 40
+            "line": 41
           },
           "name": "grantStreamReadTo",
           "optional": true,
@@ -9804,7 +9899,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 38
+            "line": 39
           },
           "name": "grantWriteTo",
           "optional": true,
@@ -9874,7 +9969,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/dynamo-table.ts",
-            "line": 34
+            "line": 35
           },
           "name": "streamViewType",
           "optional": true,
@@ -10306,7 +10401,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/eventbridge-handler.ts",
-          "line": 17
+          "line": 22
         },
         "parameters": [
           {
@@ -10332,7 +10427,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/eventbridge-handler.ts",
-        "line": 14
+        "line": 19
       },
       "name": "AppTheoryEventBridgeHandler",
       "properties": [
@@ -10340,7 +10435,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbridge-handler.ts",
-            "line": 15
+            "line": 20
           },
           "name": "rule",
           "type": {
@@ -10422,6 +10517,23 @@
           "optional": true,
           "type": {
             "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Passed through to `aws-events-targets.LambdaFunction`.",
+            "summary": "Optional configuration for the Lambda target (DLQ, input, retries, max event age, etc)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-handler.ts",
+            "line": 16
+          },
+          "name": "targetProps",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_events_targets.LambdaFunctionProps"
           }
         }
       ],
@@ -11580,14 +11692,1624 @@
       ],
       "symbolId": "lib/kms-key:AppTheoryKmsKeyProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryLambdaRole": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "example": "const role = new AppTheoryLambdaRole(this, 'LambdaRole', {\n  roleName: 'my-lambda-role',\n  enableXRay: true,\n  environmentEncryptionKeys: [envKey],\n  applicationKmsKeys: [dataKey],\n  additionalStatements: [\n    new iam.PolicyStatement({\n      actions: ['s3:GetObject'],\n      resources: ['arn:aws:s3:::my-bucket/*'],\n    }),\n  ],\n});",
+        "remarks": "Creates an IAM role suitable for Lambda execution with:\n- Basic Lambda execution permissions (CloudWatch Logs)\n- Optional X-Ray tracing permissions\n- Optional KMS permissions for environment encryption\n- Optional KMS permissions for application-level encryption\n- Escape hatch for additional inline policy statements",
+        "summary": "A Lambda execution role construct with baseline permissions and optional enhancements."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryLambdaRole",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/lambda-role.ts",
+          "line": 90
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "optional": true,
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryLambdaRoleProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/lambda-role.ts",
+        "line": 74
+      },
+      "methods": [
+        {
+          "docs": {
+            "summary": "Add a managed policy to this role."
+          },
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 170
+          },
+          "name": "addManagedPolicy",
+          "parameters": [
+            {
+              "name": "policy",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.IManagedPolicy"
+              }
+            }
+          ]
+        },
+        {
+          "docs": {
+            "summary": "Add an inline policy statement to this role."
+          },
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 177
+          },
+          "name": "addToPolicy",
+          "parameters": [
+            {
+              "name": "statement",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.PolicyStatement"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "primitive": "boolean"
+            }
+          }
+        },
+        {
+          "docs": {
+            "remarks": "This is useful when you need to allow another entity to assume this role.",
+            "summary": "Grant this role to a grantable principal."
+          },
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 155
+          },
+          "name": "grantAssumeRole",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.IPrincipal"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_iam.Grant"
+            }
+          }
+        },
+        {
+          "docs": {
+            "remarks": "This is required when a service needs to pass this role to Lambda.",
+            "summary": "Grant permissions to pass this role."
+          },
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 163
+          },
+          "name": "grantPassRole",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.IPrincipal"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_iam.Grant"
+            }
+          }
+        }
+      ],
+      "name": "AppTheoryLambdaRole",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The underlying IAM Role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 78
+          },
+          "name": "role",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_iam.Role"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The ARN of the IAM Role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 83
+          },
+          "name": "roleArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The name of the IAM Role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 88
+          },
+          "name": "roleName",
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/lambda-role:AppTheoryLambdaRole"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryLambdaRoleProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for AppTheoryLambdaRole."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryLambdaRoleProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/lambda-role.ts",
+        "line": 9
+      },
+      "name": "AppTheoryLambdaRoleProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Use this escape hatch for any additional permissions not covered by the construct.",
+            "summary": "Additional inline policy statements to attach to the role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 42
+          },
+          "name": "additionalStatements",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.PolicyStatement"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Grants the role full encrypt/decrypt permissions on these keys.",
+            "summary": "KMS key(s) for application-level KMS usage (encrypt/decrypt data at runtime)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 36
+          },
+          "name": "applicationKmsKeys",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_kms.IKey"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Optional description for the IAM role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 18
+          },
+          "name": "description",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Enable X-Ray tracing permissions by attaching AWSXRayDaemonWriteAccess managed policy."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 24
+          },
+          "name": "enableXRay",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Grants the role permission to decrypt environment variables encrypted with these keys.",
+            "summary": "KMS key(s) for Lambda environment variable encryption."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 30
+          },
+          "name": "environmentEncryptionKeys",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_kms.IKey"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "If not provided, CloudFormation will generate a unique name.",
+            "summary": "Optional role name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 13
+          },
+          "name": "roleName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Tags to apply to the IAM role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/lambda-role.ts",
+            "line": 47
+          },
+          "name": "tags",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "map"
+            }
+          }
+        }
+      ],
+      "symbolId": "lib/lambda-role:AppTheoryLambdaRoleProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMediaCdn": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "This construct creates or wraps an S3 bucket with a CloudFront distribution\nconfigured for media delivery. It supports:\n- Custom domain with certificate and Route53 integration\n- Private media access via signed URLs/cookies (trusted key groups)\n- Customizable caching and response headers\n- Access logging\n\nUse cases:\n- Public media CDN (images, videos, documents)\n- Private/authenticated media access\n- Stage-specific media subdomains (e.g., media.stage.example.com)",
+        "summary": "A CloudFront distribution optimized for serving media assets from S3."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMediaCdn",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/media-cdn.ts",
+          "line": 219
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMediaCdnProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/media-cdn.ts",
+        "line": 188
+      },
+      "name": "AppTheoryMediaCdn",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The S3 bucket for media assets."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 197
+          },
+          "name": "bucket",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.IBucket"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The CloudFront distribution."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 192
+          },
+          "name": "distribution",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.Distribution"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The certificate used for the distribution (if custom domain is configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 207
+          },
+          "name": "certificate",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_certificatemanager.ICertificate"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The key group for private media access (if configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 212
+          },
+          "name": "keyGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IKeyGroup"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The CloudFront access logs bucket (if logging is enabled)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 202
+          },
+          "name": "logsBucket",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.IBucket"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The public key created for private media (if created from PEM)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 217
+          },
+          "name": "publicKey",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.PublicKey"
+          }
+        }
+      ],
+      "symbolId": "lib/media-cdn:AppTheoryMediaCdn"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMediaCdnProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMediaCdnProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/media-cdn.ts",
+        "line": 76
+      },
+      "name": "AppTheoryMediaCdnProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "AllowedMethods.ALLOW_GET_HEAD_OPTIONS",
+            "summary": "Allowed HTTP methods for the distribution."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 170
+          },
+          "name": "allowedMethods",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.AllowedMethods"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "Only applies when removalPolicy is DESTROY.",
+            "summary": "Whether to auto-delete objects in created buckets on stack deletion."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 132
+          },
+          "name": "autoDeleteObjects",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "If not provided, a new bucket will be created.",
+            "summary": "Optional existing S3 bucket to use as the media origin."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 81
+          },
+          "name": "bucket",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.IBucket"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Name for the media bucket (only used if bucket is not provided)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 86
+          },
+          "name": "bucketName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "CachePolicy.CACHING_OPTIMIZED",
+            "summary": "Cache policy for the default behavior."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 154
+          },
+          "name": "cachePolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.ICachePolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "An optional name/comment for the distribution."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 148
+          },
+          "name": "comment",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Default root object for the distribution."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 107
+          },
+          "name": "defaultRootObject",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Domain configuration for custom domain, certificate, and Route53."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 91
+          },
+          "name": "domain",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.MediaCdnDomainConfig"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Enable CloudFront access logging."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 113
+          },
+          "name": "enableLogging",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Error responses for the distribution (e.g., custom 404 handling)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 164
+          },
+          "name": "errorResponses",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_cloudfront.ErrorResponse"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "If not provided and enableLogging is true, a new bucket will be created.",
+            "summary": "Optional S3 bucket for CloudFront access logs."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 119
+          },
+          "name": "logsBucket",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.IBucket"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Origin request policy for the default behavior."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 159
+          },
+          "name": "originRequestPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IOriginRequestPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "PriceClass.PRICE_CLASS_ALL",
+            "summary": "Price class for the CloudFront distribution."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 143
+          },
+          "name": "priceClass",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.PriceClass"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "When configured, the distribution will require authentication.",
+            "summary": "Private media configuration for signed URLs/cookies."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 102
+          },
+          "name": "privateMedia",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.PrivateMediaConfig"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "RemovalPolicy.RETAIN",
+            "summary": "Removal policy for created resources."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 125
+          },
+          "name": "removalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Response headers policy to apply to the distribution."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 96
+          },
+          "name": "responseHeadersPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Optional web ACL ID for AWS WAF integration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 137
+          },
+          "name": "webAclId",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/media-cdn:AppTheoryMediaCdnProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontend": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "This construct creates a CloudFront distribution that routes requests to:\n- SPA origins (S3 buckets) based on path prefixes (e.g., /l/*, /auth/*)\n- API origin (default behavior) for all other paths\n- API bypass paths for specific paths that should skip SPA routing\n\nA CloudFront Function handles viewer-request rewriting for SPA routing,\nensuring that paths without file extensions are rewritten to index.html.",
+        "summary": "A CloudFront distribution for path-routed multi-SPA + API deployments."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontend",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/path-routed-frontend.ts",
+          "line": 334
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontendProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/path-routed-frontend.ts",
+        "line": 313
+      },
+      "name": "AppTheoryPathRoutedFrontend",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The CloudFront distribution."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 317
+          },
+          "name": "distribution",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.Distribution"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The certificate used for the distribution (if custom domain is configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 332
+          },
+          "name": "certificate",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_certificatemanager.ICertificate"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The CloudFront access logs bucket (if logging is enabled)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 327
+          },
+          "name": "logsBucket",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.IBucket"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The CloudFront Function for SPA rewrite (if SPA origins are configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 322
+          },
+          "name": "spaRewriteFunction",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.Function"
+          }
+        }
+      ],
+      "symbolId": "lib/path-routed-frontend:AppTheoryPathRoutedFrontend"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontendProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontendProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/path-routed-frontend.ts",
+        "line": 130
+      },
+      "name": "AppTheoryPathRoutedFrontendProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The primary API origin URL (e.g., the API Gateway invoke URL or Lambda function URL). This is used for the default behavior and any API bypass paths."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 135
+          },
+          "name": "apiOriginUrl",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "These are evaluated before SPA paths due to CloudFront behavior precedence.",
+            "summary": "API bypass configurations for paths that should go directly to the API origin even though they might match an SPA path prefix."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 148
+          },
+          "name": "apiBypassPaths",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.ApiBypassConfig"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Can be overridden per bypass via `ApiBypassConfig.responseHeadersPolicy`.",
+            "summary": "Default response headers policy for API bypass behaviors."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 178
+          },
+          "name": "apiBypassResponseHeadersPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Origin request policy for the API origin (default behavior)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 183
+          },
+          "name": "apiOriginRequestPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IOriginRequestPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Response headers policy for the API origin default behavior."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 166
+          },
+          "name": "apiResponseHeadersPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "Only applies when removalPolicy is DESTROY.",
+            "summary": "Whether to auto-delete objects in created buckets on stack deletion."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 208
+          },
+          "name": "autoDeleteObjects",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "An optional name/comment for the distribution."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 224
+          },
+          "name": "comment",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Domain configuration for custom domain, certificate, and Route53."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 153
+          },
+          "name": "domain",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.PathRoutedFrontendDomainConfig"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Enable CloudFront access logging."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 189
+          },
+          "name": "enableLogging",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "If not provided and enableLogging is true, a new bucket will be created.",
+            "summary": "Optional S3 bucket for CloudFront access logs."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 195
+          },
+          "name": "logsBucket",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.IBucket"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "PriceClass.PRICE_CLASS_ALL",
+            "summary": "Price class for the CloudFront distribution."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 219
+          },
+          "name": "priceClass",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.PriceClass"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "RemovalPolicy.RETAIN",
+            "summary": "Removal policy for created resources."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 201
+          },
+          "name": "removalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Prefer using `apiResponseHeadersPolicy`, `spaResponseHeadersPolicy`, and\n`apiBypassResponseHeadersPolicy` for behavior-scoped control.",
+            "summary": "Response headers policy to apply to all behaviors (legacy)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 161
+          },
+          "name": "responseHeadersPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Each SPA will be served via CloudFront with SPA rewrite support.",
+            "summary": "SPA origins with their path patterns."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 141
+          },
+          "name": "spaOrigins",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.SpaOriginConfig"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Can be overridden per SPA via `SpaOriginConfig.responseHeadersPolicy`.",
+            "summary": "Default response headers policy for SPA behaviors."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 172
+          },
+          "name": "spaResponseHeadersPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Optional web ACL ID for AWS WAF integration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 213
+          },
+          "name": "webAclId",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/path-routed-frontend:AppTheoryPathRoutedFrontendProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryQueue": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "example": "// Queue with custom DLQ configuration\nconst queue = new AppTheoryQueue(stack, 'Queue', {\n  queueName: 'my-queue',\n  maxReceiveCount: 5,\n  dlqRetentionPeriod: Duration.days(14),\n});",
+        "remarks": "This construct creates an SQS queue with optional Dead Letter Queue (DLQ) configuration.\nIt can be used standalone (for manual message production/consumption) or composed\nwith AppTheoryQueueConsumer for Lambda integration.",
+        "summary": "A composable SQS queue construct with optional DLQ support."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueue",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/queue.ts",
+          "line": 146
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "optional": true,
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/queue.ts",
+        "line": 120
+      },
+      "methods": [
+        {
+          "docs": {
+            "summary": "Grant consume messages permission to a Lambda function."
+          },
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 207
+          },
+          "name": "grantConsumeMessages",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+              }
+            }
+          ]
+        },
+        {
+          "docs": {
+            "summary": "Grant purge messages permission to a Lambda function."
+          },
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 214
+          },
+          "name": "grantPurge",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+              }
+            }
+          ]
+        },
+        {
+          "docs": {
+            "summary": "Grant send messages permission to a Lambda function."
+          },
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 200
+          },
+          "name": "grantSendMessages",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+              }
+            }
+          ]
+        }
+      ],
+      "name": "AppTheoryQueue",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The main SQS queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 124
+          },
+          "name": "queue",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_sqs.Queue"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The ARN of the main queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 134
+          },
+          "name": "queueArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The name of the main queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 144
+          },
+          "name": "queueName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The URL of the main queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 139
+          },
+          "name": "queueUrl",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The Dead Letter Queue, if enabled."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 129
+          },
+          "name": "deadLetterQueue",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_sqs.Queue"
+          }
+        }
+      ],
+      "symbolId": "lib/queue:AppTheoryQueue"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryQueueConsumer": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "example": "// Consumer with full configuration\nnew AppTheoryQueueConsumer(stack, 'Consumer', {\n  queue: myQueue.queue,\n  consumer: myFunction,\n  batchSize: 100,\n  maxBatchingWindow: Duration.seconds(10),\n  reportBatchItemFailures: true,\n  maxConcurrency: 50,\n});",
+        "remarks": "This construct creates an event source mapping between an SQS queue and a Lambda function,\nwith full control over batching, concurrency, and failure reporting.",
+        "summary": "A composable SQS consumer construct that wires a Lambda function to an SQS queue."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueConsumer",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/queue-consumer.ts",
+          "line": 105
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueConsumerProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/queue-consumer.ts",
+        "line": 89
+      },
+      "methods": [
+        {
+          "docs": {
+            "remarks": "This can be used for circuit breaker patterns.",
+            "summary": "Disable the event source mapping."
+          },
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 131
+          },
+          "name": "disable"
+        }
+      ],
+      "name": "AppTheoryQueueConsumer",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The consumer Lambda function."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 98
+          },
+          "name": "consumer",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The event source mapping."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 93
+          },
+          "name": "eventSourceMapping",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.EventSourceMapping"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The SQS queue being consumed."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 103
+          },
+          "name": "queue",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_sqs.IQueue"
+          }
+        }
+      ],
+      "symbolId": "lib/queue-consumer:AppTheoryQueueConsumer"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryQueueConsumerProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for AppTheoryQueueConsumer construct."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueConsumerProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/queue-consumer.ts",
+        "line": 9
+      },
+      "name": "AppTheoryQueueConsumerProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The Lambda function that will process messages."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 18
+          },
+          "name": "consumer",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The SQS queue to consume messages from."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 13
+          },
+          "name": "queue",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_sqs.IQueue"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "10",
+            "summary": "The maximum number of records to retrieve per batch."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 24
+          },
+          "name": "batchSize",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Whether the event source mapping is enabled."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 50
+          },
+          "name": "enabled",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- All messages trigger the Lambda",
+            "summary": "Optional filters to control which messages trigger the Lambda."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 62
+          },
+          "name": "filters",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_lambda.FilterCriteria"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Whether to automatically grant consume permissions to the Lambda function."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 56
+          },
+          "name": "grantConsumeMessages",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- No batching window (messages processed immediately)",
+            "summary": "The maximum amount of time to wait for a batch to be gathered."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 30
+          },
+          "name": "maxBatchingWindow",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- No concurrency limit",
+            "remarks": "Valid range: 2-1000.",
+            "summary": "The maximum concurrency setting limits the number of concurrent instances of the function."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 44
+          },
+          "name": "maxConcurrency",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "When enabled, the function should return a partial failure response.",
+            "summary": "Whether to report batch item failures."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-consumer.ts",
+            "line": 37
+          },
+          "name": "reportBatchItemFailures",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        }
+      ],
+      "symbolId": "lib/queue-consumer:AppTheoryQueueConsumerProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
+      "docs": {
+        "example": "// Processor with full options\nnew AppTheoryQueueProcessor(stack, 'Processor', {\n  consumer: myFunction,\n  queueName: 'my-queue',\n  enableDlq: true,\n  batchSize: 100,\n  maxBatchingWindow: Duration.seconds(10),\n  reportBatchItemFailures: true,\n  maxConcurrency: 50,\n});",
+        "remarks": "This is a convenience construct that combines AppTheoryQueue and AppTheoryQueueConsumer\ninto a single, easy-to-use pattern. For more control, use the individual constructs.",
+        "summary": "A combined queue + consumer construct for SQS processing workflows."
+      },
       "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueProcessor",
       "initializer": {
         "locationInModule": {
           "filename": "lib/queue-processor.ts",
-          "line": 17
+          "line": 150
         },
         "parameters": [
           {
@@ -11613,17 +13335,63 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/queue-processor.ts",
-        "line": 14
+        "line": 129
       },
       "name": "AppTheoryQueueProcessor",
       "properties": [
         {
+          "docs": {
+            "summary": "The underlying AppTheoryQueueConsumer construct."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 15
+            "line": 143
+          },
+          "name": "consumerConstruct",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueConsumer"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The main SQS queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 133
           },
           "name": "queue",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_sqs.IQueue"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The underlying AppTheoryQueue construct."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 138
+          },
+          "name": "queueConstruct",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueue"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The Dead Letter Queue, if enabled."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 148
+          },
+          "name": "deadLetterQueue",
+          "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.aws_sqs.Queue"
           }
@@ -11634,32 +13402,43 @@
     "@theory-cloud/apptheory-cdk.AppTheoryQueueProcessorProps": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "datatype": true,
+      "docs": {
+        "remarks": "This construct maintains backwards compatibility with the original API\nwhile leveraging the new composable AppTheoryQueue and AppTheoryQueueConsumer constructs.",
+        "summary": "Properties for the AppTheoryQueueProcessor construct."
+      },
       "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueProcessorProps",
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/queue-processor.ts",
-        "line": 7
+        "line": 14
       },
       "name": "AppTheoryQueueProcessorProps",
       "properties": [
         {
           "abstract": true,
+          "docs": {
+            "summary": "The Lambda function that will consume messages from the queue."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 8
+            "line": 18
           },
           "name": "consumer",
           "type": {
-            "fqn": "aws-cdk-lib.aws_lambda.Function"
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
           }
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "10",
+            "summary": "The maximum number of records to retrieve per batch."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 10
+            "line": 62
           },
           "name": "batchSize",
           "optional": true,
@@ -11669,10 +13448,48 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Whether the event source mapping is enabled."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 11
+            "line": 88
+          },
+          "name": "enabled",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false (for backwards compatibility with original behavior)",
+            "summary": "Whether to enable a Dead Letter Queue (DLQ)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 49
+          },
+          "name": "enableDlq",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- No batching window",
+            "summary": "The maximum amount of time to wait for a batch to be gathered."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 68
           },
           "name": "maxBatchingWindow",
           "optional": true,
@@ -11682,19 +13499,393 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "- No concurrency limit",
+            "remarks": "Valid range: 2-1000.",
+            "summary": "The maximum concurrency setting limits the number of concurrent instances of the function."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/queue-processor.ts",
-            "line": 9
+            "line": 82
+          },
+          "name": "maxConcurrency",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "3",
+            "remarks": "Only applicable when enableDlq is true.",
+            "summary": "The maximum number of times a message can be received before being sent to the DLQ."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 56
+          },
+          "name": "maxReceiveCount",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- CloudFormation-generated name",
+            "summary": "The name of the queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 30
+          },
+          "name": "queueName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "deprecated": "Use queueName, visibilityTimeout, and other specific props instead",
+            "stability": "deprecated",
+            "summary": "Properties for the underlying SQS queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 24
           },
           "name": "queueProps",
           "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.aws_sqs.QueueProps"
           }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "Used for SQS long polling.",
+            "summary": "The amount of time for which a ReceiveMessage call will wait for a message to arrive in the queue before returning."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 43
+          },
+          "name": "receiveMessageWaitTime",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "RemovalPolicy.DESTROY",
+            "summary": "The removal policy for the queue(s)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 94
+          },
+          "name": "removalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "When enabled, the function should return a partial failure response.",
+            "summary": "Whether to report batch item failures."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 75
+          },
+          "name": "reportBatchItemFailures",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "Duration.seconds(30)",
+            "summary": "The visibility timeout for messages in the queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue-processor.ts",
+            "line": 36
+          },
+          "name": "visibilityTimeout",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
         }
       ],
       "symbolId": "lib/queue-processor:AppTheoryQueueProcessorProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryQueueProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for AppTheoryQueue construct."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/queue.ts",
+        "line": 9
+      },
+      "name": "AppTheoryQueueProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "Only applicable for FIFO queues.",
+            "summary": "Whether to enable content-based deduplication for FIFO queues."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 71
+          },
+          "name": "contentBasedDeduplication",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "Duration.days(14)",
+            "summary": "The retention period for the DLQ."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 58
+          },
+          "name": "dlqRetentionPeriod",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- Same as the main queue",
+            "summary": "The visibility timeout for the DLQ."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 52
+          },
+          "name": "dlqVisibilityTimeout",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Whether to enable a Dead Letter Queue (DLQ)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 39
+          },
+          "name": "enableDlq",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS managed encryption is used",
+            "summary": "Whether messages delivered to the queue will be encrypted."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 64
+          },
+          "name": "encryption",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_sqs.QueueEncryption"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Whether the queue is a FIFO queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 77
+          },
+          "name": "fifo",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- No additional principals",
+            "summary": "Principals to grant send messages permission to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 83
+          },
+          "name": "grantSendMessagesTo",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "3",
+            "remarks": "Only applicable when enableDlq is true.",
+            "summary": "The maximum number of times a message can be received before being sent to the DLQ."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 46
+          },
+          "name": "maxReceiveCount",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- CloudFormation-generated name",
+            "summary": "The name of the queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 14
+          },
+          "name": "queueName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "Used for SQS long polling.",
+            "summary": "The amount of time for which a ReceiveMessage call will wait for a message to arrive in the queue before returning."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 33
+          },
+          "name": "receiveMessageWaitTime",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "RemovalPolicy.DESTROY",
+            "summary": "The removal policy for the queue(s)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 89
+          },
+          "name": "removalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "Duration.days(4)",
+            "summary": "The number of seconds that Amazon SQS retains a message."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 26
+          },
+          "name": "retentionPeriod",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "Duration.seconds(30)",
+            "summary": "The visibility timeout for messages in the queue."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/queue.ts",
+            "line": 20
+          },
+          "name": "visibilityTimeout",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        }
+      ],
+      "symbolId": "lib/queue:AppTheoryQueueProps"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryRestApi": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -11848,6 +14039,941 @@
         }
       ],
       "symbolId": "lib/rest-api:AppTheoryRestApiRouteOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouter": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "example": "const router = new AppTheoryRestApiRouter(this, 'Router', {\n  apiName: 'my-api',\n  stage: { stageName: 'prod', accessLogging: true, detailedMetrics: true },\n  cors: true,\n});\n\nrouter.addLambdaIntegration('/sse', ['GET'], sseFn, { streaming: true });\nrouter.addLambdaIntegration('/api/graphql', ['POST'], graphqlFn);\nrouter.addLambdaIntegration('/{proxy+}', ['ANY'], apiFn);",
+        "remarks": "This construct addresses the gaps in AppTheoryRestApi by allowing:\n- Multiple Lambda functions attached to different routes\n- Complete response streaming integration (responseTransferMode, URI suffix, timeout)\n- Stage controls (access logging, metrics, throttling, CORS)\n- Custom domain wiring with optional Route53 record",
+        "summary": "A REST API v1 router that supports multi-Lambda routing with full streaming parity."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouter",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/rest-api-router.ts",
+          "line": 311
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "optional": true,
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/rest-api-router.ts",
+        "line": 272
+      },
+      "methods": [
+        {
+          "docs": {
+            "summary": "Add a Lambda integration for the specified path and HTTP methods."
+          },
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 357
+          },
+          "name": "addLambdaIntegration",
+          "parameters": [
+            {
+              "docs": {
+                "summary": "- The resource path (e.g., \"/sse\", \"/api/graphql\", \"/{proxy+}\")."
+              },
+              "name": "path",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "docs": {
+                "summary": "- Array of HTTP methods (e.g., [\"GET\", \"POST\"] or [\"ANY\"])."
+              },
+              "name": "methods",
+              "type": {
+                "collection": {
+                  "elementtype": {
+                    "primitive": "string"
+                  },
+                  "kind": "array"
+                }
+              }
+            },
+            {
+              "docs": {
+                "summary": "- The Lambda function to integrate."
+              },
+              "name": "handler",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+              }
+            },
+            {
+              "docs": {
+                "summary": "- Integration options including streaming configuration."
+              },
+              "name": "options",
+              "optional": true,
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterIntegrationOptions"
+              }
+            }
+          ]
+        }
+      ],
+      "name": "AppTheoryRestApiRouter",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The underlying API Gateway REST API."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 276
+          },
+          "name": "api",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.RestApi"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The deployment stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 281
+          },
+          "name": "stage",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.Stage"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The Route53 AAAA record (if domain, hostedZone, and createAAAARecord are configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 301
+          },
+          "name": "aaaaRecord",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.AaaaRecord"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The access log group (if access logging is enabled)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 306
+          },
+          "name": "accessLogGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.ILogGroup"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The Route53 A record (if domain and hostedZone are configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 296
+          },
+          "name": "aRecord",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.ARecord"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The base path mapping (if domain is configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 291
+          },
+          "name": "basePathMapping",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.BasePathMapping"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The custom domain name (if configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 286
+          },
+          "name": "domainName",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.DomainName"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-api-router:AppTheoryRestApiRouter"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterCorsOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "CORS configuration for the REST API router."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterCorsOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/rest-api-router.ts",
+        "line": 13
+      },
+      "name": "AppTheoryRestApiRouterCorsOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Whether to allow credentials."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 36
+          },
+          "name": "allowCredentials",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "['Content-Type', 'Authorization', 'X-Amz-Date', 'X-Api-Key', 'X-Amz-Security-Token']",
+            "summary": "Allowed headers."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 30
+          },
+          "name": "allowHeaders",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'HEAD']",
+            "summary": "Allowed HTTP methods."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 24
+          },
+          "name": "allowMethods",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "['*']",
+            "summary": "Allowed origins."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 18
+          },
+          "name": "allowOrigins",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "600",
+            "summary": "Max age for preflight cache in seconds."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 42
+          },
+          "name": "maxAge",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-api-router:AppTheoryRestApiRouterCorsOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterDomainOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Custom domain configuration for the REST API router."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterDomainOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/rest-api-router.ts",
+        "line": 98
+      },
+      "name": "AppTheoryRestApiRouterDomainOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The custom domain name (e.g., \"api.example.com\")."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 102
+          },
+          "name": "domainName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (maps to the root)",
+            "summary": "The base path mapping for the API under this domain."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 133
+          },
+          "name": "basePath",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Provide either certificate or certificateArn.",
+            "summary": "ACM certificate (must be in us-east-1 for edge endpoints, same region for regional)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 108
+          },
+          "name": "certificate",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_certificatemanager.ICertificate"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Provide either certificate or certificateArn.",
+            "summary": "ACM certificate ARN."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 113
+          },
+          "name": "certificateArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "Only applies when `hostedZone` is provided.",
+            "summary": "Whether to create an AAAA alias record in addition to the A alias record."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 127
+          },
+          "name": "createAAAARecord",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "REGIONAL",
+            "summary": "Endpoint type for the domain."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 139
+          },
+          "name": "endpointType",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.EndpointType"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no DNS record created)",
+            "remarks": "If provided, an A record (alias) will be created pointing to the API Gateway domain.",
+            "summary": "Route53 hosted zone for automatic DNS record creation."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 120
+          },
+          "name": "hostedZone",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.IHostedZone"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "TLS_1_2",
+            "summary": "Security policy for the domain."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 145
+          },
+          "name": "securityPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.SecurityPolicy"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-api-router:AppTheoryRestApiRouterDomainOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterIntegrationOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Options for adding a Lambda integration to a route."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterIntegrationOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/rest-api-router.ts",
+        "line": 151
+      },
+      "name": "AppTheoryRestApiRouterIntegrationOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "WHEN_NO_MATCH",
+            "summary": "Passthrough behavior for the integration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 179
+          },
+          "name": "passthroughBehavior",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.PassthroughBehavior"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (use Lambda proxy integration)",
+            "summary": "Request templates for the integration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 173
+          },
+          "name": "requestTemplates",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "map"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "When enabled:\n- ResponseTransferMode is set to STREAM\n- The Lambda invocation URI uses /response-streaming-invocations\n- Timeout is set to 15 minutes (900000ms)",
+            "summary": "Enable response streaming for this route."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 160
+          },
+          "name": "streaming",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "For streaming routes, defaults to 15 minutes.\nFor non-streaming routes, defaults to 29 seconds.",
+            "summary": "Custom integration timeout."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 167
+          },
+          "name": "timeout",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-api-router:AppTheoryRestApiRouterIntegrationOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Props for the AppTheoryRestApiRouter construct."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/rest-api-router.ts",
+        "line": 185
+      },
+      "name": "AppTheoryRestApiRouterProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "HEADER",
+            "summary": "API key source type."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 249
+          },
+          "name": "apiKeySourceType",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.ApiKeySourceType"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Name of the REST API."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 189
+          },
+          "name": "apiName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "Specify media types that should be treated as binary.",
+            "summary": "Whether the REST API uses binary media types."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 225
+          },
+          "name": "binaryMediaTypes",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no CORS)",
+            "remarks": "Set to true for sensible defaults,\nor provide custom options.",
+            "summary": "CORS configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 206
+          },
+          "name": "cors",
+          "optional": true,
+          "type": {
+            "union": {
+              "types": [
+                {
+                  "primitive": "boolean"
+                },
+                {
+                  "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterCorsOptions"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Enable deploy on construct creation."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 237
+          },
+          "name": "deploy",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Description of the REST API."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 194
+          },
+          "name": "description",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no custom domain)",
+            "summary": "Custom domain configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 212
+          },
+          "name": "domain",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterDomainOptions"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[REGIONAL]",
+            "summary": "Endpoint types for the REST API."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 218
+          },
+          "name": "endpointTypes",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_apigateway.EndpointType"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no compression)",
+            "summary": "Minimum compression size in bytes."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 231
+          },
+          "name": "minimumCompressionSize",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Retain deployment history when deployments change."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 243
+          },
+          "name": "retainDeployments",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Stage configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 199
+          },
+          "name": "stage",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterStageOptions"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-api-router:AppTheoryRestApiRouterProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterStageOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Stage-level configuration for the REST API router."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterStageOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/rest-api-router.ts",
+        "line": 48
+      },
+      "name": "AppTheoryRestApiRouterStageOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "AccessLogFormat.clf() (Common Log Format)",
+            "summary": "Access log format."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 74
+          },
+          "name": "accessLogFormat",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigateway.AccessLogFormat"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "If true, a log group will be created automatically.\nProvide a LogGroup for custom logging configuration.",
+            "summary": "Enable CloudWatch access logging for the stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 61
+          },
+          "name": "accessLogging",
+          "optional": true,
+          "type": {
+            "union": {
+              "types": [
+                {
+                  "primitive": "boolean"
+                },
+                {
+                  "fqn": "aws-cdk-lib.aws_logs.ILogGroup"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "logs.RetentionDays.ONE_MONTH",
+            "remarks": "Only applies when accessLogging is true (boolean).",
+            "summary": "Retention period for auto-created access log group."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 68
+          },
+          "name": "accessLogRetention",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.RetentionDays"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Enable detailed CloudWatch metrics at method/resource level."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 80
+          },
+          "name": "detailedMetrics",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "'prod'",
+            "summary": "Stage name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 53
+          },
+          "name": "stageName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no throttling)",
+            "summary": "Throttling burst limit for the stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 92
+          },
+          "name": "throttlingBurstLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no throttling)",
+            "summary": "Throttling rate limit (requests per second) for the stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 86
+          },
+          "name": "throttlingRateLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/rest-api-router:AppTheoryRestApiRouterStageOptions"
     },
     "@theory-cloud/apptheory-cdk.AppTheorySecretConfig": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -12039,6 +15165,32 @@
         }
       ],
       "symbolId": "lib/enhanced-security:AppTheorySecurityRule"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheorySpaRewriteMode": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheorySpaRewriteMode",
+      "kind": "enum",
+      "locationInModule": {
+        "filename": "lib/path-routed-frontend.ts",
+        "line": 10
+      },
+      "members": [
+        {
+          "docs": {
+            "summary": "Rewrite extensionless routes to `index.html` within the SPA prefix."
+          },
+          "name": "SPA"
+        },
+        {
+          "docs": {
+            "remarks": "Useful for multi-page/static sites.",
+            "summary": "Do not rewrite routes."
+          },
+          "name": "NONE"
+        }
+      ],
+      "name": "AppTheorySpaRewriteMode",
+      "symbolId": "lib/path-routed-frontend:AppTheorySpaRewriteMode"
     },
     "@theory-cloud/apptheory-cdk.AppTheorySsrSite": {
       "assembly": "@theory-cloud/apptheory-cdk",

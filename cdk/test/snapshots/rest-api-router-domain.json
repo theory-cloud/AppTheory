@@ -1,0 +1,422 @@
+{
+  "Outputs": {
+    "RouterApiEndpoint2408998C": {
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "https://",
+            {
+              "Ref": "RouterApi30C329D4"
+            },
+            ".execute-api.",
+            {
+              "Ref": "AWS::Region"
+            },
+            ".",
+            {
+              "Ref": "AWS::URLSuffix"
+            },
+            "/",
+            {
+              "Ref": "RouterApiDeploymentStageprod83159A95"
+            },
+            "/"
+          ]
+        ]
+      }
+    }
+  },
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "CertCertificate2FA294AA": {
+      "Properties": {
+        "CertificateTransparencyLoggingPreference": "ENABLED",
+        "DomainName": "api.example.com",
+        "DomainValidationOptions": [
+          {
+            "DomainName": "api.example.com",
+            "HostedZoneId": {
+              "Ref": "ZoneA5DE4B68"
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "TestStack/Cert/Certificate"
+          }
+        ],
+        "ValidationMethod": "DNS"
+      },
+      "Type": "AWS::CertificateManager::Certificate"
+    },
+    "Fn9270CBC0": {
+      "DependsOn": [
+        "FnServiceRoleB9001A96"
+      ],
+      "Properties": {
+        "Code": {
+          "ZipFile": "exports.handler = async () => ({ statusCode: 200, body: 'ok' });"
+        },
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "FnServiceRoleB9001A96",
+            "Arn"
+          ]
+        },
+        "Runtime": "nodejs24.x"
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "FnServiceRoleB9001A96": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+              ]
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "RouterAliasRecordC24CE76D": {
+      "Properties": {
+        "AliasTarget": {
+          "DNSName": {
+            "Fn::GetAtt": [
+              "RouterDomainName24E25325",
+              "RegionalDomainName"
+            ]
+          },
+          "HostedZoneId": {
+            "Fn::GetAtt": [
+              "RouterDomainName24E25325",
+              "RegionalHostedZoneId"
+            ]
+          }
+        },
+        "HostedZoneId": {
+          "Ref": "ZoneA5DE4B68"
+        },
+        "Name": "api.example.com.",
+        "Type": "A"
+      },
+      "Type": "AWS::Route53::RecordSet"
+    },
+    "RouterApi30C329D4": {
+      "Properties": {
+        "EndpointConfiguration": {
+          "Types": [
+            "REGIONAL"
+          ]
+        },
+        "Name": "apptheory-domain-test"
+      },
+      "Type": "AWS::ApiGateway::RestApi"
+    },
+    "RouterApiAccountD5E11F08": {
+      "DeletionPolicy": "Retain",
+      "DependsOn": [
+        "RouterApi30C329D4"
+      ],
+      "Properties": {
+        "CloudWatchRoleArn": {
+          "Fn::GetAtt": [
+            "RouterApiCloudWatchRole98CD244A",
+            "Arn"
+          ]
+        }
+      },
+      "Type": "AWS::ApiGateway::Account",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "RouterApiCloudWatchRole98CD244A": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "apigateway.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+              ]
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "RouterApiDeploymentD829DC847f6e58b475281b51026d8aa37b185734": {
+      "DependsOn": [
+        "RouterApiproxyANYFB4CCB02",
+        "RouterApiproxyA005E440"
+      ],
+      "Metadata": {
+        "aws:cdk:do-not-refactor": true
+      },
+      "Properties": {
+        "Description": "Automatically created by the RestApi construct",
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Deployment"
+    },
+    "RouterApiDeploymentStageprod83159A95": {
+      "DependsOn": [
+        "RouterApiAccountD5E11F08"
+      ],
+      "Properties": {
+        "DeploymentId": {
+          "Ref": "RouterApiDeploymentD829DC847f6e58b475281b51026d8aa37b185734"
+        },
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        },
+        "StageName": "prod"
+      },
+      "Type": "AWS::ApiGateway::Stage"
+    },
+    "RouterApiproxyA005E440": {
+      "Properties": {
+        "ParentId": {
+          "Fn::GetAtt": [
+            "RouterApi30C329D4",
+            "RootResourceId"
+          ]
+        },
+        "PathPart": "{proxy+}",
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Resource"
+    },
+    "RouterApiproxyANYApiPermissionTestStackRouterApi516CB159ANYproxyCBD42725": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RouterApi30C329D4"
+              },
+              "/",
+              {
+                "Ref": "RouterApiDeploymentStageprod83159A95"
+              },
+              "/*/*"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RouterApiproxyANYApiPermissionTestTestStackRouterApi516CB159ANYproxyA1E2A67B": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RouterApi30C329D4"
+              },
+              "/test-invoke-stage/*/*"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RouterApiproxyANYFB4CCB02": {
+      "Properties": {
+        "AuthorizationType": "NONE",
+        "HttpMethod": "ANY",
+        "Integration": {
+          "IntegrationHttpMethod": "POST",
+          "ResponseTransferMode": "BUFFERED",
+          "Type": "AWS_PROXY",
+          "Uri": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":apigateway:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":lambda:path/2015-03-31/functions/",
+                {
+                  "Fn::GetAtt": [
+                    "Fn9270CBC0",
+                    "Arn"
+                  ]
+                },
+                "/invocations"
+              ]
+            ]
+          }
+        },
+        "ResourceId": {
+          "Ref": "RouterApiproxyA005E440"
+        },
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Method"
+    },
+    "RouterBasePathMapping1B00790B": {
+      "Properties": {
+        "DomainName": {
+          "Ref": "RouterDomainName24E25325"
+        },
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        },
+        "Stage": {
+          "Ref": "RouterApiDeploymentStageprod83159A95"
+        }
+      },
+      "Type": "AWS::ApiGateway::BasePathMapping"
+    },
+    "RouterDomainName24E25325": {
+      "Properties": {
+        "DomainName": "api.example.com",
+        "EndpointConfiguration": {
+          "Types": [
+            "REGIONAL"
+          ]
+        },
+        "RegionalCertificateArn": {
+          "Ref": "CertCertificate2FA294AA"
+        },
+        "SecurityPolicy": "TLS_1_2"
+      },
+      "Type": "AWS::ApiGateway::DomainName"
+    },
+    "ZoneA5DE4B68": {
+      "Properties": {
+        "Name": "example.com."
+      },
+      "Type": "AWS::Route53::HostedZone"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}

@@ -15,6 +15,7 @@ on:
       - "py/pyproject.toml"
       - "examples/cdk/multilang/package-lock.json"
       - "examples/cdk/ssr-site/package-lock.json"
+      - "examples/cdk/lesser-parity/package-lock.json"
   workflow_dispatch: {}
 
 permissions:

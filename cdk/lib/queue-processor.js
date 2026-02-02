@@ -3,18 +3,73 @@ var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AppTheoryQueueProcessor = void 0;
 const JSII_RTTI_SYMBOL_1 = Symbol.for("jsii.rtti");
-const lambdaEventSources = require("aws-cdk-lib/aws-lambda-event-sources");
-const sqs = require("aws-cdk-lib/aws-sqs");
 const constructs_1 = require("constructs");
+const queue_1 = require("./queue");
+const queue_consumer_1 = require("./queue-consumer");
+/**
+ * A combined queue + consumer construct for SQS processing workflows.
+ *
+ * This is a convenience construct that combines AppTheoryQueue and AppTheoryQueueConsumer
+ * into a single, easy-to-use pattern. For more control, use the individual constructs.
+ *
+ * @example
+ * // Basic processor (backwards compatible)
+ * new AppTheoryQueueProcessor(stack, 'Processor', {
+ *   consumer: myFunction,
+ * });
+ *
+ * @example
+ * // Processor with DLQ
+ * new AppTheoryQueueProcessor(stack, 'Processor', {
+ *   consumer: myFunction,
+ *   enableDlq: true,
+ *   maxReceiveCount: 5,
+ * });
+ *
+ * @example
+ * // Processor with full options
+ * new AppTheoryQueueProcessor(stack, 'Processor', {
+ *   consumer: myFunction,
+ *   queueName: 'my-queue',
+ *   enableDlq: true,
+ *   batchSize: 100,
+ *   maxBatchingWindow: Duration.seconds(10),
+ *   reportBatchItemFailures: true,
+ *   maxConcurrency: 50,
+ * });
+ */
 class AppTheoryQueueProcessor extends constructs_1.Construct {
     constructor(scope, id, props) {
         super(scope, id);
-        this.queue = new sqs.Queue(this, "Queue", props.queueProps);
-        props.consumer.addEventSource(new lambdaEventSources.SqsEventSource(this.queue, {
-            batchSize: props.batchSize ?? 10,
+        // Determine if we should use legacy queueProps or new props
+        const useLegacyProps = props.queueProps !== undefined;
+        // Create the queue using AppTheoryQueue
+        // For backwards compatibility, DLQ is disabled by default (original behavior)
+        this.queueConstruct = new queue_1.AppTheoryQueue(this, "AppTheoryQueue", {
+            queueName: useLegacyProps ? props.queueProps?.queueName : props.queueName,
+            visibilityTimeout: useLegacyProps
+                ? props.queueProps?.visibilityTimeout
+                : props.visibilityTimeout,
+            receiveMessageWaitTime: useLegacyProps
+                ? props.queueProps?.receiveMessageWaitTime
+                : props.receiveMessageWaitTime,
+            enableDlq: props.enableDlq ?? false, // Backwards compatible: no DLQ by default
+            maxReceiveCount: props.maxReceiveCount,
+            removalPolicy: props.removalPolicy,
+        });
+        this.queue = this.queueConstruct.queue;
+        this.deadLetterQueue = this.queueConstruct.deadLetterQueue;
+        // Create the consumer using AppTheoryQueueConsumer
+        this.consumerConstruct = new queue_consumer_1.AppTheoryQueueConsumer(this, "AppTheoryConsumer", {
+            queue: this.queue,
+            consumer: props.consumer,
+            batchSize: props.batchSize,
             maxBatchingWindow: props.maxBatchingWindow,
-        }));
-        this.queue.grantConsumeMessages(props.consumer);
+            reportBatchItemFailures: props.reportBatchItemFailures,
+            maxConcurrency: props.maxConcurrency,
+            enabled: props.enabled,
+            grantConsumeMessages: true,
+        });
     }
 }
 exports.AppTheoryQueueProcessor = AppTheoryQueueProcessor;

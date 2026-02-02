@@ -30,6 +30,10 @@ if [[ ! -d "cdk/.venv" ]]; then
   python3 -m venv cdk/.venv
 fi
 
+if ! cdk/.venv/bin/python -c "import pip" >/dev/null 2>&1; then
+  cdk/.venv/bin/python -m ensurepip --upgrade >/dev/null
+fi
+
 cdk/.venv/bin/python -m pip install --upgrade pip >/dev/null
 cdk/.venv/bin/python -m pip install --requirement cdk/requirements-build.txt >/dev/null
 
@@ -88,6 +92,8 @@ from pathlib import Path
 epoch = int(os.environ["SOURCE_DATE_EPOCH"])
 root = Path(os.environ["TMP_CDK_DIR"])
 for file_path in root.rglob("*"):
+  if file_path.is_symlink():
+    continue
   if file_path.is_file():
     os.utime(file_path, (epoch, epoch))
 PY
@@ -102,6 +108,8 @@ from pathlib import Path
 epoch = int(os.environ["SOURCE_DATE_EPOCH"])
 root = Path(os.environ["TMP_CDK_DIR"])
 for file_path in root.rglob("*"):
+  if file_path.is_symlink():
+    continue
   if file_path.is_file():
     os.utime(file_path, (epoch, epoch))
 PY
@@ -117,6 +125,8 @@ from pathlib import Path
 epoch = int(os.environ["SOURCE_DATE_EPOCH"])
 root = Path(os.environ["TMP_PY_DIR"])
 for file_path in root.rglob("*"):
+  if file_path.is_symlink():
+    continue
   if file_path.is_file():
     os.utime(file_path, (epoch, epoch))
 PY

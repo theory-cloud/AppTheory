@@ -15,7 +15,7 @@ class AppTheoryEventBridgeHandler extends constructs_1.Construct {
             schedule: props.schedule,
             enabled: props.enabled,
         });
-        this.rule.addTarget(new targets.LambdaFunction(props.handler));
+        this.rule.addTarget(new targets.LambdaFunction(props.handler, props.targetProps));
     }
 }
 exports.AppTheoryEventBridgeHandler = AppTheoryEventBridgeHandler;
