@@ -29,6 +29,7 @@ Primary goals:
 - `docs/development/planning/apptheory/subroadmaps/SR-CONTRACT.md` (runtime contract + contract tests)
 - `docs/development/planning/apptheory/subroadmaps/SR-RELEASE.md` (GitHub Releases only, supply-chain, version alignment)
 - `docs/development/planning/apptheory/subroadmaps/SR-CDK.md` (CDK strategy: examples → constructs via jsii)
+- `docs/development/planning/apptheory/subroadmaps/SR-CDK-LIFT-SUNSET.md` (CDK gaps blocking full Lift CDK sunset; Lesser)
 - `docs/development/planning/apptheory/subroadmaps/SR-MOCKS.md` (AWS mocks + local testkits per language)
 - `docs/development/planning/apptheory/subroadmaps/SR-PROD-FEATURES.md` (multi-tenant/auth/observability/rate limits)
 - `docs/development/planning/apptheory/subroadmaps/SR-MIDDLEWARE.md` (middleware pipeline + `ctx.Set/Get` parity)

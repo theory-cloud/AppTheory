@@ -1,0 +1,19 @@
+{
+  "name": "restv1-router-example",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy"
+  },
+  "dependencies": {
+    "@theory-cloud/apptheory-cdk": "file:../../../cdk",
+    "aws-cdk-lib": "^2.177.0",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "aws-cdk": "^2.177.0"
+  }
+}

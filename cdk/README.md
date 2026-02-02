@@ -13,14 +13,20 @@ Status: early; start with a small “top 20%” set and grow based on real usage
 
 - `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).
 - `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).
+- `AppTheoryRestApiRouter` — REST API v1 multi-Lambda router with full streaming parity + stage controls + domain wiring.
 - `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).
 - `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.
 - `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.
-- `AppTheoryQueueProcessor` — SQS queue + consumer wiring.
+- `AppTheoryQueue` — SQS queue with optional DLQ (queue-only friendly).
+- `AppTheoryQueueConsumer` — SQS → Lambda event source mapping with full knobs.
+- `AppTheoryQueueProcessor` — SQS queue + consumer wiring (convenience wrapper over `AppTheoryQueue` + `AppTheoryQueueConsumer`).
 - `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.
 - `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.
 - `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs).
 - `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).
+- `AppTheoryLambdaRole` — Lambda execution role helper (baseline + X-Ray + KMS + escape hatches).
+- `AppTheoryPathRoutedFrontend` — CloudFront distribution for multi-SPA routing + API origin (stage domain pattern).
+- `AppTheoryMediaCdn` — CloudFront distribution for an S3-backed media CDN (optional private media via key groups).
 - `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).
 - `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + domain/cert helpers).
 
