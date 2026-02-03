@@ -134,6 +134,8 @@ html	function
 htmlStream	function
 isAppTheoryError	const
 json	function
+maskFirstLast	function
+maskFirstLast4	function
 matchesIfNoneMatch	function
 newError	function
 normalizeStage	function

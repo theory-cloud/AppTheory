@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 
 _REDACTED_VALUE = "[REDACTED]"
+_EMPTY_MASKED_VALUE = "(empty)"
+_MASKED_VALUE = "***masked***"
 
 _ALLOWED_FIELDS: set[str] = {
     "card_bin",
@@ -66,6 +68,21 @@ def _mask_restricted_string(value: str) -> str:
     if len(raw) >= 4:
         return "..." + raw[-4:]
     return _REDACTED_VALUE
+
+
+def mask_first_last(value: str, prefix_len: int, suffix_len: int) -> str:
+    raw = str(value or "")
+    if raw == "":
+        return _EMPTY_MASKED_VALUE
+    if prefix_len < 0 or suffix_len < 0:
+        return _MASKED_VALUE
+    if len(raw) <= prefix_len + suffix_len:
+        return _MASKED_VALUE
+    return raw[:prefix_len] + "***" + raw[len(raw) - suffix_len :]
+
+
+def mask_first_last4(value: str) -> str:
+    return mask_first_last(value, 4, 4)
 
 
 def _mask_card_number_string(value: str) -> str:

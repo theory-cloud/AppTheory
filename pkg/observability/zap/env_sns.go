@@ -44,6 +44,7 @@ func DefaultEnvironmentErrorNotifications() EnvironmentErrorNotificationsOptions
 		TopicARNEnvVars: []string{
 			"APPTHEORY_ERROR_NOTIFICATIONS_TOPIC_ARN",
 			"APPTHEORY_SNS_ERROR_TOPIC_ARN",
+			"ERROR_NOTIFICATION_SNS_TOPIC_ARN",
 			"ERROR_NOTIFICATIONS_TOPIC_ARN",
 			"SNS_ERROR_TOPIC_ARN",
 		},
