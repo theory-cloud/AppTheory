@@ -647,6 +647,10 @@ func MaskCardNumber(string) string
 
 func MaskCompletelyFunc(string) func(string) string
 
+func MaskFirstLast(string, int, int) string
+
+func MaskFirstLast4(string) string
+
 func MaskTokenLastFour(string) string
 
 func SanitizeFieldValue(string, any) any
