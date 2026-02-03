@@ -164,6 +164,10 @@ AppTheory’s portable observability surface is hook-based:
 
 Portable schema is fixture-backed (see parity matrix and contract tests).
 
+Legacy SNS error notification env var support:
+
+- `ERROR_NOTIFICATION_SNS_TOPIC_ARN` is accepted alongside AppTheory’s standard SNS env vars.
+
 ### 7a) Error handling (LiftError parity)
 
 Lift’s `LiftError` maps to AppTheory’s portable error type:
@@ -237,6 +241,14 @@ get_logger().info("request", {"request_id": ctx.request_id})
 
 Sanitization helpers are exposed alongside the logger (Go: `logger.SanitizeJSON`, `logger.SanitizeLogString`,
 `logger.PaymentXMLPatterns`; TS/Py: re-exports from the logger module).
+
+Lift-compatible masking helpers are available in sanitization:
+
+- Go: `sanitization.MaskFirstLast`, `sanitization.MaskFirstLast4`
+- TS: `maskFirstLast`, `maskFirstLast4`
+- Py: `mask_first_last`, `mask_first_last4`
+
+These helpers return `"(empty)"` for empty input and `"***masked***"` when the value is too short.
 
 ### 8) AWS entrypoints (HTTP)
 
