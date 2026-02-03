@@ -87,6 +87,7 @@ func TestSNSNotifier_PropagatesPublishError(t *testing.T) {
 
 func TestEnvironmentErrorNotifications_ConfiguresNotifierOrInitErr(t *testing.T) {
 	t.Setenv("APPTHEORY_ERROR_NOTIFICATIONS_TOPIC_ARN", "")
+	t.Setenv("ERROR_NOTIFICATION_SNS_TOPIC_ARN", "")
 
 	opts := &loggerOptions{}
 	WithEnvironmentErrorNotifications(context.Background(), DefaultEnvironmentErrorNotifications())(opts)
@@ -112,6 +113,20 @@ func TestEnvironmentErrorNotifications_ConfiguresNotifierOrInitErr(t *testing.T)
 	}
 	if n.subject != "hello" {
 		t.Fatalf("expected subject from env, got %q", n.subject)
+	}
+}
+
+func TestEnvironmentErrorNotifications_AllowsLegacyEnvVar(t *testing.T) {
+	t.Setenv("APPTHEORY_ERROR_NOTIFICATIONS_TOPIC_ARN", "")
+	t.Setenv("ERROR_NOTIFICATION_SNS_TOPIC_ARN", "arn:aws:sns:us-east-1:000000000000:topic")
+	t.Setenv("AWS_REGION", "us-east-1")
+	t.Setenv("AWS_ACCESS_KEY_ID", "dummy")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "dummy")
+
+	opts := &loggerOptions{}
+	WithEnvironmentErrorNotifications(context.Background(), DefaultEnvironmentErrorNotifications())(opts)
+	if opts.notifier == nil || opts.initErr != nil {
+		t.Fatalf("expected notifier to be set, got notifier=%v err=%v", opts.notifier, opts.initErr)
 	}
 }
 

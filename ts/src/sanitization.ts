@@ -3,6 +3,8 @@ import { Buffer } from "node:buffer";
 import { toBuffer } from "./internal/http.js";
 
 const REDACTED_VALUE = "[REDACTED]";
+const EMPTY_MASKED_VALUE = "(empty)";
+const MASKED_VALUE = "***masked***";
 
 const allowedSanitizeFields = new Set(["card_bin", "card_brand", "card_type"]);
 
@@ -59,6 +61,25 @@ function maskRestrictedString(value: unknown): string {
 
   if (raw.length >= 4) return `...${raw.slice(-4)}`;
   return REDACTED_VALUE;
+}
+
+export function maskFirstLast(
+  value: string,
+  prefixLen: number,
+  suffixLen: number,
+): string {
+  const raw = String(value ?? "");
+  if (!raw) return EMPTY_MASKED_VALUE;
+
+  const prefix = Number.isFinite(prefixLen) ? Math.trunc(prefixLen) : -1;
+  const suffix = Number.isFinite(suffixLen) ? Math.trunc(suffixLen) : -1;
+  if (prefix < 0 || suffix < 0) return MASKED_VALUE;
+  if (raw.length <= prefix + suffix) return MASKED_VALUE;
+  return `${raw.slice(0, prefix)}***${raw.slice(raw.length - suffix)}`;
+}
+
+export function maskFirstLast4(value: string): string {
+  return maskFirstLast(value, 4, 4);
 }
 
 function maskCardNumberString(value: unknown): string {
