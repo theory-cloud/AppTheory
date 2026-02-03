@@ -1104,6 +1104,10 @@ func IsLambda() bool
 
 func JSON(int, any) (*Response, error)
 
+func JSONHandler[Req, Resp any](func(*Context, Req) (Resp, error)) Handler
+
+func JSONHandlerContext[Req, Resp any](func(context.Context, Req) (Resp, error)) Handler
+
 func MatchesIfNoneMatch(map[string][]string, string) bool
 
 func MustJSON(int, any) *Response
