@@ -8,6 +8,11 @@ import (
 
 const redactedValue = "[REDACTED]"
 
+const (
+	emptyMaskedValue = "(empty)"
+	maskedValue      = "***masked***"
+)
+
 // AllowedFields are field names that should bypass sanitization.
 var AllowedFields = map[string]bool{
 	"card_bin":   true,
@@ -110,6 +115,26 @@ func SanitizeFieldValue(key string, value any) any {
 	}
 
 	return sanitizeValue(value)
+}
+
+// MaskFirstLast keeps the first prefixLen and last suffixLen characters and masks the middle.
+// Behavior matches Lift's sanitization helpers.
+func MaskFirstLast(value string, prefixLen, suffixLen int) string {
+	if value == "" {
+		return emptyMaskedValue
+	}
+	if prefixLen < 0 || suffixLen < 0 {
+		return maskedValue
+	}
+	if len(value) <= prefixLen+suffixLen {
+		return maskedValue
+	}
+	return value[:prefixLen] + "***" + value[len(value)-suffixLen:]
+}
+
+// MaskFirstLast4 keeps the first and last 4 characters and masks the middle.
+func MaskFirstLast4(value string) string {
+	return MaskFirstLast(value, 4, 4)
 }
 
 func sanitizeValue(value any) any {
