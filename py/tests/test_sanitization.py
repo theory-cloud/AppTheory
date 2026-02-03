@@ -9,6 +9,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "py" / "src"))
 
 from apptheory.sanitization import (  # noqa: E402
+    mask_first_last,
+    mask_first_last4,
     payment_xml_patterns,
     sanitize_field_value,
     sanitize_json,
@@ -85,3 +87,12 @@ class TestSanitization(unittest.TestCase):
 
         empty_token = "<TransArmorToken></TransArmorToken>"
         self.assertEqual(sanitize_xml(empty_token, payment_xml_patterns), empty_token)
+
+    def test_mask_first_last_helpers(self) -> None:
+        self.assertEqual(mask_first_last4(""), "(empty)")
+        self.assertEqual(mask_first_last4("12345678"), "***masked***")
+        self.assertEqual(mask_first_last4("1234567890abcdef"), "1234***cdef")
+
+        self.assertEqual(mask_first_last("abcdef", 3, 3), "***masked***")
+        self.assertEqual(mask_first_last("abcdef", -1, 2), "***masked***")
+        self.assertEqual(mask_first_last("abcdef", 2, 2), "ab***ef")
