@@ -3,6 +3,7 @@ package apptheory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -56,7 +57,8 @@ func TestJSONHandler_SuccessWithStdContext(t *testing.T) {
 		Seen string `json:"seen"`
 	}
 
-	key := struct{}{}
+	type ctxKey struct{}
+	key := ctxKey{}
 	baseCtx := context.WithValue(context.Background(), key, "ok")
 	ctx := &Context{
 		ctx: baseCtx,
@@ -66,7 +68,10 @@ func TestJSONHandler_SuccessWithStdContext(t *testing.T) {
 	}
 
 	handler := JSONHandlerContext(func(ctx context.Context, req requestModel) (responseModel, error) {
-		value, _ := ctx.Value(key).(string)
+		value, ok := ctx.Value(key).(string)
+		if !ok {
+			return responseModel{}, errors.New("missing context value")
+		}
 		return responseModel{Seen: value + ":" + req.Name}, nil
 	})
 
