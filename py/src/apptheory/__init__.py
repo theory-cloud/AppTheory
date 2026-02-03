@@ -35,6 +35,8 @@ from apptheory.naming import base_name, normalize_stage, resource_name
 from apptheory.request import Request
 from apptheory.response import Response, binary, html, html_stream, json, safe_json_for_html, text
 from apptheory.sanitization import (
+    mask_first_last,
+    mask_first_last4,
     payment_xml_patterns,
     rapid_connect_xml_patterns,
     sanitize_field_value,
@@ -110,6 +112,8 @@ __all__ = [
     "html",
     "html_stream",
     "json",
+    "mask_first_last",
+    "mask_first_last4",
     "matches_if_none_match",
     "normalize_stage",
     "origin_url",

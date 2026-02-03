@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.7.0](https://github.com/theory-cloud/AppTheory/compare/v0.6.0...v0.7.0) (2026-02-02)
+
+
+### Features
+
+* add global logger singleton ([d7a8996](https://github.com/theory-cloud/AppTheory/commit/d7a89965dd3316ebfc65a0b3e0b29a599b37537d))
+* add portable AppTheoryError type ([340a049](https://github.com/theory-cloud/AppTheory/commit/340a049b292054b53a44f5e59ca9863b77453499))
+* lift error and logger parity ([5f1185d](https://github.com/theory-cloud/AppTheory/commit/5f1185da3afc0cb70f45a2cb19eb6f00db8def84))
+* serialize AppTheoryError fields in responses ([3031659](https://github.com/theory-cloud/AppTheory/commit/30316598a5b910dcecb941ad66bb67ad835b3068))
+
+## [0.7.0-rc](https://github.com/theory-cloud/AppTheory/compare/v0.6.0...v0.7.0-rc) (2026-02-02)
+
+
+### Features
+
+* add global logger singleton ([d7a8996](https://github.com/theory-cloud/AppTheory/commit/d7a89965dd3316ebfc65a0b3e0b29a599b37537d))
+* add portable AppTheoryError type ([340a049](https://github.com/theory-cloud/AppTheory/commit/340a049b292054b53a44f5e59ca9863b77453499))
+* lift error and logger parity ([5f1185d](https://github.com/theory-cloud/AppTheory/commit/5f1185da3afc0cb70f45a2cb19eb6f00db8def84))
+* serialize AppTheoryError fields in responses ([3031659](https://github.com/theory-cloud/AppTheory/commit/30316598a5b910dcecb941ad66bb67ad835b3068))
+
 ## [0.6.0](https://github.com/theory-cloud/AppTheory/compare/v0.5.0...v0.6.0) (2026-02-02)
 
 

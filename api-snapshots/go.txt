@@ -647,6 +647,10 @@ func MaskCardNumber(string) string
 
 func MaskCompletelyFunc(string) func(string) string
 
+func MaskFirstLast(string, int, int) string
+
+func MaskFirstLast4(string) string
+
 func MaskTokenLastFour(string) string
 
 func SanitizeFieldValue(string, any) any
@@ -1099,6 +1103,10 @@ func HTMLStream(int, BodyStream) *Response
 func IsLambda() bool
 
 func JSON(int, any) (*Response, error)
+
+func JSONHandler[Req, Resp any](func(*Context, Req) (Resp, error)) Handler
+
+func JSONHandlerContext[Req, Resp any](func(context.Context, Req) (Resp, error)) Handler
 
 func MatchesIfNoneMatch(map[string][]string, string) bool
 
