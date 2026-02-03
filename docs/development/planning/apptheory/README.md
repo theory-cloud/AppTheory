@@ -36,6 +36,7 @@ Primary goals:
 - `docs/development/planning/apptheory/subroadmaps/SR-MIDDLEWARE.md` (middleware pipeline + `ctx.Set/Get` parity)
 - `docs/development/planning/apptheory/subroadmaps/SR-SERVICES.md` (Lift `pkg/services` parity; start: EventBus)
 - `docs/development/planning/apptheory/subroadmaps/SR-SANITIZATION.md` (safe logging + redaction utilities)
+- `docs/development/planning/apptheory/subroadmaps/SR-LIFT-COMPAT-125.md` (Lift compat: MaskFirstLast + SNS env var)
 - `docs/development/planning/apptheory/subroadmaps/SR-NAMING.md` (deterministic naming helpers)
 - `docs/development/planning/apptheory/subroadmaps/SR-MIGRATION.md` (Lift → AppTheory migration plan)
 - `docs/development/planning/apptheory/subroadmaps/SR-EVENTSOURCES.md` (SQS/EventBridge/DynamoDB Streams parity)
