@@ -234,14 +234,18 @@ These are not “future improvements”; these are Lift features in active use.
 
 **Current AppTheory state**
 - Sanitization helpers exist in Go/TS/Py:
-  - Go: `pkg/sanitization` (`SanitizeLogString`, `SanitizeJSON`, `SanitizeXML`, `PaymentXMLPatterns`)
-  - TS: `ts/dist/index.js` (`sanitizeLogString`, `sanitizeJSON`, `sanitizeXML`, `paymentXMLPatterns`)
-  - Py: `py/src/apptheory/sanitization.py` (`sanitize_log_string`, `sanitize_json`, `sanitize_xml`, `payment_xml_patterns`)
+  - Go: `pkg/sanitization` (`SanitizeLogString`, `SanitizeJSON`, `SanitizeXML`, `PaymentXMLPatterns`,
+    `MaskFirstLast`, `MaskFirstLast4`)
+  - TS: `ts/dist/index.js` (`sanitizeLogString`, `sanitizeJSON`, `sanitizeXML`, `paymentXMLPatterns`,
+    `maskFirstLast`, `maskFirstLast4`)
+  - Py: `py/src/apptheory/sanitization.py` (`sanitize_log_string`, `sanitize_json`, `sanitize_xml`,
+    `payment_xml_patterns`, `mask_first_last`, `mask_first_last4`)
 
 **Remediation**
 - Add an AppTheory sanitization package:
   - minimum: log-forging prevention + JSON redaction/masking helpers
   - align with the “portable core” where possible
+  - include Lift-style masking helpers used in K3 migrations
 
 **Acceptance criteria**
 - K3 can safely log raw AWS events / request payloads without leaking secrets or enabling log forging.
