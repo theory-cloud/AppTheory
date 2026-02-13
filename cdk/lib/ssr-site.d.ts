@@ -12,8 +12,10 @@ export interface AppTheorySsrSiteProps {
     readonly assetsPath?: string;
     readonly assetsKeyPrefix?: string;
     readonly assetsManifestKey?: string;
+    readonly staticPathPatterns?: string[];
     readonly cacheTableName?: string;
     readonly wireRuntimeEnv?: boolean;
+    readonly ssrForwardHeaders?: string[];
     readonly enableLogging?: boolean;
     readonly logsBucket?: s3.IBucket;
     readonly removalPolicy?: RemovalPolicy;

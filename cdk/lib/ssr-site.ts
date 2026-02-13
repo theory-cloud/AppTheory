@@ -19,12 +19,20 @@ export interface AppTheorySsrSiteProps {
   readonly assetsKeyPrefix?: string;
   readonly assetsManifestKey?: string;
 
+  // Additional CloudFront path patterns to route to the static S3 origin.
+  // Example (FaceTheory SSG hydration): "/_facetheory/data/*"
+  readonly staticPathPatterns?: string[];
+
   // Optional DynamoDB table name for ISR/cache metadata owned by app code (TableTheory).
   // When set, AppTheory will wire environment variables on the SSR function.
   readonly cacheTableName?: string;
 
   // When true (default), AppTheory wires recommended runtime environment variables onto the SSR function.
   readonly wireRuntimeEnv?: boolean;
+
+  // Additional headers to forward to the SSR origin (Lambda Function URL) via the origin request policy.
+  // Example (FaceTheory multi-tenant): "x-facetheory-tenant"
+  readonly ssrForwardHeaders?: string[];
 
   readonly enableLogging?: boolean;
   readonly logsBucket?: s3.IBucket;
@@ -115,21 +123,31 @@ export class AppTheorySsrSite extends Construct {
 
     const assetsOrigin = origins.S3BucketOrigin.withOriginAccessControl(this.assetsBucket);
 
+    const baseSsrForwardHeaders = [
+      "accept",
+      "accept-language",
+      "cache-control",
+      "host",
+      "if-none-match",
+      "user-agent",
+      "x-forwarded-for",
+      "x-forwarded-proto",
+      "cloudfront-forwarded-proto",
+      "cloudfront-viewer-address",
+    ];
+
+    const extraSsrForwardHeaders = Array.isArray(props.ssrForwardHeaders)
+      ? props.ssrForwardHeaders
+          .map((header) => String(header).trim().toLowerCase())
+          .filter((header) => header.length > 0)
+      : [];
+
+    const ssrForwardHeaders = Array.from(new Set([...baseSsrForwardHeaders, ...extraSsrForwardHeaders]));
+
     const ssrOriginRequestPolicy = new cloudfront.OriginRequestPolicy(this, "SsrOriginRequestPolicy", {
       queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.all(),
       cookieBehavior: cloudfront.OriginRequestCookieBehavior.all(),
-      headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(
-        "accept",
-        "accept-language",
-        "cache-control",
-        "host",
-        "if-none-match",
-        "user-agent",
-        "x-forwarded-for",
-        "x-forwarded-proto",
-        "cloudfront-forwarded-proto",
-        "cloudfront-viewer-address",
-      ),
+      headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(...ssrForwardHeaders),
     });
 
     const domainName = String(props.domainName ?? "").trim();
@@ -155,6 +173,32 @@ export class AppTheorySsrSite extends Construct {
 
     this.certificate = distributionCertificate;
 
+    const createStaticBehavior = (): cloudfront.BehaviorOptions => ({
+      origin: assetsOrigin,
+      viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+      cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+      compress: true,
+    });
+
+    const staticPathPatterns = Array.from(
+      new Set(
+        Array.isArray(props.staticPathPatterns)
+          ? props.staticPathPatterns
+              .map((pattern) => String(pattern).trim().replace(/^\/+/, ""))
+              .filter((pattern) => pattern.length > 0)
+          : [],
+      ),
+    );
+
+    const additionalBehaviors: Record<string, cloudfront.BehaviorOptions> = {
+      [`${assetsKeyPrefix}/*`]: createStaticBehavior(),
+    };
+
+    for (const pattern of staticPathPatterns) {
+      additionalBehaviors[pattern] = createStaticBehavior();
+    }
+
     this.distribution = new cloudfront.Distribution(this, "Distribution", {
       ...(enableLogging && this.logsBucket
         ? { enableLogging: true, logBucket: this.logsBucket, logFilePrefix: "cloudfront/" }
@@ -169,15 +213,7 @@ export class AppTheorySsrSite extends Construct {
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
         originRequestPolicy: ssrOriginRequestPolicy,
       },
-      additionalBehaviors: {
-        [`${assetsKeyPrefix}/*`]: {
-          origin: assetsOrigin,
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
-          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
-          compress: true,
-        },
-      },
+      additionalBehaviors,
       ...(props.webAclId ? { webAclId: props.webAclId } : {}),
     });
 
@@ -198,6 +234,7 @@ export class AppTheorySsrSite extends Construct {
       const cacheTableName = String(props.cacheTableName ?? "").trim();
       if (cacheTableName) {
         ssrFunctionAny.addEnvironment("APPTHEORY_CACHE_TABLE_NAME", cacheTableName);
+        ssrFunctionAny.addEnvironment("FACETHEORY_CACHE_TABLE_NAME", cacheTableName);
         ssrFunctionAny.addEnvironment("CACHE_TABLE_NAME", cacheTableName);
         ssrFunctionAny.addEnvironment("CACHE_TABLE", cacheTableName);
       }
