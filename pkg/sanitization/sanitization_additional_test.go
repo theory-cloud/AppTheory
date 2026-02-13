@@ -63,7 +63,7 @@ func TestSanitizeFieldValue_RedactsMasksAndRecurses(t *testing.T) {
 func TestSanitizeJSON_EmptyMalformedAndBodyJSONString(t *testing.T) {
 	t.Parallel()
 
-	if got := SanitizeJSON(nil); got != "(empty)" {
+	if got := SanitizeJSON(nil); got != emptyMaskedValue {
 		t.Fatalf("expected empty marker, got %q", got)
 	}
 
