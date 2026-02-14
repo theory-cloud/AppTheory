@@ -43,7 +43,7 @@ export PATH="${GOV_TOOLS_BIN}:${GOV_TOOLS_PY_BIN}:${GOV_TOOLS_PY_RUNTIME_BIN}:${
 
 # Tool pins (optional; populated by gov.init when possible).
 # If these remain unset, checks that depend on them should be marked BLOCKED (never "use whatever is installed").
-PIN_GOLANGCI_LINT_VERSION="v2.8.0"
+PIN_GOLANGCI_LINT_VERSION="v2.9.0"
 PIN_GOVULNCHECK_VERSION="v1.1.4"
 PIN_OSV_SCANNER_VERSION="v1.9.2"
 PIN_PIP_AUDIT_VERSION="2.10.0"
@@ -159,7 +159,7 @@ ensure_go_tool_pinned() {
   #   2 - BLOCKED (missing go toolchain / install failed)
   local tool_name="$1"       # e.g. golangci-lint
   local module_path="$2"     # e.g. github.com/.../cmd/golangci-lint
-  local version="$3"         # e.g. v2.8.0
+  local version="$3"         # e.g. v2.9.0
 
   if is_unset_token "${version}"; then
     echo "BLOCKED: ${tool_name} version pin missing (set ${tool_name} pin)" >&2
@@ -584,7 +584,7 @@ check_toolchain_pins() {
     return 1
   fi
 
-  # golangci-lint pin (string check; the repo installs via `go install ...@v2.8.0`)
+  # golangci-lint pin (string check; the repo installs via `go install ...@v2.9.0`)
   if ! grep -Eq "golangci-lint.*/v2/cmd/golangci-lint@${PIN_GOLANGCI_LINT_VERSION}" "${wf}"; then
     echo "FAIL: ci.yml does not pin golangci-lint to ${PIN_GOLANGCI_LINT_VERSION}" >&2
     grep -n "golangci-lint" "${wf}" || true
