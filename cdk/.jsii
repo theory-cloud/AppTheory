@@ -15199,7 +15199,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/ssr-site.ts",
-          "line": 51
+          "line": 59
         },
         "parameters": [
           {
@@ -15225,7 +15225,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 42
+        "line": 50
       },
       "name": "AppTheorySsrSite",
       "properties": [
@@ -15233,7 +15233,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 43
+            "line": 51
           },
           "name": "assetsBucket",
           "type": {
@@ -15244,7 +15244,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 44
+            "line": 52
           },
           "name": "assetsKeyPrefix",
           "type": {
@@ -15255,7 +15255,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 45
+            "line": 53
           },
           "name": "assetsManifestKey",
           "type": {
@@ -15266,7 +15266,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 48
+            "line": 56
           },
           "name": "distribution",
           "type": {
@@ -15277,7 +15277,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 47
+            "line": 55
           },
           "name": "ssrUrl",
           "type": {
@@ -15288,7 +15288,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 49
+            "line": 57
           },
           "name": "certificate",
           "optional": true,
@@ -15300,7 +15300,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 46
+            "line": 54
           },
           "name": "logsBucket",
           "optional": true,
@@ -15391,7 +15391,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 33
+            "line": 41
           },
           "name": "autoDeleteObjects",
           "optional": true,
@@ -15404,7 +15404,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 24
+            "line": 28
           },
           "name": "cacheTableName",
           "optional": true,
@@ -15417,7 +15417,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 37
+            "line": 45
           },
           "name": "certificateArn",
           "optional": true,
@@ -15430,7 +15430,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 35
+            "line": 43
           },
           "name": "domainName",
           "optional": true,
@@ -15443,7 +15443,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 29
+            "line": 37
           },
           "name": "enableLogging",
           "optional": true,
@@ -15456,7 +15456,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 36
+            "line": 44
           },
           "name": "hostedZone",
           "optional": true,
@@ -15482,7 +15482,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 30
+            "line": 38
           },
           "name": "logsBucket",
           "optional": true,
@@ -15495,7 +15495,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 32
+            "line": 40
           },
           "name": "removalPolicy",
           "optional": true,
@@ -15508,7 +15508,43 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 39
+            "line": 35
+          },
+          "name": "ssrForwardHeaders",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 24
+          },
+          "name": "staticPathPatterns",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 47
           },
           "name": "webAclId",
           "optional": true,
@@ -15521,7 +15557,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 27
+            "line": 31
           },
           "name": "wireRuntimeEnv",
           "optional": true,
@@ -16102,8 +16138,424 @@
         }
       ],
       "symbolId": "lib/websocket-api:AppTheoryWebSocketApiProps"
+    },
+    "@theory-cloud/apptheory-cdk.MediaCdnDomainConfig": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Domain configuration for the Media CDN distribution."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.MediaCdnDomainConfig",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/media-cdn.ts",
+        "line": 13
+      },
+      "name": "MediaCdnDomainConfig",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The domain name for the distribution (e.g., \"media.example.com\")."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 17
+          },
+          "name": "domainName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Must be in us-east-1 for CloudFront.",
+            "summary": "ACM certificate for HTTPS."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 22
+          },
+          "name": "certificate",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_certificatemanager.ICertificate"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "ARN of an existing ACM certificate."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 27
+          },
+          "name": "certificateArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Whether to create an AAAA alias record in addition to the A alias record."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 39
+          },
+          "name": "createAAAARecord",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "When provided, an A record alias will be created for the domain.",
+            "summary": "Route53 hosted zone for DNS record creation."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 33
+          },
+          "name": "hostedZone",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.IHostedZone"
+          }
+        }
+      ],
+      "symbolId": "lib/media-cdn:MediaCdnDomainConfig"
+    },
+    "@theory-cloud/apptheory-cdk.PathRoutedFrontendDomainConfig": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Domain configuration for the CloudFront distribution."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.PathRoutedFrontendDomainConfig",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/path-routed-frontend.ts",
+        "line": 101
+      },
+      "name": "PathRoutedFrontendDomainConfig",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The domain name for the distribution (e.g., \"app.example.com\")."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 105
+          },
+          "name": "domainName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Must be in us-east-1 for CloudFront.",
+            "summary": "ACM certificate for HTTPS."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 110
+          },
+          "name": "certificate",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_certificatemanager.ICertificate"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "ARN of an existing ACM certificate."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 115
+          },
+          "name": "certificateArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Whether to create an AAAA alias record in addition to the A alias record."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 127
+          },
+          "name": "createAAAARecord",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "When provided, an A record alias will be created for the domain.",
+            "summary": "Route53 hosted zone for DNS record creation."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 121
+          },
+          "name": "hostedZone",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.IHostedZone"
+          }
+        }
+      ],
+      "symbolId": "lib/path-routed-frontend:PathRoutedFrontendDomainConfig"
+    },
+    "@theory-cloud/apptheory-cdk.PrivateMediaConfig": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Configuration for private media access using CloudFront signed URLs/cookies."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.PrivateMediaConfig",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/media-cdn.ts",
+        "line": 45
+      },
+      "name": "PrivateMediaConfig",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "When provided, the distribution will require signed URLs or signed cookies.",
+            "summary": "An existing CloudFront key group to use for trusted key groups."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 50
+          },
+          "name": "keyGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IKeyGroup"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Comment/description for the key group."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 73
+          },
+          "name": "keyGroupComment",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"MediaCdnKeyGroup\"",
+            "summary": "Name for the key group when created."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 68
+          },
+          "name": "keyGroupName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"MediaCdnPublicKey\"",
+            "summary": "Name for the public key when created from PEM."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 62
+          },
+          "name": "publicKeyName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Only used if keyGroup is not provided.",
+            "summary": "Public key PEM content for creating a new key group."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/media-cdn.ts",
+            "line": 56
+          },
+          "name": "publicKeyPem",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/media-cdn:PrivateMediaConfig"
+    },
+    "@theory-cloud/apptheory-cdk.SpaOriginConfig": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Configuration for an SPA origin routed by path prefix."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.SpaOriginConfig",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/path-routed-frontend.ts",
+        "line": 25
+      },
+      "name": "SpaOriginConfig",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "S3 bucket containing the SPA assets."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 29
+          },
+          "name": "bucket",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.IBucket"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Path pattern to route to this SPA (e.g., \"/l/*\", \"/auth/*\"). Must include the trailing wildcard."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 35
+          },
+          "name": "pathPattern",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Defaults to CACHING_OPTIMIZED.",
+            "summary": "Optional cache policy override."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 40
+          },
+          "name": "cachePolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.ICachePolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Overrides `spaResponseHeadersPolicy` and `responseHeadersPolicy` (legacy).",
+            "summary": "Response headers policy for this SPA behavior."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 46
+          },
+          "name": "responseHeadersPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "AppTheorySpaRewriteMode.SPA",
+            "remarks": "- `SPA`: rewrite extensionless routes to the SPA's `index.html`\n- `NONE`: do not rewrite routes (useful for multi-page sites)",
+            "summary": "SPA rewrite mode."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 69
+          },
+          "name": "rewriteMode",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheorySpaRewriteMode"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "Example:\n- Request: `/auth/assets/app.js`\n- With `stripPrefixBeforeOrigin=true`, S3 receives: `/assets/app.js`\n\nThis allows laying out the SPA bucket at root while still serving it under a prefix.",
+            "summary": "Whether to strip the SPA prefix before forwarding to the S3 origin."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/path-routed-frontend.ts",
+            "line": 59
+          },
+          "name": "stripPrefixBeforeOrigin",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        }
+      ],
+      "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "0.7.0",
-  "fingerprint": "v9xC/BCGpaxhmOGSf6tXYVxVuFrlwStefQZ3wylNKGc="
+  "version": "0.8.0",
+  "fingerprint": "PpFxOf5VkHZuuBW79g4Y0HS/eccyYNvmKvFSzuQJysI="
 }

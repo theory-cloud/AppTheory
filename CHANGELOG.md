@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.8.0](https://github.com/theory-cloud/AppTheory/compare/v0.7.0...v0.8.0) (2026-02-03)
+
+
+### Features
+
+* lift compat helpers + typed JSON handler ([1244cb5](https://github.com/theory-cloud/AppTheory/commit/1244cb5b9c23aa61786274db3d6c71a2830a2aee))
+* **runtime:** add typed JSON handler helper ([14d9cf6](https://github.com/theory-cloud/AppTheory/commit/14d9cf691da443f9cc6af30dce8c805dec82ac4c))
+* **sanitization:** add mask helpers in ts/py ([1548c7b](https://github.com/theory-cloud/AppTheory/commit/1548c7b1e523a1213087e14e45c1029ff2a2c68f))
+* **sanitization:** add MaskFirstLast helpers ([912a607](https://github.com/theory-cloud/AppTheory/commit/912a60746bc9f919f0f6eb07a377f8300fe42785))
+* **zap:** accept legacy sns topic env var ([2eca449](https://github.com/theory-cloud/AppTheory/commit/2eca449f89e5e1dc9c5e9776333586d786df2b08))
+
+
+### Bug Fixes
+
+* **py:** sort __all__ export list ([f1e33d6](https://github.com/theory-cloud/AppTheory/commit/f1e33d6f5e918f49b2591fcd417688dd5aea8fba))
+* **runtime:** address json handler lint ([b818763](https://github.com/theory-cloud/AppTheory/commit/b818763ef9994963d007d77e998afd303954516f))
+
+## [0.7.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v0.7.0-rc...v0.7.0-rc.1) (2026-02-03)
+
+
+### Features
+
+* lift compat helpers + typed JSON handler ([1244cb5](https://github.com/theory-cloud/AppTheory/commit/1244cb5b9c23aa61786274db3d6c71a2830a2aee))
+* **runtime:** add typed JSON handler helper ([14d9cf6](https://github.com/theory-cloud/AppTheory/commit/14d9cf691da443f9cc6af30dce8c805dec82ac4c))
+* **sanitization:** add mask helpers in ts/py ([1548c7b](https://github.com/theory-cloud/AppTheory/commit/1548c7b1e523a1213087e14e45c1029ff2a2c68f))
+* **sanitization:** add MaskFirstLast helpers ([912a607](https://github.com/theory-cloud/AppTheory/commit/912a60746bc9f919f0f6eb07a377f8300fe42785))
+* **zap:** accept legacy sns topic env var ([2eca449](https://github.com/theory-cloud/AppTheory/commit/2eca449f89e5e1dc9c5e9776333586d786df2b08))
+
+
+### Bug Fixes
+
+* **py:** sort __all__ export list ([f1e33d6](https://github.com/theory-cloud/AppTheory/commit/f1e33d6f5e918f49b2591fcd417688dd5aea8fba))
+* **runtime:** address json handler lint ([b818763](https://github.com/theory-cloud/AppTheory/commit/b818763ef9994963d007d77e998afd303954516f))
+
 ## [0.7.0](https://github.com/theory-cloud/AppTheory/compare/v0.6.0...v0.7.0) (2026-02-02)
 
 
