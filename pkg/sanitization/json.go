@@ -10,7 +10,7 @@ import (
 // It returns a formatted JSON string with known sensitive fields masked/redacted while preserving structure.
 func SanitizeJSON(jsonBytes []byte) string {
 	if len(jsonBytes) == 0 {
-		return "(empty)"
+		return emptyMaskedValue
 	}
 
 	var data any

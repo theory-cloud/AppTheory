@@ -680,6 +680,31 @@ test("AppTheorySsrSite synthesizes expected template", () => {
   }
 });
 
+test("AppTheorySsrSite (FaceTheory) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    cacheTableName: "facetheory-cache-table",
+    ssrForwardHeaders: [" X-FaceTheory-Tenant ", "x-facetheory-tenant"],
+    staticPathPatterns: ["/_facetheory/data/* ", "_facetheory/data/*"],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("ssr-site-facetheory", template);
+  } else {
+    expectSnapshot("ssr-site-facetheory", template);
+  }
+});
+
 // ============================================================================
 // AppTheoryRestApiRouter tests
 // ============================================================================
@@ -1325,4 +1350,3 @@ test("AppTheoryLambdaRole (with additional statements) synthesizes expected temp
     expectSnapshot("lambda-role-additional-statements", template);
   }
 });
-
