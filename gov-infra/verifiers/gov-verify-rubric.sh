@@ -43,7 +43,7 @@ export PATH="${GOV_TOOLS_BIN}:${GOV_TOOLS_PY_BIN}:${GOV_TOOLS_PY_RUNTIME_BIN}:${
 
 # Tool pins (optional; populated by gov.init when possible).
 # If these remain unset, checks that depend on them should be marked BLOCKED (never "use whatever is installed").
-PIN_GOLANGCI_LINT_VERSION="v2.8.0"
+PIN_GOLANGCI_LINT_VERSION="v2.9.1"
 PIN_GOVULNCHECK_VERSION="v1.1.4"
 PIN_OSV_SCANNER_VERSION="v1.9.2"
 PIN_PIP_AUDIT_VERSION="2.10.0"

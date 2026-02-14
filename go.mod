@@ -1,11 +1,11 @@
 module github.com/theory-cloud/apptheory
 
-go 1.25.0
+go 1.26.0
 
-toolchain go1.25.6
+toolchain go1.26.0
 
 require (
-	github.com/aws/aws-cdk-go/awscdk/v2 v2.236.0
+	github.com/aws/aws-cdk-go/awscdk/v2 v2.238.0
 	github.com/aws/aws-lambda-go v1.52.0
 	github.com/aws/aws-sdk-go-v2 v1.41.1
 	github.com/aws/aws-sdk-go-v2/config v1.32.7
@@ -13,10 +13,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/apigatewaymanagementapi v1.29.10
 	github.com/aws/aws-sdk-go-v2/service/sns v1.39.11
 	github.com/aws/constructs-go/constructs/v10 v10.4.5
-	github.com/aws/jsii-runtime-go v1.125.0
+	github.com/aws/jsii-runtime-go v1.126.0
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/stretchr/testify v1.11.1
-	github.com/theory-cloud/tabletheory v1.3.0
+	github.com/theory-cloud/tabletheory v1.4.0
 	go.uber.org/zap v1.27.1
 )
 
