@@ -59,7 +59,7 @@ jobs:
         with:
           go-version: "1.26.0"
       - name: Install golangci-lint (pinned)
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.1
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version: "24.13.1"
@@ -97,7 +97,7 @@ jobs:
         with:
           go-version: "1.26.0"
       - name: Install golangci-lint (pinned)
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.1
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version: "24.13.1"
