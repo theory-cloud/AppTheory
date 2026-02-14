@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/theory-cloud/AppTheory/compare/v0.9.0...v0.9.1) (2026-02-14)
+
+
+### Bug Fixes
+
+* **ci:** pin golangci-lint v2.9.0 ([b40d132](https://github.com/theory-cloud/AppTheory/commit/b40d1322ffdadb9dfd43513ccc36fc4d914efa81))
+
 ## [0.9.0-rc.2](https://github.com/theory-cloud/AppTheory/compare/v0.9.0-rc.1...v0.9.0-rc.2) (2026-02-14)
 
 
