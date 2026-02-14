@@ -11,7 +11,37 @@ The construct (`AppTheorySsrSite`) also wires recommended runtime environment va
 - `APPTHEORY_ASSETS_BUCKET`
 - `APPTHEORY_ASSETS_PREFIX`
 - `APPTHEORY_ASSETS_MANIFEST_KEY`
-- Optional (when configured): `APPTHEORY_CACHE_TABLE_NAME`, `CACHE_TABLE_NAME`, `CACHE_TABLE`
+- Optional (when configured): `APPTHEORY_CACHE_TABLE_NAME`, `FACETHEORY_CACHE_TABLE_NAME`, `CACHE_TABLE_NAME`, `CACHE_TABLE`
+
+## FaceTheory-first deployment guide
+
+FaceTheory’s recommended topology splits CloudFront behaviors so static paths don’t traverse the SSR Lambda:
+
+- `assets/*` → S3 (assets)
+- `/_facetheory/data/*` → S3 (SSG hydration JSON)
+- default `*` → Lambda Function URL (SSR + ISR)
+
+Example configuration:
+
+```ts
+new AppTheorySsrSite(this, "Site", {
+  ssrFunction: ssrFn,
+
+  // Static routes served directly from S3 (accepts with/without leading "/").
+  staticPathPatterns: ["/_facetheory/data/*"],
+
+  // Forward FaceTheory’s tenant header to SSR when needed (normalized + de-duped).
+  ssrForwardHeaders: ["x-facetheory-tenant"],
+
+  // ISR/cache metadata table (TableTheory). Wires FACETHEORY_CACHE_TABLE_NAME + generic aliases.
+  cacheTableName: "facetheory-isr-metadata",
+});
+```
+
+Notes for ISR permissions (app-defined):
+
+- Your SSR Lambda needs **read/write** access to the S3 bucket/prefix used by your HTML store (e.g. `S3HtmlStore`).
+- Your SSR Lambda needs **read/write** access to the DynamoDB table backing ISR metadata + leases (TableTheory schema).
 
 ## Prerequisites
 
