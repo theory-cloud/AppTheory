@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.0](https://github.com/theory-cloud/AppTheory/compare/v0.8.0...v0.9.0) (2026-02-14)
+
+
+### Features
+
+* **cdk:** FaceTheory SSR site options ([d9435ec](https://github.com/theory-cloud/AppTheory/commit/d9435ec0eb4da63125d927c05cf1511a2d6a15ea))
+* **cdk:** FaceTheory SSR site options ([294be15](https://github.com/theory-cloud/AppTheory/commit/294be15b4ba0a06cebd060d5e6f8946092387ba0))
+
+
+### Bug Fixes
+
+* **pkg:** reuse empty marker constant ([847e7b5](https://github.com/theory-cloud/AppTheory/commit/847e7b5cf3b51048b6edfdfab80c25328f4e0c66))
+
 ## [0.8.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v0.8.0-rc.0...v0.8.0-rc.1) (2026-02-14)
 
 
