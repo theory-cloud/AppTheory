@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-PIN_GOLANGCI_LINT_VERSION="v2.8.0"
+PIN_GOLANGCI_LINT_VERSION="v2.9.0"
 GOV_TOOLS_BIN="$(pwd)/gov-infra/.tools/bin"
 mkdir -p "${GOV_TOOLS_BIN}"
 export PATH="${GOV_TOOLS_BIN}:${PATH}"
