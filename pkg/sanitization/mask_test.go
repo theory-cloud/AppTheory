@@ -5,7 +5,7 @@ import "testing"
 func TestMaskFirstLast4(t *testing.T) {
 	t.Parallel()
 
-	if got := MaskFirstLast4(""); got != "(empty)" {
+	if got := MaskFirstLast4(""); got != emptyMaskedValue {
 		t.Fatalf("expected empty marker, got %q", got)
 	}
 	if got := MaskFirstLast4("12345678"); got != "***masked***" {
