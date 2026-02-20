@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0](https://github.com/theory-cloud/AppTheory/compare/v0.9.1...v0.10.0) (2026-02-20)
+
+
+### Features
+
+* **mcp:** add Bedrock AgentCore Lambda support ([945e48d](https://github.com/theory-cloud/AppTheory/commit/945e48da14ccb09620c4e5277f5f585308c86bd2))
+* **mcp:** add Bedrock AgentCore Lambda support ([93724c1](https://github.com/theory-cloud/AppTheory/commit/93724c18f2f8b074751a1ccda1c795cde9b82da7))
+
 ## [0.10.0-rc](https://github.com/theory-cloud/AppTheory/compare/v0.9.1...v0.10.0-rc) (2026-02-20)
 
 
