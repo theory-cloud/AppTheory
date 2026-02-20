@@ -21,3 +21,4 @@ export * from "./ssr-site";
 export * from "./path-routed-frontend";
 export * from "./media-cdn";
 export * from "./lambda-role";
+export * from "./mcp-server";

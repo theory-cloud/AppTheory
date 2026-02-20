@@ -12025,6 +12025,476 @@
       ],
       "symbolId": "lib/lambda-role:AppTheoryLambdaRoleProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryMcpServer": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "example": "const server = new AppTheoryMcpServer(this, 'McpServer', {\n  handler: mcpFn,\n  enableSessionTable: true,\n  sessionTtlMinutes: 120,\n});",
+        "summary": "An MCP (Model Context Protocol) server construct that provisions an HTTP API Gateway v2 with a Lambda integration on POST /mcp, optional DynamoDB session table, and optional custom domain with Route53."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpServer",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/mcp-server.ts",
+          "line": 172
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpServerProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/mcp-server.ts",
+        "line": 136
+      },
+      "name": "AppTheoryMcpServer",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The underlying HTTP API Gateway v2."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 140
+          },
+          "name": "api",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.HttpApi"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The MCP endpoint URL (POST /mcp)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 150
+          },
+          "name": "endpoint",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The access log group (if access logging is enabled)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 170
+          },
+          "name": "accessLogGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.ILogGroup"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The API mapping for the custom domain (if domain is configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 160
+          },
+          "name": "apiMapping",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.ApiMapping"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The Route53 CNAME record (if domain and hostedZone are configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 165
+          },
+          "name": "cnameRecord",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.CnameRecord"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The custom domain name resource (if domain is configured)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 155
+          },
+          "name": "domainName",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.DomainName"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The DynamoDB session table (if enableSessionTable is true)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 145
+          },
+          "name": "sessionTable",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.ITable"
+          }
+        }
+      ],
+      "symbolId": "lib/mcp-server:AppTheoryMcpServer"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMcpServerDomainOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Custom domain configuration for the MCP server."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpServerDomainOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/mcp-server.ts",
+        "line": 14
+      },
+      "name": "AppTheoryMcpServerDomainOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The custom domain name (e.g., \"mcp.example.com\")."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 18
+          },
+          "name": "domainName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Provide either certificate or certificateArn.",
+            "summary": "ACM certificate for the domain."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 24
+          },
+          "name": "certificate",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_certificatemanager.ICertificate"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Provide either certificate or certificateArn.",
+            "summary": "ACM certificate ARN."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 30
+          },
+          "name": "certificateArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no DNS record created)",
+            "remarks": "If provided, a CNAME record will be created pointing to the API Gateway domain.",
+            "summary": "Route53 hosted zone for automatic DNS record creation."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 37
+          },
+          "name": "hostedZone",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.IHostedZone"
+          }
+        }
+      ],
+      "symbolId": "lib/mcp-server:AppTheoryMcpServerDomainOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMcpServerProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Props for the AppTheoryMcpServer construct."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpServerProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/mcp-server.ts",
+        "line": 79
+      },
+      "name": "AppTheoryMcpServerProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The Lambda function handling MCP requests."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 83
+          },
+          "name": "handler",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Optional API name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 89
+          },
+          "name": "apiName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no custom domain)",
+            "summary": "Custom domain configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 115
+          },
+          "name": "domain",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpServerDomainOptions"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Create a DynamoDB table for session state storage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 95
+          },
+          "name": "enableSessionTable",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (auto-generated)",
+            "remarks": "Only used when enableSessionTable is true.",
+            "summary": "Name for the session DynamoDB table."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 102
+          },
+          "name": "sessionTableName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "60",
+            "remarks": "Only used when enableSessionTable is true.",
+            "summary": "TTL in minutes for session records."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 109
+          },
+          "name": "sessionTtlMinutes",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (defaults applied)",
+            "summary": "Stage configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 121
+          },
+          "name": "stage",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpServerStageOptions"
+          }
+        }
+      ],
+      "symbolId": "lib/mcp-server:AppTheoryMcpServerProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMcpServerStageOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Stage configuration for the MCP server API Gateway."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpServerStageOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/mcp-server.ts",
+        "line": 43
+      },
+      "name": "AppTheoryMcpServerStageOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Enable CloudWatch access logging for the stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 54
+          },
+          "name": "accessLogging",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "logs.RetentionDays.ONE_MONTH",
+            "remarks": "Only applies when accessLogging is true.",
+            "summary": "Retention period for auto-created access log group."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 61
+          },
+          "name": "accessLogRetention",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.RetentionDays"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"$default\"",
+            "summary": "Stage name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 48
+          },
+          "name": "stageName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no throttling)",
+            "summary": "Throttling burst limit for the stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 73
+          },
+          "name": "throttlingBurstLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no throttling)",
+            "summary": "Throttling rate limit (requests per second) for the stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-server.ts",
+            "line": 67
+          },
+          "name": "throttlingRateLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/mcp-server:AppTheoryMcpServerStageOptions"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryMediaCdn": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -16557,5 +17027,5 @@
     }
   },
   "version": "0.9.1",
-  "fingerprint": "PpFxOf5VkHZuuBW79g4Y0HS/eccyYNvmKvFSzuQJysI="
+  "fingerprint": "GjIEIqX5gkmRW5yyMpupRN1XMvcuk0uRrPLK4nvvoQs="
 }

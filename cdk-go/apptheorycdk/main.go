@@ -304,6 +304,38 @@ func init() {
 		reflect.TypeOf((*AppTheoryLambdaRoleProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpServer",
+		reflect.TypeOf((*AppTheoryMcpServer)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "accessLogGroup", GoGetter: "AccessLogGroup"},
+			_jsii_.MemberProperty{JsiiProperty: "api", GoGetter: "Api"},
+			_jsii_.MemberProperty{JsiiProperty: "apiMapping", GoGetter: "ApiMapping"},
+			_jsii_.MemberProperty{JsiiProperty: "cnameRecord", GoGetter: "CnameRecord"},
+			_jsii_.MemberProperty{JsiiProperty: "domainName", GoGetter: "DomainName"},
+			_jsii_.MemberProperty{JsiiProperty: "endpoint", GoGetter: "Endpoint"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "sessionTable", GoGetter: "SessionTable"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryMcpServer{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpServerDomainOptions",
+		reflect.TypeOf((*AppTheoryMcpServerDomainOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpServerProps",
+		reflect.TypeOf((*AppTheoryMcpServerProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpServerStageOptions",
+		reflect.TypeOf((*AppTheoryMcpServerStageOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryMediaCdn",
 		reflect.TypeOf((*AppTheoryMediaCdn)(nil)).Elem(),
 		[]_jsii_.Member{
