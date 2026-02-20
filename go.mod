@@ -44,4 +44,5 @@ require (
 	github.com/stretchr/objx v0.5.3 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	pgregory.net/rapid v1.2.0 // indirect
 )

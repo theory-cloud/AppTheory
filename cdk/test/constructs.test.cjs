@@ -1350,3 +1350,188 @@ test("AppTheoryLambdaRole (with additional statements) synthesizes expected temp
     expectSnapshot("lambda-role-additional-statements", template);
   }
 });
+
+// ============================================================================
+// AppTheoryMcpServer tests
+// ============================================================================
+
+test("AppTheoryMcpServer (basic) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: fn,
+    apiName: "apptheory-mcp-test",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify: HTTP API exists
+  template.hasResourceProperties
+    ? assertions.Template.fromStack(stack).hasResourceProperties("AWS::ApiGatewayV2::Api", {
+        Name: "apptheory-mcp-test",
+        ProtocolType: "HTTP",
+      })
+    : null;
+
+  // Verify: POST /mcp route exists
+  const routes = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::ApiGatewayV2::Route",
+  );
+  const mcpRoute = routes.find(([key, resource]) => resource.Properties?.RouteKey === "POST /mcp");
+  assert.ok(mcpRoute, "Should have POST /mcp route");
+
+  // Verify: No DynamoDB table (session table not enabled)
+  const tables = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::DynamoDB::Table",
+  );
+  assert.equal(tables.length, 0, "Should not have DynamoDB table when session table is not enabled");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("mcp-server-basic", template);
+  } else {
+    expectSnapshot("mcp-server-basic", template);
+  }
+});
+
+test("AppTheoryMcpServer (with session table) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: fn,
+    apiName: "apptheory-mcp-session-test",
+    enableSessionTable: true,
+    sessionTableName: "mcp-sessions",
+    sessionTtlMinutes: 120,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify: DynamoDB table exists with correct key schema and TTL
+  assertions.Template.fromStack(stack).hasResourceProperties("AWS::DynamoDB::Table", {
+    TableName: "mcp-sessions",
+    KeySchema: [{ AttributeName: "sessionId", KeyType: "HASH" }],
+    TimeToLiveSpecification: { AttributeName: "expiresAt", Enabled: true },
+  });
+
+  // Verify: Lambda has read/write permissions to the session table
+  const policies = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::IAM::Policy",
+  );
+  assert.ok(policies.length >= 1, "Should have IAM policy for DynamoDB access");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("mcp-server-session-table", template);
+  } else {
+    expectSnapshot("mcp-server-session-table", template);
+  }
+});
+
+test("AppTheoryMcpServer (with custom domain) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+  const cert = new apptheory.AppTheoryCertificate(stack, "Cert", {
+    domainName: "mcp.example.com",
+    hostedZone: zone,
+  });
+
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: fn,
+    apiName: "apptheory-mcp-domain-test",
+    domain: {
+      domainName: "mcp.example.com",
+      certificate: cert.certificate,
+      hostedZone: zone,
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify: Custom domain name exists
+  const domainNames = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::ApiGatewayV2::DomainName",
+  );
+  assert.ok(domainNames.length >= 1, "Should have API Gateway v2 DomainName");
+
+  // Verify: API mapping exists
+  const apiMappings = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::ApiGatewayV2::ApiMapping",
+  );
+  assert.ok(apiMappings.length >= 1, "Should have API Gateway v2 ApiMapping");
+
+  // Verify: Route53 CNAME record exists
+  const records = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::Route53::RecordSet",
+  );
+  assert.ok(records.length >= 1, "Should have Route53 record");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("mcp-server-domain", template);
+  } else {
+    expectSnapshot("mcp-server-domain", template);
+  }
+});
+
+test("AppTheoryMcpServer (with stage options) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryMcpServer(stack, "McpServer", {
+    handler: fn,
+    apiName: "apptheory-mcp-stage-test",
+    stage: {
+      stageName: "dev",
+      accessLogging: true,
+      accessLogRetention: logs.RetentionDays.ONE_WEEK,
+      throttlingRateLimit: 100,
+      throttlingBurstLimit: 200,
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify: Stage exists with throttling
+  const stages = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::ApiGatewayV2::Stage",
+  );
+  assert.ok(stages.length >= 1, "Should have API Gateway v2 Stage");
+
+  // Verify: Access log group exists
+  const logGroups = Object.entries(template.Resources).filter(
+    ([key, resource]) => resource.Type === "AWS::Logs::LogGroup",
+  );
+  assert.ok(logGroups.length >= 1, "Should have CloudWatch Log Group for access logging");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("mcp-server-stage", template);
+  } else {
+    expectSnapshot("mcp-server-stage", template);
+  }
+});
