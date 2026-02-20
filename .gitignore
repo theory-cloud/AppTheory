@@ -21,6 +21,7 @@ py/.venv/
 *.swp
 *~
 .theory
+.kiro/
 
 # GovTheory generated artifacts
 gov-infra/.tools/
@@ -31,3 +32,4 @@ gov-infra/evidence/go-coverage-summary.txt
 gov-infra/evidence/ts-coverage-summary.txt
 gov-infra/evidence/py-coverage-summary.txt
 gov-infra/evidence/py-coverage.data
+reference/

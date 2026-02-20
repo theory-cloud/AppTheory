@@ -1292,6 +1292,162 @@ func (RandomIDGenerator) NewID() string
 
 func (RealClock) Now() time.Time
 
+## github.com/theory-cloud/apptheory/runtime/mcp
+
+const CodeInternalError = -32603
+
+const CodeInvalidParams = -32602
+
+const CodeInvalidRequest = -32600
+
+const CodeMethodNotFound = -32601
+
+const CodeParseError = -32700
+
+const CodeServerError = -32000
+
+var ErrSessionNotFound = errors.New("session not found")
+
+type ContentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+type DynamoSessionStore struct {
+	db tablecore.DB
+}
+
+type MemorySessionStore struct {
+	mu    sync.RWMutex
+	store map[string]*Session
+	clock apptheory.Clock
+}
+
+type MemorySessionStoreOption func(*MemorySessionStore)
+
+type RPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
+}
+
+type Request struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      any             `json:"id"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+type Response struct {
+	JSONRPC string    `json:"jsonrpc"`
+	ID      any       `json:"id"`
+	Result  any       `json:"result,omitempty"`
+	Error   *RPCError `json:"error,omitempty"`
+}
+
+type SSEEvent struct {
+	Data any
+}
+
+type Server struct {
+	name         string
+	version      string
+	registry     *ToolRegistry
+	sessionStore SessionStore
+	idGen        apptheory.IDGenerator
+	logger       *slog.Logger
+}
+
+type ServerOption func(*Server)
+
+type Session struct {
+	ID        string            `json:"id"`
+	CreatedAt time.Time         `json:"createdAt"`
+	ExpiresAt time.Time         `json:"expiresAt"`
+	Data      map[string]string `json:"data,omitempty"`
+}
+
+type SessionStore interface {
+	Get(context.Context, string) (*Session, error)
+	Put(context.Context, *Session) error
+	Delete(context.Context, string) error
+}
+
+type StreamingToolHandler func(context.Context, json.RawMessage, func(SSEEvent)) (*ToolResult, error)
+
+type ToolDef struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"inputSchema"`
+}
+
+type ToolHandler func(context.Context, json.RawMessage) (*ToolResult, error)
+
+type ToolRegistry struct {
+	mu    sync.RWMutex
+	tools []registeredTool
+	index map[string]int
+}
+
+type ToolResult struct {
+	Content []ContentBlock `json:"content"`
+	IsError bool           `json:"isError,omitempty"`
+}
+
+func MarshalResponse(*Response) ([]byte, error)
+
+func NewDynamoSessionStore(tablecore.DB) SessionStore
+
+func NewErrorResponse(any, int, string) *Response
+
+func NewMemorySessionStore(...MemorySessionStoreOption) *MemorySessionStore
+
+func NewResultResponse(any, any) *Response
+
+func NewServer(string, string, ...ServerOption) *Server
+
+func NewToolRegistry() *ToolRegistry
+
+func ParseBatchRequest([]byte) ([]*Request, error)
+
+func ParseRequest([]byte) (*Request, error)
+
+func WithClock(apptheory.Clock) MemorySessionStoreOption
+
+func WithLogger(*slog.Logger) ServerOption
+
+func WithServerIDGenerator(apptheory.IDGenerator) ServerOption
+
+func WithSessionStore(SessionStore) ServerOption
+
+func (*DynamoSessionStore) Delete(context.Context, string) error
+
+func (*DynamoSessionStore) Get(context.Context, string) (*Session, error)
+
+func (*DynamoSessionStore) Put(context.Context, *Session) error
+
+func (*MemorySessionStore) Delete(context.Context, string) error
+
+func (*MemorySessionStore) Get(context.Context, string) (*Session, error)
+
+func (*MemorySessionStore) Put(context.Context, *Session) error
+
+func (*Server) Handler() apptheory.Handler
+
+func (*Server) Registry() *ToolRegistry
+
+func (*ToolRegistry) Call(context.Context, string, json.RawMessage) (*ToolResult, error)
+
+func (*ToolRegistry) CallStreaming(context.Context, string, json.RawMessage, func(SSEEvent)) (*ToolResult, error)
+
+func (*ToolRegistry) List() []ToolDef
+
+func (*ToolRegistry) RegisterStreamingTool(ToolDef, StreamingToolHandler) error
+
+func (*ToolRegistry) RegisterTool(ToolDef, ToolHandler) error
+
+func (sessionRecord) TableName() string
+
 ## github.com/theory-cloud/apptheory/testkit
 
 type DynamoDBStreamEventOptions struct {
@@ -1549,3 +1705,36 @@ func (*ManualIDGenerator) NewID() string
 func (*ManualIDGenerator) Queue(...string)
 
 func (*ManualIDGenerator) Reset()
+
+## github.com/theory-cloud/apptheory/testkit/mcp
+
+type Client struct {
+	server    *mcpruntime.Server
+	env       *testkit.Env
+	app       *apptheory.App
+	sessionID string
+}
+
+func AssertError(testing.TB, *mcpruntime.Response, int)
+
+func AssertHasTools(testing.TB, []mcpruntime.ToolDef, ...string)
+
+func AssertToolResult(testing.TB, *mcpruntime.Response, string)
+
+func CallToolRequest(any, string, any) (*mcpruntime.Request, error)
+
+func InitializeRequest(any) *mcpruntime.Request
+
+func ListToolsRequest(any) *mcpruntime.Request
+
+func NewClient(*mcpruntime.Server, *testkit.Env) *Client
+
+func (*Client) CallTool(context.Context, string, any) (*mcpruntime.ToolResult, error)
+
+func (*Client) Initialize(context.Context) (*mcpruntime.Response, error)
+
+func (*Client) ListTools(context.Context) ([]mcpruntime.ToolDef, error)
+
+func (*Client) Raw(context.Context, *mcpruntime.Request) (*mcpruntime.Response, error)
+
+func (*Client) SessionID() string
