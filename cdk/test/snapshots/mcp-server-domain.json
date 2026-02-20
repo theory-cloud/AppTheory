@@ -1,0 +1,260 @@
+{
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "CertCertificate2FA294AA": {
+      "Properties": {
+        "CertificateTransparencyLoggingPreference": "ENABLED",
+        "DomainName": "mcp.example.com",
+        "DomainValidationOptions": [
+          {
+            "DomainName": "mcp.example.com",
+            "HostedZoneId": {
+              "Ref": "ZoneA5DE4B68"
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "TestStack/Cert/Certificate"
+          }
+        ],
+        "ValidationMethod": "DNS"
+      },
+      "Type": "AWS::CertificateManager::Certificate"
+    },
+    "Fn9270CBC0": {
+      "DependsOn": [
+        "FnServiceRoleB9001A96"
+      ],
+      "Properties": {
+        "Code": {
+          "ZipFile": "exports.handler = async () => ({ statusCode: 200, body: 'ok' });"
+        },
+        "Environment": {
+          "Variables": {
+            "MCP_ENDPOINT": "https://mcp.example.com/mcp"
+          }
+        },
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "FnServiceRoleB9001A96",
+            "Arn"
+          ]
+        },
+        "Runtime": "nodejs24.x"
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "FnServiceRoleB9001A96": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+              ]
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "McpServerApi22C3CCFE": {
+      "Properties": {
+        "Name": "apptheory-mcp-domain-test",
+        "ProtocolType": "HTTP"
+      },
+      "Type": "AWS::ApiGatewayV2::Api"
+    },
+    "McpServerApiDefaultStageCAD96CDE": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AutoDeploy": true,
+        "StageName": "$default"
+      },
+      "Type": "AWS::ApiGatewayV2::Stage"
+    },
+    "McpServerApiMappingF7ED8E9E": {
+      "DependsOn": [
+        "McpServerApiDefaultStageCAD96CDE"
+      ],
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "DomainName": {
+          "Ref": "McpServerDomainNameADAB057B"
+        },
+        "Stage": "$default"
+      },
+      "Type": "AWS::ApiGatewayV2::ApiMapping"
+    },
+    "McpServerApiPOSTmcpF09FF92C": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /mcp",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "McpServerApiPOSTmcpMcpHandler8CAD0E1F"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::ApiGatewayV2::Route"
+    },
+    "McpServerApiPOSTmcpMcpHandler8CAD0E1F": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "McpServerApi22C3CCFE"
+        },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "PayloadFormatVersion": "2.0"
+      },
+      "Type": "AWS::ApiGatewayV2::Integration"
+    },
+    "McpServerApiPOSTmcpMcpHandlerPermission03D18571": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "McpServerApi22C3CCFE"
+              },
+              "/*/*/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "McpServerCnameRecord9C7A6DF7": {
+      "Properties": {
+        "HostedZoneId": {
+          "Ref": "ZoneA5DE4B68"
+        },
+        "Name": "mcp.example.com.",
+        "ResourceRecords": [
+          {
+            "Fn::GetAtt": [
+              "McpServerDomainNameADAB057B",
+              "RegionalDomainName"
+            ]
+          }
+        ],
+        "TTL": "1800",
+        "Type": "CNAME"
+      },
+      "Type": "AWS::Route53::RecordSet"
+    },
+    "McpServerDomainNameADAB057B": {
+      "Properties": {
+        "DomainName": "mcp.example.com",
+        "DomainNameConfigurations": [
+          {
+            "CertificateArn": {
+              "Ref": "CertCertificate2FA294AA"
+            },
+            "EndpointType": "REGIONAL"
+          }
+        ]
+      },
+      "Type": "AWS::ApiGatewayV2::DomainName"
+    },
+    "ZoneA5DE4B68": {
+      "Properties": {
+        "Name": "example.com."
+      },
+      "Type": "AWS::Route53::HostedZone"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}
