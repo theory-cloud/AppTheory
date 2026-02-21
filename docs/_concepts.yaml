@@ -86,3 +86,18 @@ concepts:
       - lambda_defaults
     configuration:
       - cdk/
+
+  mcp_gateway:
+    type: component
+    purpose: "Expose MCP (Model Context Protocol) over HTTP for Bedrock AgentCore tool integrations."
+    provides:
+      - jsonrpc_2_0_methods
+      - tools_registry
+      - session_management
+      - optional_sse_progress_streaming
+    configuration:
+      - runtime/mcp/
+      - cdk/lib/mcp-server.ts
+    docs:
+      - docs/agentcore-mcp.md
+      - cdk/docs/mcp-server-agentcore.md

@@ -107,3 +107,13 @@ AppTheory includes a DynamoDB-backed rate limiter with portable semantics:
 
 Use it when you need **cross-instance** rate limiting (DynamoDB is the coordination layer). The portable response
 contract uses `app.rate_limited` with deterministic `Retry-After` when known.
+
+## MCP server (Bedrock AgentCore)
+
+AppTheory includes an MCP (Model Context Protocol) server implementation intended for **Bedrock AgentCore** tool integrations.
+
+- Go runtime package: `runtime/mcp` (JSON-RPC methods: `initialize`, `tools/list`, `tools/call`)
+- Go test helpers: `testkit/mcp` (deterministic in-process MCP client)
+- CDK construct (jsii): `AppTheoryMcpServer` (HTTP API v2 `POST /mcp` → Lambda, optional session table + custom domain)
+
+Guide: `docs/agentcore-mcp.md` and `cdk/docs/mcp-server-agentcore.md`.

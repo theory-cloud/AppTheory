@@ -11,6 +11,7 @@
 ### 📚 Core documentation
 - [API Reference](./api-reference.md) — public surfaces + where to find the authoritative snapshots.
 - [Core Patterns](./core-patterns.md) — canonical patterns (and anti-patterns) for routing, middleware, streaming, and errors.
+- [Bedrock AgentCore (MCP Gateway)](./agentcore-mcp.md) — deploy an MCP tool server for AgentCore (Go runtime + CDK).
 - [Development Guidelines](./development-guidelines.md) — repo conventions, version alignment, and regeneration steps.
 - [Testing Guide](./testing-guide.md) — unit tests, contract tests, and rubric verification.
 - [Troubleshooting](./troubleshooting.md) — common symptoms → verified fixes.

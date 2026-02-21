@@ -58,5 +58,5 @@ Use the adapter entrypoints on `*apptheory.App`:
 
 Next:
 - See package-specific docs for full examples: `ts/docs/README.md`, `py/docs/README.md`, `cdk/docs/README.md`.
+- If you’re integrating with Bedrock AgentCore, start here: `docs/agentcore-mcp.md`.
 - If you’re migrating from Lift, start at `docs/migration/from-lift.md`.
-
