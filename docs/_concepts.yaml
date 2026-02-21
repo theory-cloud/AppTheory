@@ -93,6 +93,8 @@ concepts:
     provides:
       - jsonrpc_2_0_methods
       - tools_registry
+      - resources_registry
+      - prompts_registry
       - session_management
       - optional_sse_progress_streaming
     configuration:
@@ -100,4 +102,5 @@ concepts:
       - cdk/lib/mcp-server.ts
     docs:
       - docs/agentcore-mcp.md
+      - docs/mcp.md
       - cdk/docs/mcp-server-agentcore.md

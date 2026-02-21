@@ -1310,7 +1310,19 @@ var ErrSessionNotFound = errors.New("session not found")
 
 type ContentBlock struct {
 	Type string `json:"type"`
+
 	Text string `json:"text,omitempty"`
+
+	Data     string `json:"data,omitempty"`
+	MimeType string `json:"mimeType,omitempty"`
+
+	URI         string `json:"uri,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+
+	Resource *ResourceContent `json:"resource,omitempty"`
 }
 
 type DynamoSessionStore struct {
@@ -1325,6 +1337,38 @@ type MemorySessionStore struct {
 
 type MemorySessionStoreOption func(*MemorySessionStore)
 
+type PromptArgument struct {
+	Name        string `json:"name"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+type PromptDef struct {
+	Name        string           `json:"name"`
+	Title       string           `json:"title,omitempty"`
+	Description string           `json:"description,omitempty"`
+	Arguments   []PromptArgument `json:"arguments,omitempty"`
+}
+
+type PromptHandler func(context.Context, json.RawMessage) (*PromptResult, error)
+
+type PromptMessage struct {
+	Role    string       `json:"role"`
+	Content ContentBlock `json:"content"`
+}
+
+type PromptRegistry struct {
+	mu      sync.RWMutex
+	prompts []registeredPrompt
+	index   map[string]int
+}
+
+type PromptResult struct {
+	Description string          `json:"description,omitempty"`
+	Messages    []PromptMessage `json:"messages"`
+}
+
 type RPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -1336,6 +1380,30 @@ type Request struct {
 	ID      any             `json:"id"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+type ResourceContent struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mimeType,omitempty"`
+	Text     string `json:"text,omitempty"`
+	Blob     string `json:"blob,omitempty"`
+}
+
+type ResourceDef struct {
+	URI         string `json:"uri"`
+	Name        string `json:"name"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+}
+
+type ResourceHandler func(context.Context) ([]ResourceContent, error)
+
+type ResourceRegistry struct {
+	mu        sync.RWMutex
+	resources []registeredResource
+	index     map[string]int
 }
 
 type Response struct {
@@ -1350,12 +1418,14 @@ type SSEEvent struct {
 }
 
 type Server struct {
-	name         string
-	version      string
-	registry     *ToolRegistry
-	sessionStore SessionStore
-	idGen        apptheory.IDGenerator
-	logger       *slog.Logger
+	name             string
+	version          string
+	registry         *ToolRegistry
+	resourceRegistry *ResourceRegistry
+	promptRegistry   *PromptRegistry
+	sessionStore     SessionStore
+	idGen            apptheory.IDGenerator
+	logger           *slog.Logger
 }
 
 type ServerOption func(*Server)
@@ -1390,8 +1460,9 @@ type ToolRegistry struct {
 }
 
 type ToolResult struct {
-	Content []ContentBlock `json:"content"`
-	IsError bool           `json:"isError,omitempty"`
+	Content           []ContentBlock `json:"content"`
+	IsError           bool           `json:"isError,omitempty"`
+	StructuredContent map[string]any `json:"structuredContent,omitempty"`
 }
 
 func MarshalResponse(*Response) ([]byte, error)
@@ -1401,6 +1472,10 @@ func NewDynamoSessionStore(tablecore.DB) SessionStore
 func NewErrorResponse(any, int, string) *Response
 
 func NewMemorySessionStore(...MemorySessionStoreOption) *MemorySessionStore
+
+func NewPromptRegistry() *PromptRegistry
+
+func NewResourceRegistry() *ResourceRegistry
 
 func NewResultResponse(any, any) *Response
 
@@ -1432,9 +1507,29 @@ func (*MemorySessionStore) Get(context.Context, string) (*Session, error)
 
 func (*MemorySessionStore) Put(context.Context, *Session) error
 
+func (*PromptRegistry) Get(context.Context, string, json.RawMessage) (*PromptResult, error)
+
+func (*PromptRegistry) Len() int
+
+func (*PromptRegistry) List() []PromptDef
+
+func (*PromptRegistry) RegisterPrompt(PromptDef, PromptHandler) error
+
+func (*ResourceRegistry) Len() int
+
+func (*ResourceRegistry) List() []ResourceDef
+
+func (*ResourceRegistry) Read(context.Context, string) ([]ResourceContent, error)
+
+func (*ResourceRegistry) RegisterResource(ResourceDef, ResourceHandler) error
+
 func (*Server) Handler() apptheory.Handler
 
+func (*Server) Prompts() *PromptRegistry
+
 func (*Server) Registry() *ToolRegistry
+
+func (*Server) Resources() *ResourceRegistry
 
 func (*ToolRegistry) Call(context.Context, string, json.RawMessage) (*ToolResult, error)
 
@@ -1723,18 +1818,34 @@ func AssertToolResult(testing.TB, *mcpruntime.Response, string)
 
 func CallToolRequest(any, string, any) (*mcpruntime.Request, error)
 
+func GetPromptRequest(any, string, any) (*mcpruntime.Request, error)
+
 func InitializeRequest(any) *mcpruntime.Request
+
+func ListPromptsRequest(any) *mcpruntime.Request
+
+func ListResourcesRequest(any) *mcpruntime.Request
 
 func ListToolsRequest(any) *mcpruntime.Request
 
 func NewClient(*mcpruntime.Server, *testkit.Env) *Client
 
+func ReadResourceRequest(any, string) (*mcpruntime.Request, error)
+
 func (*Client) CallTool(context.Context, string, any) (*mcpruntime.ToolResult, error)
 
+func (*Client) GetPrompt(context.Context, string, any) (*mcpruntime.PromptResult, error)
+
 func (*Client) Initialize(context.Context) (*mcpruntime.Response, error)
+
+func (*Client) ListPrompts(context.Context) ([]mcpruntime.PromptDef, error)
+
+func (*Client) ListResources(context.Context) ([]mcpruntime.ResourceDef, error)
 
 func (*Client) ListTools(context.Context) ([]mcpruntime.ToolDef, error)
 
 func (*Client) Raw(context.Context, *mcpruntime.Request) (*mcpruntime.Response, error)
+
+func (*Client) ReadResource(context.Context, string) ([]mcpruntime.ResourceContent, error)
 
 func (*Client) SessionID() string

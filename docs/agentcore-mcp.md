@@ -4,8 +4,10 @@ This guide explains how to expose an **MCP (Model Context Protocol)** server fro
 
 AppTheory provides two building blocks:
 
-- **Runtime (Go):** `github.com/theory-cloud/apptheory/runtime/mcp` — an MCP JSON-RPC handler (`initialize`, `tools/list`, `tools/call`), tool registry, sessions, and optional SSE progress streaming.
+- **Runtime (Go):** `github.com/theory-cloud/apptheory/runtime/mcp` — an MCP JSON-RPC handler (`initialize`, `tools/*`, plus optional `resources/*` and `prompts/*`), registries, sessions, and optional SSE progress streaming.
 - **CDK (TypeScript/Python):** `AppTheoryMcpServer` — an API Gateway v2 HTTP API with `POST /mcp` → Lambda, optional session table, optional custom domain, and optional stage logging/throttling.
+
+For the full MCP method surface (including `resources/*` and `prompts/*`), see `docs/mcp.md`.
 
 If you’re trying to answer “what do I deploy and what code do I write?”, start with **Quick Start** below.
 
@@ -108,6 +110,8 @@ AppTheory’s MCP server implements these JSON-RPC methods:
 - `tools/list`
 - `tools/call`
 
+AgentCore typically uses only the tools surface. AppTheory also supports additional MCP methods for non-AgentCore clients (`resources/*`, `prompts/*`) — see `docs/mcp.md`.
+
 ### Example: initialize
 
 ```bash
@@ -203,6 +207,12 @@ If the client sets `Accept: text/event-stream` on a `tools/call`, AppTheory form
 
 - `event: progress` for intermediate events emitted by your tool
 - `event: message` for the final JSON-RPC response
+
+Important adapter note:
+
+- True incremental SSE streaming requires a response-streaming adapter.
+  AppTheory’s streaming response (`SSEStreamResponse`) is supported by the API Gateway **REST API v1** adapter (`ServeAPIGatewayProxy` via `HandleLambda`).
+  If you deploy behind an adapter that buffers (common with HTTP API v2), clients may only receive progress once the tool finishes.
 
 ### Implement a streaming tool
 
