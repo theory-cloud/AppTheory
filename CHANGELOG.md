@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/theory-cloud/AppTheory/compare/v0.10.0...v0.11.0) (2026-02-21)
+
+
+### Features
+
+* **mcp:** add resources/prompts + streaming SSE ([#160](https://github.com/theory-cloud/AppTheory/issues/160)) ([0e390c6](https://github.com/theory-cloud/AppTheory/commit/0e390c6911fc408b841c6ec2feba025349c5387b))
+
 ## [0.10.0](https://github.com/theory-cloud/AppTheory/compare/v0.9.1...v0.10.0) (2026-02-20)
 
 
