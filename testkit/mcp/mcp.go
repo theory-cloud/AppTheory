@@ -21,6 +21,28 @@ type Client struct {
 	sessionID string
 }
 
+func parseResult[T any](method string, result any, out *T) error {
+	resultBytes, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("failed to marshal result: %w", err)
+	}
+	if err := json.Unmarshal(resultBytes, out); err != nil {
+		return fmt.Errorf("failed to parse %s result: %w", method, err)
+	}
+	return nil
+}
+
+func (c *Client) rawOK(ctx context.Context, req *mcpruntime.Request) (*mcpruntime.Response, error) {
+	resp, err := c.Raw(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		return nil, fmt.Errorf("%s error: code=%d message=%s", req.Method, resp.Error.Code, resp.Error.Message)
+	}
+	return resp, nil
+}
+
 // NewClient creates a test MCP client backed by the given MCP server and
 // deterministic test environment.
 func NewClient(server *mcpruntime.Server, env *testkit.Env) *Client {
@@ -60,26 +82,135 @@ func (c *Client) ListTools(ctx context.Context) ([]mcpruntime.ToolDef, error) {
 		ID:      2,
 		Method:  "tools/list",
 	}
+	resp, err := c.rawOK(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Tools []mcpruntime.ToolDef `json:"tools"`
+	}
+	if err := parseResult(req.Method, resp.Result, &result); err != nil {
+		return nil, err
+	}
+	return result.Tools, nil
+}
+
+// ListResources sends a resources/list request and returns the parsed resource definitions.
+func (c *Client) ListResources(ctx context.Context) ([]mcpruntime.ResourceDef, error) {
+	req := &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      20,
+		Method:  "resources/list",
+	}
+	resp, err := c.rawOK(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Resources []mcpruntime.ResourceDef `json:"resources"`
+	}
+	if err := parseResult(req.Method, resp.Result, &result); err != nil {
+		return nil, err
+	}
+	return result.Resources, nil
+}
+
+// ReadResource sends a resources/read request for the given URI and returns the parsed contents.
+func (c *Client) ReadResource(ctx context.Context, uri string) ([]mcpruntime.ResourceContent, error) {
+	params, err := json.Marshal(map[string]any{"uri": uri})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal params: %w", err)
+	}
+
+	req := &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      21,
+		Method:  "resources/read",
+		Params:  params,
+	}
 	resp, err := c.Raw(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	if resp.Error != nil {
-		return nil, fmt.Errorf("tools/list error: code=%d message=%s", resp.Error.Code, resp.Error.Message)
+		return nil, fmt.Errorf("resources/read error: code=%d message=%s", resp.Error.Code, resp.Error.Message)
 	}
 
-	// Parse the result to extract tools array.
 	resultBytes, err := json.Marshal(resp.Result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal result: %w", err)
 	}
 	var result struct {
-		Tools []mcpruntime.ToolDef `json:"tools"`
+		Contents []mcpruntime.ResourceContent `json:"contents"`
 	}
 	if err := json.Unmarshal(resultBytes, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse tools/list result: %w", err)
+		return nil, fmt.Errorf("failed to parse resources/read result: %w", err)
 	}
-	return result.Tools, nil
+	return result.Contents, nil
+}
+
+// ListPrompts sends a prompts/list request and returns the parsed prompt definitions.
+func (c *Client) ListPrompts(ctx context.Context) ([]mcpruntime.PromptDef, error) {
+	req := &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      30,
+		Method:  "prompts/list",
+	}
+	resp, err := c.rawOK(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Prompts []mcpruntime.PromptDef `json:"prompts"`
+	}
+	if err := parseResult(req.Method, resp.Result, &result); err != nil {
+		return nil, err
+	}
+	return result.Prompts, nil
+}
+
+// GetPrompt sends a prompts/get request for the named prompt with the given arguments.
+func (c *Client) GetPrompt(ctx context.Context, name string, args any) (*mcpruntime.PromptResult, error) {
+	var argsRaw json.RawMessage
+	if args != nil {
+		b, err := json.Marshal(args)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal args: %w", err)
+		}
+		argsRaw = json.RawMessage(b)
+	}
+
+	params, err := json.Marshal(map[string]any{
+		"name":      name,
+		"arguments": argsRaw,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal params: %w", err)
+	}
+
+	req := &mcpruntime.Request{
+		JSONRPC: "2.0",
+		ID:      31,
+		Method:  "prompts/get",
+		Params:  params,
+	}
+	resp, err := c.Raw(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		return nil, fmt.Errorf("prompts/get error: code=%d message=%s", resp.Error.Code, resp.Error.Message)
+	}
+
+	resultBytes, err := json.Marshal(resp.Result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal result: %w", err)
+	}
+	var out mcpruntime.PromptResult
+	if err := json.Unmarshal(resultBytes, &out); err != nil {
+		return nil, fmt.Errorf("failed to parse prompts/get result: %w", err)
+	}
+	return &out, nil
 }
 
 // CallTool sends a tools/call request for the named tool with the given arguments.

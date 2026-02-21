@@ -112,8 +112,10 @@ contract uses `app.rate_limited` with deterministic `Retry-After` when known.
 
 AppTheory includes an MCP (Model Context Protocol) server implementation intended for **Bedrock AgentCore** tool integrations.
 
-- Go runtime package: `runtime/mcp` (JSON-RPC methods: `initialize`, `tools/list`, `tools/call`)
+- Go runtime package: `runtime/mcp` (JSON-RPC methods: `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `prompts/list`, `prompts/get`)
 - Go test helpers: `testkit/mcp` (deterministic in-process MCP client)
 - CDK construct (jsii): `AppTheoryMcpServer` (HTTP API v2 `POST /mcp` → Lambda, optional session table + custom domain)
 
-Guide: `docs/agentcore-mcp.md` and `cdk/docs/mcp-server-agentcore.md`.
+Guides:
+- AgentCore deployment: `docs/agentcore-mcp.md` and `cdk/docs/mcp-server-agentcore.md`
+- Full MCP method surface + payload shapes: `docs/mcp.md`

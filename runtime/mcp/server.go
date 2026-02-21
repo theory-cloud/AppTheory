@@ -25,12 +25,14 @@ const (
 // Server is the MCP protocol handler. It dispatches JSON-RPC 2.0 messages
 // to the appropriate MCP method handlers (initialize, tools/list, tools/call).
 type Server struct {
-	name         string
-	version      string
-	registry     *ToolRegistry
-	sessionStore SessionStore
-	idGen        apptheory.IDGenerator
-	logger       *slog.Logger
+	name             string
+	version          string
+	registry         *ToolRegistry
+	resourceRegistry *ResourceRegistry
+	promptRegistry   *PromptRegistry
+	sessionStore     SessionStore
+	idGen            apptheory.IDGenerator
+	logger           *slog.Logger
 }
 
 // ServerOption configures a Server.
@@ -60,12 +62,14 @@ func WithLogger(logger *slog.Logger) ServerOption {
 // NewServer creates an MCP server with the given name, version, and options.
 func NewServer(name, version string, opts ...ServerOption) *Server {
 	s := &Server{
-		name:         name,
-		version:      version,
-		registry:     NewToolRegistry(),
-		sessionStore: NewMemorySessionStore(),
-		idGen:        apptheory.RandomIDGenerator{},
-		logger:       slog.Default(),
+		name:             name,
+		version:          version,
+		registry:         NewToolRegistry(),
+		resourceRegistry: NewResourceRegistry(),
+		promptRegistry:   NewPromptRegistry(),
+		sessionStore:     NewMemorySessionStore(),
+		idGen:            apptheory.RandomIDGenerator{},
+		logger:           slog.Default(),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -78,6 +82,16 @@ func NewServer(name, version string, opts ...ServerOption) *Server {
 // Registry returns the server's tool registry for registering tools.
 func (s *Server) Registry() *ToolRegistry {
 	return s.registry
+}
+
+// Resources returns the server's resource registry for registering resources.
+func (s *Server) Resources() *ResourceRegistry {
+	return s.resourceRegistry
+}
+
+// Prompts returns the server's prompt registry for registering prompts.
+func (s *Server) Prompts() *PromptRegistry {
+	return s.promptRegistry
 }
 
 // Handler returns an apptheory.Handler that processes MCP JSON-RPC requests.
@@ -142,6 +156,14 @@ func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
 		return s.handleToolsList(req)
 	case "tools/call":
 		return s.handleToolsCall(ctx, req)
+	case "resources/list":
+		return s.handleResourcesList(req)
+	case "resources/read":
+		return s.handleResourcesRead(ctx, req)
+	case "prompts/list":
+		return s.handlePromptsList(req)
+	case "prompts/get":
+		return s.handlePromptsGet(ctx, req)
 	default:
 		s.logger.ErrorContext(ctx, "method not found", "method", req.Method)
 		return NewErrorResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("Method not found: %s", req.Method))
@@ -150,11 +172,19 @@ func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
 
 // handleInitialize responds to the MCP initialize request with server capabilities.
 func (s *Server) handleInitialize(req *Request) *Response {
+	capabilities := map[string]any{
+		"tools": map[string]any{},
+	}
+	if s.resourceRegistry.Len() > 0 {
+		capabilities["resources"] = map[string]any{}
+	}
+	if s.promptRegistry.Len() > 0 {
+		capabilities["prompts"] = map[string]any{}
+	}
+
 	result := map[string]any{
 		"protocolVersion": protocolVersion,
-		"capabilities": map[string]any{
-			"tools": map[string]any{},
-		},
+		"capabilities":    capabilities,
 		"serverInfo": map[string]any{
 			"name":    s.name,
 			"version": s.version,
@@ -210,29 +240,42 @@ func (s *Server) handleToolsCallStreaming(ctx context.Context, req *Request) (*a
 		return marshalSSEResponse(resp)
 	}
 
-	var sseEvents []apptheory.SSEEvent
+	events := make(chan apptheory.SSEEvent)
 
-	emit := func(ev SSEEvent) {
-		sseEvents = append(sseEvents, apptheory.SSEEvent{
-			Event: "progress",
-			Data:  ev.Data,
-		})
-	}
+	go func() {
+		defer close(events)
 
-	result, err := s.registry.CallStreaming(ctx, params.Name, params.Arguments, emit)
-	if err != nil {
-		resp := s.toolCallError(ctx, req.ID, params.Name, err)
-		return marshalSSEResponse(resp)
-	}
+		emit := func(ev SSEEvent) {
+			select {
+			case <-ctx.Done():
+				return
+			case events <- apptheory.SSEEvent{
+				Event: "progress",
+				Data:  ev.Data,
+			}:
+			}
+		}
 
-	// Add the final result as the last SSE event.
-	finalResp := NewResultResponse(req.ID, result)
-	sseEvents = append(sseEvents, apptheory.SSEEvent{
-		Event: "message",
-		Data:  finalResp,
-	})
+		result, err := s.registry.CallStreaming(ctx, params.Name, params.Arguments, emit)
 
-	return apptheory.SSEResponse(200, sseEvents...)
+		var finalResp *Response
+		if err != nil {
+			finalResp = s.toolCallError(ctx, req.ID, params.Name, err)
+		} else {
+			finalResp = NewResultResponse(req.ID, result)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case events <- apptheory.SSEEvent{
+			Event: "message",
+			Data:  finalResp,
+		}:
+		}
+	}()
+
+	return apptheory.SSEStreamResponse(ctx, 200, events)
 }
 
 // toolCallError maps a tool call error to the appropriate JSON-RPC error response.
