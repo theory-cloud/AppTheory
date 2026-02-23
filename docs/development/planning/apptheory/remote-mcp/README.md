@@ -25,3 +25,4 @@ This folder contains the **planning and delivery roadmap** for making **AppTheor
 - `docs/development/planning/apptheory/remote-mcp/M1.md`
 - `docs/development/planning/apptheory/remote-mcp/M2.md`
 - `docs/development/planning/apptheory/remote-mcp/M3.md`
+- `docs/development/planning/apptheory/remote-mcp/M4.md`
