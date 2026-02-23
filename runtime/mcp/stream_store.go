@@ -191,15 +191,9 @@ func (m *MemoryStreamStore) Subscribe(ctx context.Context, sessionID, streamID, 
 		return nil, errors.New("missing stream id")
 	}
 
-	afterSeq := int64(0)
-	if afterEventID != "" {
-		seq, err := strconv.ParseInt(afterEventID, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid last-event-id: %w", err)
-		}
-		if seq > 0 {
-			afterSeq = seq
-		}
+	afterSeq, err := afterSeqFromEventID(afterEventID)
+	if err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
@@ -214,67 +208,104 @@ func (m *MemoryStreamStore) Subscribe(ctx context.Context, sessionID, streamID, 
 		return nil, ErrStreamNotFound
 	}
 
-	nextIndex := 0
-	for nextIndex < len(stream.events) && stream.events[nextIndex].seq <= afterSeq {
-		nextIndex++
-	}
+	nextIndex := startIndexAfterSeq(stream.events, afterSeq)
 	m.mu.Unlock()
 
 	out := make(chan StreamEvent)
-
-	go func() {
-		defer close(out)
-
-		done := ctx.Done()
-		if done != nil {
-			go func() {
-				<-done
-				m.mu.Lock()
-				stream.cond.Broadcast()
-				m.mu.Unlock()
-			}()
-		}
-
-		for {
-			m.mu.Lock()
-
-			for nextIndex >= len(stream.events) && !stream.closed && ctx.Err() == nil {
-				stream.cond.Wait()
-			}
-
-			if ctx.Err() != nil {
-				m.mu.Unlock()
-				return
-			}
-
-			if nextIndex >= len(stream.events) {
-				// No buffered events left.
-				if stream.closed {
-					m.mu.Unlock()
-					return
-				}
-				m.mu.Unlock()
-				continue
-			}
-
-			ev := stream.events[nextIndex]
-			nextIndex++
-
-			data := make([]byte, len(ev.data))
-			copy(data, ev.data)
-
-			id := strconv.FormatInt(ev.seq, 10)
-			m.mu.Unlock()
-
-			select {
-			case <-done:
-				return
-			case out <- StreamEvent{ID: id, Data: data}:
-			}
-		}
-	}()
+	go m.pumpSubscription(ctx, stream, nextIndex, out)
 
 	return out, nil
+}
+
+func afterSeqFromEventID(afterEventID string) (int64, error) {
+	if afterEventID == "" {
+		return 0, nil
+	}
+	seq, err := strconv.ParseInt(afterEventID, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid last-event-id: %w", err)
+	}
+	if seq > 0 {
+		return seq, nil
+	}
+	return 0, nil
+}
+
+func startIndexAfterSeq(events []memoryStreamEvent, afterSeq int64) int {
+	nextIndex := 0
+	for nextIndex < len(events) && events[nextIndex].seq <= afterSeq {
+		nextIndex++
+	}
+	return nextIndex
+}
+
+func (m *MemoryStreamStore) pumpSubscription(ctx context.Context, stream *memoryStream, startIndex int, out chan<- StreamEvent) {
+	defer close(out)
+
+	done := ctx.Done()
+	m.broadcastOnDone(done, stream)
+
+	nextIndex := startIndex
+	for {
+		ev, ok := m.waitNextSubscriptionEvent(ctx, stream, &nextIndex)
+		if !ok {
+			return
+		}
+
+		select {
+		case <-done:
+			return
+		case out <- ev:
+		}
+	}
+}
+
+func (m *MemoryStreamStore) broadcastOnDone(done <-chan struct{}, stream *memoryStream) {
+	if done == nil {
+		return
+	}
+	go func() {
+		<-done
+		m.mu.Lock()
+		stream.cond.Broadcast()
+		m.mu.Unlock()
+	}()
+}
+
+func (m *MemoryStreamStore) waitNextSubscriptionEvent(ctx context.Context, stream *memoryStream, nextIndex *int) (StreamEvent, bool) {
+	for {
+		m.mu.Lock()
+
+		for *nextIndex >= len(stream.events) && !stream.closed && ctx.Err() == nil {
+			stream.cond.Wait()
+		}
+
+		if ctx.Err() != nil {
+			m.mu.Unlock()
+			return StreamEvent{}, false
+		}
+
+		if *nextIndex >= len(stream.events) {
+			// No buffered events left.
+			if stream.closed {
+				m.mu.Unlock()
+				return StreamEvent{}, false
+			}
+			m.mu.Unlock()
+			continue
+		}
+
+		ev := stream.events[*nextIndex]
+		(*nextIndex)++
+
+		data := make([]byte, len(ev.data))
+		copy(data, ev.data)
+
+		id := strconv.FormatInt(ev.seq, 10)
+		m.mu.Unlock()
+
+		return StreamEvent{ID: id, Data: data}, true
+	}
 }
 
 func (m *MemoryStreamStore) StreamForEvent(_ context.Context, sessionID, eventID string) (string, error) {

@@ -70,34 +70,5 @@ func (m *AuthorizationServerMetadata) MarshalJSONBytes() ([]byte, error) {
 // AuthorizationServerMetadataHandler returns an AppTheory handler that serves the
 // RFC8414 authorization server metadata document.
 func AuthorizationServerMetadataHandler(md *AuthorizationServerMetadata) apptheory.Handler {
-	return func(*apptheory.Context) (*apptheory.Response, error) {
-		if md == nil {
-			return &apptheory.Response{
-				Status: 200,
-				Headers: map[string][]string{
-					"content-type": {"application/json; charset=utf-8"},
-				},
-				Body: []byte("null"),
-			}, nil
-		}
-
-		b, err := md.MarshalJSONBytes()
-		if err != nil {
-			return &apptheory.Response{
-				Status: 500,
-				Headers: map[string][]string{
-					"content-type": {"application/json; charset=utf-8"},
-				},
-				Body: []byte(`{"error":"internal server error"}`),
-			}, nil
-		}
-
-		return &apptheory.Response{
-			Status: 200,
-			Headers: map[string][]string{
-				"content-type": {"application/json; charset=utf-8"},
-			},
-			Body: b,
-		}, nil
-	}
+	return jsonBytesHandler(md.MarshalJSONBytes)
 }

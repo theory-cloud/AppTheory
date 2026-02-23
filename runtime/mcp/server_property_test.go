@@ -326,10 +326,7 @@ func TestProperty10_ResponseFormatMatchesAcceptHeader(t *testing.T) {
 			t.Fatalf("failed to marshal request: %v", err)
 		}
 
-		headers := map[string][]string{
-			"content-type": {"application/json"},
-		}
-		headers = sessionHeaders(sessionID)
+		headers := sessionHeaders(sessionID)
 		if acceptType != "" {
 			headers["accept"] = []string{acceptType}
 		}
