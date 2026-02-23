@@ -389,3 +389,4 @@ type AppTheoryFunctionProps struct {
 	// Use `Runtime.FROM_IMAGE` when defining a function from a Docker image.
 	Runtime awslambda.Runtime `field:"required" json:"runtime" yaml:"runtime"`
 }
+

@@ -45,3 +45,4 @@ type AppTheoryQueueConsumerProps struct {
 	//
 	ReportBatchItemFailures *bool `field:"optional" json:"reportBatchItemFailures" yaml:"reportBatchItemFailures"`
 }
+

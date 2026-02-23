@@ -112,6 +112,7 @@ func (j *jsiiProxy_AppTheorySsrSite) SsrUrl() awslambda.FunctionUrl {
 	return returns
 }
 
+
 func NewAppTheorySsrSite(scope constructs.Construct, id *string, props *AppTheorySsrSiteProps) AppTheorySsrSite {
 	_init_.Initialize()
 
@@ -186,3 +187,4 @@ func (a *jsiiProxy_AppTheorySsrSite) ToString() *string {
 
 	return returns
 }
+

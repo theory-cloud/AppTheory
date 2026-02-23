@@ -11,3 +11,4 @@ func validateAppTheoryApiDomain_IsConstructParameters(x interface{}) error {
 func validateNewAppTheoryApiDomainParameters(scope constructs.Construct, id *string, props *AppTheoryApiDomainProps) error {
 	return nil
 }
+

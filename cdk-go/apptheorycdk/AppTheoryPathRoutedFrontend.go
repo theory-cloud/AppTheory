@@ -91,6 +91,7 @@ func (j *jsiiProxy_AppTheoryPathRoutedFrontend) SpaRewriteFunction() awscloudfro
 	return returns
 }
 
+
 func NewAppTheoryPathRoutedFrontend(scope constructs.Construct, id *string, props *AppTheoryPathRoutedFrontendProps) AppTheoryPathRoutedFrontend {
 	_init_.Initialize()
 
@@ -165,3 +166,4 @@ func (a *jsiiProxy_AppTheoryPathRoutedFrontend) ToString() *string {
 
 	return returns
 }
+
