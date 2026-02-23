@@ -22,12 +22,19 @@ Claude Remote MCP requires real incremental streaming for tool calls (SSE). On A
   - session table (matches `runtime/mcp` Dynamo session store schema)
   - stream/event table (intended for durable resumable SSE)
 
+If you are using OAuth for Claude connectors, also add:
+
+- `GET /.well-known/oauth-protected-resource` (RFC9728 protected resource metadata)
+
 ## TypeScript example
 
 ```ts
 import { Stack } from "aws-cdk-lib";
 import * as lambda from "aws-cdk-lib/aws-lambda";
-import { AppTheoryRemoteMcpServer } from "@theory-cloud/apptheory-cdk";
+import {
+  AppTheoryMcpProtectedResource,
+  AppTheoryRemoteMcpServer,
+} from "@theory-cloud/apptheory-cdk";
 
 const stack = new Stack();
 
@@ -45,6 +52,13 @@ const mcp = new AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
   // enableStreamTable: true, // optional; depends on your StreamStore implementation
 });
 
+// Required for MCP auth `2025-06-18` discovery (Claude Remote MCP)
+new AppTheoryMcpProtectedResource(stack, "ProtectedResource", {
+  router: mcp.router,
+  resource: mcp.endpoint,
+  authorizationServers: ["https://auth.example.com"],
+});
+
 // MCP endpoint URL (…/mcp)
 // mcp.endpoint
 ```
@@ -60,4 +74,4 @@ For SSE connections, expect disconnects (idle timeouts, client refresh, Lambda m
 
 - Go runtime MCP server: `docs/mcp.md`
 - Remote MCP planning + compatibility contract: `docs/development/planning/apptheory/remote-mcp/README.md`
-
+- Protected resource metadata (RFC9728): `cdk/docs/mcp-protected-resource.md`

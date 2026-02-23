@@ -1711,3 +1711,39 @@ test("AppTheoryRemoteMcpServer (with custom domain) synthesizes expected templat
     expectSnapshot("remote-mcp-server-domain", template);
   }
 });
+
+// ============================================================================
+// AppTheoryMcpProtectedResource tests
+// ============================================================================
+
+test("AppTheoryMcpProtectedResource synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-protected-resource-test",
+  });
+
+  new apptheory.AppTheoryMcpProtectedResource(stack, "Protected", {
+    router,
+    resource: "https://mcp.example.com/mcp",
+    authorizationServers: ["https://auth.example.com"],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  let mockGetMethods = 0;
+  for (const [, resource] of Object.entries(template.Resources)) {
+    if (resource.Type !== "AWS::ApiGateway::Method") continue;
+    if (resource.Properties?.HttpMethod !== "GET") continue;
+    if (resource.Properties?.Integration?.Type !== "MOCK") continue;
+    mockGetMethods++;
+  }
+  assert.equal(mockGetMethods, 1, "Should have one GET mock method for /.well-known/oauth-protected-resource");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("mcp-protected-resource", template);
+  } else {
+    expectSnapshot("mcp-protected-resource", template);
+  }
+});

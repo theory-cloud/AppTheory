@@ -116,8 +116,19 @@ AppTheory includes an MCP (Model Context Protocol) server implementation intende
 - Go test helpers: `testkit/mcp` (deterministic in-process MCP client)
 - CDK construct (jsii): `AppTheoryMcpServer` (HTTP API v2 `POST /mcp` → Lambda, optional session table + custom domain)
 - CDK construct (jsii): `AppTheoryRemoteMcpServer` (REST API v1 streaming `/mcp` for Claude Remote MCP / Streamable HTTP)
+- CDK construct (jsii): `AppTheoryMcpProtectedResource` (REST API v1 `/.well-known/oauth-protected-resource` for OAuth discovery)
 
 Guides:
 - AgentCore deployment: `docs/agentcore-mcp.md` and `cdk/docs/mcp-server-agentcore.md`
 - Claude Remote MCP deployment: `docs/development/planning/apptheory/remote-mcp/README.md` and `cdk/docs/mcp-server-remote-mcp.md`
 - Full MCP method surface + payload shapes: `docs/mcp.md`
+
+## OAuth primitives (Remote MCP / Autheory)
+
+For Claude connectors, AppTheory also includes OAuth wire-level helpers used by:
+- protected MCP resource servers (challenge + metadata)
+- Autheory (OAuth Authorization Server) implementations (DCR/PKCE helpers)
+
+Surfaces:
+- Go runtime package: `runtime/oauth` (protected resource metadata + `WWW-Authenticate` challenge, RFC8414 metadata helpers, RFC7591 DCR types/validation, PKCE utilities, in-memory code/refresh stores)
+- Go test helpers: `testkit/oauth` (Claude-like DCR → PKCE auth code → token exchange → refresh harness)

@@ -18,3 +18,10 @@ This folder contains the **planning and delivery roadmap** for making **AppTheor
 - `docs/development/planning/apptheory/remote-mcp/API_SURFACE_SKETCH.md` — Proposed runtime + CDK + testkit public surfaces.
 - `docs/development/planning/apptheory/remote-mcp/autheory.md` — Implementation notes for Autheory (OAuth AS + DCR + token semantics).
 - `docs/development/planning/apptheory/remote-mcp/theory-mcp.md` — Implementation notes for theory-mcp (migrate to Streamable HTTP + async/resume model).
+
+## Milestone records
+
+- `docs/development/planning/apptheory/remote-mcp/M0.md`
+- `docs/development/planning/apptheory/remote-mcp/M1.md`
+- `docs/development/planning/apptheory/remote-mcp/M2.md`
+- `docs/development/planning/apptheory/remote-mcp/M3.md`
