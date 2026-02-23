@@ -19,14 +19,30 @@ type ToolHandler func(ctx context.Context, args json.RawMessage) (*ToolResult, e
 
 // ToolResult is the result of a tool invocation.
 type ToolResult struct {
-	Content []ContentBlock `json:"content"`
-	IsError bool           `json:"isError,omitempty"`
+	Content           []ContentBlock `json:"content"`
+	IsError           bool           `json:"isError,omitempty"`
+	StructuredContent map[string]any `json:"structuredContent,omitempty"`
 }
 
-// ContentBlock is a content item in a tool result.
 type ContentBlock struct {
-	Type string `json:"type"` // "text", "image", "resource"
+	Type string `json:"type"` // "text", "image", "audio", "resource_link", "resource"
+
+	// Text content (type = "text").
 	Text string `json:"text,omitempty"`
+
+	// Image/audio content (type = "image" or "audio").
+	Data     string `json:"data,omitempty"`     // base64-encoded
+	MimeType string `json:"mimeType,omitempty"` // e.g. "image/png"
+
+	// Resource link content (type = "resource_link").
+	URI         string `json:"uri,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+
+	// Embedded resource content (type = "resource").
+	Resource *ResourceContent `json:"resource,omitempty"`
 }
 
 // registeredTool pairs a tool definition with its handler.
