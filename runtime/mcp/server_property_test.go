@@ -35,29 +35,37 @@ func newTestServer() *Server {
 	return s
 }
 
-// invokeHandler sends a raw body to the MCP server handler and returns the
+// invokeHandlerWithMethod sends a raw body to the MCP server handler and returns the
 // apptheory.Response. Headers can be provided for Accept, Mcp-Session-Id, etc.
-func invokeHandler(s *Server, body []byte, headers map[string][]string) (*apptheory.Response, error) {
+func invokeHandlerWithMethod(ctx context.Context, s *Server, method string, body []byte, headers map[string][]string) (*apptheory.Response, error) {
 	handler := s.Handler()
 	app := apptheory.New()
 	app.Post("/mcp", handler)
+	app.Get("/mcp", handler)
+	app.Delete("/mcp", handler)
 
 	if headers == nil {
 		headers = map[string][]string{}
 	}
-	if _, ok := headers["content-type"]; !ok {
-		headers["content-type"] = []string{"application/json"}
+	if method == "POST" {
+		if _, ok := headers["content-type"]; !ok {
+			headers["content-type"] = []string{"application/json"}
+		}
 	}
 
 	req := apptheory.Request{
-		Method:  "POST",
+		Method:  method,
 		Path:    "/mcp",
 		Headers: headers,
 		Body:    body,
 	}
 
-	resp := app.Serve(context.Background(), req)
+	resp := app.Serve(ctx, req)
 	return &resp, nil
+}
+
+func invokeHandler(s *Server, body []byte, headers map[string][]string) (*apptheory.Response, error) {
+	return invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 }
 
 // parseJSONRPCResponse parses a JSON-RPC response from an apptheory.Response body.
@@ -67,6 +75,45 @@ func parseJSONRPCResponse(resp *apptheory.Response) (*Response, error) {
 		return nil, err
 	}
 	return &rpcResp, nil
+}
+
+type tbFatalf interface {
+	Fatalf(format string, args ...any)
+}
+
+func initializeSession(t tbFatalf, s *Server) string {
+	if h, ok := any(t).(interface{ Helper() }); ok {
+		h.Helper()
+	}
+
+	body, err := json.Marshal(Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	if err != nil {
+		t.Fatalf("marshal initialize: %v", err)
+	}
+
+	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, map[string][]string{
+		"content-type": {"application/json"},
+		"accept":       {"application/json, text/event-stream"},
+	})
+	if err != nil {
+		t.Fatalf("invoke initialize: %v", err)
+	}
+	if resp.Status != 200 {
+		t.Fatalf("initialize status: got %d, want %d (body: %s)", resp.Status, 200, resp.Body)
+	}
+	ids := resp.Headers["mcp-session-id"]
+	if len(ids) == 0 || ids[0] == "" {
+		t.Fatalf("expected mcp-session-id header on initialize response")
+	}
+	return ids[0]
+}
+
+func sessionHeaders(sessionID string) map[string][]string {
+	return map[string][]string{
+		"content-type":         {"application/json"},
+		"mcp-session-id":       {sessionID},
+		"mcp-protocol-version": {protocolVersion},
+	}
 }
 
 // Feature: cloud-mcp-gateway, Property 6: Protocol Error Code Correctness
@@ -105,6 +152,8 @@ func TestProperty6_ProtocolErrorCodeCorrectness(t *testing.T) {
 			}
 
 		case 1:
+			sessionID := initializeSession(t, s)
+
 			// Unknown method → -32601
 			unknownMethod := "unknown/" + genAlphanumericString(1, 16).Draw(t, "method")
 			reqID := genRequestID().Draw(t, "id")
@@ -117,7 +166,10 @@ func TestProperty6_ProtocolErrorCodeCorrectness(t *testing.T) {
 				t.Fatalf("failed to marshal request: %v", err)
 			}
 
-			resp, err := invokeHandler(s, body, nil)
+			headers := sessionHeaders(sessionID)
+			headers["accept"] = []string{"application/json"}
+
+			resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 			if err != nil {
 				t.Fatalf("handler error: %v", err)
 			}
@@ -133,6 +185,8 @@ func TestProperty6_ProtocolErrorCodeCorrectness(t *testing.T) {
 			}
 
 		case 2:
+			sessionID := initializeSession(t, s)
+
 			// Invalid params for tools/call → -32602
 			reqID := genRequestID().Draw(t, "id")
 			// Send tools/call with invalid params (not a valid JSON object for tool params).
@@ -146,7 +200,10 @@ func TestProperty6_ProtocolErrorCodeCorrectness(t *testing.T) {
 				t.Fatalf("failed to marshal request: %v", err)
 			}
 
-			resp, err := invokeHandler(s, body, nil)
+			headers := sessionHeaders(sessionID)
+			headers["accept"] = []string{"application/json"}
+
+			resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 			if err != nil {
 				t.Fatalf("handler error: %v", err)
 			}
@@ -206,7 +263,11 @@ func TestProperty7_ToolHandlerErrorWrapping(t *testing.T) {
 			t.Fatalf("failed to marshal request: %v", err)
 		}
 
-		resp, err := invokeHandler(s, body, nil)
+		sessionID := initializeSession(t, s)
+		headers := sessionHeaders(sessionID)
+		headers["accept"] = []string{"application/json"}
+
+		resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 		if err != nil {
 			t.Fatalf("handler error: %v", err)
 		}
@@ -239,6 +300,8 @@ func TestProperty10_ResponseFormatMatchesAcceptHeader(t *testing.T) {
 	s := newTestServer()
 
 	rapid.Check(t, func(t *rapid.T) {
+		sessionID := initializeSession(t, s)
+
 		reqID := genRequestID().Draw(t, "id")
 		acceptType := rapid.SampledFrom([]string{
 			"text/event-stream",
@@ -266,11 +329,12 @@ func TestProperty10_ResponseFormatMatchesAcceptHeader(t *testing.T) {
 		headers := map[string][]string{
 			"content-type": {"application/json"},
 		}
+		headers = sessionHeaders(sessionID)
 		if acceptType != "" {
 			headers["accept"] = []string{acceptType}
 		}
 
-		resp, err := invokeHandler(s, body, headers)
+		resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 		if err != nil {
 			t.Fatalf("handler error: %v", err)
 		}

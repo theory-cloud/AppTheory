@@ -25,7 +25,7 @@ Key details:
 
 - The MCP endpoint is **`POST /mcp`**.
 - The payload is **JSON-RPC 2.0** (`jsonrpc: "2.0"`) with an `id`, `method`, and optional `params`.
-- Session state is tracked via the **`mcp-session-id`** header (server issues one if you don’t send it).
+- Session state is tracked via the **`Mcp-Session-Id`** header (issued on the `initialize` response).
 - MCP errors are returned as JSON-RPC errors (HTTP status is still `200`).
 
 ---

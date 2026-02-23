@@ -1306,7 +1306,11 @@ const CodeParseError = -32700
 
 const CodeServerError = -32000
 
+var ErrEventNotFound = errors.New("event not found")
+
 var ErrSessionNotFound = errors.New("session not found")
+
+var ErrStreamNotFound = errors.New("stream not found")
 
 type ContentBlock struct {
 	Type string `json:"type"`
@@ -1336,6 +1340,16 @@ type MemorySessionStore struct {
 }
 
 type MemorySessionStoreOption func(*MemorySessionStore)
+
+type MemoryStreamStore struct {
+	mu       sync.Mutex
+	idGen    apptheory.IDGenerator
+	sessions map[string]*memoryStreamSession
+}
+
+type MemoryStreamStoreOption func(*MemoryStreamStore)
+
+type OriginValidator func(string) bool
 
 type PromptArgument struct {
 	Name        string `json:"name"`
@@ -1377,7 +1391,7 @@ type RPCError struct {
 
 type Request struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      any             `json:"id"`
+	ID      any             `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
 }
@@ -1424,8 +1438,10 @@ type Server struct {
 	resourceRegistry *ResourceRegistry
 	promptRegistry   *PromptRegistry
 	sessionStore     SessionStore
+	streamStore      StreamStore
 	idGen            apptheory.IDGenerator
 	logger           *slog.Logger
+	originValidator  OriginValidator
 }
 
 type ServerOption func(*Server)
@@ -1441,6 +1457,23 @@ type SessionStore interface {
 	Get(context.Context, string) (*Session, error)
 	Put(context.Context, *Session) error
 	Delete(context.Context, string) error
+}
+
+type StreamEvent struct {
+	ID   string
+	Data json.RawMessage
+}
+
+type StreamStore interface {
+	Create(context.Context, string) (string, error)
+	Append(context.Context, string, string, json.RawMessage) (string, error)
+	Close(context.Context, string, string) error
+
+	Subscribe(context.Context, string, string, string) (<-chan StreamEvent, error)
+
+	StreamForEvent(context.Context, string, string) (string, error)
+
+	DeleteSession(context.Context, string) error
 }
 
 type StreamingToolHandler func(context.Context, json.RawMessage, func(SSEEvent)) (*ToolResult, error)
@@ -1465,6 +1498,8 @@ type ToolResult struct {
 	StructuredContent map[string]any `json:"structuredContent,omitempty"`
 }
 
+func AllowOrigins(...string) OriginValidator
+
 func MarshalResponse(*Response) ([]byte, error)
 
 func NewDynamoSessionStore(tablecore.DB) SessionStore
@@ -1472,6 +1507,8 @@ func NewDynamoSessionStore(tablecore.DB) SessionStore
 func NewErrorResponse(any, int, string) *Response
 
 func NewMemorySessionStore(...MemorySessionStoreOption) *MemorySessionStore
+
+func NewMemoryStreamStore(...MemoryStreamStoreOption) *MemoryStreamStore
 
 func NewPromptRegistry() *PromptRegistry
 
@@ -1487,13 +1524,21 @@ func ParseBatchRequest([]byte) ([]*Request, error)
 
 func ParseRequest([]byte) (*Request, error)
 
+func ParseResponse([]byte) (*Response, error)
+
 func WithClock(apptheory.Clock) MemorySessionStoreOption
 
 func WithLogger(*slog.Logger) ServerOption
 
+func WithOriginValidator(OriginValidator) ServerOption
+
 func WithServerIDGenerator(apptheory.IDGenerator) ServerOption
 
 func WithSessionStore(SessionStore) ServerOption
+
+func WithStreamIDGenerator(apptheory.IDGenerator) MemoryStreamStoreOption
+
+func WithStreamStore(StreamStore) ServerOption
 
 func (*DynamoSessionStore) Delete(context.Context, string) error
 
@@ -1506,6 +1551,18 @@ func (*MemorySessionStore) Delete(context.Context, string) error
 func (*MemorySessionStore) Get(context.Context, string) (*Session, error)
 
 func (*MemorySessionStore) Put(context.Context, *Session) error
+
+func (*MemoryStreamStore) Append(context.Context, string, string, json.RawMessage) (string, error)
+
+func (*MemoryStreamStore) Close(context.Context, string, string) error
+
+func (*MemoryStreamStore) Create(context.Context, string) (string, error)
+
+func (*MemoryStreamStore) DeleteSession(context.Context, string) error
+
+func (*MemoryStreamStore) StreamForEvent(context.Context, string, string) (string, error)
+
+func (*MemoryStreamStore) Subscribe(context.Context, string, string, string) (<-chan StreamEvent, error)
 
 func (*PromptRegistry) Get(context.Context, string, json.RawMessage) (*PromptResult, error)
 
@@ -1808,6 +1865,7 @@ type Client struct {
 	env       *testkit.Env
 	app       *apptheory.App
 	sessionID string
+	protocol  string
 }
 
 func AssertError(testing.TB, *mcpruntime.Response, int)
