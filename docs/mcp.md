@@ -4,11 +4,15 @@ This document describes AppTheory’s **MCP server implementation** (`github.com
 
 If you’re specifically integrating with **Bedrock AgentCore**, start with `docs/agentcore-mcp.md` (it focuses on what to deploy and how AgentCore calls tools).
 
+> Remote MCP (Claude connectors) note:
+> The current `runtime/mcp` HTTP handler is **not yet Streamable HTTP transport compliant** (POST/GET/DELETE semantics, 202 handling, resumable SSE framing, etc.).
+> For the Claude-first Streamable HTTP roadmap, see `docs/development/planning/apptheory/remote-mcp/README.md`.
+
 ---
 
 ## Transport + endpoint
 
-AppTheory’s MCP server is an **HTTP JSON-RPC 2.0** handler:
+AppTheory’s MCP server is a **legacy HTTP JSON-RPC 2.0** handler (not Streamable HTTP):
 
 - HTTP method: `POST`
 - Path: (you choose) typically `POST /mcp`
@@ -24,7 +28,7 @@ app := apptheory.New()
 app.Post("/mcp", srv.Handler())
 ```
 
-Protocol version implemented: `2025-06-18`.
+Protocol version implemented (method surface / payloads): `2025-06-18`.
 
 ---
 
@@ -208,4 +212,3 @@ _, _ = client.Initialize(context.Background())
 tools, _ := client.ListTools(context.Background())
 _ = tools
 ```
-
