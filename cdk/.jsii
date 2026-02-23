@@ -12025,6 +12025,117 @@
       ],
       "symbolId": "lib/lambda-role:AppTheoryLambdaRoleProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResource": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "summary": "Adds `/.well-known/oauth-protected-resource` metadata (RFC9728) to a REST API."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResource",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/mcp-protected-resource.ts",
+          "line": 40
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResourceProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/mcp-protected-resource.ts",
+        "line": 39
+      },
+      "name": "AppTheoryMcpProtectedResource",
+      "symbolId": "lib/mcp-protected-resource:AppTheoryMcpProtectedResource"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResourceProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "remarks": "This construct adds the RFC9728 protected resource metadata endpoint required\nby MCP auth (2025-06-18):\n- GET `/.well-known/oauth-protected-resource`",
+        "summary": "Props for AppTheoryMcpProtectedResource."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResourceProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/mcp-protected-resource.ts",
+        "line": 14
+      },
+      "name": "AppTheoryMcpProtectedResourceProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Autheory should be the first (and usually only) entry.",
+            "summary": "One or more OAuth Authorization Server issuer/base URLs."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-protected-resource.ts",
+            "line": 33
+          },
+          "name": "authorizationServers",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "For Claude Remote MCP this should be your MCP endpoint URL (including `/mcp`),\ne.g. `https://mcp.example.com/mcp`.",
+            "summary": "The canonical protected resource identifier."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-protected-resource.ts",
+            "line": 26
+          },
+          "name": "resource",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The REST API router to attach the well-known endpoint to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/mcp-protected-resource.ts",
+            "line": 18
+          },
+          "name": "router",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouter"
+          }
+        }
+      ],
+      "symbolId": "lib/mcp-protected-resource:AppTheoryMcpProtectedResourceProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryMcpServer": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -17360,5 +17471,5 @@
     }
   },
   "version": "0.11.0",
-  "fingerprint": "AX0qdUdZWQjVqMPdY74R+e9u+s/zaULCg3mdtZF/gSE="
+  "fingerprint": "3V/RyOXRKQKOZYl/gY5qsYsCspAkJ/TZWR89m4+iHq8="
 }

@@ -20,6 +20,7 @@
 - [REST API v1 Router + Streaming](./rest-api-router-streaming.md) — multi-Lambda REST API v1 + full response streaming parity.
 - [MCP Server for Bedrock AgentCore](./mcp-server-agentcore.md) — deploy `POST /mcp` (HTTP API v2) for AgentCore tool calls.
 - [MCP Server for Claude Remote MCP](./mcp-server-remote-mcp.md) — deploy Streamable HTTP `/mcp` (REST API v1 + streaming) for Claude connectors.
+- [MCP Protected Resource Metadata (OAuth)](./mcp-protected-resource.md) — add `/.well-known/oauth-protected-resource` (RFC9728) for Claude Remote MCP auth discovery.
 - [SQS Queue + Consumer Patterns](./sqs-queue-consumer.md) — queue-only, queue+consumer, and processor patterns (DLQs + partial batch failures).
 - [Lambda Role Helper](./lambda-role.md) — Lambda execution roles (baseline + X-Ray + KMS + custom statements).
 - [CloudFront Path-Routed Frontend Distribution](./path-routed-frontend.md) — multi-SPA routing behind one stage domain.

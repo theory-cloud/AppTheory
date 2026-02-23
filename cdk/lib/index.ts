@@ -22,4 +22,5 @@ export * from "./path-routed-frontend";
 export * from "./media-cdn";
 export * from "./lambda-role";
 export * from "./mcp-server";
+export * from "./mcp-protected-resource";
 export * from "./remote-mcp-server";

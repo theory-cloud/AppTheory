@@ -7,6 +7,9 @@ If you’re specifically integrating with **Bedrock AgentCore**, start with `doc
 For the Claude-first Remote MCP roadmap (Streamable HTTP + OAuth/DCR), see:
 - `docs/development/planning/apptheory/remote-mcp/README.md`
 
+OAuth helper surfaces used by Remote MCP deployments and Autheory are in:
+- `github.com/theory-cloud/apptheory/runtime/oauth`
+
 ---
 
 ## Transport + endpoint
