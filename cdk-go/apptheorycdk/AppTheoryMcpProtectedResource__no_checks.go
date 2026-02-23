@@ -11,4 +11,3 @@ func validateAppTheoryMcpProtectedResource_IsConstructParameters(x interface{}) 
 func validateNewAppTheoryMcpProtectedResourceParameters(scope constructs.Construct, id *string, props *AppTheoryMcpProtectedResourceProps) error {
 	return nil
 }
-

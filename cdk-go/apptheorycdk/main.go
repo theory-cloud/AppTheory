@@ -560,7 +560,7 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheorySpaRewriteMode",
 		reflect.TypeOf((*AppTheorySpaRewriteMode)(nil)).Elem(),
 		map[string]interface{}{
-			"SPA": AppTheorySpaRewriteMode_SPA,
+			"SPA":  AppTheorySpaRewriteMode_SPA,
 			"NONE": AppTheorySpaRewriteMode_NONE,
 		},
 	)

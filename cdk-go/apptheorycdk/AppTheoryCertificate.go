@@ -44,7 +44,6 @@ func (j *jsiiProxy_AppTheoryCertificate) Node() constructs.Node {
 	return returns
 }
 
-
 func NewAppTheoryCertificate(scope constructs.Construct, id *string, props *AppTheoryCertificateProps) AppTheoryCertificate {
 	_init_.Initialize()
 
@@ -130,4 +129,3 @@ func (a *jsiiProxy_AppTheoryCertificate) ToString() *string {
 
 	return returns
 }
-

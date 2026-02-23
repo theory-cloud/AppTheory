@@ -11,4 +11,3 @@ func validateAppTheoryMcpServer_IsConstructParameters(x interface{}) error {
 func validateNewAppTheoryMcpServerParameters(scope constructs.Construct, id *string, props *AppTheoryMcpServerProps) error {
 	return nil
 }
-
