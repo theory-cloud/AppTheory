@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	apptheory "github.com/theory-cloud/apptheory/runtime"
-	"log/slog"
-	"os"
-	"strconv"
 )
 
 // protocolVersion is the MCP protocol version supported by this server.
@@ -23,6 +23,12 @@ const (
 	headerMcpProtocolVersion = "mcp-protocol-version"
 	headerMcpSessionID       = "mcp-session-id"
 	headerLastEventID        = "last-event-id"
+)
+
+const (
+	methodInitialize               = "initialize"
+	methodNotificationsInitialized = "notifications/initialized"
+	methodNotificationsCancelled   = "notifications/cancel" + "led"
 )
 
 const (
@@ -180,56 +186,64 @@ func (s *Server) handlePOST(c *apptheory.Context) (*apptheory.Response, error) {
 
 	// Request/notification
 	if _, hasMethod := raw["method"]; hasMethod {
-		req, parseErr := ParseRequest(body)
-		if parseErr != nil {
-			s.logger.ErrorContext(ctx, "parse error", "error", parseErr)
-			resp := NewErrorResponse(nil, CodeParseError, "Parse error: "+parseErr.Error())
-			return s.marshalSingleResponse(resp, "", false)
-		}
-
-		// initialize creates and returns a session id.
-		if req.Method == "initialize" {
-			return s.handleInitializeHTTP(ctx, req)
-		}
-
-		sessionID, sess, errResp := s.requireSession(ctx, c.Request.Headers)
-		if errResp != nil {
-			return errResp, nil
-		}
-		if pvResp := s.requireProtocolVersion(c.Request.Headers, sess); pvResp != nil {
-			return pvResp, nil
-		}
-
-		// Notifications return 202 Accepted with no body.
-		if req.ID == nil {
-			s.handleNotification(ctx, sess, req)
-			return &apptheory.Response{Status: 202}, nil
-		}
-
-		return s.handleRequestHTTP(ctx, sessionID, req, c.Request.Headers)
+		return s.handlePOSTRequest(ctx, body, c.Request.Headers)
 	}
 
 	// Response
 	if _, hasResult := raw["result"]; hasResult || raw["error"] != nil {
-		_, parseErr := ParseResponse(body)
-		if parseErr != nil {
-			return badRequest("invalid JSON-RPC response"), nil
-		}
-
-		_, sess, errResp := s.requireSession(ctx, c.Request.Headers)
-		if errResp != nil {
-			return errResp, nil
-		}
-		if pvResp := s.requireProtocolVersion(c.Request.Headers, sess); pvResp != nil {
-			return pvResp, nil
-		}
-
-		// Server currently does not issue client-bound requests, but responses
-		// are part of the transport and must be accepted.
-		return &apptheory.Response{Status: 202}, nil
+		return s.handlePOSTResponse(ctx, body, c.Request.Headers)
 	}
 
 	return badRequest("invalid JSON-RPC message"), nil
+}
+
+func (s *Server) handlePOSTRequest(ctx context.Context, body []byte, headers map[string][]string) (*apptheory.Response, error) {
+	req, parseErr := ParseRequest(body)
+	if parseErr != nil {
+		s.logger.ErrorContext(ctx, "parse error", "error", parseErr)
+		resp := NewErrorResponse(nil, CodeParseError, "Parse error: "+parseErr.Error())
+		return s.marshalSingleResponse(resp, "", false)
+	}
+
+	// initialize creates and returns a session id.
+	if req.Method == methodInitialize {
+		return s.handleInitializeHTTP(ctx, req)
+	}
+
+	sessionID, sess, errResp := s.requireSession(ctx, headers)
+	if errResp != nil {
+		return errResp, nil
+	}
+	if pvResp := s.requireProtocolVersion(headers, sess); pvResp != nil {
+		return pvResp, nil
+	}
+
+	// Notifications return 202 Accepted with no body.
+	if req.ID == nil {
+		s.handleNotification(ctx, sess, req)
+		return &apptheory.Response{Status: 202}, nil
+	}
+
+	return s.handleRequestHTTP(ctx, sessionID, req, headers)
+}
+
+func (s *Server) handlePOSTResponse(ctx context.Context, body []byte, headers map[string][]string) (*apptheory.Response, error) {
+	_, parseErr := ParseResponse(body)
+	if parseErr != nil {
+		return badRequest("invalid JSON-RPC response"), nil
+	}
+
+	_, sess, errResp := s.requireSession(ctx, headers)
+	if errResp != nil {
+		return errResp, nil
+	}
+	if pvResp := s.requireProtocolVersion(headers, sess); pvResp != nil {
+		return pvResp, nil
+	}
+
+	// Server currently does not issue client-bound requests, but responses
+	// are part of the transport and must be accepted.
+	return &apptheory.Response{Status: 202}, nil
 }
 
 func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
@@ -302,7 +316,9 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 		return internalServerError(), nil
 	}
 	if s.streamStore != nil {
-		_ = s.streamStore.DeleteSession(ctx, sessionID)
+		if err := s.streamStore.DeleteSession(ctx, sessionID); err != nil {
+			s.logger.ErrorContext(ctx, "failed to delete stream session", "sessionId", sessionID, "error", err)
+		}
 	}
 
 	return &apptheory.Response{Status: 202}, nil
@@ -311,7 +327,7 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 // dispatch routes a parsed JSON-RPC request to the appropriate MCP method handler.
 func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
 	switch req.Method {
-	case "initialize":
+	case methodInitialize:
 		return s.handleInitialize(req, protocolVersion)
 	case "ping":
 		return NewResultResponse(req.ID, map[string]any{})
@@ -427,78 +443,16 @@ func (s *Server) handleBatch(ctx context.Context, body []byte, headers map[strin
 
 	requests, err := ParseBatchRequest(body)
 	if err != nil {
-		s.logger.ErrorContext(ctx, "batch parse error", "error", err)
-		resp := NewErrorResponse(nil, CodeParseError, "Parse error: "+err.Error())
-		data, marshalErr := MarshalResponse(resp)
-		if marshalErr != nil {
-			return nil, marshalErr
-		}
-		headers := map[string][]string{
-			"content-type": {"application/json"},
-		}
-		return &apptheory.Response{
-			Status:  200,
-			Headers: headers,
-			Body:    data,
-		}, nil
+		return s.batchParseErrorResponse(ctx, err)
 	}
 
 	sessionID := firstHeader(headers, headerMcpSessionID)
-	var sess *Session
-	if sessionID != "" {
-		var sessionErr error
-		sess, sessionErr = s.getSession(ctx, sessionID)
-		if sessionErr != nil {
-			if errors.Is(sessionErr, ErrSessionNotFound) {
-				return notFound("session not found"), nil
-			}
-			s.logger.ErrorContext(ctx, "session store error", "error", sessionErr)
-			return internalServerError(), nil
-		}
+	sess, sessErrResp := s.loadBatchSession(ctx, sessionID)
+	if sessErrResp != nil {
+		return sessErrResp, nil
 	}
 
-	var createdSessionID string
-	responses := make([]*Response, 0, len(requests))
-
-	for _, req := range requests {
-		if req.Method == "initialize" {
-			initResp, newID, initErr := s.handleInitializeBatch(ctx, req)
-			if initErr != nil {
-				// Return initialize error as a normal JSON-RPC error response.
-				if req.ID != nil {
-					responses = append(responses, initErr)
-				}
-				continue
-			}
-			if req.ID != nil {
-				responses = append(responses, initResp)
-			}
-			createdSessionID = newID
-			sessionID = newID
-			sess, _ = s.sessionStore.Get(ctx, sessionID)
-			continue
-		}
-
-		// Notifications do not produce responses in batch mode.
-		if req.ID == nil {
-			continue
-		}
-
-		if sessionID == "" {
-			responses = append(responses, NewErrorResponse(req.ID, CodeInvalidRequest, "missing session; call initialize first"))
-			continue
-		}
-		if sess == nil {
-			var sessionErr error
-			sess, sessionErr = s.getSession(ctx, sessionID)
-			if sessionErr != nil {
-				responses = append(responses, NewErrorResponse(req.ID, CodeInternalError, "session error"))
-				continue
-			}
-		}
-
-		responses = append(responses, s.dispatch(ctx, req))
-	}
+	createdSessionID, responses := s.runBatchRequests(ctx, requests, sessionID, sess)
 
 	if len(responses) == 0 {
 		return &apptheory.Response{Status: 202}, nil
@@ -517,6 +471,87 @@ func (s *Server) handleBatch(ctx context.Context, body []byte, headers map[strin
 	}
 
 	return &apptheory.Response{Status: 200, Headers: outHeaders, Body: data}, nil
+}
+
+func (s *Server) batchParseErrorResponse(ctx context.Context, err error) (*apptheory.Response, error) {
+	s.logger.ErrorContext(ctx, "batch parse error", "error", err)
+	resp := NewErrorResponse(nil, CodeParseError, "Parse error: "+err.Error())
+	data, marshalErr := MarshalResponse(resp)
+	if marshalErr != nil {
+		return nil, marshalErr
+	}
+	respHeaders := map[string][]string{
+		"content-type": {"application/json"},
+	}
+	return &apptheory.Response{
+		Status:  200,
+		Headers: respHeaders,
+		Body:    data,
+	}, nil
+}
+
+func (s *Server) loadBatchSession(ctx context.Context, sessionID string) (*Session, *apptheory.Response) {
+	if sessionID == "" {
+		return nil, nil
+	}
+
+	sess, err := s.getSession(ctx, sessionID)
+	switch {
+	case err == nil:
+		return sess, nil
+	case errors.Is(err, ErrSessionNotFound):
+		return nil, notFound("session not found")
+	default:
+		s.logger.ErrorContext(ctx, "session store error", "error", err)
+		return nil, internalServerError()
+	}
+}
+
+func (s *Server) runBatchRequests(ctx context.Context, requests []*Request, sessionID string, sess *Session) (createdSessionID string, responses []*Response) {
+	responses = make([]*Response, 0, len(requests))
+
+	for _, req := range requests {
+		if req.Method == methodInitialize {
+			initResp, newSess, initErr := s.handleInitializeBatch(ctx, req)
+			if initErr != nil {
+				// Return initialize error as a normal JSON-RPC error response.
+				if req.ID != nil {
+					responses = append(responses, initErr)
+				}
+				continue
+			}
+			if req.ID != nil {
+				responses = append(responses, initResp)
+			}
+			createdSessionID = newSess.ID
+			sessionID = newSess.ID
+			sess = newSess
+			continue
+		}
+
+		// Notifications do not produce responses in batch mode.
+		if req.ID == nil {
+			continue
+		}
+
+		if sessionID == "" {
+			responses = append(responses, NewErrorResponse(req.ID, CodeInvalidRequest, "missing session; call initialize first"))
+			continue
+		}
+
+		if sess == nil {
+			var sessionErr error
+			sess, sessionErr = s.getSession(ctx, sessionID)
+			if sessionErr != nil {
+				responses = append(responses, NewErrorResponse(req.ID, CodeInternalError, "session error"))
+				continue
+			}
+		}
+
+		responses = append(responses, s.dispatch(ctx, req))
+	}
+
+	return createdSessionID, responses
 }
 
 func sessionTTL() time.Duration {
@@ -681,14 +716,14 @@ func (s *Server) handleInitializeHTTP(ctx context.Context, req *Request) (*appth
 		return s.marshalSingleResponse(errResp, "", false)
 	}
 
-	sessionID, err := s.createSession(ctx, selectedPV)
+	sess, err := s.createSession(ctx, selectedPV)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "failed to create session", "error", err)
 		return jsonRPCErrorResponse(req.ID, CodeInternalError, "session error"), nil
 	}
 
 	resp := s.handleInitialize(req, selectedPV)
-	return s.marshalSingleResponse(resp, sessionID, true)
+	return s.marshalSingleResponse(resp, sess.ID, true)
 }
 
 func (s *Server) negotiateInitializeProtocolVersion(req *Request) (string, *Response) {
@@ -712,7 +747,7 @@ func (s *Server) negotiateInitializeProtocolVersion(req *Request) (string, *Resp
 	return params.ProtocolVersion, nil
 }
 
-func (s *Server) createSession(ctx context.Context, selectedPV string) (string, error) {
+func (s *Server) createSession(ctx context.Context, selectedPV string) (*Session, error) {
 	now := time.Now().UTC()
 	ttl := sessionTTL()
 
@@ -726,26 +761,26 @@ func (s *Server) createSession(ctx context.Context, selectedPV string) (string, 
 		},
 	}
 	if err := s.sessionStore.Put(ctx, sess); err != nil {
-		return "", fmt.Errorf("failed to create session: %w", err)
+		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
-	return newID, nil
+	return sess, nil
 }
 
-func (s *Server) handleInitializeBatch(ctx context.Context, req *Request) (*Response, string, *Response) {
+func (s *Server) handleInitializeBatch(ctx context.Context, req *Request) (*Response, *Session, *Response) {
 	selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
 	if errResp != nil {
-		return nil, "", errResp
+		return nil, nil, errResp
 	}
-	id, err := s.createSession(ctx, selectedPV)
+	sess, err := s.createSession(ctx, selectedPV)
 	if err != nil {
-		return nil, "", NewErrorResponse(req.ID, CodeInternalError, "session error")
+		return nil, nil, NewErrorResponse(req.ID, CodeInternalError, "session error")
 	}
-	return s.handleInitialize(req, selectedPV), id, nil
+	return s.handleInitialize(req, selectedPV), sess, nil
 }
 
 func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Request) {
 	switch req.Method {
-	case "notifications/initialized":
+	case methodNotificationsInitialized:
 		if sess == nil {
 			return
 		}
@@ -753,8 +788,10 @@ func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Req
 			sess.Data = map[string]string{}
 		}
 		sess.Data["initialized"] = "true"
-		_ = s.sessionStore.Put(ctx, sess)
-	case "notifications/cancelled":
+		if err := s.sessionStore.Put(ctx, sess); err != nil {
+			s.logger.ErrorContext(ctx, "failed to persist session", "sessionId", sess.ID, "error", err)
+		}
+	case methodNotificationsCancelled:
 		// Accepted for spec compliance; cancellation wiring is handled by higher-level
 		// async implementations (e.g. theory-mcp).
 	default:
@@ -797,16 +834,23 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 
 func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID string, req *Request) {
 	defer func() {
-		_ = s.streamStore.Close(ctx, sessionID, streamID)
+		if err := s.streamStore.Close(ctx, sessionID, streamID); err != nil {
+			s.logger.ErrorContext(ctx, "stream store close error", "sessionId", sessionID, "streamId", streamID, "error", err)
+		}
 	}()
 
 	var params toolsCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		_ = s.appendStreamResponse(ctx, sessionID, streamID, NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: "+err.Error()))
+		resp := NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: "+err.Error())
+		if appendErr := s.appendStreamResponse(ctx, sessionID, streamID, resp); appendErr != nil {
+			s.logger.ErrorContext(ctx, "stream store append error", "sessionId", sessionID, "streamId", streamID, "error", appendErr)
+		}
 		return
 	}
 	if params.Name == "" {
-		_ = s.appendStreamResponse(ctx, sessionID, streamID, NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name"))
+		if err := s.appendStreamResponse(ctx, sessionID, streamID, NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name")); err != nil {
+			s.logger.ErrorContext(ctx, "stream store append error", "sessionId", sessionID, "streamId", streamID, "error", err)
+		}
 		return
 	}
 
@@ -826,11 +870,14 @@ func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID strin
 			Method:  "notifications/progress",
 			Params:  mustMarshalJSON(map[string]any{"progressToken": progressToken, "progress": progress, "total": total, "message": message}),
 		}
+
 		notificationBytes, err := json.Marshal(notification)
 		if err != nil {
 			return
 		}
-		_, _ = s.streamStore.Append(ctx, sessionID, streamID, notificationBytes)
+		if _, err := s.streamStore.Append(ctx, sessionID, streamID, notificationBytes); err != nil {
+			s.logger.ErrorContext(ctx, "stream store append error", "sessionId", sessionID, "streamId", streamID, "error", err)
+		}
 	}
 
 	result, err := s.registry.CallStreaming(ctx, params.Name, params.Arguments, emit)
@@ -842,7 +889,9 @@ func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID strin
 		finalResp = NewResultResponse(req.ID, result)
 	}
 
-	_ = s.appendStreamResponse(ctx, sessionID, streamID, finalResp)
+	if err := s.appendStreamResponse(ctx, sessionID, streamID, finalResp); err != nil {
+		s.logger.ErrorContext(ctx, "stream store append error", "sessionId", sessionID, "streamId", streamID, "error", err)
+	}
 }
 
 func progressFromSSEEvent(ev SSEEvent, fallbackProgress float64) (progress float64, total any, message string) {

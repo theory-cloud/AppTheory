@@ -2,7 +2,6 @@ package oauth
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"strings"
 
@@ -10,7 +9,7 @@ import (
 )
 
 // ContextKeyBearerToken is set on apptheory.Context by RequireBearerTokenMiddleware.
-const ContextKeyBearerToken = "oauth.bearer_token"
+const ContextKeyBearerToken = "oauth.bearer_token" //nolint:gosec // context key, not a credential
 
 // BearerTokenValidator validates a Bearer access token.
 //
@@ -81,7 +80,7 @@ func unauthorizedResponse(c *apptheory.Context, opts RequireBearerTokenOptions) 
 		}
 	}
 
-	body, _ := json.Marshal(map[string]string{"error": "unauthorized"})
+	body := []byte(`{"error":"unauthorized"}`)
 
 	headers := map[string][]string{
 		"content-type": {"application/json; charset=utf-8"},

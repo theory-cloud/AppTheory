@@ -51,19 +51,42 @@ func ValidateDynamicClientRegistrationRequest(req *DynamicClientRegistrationRequ
 		return fmt.Errorf("dcr: request is nil")
 	}
 
-	allowed := make(map[string]bool, len(policy.AllowedRedirectURIs))
-	for _, u := range policy.AllowedRedirectURIs {
+	allowed := allowedRedirectURIs(policy.AllowedRedirectURIs)
+	if err := validateRedirectURIs(req.RedirectURIs, allowed); err != nil {
+		return err
+	}
+	if err := validateTokenEndpointAuthMethod(req.TokenEndpointAuthMethod, policy.RequirePublicClient); err != nil {
+		return err
+	}
+	if err := validateGrantTypes(req.GrantTypes, policy.RequireRefreshToken); err != nil {
+		return err
+	}
+	return validateResponseTypes(req.ResponseTypes)
+}
+
+func allowedRedirectURIs(in []string) map[string]bool {
+	if len(in) == 0 {
+		return nil
+	}
+	allowed := make(map[string]bool, len(in))
+	for _, u := range in {
 		u = strings.TrimSpace(u)
 		if u == "" {
 			continue
 		}
 		allowed[u] = true
 	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	return allowed
+}
 
-	if len(req.RedirectURIs) == 0 {
+func validateRedirectURIs(redirectURIs []string, allowed map[string]bool) error {
+	if len(redirectURIs) == 0 {
 		return fmt.Errorf("dcr: redirect_uris is required")
 	}
-	for _, uri := range req.RedirectURIs {
+	for _, uri := range redirectURIs {
 		uri = strings.TrimSpace(uri)
 		if uri == "" {
 			return fmt.Errorf("dcr: redirect_uris contains an empty value")
@@ -72,32 +95,45 @@ func ValidateDynamicClientRegistrationRequest(req *DynamicClientRegistrationRequ
 			return fmt.Errorf("dcr: redirect_uri not allowed: %s", uri)
 		}
 	}
+	return nil
+}
 
-	if policy.RequirePublicClient {
-		method := strings.TrimSpace(req.TokenEndpointAuthMethod)
-		if method == "" {
-			method = "none"
-		}
-		if method != "none" {
-			return fmt.Errorf("dcr: token_endpoint_auth_method must be none")
-		}
+func validateTokenEndpointAuthMethod(method string, requirePublicClient bool) error {
+	if !requirePublicClient {
+		return nil
 	}
-
-	grantTypes := normalizeStringList(req.GrantTypes)
-	if len(grantTypes) > 0 {
-		if !contains(grantTypes, "authorization_code") {
-			return fmt.Errorf("dcr: grant_types must include authorization_code")
-		}
-		if policy.RequireRefreshToken && !contains(grantTypes, "refresh_token") {
-			return fmt.Errorf("dcr: grant_types must include refresh_token")
-		}
+	method = strings.TrimSpace(method)
+	if method == "" {
+		method = "none"
 	}
+	if method != "none" {
+		return fmt.Errorf("dcr: token_endpoint_auth_method must be none")
+	}
+	return nil
+}
 
-	responseTypes := normalizeStringList(req.ResponseTypes)
-	if len(responseTypes) > 0 && !contains(responseTypes, "code") {
+func validateGrantTypes(grantTypes []string, requireRefreshToken bool) error {
+	normalized := normalizeStringList(grantTypes)
+	if len(normalized) == 0 {
+		return nil
+	}
+	if !contains(normalized, "authorization_code") {
+		return fmt.Errorf("dcr: grant_types must include authorization_code")
+	}
+	if requireRefreshToken && !contains(normalized, "refresh_token") {
+		return fmt.Errorf("dcr: grant_types must include refresh_token")
+	}
+	return nil
+}
+
+func validateResponseTypes(responseTypes []string) error {
+	normalized := normalizeStringList(responseTypes)
+	if len(normalized) == 0 {
+		return nil
+	}
+	if !contains(normalized, "code") {
 		return fmt.Errorf("dcr: response_types must include code")
 	}
-
 	return nil
 }
 

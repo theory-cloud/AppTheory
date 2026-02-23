@@ -194,14 +194,19 @@ func TestClaudeRemoteMcp_Lifecycle_AndStreamingResume_WithBearerAuth(t *testing.
 	}
 
 	var initRPC mcpruntime.Response
-	if err := json.Unmarshal(initResp.Body, &initRPC); err != nil {
-		t.Fatalf("parse initialize JSON-RPC response: %v", err)
+	if unmarshalErr := json.Unmarshal(initResp.Body, &initRPC); unmarshalErr != nil {
+		t.Fatalf("parse initialize JSON-RPC response: %v", unmarshalErr)
 	}
 	var initResult struct {
 		ProtocolVersion string `json:"protocolVersion"`
 	}
-	initResultBytes, _ := json.Marshal(initRPC.Result)
-	_ = json.Unmarshal(initResultBytes, &initResult)
+	initResultBytes, marshalErr := json.Marshal(initRPC.Result)
+	if marshalErr != nil {
+		t.Fatalf("marshal initialize result: %v", marshalErr)
+	}
+	if unmarshalErr := json.Unmarshal(initResultBytes, &initResult); unmarshalErr != nil {
+		t.Fatalf("unmarshal initialize result: %v", unmarshalErr)
+	}
 	if strings.TrimSpace(initResult.ProtocolVersion) != "2025-06-18" {
 		t.Fatalf("expected protocolVersion=2025-06-18, got %q", initResult.ProtocolVersion)
 	}

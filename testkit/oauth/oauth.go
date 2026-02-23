@@ -64,6 +64,26 @@ type TokenResponse struct {
 	ExpiresIn    int64  `json:"expires_in,omitempty"`
 }
 
+func readBodyAndClose(resp *http.Response, limit int64) ([]byte, error) {
+	if resp == nil || resp.Body == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 4096
+	}
+
+	b, readErr := io.ReadAll(io.LimitReader(resp.Body, limit))
+	closeErr := resp.Body.Close()
+
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	return b, nil
+}
+
 // Authorize performs:
 // - 401 challenge parsing (WWW-Authenticate)
 // - protected resource metadata fetch
@@ -159,10 +179,12 @@ func (c *ClaudePublicClient) discover(ctx context.Context, mcpEndpoint, origin s
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	body, err := readBodyAndClose(resp, 4096)
+	if err != nil {
+		return nil, err
+	}
 
 	if resp.StatusCode != 401 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("oauth: expected 401 from MCP (got %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
@@ -202,15 +224,17 @@ func (c *ClaudePublicClient) fetchProtectedResourceMetadata(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	body, err := readBodyAndClose(resp, 1<<20)
+	if err != nil {
+		return nil, err
+	}
 
 	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("oauth: protected resource metadata: expected 200 (got %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var md oauthruntime.ProtectedResourceMetadata
-	if err := json.NewDecoder(resp.Body).Decode(&md); err != nil {
+	if err := json.Unmarshal(body, &md); err != nil {
 		return nil, fmt.Errorf("oauth: protected resource metadata decode: %w", err)
 	}
 	return &md, nil
@@ -243,22 +267,24 @@ func (c *ClaudePublicClient) fetchAuthorizationServerMetadata(ctx context.Contex
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	body, err := readBodyAndClose(resp, 1<<20)
+	if err != nil {
+		return nil, err
+	}
 
 	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("oauth: as metadata: expected 200 (got %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var md oauthruntime.AuthorizationServerMetadata
-	if err := json.NewDecoder(resp.Body).Decode(&md); err != nil {
+	if err := json.Unmarshal(body, &md); err != nil {
 		return nil, fmt.Errorf("oauth: as metadata decode: %w", err)
 	}
 	return &md, nil
 }
 
 func (c *ClaudePublicClient) register(ctx context.Context, registrationEndpoint, redirectURI string) (*DCRResult, error) {
-	body, err := json.Marshal(map[string]any{
+	reqBody, err := json.Marshal(map[string]any{
 		"client_name":                "Claude",
 		"redirect_uris":              []string{redirectURI},
 		"token_endpoint_auth_method": "none",
@@ -269,7 +295,7 @@ func (c *ClaudePublicClient) register(ctx context.Context, registrationEndpoint,
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, registrationEndpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, registrationEndpoint, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, err
 	}
@@ -280,17 +306,19 @@ func (c *ClaudePublicClient) register(ctx context.Context, registrationEndpoint,
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	respBody, err := readBodyAndClose(resp, 1<<20)
+	if err != nil {
+		return nil, err
+	}
 
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("oauth: dcr: expected 200/201 (got %d): %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		return nil, fmt.Errorf("oauth: dcr: expected 200/201 (got %d): %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
 	var out struct {
 		ClientID string `json:"client_id"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.Unmarshal(respBody, &out); err != nil {
 		return nil, fmt.Errorf("oauth: dcr decode: %w", err)
 	}
 	if out.ClientID == "" {
@@ -332,10 +360,12 @@ func (c *ClaudePublicClient) authorizeCode(ctx context.Context, authorizationEnd
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	body, err := readBodyAndClose(resp, 4096)
+	if err != nil {
+		return "", err
+	}
 
 	if resp.StatusCode != 302 && resp.StatusCode != 303 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return "", fmt.Errorf("oauth: authorize: expected redirect (got %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
@@ -384,15 +414,17 @@ func (c *ClaudePublicClient) exchangeCode(ctx context.Context, tokenEndpoint str
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	body, err := readBodyAndClose(resp, 1<<20)
+	if err != nil {
+		return nil, err
+	}
 
 	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("oauth: token exchange: expected 200 (got %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var out TokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("oauth: token exchange decode: %w", err)
 	}
 	if out.AccessToken == "" || out.TokenType == "" {
@@ -427,15 +459,17 @@ func (c *ClaudePublicClient) refresh(ctx context.Context, tokenEndpoint string, 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	body, err := readBodyAndClose(resp, 1<<20)
+	if err != nil {
+		return nil, err
+	}
 
 	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("oauth: refresh: expected 200 (got %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var out TokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("oauth: refresh decode: %w", err)
 	}
 	if out.AccessToken == "" || out.TokenType == "" {

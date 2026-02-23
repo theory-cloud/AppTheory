@@ -47,6 +47,38 @@ func NewMemoryAuthorizationCodeStore() *MemoryAuthorizationCodeStore {
 	return &MemoryAuthorizationCodeStore{codes: map[string]*AuthorizationCodeRecord{}}
 }
 
+func consumeStoreRecord[T any](
+	mu *sync.Mutex,
+	records map[string]*T,
+	key string,
+	notFound error,
+	expired error,
+	expiresAt func(*T) time.Time,
+) (*T, error) {
+	if strings.TrimSpace(key) == "" {
+		return nil, notFound
+	}
+
+	now := time.Now().UTC()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	rec := records[key]
+	if rec == nil {
+		return nil, notFound
+	}
+	delete(records, key)
+
+	if expiresAt != nil {
+		if exp := expiresAt(rec); !exp.IsZero() && now.After(exp) {
+			return nil, expired
+		}
+	}
+
+	return rec, nil
+}
+
 func (s *MemoryAuthorizationCodeStore) Put(_ context.Context, rec *AuthorizationCodeRecord) error {
 	if rec == nil || rec.Code == "" {
 		return fmt.Errorf("authcode: missing code")
@@ -58,23 +90,9 @@ func (s *MemoryAuthorizationCodeStore) Put(_ context.Context, rec *Authorization
 }
 
 func (s *MemoryAuthorizationCodeStore) Consume(_ context.Context, code string) (*AuthorizationCodeRecord, error) {
-	if strings.TrimSpace(code) == "" {
-		return nil, ErrAuthorizationCodeNotFound
-	}
-	now := time.Now().UTC()
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	rec := s.codes[code]
-	if rec == nil {
-		return nil, ErrAuthorizationCodeNotFound
-	}
-	delete(s.codes, code)
-
-	if !rec.ExpiresAt.IsZero() && now.After(rec.ExpiresAt) {
-		return nil, ErrAuthorizationCodeExpired
-	}
-	return rec, nil
+	return consumeStoreRecord(&s.mu, s.codes, code, ErrAuthorizationCodeNotFound, ErrAuthorizationCodeExpired, func(r *AuthorizationCodeRecord) time.Time {
+		return r.ExpiresAt
+	})
 }
 
 // RefreshTokenRecord stores long-lived refresh token state.
@@ -134,22 +152,9 @@ func (s *MemoryRefreshTokenStore) Get(_ context.Context, token string) (*Refresh
 }
 
 func (s *MemoryRefreshTokenStore) Consume(_ context.Context, token string) (*RefreshTokenRecord, error) {
-	if strings.TrimSpace(token) == "" {
-		return nil, ErrRefreshTokenNotFound
-	}
-	now := time.Now().UTC()
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	rec := s.tokens[token]
-	if rec == nil {
-		return nil, ErrRefreshTokenNotFound
-	}
-	delete(s.tokens, token)
-	if !rec.ExpiresAt.IsZero() && now.After(rec.ExpiresAt) {
-		return nil, ErrRefreshTokenExpired
-	}
-	return rec, nil
+	return consumeStoreRecord(&s.mu, s.tokens, token, ErrRefreshTokenNotFound, ErrRefreshTokenExpired, func(r *RefreshTokenRecord) time.Time {
+		return r.ExpiresAt
+	})
 }
 
 func (s *MemoryRefreshTokenStore) Delete(_ context.Context, token string) error {

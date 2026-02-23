@@ -13,8 +13,15 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
 	oauthruntime "github.com/theory-cloud/apptheory/runtime/oauth"
 )
+
+func mustWrite(w http.ResponseWriter, b []byte) {
+	if _, err := w.Write(b); err != nil {
+		panic(err)
+	}
+}
 
 func TestClaudePublicClient_DCR_PKCE_Refresh(t *testing.T) {
 	ctx := context.Background()
@@ -33,7 +40,7 @@ func TestClaudePublicClient_DCR_PKCE_Refresh(t *testing.T) {
 		b, err := md.MarshalJSONBytes()
 		require.NoError(t, err)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write(b)
+		mustWrite(w, b)
 	})
 
 	authMux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +50,7 @@ func TestClaudePublicClient_DCR_PKCE_Refresh(t *testing.T) {
 
 		id := atomic.AddInt64(&nextClientID, 1)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write([]byte(`{"client_id":"claude-client-` + strconv.FormatInt(id, 10) + `"}`))
+		mustWrite(w, []byte(`{"client_id":"claude-client-`+strconv.FormatInt(id, 10)+`"}`))
 	})
 
 	authMux.HandleFunc("/authorize", func(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +122,7 @@ func TestClaudePublicClient_DCR_PKCE_Refresh(t *testing.T) {
 			}))
 
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			_, _ = w.Write([]byte(`{"access_token":"` + access + `","refresh_token":"` + refresh + `","token_type":"Bearer","expires_in":3600}`))
+			mustWrite(w, []byte(`{"access_token":"`+access+`","refresh_token":"`+refresh+`","token_type":"Bearer","expires_in":3600}`))
 		case "refresh_token":
 			refresh := r.Form.Get("refresh_token")
 			clientID := r.Form.Get("client_id")
@@ -140,7 +147,7 @@ func TestClaudePublicClient_DCR_PKCE_Refresh(t *testing.T) {
 			}))
 
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			_, _ = w.Write([]byte(`{"access_token":"` + access + `","refresh_token":"` + newRefresh + `","token_type":"Bearer","expires_in":3600}`))
+			mustWrite(w, []byte(`{"access_token":"`+access+`","refresh_token":"`+newRefresh+`","token_type":"Bearer","expires_in":3600}`))
 		default:
 			http.Error(w, "unsupported grant_type", http.StatusBadRequest)
 		}
@@ -160,7 +167,7 @@ func TestClaudePublicClient_DCR_PKCE_Refresh(t *testing.T) {
 		b, err := md.MarshalJSONBytes()
 		require.NoError(t, err)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write(b)
+		mustWrite(w, b)
 	})
 
 	mcpMux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
@@ -171,7 +178,7 @@ func TestClaudePublicClient_DCR_PKCE_Refresh(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write([]byte(`{"ok":true}`))
+		mustWrite(w, []byte(`{"ok":true}`))
 	})
 
 	mcpServer := httptest.NewServer(mcpMux)
