@@ -41,6 +41,7 @@ Primary goals:
 - `docs/development/planning/apptheory/subroadmaps/SR-MIGRATION.md` (Lift → AppTheory migration plan)
 - `docs/development/planning/apptheory/subroadmaps/SR-EVENTSOURCES.md` (SQS/EventBridge/DynamoDB Streams parity)
 - `docs/development/planning/apptheory/subroadmaps/SR-WEBSOCKETS.md` (WebSocket runtime + `streamer` parity)
+- `docs/development/planning/apptheory/subroadmaps/SR-REMOTE-MCP.md` (Claude-first Remote MCP: Streamable HTTP + OAuth/DCR)
 - `docs/development/planning/apptheory/subroadmaps/SR-SSE.md` (API Gateway REST v1 + SSE streaming parity)
 - `docs/development/planning/apptheory/subroadmaps/SR-STREAMING.md` (response streaming contract + Lambda URL streaming handler + streaming testkit)
 - `docs/development/planning/apptheory/subroadmaps/SR-SSR-INFRA.md` (CloudFront + S3 + Lambda URL deployment pattern)

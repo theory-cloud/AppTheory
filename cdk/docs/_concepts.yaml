@@ -14,3 +14,13 @@ concepts:
       - aws_cdk_v2
       - node_24
 
+  mcp_server_agentcore:
+    type: construct
+    purpose: "Provision an HTTP API `POST /mcp` endpoint for MCP / Bedrock AgentCore tool calls."
+    provides:
+      - http_api_v2_route
+      - optional_session_table
+      - optional_custom_domain
+      - optional_stage_logging_throttling
+    related_docs:
+      - cdk/docs/mcp-server-agentcore.md
