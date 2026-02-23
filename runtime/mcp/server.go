@@ -5,17 +5,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	apptheory "github.com/theory-cloud/apptheory/runtime"
+	"log/slog"
+	"os"
+	"strconv"
 )
 
 // protocolVersion is the MCP protocol version supported by this server.
 const protocolVersion = "2025-06-18"
+
+const (
+	protocolVersionLegacy = "2025-03-26"
+
+	headerMcpProtocolVersion = "mcp-protocol-version"
+	headerMcpSessionID       = "mcp-session-id"
+	headerLastEventID        = "last-event-id"
+)
 
 const (
 	defaultSessionTTLMinutes = 60
@@ -31,8 +39,10 @@ type Server struct {
 	resourceRegistry *ResourceRegistry
 	promptRegistry   *PromptRegistry
 	sessionStore     SessionStore
+	streamStore      StreamStore
 	idGen            apptheory.IDGenerator
 	logger           *slog.Logger
+	originValidator  OriginValidator
 }
 
 // ServerOption configures a Server.
@@ -42,6 +52,13 @@ type ServerOption func(*Server)
 func WithSessionStore(store SessionStore) ServerOption {
 	return func(s *Server) {
 		s.sessionStore = store
+	}
+}
+
+// WithStreamStore sets the stream store for the server.
+func WithStreamStore(store StreamStore) ServerOption {
+	return func(s *Server) {
+		s.streamStore = store
 	}
 }
 
@@ -59,6 +76,16 @@ func WithLogger(logger *slog.Logger) ServerOption {
 	}
 }
 
+// WithOriginValidator sets the Origin validator for browser-based callers.
+//
+// If an Origin header is present, the request is rejected unless it passes
+// validation (fail closed).
+func WithOriginValidator(v OriginValidator) ServerOption {
+	return func(s *Server) {
+		s.originValidator = v
+	}
+}
+
 // NewServer creates an MCP server with the given name, version, and options.
 func NewServer(name, version string, opts ...ServerOption) *Server {
 	s := &Server{
@@ -68,8 +95,10 @@ func NewServer(name, version string, opts ...ServerOption) *Server {
 		resourceRegistry: NewResourceRegistry(),
 		promptRegistry:   NewPromptRegistry(),
 		sessionStore:     NewMemorySessionStore(),
+		streamStore:      NewMemoryStreamStore(),
 		idGen:            apptheory.RandomIDGenerator{},
 		logger:           slog.Default(),
+		originValidator:  AllowOrigins("https://claude.ai", "https://claude.com"),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -95,63 +124,197 @@ func (s *Server) Prompts() *PromptRegistry {
 }
 
 // Handler returns an apptheory.Handler that processes MCP JSON-RPC requests.
-// It handles session management via the Mcp-Session-Id header and dispatches
-// to initialize, tools/list, and tools/call method handlers.
 //
-// When the Accept header is text/event-stream and the method is tools/call,
-// the response is formatted as SSE. Otherwise, a buffered JSON response is returned.
+// Streamable HTTP semantics:
+// - POST /mcp accepts JSON-RPC requests, notifications, and responses.
+// - GET /mcp replays/resumes previously interrupted SSE streams via Last-Event-ID.
+// - DELETE /mcp terminates a session.
+//
+// Notes:
+//   - Clients must initialize first; the server issues Mcp-Session-Id on the
+//     initialize response and requires it thereafter.
+//   - Disconnects are not treated as cancellation. Streaming tool execution is
+//     decoupled from the connection and can be resumed with GET.
 func (s *Server) Handler() apptheory.Handler {
 	return func(c *apptheory.Context) (*apptheory.Response, error) {
-		ctx := c.Context()
-		body := c.Request.Body
-
-		// Resolve or create session.
-		sessionID := firstHeader(c.Request.Headers, "mcp-session-id")
-		sessionID, err := s.resolveSession(ctx, sessionID)
-		if err != nil {
-			s.logger.ErrorContext(ctx, "session error", "error", err)
-			return jsonRPCErrorResponse(nil, CodeInternalError, "session error"), nil
+		switch strings.ToUpper(strings.TrimSpace(c.Request.Method)) {
+		case "POST":
+			return s.handlePOST(c)
+		case "GET":
+			return s.handleGET(c)
+		case "DELETE":
+			return s.handleDELETE(c)
+		default:
+			return &apptheory.Response{
+				Status: 405,
+				Headers: map[string][]string{
+					"content-type": {"application/json"},
+				},
+				Body: []byte(`{"error":"method not allowed"}`),
+			}, nil
 		}
+	}
+}
 
-		// Try to detect batch vs single request.
-		trimmed := trimLeftSpace(body)
-		if len(trimmed) > 0 && trimmed[0] == '[' {
-			return s.handleBatch(ctx, body, sessionID)
-		}
+func (s *Server) handlePOST(c *apptheory.Context) (*apptheory.Response, error) {
+	ctx := c.Context()
 
-		// Parse single request.
+	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
+		return resp, nil
+	}
+
+	body := c.Request.Body
+
+	// Batch request support (legacy protocol only).
+	trimmed := trimLeftSpace(body)
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		return s.handleBatch(ctx, body, c.Request.Headers)
+	}
+
+	raw, err := parseJSONObject(body)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "parse error", "error", err)
+		resp := NewErrorResponse(nil, CodeParseError, "Parse error: "+err.Error())
+		return s.marshalSingleResponse(resp, "", false)
+	}
+
+	// Request/notification
+	if _, hasMethod := raw["method"]; hasMethod {
 		req, parseErr := ParseRequest(body)
 		if parseErr != nil {
 			s.logger.ErrorContext(ctx, "parse error", "error", parseErr)
 			resp := NewErrorResponse(nil, CodeParseError, "Parse error: "+parseErr.Error())
-			return s.marshalSingleResponse(resp, sessionID, c.Request.Headers)
+			return s.marshalSingleResponse(resp, "", false)
 		}
 
-		// Check if client wants SSE for tools/call.
-		if req.Method == "tools/call" && wantsSSE(c.Request.Headers) {
-			sseResp, sseErr := s.handleToolsCallStreaming(ctx, req)
-			if sseErr != nil {
-				return nil, sseErr
-			}
-			if sseResp.Headers == nil {
-				sseResp.Headers = map[string][]string{}
-			}
-			if sessionID != "" {
-				sseResp.Headers["mcp-session-id"] = []string{sessionID}
-			}
-			return sseResp, nil
+		// initialize creates and returns a session id.
+		if req.Method == "initialize" {
+			return s.handleInitializeHTTP(ctx, req)
 		}
 
-		resp := s.dispatch(ctx, req)
-		return s.marshalSingleResponse(resp, sessionID, c.Request.Headers)
+		sessionID, sess, errResp := s.requireSession(ctx, c.Request.Headers)
+		if errResp != nil {
+			return errResp, nil
+		}
+		if pvResp := s.requireProtocolVersion(c.Request.Headers, sess); pvResp != nil {
+			return pvResp, nil
+		}
+
+		// Notifications return 202 Accepted with no body.
+		if req.ID == nil {
+			s.handleNotification(ctx, sess, req)
+			return &apptheory.Response{Status: 202}, nil
+		}
+
+		return s.handleRequestHTTP(ctx, sessionID, req, c.Request.Headers)
 	}
+
+	// Response
+	if _, hasResult := raw["result"]; hasResult || raw["error"] != nil {
+		_, parseErr := ParseResponse(body)
+		if parseErr != nil {
+			return badRequest("invalid JSON-RPC response"), nil
+		}
+
+		_, sess, errResp := s.requireSession(ctx, c.Request.Headers)
+		if errResp != nil {
+			return errResp, nil
+		}
+		if pvResp := s.requireProtocolVersion(c.Request.Headers, sess); pvResp != nil {
+			return pvResp, nil
+		}
+
+		// Server currently does not issue client-bound requests, but responses
+		// are part of the transport and must be accepted.
+		return &apptheory.Response{Status: 202}, nil
+	}
+
+	return badRequest("invalid JSON-RPC message"), nil
+}
+
+func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
+	ctx := c.Context()
+
+	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
+		return resp, nil
+	}
+
+	sessionID, sess, errResp := s.requireSession(ctx, c.Request.Headers)
+	if errResp != nil {
+		return errResp, nil
+	}
+	if pvResp := s.requireProtocolVersion(c.Request.Headers, sess); pvResp != nil {
+		return pvResp, nil
+	}
+
+	lastEventID := firstHeader(c.Request.Headers, headerLastEventID)
+	if lastEventID == "" {
+		// No resumable stream requested.
+		return apptheory.SSEResponse(200)
+	}
+
+	streamID, err := s.streamStore.StreamForEvent(ctx, sessionID, lastEventID)
+	if err != nil {
+		if errors.Is(err, ErrEventNotFound) {
+			return notFound("event not found"), nil
+		}
+		s.logger.ErrorContext(ctx, "stream store error", "error", err)
+		return internalServerError(), nil
+	}
+
+	events, err := s.streamStore.Subscribe(ctx, sessionID, streamID, lastEventID)
+	if err != nil {
+		if errors.Is(err, ErrStreamNotFound) {
+			return notFound("stream not found"), nil
+		}
+		s.logger.ErrorContext(ctx, "stream store error", "error", err)
+		return internalServerError(), nil
+	}
+
+	return s.streamToSSE(ctx, sessionID, events)
+}
+
+func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error) {
+	ctx := c.Context()
+
+	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
+		return resp, nil
+	}
+
+	sessionID := firstHeader(c.Request.Headers, headerMcpSessionID)
+	if sessionID == "" {
+		return badRequest("missing Mcp-Session-Id"), nil
+	}
+
+	_, err := s.sessionStore.Get(ctx, sessionID)
+	switch {
+	case err == nil:
+		// ok
+	case errors.Is(err, ErrSessionNotFound):
+		return notFound("session not found"), nil
+	default:
+		s.logger.ErrorContext(ctx, "session store error", "error", err)
+		return internalServerError(), nil
+	}
+
+	if err := s.sessionStore.Delete(ctx, sessionID); err != nil {
+		s.logger.ErrorContext(ctx, "failed to delete session", "sessionId", sessionID, "error", err)
+		return internalServerError(), nil
+	}
+	if s.streamStore != nil {
+		_ = s.streamStore.DeleteSession(ctx, sessionID)
+	}
+
+	return &apptheory.Response{Status: 202}, nil
 }
 
 // dispatch routes a parsed JSON-RPC request to the appropriate MCP method handler.
 func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
 	switch req.Method {
 	case "initialize":
-		return s.handleInitialize(req)
+		return s.handleInitialize(req, protocolVersion)
+	case "ping":
+		return NewResultResponse(req.ID, map[string]any{})
 	case "tools/list":
 		return s.handleToolsList(req)
 	case "tools/call":
@@ -171,7 +334,7 @@ func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
 }
 
 // handleInitialize responds to the MCP initialize request with server capabilities.
-func (s *Server) handleInitialize(req *Request) *Response {
+func (s *Server) handleInitialize(req *Request, selectedProtocolVersion string) *Response {
 	capabilities := map[string]any{
 		"tools": map[string]any{},
 	}
@@ -183,7 +346,7 @@ func (s *Server) handleInitialize(req *Request) *Response {
 	}
 
 	result := map[string]any{
-		"protocolVersion": protocolVersion,
+		"protocolVersion": selectedProtocolVersion,
 		"capabilities":    capabilities,
 		"serverInfo": map[string]any{
 			"name":    s.name,
@@ -206,6 +369,9 @@ func (s *Server) handleToolsList(req *Request) *Response {
 type toolsCallParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
+	Meta      struct {
+		ProgressToken string `json:"progressToken,omitempty"`
+	} `json:"_meta,omitempty"`
 }
 
 // handleToolsCall invokes a registered tool by name (buffered JSON mode).
@@ -225,57 +391,6 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
 	}
 
 	return NewResultResponse(req.ID, result)
-}
-
-// handleToolsCallStreaming invokes a registered tool with SSE streaming support.
-func (s *Server) handleToolsCallStreaming(ctx context.Context, req *Request) (*apptheory.Response, error) {
-	var params toolsCallParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		resp := NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: "+err.Error())
-		return marshalSSEResponse(resp)
-	}
-
-	if params.Name == "" {
-		resp := NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name")
-		return marshalSSEResponse(resp)
-	}
-
-	events := make(chan apptheory.SSEEvent)
-
-	go func() {
-		defer close(events)
-
-		emit := func(ev SSEEvent) {
-			select {
-			case <-ctx.Done():
-				return
-			case events <- apptheory.SSEEvent{
-				Event: "progress",
-				Data:  ev.Data,
-			}:
-			}
-		}
-
-		result, err := s.registry.CallStreaming(ctx, params.Name, params.Arguments, emit)
-
-		var finalResp *Response
-		if err != nil {
-			finalResp = s.toolCallError(ctx, req.ID, params.Name, err)
-		} else {
-			finalResp = NewResultResponse(req.ID, result)
-		}
-
-		select {
-		case <-ctx.Done():
-			return
-		case events <- apptheory.SSEEvent{
-			Event: "message",
-			Data:  finalResp,
-		}:
-		}
-	}()
-
-	return apptheory.SSEStreamResponse(ctx, 200, events)
 }
 
 // toolCallError maps a tool call error to the appropriate JSON-RPC error response.
@@ -302,17 +417,14 @@ func (s *Server) toolCallError(ctx context.Context, reqID any, toolName string, 
 	return NewErrorResponse(reqID, CodeServerError, err.Error())
 }
 
-// marshalSSEResponse wraps a JSON-RPC response as a single SSE event.
-func marshalSSEResponse(resp *Response) (*apptheory.Response, error) {
-	return apptheory.SSEResponse(200, apptheory.SSEEvent{
-		Event: "message",
-		Data:  resp,
-	})
-}
-
 // handleBatch processes a JSON-RPC batch request (array of requests).
 // It parses each request, dispatches it, and returns an array of responses.
-func (s *Server) handleBatch(ctx context.Context, body []byte, sessionID string) (*apptheory.Response, error) {
+func (s *Server) handleBatch(ctx context.Context, body []byte, headers map[string][]string) (*apptheory.Response, error) {
+	// Batch semantics are only supported for legacy clients.
+	if pv := firstHeader(headers, headerMcpProtocolVersion); pv != "" && pv != protocolVersionLegacy {
+		return badRequest("batch requests are only supported for MCP-Protocol-Version 2025-03-26"), nil
+	}
+
 	requests, err := ParseBatchRequest(body)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "batch parse error", "error", err)
@@ -324,9 +436,6 @@ func (s *Server) handleBatch(ctx context.Context, body []byte, sessionID string)
 		headers := map[string][]string{
 			"content-type": {"application/json"},
 		}
-		if sessionID != "" {
-			headers["mcp-session-id"] = []string{sessionID}
-		}
 		return &apptheory.Response{
 			Status:  200,
 			Headers: headers,
@@ -334,9 +443,65 @@ func (s *Server) handleBatch(ctx context.Context, body []byte, sessionID string)
 		}, nil
 	}
 
-	responses := make([]*Response, len(requests))
-	for i, req := range requests {
-		responses[i] = s.dispatch(ctx, req)
+	sessionID := firstHeader(headers, headerMcpSessionID)
+	var sess *Session
+	if sessionID != "" {
+		var sessionErr error
+		sess, sessionErr = s.getSession(ctx, sessionID)
+		if sessionErr != nil {
+			if errors.Is(sessionErr, ErrSessionNotFound) {
+				return notFound("session not found"), nil
+			}
+			s.logger.ErrorContext(ctx, "session store error", "error", sessionErr)
+			return internalServerError(), nil
+		}
+	}
+
+	var createdSessionID string
+	responses := make([]*Response, 0, len(requests))
+
+	for _, req := range requests {
+		if req.Method == "initialize" {
+			initResp, newID, initErr := s.handleInitializeBatch(ctx, req)
+			if initErr != nil {
+				// Return initialize error as a normal JSON-RPC error response.
+				if req.ID != nil {
+					responses = append(responses, initErr)
+				}
+				continue
+			}
+			if req.ID != nil {
+				responses = append(responses, initResp)
+			}
+			createdSessionID = newID
+			sessionID = newID
+			sess, _ = s.sessionStore.Get(ctx, sessionID)
+			continue
+		}
+
+		// Notifications do not produce responses in batch mode.
+		if req.ID == nil {
+			continue
+		}
+
+		if sessionID == "" {
+			responses = append(responses, NewErrorResponse(req.ID, CodeInvalidRequest, "missing session; call initialize first"))
+			continue
+		}
+		if sess == nil {
+			var sessionErr error
+			sess, sessionErr = s.getSession(ctx, sessionID)
+			if sessionErr != nil {
+				responses = append(responses, NewErrorResponse(req.ID, CodeInternalError, "session error"))
+				continue
+			}
+		}
+
+		responses = append(responses, s.dispatch(ctx, req))
+	}
+
+	if len(responses) == 0 {
+		return &apptheory.Response{Status: 202}, nil
 	}
 
 	data, err := json.Marshal(responses)
@@ -344,18 +509,14 @@ func (s *Server) handleBatch(ctx context.Context, body []byte, sessionID string)
 		return nil, fmt.Errorf("failed to marshal batch response: %w", err)
 	}
 
-	headers := map[string][]string{
+	outHeaders := map[string][]string{
 		"content-type": {"application/json"},
 	}
-	if sessionID != "" {
-		headers["mcp-session-id"] = []string{sessionID}
+	if createdSessionID != "" {
+		outHeaders[headerMcpSessionID] = []string{createdSessionID}
 	}
 
-	return &apptheory.Response{
-		Status:  200,
-		Headers: headers,
-		Body:    data,
-	}, nil
+	return &apptheory.Response{Status: 200, Headers: outHeaders, Body: data}, nil
 }
 
 func sessionTTL() time.Duration {
@@ -368,56 +529,9 @@ func sessionTTL() time.Duration {
 	return time.Duration(defaultSessionTTLMinutes) * time.Minute
 }
 
-// resolveSession looks up an existing session or creates a new one.
-// Returns the session ID to use in the response.
-func (s *Server) resolveSession(ctx context.Context, sessionID string) (string, error) {
-	now := time.Now().UTC()
-	ttl := sessionTTL()
-
-	if sessionID != "" {
-		sess, err := s.sessionStore.Get(ctx, sessionID)
-		switch {
-		case err == nil:
-			if !sess.ExpiresAt.IsZero() && now.After(sess.ExpiresAt) {
-				if delErr := s.sessionStore.Delete(ctx, sessionID); delErr != nil {
-					s.logger.ErrorContext(ctx, "failed to delete expired session", "sessionId", sessionID, "error", delErr)
-				}
-				break
-			}
-
-			// Refresh session TTL on access (sliding window).
-			sess.ExpiresAt = now.Add(ttl)
-			if sess.CreatedAt.IsZero() {
-				sess.CreatedAt = now
-			}
-			if putErr := s.sessionStore.Put(ctx, sess); putErr != nil {
-				return "", fmt.Errorf("failed to refresh session: %w", putErr)
-			}
-
-			return sessionID, nil
-		case errors.Is(err, ErrSessionNotFound):
-			// Session expired or invalid — fall through to create new one.
-		default:
-			return "", fmt.Errorf("failed to get session: %w", err)
-		}
-	}
-
-	// Create a new session.
-	newID := s.idGen.NewID()
-	sess := &Session{
-		ID:        newID,
-		CreatedAt: now,
-		ExpiresAt: now.Add(ttl),
-	}
-	if err := s.sessionStore.Put(ctx, sess); err != nil {
-		return "", fmt.Errorf("failed to create session: %w", err)
-	}
-	return newID, nil
-}
-
 // marshalSingleResponse serializes a JSON-RPC response and wraps it in an
 // apptheory.Response with the appropriate headers.
-func (s *Server) marshalSingleResponse(resp *Response, sessionID string, _ map[string][]string) (*apptheory.Response, error) {
+func (s *Server) marshalSingleResponse(resp *Response, sessionID string, includeSession bool) (*apptheory.Response, error) {
 	data, err := MarshalResponse(resp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal response: %w", err)
@@ -426,8 +540,8 @@ func (s *Server) marshalSingleResponse(resp *Response, sessionID string, _ map[s
 	headers := map[string][]string{
 		"content-type": {"application/json"},
 	}
-	if sessionID != "" {
-		headers["mcp-session-id"] = []string{sessionID}
+	if includeSession && sessionID != "" {
+		headers[headerMcpSessionID] = []string{sessionID}
 	}
 
 	return &apptheory.Response{
@@ -463,12 +577,401 @@ func firstHeader(headers map[string][]string, key string) string {
 	return values[0]
 }
 
-// wantsSSE returns true if the Accept header includes text/event-stream.
-func wantsSSE(headers map[string][]string) bool {
+func acceptsEventStream(headers map[string][]string) bool {
 	for _, v := range headers["accept"] {
 		if strings.Contains(strings.ToLower(v), "text/event-stream") {
 			return true
 		}
 	}
 	return false
+}
+
+func parseJSONObject(data []byte) (map[string]json.RawMessage, error) {
+	if len(data) == 0 {
+		return nil, errors.New("empty request body")
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func (s *Server) validateOrigin(headers map[string][]string) *apptheory.Response {
+	origin := firstHeader(headers, "origin")
+	if origin == "" {
+		return nil
+	}
+	if s.originValidator == nil || !s.originValidator(origin) {
+		return &apptheory.Response{
+			Status: 403,
+			Headers: map[string][]string{
+				"content-type": {"application/json"},
+			},
+			Body: []byte(`{"error":"forbidden"}`),
+		}
+	}
+	return nil
+}
+
+func isSupportedProtocolVersion(v string) bool {
+	return v == protocolVersion || v == protocolVersionLegacy
+}
+
+func (s *Server) requireProtocolVersion(headers map[string][]string, sess *Session) *apptheory.Response {
+	v := firstHeader(headers, headerMcpProtocolVersion)
+	if v == "" {
+		// Header is optional. When absent, behavior defaults to the session's
+		// negotiated protocol (if any) and otherwise the legacy default.
+		return nil
+	}
+	if !isSupportedProtocolVersion(v) {
+		return badRequest("unsupported MCP-Protocol-Version")
+	}
+	if sess != nil && sess.Data != nil {
+		if expected := sess.Data["protocolVersion"]; expected != "" && expected != v {
+			return badRequest("MCP-Protocol-Version mismatch")
+		}
+	}
+	return nil
+}
+
+func (s *Server) requireSession(ctx context.Context, headers map[string][]string) (string, *Session, *apptheory.Response) {
+	sessionID := firstHeader(headers, headerMcpSessionID)
+	if sessionID == "" {
+		return "", nil, badRequest("missing Mcp-Session-Id")
+	}
+
+	sess, err := s.getSession(ctx, sessionID)
+	switch {
+	case err == nil:
+		return sessionID, sess, nil
+	case errors.Is(err, ErrSessionNotFound):
+		return "", nil, notFound("session not found")
+	default:
+		s.logger.ErrorContext(ctx, "session store error", "error", err)
+		return "", nil, internalServerError()
+	}
+}
+
+func (s *Server) getSession(ctx context.Context, sessionID string) (*Session, error) {
+	now := time.Now().UTC()
+	ttl := sessionTTL()
+
+	sess, err := s.sessionStore.Get(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Refresh session TTL on access (sliding window).
+	sess.ExpiresAt = now.Add(ttl)
+	if sess.CreatedAt.IsZero() {
+		sess.CreatedAt = now
+	}
+	if putErr := s.sessionStore.Put(ctx, sess); putErr != nil {
+		return nil, fmt.Errorf("failed to refresh session: %w", putErr)
+	}
+
+	return sess, nil
+}
+
+func (s *Server) handleInitializeHTTP(ctx context.Context, req *Request) (*apptheory.Response, error) {
+	selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
+	if errResp != nil {
+		return s.marshalSingleResponse(errResp, "", false)
+	}
+
+	sessionID, err := s.createSession(ctx, selectedPV)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "failed to create session", "error", err)
+		return jsonRPCErrorResponse(req.ID, CodeInternalError, "session error"), nil
+	}
+
+	resp := s.handleInitialize(req, selectedPV)
+	return s.marshalSingleResponse(resp, sessionID, true)
+}
+
+func (s *Server) negotiateInitializeProtocolVersion(req *Request) (string, *Response) {
+	selected := protocolVersion
+	if len(req.Params) == 0 {
+		return selected, nil
+	}
+
+	var params struct {
+		ProtocolVersion string `json:"protocolVersion,omitempty"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return "", NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: "+err.Error())
+	}
+	if params.ProtocolVersion == "" {
+		return selected, nil
+	}
+	if !isSupportedProtocolVersion(params.ProtocolVersion) {
+		return "", NewErrorResponse(req.ID, CodeInvalidParams, fmt.Sprintf("Unsupported protocolVersion: %s", params.ProtocolVersion))
+	}
+	return params.ProtocolVersion, nil
+}
+
+func (s *Server) createSession(ctx context.Context, selectedPV string) (string, error) {
+	now := time.Now().UTC()
+	ttl := sessionTTL()
+
+	newID := s.idGen.NewID()
+	sess := &Session{
+		ID:        newID,
+		CreatedAt: now,
+		ExpiresAt: now.Add(ttl),
+		Data: map[string]string{
+			"protocolVersion": selectedPV,
+		},
+	}
+	if err := s.sessionStore.Put(ctx, sess); err != nil {
+		return "", fmt.Errorf("failed to create session: %w", err)
+	}
+	return newID, nil
+}
+
+func (s *Server) handleInitializeBatch(ctx context.Context, req *Request) (*Response, string, *Response) {
+	selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
+	if errResp != nil {
+		return nil, "", errResp
+	}
+	id, err := s.createSession(ctx, selectedPV)
+	if err != nil {
+		return nil, "", NewErrorResponse(req.ID, CodeInternalError, "session error")
+	}
+	return s.handleInitialize(req, selectedPV), id, nil
+}
+
+func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Request) {
+	switch req.Method {
+	case "notifications/initialized":
+		if sess == nil {
+			return
+		}
+		if sess.Data == nil {
+			sess.Data = map[string]string{}
+		}
+		sess.Data["initialized"] = "true"
+		_ = s.sessionStore.Put(ctx, sess)
+	case "notifications/cancelled":
+		// Accepted for spec compliance; cancellation wiring is handled by higher-level
+		// async implementations (e.g. theory-mcp).
+	default:
+	}
+}
+
+func (s *Server) handleRequestHTTP(ctx context.Context, sessionID string, req *Request, headers map[string][]string) (*apptheory.Response, error) {
+	if req.Method == "tools/call" && acceptsEventStream(headers) {
+		return s.handleToolsCallStream(ctx, sessionID, req)
+	}
+
+	resp := s.dispatch(ctx, req)
+	return s.marshalSingleResponse(resp, sessionID, false)
+}
+
+func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, req *Request) (*apptheory.Response, error) {
+	if s.streamStore == nil {
+		resp := NewErrorResponse(req.ID, CodeInternalError, "streaming not supported")
+		return s.marshalSingleResponse(resp, sessionID, false)
+	}
+
+	streamID, err := s.streamStore.Create(ctx, sessionID)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "stream store error", "error", err)
+		return internalServerError(), nil
+	}
+
+	// Run the tool out-of-band so disconnects do not cancel execution.
+	toolCtx := context.WithoutCancel(ctx)
+	go s.runStreamingTool(toolCtx, sessionID, streamID, req)
+
+	events, err := s.streamStore.Subscribe(ctx, sessionID, streamID, "")
+	if err != nil {
+		s.logger.ErrorContext(ctx, "stream store error", "error", err)
+		return internalServerError(), nil
+	}
+
+	return s.streamToSSE(ctx, sessionID, events)
+}
+
+func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID string, req *Request) {
+	defer func() {
+		_ = s.streamStore.Close(ctx, sessionID, streamID)
+	}()
+
+	var params toolsCallParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		_ = s.appendStreamResponse(ctx, sessionID, streamID, NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: "+err.Error()))
+		return
+	}
+	if params.Name == "" {
+		_ = s.appendStreamResponse(ctx, sessionID, streamID, NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name"))
+		return
+	}
+
+	progressToken := strings.TrimSpace(params.Meta.ProgressToken)
+	progressSeq := 0.0
+
+	emit := func(ev SSEEvent) {
+		if progressToken == "" {
+			return
+		}
+
+		progressSeq++
+		progress, total, message := progressFromSSEEvent(ev, progressSeq)
+
+		notification := Request{
+			JSONRPC: jsonrpcVersion,
+			Method:  "notifications/progress",
+			Params:  mustMarshalJSON(map[string]any{"progressToken": progressToken, "progress": progress, "total": total, "message": message}),
+		}
+		notificationBytes, err := json.Marshal(notification)
+		if err != nil {
+			return
+		}
+		_, _ = s.streamStore.Append(ctx, sessionID, streamID, notificationBytes)
+	}
+
+	result, err := s.registry.CallStreaming(ctx, params.Name, params.Arguments, emit)
+
+	var finalResp *Response
+	if err != nil {
+		finalResp = s.toolCallError(ctx, req.ID, params.Name, err)
+	} else {
+		finalResp = NewResultResponse(req.ID, result)
+	}
+
+	_ = s.appendStreamResponse(ctx, sessionID, streamID, finalResp)
+}
+
+func progressFromSSEEvent(ev SSEEvent, fallbackProgress float64) (progress float64, total any, message string) {
+	switch v := ev.Data.(type) {
+	case nil:
+		return fallbackProgress, nil, ""
+	case string:
+		return fallbackProgress, nil, v
+	case map[string]any:
+		var ok bool
+		if progress, ok = floatFromAny(v["progress"]); !ok {
+			if progress, ok = floatFromAny(v["seq"]); !ok {
+				progress = fallbackProgress
+			}
+		}
+		if t, has := v["total"]; has {
+			total = t
+		}
+		if msg, has := v["message"]; has {
+			if s, ok := msg.(string); ok {
+				message = s
+			}
+		}
+		return progress, total, message
+	default:
+		return fallbackProgress, nil, fmt.Sprint(v)
+	}
+}
+
+func floatFromAny(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case float32:
+		return float64(x), true
+	case int:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	case int32:
+		return float64(x), true
+	case json.Number:
+		f, err := x.Float64()
+		return f, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func mustMarshalJSON(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+func (s *Server) appendStreamResponse(ctx context.Context, sessionID, streamID string, resp *Response) error {
+	b, err := MarshalResponse(resp)
+	if err != nil {
+		return err
+	}
+	_, err = s.streamStore.Append(ctx, sessionID, streamID, b)
+	return err
+}
+
+func (s *Server) streamToSSE(ctx context.Context, sessionID string, events <-chan StreamEvent) (*apptheory.Response, error) {
+	out := make(chan apptheory.SSEEvent)
+
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-events:
+				if !ok {
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case out <- apptheory.SSEEvent{
+					ID:    ev.ID,
+					Event: "message",
+					Data:  ev.Data,
+				}:
+				}
+			}
+		}
+	}()
+
+	resp, err := apptheory.SSEStreamResponse(ctx, 200, out)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Headers == nil {
+		resp.Headers = map[string][]string{}
+	}
+	resp.Headers[headerMcpSessionID] = []string{sessionID}
+	return resp, nil
+}
+
+func badRequest(msg string) *apptheory.Response {
+	return &apptheory.Response{
+		Status: 400,
+		Headers: map[string][]string{
+			"content-type": {"application/json"},
+		},
+		Body: []byte(fmt.Sprintf(`{"error":%q}`, msg)),
+	}
+}
+
+func notFound(msg string) *apptheory.Response {
+	return &apptheory.Response{
+		Status: 404,
+		Headers: map[string][]string{
+			"content-type": {"application/json"},
+		},
+		Body: []byte(fmt.Sprintf(`{"error":%q}`, msg)),
+	}
+}
+
+func internalServerError() *apptheory.Response {
+	return &apptheory.Response{
+		Status: 500,
+		Headers: map[string][]string{
+			"content-type": {"application/json"},
+		},
+		Body: []byte(`{"error":"internal server error"}`),
+	}
 }

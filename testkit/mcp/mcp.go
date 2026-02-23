@@ -19,6 +19,7 @@ type Client struct {
 	env       *testkit.Env
 	app       *apptheory.App
 	sessionID string
+	protocol  string
 }
 
 func parseResult[T any](method string, result any, out *T) error {
@@ -47,11 +48,15 @@ func (c *Client) rawOK(ctx context.Context, req *mcpruntime.Request) (*mcpruntim
 // deterministic test environment.
 func NewClient(server *mcpruntime.Server, env *testkit.Env) *Client {
 	app := env.App()
-	app.Post("/mcp", server.Handler())
+	h := server.Handler()
+	app.Post("/mcp", h)
+	app.Get("/mcp", h)
+	app.Delete("/mcp", h)
 	return &Client{
-		server: server,
-		env:    env,
-		app:    app,
+		server:   server,
+		env:      env,
+		app:      app,
+		protocol: "2025-06-18",
 	}
 }
 
@@ -67,6 +72,7 @@ func (c *Client) Initialize(ctx context.Context) (*mcpruntime.Response, error) {
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "initialize",
+		Params:  json.RawMessage(`{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"apptheory-testkit","version":"dev"}}`),
 	}
 	resp, err := c.Raw(ctx, req)
 	if err != nil {
@@ -267,9 +273,11 @@ func (c *Client) Raw(ctx context.Context, req *mcpruntime.Request) (*mcpruntime.
 
 	headers := map[string][]string{
 		"content-type": {"application/json"},
+		"accept":       {"application/json"},
 	}
 	if c.sessionID != "" {
 		headers["mcp-session-id"] = []string{c.sessionID}
+		headers["mcp-protocol-version"] = []string{c.protocol}
 	}
 
 	httpReq := apptheory.Request{
@@ -286,9 +294,23 @@ func (c *Client) Raw(ctx context.Context, req *mcpruntime.Request) (*mcpruntime.
 		c.sessionID = ids[0]
 	}
 
+	// Streamable HTTP notifications/responses return 202 with no body.
+	if httpResp.Status == 202 && len(httpResp.Body) == 0 {
+		return &mcpruntime.Response{JSONRPC: "2.0", ID: nil}, nil
+	}
+
 	var rpcResp mcpruntime.Response
 	if err := json.Unmarshal(httpResp.Body, &rpcResp); err != nil {
 		return nil, fmt.Errorf("failed to parse response (status=%d): %w", httpResp.Status, err)
+	}
+
+	if req != nil && req.Method == "initialize" && rpcResp.Error == nil {
+		var result struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		if err := parseResult(req.Method, rpcResp.Result, &result); err == nil && result.ProtocolVersion != "" {
+			c.protocol = result.ProtocolVersion
+		}
 	}
 	return &rpcResp, nil
 }
