@@ -5,7 +5,7 @@ This document describes AppTheory’s **MCP server implementation** (`github.com
 If you’re specifically integrating with **Bedrock AgentCore**, start with `docs/agentcore-mcp.md` (it focuses on what to deploy and how AgentCore calls tools).
 
 For the Claude-first Remote MCP roadmap (Streamable HTTP + OAuth/DCR), see:
-- `docs/development/planning/apptheory/remote-mcp/README.md`
+- `docs/remote-mcp.md` (implementation guide) and `docs/development/planning/apptheory/remote-mcp/README.md` (roadmap + contract)
 
 OAuth helper surfaces used by Remote MCP deployments and Autheory are in:
 - `github.com/theory-cloud/apptheory/runtime/oauth`
@@ -236,3 +236,7 @@ _, _ = client.Initialize(context.Background())
 tools, _ := client.ListTools(context.Background())
 _ = tools
 ```
+
+For Streamable HTTP SSE streaming, use:
+- `Client.RawStream(...)` (POST stream)
+- `Client.ResumeStream(...)` (GET replay/resume with `Last-Event-ID`)

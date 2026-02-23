@@ -2036,6 +2036,18 @@ type Client struct {
 	protocol  string
 }
 
+type SSEMessage struct {
+	ID    string
+	Event string
+	Data  json.RawMessage
+}
+
+type Stream struct {
+	cancel context.CancelFunc
+	resp   apptheory.Response
+	reader *bufio.Reader
+}
+
 func AssertError(testing.TB, *mcpruntime.Response, int)
 
 func AssertHasTools(testing.TB, []mcpruntime.ToolDef, ...string)
@@ -2058,6 +2070,8 @@ func NewClient(*mcpruntime.Server, *testkit.Env) *Client
 
 func ReadResourceRequest(any, string) (*mcpruntime.Request, error)
 
+func ReadSSEMessage(*bufio.Reader) (*SSEMessage, error)
+
 func (*Client) CallTool(context.Context, string, any) (*mcpruntime.ToolResult, error)
 
 func (*Client) GetPrompt(context.Context, string, any) (*mcpruntime.PromptResult, error)
@@ -2072,9 +2086,21 @@ func (*Client) ListTools(context.Context) ([]mcpruntime.ToolDef, error)
 
 func (*Client) Raw(context.Context, *mcpruntime.Request) (*mcpruntime.Response, error)
 
+func (*Client) RawStream(context.Context, *mcpruntime.Request, map[string][]string) (*Stream, error)
+
 func (*Client) ReadResource(context.Context, string) ([]mcpruntime.ResourceContent, error)
 
+func (*Client) ResumeStream(context.Context, string, map[string][]string) (*Stream, error)
+
 func (*Client) SessionID() string
+
+func (*Stream) Cancel()
+
+func (*Stream) Next() (*SSEMessage, error)
+
+func (*Stream) ReadAll() ([]SSEMessage, error)
+
+func (*Stream) Response() apptheory.Response
 
 ## github.com/theory-cloud/apptheory/testkit/oauth
 
