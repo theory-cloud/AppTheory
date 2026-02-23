@@ -11,3 +11,4 @@ func validateAppTheoryFunctionAlarms_IsConstructParameters(x interface{}) error 
 func validateNewAppTheoryFunctionAlarmsParameters(scope constructs.Construct, id *string, props *AppTheoryFunctionAlarmsProps) error {
 	return nil
 }
+

@@ -78,6 +78,7 @@ func (j *jsiiProxy_AppTheoryApiDomain) Node() constructs.Node {
 	return returns
 }
 
+
 func NewAppTheoryApiDomain(scope constructs.Construct, id *string, props *AppTheoryApiDomainProps) AppTheoryApiDomain {
 	_init_.Initialize()
 
@@ -152,3 +153,4 @@ func (a *jsiiProxy_AppTheoryApiDomain) ToString() *string {
 
 	return returns
 }
+

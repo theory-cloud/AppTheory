@@ -37,3 +37,4 @@ type SpaOriginConfig struct {
 	//
 	StripPrefixBeforeOrigin *bool `field:"optional" json:"stripPrefixBeforeOrigin" yaml:"stripPrefixBeforeOrigin"`
 }
+

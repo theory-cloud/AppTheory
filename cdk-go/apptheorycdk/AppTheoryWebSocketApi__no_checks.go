@@ -11,3 +11,4 @@ func validateAppTheoryWebSocketApi_IsConstructParameters(x interface{}) error {
 func validateNewAppTheoryWebSocketApiParameters(scope constructs.Construct, id *string, props *AppTheoryWebSocketApiProps) error {
 	return nil
 }
+

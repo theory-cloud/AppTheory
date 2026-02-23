@@ -447,6 +447,27 @@ func init() {
 		reflect.TypeOf((*AppTheoryQueueProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServer",
+		reflect.TypeOf((*AppTheoryRemoteMcpServer)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "endpoint", GoGetter: "Endpoint"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "router", GoGetter: "Router"},
+			_jsii_.MemberProperty{JsiiProperty: "sessionTable", GoGetter: "SessionTable"},
+			_jsii_.MemberProperty{JsiiProperty: "streamTable", GoGetter: "StreamTable"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryRemoteMcpServer{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServerProps",
+		reflect.TypeOf((*AppTheoryRemoteMcpServerProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryRestApi",
 		reflect.TypeOf((*AppTheoryRestApi)(nil)).Elem(),
 		[]_jsii_.Member{
@@ -522,7 +543,7 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheorySpaRewriteMode",
 		reflect.TypeOf((*AppTheorySpaRewriteMode)(nil)).Elem(),
 		map[string]interface{}{
-			"SPA":  AppTheorySpaRewriteMode_SPA,
+			"SPA": AppTheorySpaRewriteMode_SPA,
 			"NONE": AppTheorySpaRewriteMode_NONE,
 		},
 	)

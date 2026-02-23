@@ -11,6 +11,7 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryFunctionAlarms` (baseline alarms)
 - `AppTheoryHttpApi` (API Gateway v2 HTTP API + proxy routes)
 - `AppTheoryMcpServer` (API Gateway v2 HTTP API `POST /mcp` for MCP / Bedrock AgentCore)
+- `AppTheoryRemoteMcpServer` (API Gateway REST API v1 streaming `/mcp` for Claude Remote MCP / Streamable HTTP)
 - `AppTheoryRestApi` (API Gateway REST API v1 + single-Lambda proxy routes)
 - `AppTheoryRestApiRouter` (API Gateway REST API v1 + multi-Lambda routing + full streaming parity)
 - `AppTheoryWebSocketApi` (WebSocket API + routes/permissions; optional connection table + stage access logging)

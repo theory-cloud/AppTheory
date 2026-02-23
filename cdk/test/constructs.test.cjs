@@ -1535,3 +1535,179 @@ test("AppTheoryMcpServer (with stage options) synthesizes expected template", ()
     expectSnapshot("mcp-server-stage", template);
   }
 });
+
+// ============================================================================
+// AppTheoryRemoteMcpServer tests
+// ============================================================================
+
+test("AppTheoryRemoteMcpServer (basic) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
+    handler: fn,
+    apiName: "apptheory-remote-mcp-test",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify: REST API exists
+  assertions.Template.fromStack(stack).hasResourceProperties("AWS::ApiGateway::RestApi", {
+    Name: "apptheory-remote-mcp-test",
+  });
+
+  // Verify: Streaming enabled on POST/GET methods (ResponseTransferMode + URI suffix + timeout)
+  let streamingMethods = 0;
+  let hasPost = false;
+  let hasGet = false;
+  let hasDelete = false;
+
+  for (const [key, resource] of Object.entries(template.Resources)) {
+    if (resource.Type !== "AWS::ApiGateway::Method") continue;
+
+    const method = resource.Properties?.HttpMethod;
+    if (method === "POST") hasPost = true;
+    if (method === "GET") hasGet = true;
+    if (method === "DELETE") hasDelete = true;
+
+    if (method !== "POST" && method !== "GET") continue;
+
+    const integration = resource.Properties?.Integration;
+    assert.equal(integration?.ResponseTransferMode, "STREAM", `Method ${key} should be streaming`);
+    assert.equal(integration?.TimeoutInMillis, 900000, `Method ${key} should have 15min timeout`);
+
+    const uri = integration?.Uri;
+    if (uri && uri["Fn::Join"]) {
+      const uriParts = uri["Fn::Join"][1];
+      const hasStreamingUri = uriParts.some(
+        (p) => typeof p === "string" && p.includes("/response-streaming-invocations"),
+      );
+      assert.ok(hasStreamingUri, `Method ${key} should have streaming invocation URI`);
+    } else {
+      assert.fail(`Method ${key} should have a Fn::Join integration URI`);
+    }
+
+    streamingMethods++;
+  }
+
+  assert.ok(hasPost, "Should have POST /mcp method");
+  assert.ok(hasGet, "Should have GET /mcp method");
+  assert.ok(hasDelete, "Should have DELETE /mcp method");
+  assert.ok(streamingMethods >= 2, "Should have streaming enabled on POST and GET");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("remote-mcp-server-basic", template);
+  } else {
+    expectSnapshot("remote-mcp-server-basic", template);
+  }
+});
+
+test("AppTheoryRemoteMcpServer (with tables) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
+    handler: fn,
+    apiName: "apptheory-remote-mcp-tables-test",
+    enableSessionTable: true,
+    sessionTableName: "mcp-sessions",
+    sessionTtlMinutes: 120,
+    enableStreamTable: true,
+    streamTableName: "mcp-streams",
+    streamTtlMinutes: 240,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify: Session table exists (pk + TTL)
+  assertions.Template.fromStack(stack).hasResourceProperties("AWS::DynamoDB::Table", {
+    TableName: "mcp-sessions",
+    KeySchema: [{ AttributeName: "sessionId", KeyType: "HASH" }],
+    TimeToLiveSpecification: { AttributeName: "expiresAt", Enabled: true },
+  });
+
+  // Verify: Stream table exists (pk/sk + TTL)
+  assertions.Template.fromStack(stack).hasResourceProperties("AWS::DynamoDB::Table", {
+    TableName: "mcp-streams",
+    KeySchema: [
+      { AttributeName: "sessionId", KeyType: "HASH" },
+      { AttributeName: "eventId", KeyType: "RANGE" },
+    ],
+    TimeToLiveSpecification: { AttributeName: "expiresAt", Enabled: true },
+  });
+
+  // Verify: Lambda has IAM policies for DynamoDB access
+  const policies = Object.entries(template.Resources).filter(
+    ([, resource]) => resource.Type === "AWS::IAM::Policy",
+  );
+  assert.ok(policies.length >= 1, "Should have IAM policy for DynamoDB access");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("remote-mcp-server-tables", template);
+  } else {
+    expectSnapshot("remote-mcp-server-tables", template);
+  }
+});
+
+test("AppTheoryRemoteMcpServer (with custom domain) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+  const cert = new apptheory.AppTheoryCertificate(stack, "Cert", {
+    domainName: "mcp.example.com",
+    hostedZone: zone,
+  });
+
+  new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
+    handler: fn,
+    apiName: "apptheory-remote-mcp-domain-test",
+    domain: {
+      domainName: "mcp.example.com",
+      certificate: cert.certificate,
+      hostedZone: zone,
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+
+  // Verify: REST domain + mapping + Route53 alias record exist
+  const domainNames = Object.entries(template.Resources).filter(
+    ([, resource]) => resource.Type === "AWS::ApiGateway::DomainName",
+  );
+  assert.ok(domainNames.length >= 1, "Should have API Gateway REST DomainName");
+
+  const mappings = Object.entries(template.Resources).filter(
+    ([, resource]) => resource.Type === "AWS::ApiGateway::BasePathMapping",
+  );
+  assert.ok(mappings.length >= 1, "Should have API Gateway REST BasePathMapping");
+
+  const records = Object.entries(template.Resources).filter(
+    ([, resource]) => resource.Type === "AWS::Route53::RecordSet",
+  );
+  assert.ok(records.length >= 1, "Should have Route53 record");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("remote-mcp-server-domain", template);
+  } else {
+    expectSnapshot("remote-mcp-server-domain", template);
+  }
+});

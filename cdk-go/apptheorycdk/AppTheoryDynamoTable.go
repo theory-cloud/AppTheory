@@ -43,6 +43,7 @@ func (j *jsiiProxy_AppTheoryDynamoTable) Table() awsdynamodb.Table {
 	return returns
 }
 
+
 func NewAppTheoryDynamoTable(scope constructs.Construct, id *string, props *AppTheoryDynamoTableProps) AppTheoryDynamoTable {
 	_init_.Initialize()
 
@@ -117,3 +118,4 @@ func (a *jsiiProxy_AppTheoryDynamoTable) ToString() *string {
 
 	return returns
 }
+

@@ -36,3 +36,4 @@ func validateNewAppTheoryMcpServerParameters(scope constructs.Construct, id *str
 
 	return nil
 }
+

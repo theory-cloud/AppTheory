@@ -115,7 +115,9 @@ AppTheory includes an MCP (Model Context Protocol) server implementation intende
 - Go runtime package: `runtime/mcp` (JSON-RPC methods: `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `prompts/list`, `prompts/get`)
 - Go test helpers: `testkit/mcp` (deterministic in-process MCP client)
 - CDK construct (jsii): `AppTheoryMcpServer` (HTTP API v2 `POST /mcp` → Lambda, optional session table + custom domain)
+- CDK construct (jsii): `AppTheoryRemoteMcpServer` (REST API v1 streaming `/mcp` for Claude Remote MCP / Streamable HTTP)
 
 Guides:
 - AgentCore deployment: `docs/agentcore-mcp.md` and `cdk/docs/mcp-server-agentcore.md`
+- Claude Remote MCP deployment: `docs/development/planning/apptheory/remote-mcp/README.md` and `cdk/docs/mcp-server-remote-mcp.md`
 - Full MCP method surface + payload shapes: `docs/mcp.md`

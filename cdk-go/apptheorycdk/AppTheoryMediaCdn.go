@@ -119,6 +119,7 @@ func (j *jsiiProxy_AppTheoryMediaCdn) PublicKey() awscloudfront.PublicKey {
 	return returns
 }
 
+
 func NewAppTheoryMediaCdn(scope constructs.Construct, id *string, props *AppTheoryMediaCdnProps) AppTheoryMediaCdn {
 	_init_.Initialize()
 
@@ -193,3 +194,4 @@ func (a *jsiiProxy_AppTheoryMediaCdn) ToString() *string {
 
 	return returns
 }
+
