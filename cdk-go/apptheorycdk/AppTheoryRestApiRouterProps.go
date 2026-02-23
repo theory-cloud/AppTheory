@@ -50,4 +50,3 @@ type AppTheoryRestApiRouterProps struct {
 	// Stage configuration.
 	Stage *AppTheoryRestApiRouterStageOptions `field:"optional" json:"stage" yaml:"stage"`
 }
-

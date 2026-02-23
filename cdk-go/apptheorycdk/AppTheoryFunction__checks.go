@@ -36,4 +36,3 @@ func validateNewAppTheoryFunctionParameters(scope constructs.Construct, id *stri
 
 	return nil
 }
-

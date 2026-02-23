@@ -36,4 +36,3 @@ func validateNewAppTheoryApiDomainParameters(scope constructs.Construct, id *str
 
 	return nil
 }
-

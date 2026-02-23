@@ -11,4 +11,3 @@ func validateAppTheoryQueueProcessor_IsConstructParameters(x interface{}) error 
 func validateNewAppTheoryQueueProcessorParameters(scope constructs.Construct, id *string, props *AppTheoryQueueProcessorProps) error {
 	return nil
 }
-

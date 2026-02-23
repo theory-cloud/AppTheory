@@ -43,7 +43,6 @@ func (j *jsiiProxy_AppTheoryEventBridgeHandler) Rule() awsevents.Rule {
 	return returns
 }
 
-
 func NewAppTheoryEventBridgeHandler(scope constructs.Construct, id *string, props *AppTheoryEventBridgeHandlerProps) AppTheoryEventBridgeHandler {
 	_init_.Initialize()
 
@@ -118,4 +117,3 @@ func (a *jsiiProxy_AppTheoryEventBridgeHandler) ToString() *string {
 
 	return returns
 }
-

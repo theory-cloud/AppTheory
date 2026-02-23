@@ -11,4 +11,3 @@ func validateAppTheoryKmsKey_IsConstructParameters(x interface{}) error {
 func validateNewAppTheoryKmsKeyParameters(scope constructs.Construct, id *string, props *AppTheoryKmsKeyProps) error {
 	return nil
 }
-
