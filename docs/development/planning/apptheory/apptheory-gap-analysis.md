@@ -8,7 +8,7 @@ Status snapshot:
 
 - Repo: `AppTheory/`
 - Commit: `v0.2.0-rc.1` (tagged release candidate)
-- Toolchains: Go `1.25.6`, Node `24`, Python `3.14` (per `go.mod` + docs)
+- Toolchains: Go `1.26.0`, Node `24`, Python `3.14` (per `go.mod` + docs)
 - Current quality signal:
   - `make rubric`: PASS
   - `make verify-builds`: PASS (deterministic artifacts)
