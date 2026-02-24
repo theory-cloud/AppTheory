@@ -22,7 +22,7 @@ const jsonrpcVersion = "2.0"
 // Request is a JSON-RPC 2.0 request message.
 type Request struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      any             `json:"id"`
+	ID      any             `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
 }
@@ -43,8 +43,14 @@ type RPCError struct {
 }
 
 // ParseRequest parses a single JSON-RPC 2.0 request from raw bytes.
-// It validates the required fields: jsonrpc must be "2.0", method must be
-// non-empty, and id must be present.
+// It validates the required fields: jsonrpc must be "2.0" and method must be
+// non-empty.
+//
+// This function accepts both JSON-RPC requests and notifications:
+// - Requests include an "id" field.
+// - Notifications omit the "id" field.
+//
+// If an "id" field is present, it MUST NOT be null.
 func ParseRequest(data []byte) (*Request, error) {
 	if len(data) == 0 {
 		return nil, errors.New("empty request body")
@@ -63,8 +69,10 @@ func ParseRequest(data []byte) (*Request, error) {
 	if _, ok := raw["method"]; !ok {
 		return nil, errors.New("missing required field: method")
 	}
-	if _, ok := raw["id"]; !ok {
-		return nil, errors.New("missing required field: id")
+	if idRaw, ok := raw["id"]; ok {
+		if len(trimLeftSpace(idRaw)) == 0 || string(trimLeftSpace(idRaw)) == "null" {
+			return nil, errors.New("id must not be null")
+		}
 	}
 
 	var req Request
@@ -80,6 +88,45 @@ func ParseRequest(data []byte) (*Request, error) {
 	}
 
 	return &req, nil
+}
+
+// ParseResponse parses a single JSON-RPC 2.0 response from raw bytes.
+//
+// It validates:
+// - jsonrpc must be "2.0"
+// - id must be present (it may be null for certain error cases)
+// - exactly one of result or error is present
+func ParseResponse(data []byte) (*Response, error) {
+	if len(data) == 0 {
+		return nil, errors.New("empty response body")
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %w", err)
+	}
+
+	if _, ok := raw["jsonrpc"]; !ok {
+		return nil, errors.New("missing required field: jsonrpc")
+	}
+	if _, ok := raw["id"]; !ok {
+		return nil, errors.New("missing required field: id")
+	}
+	_, hasResult := raw["result"]
+	_, hasError := raw["error"]
+	if hasResult == hasError {
+		return nil, errors.New("response must have exactly one of result or error")
+	}
+
+	var resp Response
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	if resp.JSONRPC != jsonrpcVersion {
+		return nil, fmt.Errorf("unsupported jsonrpc version: %s", resp.JSONRPC)
+	}
+
+	return &resp, nil
 }
 
 // ParseBatchRequest parses a JSON-RPC batch request (array of requests) from
