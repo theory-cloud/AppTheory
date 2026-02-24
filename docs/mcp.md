@@ -4,27 +4,39 @@ This document describes AppTheory’s **MCP server implementation** (`github.com
 
 If you’re specifically integrating with **Bedrock AgentCore**, start with `docs/agentcore-mcp.md` (it focuses on what to deploy and how AgentCore calls tools).
 
+For the Claude-first Remote MCP roadmap (Streamable HTTP + OAuth/DCR), see:
+- `docs/remote-mcp.md` (implementation guide) and `docs/development/planning/apptheory/remote-mcp/README.md` (roadmap + contract)
+
+OAuth helper surfaces used by Remote MCP deployments and Autheory are in:
+- `github.com/theory-cloud/apptheory/runtime/oauth`
+
 ---
 
 ## Transport + endpoint
 
-AppTheory’s MCP server is an **HTTP JSON-RPC 2.0** handler:
+AppTheory’s MCP server implements **MCP Streamable HTTP** on a single endpoint path:
 
-- HTTP method: `POST`
-- Path: (you choose) typically `POST /mcp`
+- `POST /mcp`
+- `GET /mcp` (resume/replay via `Last-Event-ID`)
+- `DELETE /mcp` (terminate session)
+
 - Request body: JSON-RPC `{ "jsonrpc": "2.0", "id": ..., "method": "...", "params": { ... } }`
-- Session header: `mcp-session-id` (issued by the server if you don’t send one)
+- Session header: `Mcp-Session-Id` (issued by the server on `initialize`)
+- Protocol header: `MCP-Protocol-Version` (required after initialization)
 
-It is not a stdio transport — you mount it on an AppTheory route:
+It is not a stdio transport — you mount it on AppTheory routes:
 
 ```go
 srv := mcp.NewServer("my-mcp-server", "dev")
 
 app := apptheory.New()
-app.Post("/mcp", srv.Handler())
+h := srv.Handler()
+app.Post("/mcp", h)
+app.Get("/mcp", h)
+app.Delete("/mcp", h)
 ```
 
-Protocol version implemented: `2025-06-18`.
+Protocol version implemented (method surface / payloads): `2025-06-18`.
 
 ---
 
@@ -94,10 +106,14 @@ If you want to include structured output in addition to the `content` blocks, se
 
 ### Streaming tool progress (SSE)
 
-If the client sets `Accept: text/event-stream` on a `tools/call`, AppTheory formats the response as SSE:
+If the client includes `Accept: text/event-stream` on a `tools/call`, AppTheory may format the response as SSE:
 
-- `event: progress` for events emitted by your tool
-- `event: message` for the final JSON-RPC response
+- Every server message is delivered as an SSE event:
+  - `event: message`
+  - `data: <single JSON-RPC message>`
+- Progress is delivered as JSON-RPC notifications:
+  - `method: "notifications/progress"`
+  - correlated via `params._meta.progressToken` from the original request
 
 Register a streaming tool with `RegisterStreamingTool`:
 
@@ -107,9 +123,9 @@ _ = srv.Registry().RegisterStreamingTool(mcp.ToolDef{
   Description: "Example long-running task with progress.",
   InputSchema: json.RawMessage(`{"type":"object"}`),
 }, func(ctx context.Context, args json.RawMessage, emit func(mcp.SSEEvent)) (*mcp.ToolResult, error) {
-  emit(mcp.SSEEvent{Data: map[string]any{"status": "started"}})
+  emit(mcp.SSEEvent{Data: map[string]any{"progress": 1, "total": 10, "message": "started"}})
   // ... do work ...
-  emit(mcp.SSEEvent{Data: map[string]any{"status": "done"}})
+  emit(mcp.SSEEvent{Data: map[string]any{"progress": 10, "total": 10, "message": "done"}})
   return &mcp.ToolResult{Content: []mcp.ContentBlock{{Type: "text", Text: "ok"}}}, nil
 })
 ```
@@ -119,6 +135,15 @@ Important deployment note:
 - **True incremental SSE streaming requires a response-streaming adapter**.
   AppTheory’s `SSEStreamResponse` is supported by the API Gateway **REST API v1** adapter (`ServeAPIGatewayProxy` via `HandleLambda`).
   If you’re behind an adapter that buffers (common with HTTP API v2), clients may receive progress only after completion.
+
+### Resumability (GET + `Last-Event-ID`)
+
+For streaming tool calls, the server includes `id: <id>` on SSE events.
+
+If the client disconnects, it can resume by calling:
+
+- `GET /mcp` with `Last-Event-ID: <id>`
+- plus the same `Mcp-Session-Id` (and usually `MCP-Protocol-Version`)
 
 ---
 
@@ -186,9 +211,12 @@ Supported methods:
 
 ## Sessions
 
-Sessions are tracked via the `mcp-session-id` HTTP header:
+Sessions are tracked via the `Mcp-Session-Id` HTTP header:
 
-- If you don’t send a session id, the server issues one and returns it on the response.
+- The server issues a session id on the **`initialize`** HTTP response.
+- After initialization, clients must send:
+  - `Mcp-Session-Id: ...`
+  - `MCP-Protocol-Version: 2025-06-18` (or `2025-03-26` for legacy/batch compatibility)
 - TTL is controlled by `MCP_SESSION_TTL_MINUTES` (default: `60`).
 
 The default store is in-memory. For persistent storage across cold starts, use the Dynamo-backed store (see `docs/agentcore-mcp.md`).
@@ -209,3 +237,6 @@ tools, _ := client.ListTools(context.Background())
 _ = tools
 ```
 
+For Streamable HTTP SSE streaming, use:
+- `Client.RawStream(...)` (POST stream)
+- `Client.ResumeStream(...)` (GET replay/resume with `Last-Event-ID`)

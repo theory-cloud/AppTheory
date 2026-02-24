@@ -17,7 +17,7 @@ type AppTheoryMcpServerStageOptions struct {
 	//
 	AccessLogRetention awslogs.RetentionDays `field:"optional" json:"accessLogRetention" yaml:"accessLogRetention"`
 	// Stage name.
-	// Default: "prod".
+	// Default: "$default".
 	//
 	StageName *string `field:"optional" json:"stageName" yaml:"stageName"`
 	// Throttling burst limit for the stage.
