@@ -18,6 +18,10 @@ func mustMarshal(t testing.TB, v any) []byte {
 func TestResourcesListAndRead_RoundTrip(t *testing.T) {
 	s := NewServer("test", "1.0.0")
 
+	sessionID := initializeSession(t, s)
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"application/json"}
+
 	if err := s.Resources().RegisterResource(ResourceDef{
 		URI:         "file://hello.txt",
 		Name:        "hello",
@@ -30,7 +34,7 @@ func TestResourcesListAndRead_RoundTrip(t *testing.T) {
 	}
 
 	listReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: "resources/list"})
-	listResp, err := invokeHandler(s, listReq, nil)
+	listResp, err := invokeHandlerWithMethod(context.Background(), s, "POST", listReq, headers)
 	if err != nil {
 		t.Fatalf("invoke resources/list: %v", err)
 	}
@@ -55,7 +59,7 @@ func TestResourcesListAndRead_RoundTrip(t *testing.T) {
 
 	readParams := mustMarshal(t, map[string]any{"uri": "file://hello.txt"})
 	readReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 2, Method: "resources/read", Params: readParams})
-	readResp, err := invokeHandler(s, readReq, nil)
+	readResp, err := invokeHandlerWithMethod(context.Background(), s, "POST", readReq, headers)
 	if err != nil {
 		t.Fatalf("invoke resources/read: %v", err)
 	}
@@ -82,6 +86,10 @@ func TestResourcesListAndRead_RoundTrip(t *testing.T) {
 func TestPromptsListAndGet_RoundTrip(t *testing.T) {
 	s := NewServer("test", "1.0.0")
 
+	sessionID := initializeSession(t, s)
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"application/json"}
+
 	if err := s.Prompts().RegisterPrompt(PromptDef{
 		Name:        "greet",
 		Description: "test",
@@ -96,7 +104,7 @@ func TestPromptsListAndGet_RoundTrip(t *testing.T) {
 	}
 
 	listReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: "prompts/list"})
-	listResp, err := invokeHandler(s, listReq, nil)
+	listResp, err := invokeHandlerWithMethod(context.Background(), s, "POST", listReq, headers)
 	if err != nil {
 		t.Fatalf("invoke prompts/list: %v", err)
 	}
@@ -121,7 +129,7 @@ func TestPromptsListAndGet_RoundTrip(t *testing.T) {
 
 	getParams := mustMarshal(t, map[string]any{"name": "greet", "arguments": json.RawMessage(`{}`)})
 	getReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 2, Method: "prompts/get", Params: getParams})
-	getResp, err := invokeHandler(s, getReq, nil)
+	getResp, err := invokeHandlerWithMethod(context.Background(), s, "POST", getReq, headers)
 	if err != nil {
 		t.Fatalf("invoke prompts/get: %v", err)
 	}
@@ -146,9 +154,13 @@ func TestPromptsListAndGet_RoundTrip(t *testing.T) {
 func TestResourcesRead_NotFoundIsInvalidParams(t *testing.T) {
 	s := NewServer("test", "1.0.0")
 
+	sessionID := initializeSession(t, s)
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"application/json"}
+
 	readParams := mustMarshal(t, map[string]any{"uri": "file://missing.txt"})
 	readReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: "resources/read", Params: readParams})
-	readResp, err := invokeHandler(s, readReq, nil)
+	readResp, err := invokeHandlerWithMethod(context.Background(), s, "POST", readReq, headers)
 	if err != nil {
 		t.Fatalf("invoke resources/read: %v", err)
 	}
@@ -164,9 +176,13 @@ func TestResourcesRead_NotFoundIsInvalidParams(t *testing.T) {
 func TestPromptsGet_NotFoundIsInvalidParams(t *testing.T) {
 	s := NewServer("test", "1.0.0")
 
+	sessionID := initializeSession(t, s)
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"application/json"}
+
 	getParams := mustMarshal(t, map[string]any{"name": "missing", "arguments": json.RawMessage(`{}`)})
 	getReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: "prompts/get", Params: getParams})
-	getResp, err := invokeHandler(s, getReq, nil)
+	getResp, err := invokeHandlerWithMethod(context.Background(), s, "POST", getReq, headers)
 	if err != nil {
 		t.Fatalf("invoke prompts/get: %v", err)
 	}

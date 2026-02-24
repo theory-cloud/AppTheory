@@ -27,6 +27,8 @@ func readSSEFrame(r *bufio.Reader) (string, error) {
 func TestToolsCallStreaming_StreamsProgressIncrementally(t *testing.T) {
 	s := NewServer("test-server", "1.0.0")
 
+	sessionID := initializeSession(t, s)
+
 	firstEmitted := make(chan struct{})
 	continueTool := make(chan struct{})
 
@@ -53,30 +55,15 @@ func TestToolsCallStreaming_StreamsProgressIncrementally(t *testing.T) {
 		t.Fatalf("register streaming tool: %v", err)
 	}
 
-	params, err := json.Marshal(toolsCallParams{
-		Name:      "slow_tool",
-		Arguments: json.RawMessage(`{}`),
-	})
-	if err != nil {
-		t.Fatalf("marshal params: %v", err)
-	}
+	params := toolsCallParams{Name: "slow_tool", Arguments: json.RawMessage(`{}`)}
+	params.Meta.ProgressToken = "pt-123"
 
-	body, err := json.Marshal(Request{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  "tools/call",
-		Params:  params,
-	})
-	if err != nil {
-		t.Fatalf("marshal request: %v", err)
-	}
+	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: "tools/call", Params: mustMarshal(t, params)})
 
-	headers := map[string][]string{
-		"content-type": {"application/json"},
-		"accept":       {"text/event-stream"},
-	}
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"text/event-stream"}
 
-	resp, err := invokeHandler(s, body, headers)
+	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
@@ -117,11 +104,14 @@ func TestToolsCallStreaming_StreamsProgressIncrementally(t *testing.T) {
 		t.Fatalf("timed out waiting for first SSE frame")
 	}
 
-	if !strings.Contains(firstFrame, "event: progress\n") {
-		t.Fatalf("expected first frame to be progress event, got:\n%s", firstFrame)
+	if !strings.Contains(firstFrame, "event: message\n") {
+		t.Fatalf("expected first frame to be message event, got:\n%s", firstFrame)
 	}
-	if !strings.Contains(firstFrame, `"seq":1`) {
-		t.Fatalf("expected first frame to contain seq=1, got:\n%s", firstFrame)
+	if !strings.Contains(firstFrame, `"method":"notifications/progress"`) {
+		t.Fatalf("expected first frame to be progress notification, got:\n%s", firstFrame)
+	}
+	if !strings.Contains(firstFrame, `"progressToken":"pt-123"`) {
+		t.Fatalf("expected first frame to contain progressToken, got:\n%s", firstFrame)
 	}
 
 	close(continueTool)
@@ -147,13 +137,132 @@ func TestToolsCallStreaming_StreamsProgressIncrementally(t *testing.T) {
 	}
 
 	all := firstFrame + string(rest)
-	if !strings.Contains(all, `"seq":2`) {
-		t.Fatalf("expected SSE stream to contain seq=2 progress event, got:\n%s", all)
+	if !strings.Contains(all, `"method":"notifications/progress"`) {
+		t.Fatalf("expected SSE stream to contain progress notification, got:\n%s", all)
 	}
 	if !strings.Contains(all, "event: message\n") {
 		t.Fatalf("expected SSE stream to contain final message event, got:\n%s", all)
 	}
 	if !strings.Contains(all, `"result"`) {
 		t.Fatalf("expected final message to contain JSON-RPC result, got:\n%s", all)
+	}
+}
+
+func TestToolsCallStreaming_CanResumeViaGETWithLastEventID(t *testing.T) {
+	s := NewServer("test-server", "1.0.0")
+	sessionID := initializeSession(t, s)
+
+	firstEmitted := make(chan struct{})
+	continueTool := make(chan struct{})
+	toolDone := make(chan struct{})
+
+	if err := s.registry.RegisterStreamingTool(
+		ToolDef{
+			Name:        "slow_tool",
+			Description: "Emits progress then blocks",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+		},
+		func(ctx context.Context, _ json.RawMessage, emit func(SSEEvent)) (*ToolResult, error) {
+			emit(SSEEvent{Data: map[string]any{"seq": 1}})
+			close(firstEmitted)
+
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-continueTool:
+			}
+
+			emit(SSEEvent{Data: map[string]any{"seq": 2}})
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
+		},
+	); err != nil {
+		t.Fatalf("register streaming tool: %v", err)
+	}
+
+	params := toolsCallParams{Name: "slow_tool", Arguments: json.RawMessage(`{}`)}
+	params.Meta.ProgressToken = "pt-123"
+	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: "tools/call", Params: mustMarshal(t, params)})
+
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"text/event-stream"}
+
+	reqCtx, cancel := context.WithCancel(context.Background())
+	resp, err := invokeHandlerWithMethod(reqCtx, s, "POST", body, headers)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if resp.BodyReader == nil {
+		t.Fatalf("expected streaming response BodyReader to be set")
+	}
+
+	reader := bufio.NewReader(resp.BodyReader)
+
+	select {
+	case <-firstEmitted:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for first progress emission")
+	}
+
+	firstFrame, err := readSSEFrame(reader)
+	if err != nil {
+		t.Fatalf("read first SSE frame: %v", err)
+	}
+
+	if !strings.Contains(firstFrame, "event: message\n") {
+		t.Fatalf("expected first frame to be message event, got:\n%s", firstFrame)
+	}
+	if !strings.Contains(firstFrame, `"method":"notifications/progress"`) {
+		t.Fatalf("expected first frame to be progress notification, got:\n%s", firstFrame)
+	}
+
+	// Capture the SSE id to use as Last-Event-ID.
+	lastID := ""
+	for _, line := range strings.Split(firstFrame, "\n") {
+		if strings.HasPrefix(line, "id: ") {
+			lastID = strings.TrimSpace(strings.TrimPrefix(line, "id: "))
+			break
+		}
+	}
+	if lastID == "" {
+		t.Fatalf("expected first frame to include an id line, got:\n%s", firstFrame)
+	}
+
+	// Simulate disconnect: stop the POST stream.
+	cancel()
+
+	// Allow tool to finish after disconnect.
+	go func() {
+		defer close(toolDone)
+		close(continueTool)
+	}()
+	select {
+	case <-toolDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for tool completion")
+	}
+
+	getHeaders := sessionHeaders(sessionID)
+	getHeaders["accept"] = []string{"text/event-stream"}
+	getHeaders["last-event-id"] = []string{lastID}
+
+	getResp, err := invokeHandlerWithMethod(context.Background(), s, "GET", nil, getHeaders)
+	if err != nil {
+		t.Fatalf("invoke GET: %v", err)
+	}
+	if getResp.BodyReader == nil {
+		t.Fatalf("expected GET response BodyReader to be set")
+	}
+
+	b, err := io.ReadAll(getResp.BodyReader)
+	if err != nil {
+		t.Fatalf("read GET SSE: %v", err)
+	}
+
+	all := string(b)
+	if !strings.Contains(all, `"method":"notifications/progress"`) {
+		t.Fatalf("expected resumed stream to contain progress notification, got:\n%s", all)
+	}
+	if !strings.Contains(all, `"result"`) {
+		t.Fatalf("expected resumed stream to contain final result, got:\n%s", all)
 	}
 }

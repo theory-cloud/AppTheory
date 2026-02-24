@@ -11,6 +11,7 @@ func TestBindingsIncludeNewConstructs(t *testing.T) {
 
 	_ = apptheorycdk.NewAppTheoryLambdaRole
 	_ = apptheorycdk.NewAppTheoryMediaCdn
+	_ = apptheorycdk.NewAppTheoryMcpProtectedResource
 	_ = apptheorycdk.NewAppTheoryPathRoutedFrontend
 	_ = apptheorycdk.NewAppTheoryQueue
 	_ = apptheorycdk.NewAppTheoryQueueConsumer

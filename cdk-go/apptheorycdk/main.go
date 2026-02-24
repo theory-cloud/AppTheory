@@ -304,6 +304,23 @@ func init() {
 		reflect.TypeOf((*AppTheoryLambdaRoleProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResource",
+		reflect.TypeOf((*AppTheoryMcpProtectedResource)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryMcpProtectedResource{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResourceProps",
+		reflect.TypeOf((*AppTheoryMcpProtectedResourceProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpServer",
 		reflect.TypeOf((*AppTheoryMcpServer)(nil)).Elem(),
 		[]_jsii_.Member{
@@ -445,6 +462,27 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryQueueProps",
 		reflect.TypeOf((*AppTheoryQueueProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServer",
+		reflect.TypeOf((*AppTheoryRemoteMcpServer)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "endpoint", GoGetter: "Endpoint"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "router", GoGetter: "Router"},
+			_jsii_.MemberProperty{JsiiProperty: "sessionTable", GoGetter: "SessionTable"},
+			_jsii_.MemberProperty{JsiiProperty: "streamTable", GoGetter: "StreamTable"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryRemoteMcpServer{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServerProps",
+		reflect.TypeOf((*AppTheoryRemoteMcpServerProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryRestApi",

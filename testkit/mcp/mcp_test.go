@@ -372,6 +372,10 @@ func TestRaw_UnknownMethod(t *testing.T) {
 	server := newSampleServer(env)
 	client := mcptestkit.NewClient(server, env)
 
+	if _, err := client.Initialize(context.Background()); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
 	resp, err := client.Raw(context.Background(), &mcpruntime.Request{
 		JSONRPC: "2.0",
 		ID:      99,

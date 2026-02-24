@@ -1306,7 +1306,11 @@ const CodeParseError = -32700
 
 const CodeServerError = -32000
 
+var ErrEventNotFound = errors.New("event not found")
+
 var ErrSessionNotFound = errors.New("session not found")
+
+var ErrStreamNotFound = errors.New("stream not found")
 
 type ContentBlock struct {
 	Type string `json:"type"`
@@ -1336,6 +1340,16 @@ type MemorySessionStore struct {
 }
 
 type MemorySessionStoreOption func(*MemorySessionStore)
+
+type MemoryStreamStore struct {
+	mu       sync.Mutex
+	idGen    apptheory.IDGenerator
+	sessions map[string]*memoryStreamSession
+}
+
+type MemoryStreamStoreOption func(*MemoryStreamStore)
+
+type OriginValidator func(string) bool
 
 type PromptArgument struct {
 	Name        string `json:"name"`
@@ -1377,7 +1391,7 @@ type RPCError struct {
 
 type Request struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      any             `json:"id"`
+	ID      any             `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
 }
@@ -1424,8 +1438,10 @@ type Server struct {
 	resourceRegistry *ResourceRegistry
 	promptRegistry   *PromptRegistry
 	sessionStore     SessionStore
+	streamStore      StreamStore
 	idGen            apptheory.IDGenerator
 	logger           *slog.Logger
+	originValidator  OriginValidator
 }
 
 type ServerOption func(*Server)
@@ -1441,6 +1457,23 @@ type SessionStore interface {
 	Get(context.Context, string) (*Session, error)
 	Put(context.Context, *Session) error
 	Delete(context.Context, string) error
+}
+
+type StreamEvent struct {
+	ID   string
+	Data json.RawMessage
+}
+
+type StreamStore interface {
+	Create(context.Context, string) (string, error)
+	Append(context.Context, string, string, json.RawMessage) (string, error)
+	Close(context.Context, string, string) error
+
+	Subscribe(context.Context, string, string, string) (<-chan StreamEvent, error)
+
+	StreamForEvent(context.Context, string, string) (string, error)
+
+	DeleteSession(context.Context, string) error
 }
 
 type StreamingToolHandler func(context.Context, json.RawMessage, func(SSEEvent)) (*ToolResult, error)
@@ -1465,6 +1498,8 @@ type ToolResult struct {
 	StructuredContent map[string]any `json:"structuredContent,omitempty"`
 }
 
+func AllowOrigins(...string) OriginValidator
+
 func MarshalResponse(*Response) ([]byte, error)
 
 func NewDynamoSessionStore(tablecore.DB) SessionStore
@@ -1472,6 +1507,8 @@ func NewDynamoSessionStore(tablecore.DB) SessionStore
 func NewErrorResponse(any, int, string) *Response
 
 func NewMemorySessionStore(...MemorySessionStoreOption) *MemorySessionStore
+
+func NewMemoryStreamStore(...MemoryStreamStoreOption) *MemoryStreamStore
 
 func NewPromptRegistry() *PromptRegistry
 
@@ -1487,13 +1524,21 @@ func ParseBatchRequest([]byte) ([]*Request, error)
 
 func ParseRequest([]byte) (*Request, error)
 
+func ParseResponse([]byte) (*Response, error)
+
 func WithClock(apptheory.Clock) MemorySessionStoreOption
 
 func WithLogger(*slog.Logger) ServerOption
 
+func WithOriginValidator(OriginValidator) ServerOption
+
 func WithServerIDGenerator(apptheory.IDGenerator) ServerOption
 
 func WithSessionStore(SessionStore) ServerOption
+
+func WithStreamIDGenerator(apptheory.IDGenerator) MemoryStreamStoreOption
+
+func WithStreamStore(StreamStore) ServerOption
 
 func (*DynamoSessionStore) Delete(context.Context, string) error
 
@@ -1506,6 +1551,18 @@ func (*MemorySessionStore) Delete(context.Context, string) error
 func (*MemorySessionStore) Get(context.Context, string) (*Session, error)
 
 func (*MemorySessionStore) Put(context.Context, *Session) error
+
+func (*MemoryStreamStore) Append(context.Context, string, string, json.RawMessage) (string, error)
+
+func (*MemoryStreamStore) Close(context.Context, string, string) error
+
+func (*MemoryStreamStore) Create(context.Context, string) (string, error)
+
+func (*MemoryStreamStore) DeleteSession(context.Context, string) error
+
+func (*MemoryStreamStore) StreamForEvent(context.Context, string, string) (string, error)
+
+func (*MemoryStreamStore) Subscribe(context.Context, string, string, string) (<-chan StreamEvent, error)
 
 func (*PromptRegistry) Get(context.Context, string, json.RawMessage) (*PromptResult, error)
 
@@ -1542,6 +1599,174 @@ func (*ToolRegistry) RegisterStreamingTool(ToolDef, StreamingToolHandler) error
 func (*ToolRegistry) RegisterTool(ToolDef, ToolHandler) error
 
 func (sessionRecord) TableName() string
+
+## github.com/theory-cloud/apptheory/runtime/oauth
+
+const ContextKeyBearerToken = "oauth.bearer_token"
+
+var ErrAuthorizationCodeExpired = errors.New("authorization code expired")
+
+var ErrAuthorizationCodeNotFound = errors.New("authorization code not found")
+
+var ErrInvalidAuthorizationHeader = errors.New("invalid authorization header")
+
+var ErrInvalidURL = errors.New("invalid url")
+
+var ErrMissingBearerToken = errors.New("missing bearer token")
+
+var ErrRefreshTokenExpired = errors.New("refresh token expired")
+
+var ErrRefreshTokenNotFound = errors.New("refresh token not found")
+
+type AuthorizationCodeRecord struct {
+	Code                string
+	ClientID            string
+	RedirectURI         string
+	Resource            string
+	CodeChallenge       string
+	CodeChallengeMethod string
+	ExpiresAt           time.Time
+}
+
+type AuthorizationCodeStore interface {
+	Put(context.Context, *AuthorizationCodeRecord) error
+	Consume(context.Context, string) (*AuthorizationCodeRecord, error)
+}
+
+type AuthorizationServerMetadata struct {
+	Issuer                            string   `json:"issuer"`
+	AuthorizationEndpoint             string   `json:"authorization_endpoint,omitempty"`
+	TokenEndpoint                     string   `json:"token_endpoint,omitempty"`
+	RegistrationEndpoint              string   `json:"registration_endpoint,omitempty"`
+	JWKSURI                           string   `json:"jwks_uri,omitempty"`
+	ResponseTypesSupported            []string `json:"response_types_supported,omitempty"`
+	GrantTypesSupported               []string `json:"grant_types_supported,omitempty"`
+	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
+	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported,omitempty"`
+	ScopesSupported                   []string `json:"scopes_supported,omitempty"`
+	SubjectTypesSupported             []string `json:"subject_types_supported,omitempty"`
+	IDTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported,omitempty"`
+}
+
+type BearerTokenValidator func(context.Context, string) error
+
+type DynamicClientRegistrationPolicy struct {
+	AllowedRedirectURIs []string
+	RequirePublicClient bool
+	RequireRefreshToken bool
+}
+
+type DynamicClientRegistrationRequest struct {
+	ClientName              string   `json:"client_name,omitempty"`
+	RedirectURIs            []string `json:"redirect_uris,omitempty"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
+	GrantTypes              []string `json:"grant_types,omitempty"`
+	ResponseTypes           []string `json:"response_types,omitempty"`
+	Scope                   string   `json:"scope,omitempty"`
+}
+
+type DynamicClientRegistrationResponse struct {
+	ClientID string `json:"client_id"`
+
+	ClientSecret          string `json:"client_secret,omitempty"`
+	ClientIDIssuedAt      int64  `json:"client_id_issued_at,omitempty"`
+	ClientSecretExpiresAt int64  `json:"client_secret_expires_at,omitempty"`
+}
+
+type MemoryAuthorizationCodeStore struct {
+	mu    sync.Mutex
+	codes map[string]*AuthorizationCodeRecord
+}
+
+type MemoryRefreshTokenStore struct {
+	mu     sync.Mutex
+	tokens map[string]*RefreshTokenRecord
+}
+
+type ProtectedResourceMetadata struct {
+	Resource               string   `json:"resource"`
+	AuthorizationServers   []string `json:"authorization_servers"`
+	JWKSURI                string   `json:"jwks_uri,omitempty"`
+	ScopesSupported        []string `json:"scopes_supported,omitempty"`
+	BearerMethodsSupported []string `json:"bearer_methods_supported,omitempty"`
+}
+
+type RefreshTokenRecord struct {
+	Token     string
+	ClientID  string
+	Subject   string
+	Resource  string
+	ExpiresAt time.Time
+}
+
+type RefreshTokenStore interface {
+	Put(context.Context, *RefreshTokenRecord) error
+	Get(context.Context, string) (*RefreshTokenRecord, error)
+	Consume(context.Context, string) (*RefreshTokenRecord, error)
+	Delete(context.Context, string) error
+}
+
+type RequireBearerTokenOptions struct {
+	ResourceMetadataURL string
+
+	Validator BearerTokenValidator
+}
+
+func AuthorizationServerMetadataHandler(*AuthorizationServerMetadata) apptheory.Handler
+
+func BearerTokenFromHeaders(map[string][]string) (string, error)
+
+func CanonicalResourceURL(string) string
+
+func CanonicalizeIssuerURL(string) (string, bool)
+
+func ClaudeDynamicClientRegistrationPolicy() DynamicClientRegistrationPolicy
+
+func NewAuthorizationServerMetadata(string) (*AuthorizationServerMetadata, error)
+
+func NewMemoryAuthorizationCodeStore() *MemoryAuthorizationCodeStore
+
+func NewMemoryRefreshTokenStore() *MemoryRefreshTokenStore
+
+func NewOpaqueToken() (string, error)
+
+func NewPKCECodeVerifier() (string, error)
+
+func NewProtectedResourceMetadata(string, []string) (*ProtectedResourceMetadata, error)
+
+func PKCEChallengeS256(string) (string, error)
+
+func PKCEVerifyS256(string, string) (bool, error)
+
+func ProtectedResourceMetadataHandler(*ProtectedResourceMetadata) apptheory.Handler
+
+func ProtectedResourceMetadataURLForRequest(map[string][]string) (string, bool)
+
+func ProtectedResourceWWWAuthenticate(string) string
+
+func RequireBearerTokenMiddleware(RequireBearerTokenOptions) apptheory.Middleware
+
+func ResourceMetadataURLFromMcpEndpoint(string) (string, bool)
+
+func ValidateDynamicClientRegistrationRequest(*DynamicClientRegistrationRequest, DynamicClientRegistrationPolicy) error
+
+func ValidatePKCECodeVerifier(string) error
+
+func (*AuthorizationServerMetadata) MarshalJSONBytes() ([]byte, error)
+
+func (*MemoryAuthorizationCodeStore) Consume(context.Context, string) (*AuthorizationCodeRecord, error)
+
+func (*MemoryAuthorizationCodeStore) Put(context.Context, *AuthorizationCodeRecord) error
+
+func (*MemoryRefreshTokenStore) Consume(context.Context, string) (*RefreshTokenRecord, error)
+
+func (*MemoryRefreshTokenStore) Delete(context.Context, string) error
+
+func (*MemoryRefreshTokenStore) Get(context.Context, string) (*RefreshTokenRecord, error)
+
+func (*MemoryRefreshTokenStore) Put(context.Context, *RefreshTokenRecord) error
+
+func (*ProtectedResourceMetadata) MarshalJSONBytes() ([]byte, error)
 
 ## github.com/theory-cloud/apptheory/testkit
 
@@ -1808,6 +2033,19 @@ type Client struct {
 	env       *testkit.Env
 	app       *apptheory.App
 	sessionID string
+	protocol  string
+}
+
+type SSEMessage struct {
+	ID    string
+	Event string
+	Data  json.RawMessage
+}
+
+type Stream struct {
+	cancel context.CancelFunc
+	resp   apptheory.Response
+	reader *bufio.Reader
 }
 
 func AssertError(testing.TB, *mcpruntime.Response, int)
@@ -1832,6 +2070,8 @@ func NewClient(*mcpruntime.Server, *testkit.Env) *Client
 
 func ReadResourceRequest(any, string) (*mcpruntime.Request, error)
 
+func ReadSSEMessage(*bufio.Reader) (*SSEMessage, error)
+
 func (*Client) CallTool(context.Context, string, any) (*mcpruntime.ToolResult, error)
 
 func (*Client) GetPrompt(context.Context, string, any) (*mcpruntime.PromptResult, error)
@@ -1846,6 +2086,53 @@ func (*Client) ListTools(context.Context) ([]mcpruntime.ToolDef, error)
 
 func (*Client) Raw(context.Context, *mcpruntime.Request) (*mcpruntime.Response, error)
 
+func (*Client) RawStream(context.Context, *mcpruntime.Request, map[string][]string) (*Stream, error)
+
 func (*Client) ReadResource(context.Context, string) ([]mcpruntime.ResourceContent, error)
 
+func (*Client) ResumeStream(context.Context, string, map[string][]string) (*Stream, error)
+
 func (*Client) SessionID() string
+
+func (*Stream) Cancel()
+
+func (*Stream) Next() (*SSEMessage, error)
+
+func (*Stream) ReadAll() ([]SSEMessage, error)
+
+func (*Stream) Response() apptheory.Response
+
+## github.com/theory-cloud/apptheory/testkit/oauth
+
+type AuthorizeOptions struct {
+	McpEndpoint string
+
+	Origin string
+
+	RedirectURI string
+}
+
+type ClaudePublicClient struct {
+	http *http.Client
+}
+
+type DCRResult struct {
+	ClientID string
+}
+
+type Discovery struct {
+	ResourceMetadataURL         string
+	ProtectedResourceMetadata   *oauthruntime.ProtectedResourceMetadata
+	AuthorizationServerMetadata *oauthruntime.AuthorizationServerMetadata
+}
+
+type TokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int64  `json:"expires_in,omitempty"`
+}
+
+func NewClaudePublicClient(*http.Client) *ClaudePublicClient
+
+func (*ClaudePublicClient) Authorize(context.Context, AuthorizeOptions) (*Discovery, *DCRResult, *TokenResponse, *TokenResponse, error)

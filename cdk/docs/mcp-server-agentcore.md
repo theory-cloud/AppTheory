@@ -18,6 +18,7 @@ Note on SSE progress streaming:
 
 - This construct uses **HTTP API v2**. Many deployments will buffer responses, so SSE progress may not be delivered incrementally.
 - If you require true response streaming, use an API Gateway **REST API v1** streaming pattern (see `cdk/docs/rest-api-router-streaming.md`).
+- For Claude Custom Connectors (Remote MCP / Streamable HTTP), use `AppTheoryRemoteMcpServer` (see `cdk/docs/mcp-server-remote-mcp.md`).
 
 ---
 

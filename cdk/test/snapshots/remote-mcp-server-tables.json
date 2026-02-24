@@ -1,0 +1,770 @@
+{
+  "Outputs": {
+    "RemoteMcpApiEndpoint13A0DE9A": {
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "https://",
+            {
+              "Ref": "RemoteMcpApi6A28A6F0"
+            },
+            ".execute-api.",
+            {
+              "Ref": "AWS::Region"
+            },
+            ".",
+            {
+              "Ref": "AWS::URLSuffix"
+            },
+            "/",
+            {
+              "Ref": "RemoteMcpApiDeploymentStageprod63002A1D"
+            },
+            "/"
+          ]
+        ]
+      }
+    }
+  },
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "Fn9270CBC0": {
+      "DependsOn": [
+        "FnServiceRoleDefaultPolicyC6A839BF",
+        "FnServiceRoleB9001A96"
+      ],
+      "Properties": {
+        "Code": {
+          "ZipFile": "exports.handler = async () => ({ statusCode: 200, body: 'ok' });"
+        },
+        "Environment": {
+          "Variables": {
+            "MCP_ENDPOINT": {
+              "Fn::Join": [
+                "",
+                [
+                  "https://",
+                  {
+                    "Ref": "RemoteMcpApi6A28A6F0"
+                  },
+                  ".execute-api.",
+                  {
+                    "Ref": "AWS::Region"
+                  },
+                  ".",
+                  {
+                    "Ref": "AWS::URLSuffix"
+                  },
+                  "/prod/mcp"
+                ]
+              ]
+            },
+            "MCP_SESSION_TABLE": {
+              "Ref": "RemoteMcpSessionTable949CA67A"
+            },
+            "MCP_SESSION_TTL_MINUTES": "120",
+            "MCP_STREAM_TABLE": {
+              "Ref": "RemoteMcpStreamTable14FCF20C"
+            },
+            "MCP_STREAM_TTL_MINUTES": "240"
+          }
+        },
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "FnServiceRoleB9001A96",
+            "Arn"
+          ]
+        },
+        "Runtime": "nodejs24.x"
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "FnServiceRoleB9001A96": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+              ]
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "FnServiceRoleDefaultPolicyC6A839BF": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable"
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "RemoteMcpSessionTable949CA67A",
+                  "Arn"
+                ]
+              }
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator"
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "RemoteMcpSessionTable949CA67A",
+                  "Arn"
+                ]
+              }
+            },
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable"
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "RemoteMcpStreamTable14FCF20C",
+                  "Arn"
+                ]
+              }
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator"
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "RemoteMcpStreamTable14FCF20C",
+                  "Arn"
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "PolicyName": "FnServiceRoleDefaultPolicyC6A839BF",
+        "Roles": [
+          {
+            "Ref": "FnServiceRoleB9001A96"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Policy"
+    },
+    "RemoteMcpApi6A28A6F0": {
+      "Properties": {
+        "EndpointConfiguration": {
+          "Types": [
+            "REGIONAL"
+          ]
+        },
+        "Name": "apptheory-remote-mcp-tables-test"
+      },
+      "Type": "AWS::ApiGateway::RestApi"
+    },
+    "RemoteMcpApiAccountFAD8D99A": {
+      "DeletionPolicy": "Retain",
+      "DependsOn": [
+        "RemoteMcpApi6A28A6F0"
+      ],
+      "Properties": {
+        "CloudWatchRoleArn": {
+          "Fn::GetAtt": [
+            "RemoteMcpApiCloudWatchRoleE6BA8C69",
+            "Arn"
+          ]
+        }
+      },
+      "Type": "AWS::ApiGateway::Account",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "RemoteMcpApiCloudWatchRoleE6BA8C69": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "apigateway.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+              ]
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "RemoteMcpApiDeploymentC23505CBf33c966f0854f5d82c26e8c2ae2393d6": {
+      "DependsOn": [
+        "RemoteMcpApimcpDELETEFC6BA5B9",
+        "RemoteMcpApimcpGETC98E2584",
+        "RemoteMcpApimcpPOSTB1694D76",
+        "RemoteMcpApimcp6079DB6F"
+      ],
+      "Metadata": {
+        "aws:cdk:do-not-refactor": true
+      },
+      "Properties": {
+        "Description": "Automatically created by the RestApi construct",
+        "RestApiId": {
+          "Ref": "RemoteMcpApi6A28A6F0"
+        }
+      },
+      "Type": "AWS::ApiGateway::Deployment"
+    },
+    "RemoteMcpApiDeploymentStageprod63002A1D": {
+      "DependsOn": [
+        "RemoteMcpApiAccountFAD8D99A"
+      ],
+      "Properties": {
+        "DeploymentId": {
+          "Ref": "RemoteMcpApiDeploymentC23505CBf33c966f0854f5d82c26e8c2ae2393d6"
+        },
+        "RestApiId": {
+          "Ref": "RemoteMcpApi6A28A6F0"
+        },
+        "StageName": "prod"
+      },
+      "Type": "AWS::ApiGateway::Stage"
+    },
+    "RemoteMcpApimcp6079DB6F": {
+      "Properties": {
+        "ParentId": {
+          "Fn::GetAtt": [
+            "RemoteMcpApi6A28A6F0",
+            "RootResourceId"
+          ]
+        },
+        "PathPart": "mcp",
+        "RestApiId": {
+          "Ref": "RemoteMcpApi6A28A6F0"
+        }
+      },
+      "Type": "AWS::ApiGateway::Resource"
+    },
+    "RemoteMcpApimcpDELETEApiPermissionTestStackRemoteMcpApi4383765EDELETEmcp7C50285D": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RemoteMcpApi6A28A6F0"
+              },
+              "/",
+              {
+                "Ref": "RemoteMcpApiDeploymentStageprod63002A1D"
+              },
+              "/DELETE/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RemoteMcpApimcpDELETEApiPermissionTestTestStackRemoteMcpApi4383765EDELETEmcp23963265": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RemoteMcpApi6A28A6F0"
+              },
+              "/test-invoke-stage/DELETE/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RemoteMcpApimcpDELETEFC6BA5B9": {
+      "Properties": {
+        "AuthorizationType": "NONE",
+        "HttpMethod": "DELETE",
+        "Integration": {
+          "IntegrationHttpMethod": "POST",
+          "ResponseTransferMode": "BUFFERED",
+          "Type": "AWS_PROXY",
+          "Uri": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":apigateway:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":lambda:path/2015-03-31/functions/",
+                {
+                  "Fn::GetAtt": [
+                    "Fn9270CBC0",
+                    "Arn"
+                  ]
+                },
+                "/invocations"
+              ]
+            ]
+          }
+        },
+        "ResourceId": {
+          "Ref": "RemoteMcpApimcp6079DB6F"
+        },
+        "RestApiId": {
+          "Ref": "RemoteMcpApi6A28A6F0"
+        }
+      },
+      "Type": "AWS::ApiGateway::Method"
+    },
+    "RemoteMcpApimcpGETApiPermissionTestStackRemoteMcpApi4383765EGETmcp0155D48F": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RemoteMcpApi6A28A6F0"
+              },
+              "/",
+              {
+                "Ref": "RemoteMcpApiDeploymentStageprod63002A1D"
+              },
+              "/GET/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RemoteMcpApimcpGETApiPermissionTestTestStackRemoteMcpApi4383765EGETmcpE38162BC": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RemoteMcpApi6A28A6F0"
+              },
+              "/test-invoke-stage/GET/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RemoteMcpApimcpGETC98E2584": {
+      "Properties": {
+        "AuthorizationType": "NONE",
+        "HttpMethod": "GET",
+        "Integration": {
+          "IntegrationHttpMethod": "POST",
+          "ResponseTransferMode": "STREAM",
+          "TimeoutInMillis": 900000,
+          "Type": "AWS_PROXY",
+          "Uri": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":apigateway:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":lambda:path/2021-11-15/functions/",
+                {
+                  "Fn::GetAtt": [
+                    "Fn9270CBC0",
+                    "Arn"
+                  ]
+                },
+                "/response-streaming-invocations"
+              ]
+            ]
+          }
+        },
+        "ResourceId": {
+          "Ref": "RemoteMcpApimcp6079DB6F"
+        },
+        "RestApiId": {
+          "Ref": "RemoteMcpApi6A28A6F0"
+        }
+      },
+      "Type": "AWS::ApiGateway::Method"
+    },
+    "RemoteMcpApimcpPOSTApiPermissionTestStackRemoteMcpApi4383765EPOSTmcp8B12E11F": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RemoteMcpApi6A28A6F0"
+              },
+              "/",
+              {
+                "Ref": "RemoteMcpApiDeploymentStageprod63002A1D"
+              },
+              "/POST/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RemoteMcpApimcpPOSTApiPermissionTestTestStackRemoteMcpApi4383765EPOSTmcp45A29C36": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RemoteMcpApi6A28A6F0"
+              },
+              "/test-invoke-stage/POST/mcp"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RemoteMcpApimcpPOSTB1694D76": {
+      "Properties": {
+        "AuthorizationType": "NONE",
+        "HttpMethod": "POST",
+        "Integration": {
+          "IntegrationHttpMethod": "POST",
+          "ResponseTransferMode": "STREAM",
+          "TimeoutInMillis": 900000,
+          "Type": "AWS_PROXY",
+          "Uri": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":apigateway:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":lambda:path/2021-11-15/functions/",
+                {
+                  "Fn::GetAtt": [
+                    "Fn9270CBC0",
+                    "Arn"
+                  ]
+                },
+                "/response-streaming-invocations"
+              ]
+            ]
+          }
+        },
+        "ResourceId": {
+          "Ref": "RemoteMcpApimcp6079DB6F"
+        },
+        "RestApiId": {
+          "Ref": "RemoteMcpApi6A28A6F0"
+        }
+      },
+      "Type": "AWS::ApiGateway::Method"
+    },
+    "RemoteMcpSessionTable949CA67A": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "sessionId",
+            "AttributeType": "S"
+          }
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [
+          {
+            "AttributeName": "sessionId",
+            "KeyType": "HASH"
+          }
+        ],
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "SSESpecification": {
+          "SSEEnabled": true
+        },
+        "TableName": "mcp-sessions",
+        "TimeToLiveSpecification": {
+          "AttributeName": "expiresAt",
+          "Enabled": true
+        }
+      },
+      "Type": "AWS::DynamoDB::Table",
+      "UpdateReplacePolicy": "Delete"
+    },
+    "RemoteMcpStreamTable14FCF20C": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "sessionId",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "eventId",
+            "AttributeType": "S"
+          }
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [
+          {
+            "AttributeName": "sessionId",
+            "KeyType": "HASH"
+          },
+          {
+            "AttributeName": "eventId",
+            "KeyType": "RANGE"
+          }
+        ],
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "SSESpecification": {
+          "SSEEnabled": true
+        },
+        "TableName": "mcp-streams",
+        "TimeToLiveSpecification": {
+          "AttributeName": "expiresAt",
+          "Enabled": true
+        }
+      },
+      "Type": "AWS::DynamoDB::Table",
+      "UpdateReplacePolicy": "Delete"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}
