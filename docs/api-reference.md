@@ -107,3 +107,31 @@ AppTheory includes a DynamoDB-backed rate limiter with portable semantics:
 
 Use it when you need **cross-instance** rate limiting (DynamoDB is the coordination layer). The portable response
 contract uses `app.rate_limited` with deterministic `Retry-After` when known.
+
+## MCP server (Bedrock AgentCore)
+
+AppTheory includes an MCP (Model Context Protocol) server implementation intended for **Bedrock AgentCore** tool integrations.
+
+- Go runtime package: `runtime/mcp` (JSON-RPC methods: `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `prompts/list`, `prompts/get`)
+- Go test helpers: `testkit/mcp` (deterministic in-process MCP client + Streamable HTTP SSE helpers)
+- CDK construct (jsii): `AppTheoryMcpServer` (HTTP API v2 `POST /mcp` → Lambda, optional session table + custom domain)
+- CDK construct (jsii): `AppTheoryRemoteMcpServer` (REST API v1 streaming `/mcp` for Claude Remote MCP / Streamable HTTP)
+- CDK construct (jsii): `AppTheoryMcpProtectedResource` (REST API v1 `/.well-known/oauth-protected-resource` for OAuth discovery)
+
+Guides:
+- AgentCore deployment: `docs/agentcore-mcp.md` and `cdk/docs/mcp-server-agentcore.md`
+- Claude Remote MCP: `docs/remote-mcp.md` and `cdk/docs/mcp-server-remote-mcp.md`
+- Full MCP method surface + payload shapes: `docs/mcp.md`
+
+## OAuth primitives (Remote MCP / Autheory)
+
+For Claude connectors, AppTheory also includes OAuth wire-level helpers used by:
+- protected MCP resource servers (challenge + metadata)
+- Autheory (OAuth Authorization Server) implementations (DCR/PKCE helpers)
+
+Surfaces:
+- Go runtime package: `runtime/oauth` (protected resource metadata + `WWW-Authenticate` challenge, RFC8414 metadata helpers, RFC7591 DCR types/validation, PKCE utilities, in-memory code/refresh stores)
+- Go test helpers: `testkit/oauth` (Claude-like DCR → PKCE auth code → token exchange → refresh harness)
+
+Guide:
+- Autheory (OAuth AS) for Claude Remote MCP: `docs/remote-mcp-autheory.md`
