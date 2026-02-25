@@ -11,6 +11,8 @@ Child issues:
 - `#175` — Sanitization: treat common PAN field aliases as sensitive (e.g. `pan_value`)
 - `#176` — Examples: end-to-end import pipeline reference stack
 
+M0 decision lock: `docs/development/planning/apptheory/adr/0002-import-pipeline-support-pack-m0.md`
+
 ## Summary (what this support pack provides)
 
 AppTheory already supports Lambda + common event sources (SQS/EventBridge/Streams) and has strong CDK patterns. This epic
@@ -344,4 +346,3 @@ When implementing, each milestone should keep the repo green:
 - Lease semantics: default lease duration and refresh strategy; how to surface “stolen lease” / contention errors.
 - Idempotency semantics: how to represent in-progress vs complete, and what TTL/replay windows we expect.
 - Error envelopes: which fields are safe to store by default (message, code, category) and how to avoid payload leakage.
-
