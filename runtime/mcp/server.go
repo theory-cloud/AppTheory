@@ -29,11 +29,19 @@ const (
 	methodInitialize               = "initialize"
 	methodNotificationsInitialized = "notifications/initialized"
 	methodNotificationsCancelled   = "notifications/cancel" + "led"
+	methodPing                     = "ping"
+	methodToolsList                = "tools/list"
+	methodToolsCall                = "tools/call"
+	methodResourcesList            = "resources/list"
+	methodResourcesRead            = "resources/read"
+	methodPromptsList              = "prompts/list"
+	methodPromptsGet               = "prompts/get"
 )
 
 const (
 	defaultSessionTTLMinutes = 60
 	envSessionTTLMinutes     = "MCP_SESSION_TTL_MINUTES"
+	sessionInitializedValue  = "true"
 )
 
 // Server is the MCP protocol handler. It dispatches JSON-RPC 2.0 messages
@@ -329,19 +337,19 @@ func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
 	switch req.Method {
 	case methodInitialize:
 		return s.handleInitialize(req, protocolVersion)
-	case "ping":
+	case methodPing:
 		return NewResultResponse(req.ID, map[string]any{})
-	case "tools/list":
+	case methodToolsList:
 		return s.handleToolsList(req)
-	case "tools/call":
+	case methodToolsCall:
 		return s.handleToolsCall(ctx, req)
-	case "resources/list":
+	case methodResourcesList:
 		return s.handleResourcesList(req)
-	case "resources/read":
+	case methodResourcesRead:
 		return s.handleResourcesRead(ctx, req)
-	case "prompts/list":
+	case methodPromptsList:
 		return s.handlePromptsList(req)
-	case "prompts/get":
+	case methodPromptsGet:
 		return s.handlePromptsGet(ctx, req)
 	default:
 		s.logger.ErrorContext(ctx, "method not found", "method", req.Method)
@@ -787,7 +795,7 @@ func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Req
 		if sess.Data == nil {
 			sess.Data = map[string]string{}
 		}
-		sess.Data["initialized"] = "true"
+		sess.Data["initialized"] = sessionInitializedValue
 		if err := s.sessionStore.Put(ctx, sess); err != nil {
 			s.logger.ErrorContext(ctx, "failed to persist session", "sessionId", sess.ID, "error", err)
 		}
@@ -799,7 +807,7 @@ func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Req
 }
 
 func (s *Server) handleRequestHTTP(ctx context.Context, sessionID string, req *Request, headers map[string][]string) (*apptheory.Response, error) {
-	if req.Method == "tools/call" && acceptsEventStream(headers) {
+	if req.Method == methodToolsCall && acceptsEventStream(headers) {
 		return s.handleToolsCallStream(ctx, sessionID, req)
 	}
 

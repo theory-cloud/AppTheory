@@ -521,6 +521,12 @@ test("sanitization: sanitizeFieldValue masks sensitive fields", async () => {
   assert.equal(sanitizeFieldValue("authorization", "Bearer secret"), "[REDACTED]");
   assert.equal(sanitizeFieldValue("client_secret", "x"), "[REDACTED]");
   assert.equal(sanitizeFieldValue("card_number", "4242 4242 4242 4242"), "424242******4242");
+  assert.equal(sanitizeFieldValue("pan_value", "4242 4242 4242 4242"), "424242******4242");
+  assert.equal(sanitizeFieldValue("pan", "4242 4242 4242 4242"), "424242******4242");
+  assert.equal(
+    sanitizeFieldValue("primary_account_number", "4242 4242 4242 4242"),
+    "424242******4242",
+  );
 
   const nested = sanitizeFieldValue("root", {
     password: "p\nw",

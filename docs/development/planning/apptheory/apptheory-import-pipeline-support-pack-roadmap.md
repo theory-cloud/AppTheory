@@ -249,17 +249,18 @@ This epic should make cross-account posture easy and safe, but not opaque:
 
 **Goal:** “safe logging” must not leak PAN when datasets use different field names.
 
-**Implementation:**
-- Go: `pkg/sanitization/sanitization.go` add aliases:
-  - `pan_value` (PartialMask, card-number masking behavior)
-  - consider `pan`, `primary_account_number` (same behavior)
-- TS: `ts/src/sanitization.ts` update `sensitiveSanitizeFields` + masking routing
-- Py: `py/src/apptheory/sanitization.py` update `_SENSITIVE_FIELDS` + masking routing
+**Implementation (done):**
+- Go: `pkg/sanitization/sanitization.go` treats these aliases as `PartialMask` and routes them through card-number masking:
+  - `pan_value`
+  - `pan`
+  - `primary_account_number`
+- TS: `ts/src/sanitization.ts` adds the same aliases and routes them through card-number masking.
+- Py: `py/src/apptheory/sanitization.py` adds the same aliases and routes them through card-number masking.
 
-**Tests:**
-- Go: extend existing sanitization tests under `pkg/sanitization/*_test.go`
-- TS: extend existing tests in `contract-tests/runners/ts/fixtures.test.cjs`
-- Py: extend `py/tests/test_sanitization.py`
+**Tests (done):**
+- Go: `pkg/sanitization/sanitization_additional_test.go`
+- TS: `contract-tests/runners/ts/fixtures.test.cjs`
+- Py: `py/tests/test_sanitization.py`
 
 ---
 
@@ -301,7 +302,7 @@ Deliverables:
 ### M1 — Safety footgun fixes (sanitization)
 
 Deliverables:
-- Implement `#175` across Go/TS/Py + tests.
+- Implement `#175` across Go/TS/Py + tests (done).
 
 ### M2 — CDK primitives (routing + ingest + table)
 
