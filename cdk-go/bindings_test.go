@@ -9,6 +9,8 @@ import (
 func TestBindingsIncludeNewConstructs(t *testing.T) {
 	t.Helper()
 
+	_ = apptheorycdk.NewAppTheoryEventBridgeRuleTarget
+	_ = apptheorycdk.NewAppTheoryJobsTable
 	_ = apptheorycdk.NewAppTheoryLambdaRole
 	_ = apptheorycdk.NewAppTheoryMediaCdn
 	_ = apptheorycdk.NewAppTheoryMcpProtectedResource
@@ -16,4 +18,5 @@ func TestBindingsIncludeNewConstructs(t *testing.T) {
 	_ = apptheorycdk.NewAppTheoryQueue
 	_ = apptheorycdk.NewAppTheoryQueueConsumer
 	_ = apptheorycdk.NewAppTheoryRestApiRouter
+	_ = apptheorycdk.NewAppTheoryS3Ingest
 }

@@ -78,6 +78,12 @@ This epic should make cross-account posture easy and safe, but not opaque:
 
 **Goal:** eliminate bespoke `events.Rule` + `targets.LambdaFunction` boilerplate.
 
+**Implementation (done):**
+- Construct: `cdk/lib/eventbridge-rule-target.ts` (`AppTheoryEventBridgeRuleTarget`)
+- Exports: `cdk/lib/index.ts`
+- Tests: `cdk/test/constructs.test.cjs` + snapshots under `cdk/test/snapshots/`
+- Docs: `cdk/docs/eventbridge-rule-target.md`
+
 **Recommended approach:** add a new construct for clarity/back-compat:
 - `cdk/lib/eventbridge-rule-target.ts`: `AppTheoryEventBridgeRuleTarget`
 - Keep existing `AppTheoryEventBridgeHandler` schedule-only (or deprecate later), to avoid a confusing “either/or” prop bag.
@@ -108,6 +114,12 @@ This epic should make cross-account posture easy and safe, but not opaque:
 ### #171 — CDK: S3 ingest “front door” construct
 
 **Goal:** standardize the first step of most import jobs: secure bucket + notifications + filters.
+
+**Implementation (done):**
+- Construct: `cdk/lib/s3-ingest.ts` (`AppTheoryS3Ingest`)
+- Exports: `cdk/lib/index.ts`
+- Tests: `cdk/test/constructs.test.cjs` + snapshots under `cdk/test/snapshots/`
+- Docs: `cdk/docs/s3-ingest.md`
 
 **Construct:** `cdk/lib/s3-ingest.ts`: `AppTheoryS3Ingest`
 
@@ -217,6 +229,12 @@ This epic should make cross-account posture easy and safe, but not opaque:
 
 **Goal:** standardize the backing table for `pkg/jobs` so stacks don’t drift.
 
+**Implementation (done):**
+- Construct: `cdk/lib/jobs-table.ts` (`AppTheoryJobsTable`)
+- Exports: `cdk/lib/index.ts`
+- Tests: `cdk/test/constructs.test.cjs` + snapshots under `cdk/test/snapshots/`
+- Docs: `cdk/docs/jobs-table.md`
+
 **Construct:** `cdk/lib/jobs-table.ts`: `AppTheoryJobsTable`
 
 **Defaults (recommended):**
@@ -310,6 +328,8 @@ Deliverables:
 - Implement `#170` (EventBridge rule target) + snapshots + docs.
 - Implement `#171` (S3 ingest) + snapshots + docs.
 - Implement `#174` (Jobs table) + snapshots + docs.
+
+Status: done (implements `#170`, `#171`, `#174`).
 
 ### M3 — Runtime primitives (job ledger)
 

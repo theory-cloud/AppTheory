@@ -22,6 +22,9 @@
 - [MCP Server for Claude Remote MCP](./mcp-server-remote-mcp.md) — deploy Streamable HTTP `/mcp` (REST API v1 + streaming) for Claude connectors.
 - [MCP Protected Resource Metadata (OAuth)](./mcp-protected-resource.md) — add `/.well-known/oauth-protected-resource` (RFC9728) for Claude Remote MCP auth discovery.
 - [SQS Queue + Consumer Patterns](./sqs-queue-consumer.md) — queue-only, queue+consumer, and processor patterns (DLQs + partial batch failures).
+- [EventBridge Rule Target](./eventbridge-rule-target.md) — rule → Lambda wiring for schedules and event patterns.
+- [S3 Ingest Front Door](./s3-ingest.md) — secure bucket + optional EventBridge/SQS notifications for import workloads.
+- [Jobs Table (Import Pipeline)](./jobs-table.md) — opinionated DynamoDB table for job ledgers (schema + GSIs + TTL).
 - [Lambda Role Helper](./lambda-role.md) — Lambda execution roles (baseline + X-Ray + KMS + custom statements).
 - [CloudFront Path-Routed Frontend Distribution](./path-routed-frontend.md) — multi-SPA routing behind one stage domain.
 - [Media CDN Pattern](./media-cdn.md) — S3 + CloudFront distribution for media subdomains (optional private media).

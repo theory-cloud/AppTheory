@@ -359,6 +359,178 @@ test("AppTheoryEventBridgeHandler synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryEventBridgeRuleTarget (schedule) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryEventBridgeRuleTarget(stack, "RuleTarget", {
+    handler: fn,
+    schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+    ruleName: "apptheory-test-rule",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("eventbridge-rule-target-schedule", template);
+  } else {
+    expectSnapshot("eventbridge-rule-target-schedule", template);
+  }
+});
+
+test("AppTheoryEventBridgeRuleTarget (eventPattern) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryEventBridgeRuleTarget(stack, "RuleTarget", {
+    handler: fn,
+    eventPattern: {
+      source: ["aws.s3"],
+      detailType: ["Object Created"],
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("eventbridge-rule-target-event-pattern", template);
+  } else {
+    expectSnapshot("eventbridge-rule-target-event-pattern", template);
+  }
+});
+
+test("AppTheoryEventBridgeRuleTarget (eventBus + eventPattern) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const bus = new events.EventBus(stack, "Bus");
+
+  new apptheory.AppTheoryEventBridgeRuleTarget(stack, "RuleTarget", {
+    handler: fn,
+    eventBus: bus,
+    eventPattern: {
+      source: ["com.example"],
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("eventbridge-rule-target-event-bus", template);
+  } else {
+    expectSnapshot("eventbridge-rule-target-event-bus", template);
+  }
+});
+
+test("AppTheoryEventBridgeRuleTarget fails closed on invalid props", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryEventBridgeRuleTarget(stack, "MissingBoth", {
+        handler: fn,
+      }),
+    /requires exactly one of eventPattern or schedule/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryEventBridgeRuleTarget(stack, "HasBoth", {
+        handler: fn,
+        schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+        eventPattern: { source: ["aws.s3"] },
+      }),
+    /requires exactly one of eventPattern or schedule/,
+  );
+});
+
+test("AppTheoryS3Ingest (bucket defaults) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryS3Ingest(stack, "Ingest");
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("s3-ingest-defaults", template);
+  } else {
+    expectSnapshot("s3-ingest-defaults", template);
+  }
+});
+
+test("AppTheoryS3Ingest (EventBridge enabled) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryS3Ingest(stack, "Ingest", {
+    enableEventBridge: true,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("s3-ingest-eventbridge", template);
+  } else {
+    expectSnapshot("s3-ingest-eventbridge", template);
+  }
+});
+
+test("AppTheoryS3Ingest (SQS notifications + filters) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryS3Ingest(stack, "Ingest", {
+    queueProps: {
+      queueName: "import-ingest",
+      enableDlq: true,
+    },
+    prefixes: ["incoming/"],
+    suffixes: [".csv", ".json"],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("s3-ingest-sqs-filters", template);
+  } else {
+    expectSnapshot("s3-ingest-sqs-filters", template);
+  }
+});
+
+test("AppTheoryJobsTable synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryJobsTable(stack, "Jobs");
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("jobs-table", template);
+  } else {
+    expectSnapshot("jobs-table", template);
+  }
+});
+
 test("AppTheoryDynamoDBStreamMapping synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
