@@ -33,7 +33,7 @@ func TestResourcesListAndRead_RoundTrip(t *testing.T) {
 		t.Fatalf("register resource: %v", err)
 	}
 
-	listReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: "resources/list"})
+	listReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodResourcesList})
 	listResp, err := invokeHandlerWithMethod(context.Background(), s, "POST", listReq, headers)
 	if err != nil {
 		t.Fatalf("invoke resources/list: %v", err)
@@ -58,7 +58,7 @@ func TestResourcesListAndRead_RoundTrip(t *testing.T) {
 	}
 
 	readParams := mustMarshal(t, map[string]any{"uri": "file://hello.txt"})
-	readReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 2, Method: "resources/read", Params: readParams})
+	readReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 2, Method: methodResourcesRead, Params: readParams})
 	readResp, err := invokeHandlerWithMethod(context.Background(), s, "POST", readReq, headers)
 	if err != nil {
 		t.Fatalf("invoke resources/read: %v", err)
@@ -103,7 +103,7 @@ func TestPromptsListAndGet_RoundTrip(t *testing.T) {
 		t.Fatalf("register prompt: %v", err)
 	}
 
-	listReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: "prompts/list"})
+	listReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodPromptsList})
 	listResp, err := invokeHandlerWithMethod(context.Background(), s, "POST", listReq, headers)
 	if err != nil {
 		t.Fatalf("invoke prompts/list: %v", err)
@@ -128,7 +128,7 @@ func TestPromptsListAndGet_RoundTrip(t *testing.T) {
 	}
 
 	getParams := mustMarshal(t, map[string]any{"name": "greet", "arguments": json.RawMessage(`{}`)})
-	getReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 2, Method: "prompts/get", Params: getParams})
+	getReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 2, Method: methodPromptsGet, Params: getParams})
 	getResp, err := invokeHandlerWithMethod(context.Background(), s, "POST", getReq, headers)
 	if err != nil {
 		t.Fatalf("invoke prompts/get: %v", err)
@@ -159,7 +159,7 @@ func TestResourcesRead_NotFoundIsInvalidParams(t *testing.T) {
 	headers["accept"] = []string{"application/json"}
 
 	readParams := mustMarshal(t, map[string]any{"uri": "file://missing.txt"})
-	readReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: "resources/read", Params: readParams})
+	readReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodResourcesRead, Params: readParams})
 	readResp, err := invokeHandlerWithMethod(context.Background(), s, "POST", readReq, headers)
 	if err != nil {
 		t.Fatalf("invoke resources/read: %v", err)
@@ -181,7 +181,7 @@ func TestPromptsGet_NotFoundIsInvalidParams(t *testing.T) {
 	headers["accept"] = []string{"application/json"}
 
 	getParams := mustMarshal(t, map[string]any{"name": "missing", "arguments": json.RawMessage(`{}`)})
-	getReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: "prompts/get", Params: getParams})
+	getReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodPromptsGet, Params: getParams})
 	getResp, err := invokeHandlerWithMethod(context.Background(), s, "POST", getReq, headers)
 	if err != nil {
 		t.Fatalf("invoke prompts/get: %v", err)

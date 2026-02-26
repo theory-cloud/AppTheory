@@ -193,7 +193,7 @@ func TestProperty6_ProtocolErrorCodeCorrectness(t *testing.T) {
 			body, err := json.Marshal(Request{
 				JSONRPC: "2.0",
 				ID:      reqID,
-				Method:  "tools/call",
+				Method:  methodToolsCall,
 				Params:  json.RawMessage(`"not an object"`),
 			})
 			if err != nil {
@@ -256,7 +256,7 @@ func TestProperty7_ToolHandlerErrorWrapping(t *testing.T) {
 		body, err := json.Marshal(Request{
 			JSONRPC: "2.0",
 			ID:      reqID,
-			Method:  "tools/call",
+			Method:  methodToolsCall,
 			Params:  params,
 		})
 		if err != nil {
@@ -319,7 +319,7 @@ func TestProperty10_ResponseFormatMatchesAcceptHeader(t *testing.T) {
 		body, err := json.Marshal(Request{
 			JSONRPC: "2.0",
 			ID:      reqID,
-			Method:  "tools/call",
+			Method:  methodToolsCall,
 			Params:  params,
 		})
 		if err != nil {
@@ -369,7 +369,7 @@ func TestProperty11_BatchRequestHandling(t *testing.T) {
 		// Build N requests with unique IDs.
 		requests := make([]Request, n)
 		for i := range n {
-			method := rapid.SampledFrom([]string{"initialize", "tools/list"}).Draw(t, fmt.Sprintf("method_%d", i))
+			method := rapid.SampledFrom([]string{methodInitialize, methodToolsList}).Draw(t, fmt.Sprintf("method_%d", i))
 			requests[i] = Request{
 				JSONRPC: "2.0",
 				ID:      i + 1, // sequential integer IDs

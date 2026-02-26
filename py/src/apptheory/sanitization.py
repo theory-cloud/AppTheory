@@ -26,6 +26,10 @@ _SENSITIVE_FIELDS: dict[str, str] = {
     "cardholder_name": "fully",
     "card_number": "partial",
     "number": "partial",
+    # Common PAN aliases used in import/migration datasets.
+    "pan_value": "partial",
+    "pan": "partial",
+    "primary_account_number": "partial",
     "account_number": "partial",
     "ssn": "partial",
     "tin": "partial",
@@ -111,7 +115,7 @@ def sanitize_field_value(key: str, value: Any) -> Any:
     if explicit == "fully":
         return _REDACTED_VALUE
     if explicit == "partial":
-        if k in {"card_number", "number"}:
+        if k in {"card_number", "number", "pan_value", "pan", "primary_account_number"}:
             return _mask_card_number_string(str(value or ""))
         return _mask_restricted_string(str(value or ""))
 
