@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.12.0](https://github.com/theory-cloud/AppTheory/compare/v0.11.1...v0.12.0) (2026-02-26)
+
+
+### Features
+
+* **import-pipeline:** ship import pipeline support pack (M1–M5) ([5f697a0](https://github.com/theory-cloud/AppTheory/commit/5f697a0a166efde987fb1b583c9894458e5abc65))
+
+
+### Bug Fixes
+
+* **release:** prevent release-please skips on staging→premain ([a7b8cdb](https://github.com/theory-cloud/AppTheory/commit/a7b8cdbbd8667b756f7c19efd0e7d0f9c987250d))
+* **release:** require feat/fix/perf for staging→premain ([091a353](https://github.com/theory-cloud/AppTheory/commit/091a3532e54d8363af6f8596c73fdc21a2e8b63d))
+
 ## [0.12.0-rc](https://github.com/theory-cloud/AppTheory/compare/v0.11.1-rc...v0.12.0-rc) (2026-02-26)
 
 
