@@ -9,6 +9,35 @@ on:
       - premain
 
 jobs:
+  prerelease-readiness:
+    name: Prerelease readiness (staging → premain)
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Verify user-facing conventional commits exist
+        run: |
+          set -euo pipefail
+
+          git fetch origin premain staging --force
+          range="origin/premain..origin/staging"
+
+          echo "Checking commits in ${range}..."
+          if git log --format=%s "${range}" | grep -Eq '^(feat|fix|perf)(\([^)]+\))?(!)?: '; then
+            echo "prerelease-ready: OK"
+            exit 0
+          fi
+
+          echo "prerelease-ready: FAIL"
+          echo "No user-facing conventional commits (feat:/fix:/perf:) found in ${range}."
+          echo "release-please will skip, so no new vX.Y.Z-rc tag will be cut."
+          echo
+          echo "Commit subjects:"
+          git log --format=%s "${range}" || true
+          exit 1
+
   version-alignment:
     name: Version alignment
     runs-on: ubuntu-latest
