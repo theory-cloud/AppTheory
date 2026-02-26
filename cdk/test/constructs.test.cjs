@@ -5,9 +5,11 @@ const test = require("node:test");
 
 const cdk = require("aws-cdk-lib");
 const assertions = require("aws-cdk-lib/assertions");
+const codebuild = require("aws-cdk-lib/aws-codebuild");
 const dynamodb = require("aws-cdk-lib/aws-dynamodb");
 const ec2 = require("aws-cdk-lib/aws-ec2");
 const events = require("aws-cdk-lib/aws-events");
+const iam = require("aws-cdk-lib/aws-iam");
 const kms = require("aws-cdk-lib/aws-kms");
 const lambda = require("aws-cdk-lib/aws-lambda");
 const logs = require("aws-cdk-lib/aws-logs");
@@ -528,6 +530,113 @@ test("AppTheoryJobsTable synthesizes expected template", () => {
     writeSnapshot("jobs-table", template);
   } else {
     expectSnapshot("jobs-table", template);
+  }
+});
+
+test("AppTheoryCodeBuildJobRunner synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryCodeBuildJobRunner(stack, "Runner", {
+    buildSpec: codebuild.BuildSpec.fromObject({
+      version: "0.2",
+      phases: {
+        build: {
+          commands: ["echo hello"],
+        },
+      },
+    }),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("codebuild-job-runner", template);
+  } else {
+    expectSnapshot("codebuild-job-runner", template);
+  }
+});
+
+test("AppTheoryCodeBuildJobRunner (env vars + KMS) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const key = new kms.Key(stack, "Key");
+
+  new apptheory.AppTheoryCodeBuildJobRunner(stack, "Runner", {
+    encryptionKey: key,
+    environmentVariables: {
+      HELLO: { value: "world" },
+    },
+    buildSpec: codebuild.BuildSpec.fromObject({
+      version: "0.2",
+      phases: {
+        build: {
+          commands: ["echo $HELLO"],
+        },
+      },
+    }),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("codebuild-job-runner-env-kms", template);
+  } else {
+    expectSnapshot("codebuild-job-runner-env-kms", template);
+  }
+});
+
+test("AppTheoryCodeBuildJobRunner (additional statements) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryCodeBuildJobRunner(stack, "Runner", {
+    additionalStatements: [
+      new iam.PolicyStatement({
+        actions: ["s3:ListBucket"],
+        resources: ["*"],
+      }),
+    ],
+    buildSpec: codebuild.BuildSpec.fromObject({
+      version: "0.2",
+      phases: {
+        build: {
+          commands: ["echo ok"],
+        },
+      },
+    }),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("codebuild-job-runner-additional-statements", template);
+  } else {
+    expectSnapshot("codebuild-job-runner-additional-statements", template);
+  }
+});
+
+test("AppTheoryCodeBuildJobRunner (state change rule) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryCodeBuildJobRunner(stack, "Runner", {
+    enableStateChangeRule: true,
+    stateChangeRuleName: "build-state-changes",
+    stateChangeRuleDescription: "state changes",
+    buildSpec: codebuild.BuildSpec.fromObject({
+      version: "0.2",
+      phases: {
+        build: {
+          commands: ["echo ok"],
+        },
+      },
+    }),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("codebuild-job-runner-state-change-rule", template);
+  } else {
+    expectSnapshot("codebuild-job-runner-state-change-rule", template);
   }
 });
 

@@ -9374,6 +9374,510 @@
       ],
       "symbolId": "lib/certificate:AppTheoryCertificateProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryCodeBuildJobRunner": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "This construct creates a CodeBuild project with:\n- safe defaults for image/compute/timeout\n- deterministic log group retention (auto-managed by default)\n- an optional EventBridge state-change rule hook\n- ergonomic grant helpers for common AWS resources",
+        "summary": "Opinionated CodeBuild wrapper for running import/batch jobs outside Lambda."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCodeBuildJobRunner",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/codebuild-job-runner.ts",
+          "line": 124
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCodeBuildJobRunnerProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/codebuild-job-runner.ts",
+        "line": 118
+      },
+      "methods": [
+        {
+          "docs": {
+            "summary": "Attach a policy statement to the CodeBuild role."
+          },
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 217
+          },
+          "name": "addToRolePolicy",
+          "parameters": [
+            {
+              "name": "statement",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.PolicyStatement"
+              }
+            }
+          ]
+        },
+        {
+          "docs": {
+            "summary": "Grant DynamoDB read permissions to the project."
+          },
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 196
+          },
+          "name": "grantDynamoRead",
+          "parameters": [
+            {
+              "name": "table",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_dynamodb.ITable"
+              }
+            }
+          ]
+        },
+        {
+          "docs": {
+            "summary": "Grant DynamoDB write permissions to the project."
+          },
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 203
+          },
+          "name": "grantDynamoWrite",
+          "parameters": [
+            {
+              "name": "table",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_dynamodb.ITable"
+              }
+            }
+          ]
+        },
+        {
+          "docs": {
+            "summary": "Grant S3 read permissions to the project."
+          },
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 182
+          },
+          "name": "grantS3Read",
+          "parameters": [
+            {
+              "name": "bucket",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_s3.IBucket"
+              }
+            }
+          ]
+        },
+        {
+          "docs": {
+            "summary": "Grant S3 write permissions to the project."
+          },
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 189
+          },
+          "name": "grantS3Write",
+          "parameters": [
+            {
+              "name": "bucket",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_s3.IBucket"
+              }
+            }
+          ]
+        },
+        {
+          "docs": {
+            "summary": "Grant Secrets Manager read permissions to the project."
+          },
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 210
+          },
+          "name": "grantSecretRead",
+          "parameters": [
+            {
+              "name": "secret",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_secretsmanager.ISecret"
+              }
+            }
+          ]
+        }
+      ],
+      "name": "AppTheoryCodeBuildJobRunner",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 121
+          },
+          "name": "logGroup",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.ILogGroup"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 119
+          },
+          "name": "project",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_codebuild.Project"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 120
+          },
+          "name": "role",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_iam.Role"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 122
+          },
+          "name": "stateChangeRule",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_events.Rule"
+          }
+        }
+      ],
+      "symbolId": "lib/codebuild-job-runner:AppTheoryCodeBuildJobRunner"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryCodeBuildJobRunnerProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCodeBuildJobRunnerProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/codebuild-job-runner.ts",
+        "line": 12
+      },
+      "name": "AppTheoryCodeBuildJobRunnerProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Build specification."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 27
+          },
+          "name": "buildSpec",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_codebuild.BuildSpec"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Additional IAM policy statements to attach to the CodeBuild role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 66
+          },
+          "name": "additionalStatements",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.PolicyStatement"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "codebuild.LinuxBuildImage.STANDARD_7_0",
+            "summary": "Build image."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 39
+          },
+          "name": "buildImage",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_codebuild.IBuildImage"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "codebuild.ComputeType.SMALL",
+            "summary": "Compute type."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 45
+          },
+          "name": "computeType",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_codebuild.ComputeType"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Optional description."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 22
+          },
+          "name": "description",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Whether to create an EventBridge rule for build state changes."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 83
+          },
+          "name": "enableStateChangeRule",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Optional KMS key for encrypting build artifacts/logs."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 61
+          },
+          "name": "encryptionKey",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kms.IKey"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Environment variables."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 56
+          },
+          "name": "environmentVariables",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_codebuild.BuildEnvironmentVariable"
+              },
+              "kind": "map"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Optional log group to use for CodeBuild logs."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 71
+          },
+          "name": "logGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.ILogGroup"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "logs.RetentionDays.ONE_MONTH",
+            "summary": "Retention for auto-managed log group."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 77
+          },
+          "name": "logRetention",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.RetentionDays"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- CloudFormation-generated name",
+            "summary": "Optional project name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 17
+          },
+          "name": "projectName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- NoSource",
+            "summary": "CodeBuild source configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 33
+          },
+          "name": "source",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_codebuild.ISource"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- Default event bus",
+            "summary": "Optional EventBus for the state change rule."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 106
+          },
+          "name": "stateChangeEventBus",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_events.IEventBus"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Optional rule description for the state change rule."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 94
+          },
+          "name": "stateChangeRuleDescription",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Whether the state change rule should be enabled."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 100
+          },
+          "name": "stateChangeRuleEnabled",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- CloudFormation-generated name",
+            "summary": "Optional rule name for the state change rule."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 89
+          },
+          "name": "stateChangeRuleName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "Duration.minutes(60)",
+            "summary": "Timeout for a single build."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/codebuild-job-runner.ts",
+            "line": 51
+          },
+          "name": "timeout",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        }
+      ],
+      "symbolId": "lib/codebuild-job-runner:AppTheoryCodeBuildJobRunnerProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryDynamoDBStreamMapping": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -18443,5 +18947,5 @@
     }
   },
   "version": "0.11.1",
-  "fingerprint": "DEUEfiWyOhGxNkV0Y3GySUch2kYvbc5NQn5O8kpDhsw="
+  "fingerprint": "7U3vDCMrU2I2h4imz+udxamyMlFApf4oF56EvnO/RM8="
 }

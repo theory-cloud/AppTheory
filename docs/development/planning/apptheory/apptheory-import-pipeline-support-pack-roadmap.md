@@ -164,6 +164,13 @@ This epic should make cross-account posture easy and safe, but not opaque:
 
 **Goal:** provide a safe default for “batch steps” that shouldn’t run in Lambda (PGP decrypt, large transforms, backfills).
 
+**Implementation (done):**
+- Construct: `cdk/lib/codebuild-job-runner.ts` (`AppTheoryCodeBuildJobRunner`)
+- Exports: `cdk/lib/index.ts`
+- Tests: `cdk/test/constructs.test.cjs` + snapshots under `cdk/test/snapshots/`
+- Docs: `cdk/docs/codebuild-job-runner.md`
+- Example: `examples/cdk/codebuild-job-runner/`
+
 **Construct:** `cdk/lib/codebuild-job-runner.ts`: `AppTheoryCodeBuildJobRunner` (or `AppTheoryCodeBuildProject`)
 
 **API shape (proposed):**
@@ -323,6 +330,8 @@ Status: done (implements `#173`).
 
 Deliverables:
 - Implement `#172` + snapshots + docs + small example.
+
+Status: done (implements `#172`).
 
 ### M5 — Reference example (end-to-end)
 

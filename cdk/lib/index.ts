@@ -3,6 +3,7 @@ export * from "./function-alarms";
 export * from "./hosted-zone";
 export * from "./certificate";
 export * from "./api-domain";
+export * from "./codebuild-job-runner";
 export * from "./kms-key";
 export * from "./enhanced-security";
 export * from "./app";
