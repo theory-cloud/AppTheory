@@ -43,6 +43,10 @@ var SensitiveFields = map[string]SanitizationType{
 
 	"card_number": PartialMask,
 	"number":      PartialMask,
+	// Common PAN aliases used in import/migration datasets.
+	"pan_value":              PartialMask,
+	"pan":                    PartialMask,
+	"primary_account_number": PartialMask,
 
 	"account_number": PartialMask,
 	"ssn":            PartialMask,
@@ -89,7 +93,7 @@ func SanitizeFieldValue(key string, value any) any {
 		case FullyRedact:
 			return redactedValue
 		case PartialMask:
-			if keyLower == "card_number" || keyLower == "number" {
+			if keyLower == "card_number" || keyLower == "number" || keyLower == "pan_value" || keyLower == "pan" || keyLower == "primary_account_number" {
 				return maskCardNumberValue(value)
 			}
 			return maskRestrictedValue(value)

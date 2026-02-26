@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/theory-cloud/AppTheory/compare/v0.11.0...v0.11.1) (2026-02-24)
+
+
+### Bug Fixes
+
+* go-lint cleanup for remote MCP ([558df0f](https://github.com/theory-cloud/AppTheory/commit/558df0f46eab039da71be3553880127872f0ac76))
+
 ## [0.11.1-rc](https://github.com/theory-cloud/AppTheory/compare/v0.11.0...v0.11.1-rc) (2026-02-24)
 
 
