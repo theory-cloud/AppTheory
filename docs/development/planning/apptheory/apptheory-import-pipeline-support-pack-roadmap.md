@@ -273,7 +273,13 @@ This epic should make cross-account posture easy and safe, but not opaque:
 
 **Goal:** provide a copy/pasteable reference that demonstrates the full pattern.
 
-**Example directory:** `examples/cdk/import-pipeline/` (name TBD)
+**Example directory:** `examples/cdk/import-pipeline/` (stack: `AppTheoryImportPipelineDemo`)
+
+**Implementation (done):**
+- Example stack + handlers + docs: `examples/cdk/import-pipeline/`
+- Go: add missing AWS SDK dependency for the ingest handler (`service/sqs`): `go.mod` + `go.sum`
+- Synth snapshot: `examples/cdk/import-pipeline/snapshots/AppTheoryImportPipelineDemo.template.sha256`
+- Gate: `scripts/verify-cdk-synth.sh` includes `examples/cdk/import-pipeline|AppTheoryImportPipelineDemo`
 
 **Infra in the example:**
 - S3 ingest wiring (`AppTheoryS3Ingest`)
@@ -338,6 +344,8 @@ Status: done (implements `#172`).
 Deliverables:
 - Implement `#176` example stack + handlers + README.
 - Add synth snapshot + gate in `scripts/verify-cdk-synth.sh`.
+
+Status: done (implements `#176`).
 
 ## Repo gates / “done means done”
 
