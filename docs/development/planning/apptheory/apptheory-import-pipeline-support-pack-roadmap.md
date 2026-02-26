@@ -195,33 +195,13 @@ This epic should make cross-account posture easy and safe, but not opaque:
 
 **Goal:** make correctness properties repeatable: job lifecycle, record status, audit, idempotency, leases.
 
-**Primary output (Go):**
-- New package: `pkg/jobs`
-- TableTheory-backed models for the canonical shapes in **A2**
-- Public helpers:
-  - create job
-  - transition job state (versioned optimistic concurrency)
-  - add/update record status (including safe error envelopes)
-  - acquire/refresh/release lease
-  - create/complete idempotency records
-
-**Language parity plan (recommended):**
-- TypeScript: `ts/src/jobs.ts` (+ export from `ts/src/index.ts`, regenerate `ts/dist/`)
-- Python: `py/src/apptheory/jobs.py` (+ export in `py/src/apptheory/__init__.py`)
-
-**Testing strategy:**
-- Go: deterministic unit tests using TableTheory mocks (see `pkg/limited/*` patterns).
-- TS: add unit coverage via existing `contract-tests/runners/ts/fixtures.test.cjs` harness (FakeTheorydb pattern already
-  exists there for `limited`).
-- Py: unit tests in `py/tests/test_jobs.py` using a small in-memory fake that matches the TableTheory client surface
-  used by the implementation (keep it minimal and deterministic).
-
-**Docs:**
-- Add `docs/jobs-ledger.md` (or similar) describing:
-  - schema + invariants
-  - idempotency + lease “exactly-once-ish” posture
-  - recommended job/record state enum(s)
-  - safe logging guidance (no payload dumps; sanitize error context)
+**Implementation (done):**
+- Go: `pkg/jobs/*` (`DynamoJobLedger`, models, safe logging wrappers) + tests in `pkg/jobs/ledger_test.go`
+- TypeScript: `ts/src/jobs.ts` (exported via `ts/src/index.ts`, shipped as `ts/dist/jobs.*`) + exercised in
+  `contract-tests/runners/ts/fixtures.test.cjs`
+- Python: `py/src/apptheory/jobs.py` (`DynamoJobLedger` + canonical item dataclasses) + tests in `py/tests/test_jobs.py`
+  + exported via `py/src/apptheory/__init__.py`
+- Docs: `docs/jobs-ledger.md`
 
 ---
 
@@ -336,6 +316,8 @@ Status: done (implements `#170`, `#171`, `#174`).
 Deliverables:
 - Implement `#173` Go package + tests + docs.
 - Implement TS/Py parity (recommended) + tests + API snapshots updates.
+
+Status: done (implements `#173`).
 
 ### M4 — Batch primitive (CodeBuild)
 
