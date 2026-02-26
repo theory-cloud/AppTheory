@@ -108,6 +108,21 @@ AppTheory includes a DynamoDB-backed rate limiter with portable semantics:
 Use it when you need **cross-instance** rate limiting (DynamoDB is the coordination layer). The portable response
 contract uses `app.rate_limited` with deterministic `Retry-After` when known.
 
+## Jobs ledger (`jobs`)
+
+AppTheory includes TableTheory-backed job ledger primitives intended for long-running “jobs” that need:
+- job lifecycle tracking (optimistic concurrency via versioning)
+- per-record status + safe error envelopes
+- idempotency across retries
+- lease/lock semantics to prevent double-processing
+
+Surfaces:
+- Go runtime package: `pkg/jobs`
+- TypeScript: exported from `@theory-cloud/apptheory` (see `api-snapshots/ts.txt`)
+- Python: exported from `apptheory` (see `api-snapshots/py.txt`)
+
+Guide: `docs/jobs-ledger.md`
+
 ## MCP server (Bedrock AgentCore)
 
 AppTheory includes an MCP (Model Context Protocol) server implementation intended for **Bedrock AgentCore** tool integrations.
