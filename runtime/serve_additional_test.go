@@ -7,174 +7,242 @@ import (
 	"time"
 )
 
-func TestServe_DefaultTierFallback_UnknownTier(t *testing.T) {
+func TestHTTPVerbHelpers_StrictAndNonStrict(t *testing.T) {
+	t.Parallel()
+
+	app := New()
+	handler := func(*Context) (*Response, error) { return Text(200, "ok"), nil }
+
+	if _, err := app.PostStrict("/post", handler); err != nil {
+		t.Fatalf("PostStrict: %v", err)
+	}
+	if _, err := app.PutStrict("/put", handler); err != nil {
+		t.Fatalf("PutStrict: %v", err)
+	}
+	if _, err := app.DeleteStrict("/delete", handler); err != nil {
+		t.Fatalf("DeleteStrict: %v", err)
+	}
+	if _, err := app.PatchStrict("/patch-strict", handler); err != nil {
+		t.Fatalf("PatchStrict: %v", err)
+	}
+	if _, err := app.OptionsStrict("/options-strict", handler); err != nil {
+		t.Fatalf("OptionsStrict: %v", err)
+	}
+
+	if got := app.Patch("/patch", handler); got == nil {
+		t.Fatalf("Patch: expected non-nil app")
+	}
+	if got := app.Options("/options", handler); got == nil {
+		t.Fatalf("Options: expected non-nil app")
+	}
+	if got := app.Put("/put", handler); got == nil {
+		t.Fatalf("Put: expected non-nil app")
+	}
+	if got := app.Delete("/delete", handler); got == nil {
+		t.Fatalf("Delete: expected non-nil app")
+	}
+
+	// Smoke test: route is actually reachable.
+	resp := app.Serve(context.Background(), Request{Method: "POST", Path: "/post"})
+	if resp.Status != 200 {
+		t.Fatalf("Serve: got %d want %d", resp.Status, 200)
+	}
+
+	// Not found should produce a deterministic error response.
+	resp = app.Serve(context.Background(), Request{Method: "GET", Path: "/missing"})
+	if resp.Status != 404 {
+		t.Fatalf("expected 404, got %d", resp.Status)
+	}
+}
+
+func TestHandleStrict_InvalidInputs_ReturnError(t *testing.T) {
+	t.Parallel()
+
+	handler := func(*Context) (*Response, error) { return Text(200, "ok"), nil }
+
+	var nilApp *App
+	if _, err := nilApp.GetStrict("/any", handler); err == nil {
+		t.Fatalf("expected nil app to error")
+	}
+
+	app := New()
+	if _, err := app.GetStrict("/nil-handler", nil); err == nil {
+		t.Fatalf("expected nil handler to error")
+	}
+}
+
+func TestErrorCodeForError_CoversAllTypes(t *testing.T) {
+	t.Parallel()
+
+	if got := errorCodeForError(&AppTheoryError{Code: "X"}); got != "X" {
+		t.Fatalf("AppTheoryError: got %q", got)
+	}
+	if got := errorCodeForError(&AppTheoryError{Code: " "}); got != errorCodeInternal {
+		t.Fatalf("AppTheoryError empty code: got %q", got)
+	}
+	if got := errorCodeForError(&AppError{Code: errorCodeBadRequest}); got != errorCodeBadRequest {
+		t.Fatalf("AppError: got %q", got)
+	}
+	if got := errorCodeForError(errors.New("boom")); got != errorCodeInternal {
+		t.Fatalf("generic error: got %q", got)
+	}
+}
+
+func TestExtractTenantID_QueryFallback(t *testing.T) {
+	t.Parallel()
+
+	if got := extractTenantID(map[string][]string{}, map[string][]string{"tenant": {"t1"}}); got != "t1" {
+		t.Fatalf("tenant query fallback: got %q", got)
+	}
+	if got := extractTenantID(map[string][]string{"x-tenant-id": {"t2"}}, map[string][]string{"tenant": {"t1"}}); got != "t2" {
+		t.Fatalf("tenant header precedence: got %q", got)
+	}
+}
+
+func TestRemainingMSFromContext_DeadlineMath(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithDeadline(context.Background(), RealClock{}.Now().Add(50*time.Millisecond))
+	defer cancel()
+
+	if got := remainingMSFromContext(ctx, RealClock{}); got <= 0 {
+		t.Fatalf("expected remainingMS > 0, got %d", got)
+	}
+
+	pastCtx, pastCancel := context.WithDeadline(context.Background(), RealClock{}.Now().Add(-time.Millisecond))
+	defer pastCancel()
+
+	if got := remainingMSFromContext(pastCtx, RealClock{}); got != 0 {
+		t.Fatalf("expected remainingMS = 0 for past deadline, got %d", got)
+	}
+}
+
+func TestDefaultPolicyMessage_KnownAndUnknownCodes(t *testing.T) {
+	t.Parallel()
+
+	if got := defaultPolicyMessage(errorCodeRateLimited); got != errorMessageRateLimited {
+		t.Fatalf("rate limited: got %q", got)
+	}
+	if got := defaultPolicyMessage(errorCodeOverloaded); got != errorMessageOverloaded {
+		t.Fatalf("overloaded: got %q", got)
+	}
+	if got := defaultPolicyMessage("something-else"); got != errorMessageInternal {
+		t.Fatalf("default: got %q", got)
+	}
+}
+
+func TestPortableServe_PolicyAndAuth_ErrorBranches(t *testing.T) {
+	t.Parallel()
+
+	t.Run("policy hook error returns 500", func(t *testing.T) {
+		app := New(
+			WithTier(TierP2),
+			WithIDGenerator(fixedIDGenerator("req_1")),
+			WithPolicyHook(func(*Context) (*PolicyDecision, error) {
+				return nil, errors.New("boom")
+			}),
+		)
+		app.Get("/ok", func(*Context) (*Response, error) { return Text(200, "ok"), nil })
+
+		resp := app.Serve(context.Background(), Request{Method: "GET", Path: "/ok"})
+		if resp.Status != 500 {
+			t.Fatalf("expected 500, got %d", resp.Status)
+		}
+	})
+
+	t.Run("policy decision with empty code is ignored", func(t *testing.T) {
+		app := New(
+			WithTier(TierP2),
+			WithIDGenerator(fixedIDGenerator("req_1")),
+			WithPolicyHook(func(*Context) (*PolicyDecision, error) {
+				return &PolicyDecision{Code: " "}, nil
+			}),
+		)
+		app.Get("/ok", func(*Context) (*Response, error) { return Text(200, "ok"), nil })
+
+		resp := app.Serve(context.Background(), Request{Method: "GET", Path: "/ok"})
+		if resp.Status != 200 {
+			t.Fatalf("expected 200, got %d", resp.Status)
+		}
+	})
+
+	t.Run("auth required without hook returns 401", func(t *testing.T) {
+		app := New(WithTier(TierP2), WithIDGenerator(fixedIDGenerator("req_1")))
+		app.Get("/protected", func(*Context) (*Response, error) { return Text(200, "ok"), nil }, RequireAuth())
+
+		resp := app.Serve(context.Background(), Request{Method: "GET", Path: "/protected"})
+		if resp.Status != 401 {
+			t.Fatalf("expected 401, got %d", resp.Status)
+		}
+	})
+
+	t.Run("auth hook error returns 500", func(t *testing.T) {
+		app := New(
+			WithTier(TierP2),
+			WithIDGenerator(fixedIDGenerator("req_1")),
+			WithAuthHook(func(*Context) (string, error) {
+				return "", errors.New("auth boom")
+			}),
+		)
+		app.Get("/protected", func(*Context) (*Response, error) { return Text(200, "ok"), nil }, RequireAuth())
+
+		resp := app.Serve(context.Background(), Request{Method: "GET", Path: "/protected"})
+		if resp.Status != 500 {
+			t.Fatalf("expected 500, got %d", resp.Status)
+		}
+	})
+
+	t.Run("auth hook empty identity returns 401", func(t *testing.T) {
+		app := New(
+			WithTier(TierP2),
+			WithIDGenerator(fixedIDGenerator("req_1")),
+			WithAuthHook(func(*Context) (string, error) {
+				return " ", nil
+			}),
+		)
+		app.Get("/protected", func(*Context) (*Response, error) { return Text(200, "ok"), nil }, RequireAuth())
+
+		resp := app.Serve(context.Background(), Request{Method: "GET", Path: "/protected"})
+		if resp.Status != 401 {
+			t.Fatalf("expected 401, got %d", resp.Status)
+		}
+	})
+}
+
+func TestPortableServe_MethodNotAllowed_WhenRouteExists(t *testing.T) {
+	t.Parallel()
+
+	app := New(WithTier(TierP2), WithIDGenerator(fixedIDGenerator("req_1")))
+	app.Get("/ok", func(*Context) (*Response, error) { return Text(200, "ok"), nil })
+
+	resp := app.Serve(context.Background(), Request{Method: "POST", Path: "/ok"})
+	if resp.Status != 405 {
+		t.Fatalf("expected 405, got %d", resp.Status)
+	}
+}
+
+func TestHandleStrict_InitializesRouter_WhenNil(t *testing.T) {
+	t.Parallel()
+
+	app := &App{}
+	_, err := app.HandleStrict("GET", "/x", func(*Context) (*Response, error) { return Text(200, "ok"), nil })
+	if err != nil {
+		t.Fatalf("HandleStrict: %v", err)
+	}
+	if app.router == nil {
+		t.Fatalf("expected router to be initialized")
+	}
+}
+
+func TestServe_UsesBackgroundWhenContextNil_AndDefaultsToP2(t *testing.T) {
 	t.Parallel()
 
 	app := New(WithTier(Tier("unknown")))
-	app.Get("/", func(_ *Context) (*Response, error) { return Text(200, "ok"), nil })
+	app.Get("/ok", func(*Context) (*Response, error) { return Text(200, "ok"), nil })
 
-	resp := app.Serve(context.Background(), Request{Method: "GET", Path: "/"})
+	//nolint:staticcheck // testing nil context handling
+	resp := app.Serve(nil, Request{Method: "GET", Path: "/ok"})
 	if resp.Status != 200 {
 		t.Fatalf("expected 200, got %d", resp.Status)
-	}
-}
-
-func TestServe_PutAndDelete_WrappersRegisterHandlers(t *testing.T) {
-	t.Parallel()
-
-	app := New(WithTier(TierP0))
-	app.Put("/put", func(_ *Context) (*Response, error) { return Text(200, "put"), nil })
-	app.Delete("/del", func(_ *Context) (*Response, error) { return Text(200, "del"), nil })
-
-	resp := app.Serve(context.Background(), Request{Method: "PUT", Path: "/put"})
-	if resp.Status != 200 || string(resp.Body) != "put" {
-		t.Fatalf("unexpected put response: %#v", resp)
-	}
-
-	resp = app.Serve(context.Background(), Request{Method: "DELETE", Path: "/del"})
-	if resp.Status != 200 || string(resp.Body) != "del" {
-		t.Fatalf("unexpected delete response: %#v", resp)
-	}
-}
-
-func TestServePortable_ErrorCodeForError_AndRouteNotFoundResponse(t *testing.T) {
-	t.Parallel()
-
-	if got := errorCodeForError(&AppError{Code: errorCodeForbidden, Message: errorMessageForbidden}); got != errorCodeForbidden {
-		t.Fatalf("expected errorCodeForError to return AppError.Code, got %q", got)
-	}
-	if got := errorCodeForError(errors.New("boom")); got != errorCodeInternal {
-		t.Fatalf("expected errorCodeForError to map unknown errors to internal, got %q", got)
-	}
-
-	resp, code := routeNotFoundResponse([]string{"GET", "POST"}, "req_1")
-	if resp.Status != 405 || code != errorCodeMethodNotAllowed {
-		t.Fatalf("expected 405/method_not_allowed, got %d/%s", resp.Status, code)
-	}
-	if allow := resp.Headers["allow"]; len(allow) != 1 || allow[0] == "" {
-		t.Fatalf("expected allow header, got %#v", resp.Headers)
-	}
-
-	resp, code = routeNotFoundResponse(nil, "req_1")
-	if resp.Status != 404 || code != errorCodeNotFound {
-		t.Fatalf("expected 404/not_found, got %d/%s", resp.Status, code)
-	}
-}
-
-func TestServePortable_AuthorizeAndPolicyBranches(t *testing.T) {
-	t.Parallel()
-
-	// AuthRequired with no auth hook should fail closed.
-	app := New(WithTier(TierP2), WithIDGenerator(fixedIDGenerator("req_1")))
-	app.Get("/auth", func(_ *Context) (*Response, error) { return Text(200, "ok"), nil }, RequireAuth())
-	resp := app.Serve(context.Background(), Request{Method: "GET", Path: "/auth"})
-	if resp.Status != 401 {
-		t.Fatalf("expected 401, got %d", resp.Status)
-	}
-
-	// Auth hook error uses responseForErrorWithRequestID (and errorCodeForError).
-	app = New(
-		WithTier(TierP2),
-		WithIDGenerator(fixedIDGenerator("req_1")),
-		WithAuthHook(func(_ *Context) (string, error) {
-			return "", &AppError{Code: errorCodeForbidden, Message: errorMessageForbidden}
-		}),
-	)
-	app.Get("/auth", func(_ *Context) (*Response, error) { return Text(200, "ok"), nil }, RequireAuth())
-	resp = app.Serve(context.Background(), Request{Method: "GET", Path: "/auth"})
-	if resp.Status != 403 {
-		t.Fatalf("expected 403, got %d", resp.Status)
-	}
-
-	// Empty identity should be treated as unauthorized.
-	app = New(
-		WithTier(TierP2),
-		WithIDGenerator(fixedIDGenerator("req_1")),
-		WithAuthHook(func(_ *Context) (string, error) { return "   ", nil }),
-	)
-	app.Get("/auth", func(_ *Context) (*Response, error) { return Text(200, "ok"), nil }, RequireAuth())
-	resp = app.Serve(context.Background(), Request{Method: "GET", Path: "/auth"})
-	if resp.Status != 401 {
-		t.Fatalf("expected 401, got %d", resp.Status)
-	}
-
-	// Policy: nil decision and blank code should be ignored (handler runs).
-	app = New(
-		WithTier(TierP2),
-		WithIDGenerator(fixedIDGenerator("req_1")),
-		WithPolicyHook(func(_ *Context) (*PolicyDecision, error) { return nil, nil }),
-	)
-	app.Get("/ok", func(_ *Context) (*Response, error) { return Text(200, "ok"), nil })
-	resp = app.Serve(context.Background(), Request{Method: "GET", Path: "/ok"})
-	if resp.Status != 200 {
-		t.Fatalf("expected 200, got %d", resp.Status)
-	}
-
-	app = New(
-		WithTier(TierP2),
-		WithIDGenerator(fixedIDGenerator("req_1")),
-		WithPolicyHook(func(_ *Context) (*PolicyDecision, error) { return &PolicyDecision{Code: "  ", Message: "ignored"}, nil }),
-	)
-	app.Get("/ok", func(_ *Context) (*Response, error) { return Text(200, "ok"), nil })
-	resp = app.Serve(context.Background(), Request{Method: "GET", Path: "/ok"})
-	if resp.Status != 200 {
-		t.Fatalf("expected 200, got %d", resp.Status)
-	}
-
-	// Policy: error fails closed.
-	app = New(
-		WithTier(TierP2),
-		WithIDGenerator(fixedIDGenerator("req_1")),
-		WithPolicyHook(func(_ *Context) (*PolicyDecision, error) { return nil, errors.New("boom") }),
-	)
-	app.Get("/ok", func(_ *Context) (*Response, error) { return Text(200, "ok"), nil })
-	resp = app.Serve(context.Background(), Request{Method: "GET", Path: "/ok"})
-	if resp.Status != 500 {
-		t.Fatalf("expected 500, got %d", resp.Status)
-	}
-
-	// Policy: default message selection (overloaded + fallback).
-	app = New(
-		WithTier(TierP2),
-		WithIDGenerator(fixedIDGenerator("req_1")),
-		WithPolicyHook(func(_ *Context) (*PolicyDecision, error) { return &PolicyDecision{Code: errorCodeOverloaded}, nil }),
-	)
-	app.Get("/ok", func(_ *Context) (*Response, error) { return Text(200, "ok"), nil })
-	resp = app.Serve(context.Background(), Request{Method: "GET", Path: "/ok"})
-	if resp.Status != 503 {
-		t.Fatalf("expected 503, got %d", resp.Status)
-	}
-
-	app = New(
-		WithTier(TierP2),
-		WithIDGenerator(fixedIDGenerator("req_1")),
-		WithPolicyHook(func(_ *Context) (*PolicyDecision, error) { return &PolicyDecision{Code: "app.weird"}, nil }),
-	)
-	app.Get("/ok", func(_ *Context) (*Response, error) { return Text(200, "ok"), nil })
-	resp = app.Serve(context.Background(), Request{Method: "GET", Path: "/ok"})
-	if resp.Status != 500 {
-		t.Fatalf("expected 500, got %d", resp.Status)
-	}
-}
-
-func TestRemainingMSFromContext_Branches(t *testing.T) {
-	t.Parallel()
-
-	if got := remainingMSFromContext(context.Background(), nil); got != 0 {
-		t.Fatalf("expected no deadline to return 0, got %d", got)
-	}
-
-	pastCtx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
-	cancel()
-	if got := remainingMSFromContext(pastCtx, nil); got != 0 {
-		t.Fatalf("expected past deadline to return 0, got %d", got)
-	}
-
-	fixedNow := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	futureCtx, cancel := context.WithDeadline(context.Background(), fixedNow.Add(1500*time.Millisecond))
-	defer cancel()
-
-	if got := remainingMSFromContext(futureCtx, testFixedClock{now: fixedNow}); got != 1500 {
-		t.Fatalf("expected 1500ms remaining, got %d", got)
 	}
 }

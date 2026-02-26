@@ -1,0 +1,24 @@
+{
+  "name": "@theory-cloud/apptheory-cdk-import-pipeline-example",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "synth": "cdk synth",
+    "deploy": "cdk deploy --all"
+  },
+  "devDependencies": {
+    "@theory-cloud/apptheory-cdk": "file:../../../cdk",
+    "@types/node": "25.0.9",
+    "aws-cdk": "2.1101.0",
+    "aws-cdk-lib": "2.240.0",
+    "constructs": "10.5.1",
+    "ts-node": "10.9.2",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "diff": "4.0.4"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

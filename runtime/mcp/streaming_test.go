@@ -58,7 +58,7 @@ func TestToolsCallStreaming_StreamsProgressIncrementally(t *testing.T) {
 	params := toolsCallParams{Name: "slow_tool", Arguments: json.RawMessage(`{}`)}
 	params.Meta.ProgressToken = "pt-123"
 
-	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: "tools/call", Params: mustMarshal(t, params)})
+	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: mustMarshal(t, params)})
 
 	headers := sessionHeaders(sessionID)
 	headers["accept"] = []string{"text/event-stream"}
@@ -181,7 +181,7 @@ func TestToolsCallStreaming_CanResumeViaGETWithLastEventID(t *testing.T) {
 
 	params := toolsCallParams{Name: "slow_tool", Arguments: json.RawMessage(`{}`)}
 	params.Meta.ProgressToken = "pt-123"
-	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: "tools/call", Params: mustMarshal(t, params)})
+	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: mustMarshal(t, params)})
 
 	headers := sessionHeaders(sessionID)
 	headers["accept"] = []string{"text/event-stream"}
