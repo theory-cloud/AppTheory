@@ -10581,6 +10581,208 @@
       ],
       "symbolId": "lib/eventbridge-handler:AppTheoryEventBridgeHandlerProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeRuleTarget": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "This construct intentionally enforces `eventPattern` XOR `schedule` (fail closed).\nFor schedule-only back-compat, see `AppTheoryEventBridgeHandler`.",
+        "summary": "Opinionated wiring for an EventBridge rule with a Lambda target."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeRuleTarget",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/eventbridge-rule-target.ts",
+          "line": 65
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeRuleTargetProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/eventbridge-rule-target.ts",
+        "line": 62
+      },
+      "name": "AppTheoryEventBridgeRuleTarget",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-rule-target.ts",
+            "line": 63
+          },
+          "name": "rule",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_events.Rule"
+          }
+        }
+      ],
+      "symbolId": "lib/eventbridge-rule-target:AppTheoryEventBridgeRuleTarget"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeRuleTargetProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeRuleTargetProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/eventbridge-rule-target.ts",
+        "line": 6
+      },
+      "name": "AppTheoryEventBridgeRuleTargetProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The Lambda function to invoke when the rule matches."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-rule-target.ts",
+            "line": 10
+          },
+          "name": "handler",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Optional rule description."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-rule-target.ts",
+            "line": 47
+          },
+          "name": "description",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Whether the rule is enabled."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-rule-target.ts",
+            "line": 42
+          },
+          "name": "enabled",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- the account default event bus",
+            "summary": "Optional event bus to attach the rule to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-rule-target.ts",
+            "line": 30
+          },
+          "name": "eventBus",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_events.IEventBus"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Mutually exclusive with `schedule`.",
+            "summary": "EventBridge event pattern for rule matching."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-rule-target.ts",
+            "line": 17
+          },
+          "name": "eventPattern",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_events.EventPattern"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- CloudFormation-generated name",
+            "summary": "Optional rule name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-rule-target.ts",
+            "line": 36
+          },
+          "name": "ruleName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Mutually exclusive with `eventPattern`.",
+            "summary": "Schedule for rule triggering."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-rule-target.ts",
+            "line": 24
+          },
+          "name": "schedule",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_events.Schedule"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Passed through to `aws-events-targets.LambdaFunction`.",
+            "summary": "Optional configuration for the Lambda target (DLQ, input, retries, max event age, etc)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-rule-target.ts",
+            "line": 53
+          },
+          "name": "targetProps",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_events_targets.LambdaFunctionProps"
+          }
+        }
+      ],
+      "symbolId": "lib/eventbridge-rule-target:AppTheoryEventBridgeRuleTargetProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryEventBusTable": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -11367,6 +11569,382 @@
         }
       ],
       "symbolId": "lib/http-api:AppTheoryHttpApiProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryJobsTable": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "Canonical schema:\n- PK: `pk` (string)\n- SK: `sk` (string)\n\nCanonical GSIs (locked by ADR 0002):\n- `status-created-index`: `status` (pk) + `created_at` (sk)\n- `tenant-created-index`: `tenant_id` (pk) + `created_at` (sk)\n\nCanonical TTL attribute:\n- `ttl` (configurable)",
+        "summary": "Opinionated DynamoDB table for import pipeline job ledgers."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryJobsTable",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/jobs-table.ts",
+          "line": 101
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "optional": true,
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryJobsTableProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/jobs-table.ts",
+        "line": 98
+      },
+      "methods": [
+        {
+          "docs": {
+            "summary": "Binds the canonical jobs table env var to a Lambda function."
+          },
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 173
+          },
+          "name": "bindEnvironment",
+          "parameters": [
+            {
+              "name": "fn",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_lambda.Function"
+              }
+            }
+          ]
+        },
+        {
+          "docs": {
+            "summary": "Grant DynamoDB read permissions."
+          },
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 180
+          },
+          "name": "grantReadTo",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              }
+            }
+          ]
+        },
+        {
+          "docs": {
+            "summary": "Grant DynamoDB read/write permissions."
+          },
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 194
+          },
+          "name": "grantReadWriteTo",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              }
+            }
+          ]
+        },
+        {
+          "docs": {
+            "summary": "Grant DynamoDB write permissions."
+          },
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 187
+          },
+          "name": "grantWriteTo",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              }
+            }
+          ]
+        }
+      ],
+      "name": "AppTheoryJobsTable",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 99
+          },
+          "name": "table",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.Table"
+          }
+        }
+      ],
+      "symbolId": "lib/jobs-table:AppTheoryJobsTable"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryJobsTableProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryJobsTableProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/jobs-table.ts",
+        "line": 8
+      },
+      "name": "AppTheoryJobsTableProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "PAY_PER_REQUEST",
+            "summary": "Billing mode for the table."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 19
+          },
+          "name": "billingMode",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.BillingMode"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS default (no deletion protection)",
+            "summary": "Whether deletion protection should be enabled for the table."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 31
+          },
+          "name": "deletionProtection",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Whether point-in-time recovery should be enabled."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 43
+          },
+          "name": "enablePointInTimeRecovery",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "AWS_MANAGED",
+            "summary": "Table encryption setting."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 49
+          },
+          "name": "encryption",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.TableEncryption"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Customer-managed KMS key (required when encryption is CUSTOMER_MANAGED)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 54
+          },
+          "name": "encryptionKey",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kms.IKey"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Principals to grant DynamoDB read permissions to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 71
+          },
+          "name": "grantReadTo",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Principals to grant DynamoDB read/write permissions to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 81
+          },
+          "name": "grantReadWriteTo",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Principals to grant DynamoDB write permissions to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 76
+          },
+          "name": "grantWriteTo",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "5",
+            "summary": "Provisioned read capacity (only used when billingMode is PROVISIONED)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 60
+          },
+          "name": "readCapacity",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "RemovalPolicy.RETAIN",
+            "summary": "Removal policy for the table."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 25
+          },
+          "name": "removalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- CloudFormation-generated name",
+            "summary": "Optional table name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 13
+          },
+          "name": "tableName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"ttl\"",
+            "summary": "TTL attribute name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 37
+          },
+          "name": "timeToLiveAttribute",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "5",
+            "summary": "Provisioned write capacity (only used when billingMode is PROVISIONED)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/jobs-table.ts",
+            "line": 66
+          },
+          "name": "writeCapacity",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/jobs-table:AppTheoryJobsTableProps"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryKmsKey": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -15931,6 +16509,358 @@
       ],
       "symbolId": "lib/rest-api-router:AppTheoryRestApiRouterStageOptions"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryS3Ingest": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "This construct can:\n- Create a secure bucket (or attach to an existing bucket)\n- Enable S3 -> EventBridge notifications\n- Configure S3 -> SQS notifications with prefix/suffix filters",
+        "summary": "Secure “front door” S3 ingest wiring for import pipelines."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryS3Ingest",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/s3-ingest.ts",
+          "line": 117
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "optional": true,
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryS3IngestProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/s3-ingest.ts",
+        "line": 112
+      },
+      "name": "AppTheoryS3Ingest",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 113
+          },
+          "name": "bucket",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.IBucket"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 114
+          },
+          "name": "queue",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_sqs.IQueue"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 115
+          },
+          "name": "queueConstruct",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueue"
+          }
+        }
+      ],
+      "symbolId": "lib/s3-ingest:AppTheoryS3Ingest"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryS3IngestProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryS3IngestProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/s3-ingest.ts",
+        "line": 18
+      },
+      "name": "AppTheoryS3IngestProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Whether to auto-delete objects in a created bucket when removalPolicy is DESTROY."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 41
+          },
+          "name": "autoDeleteObjects",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "If not provided, a new bucket will be created with secure defaults.",
+            "summary": "Optional existing S3 bucket to use for ingest."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 24
+          },
+          "name": "bucket",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.IBucket"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Name for the ingest bucket (only used if bucket is not provided)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 29
+          },
+          "name": "bucketName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "When creating a bucket, this sets `eventBridgeEnabled`.\nWhen using an existing bucket, this calls `enableEventBridgeNotification()`.",
+            "summary": "Whether to enable EventBridge notifications for the bucket."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 50
+          },
+          "name": "enableEventBridge",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "s3.BucketEncryption.S3_MANAGED",
+            "summary": "Optional bucket encryption setting (only used when creating a bucket)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 78
+          },
+          "name": "encryption",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.BucketEncryption"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Only valid when `encryption` is `s3.BucketEncryption.KMS`.",
+            "summary": "Optional customer-managed KMS key (only used when creating a bucket)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 84
+          },
+          "name": "encryptionKey",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kms.IKey"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Principals to grant read permissions to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 89
+          },
+          "name": "grantReadTo",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Principals to grant write permissions to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 94
+          },
+          "name": "grantWriteTo",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Object key prefixes to match for S3 -> SQS notifications."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 67
+          },
+          "name": "prefixes",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Mutually exclusive with `queueTarget`.",
+            "summary": "Optional queue props to create an SQS queue for direct S3 -> SQS notifications."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 62
+          },
+          "name": "queueProps",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryQueueProps"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Optional SQS queue target for direct S3 -> SQS notifications."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 55
+          },
+          "name": "queueTarget",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_sqs.IQueue"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "RemovalPolicy.RETAIN",
+            "summary": "Removal policy for created resources."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 35
+          },
+          "name": "removalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Object key suffixes to match for S3 -> SQS notifications."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 72
+          },
+          "name": "suffixes",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "This is intentionally explicit (bucket policy), rather than implicit magic.",
+            "summary": "Cross-account writer principals to allow via bucket policy."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/s3-ingest.ts",
+            "line": 101
+          },
+          "name": "writerPrincipals",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.IPrincipal"
+              },
+              "kind": "array"
+            }
+          }
+        }
+      ],
+      "symbolId": "lib/s3-ingest:AppTheoryS3IngestProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheorySecretConfig": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "datatype": true,
@@ -17513,5 +18443,5 @@
     }
   },
   "version": "0.11.1",
-  "fingerprint": "g686HtXOhPAb+iJYcvZ8kschq4idDqYZntAllzH90yw="
+  "fingerprint": "DEUEfiWyOhGxNkV0Y3GySUch2kYvbc5NQn5O8kpDhsw="
 }
