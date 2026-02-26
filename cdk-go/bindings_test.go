@@ -9,6 +9,7 @@ import (
 func TestBindingsIncludeNewConstructs(t *testing.T) {
 	t.Helper()
 
+	_ = apptheorycdk.NewAppTheoryCodeBuildJobRunner
 	_ = apptheorycdk.NewAppTheoryEventBridgeRuleTarget
 	_ = apptheorycdk.NewAppTheoryJobsTable
 	_ = apptheorycdk.NewAppTheoryLambdaRole

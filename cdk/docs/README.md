@@ -24,6 +24,7 @@
 - [SQS Queue + Consumer Patterns](./sqs-queue-consumer.md) — queue-only, queue+consumer, and processor patterns (DLQs + partial batch failures).
 - [EventBridge Rule Target](./eventbridge-rule-target.md) — rule → Lambda wiring for schedules and event patterns.
 - [S3 Ingest Front Door](./s3-ingest.md) — secure bucket + optional EventBridge/SQS notifications for import workloads.
+- [CodeBuild Job Runner (Import Pipeline)](./codebuild-job-runner.md) — batch job runner for transforms/decrypt/backfills.
 - [Jobs Table (Import Pipeline)](./jobs-table.md) — opinionated DynamoDB table for job ledgers (schema + GSIs + TTL).
 - [Lambda Role Helper](./lambda-role.md) — Lambda execution roles (baseline + X-Ray + KMS + custom statements).
 - [CloudFront Path-Routed Frontend Distribution](./path-routed-frontend.md) — multi-SPA routing behind one stage domain.
