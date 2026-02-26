@@ -14,6 +14,10 @@ const sensitiveSanitizeFields = new Map([
     ["cardholder_name", "fully"],
     ["card_number", "partial"],
     ["number", "partial"],
+    // Common PAN aliases used in import/migration datasets.
+    ["pan_value", "partial"],
+    ["pan", "partial"],
+    ["primary_account_number", "partial"],
     ["account_number", "partial"],
     ["ssn", "partial"],
     ["tin", "partial"],
@@ -112,7 +116,11 @@ export function sanitizeFieldValue(key, value) {
     if (explicit === "fully")
         return REDACTED_VALUE;
     if (explicit === "partial") {
-        if (k === "card_number" || k === "number")
+        if (k === "card_number" ||
+            k === "number" ||
+            k === "pan_value" ||
+            k === "pan" ||
+            k === "primary_account_number")
             return maskCardNumberString(value);
         return maskRestrictedString(value);
     }

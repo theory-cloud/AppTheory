@@ -5,9 +5,11 @@ const test = require("node:test");
 
 const cdk = require("aws-cdk-lib");
 const assertions = require("aws-cdk-lib/assertions");
+const codebuild = require("aws-cdk-lib/aws-codebuild");
 const dynamodb = require("aws-cdk-lib/aws-dynamodb");
 const ec2 = require("aws-cdk-lib/aws-ec2");
 const events = require("aws-cdk-lib/aws-events");
+const iam = require("aws-cdk-lib/aws-iam");
 const kms = require("aws-cdk-lib/aws-kms");
 const lambda = require("aws-cdk-lib/aws-lambda");
 const logs = require("aws-cdk-lib/aws-logs");
@@ -356,6 +358,285 @@ test("AppTheoryEventBridgeHandler synthesizes expected template", () => {
     writeSnapshot("eventbridge-handler", template);
   } else {
     expectSnapshot("eventbridge-handler", template);
+  }
+});
+
+test("AppTheoryEventBridgeRuleTarget (schedule) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryEventBridgeRuleTarget(stack, "RuleTarget", {
+    handler: fn,
+    schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+    ruleName: "apptheory-test-rule",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("eventbridge-rule-target-schedule", template);
+  } else {
+    expectSnapshot("eventbridge-rule-target-schedule", template);
+  }
+});
+
+test("AppTheoryEventBridgeRuleTarget (eventPattern) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryEventBridgeRuleTarget(stack, "RuleTarget", {
+    handler: fn,
+    eventPattern: {
+      source: ["aws.s3"],
+      detailType: ["Object Created"],
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("eventbridge-rule-target-event-pattern", template);
+  } else {
+    expectSnapshot("eventbridge-rule-target-event-pattern", template);
+  }
+});
+
+test("AppTheoryEventBridgeRuleTarget (eventBus + eventPattern) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const bus = new events.EventBus(stack, "Bus");
+
+  new apptheory.AppTheoryEventBridgeRuleTarget(stack, "RuleTarget", {
+    handler: fn,
+    eventBus: bus,
+    eventPattern: {
+      source: ["com.example"],
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("eventbridge-rule-target-event-bus", template);
+  } else {
+    expectSnapshot("eventbridge-rule-target-event-bus", template);
+  }
+});
+
+test("AppTheoryEventBridgeRuleTarget fails closed on invalid props", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryEventBridgeRuleTarget(stack, "MissingBoth", {
+        handler: fn,
+      }),
+    /requires exactly one of eventPattern or schedule/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryEventBridgeRuleTarget(stack, "HasBoth", {
+        handler: fn,
+        schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+        eventPattern: { source: ["aws.s3"] },
+      }),
+    /requires exactly one of eventPattern or schedule/,
+  );
+});
+
+test("AppTheoryS3Ingest (bucket defaults) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryS3Ingest(stack, "Ingest");
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("s3-ingest-defaults", template);
+  } else {
+    expectSnapshot("s3-ingest-defaults", template);
+  }
+});
+
+test("AppTheoryS3Ingest (EventBridge enabled) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryS3Ingest(stack, "Ingest", {
+    enableEventBridge: true,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("s3-ingest-eventbridge", template);
+  } else {
+    expectSnapshot("s3-ingest-eventbridge", template);
+  }
+});
+
+test("AppTheoryS3Ingest (SQS notifications + filters) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryS3Ingest(stack, "Ingest", {
+    queueProps: {
+      queueName: "import-ingest",
+      enableDlq: true,
+    },
+    prefixes: ["incoming/"],
+    suffixes: [".csv", ".json"],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("s3-ingest-sqs-filters", template);
+  } else {
+    expectSnapshot("s3-ingest-sqs-filters", template);
+  }
+});
+
+test("AppTheoryJobsTable synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryJobsTable(stack, "Jobs");
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("jobs-table", template);
+  } else {
+    expectSnapshot("jobs-table", template);
+  }
+});
+
+test("AppTheoryCodeBuildJobRunner synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryCodeBuildJobRunner(stack, "Runner", {
+    buildSpec: codebuild.BuildSpec.fromObject({
+      version: "0.2",
+      phases: {
+        build: {
+          commands: ["echo hello"],
+        },
+      },
+    }),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("codebuild-job-runner", template);
+  } else {
+    expectSnapshot("codebuild-job-runner", template);
+  }
+});
+
+test("AppTheoryCodeBuildJobRunner (env vars + KMS) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const key = new kms.Key(stack, "Key");
+
+  new apptheory.AppTheoryCodeBuildJobRunner(stack, "Runner", {
+    encryptionKey: key,
+    environmentVariables: {
+      HELLO: { value: "world" },
+    },
+    buildSpec: codebuild.BuildSpec.fromObject({
+      version: "0.2",
+      phases: {
+        build: {
+          commands: ["echo $HELLO"],
+        },
+      },
+    }),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("codebuild-job-runner-env-kms", template);
+  } else {
+    expectSnapshot("codebuild-job-runner-env-kms", template);
+  }
+});
+
+test("AppTheoryCodeBuildJobRunner (additional statements) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryCodeBuildJobRunner(stack, "Runner", {
+    additionalStatements: [
+      new iam.PolicyStatement({
+        actions: ["s3:ListBucket"],
+        resources: ["*"],
+      }),
+    ],
+    buildSpec: codebuild.BuildSpec.fromObject({
+      version: "0.2",
+      phases: {
+        build: {
+          commands: ["echo ok"],
+        },
+      },
+    }),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("codebuild-job-runner-additional-statements", template);
+  } else {
+    expectSnapshot("codebuild-job-runner-additional-statements", template);
+  }
+});
+
+test("AppTheoryCodeBuildJobRunner (state change rule) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryCodeBuildJobRunner(stack, "Runner", {
+    enableStateChangeRule: true,
+    stateChangeRuleName: "build-state-changes",
+    stateChangeRuleDescription: "state changes",
+    buildSpec: codebuild.BuildSpec.fromObject({
+      version: "0.2",
+      phases: {
+        build: {
+          commands: ["echo ok"],
+        },
+      },
+    }),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("codebuild-job-runner-state-change-rule", template);
+  } else {
+    expectSnapshot("codebuild-job-runner-state-change-rule", template);
   }
 });
 
