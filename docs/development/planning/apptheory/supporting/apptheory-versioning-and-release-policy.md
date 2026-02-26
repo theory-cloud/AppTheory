@@ -33,6 +33,10 @@ Important: release automation is driven by **Conventional Commits**. Commits typ
 and will advance the release line; `chore:` commits may be ignored by release-please. If a change must ship, prefer `fix(<scope>): ...`
 or `feat(<scope>): ...` (this matches TableTheory’s release flow expectations).
 
+Note: milestone-style commit prefixes like `M1:` / `M2:` / ... are **not** treated as user-facing by release-please. If milestone work
+must ship in the next RC/release, use conventional commits such as `feat(M1): ...` / `fix(M1): ...` (or add a single `feat(<scope>): ...`
+"release marker" commit that summarizes what should ship).
+
 ## Troubleshooting
 
 - If a prerelease/release PR was merged but no new `vX.Y.Z-rc...` (or `vX.Y.Z`) tag exists, check the corresponding GitHub Actions run:

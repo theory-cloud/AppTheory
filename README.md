@@ -121,6 +121,7 @@ Start here:
 
 - Planning index: `docs/development/planning/apptheory/README.md`
 - Main roadmap: `docs/development/planning/apptheory/apptheory-multilang-roadmap.md`
+- Import pipeline support pack reference example (CDK + handlers): `examples/cdk/import-pipeline/`
 
 Migration:
 

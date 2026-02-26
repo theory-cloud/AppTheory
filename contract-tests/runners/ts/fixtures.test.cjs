@@ -17,6 +17,30 @@ function conditionalCheckFailed(message = "conditional check failed") {
   return err;
 }
 
+function itemNotFound(message = "item not found") {
+  const err = new Error(message);
+  err.name = "ErrItemNotFound";
+  err.code = "ErrItemNotFound";
+  return err;
+}
+
+function normalizeKeyParts(obj) {
+  const hasPK = obj && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, "PK");
+  const hasSK = obj && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, "SK");
+  const hasPk = obj && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, "pk");
+  const hasSk = obj && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, "sk");
+
+  const pk = String((obj && (obj.PK ?? obj.pk)) ?? "");
+  const sk = String((obj && (obj.SK ?? obj.sk)) ?? "");
+
+  return {
+    pk,
+    sk,
+    pkAttr: hasPK ? "PK" : hasPk ? "pk" : "PK",
+    skAttr: hasSK ? "SK" : hasSk ? "sk" : "SK",
+  };
+}
+
 function cloneJson(value) {
   return value ? JSON.parse(JSON.stringify(value)) : value;
 }
@@ -24,10 +48,11 @@ function cloneJson(value) {
 class FakeUpdateBuilder {
   constructor(items, key) {
     this._items = items;
-    this._key = { PK: String(key?.PK ?? ""), SK: String(key?.SK ?? "") };
+    this._key = normalizeKeyParts(key);
     this._adds = new Map();
     this._sets = new Map();
     this._setIfMissing = new Map();
+    this._removes = new Set();
     this._andConditions = [];
     this._orConditions = [];
   }
@@ -47,17 +72,24 @@ class FakeUpdateBuilder {
     return this;
   }
 
+  increment(field) {
+    return this.add(field, 1);
+  }
+
+  remove(field) {
+    this._removes.add(String(field));
+    return this;
+  }
+
   condition(field, operator, value) {
     const f = String(field);
     const op = String(operator);
-    this._andConditions.push((item) => {
-      if (!(f in item)) return false;
-      const left = Number(item[f]);
-      const right = Number(value);
-      if (op === "<") return Number.isFinite(left) && Number.isFinite(right) && left < right;
-      return false;
-    });
+    this._andConditions.push((item) => checkCondition(item, f, op, value));
     return this;
+  }
+
+  conditionExists(field) {
+    return this.condition(field, "attribute_exists");
   }
 
   conditionNotExists(field) {
@@ -69,14 +101,12 @@ class FakeUpdateBuilder {
   orCondition(field, operator, value) {
     const f = String(field);
     const op = String(operator);
-    this._orConditions.push((item) => {
-      if (!(f in item)) return false;
-      const left = Number(item[f]);
-      const right = Number(value);
-      if (op === "<") return Number.isFinite(left) && Number.isFinite(right) && left < right;
-      return false;
-    });
+    this._orConditions.push((item) => checkCondition(item, f, op, value));
     return this;
+  }
+
+  conditionVersion(currentVersion) {
+    return this.condition("version", "=", Number(currentVersion));
   }
 
   returnValues(_opt) {
@@ -88,20 +118,20 @@ class FakeUpdateBuilder {
   }
 
   _apply() {
-    const pk = String(this._key.PK ?? "");
-    const sk = String(this._key.SK ?? "");
+    const pk = String(this._key.pk ?? "");
+    const sk = String(this._key.sk ?? "");
     const keyId = `${pk}||${sk}`;
     const existing = this._items.get(keyId);
     const item = existing ? cloneJson(existing) : {};
-
-    if (pk) item.PK = pk;
-    if (sk) item.SK = sk;
 
     const andOk = this._andConditions.every((fn) => fn(item));
     const orOk = this._orConditions.length === 0 ? true : this._orConditions.some((fn) => fn(item));
     if (!andOk || !orOk) {
       throw conditionalCheckFailed();
     }
+
+    if (pk) item[this._key.pkAttr] = pk;
+    if (sk) item[this._key.skAttr] = sk;
 
     for (const [field, inc] of this._adds.entries()) {
       const current = Number(item[field] ?? 0);
@@ -114,9 +144,41 @@ class FakeUpdateBuilder {
       if (!(field in item)) item[field] = value;
     }
 
+    for (const field of this._removes.values()) {
+      // eslint-disable-next-line unicorn/no-delete
+      delete item[field];
+    }
+
     this._items.set(keyId, item);
     return cloneJson(item);
   }
+}
+
+function checkCondition(item, field, operator, value) {
+  const f = String(field);
+  const op = String(operator);
+
+  if (op === "attribute_exists") {
+    return f in item;
+  }
+  if (op === "attribute_not_exists") {
+    return !(f in item);
+  }
+  if (!(f in item)) return false;
+
+  if (op === "=") {
+    const leftNum = Number(item[f]);
+    const rightNum = Number(value);
+    if (Number.isFinite(leftNum) && Number.isFinite(rightNum)) return leftNum === rightNum;
+    return String(item[f]) === String(value);
+  }
+
+  const left = Number(item[f]);
+  const right = Number(value);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
+  if (op === "<") return left < right;
+  if (op === ">") return left > right;
+  return false;
 }
 
 class FakeTheorydb {
@@ -141,8 +203,7 @@ class FakeTheorydb {
     }
     const out = [];
     for (const key of keys ?? []) {
-      const pk = String(key?.PK ?? "");
-      const sk = String(key?.SK ?? "");
+      const { pk, sk } = normalizeKeyParts(key);
       const item = this.items.get(this._key(pk, sk));
       if (item) out.push(cloneJson(item));
     }
@@ -150,13 +211,26 @@ class FakeTheorydb {
   }
 
   async create(_modelName, item, opts) {
-    const pk = String(item?.PK ?? "");
-    const sk = String(item?.SK ?? "");
+    const { pk, sk } = normalizeKeyParts(item);
     const k = this._key(pk, sk);
     if (opts?.ifNotExists && this.items.has(k)) {
       throw conditionalCheckFailed();
     }
     this.items.set(k, cloneJson(item));
+  }
+
+  async get(_modelName, key) {
+    const { pk, sk } = normalizeKeyParts(key);
+    const item = this.items.get(this._key(pk, sk));
+    if (!item) {
+      throw itemNotFound();
+    }
+    return cloneJson(item);
+  }
+
+  async delete(_modelName, key) {
+    const { pk, sk } = normalizeKeyParts(key);
+    this.items.delete(this._key(pk, sk));
   }
 
   updateBuilder(_modelName, key) {
@@ -521,6 +595,12 @@ test("sanitization: sanitizeFieldValue masks sensitive fields", async () => {
   assert.equal(sanitizeFieldValue("authorization", "Bearer secret"), "[REDACTED]");
   assert.equal(sanitizeFieldValue("client_secret", "x"), "[REDACTED]");
   assert.equal(sanitizeFieldValue("card_number", "4242 4242 4242 4242"), "424242******4242");
+  assert.equal(sanitizeFieldValue("pan_value", "4242 4242 4242 4242"), "424242******4242");
+  assert.equal(sanitizeFieldValue("pan", "4242 4242 4242 4242"), "424242******4242");
+  assert.equal(
+    sanitizeFieldValue("primary_account_number", "4242 4242 4242 4242"),
+    "424242******4242",
+  );
 
   const nested = sanitizeFieldValue("root", {
     password: "p\nw",
@@ -1257,5 +1337,122 @@ test("limited: metadata trimming, sliding currentCount, and failOpen behavior", 
   await assert.rejects(
     () => failClosedLimiter.checkAndIncrement({ identifier: "i1", resource: "/r", operation: "GET" }),
     (err) => err && err.name === "RateLimiterError",
+  );
+});
+
+test("jobs: job ledger primitives (lease + idempotency + safe logging)", async () => {
+  const { DynamoJobLedger } = await importDist("index.js");
+
+  const clock = { now: () => new Date("2026-01-01T00:00:30.000Z") };
+  const theorydb = new FakeTheorydb();
+  const ledger = new DynamoJobLedger({
+    theorydb,
+    clock,
+    config: { tableName: "jobs-test" },
+  });
+
+  const job = await ledger.createJob({ jobId: "j1", tenantId: "t1" });
+  assert.equal(job.pk, "JOB#j1");
+  assert.equal(job.sk, "META");
+  assert.equal(job.status, "PENDING");
+  assert.equal(job.version, 1);
+
+  const running = await ledger.transitionJobStatus({
+    jobId: "j1",
+    expectedVersion: 1,
+    fromStatus: "PENDING",
+    toStatus: "RUNNING",
+  });
+  assert.equal(running.status, "RUNNING");
+  assert.equal(running.version, 2);
+
+  await assert.rejects(
+    () =>
+      ledger.transitionJobStatus({
+        jobId: "j1",
+        expectedVersion: 1,
+        toStatus: "SUCCEEDED",
+      }),
+    (err) => err && err.name === "JobLedgerError" && err.type === "conflict",
+  );
+
+  const failed = await ledger.upsertRecordStatus({
+    jobId: "j1",
+    recordId: "r1",
+    status: "FAILED",
+    error: { message: "bad\nnews", fields: { pan: "4111111111111111" } },
+  });
+  assert.equal(failed.error.message, "badnews");
+  assert.equal(failed.error.fields.pan, "411111******1111");
+
+  const cleared = await ledger.upsertRecordStatus({
+    jobId: "j1",
+    recordId: "r1",
+    status: "PROCESSING",
+  });
+  assert.equal(cleared.error, undefined);
+
+  const lease1 = await ledger.acquireLease({
+    jobId: "j1",
+    owner: "w1",
+    leaseDurationMs: 120_000,
+  });
+  assert.equal(lease1.leaseOwner, "w1");
+  assert.ok((lease1.leaseExpiresAt ?? 0) > 0);
+
+  await assert.rejects(
+    () =>
+      ledger.acquireLease({
+        jobId: "j1",
+        owner: "w2",
+        leaseDurationMs: 120_000,
+      }),
+    (err) => err && err.name === "JobLedgerError" && err.type === "conflict",
+  );
+
+  const refreshed = await ledger.refreshLease({
+    jobId: "j1",
+    owner: "w1",
+    leaseDurationMs: 120_000,
+  });
+  assert.equal(refreshed.leaseOwner, "w1");
+
+  await ledger.releaseLease({ jobId: "j1", owner: "w1" });
+  await ledger.releaseLease({ jobId: "j1", owner: "w1" }); // idempotent
+
+  const idem1 = await ledger.createIdempotencyRecord({
+    jobId: "j1",
+    idempotencyKey: "k1",
+  });
+  assert.equal(idem1.outcome, "created");
+  assert.equal(idem1.request.status, "IN_PROGRESS");
+
+  const idem2 = await ledger.createIdempotencyRecord({
+    jobId: "j1",
+    idempotencyKey: "k1",
+  });
+  assert.equal(idem2.outcome, "already_in_progress");
+
+  const completed = await ledger.completeIdempotencyRecord({
+    jobId: "j1",
+    idempotencyKey: "k1",
+    result: { pan: "4111111111111111" },
+  });
+  assert.equal(completed.status, "COMPLETED");
+  assert.equal(completed.result.pan, "411111******1111");
+
+  const idem3 = await ledger.createIdempotencyRecord({
+    jobId: "j1",
+    idempotencyKey: "k1",
+  });
+  assert.equal(idem3.outcome, "already_completed");
+
+  await assert.rejects(
+    () =>
+      ledger.completeIdempotencyRecord({
+        jobId: "j1",
+        idempotencyKey: "missing",
+      }),
+    (err) => err && err.name === "JobLedgerError" && err.type === "not_found",
   );
 });

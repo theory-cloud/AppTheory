@@ -29,6 +29,98 @@ from apptheory.cloudfront import client_ip, origin_url
 from apptheory.context import Context, EventContext, WebSocketContext
 from apptheory.errors import AppError, AppTheoryError
 from apptheory.ids import IDGenerator, IdGenerator, ManualIdGenerator, RealIdGenerator
+
+try:
+    from apptheory.jobs import (  # type: ignore
+        DEFAULT_JOBS_TABLE_NAME,
+        DynamoJobLedger,
+        EnvJobsTableName,
+        JobLedgerError,
+        JobsConfig,
+        format_rfc3339_nano,
+        job_lock_sort_key,
+        job_meta_sort_key,
+        job_partition_key,
+        job_record_sort_key,
+        job_request_sort_key,
+        jobs_table_name,
+        sanitize_error_envelope,
+        sanitize_fields,
+        unix_seconds,
+    )
+    from apptheory.jobs import (
+        default_config as default_jobs_config,
+    )
+    from apptheory.jobs import (
+        new_error as new_job_ledger_error,
+    )
+    from apptheory.jobs import (
+        wrap_error as wrap_job_ledger_error,
+    )
+except ModuleNotFoundError as exc:  # pragma: no cover
+    if exc.name != "theorydb_py":
+        raise
+
+    DEFAULT_JOBS_TABLE_NAME = "apptheory-jobs"
+    EnvJobsTableName = "APPTHEORY_JOBS_TABLE_NAME"
+    missing_exc = exc
+
+    def _raise_jobs_dependency_error() -> None:
+        raise ModuleNotFoundError(
+            "theorydb_py is required for apptheory.jobs; install `tabletheory-py` (see py/pyproject.toml)."
+        ) from missing_exc
+
+    class JobsConfig:  # type: ignore
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            _raise_jobs_dependency_error()
+
+    class JobLedgerError(Exception):
+        pass
+
+    class DynamoJobLedger:  # type: ignore
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            _raise_jobs_dependency_error()
+
+    def default_jobs_config() -> JobsConfig:
+        _raise_jobs_dependency_error()
+
+    def new_job_ledger_error(*_args: object, **_kwargs: object) -> JobLedgerError:
+        _raise_jobs_dependency_error()
+
+    def wrap_job_ledger_error(*_args: object, **_kwargs: object) -> JobLedgerError:
+        _raise_jobs_dependency_error()
+
+    def jobs_table_name() -> str:
+        _raise_jobs_dependency_error()
+
+    def job_partition_key(_job_id: str) -> str:
+        _raise_jobs_dependency_error()
+
+    def job_meta_sort_key() -> str:
+        _raise_jobs_dependency_error()
+
+    def job_record_sort_key(_record_id: str) -> str:
+        _raise_jobs_dependency_error()
+
+    def job_lock_sort_key() -> str:
+        _raise_jobs_dependency_error()
+
+    def job_request_sort_key(_idempotency_key: str) -> str:
+        _raise_jobs_dependency_error()
+
+    def unix_seconds(_value: object) -> int:
+        _raise_jobs_dependency_error()
+
+    def format_rfc3339_nano(_value: object) -> str:
+        _raise_jobs_dependency_error()
+
+    def sanitize_fields(_fields: object) -> object:
+        _raise_jobs_dependency_error()
+
+    def sanitize_error_envelope(_envelope: object) -> object:
+        _raise_jobs_dependency_error()
+
+
 from apptheory.logger import NoOpLogger, StructuredLogger, get_logger, set_logger
 from apptheory.middleware import TimeoutConfig, timeout_middleware
 from apptheory.naming import base_name, normalize_stage, resource_name
@@ -57,18 +149,23 @@ from apptheory.testkit import (
 )
 
 __all__ = [
+    "DEFAULT_JOBS_TABLE_NAME",
     "App",
     "AppError",
     "AppTheoryError",
     "CORSConfig",
     "Clock",
     "Context",
+    "DynamoJobLedger",
+    "EnvJobsTableName",
     "EventBridgeSelector",
     "EventContext",
     "FakeWebSocketClientFactory",
     "FakeWebSocketManagementClient",
     "IDGenerator",
     "IdGenerator",
+    "JobLedgerError",
+    "JobsConfig",
     "Limits",
     "ManualClock",
     "ManualIdGenerator",
@@ -105,23 +202,34 @@ __all__ = [
     "create_app",
     "create_fake_websocket_client_factory",
     "create_test_env",
+    "default_jobs_config",
     "etag",
     "event_bridge_pattern",
     "event_bridge_rule",
+    "format_rfc3339_nano",
     "get_logger",
     "html",
     "html_stream",
+    "job_lock_sort_key",
+    "job_meta_sort_key",
+    "job_partition_key",
+    "job_record_sort_key",
+    "job_request_sort_key",
+    "jobs_table_name",
     "json",
     "mask_first_last",
     "mask_first_last4",
     "matches_if_none_match",
+    "new_job_ledger_error",
     "normalize_stage",
     "origin_url",
     "payment_xml_patterns",
     "rapid_connect_xml_patterns",
     "resource_name",
     "safe_json_for_html",
+    "sanitize_error_envelope",
     "sanitize_field_value",
+    "sanitize_fields",
     "sanitize_json",
     "sanitize_log_string",
     "sanitize_xml",
@@ -131,5 +239,7 @@ __all__ = [
     "stepfunctions_task_token",
     "text",
     "timeout_middleware",
+    "unix_seconds",
     "vary",
+    "wrap_job_ledger_error",
 ]

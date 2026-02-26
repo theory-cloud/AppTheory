@@ -32,5 +32,6 @@ Version bumps must keep `VERSION`, `ts/package.json`, `cdk/package.json`, and `p
 - If you change exported APIs, update snapshots: `./scripts/update-api-snapshots.sh` and commit `api-snapshots/*.txt`.
 
 ## Commit & Pull Request Guidelines
-- Prefer a short prefix and imperative subject (examples from history: `feat(cdk): ...`, `docs: ...`, `M1: ...`, `m14(scope): ...`).
+- Prefer a short prefix and imperative subject (examples: `feat(cdk): ...`, `docs: ...`, `feat(M1): ...`, `m14(scope): ...`).
+- Release automation is driven by Conventional Commits; if a change must ship, use `feat:` / `fix:` (avoid milestone-only prefixes like `M1:`).
 - PRs should describe intent, list commands run (at least `make test`), and include any contract/snapshot/version updates.

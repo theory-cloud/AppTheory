@@ -9,6 +9,35 @@ on:
       - premain
 
 jobs:
+  prerelease-readiness:
+    name: Prerelease readiness (staging → premain)
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Verify user-facing conventional commits exist
+        run: |
+          set -euo pipefail
+
+          git fetch origin premain staging --force
+          range="origin/premain..origin/staging"
+
+          echo "Checking commits in ${range}..."
+          if git log --format=%s "${range}" | grep -Eq '^(feat|fix|perf)(\([^)]+\))?(!)?: '; then
+            echo "prerelease-ready: OK"
+            exit 0
+          fi
+
+          echo "prerelease-ready: FAIL"
+          echo "No user-facing conventional commits (feat:/fix:/perf:) found in ${range}."
+          echo "release-please will skip, so no new vX.Y.Z-rc tag will be cut."
+          echo
+          echo "Commit subjects:"
+          git log --format=%s "${range}" || true
+          exit 1
+
   version-alignment:
     name: Version alignment
     runs-on: ubuntu-latest
@@ -35,7 +64,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
-          node-version: "24.13.1"
+          node-version: "24"
       - name: Build tarball
         run: scripts/verify-ts-pack.sh
 
@@ -46,7 +75,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
-          python-version: "3.14.3"
+          python-version: "3.14"
       - name: Build wheel + sdist
         run: scripts/verify-python-build.sh
 
@@ -62,10 +91,10 @@ jobs:
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
-          node-version: "24.13.1"
+          node-version: "24"
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
-          python-version: "3.14.3"
+          python-version: "3.14"
       - name: Build twice and compare checksums
         run: scripts/verify-builds.sh
 
@@ -79,10 +108,10 @@ jobs:
           go-version: "1.26.0"
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
-          node-version: "24.13.1"
+          node-version: "24"
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
-          python-version: "3.14.3"
+          python-version: "3.14"
       - name: Verify API snapshots
         run: scripts/verify-api-snapshots.sh
       - name: Run contract tests
@@ -100,9 +129,9 @@ jobs:
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
-          node-version: "24.13.1"
+          node-version: "24"
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
-          python-version: "3.14.3"
+          python-version: "3.14"
       - name: Run full rubric
         run: make rubric

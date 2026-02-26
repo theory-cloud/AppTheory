@@ -27,6 +27,9 @@ class TestSanitization(unittest.TestCase):
         self.assertEqual(sanitize_field_value("authorization", "Bearer secret"), "[REDACTED]")
         self.assertEqual(sanitize_field_value("client_secret", "x"), "[REDACTED]")
         self.assertEqual(sanitize_field_value("card_number", "4242 4242 4242 4242"), "424242******4242")
+        self.assertEqual(sanitize_field_value("pan_value", "4242 4242 4242 4242"), "424242******4242")
+        self.assertEqual(sanitize_field_value("pan", "4242 4242 4242 4242"), "424242******4242")
+        self.assertEqual(sanitize_field_value("primary_account_number", "4242 4242 4242 4242"), "424242******4242")
 
         nested = sanitize_field_value(
             "root",
