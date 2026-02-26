@@ -24,3 +24,27 @@ concepts:
       - optional_stage_logging_throttling
     related_docs:
       - cdk/docs/mcp-server-agentcore.md
+
+  eventbridge_rule_target:
+    type: construct
+    purpose: "Standard EventBridge rule → Lambda target wiring (schedule XOR eventPattern)."
+    related_docs:
+      - cdk/docs/eventbridge-rule-target.md
+
+  s3_ingest:
+    type: construct
+    purpose: "Secure S3 ingest bucket with optional EventBridge/SQS notifications (import pipeline front door)."
+    related_docs:
+      - cdk/docs/s3-ingest.md
+
+  codebuild_job_runner:
+    type: construct
+    purpose: "Opinionated CodeBuild batch runner for import pipeline steps (safe defaults + logs + optional state change hook)."
+    related_docs:
+      - cdk/docs/codebuild-job-runner.md
+
+  jobs_table:
+    type: construct
+    purpose: "Opinionated DynamoDB Jobs table backing the jobs ledger schema (pk/sk + GSIs + TTL)."
+    related_docs:
+      - cdk/docs/jobs-table.md
