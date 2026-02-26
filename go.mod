@@ -1,6 +1,8 @@
 module github.com/theory-cloud/apptheory
 
-go 1.26.0
+go 1.26
+
+toolchain go1.26.0
 
 require (
 	github.com/aws/aws-cdk-go/awscdk/v2 v2.238.0

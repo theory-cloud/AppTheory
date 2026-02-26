@@ -617,6 +617,10 @@ var SensitiveFields = map[string]SanitizationType{
 	"card_number": PartialMask,
 	"number":      PartialMask,
 
+	"pan_value":              PartialMask,
+	"pan":                    PartialMask,
+	"primary_account_number": PartialMask,
+
 	"account_number": PartialMask,
 	"ssn":            PartialMask,
 	"tin":            PartialMask,

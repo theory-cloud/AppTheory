@@ -6,8 +6,8 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.235.1",
-    "constructs": "10.4.5"
+    "aws-cdk-lib": "2.240.0",
+    "constructs": "10.5.1"
   },
   "dependencyClosure": {
     "@aws-cdk/asset-awscli-v1": {
@@ -1421,6 +1421,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_eks_v2": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.EKSv2"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.eks_v2"
+            },
+            "python": {
+              "module": "aws_cdk.aws_eks_v2"
+            }
+          }
+        },
         "aws-cdk-lib.aws_elasticache": {
           "targets": {
             "dotnet": {
@@ -2601,6 +2614,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_mwaa"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_mwaaserverless": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.MWAAServerless"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.mwaaserverless"
+            },
+            "python": {
+              "module": "aws_cdk.aws_mwaaserverless"
             }
           }
         },
@@ -6806,6 +6832,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_mwaa"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_mwaaserverless": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.MWAAServerless"
+            },
+            "go": {
+              "packageName": "interfacesawsmwaaserverless"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.mwaaserverless"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_mwaaserverless"
             }
           }
         },
@@ -17471,5 +17513,5 @@
     }
   },
   "version": "0.11.1",
-  "fingerprint": "3V/RyOXRKQKOZYl/gY5qsYsCspAkJ/TZWR89m4+iHq8="
+  "fingerprint": "g686HtXOhPAb+iJYcvZ8kschq4idDqYZntAllzH90yw="
 }

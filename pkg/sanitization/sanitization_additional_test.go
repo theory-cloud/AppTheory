@@ -28,6 +28,15 @@ func TestSanitizeFieldValue_RedactsMasksAndRecurses(t *testing.T) {
 	if got := SanitizeFieldValue("card_number", "4111111111111111"); got != "411111******1111" {
 		t.Fatalf("expected card number to be pci-masked, got %#v", got)
 	}
+	if got := SanitizeFieldValue("pan_value", "4111111111111111"); got != "411111******1111" {
+		t.Fatalf("expected pan_value to be pci-masked, got %#v", got)
+	}
+	if got := SanitizeFieldValue("pan", "4111111111111111"); got != "411111******1111" {
+		t.Fatalf("expected pan to be pci-masked, got %#v", got)
+	}
+	if got := SanitizeFieldValue("primary_account_number", "4111111111111111"); got != "411111******1111" {
+		t.Fatalf("expected primary_account_number to be pci-masked, got %#v", got)
+	}
 
 	// Allowed fields should be preserved (except for log sanitization).
 	if got := SanitizeFieldValue("card_brand", "visa\r\n"); got != "visa" {

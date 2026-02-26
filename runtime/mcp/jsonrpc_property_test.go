@@ -55,7 +55,7 @@ func TestProperty1_JSONRPCResponseInvariant(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate a random valid JSON-RPC request.
 		reqID := genRequestID().Draw(t, "id")
-		method := rapid.SampledFrom([]string{"initialize", "tools/list", "tools/call", "unknown/method"}).Draw(t, "method")
+		method := rapid.SampledFrom([]string{methodInitialize, methodToolsList, methodToolsCall, "unknown/method"}).Draw(t, "method")
 
 		reqBytes, err := json.Marshal(Request{
 			JSONRPC: "2.0",
