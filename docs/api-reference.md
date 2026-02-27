@@ -108,6 +108,15 @@ AppTheory includes a DynamoDB-backed rate limiter with portable semantics:
 Use it when you need **cross-instance** rate limiting (DynamoDB is the coordination layer). The portable response
 contract uses `app.rate_limited` with deterministic `Retry-After` when known.
 
+## Sanitization (`sanitization`)
+
+AppTheory includes safe logging utilities intended to prevent sensitive data leaks in logs (PCI/PII-heavy workflows):
+- Go: `pkg/sanitization`
+- TypeScript: exported from `@theory-cloud/apptheory` (`sanitizeLogString`, `sanitizeFieldValue`, `sanitizeJSON`, `sanitizeJSONValue`, `sanitizeXML`)
+- Python: exported from `apptheory` (`sanitize_log_string`, `sanitize_field_value`, `sanitize_json`, `sanitize_json_value`, `sanitize_xml`)
+
+Guide: `docs/sanitization.md`
+
 ## Jobs ledger (`jobs`)
 
 AppTheory includes TableTheory-backed job ledger primitives intended for long-running “jobs” that need:
@@ -122,6 +131,7 @@ Surfaces:
 - Python: exported from `apptheory` (see `api-snapshots/py.txt`)
 
 Guide: `docs/jobs-ledger.md`
+Reference: `examples/cdk/import-pipeline/` (Issue `#169`)
 
 ## MCP server (Bedrock AgentCore)
 

@@ -1,6 +1,6 @@
 {
   "name": "@theory-cloud/apptheory",
-  "version": "0.12.0-rc",
+  "version": "0.12.0",
   "description": "AppTheory — multi-language serverless application framework (TypeScript package)",
   "type": "module",
   "license": "Apache-2.0",
@@ -25,19 +25,20 @@
   },
   "overrides": {
     "@typescript-eslint/typescript-estree": {
-      "minimatch": "9.0.6"
+      "minimatch": "9.0.7"
     },
     "@eslint/eslintrc": {
       "ajv": "6.14.0",
-      "minimatch": "3.1.3"
+      "minimatch": "3.1.4"
     },
     "eslint": {
       "ajv": "6.14.0",
-      "minimatch": "3.1.3"
+      "minimatch": "3.1.4"
     },
     "eslint-plugin-import": {
-      "minimatch": "3.1.3"
-    }
+      "minimatch": "3.1.4"
+    },
+    "fast-xml-parser": "5.3.8"
   },
   "files": [
     "dist",

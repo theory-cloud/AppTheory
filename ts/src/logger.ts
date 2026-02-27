@@ -3,6 +3,7 @@ import {
   rapidConnectXMLPatterns,
   sanitizeFieldValue,
   sanitizeJSON,
+  sanitizeJSONValue,
   sanitizeLogString,
   sanitizeXML,
 } from "./sanitization.js";
@@ -88,6 +89,7 @@ export {
   rapidConnectXMLPatterns,
   sanitizeFieldValue,
   sanitizeJSON,
+  sanitizeJSONValue,
   sanitizeLogString,
   sanitizeXML,
 };

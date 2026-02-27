@@ -184,6 +184,8 @@ sanitizeFieldValue	re-export
 sanitizeFields	function
 sanitizeJSON	function
 sanitizeJSON	re-export
+sanitizeJSONValue	function
+sanitizeJSONValue	re-export
 sanitizeLogString	function
 sanitizeLogString	re-export
 sanitizeXML	function

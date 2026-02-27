@@ -47,3 +47,13 @@ Streaming is validated by contract fixtures for supported adapters. Don’t assu
 - Use the runtime-provided streaming helpers (`htmlStream`, `sseEventStream`, etc.) where available.
 - Test streaming deterministically using the language test env.
 
+## Pattern: sanitize user payloads before logging
+
+Import pipelines and event-driven workloads often process PCI/PII-heavy payloads. Treat payloads as user data and prevent sensitive data leaks in logs.
+
+✅ CORRECT:
+- Sanitize log strings (strip `\r` / `\n`) to prevent log forging.
+- Sanitize structured fields by key name (redact/mask known sensitive keys).
+- When logging event envelopes, log sanitized JSON/XML (never raw dumps).
+
+Guide: `docs/sanitization.md`
