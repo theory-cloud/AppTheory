@@ -10,13 +10,16 @@
     "@theory-cloud/apptheory-cdk": "file:../../../cdk",
     "@types/node": "25.0.9",
     "aws-cdk": "2.1101.0",
-    "aws-cdk-lib": "2.240.0",
+    "aws-cdk-lib": "file:../../../third_party/aws-cdk-lib-2.240.0+minimatch-10.2.4.tgz",
     "constructs": "10.5.1",
     "ts-node": "10.9.2",
     "typescript": "5.9.3"
   },
   "overrides": {
-    "diff": "4.0.4"
+    "diff": "4.0.4",
+    "aws-cdk-lib": {
+      "minimatch": "10.2.4"
+    }
   },
   "engines": {
     "node": ">=24"

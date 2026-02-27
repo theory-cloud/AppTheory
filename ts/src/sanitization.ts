@@ -6,7 +6,16 @@ const REDACTED_VALUE = "[REDACTED]";
 const EMPTY_MASKED_VALUE = "(empty)";
 const MASKED_VALUE = "***masked***";
 
-const allowedSanitizeFields = new Set(["card_bin", "card_brand", "card_type"]);
+const allowedSanitizeFields = new Set([
+  "card_bin",
+  "card_brand",
+  "card_type",
+
+  // Common system identifiers that are safe/necessary for debugging and correlation.
+  "transaction_id",
+  "authorization_id",
+  "merchant_uid",
+]);
 
 const sensitiveSanitizeFields = new Map<string, "fully" | "partial">([
   ["cvv", "fully"],
@@ -39,9 +48,30 @@ const sensitiveSanitizeFields = new Map<string, "fully" | "partial">([
   ["api_token", "fully"],
   ["api_key_id", "partial"],
   ["authorization", "fully"],
-  ["authorization_id", "fully"],
   ["authorization_header", "fully"],
 ]);
+
+function canonicalizeSanitizationKey(key: string): string {
+  return String(key ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_\-\s]+/g, "");
+}
+
+function addSanitizationKeyAliases(): void {
+  for (const k of Array.from(allowedSanitizeFields)) {
+    const alias = canonicalizeSanitizationKey(k);
+    if (alias && alias !== k) allowedSanitizeFields.add(alias);
+  }
+
+  for (const [k, v] of Array.from(sensitiveSanitizeFields.entries())) {
+    const alias = canonicalizeSanitizationKey(k);
+    if (alias && alias !== k && !sensitiveSanitizeFields.has(alias))
+      sensitiveSanitizeFields.set(alias, v);
+  }
+}
+
+addSanitizationKeyAliases();
 
 export function sanitizeLogString(value: string): string {
   const v = String(value ?? "");
@@ -127,12 +157,13 @@ export function sanitizeFieldValue(key: string, value: unknown): unknown {
   const explicit = sensitiveSanitizeFields.get(k);
   if (explicit === "fully") return REDACTED_VALUE;
   if (explicit === "partial") {
+    const canonical = canonicalizeSanitizationKey(k);
     if (
-      k === "card_number" ||
-      k === "number" ||
-      k === "pan_value" ||
-      k === "pan" ||
-      k === "primary_account_number"
+      canonical === "cardnumber" ||
+      canonical === "number" ||
+      canonical === "panvalue" ||
+      canonical === "pan" ||
+      canonical === "primaryaccountnumber"
     )
       return maskCardNumberString(value);
     return maskRestrictedString(value);
@@ -143,8 +174,10 @@ export function sanitizeFieldValue(key: string, value: unknown): unknown {
     "token",
     "password",
     "private_key",
+    "privatekey",
     "client_secret",
     "api_key",
+    "apikey",
     "authorization",
   ];
   for (const s of blockedSubstrings) {
@@ -172,7 +205,7 @@ export function sanitizeJSON(jsonBytes: Uint8Array | string): string {
     return `(malformed JSON: ${msg})`;
   }
 
-  const sanitized = sanitizeJSONValue(data);
+  const sanitized = sanitizeJSONStructure(data, { keepBodyString: true });
   try {
     return JSON.stringify(sanitized, null, 2);
   } catch {
@@ -180,25 +213,25 @@ export function sanitizeJSON(jsonBytes: Uint8Array | string): string {
   }
 }
 
-function sanitizeJSONValue(value: unknown): unknown {
-  if (value === null || value === undefined) return null;
-  if (Array.isArray(value)) return value.map((v) => sanitizeJSONValue(v));
-  if (typeof value !== "object") return sanitizeValue(value);
+export function sanitizeJSONValue(jsonBytes: Uint8Array | string): unknown {
+  const buf =
+    typeof jsonBytes === "string"
+      ? Buffer.from(jsonBytes, "utf8")
+      : toBuffer(jsonBytes);
+  if (!buf || buf.length === 0) return "(empty)";
 
-  const out: Record<string, unknown> = {};
-  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (key === "body" && typeof raw === "string") {
-      try {
-        const parsed: unknown = JSON.parse(raw);
-        out[key] = JSON.stringify(sanitizeJSONValue(parsed));
-        continue;
-      } catch {
-        // fall through
-      }
-    }
-    out[key] = sanitizeFieldValue(key, raw);
+  let data: unknown;
+  try {
+    data = JSON.parse(buf.toString("utf8"));
+  } catch (err) {
+    const msg =
+      err && typeof err === "object" && "message" in err
+        ? String((err as { message?: unknown }).message)
+        : String(err);
+    return `(malformed JSON: ${msg})`;
   }
-  return out;
+
+  return sanitizeJSONStructure(data, { keepBodyString: false });
 }
 
 export interface XMLSanitizationPattern {
@@ -221,6 +254,46 @@ export function sanitizeXML(
     )
       continue;
     out = out.replace(p.pattern, (match) => p.maskingFunc(match));
+  }
+  return out;
+}
+
+type SanitizeJSONOptions = {
+  keepBodyString: boolean;
+};
+
+function sanitizeJSONStructure(
+  value: unknown,
+  opts: SanitizeJSONOptions,
+): unknown {
+  const sanitized = sanitizeValue(value);
+  return sanitizeEmbeddedBodyJSON(sanitized, opts);
+}
+
+function sanitizeEmbeddedBodyJSON(
+  value: unknown,
+  opts: SanitizeJSONOptions,
+): unknown {
+  if (value === null || value === undefined) return null;
+  if (Array.isArray(value))
+    return value.map((v) => sanitizeEmbeddedBodyJSON(v, opts));
+  if (typeof value !== "object") return value;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "body" && typeof raw === "string") {
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        const sanitizedBody = sanitizeJSONStructure(parsed, opts);
+        out[key] = opts.keepBodyString
+          ? JSON.stringify(sanitizedBody)
+          : sanitizedBody;
+        continue;
+      } catch {
+        // fall through
+      }
+    }
+    out[key] = sanitizeEmbeddedBodyJSON(raw, opts);
   }
   return out;
 }

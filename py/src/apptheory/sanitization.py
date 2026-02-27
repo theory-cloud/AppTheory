@@ -14,6 +14,10 @@ _ALLOWED_FIELDS: set[str] = {
     "card_bin",
     "card_brand",
     "card_type",
+    # Common system identifiers that are safe/necessary for debugging and correlation.
+    "transaction_id",
+    "authorization_id",
+    "merchant_uid",
 }
 
 _SENSITIVE_FIELDS: dict[str, str] = {
@@ -42,9 +46,29 @@ _SENSITIVE_FIELDS: dict[str, str] = {
     "api_token": "fully",
     "api_key_id": "partial",
     "authorization": "fully",
-    "authorization_id": "fully",
     "authorization_header": "fully",
 }
+
+_CANONICALIZE_KEY_RE = re.compile(r"[_\-\s]+")
+
+
+def _canonicalize_sanitization_key(key: str) -> str:
+    return _CANONICALIZE_KEY_RE.sub("", str(key or "").strip().lower())
+
+
+def _add_sanitization_key_aliases() -> None:
+    for key in _ALLOWED_FIELDS.copy():
+        alias = _canonicalize_sanitization_key(key)
+        if alias and alias != key:
+            _ALLOWED_FIELDS.add(alias)
+
+    for key, value in _SENSITIVE_FIELDS.copy().items():
+        alias = _canonicalize_sanitization_key(key)
+        if alias and alias != key and alias not in _SENSITIVE_FIELDS:
+            _SENSITIVE_FIELDS[alias] = value
+
+
+_add_sanitization_key_aliases()
 
 
 def sanitize_log_string(value: str) -> str:
@@ -115,7 +139,8 @@ def sanitize_field_value(key: str, value: Any) -> Any:
     if explicit == "fully":
         return _REDACTED_VALUE
     if explicit == "partial":
-        if k in {"card_number", "number", "pan_value", "pan", "primary_account_number"}:
+        canonical = _canonicalize_sanitization_key(k)
+        if canonical in {"cardnumber", "number", "panvalue", "pan", "primaryaccountnumber"}:
             return _mask_card_number_string(str(value or ""))
         return _mask_restricted_string(str(value or ""))
 
@@ -124,8 +149,10 @@ def sanitize_field_value(key: str, value: Any) -> Any:
         "token",
         "password",
         "private_key",
+        "privatekey",
         "client_secret",
         "api_key",
+        "apikey",
         "authorization",
     ]
     for s in blocked_substrings:
@@ -163,20 +190,48 @@ def sanitize_json(json_bytes: bytes | str) -> str:
     except Exception as exc:  # noqa: BLE001
         return f"(malformed JSON: {exc})"
 
-    sanitized = _sanitize_json_value(data)
+    sanitized = _sanitize_json_structure(data, keep_body_string=True)
     try:
         return jsonlib.dumps(sanitized, indent=2, ensure_ascii=False, sort_keys=True)
     except Exception:  # noqa: BLE001
         return "(error marshaling sanitized JSON)"
 
 
-def _sanitize_json_value(value: Any) -> Any:
+def sanitize_json_value(json_bytes: bytes | str) -> Any:
+    """Sanitize JSON bytes for structured logging.
+
+    Unlike `sanitize_json`, this returns a structured object (dict/list) so JSON loggers can emit nested JSON
+    without escaping it as a string.
+    """
+
+    if json_bytes is None:
+        return "(empty)"
+
+    raw = json_bytes.encode("utf-8") if isinstance(json_bytes, str) else bytes(json_bytes)
+
+    if not raw:
+        return "(empty)"
+
+    try:
+        data = jsonlib.loads(raw.decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        return f"(malformed JSON: {exc})"
+
+    return _sanitize_json_structure(data, keep_body_string=False)
+
+
+def _sanitize_json_structure(value: Any, *, keep_body_string: bool) -> Any:
+    sanitized = _sanitize_value(value)
+    return _sanitize_embedded_body_json(sanitized, keep_body_string=keep_body_string)
+
+
+def _sanitize_embedded_body_json(value: Any, *, keep_body_string: bool) -> Any:
     if value is None:
         return None
     if isinstance(value, list):
-        return [_sanitize_json_value(v) for v in value]
+        return [_sanitize_embedded_body_json(v, keep_body_string=keep_body_string) for v in value]
     if not isinstance(value, dict):
-        return _sanitize_value(value)
+        return value
 
     out: dict[str, Any] = {}
     for key, raw in value.items():
@@ -186,14 +241,20 @@ def _sanitize_json_value(value: Any) -> Any:
             except jsonlib.JSONDecodeError:
                 parsed = None
             else:
-                out[key] = jsonlib.dumps(
-                    _sanitize_json_value(parsed),
-                    separators=(",", ":"),
-                    ensure_ascii=False,
-                    sort_keys=True,
+                sanitized_body = _sanitize_json_structure(parsed, keep_body_string=keep_body_string)
+                out[key] = (
+                    jsonlib.dumps(
+                        sanitized_body,
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                    if keep_body_string
+                    else sanitized_body
                 )
                 continue
-        out[str(key)] = sanitize_field_value(str(key), raw)
+
+        out[str(key)] = _sanitize_embedded_body_json(raw, keep_body_string=keep_body_string)
     return out
 
 
