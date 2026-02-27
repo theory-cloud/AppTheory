@@ -135,3 +135,72 @@ func TestXMLMaskHelpers_HandleEscapedAndShortValues(t *testing.T) {
 		t.Fatalf("expected token to be masked to last4, got %s", out)
 	}
 }
+
+func TestSanitizeFieldValue_AllowsAuthorizationID_AndAliases(t *testing.T) {
+	t.Parallel()
+
+	if got := SanitizeFieldValue("authorization_id", "auth_123"); got != "auth_123" {
+		t.Fatalf("expected authorization_id to be preserved, got %#v", got)
+	}
+	if got := SanitizeFieldValue("authorizationId", "auth_123"); got != "auth_123" {
+		t.Fatalf("expected authorizationId alias to be preserved, got %#v", got)
+	}
+}
+
+func TestSanitizeFieldValue_MasksCamelCaseSensitiveKeys(t *testing.T) {
+	t.Parallel()
+
+	if got := SanitizeFieldValue("cardNumber", "4111111111111111"); got != "411111******1111" {
+		t.Fatalf("expected camelCase card number to be pci-masked, got %#v", got)
+	}
+	if got := SanitizeFieldValue("panValue", "4111111111111111"); got != "411111******1111" {
+		t.Fatalf("expected panValue alias to be pci-masked, got %#v", got)
+	}
+	if got := SanitizeFieldValue("privateKey", "shh"); got != redactedValue {
+		t.Fatalf("expected privateKey to be redacted, got %#v", got)
+	}
+	if got := SanitizeFieldValue("apiKey", "k"); got != redactedValue {
+		t.Fatalf("expected apiKey to be redacted, got %#v", got)
+	}
+}
+
+func TestSanitizeJSONValue_ReturnsStructuredJSON(t *testing.T) {
+	t.Parallel()
+
+	input := []byte(`{"ok":"v","body":"{\"card_number\":\"4111111111111111\",\"cvv\":\"123\"}"}`)
+	out := SanitizeJSONValue(input)
+
+	outer, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map output, got %T (%#v)", out, out)
+	}
+
+	body, ok := outer["body"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected body to be parsed as object, got %T (%#v)", outer["body"], outer["body"])
+	}
+	if body["card_number"] != "411111******1111" {
+		t.Fatalf("expected body.card_number to be masked, got %#v", body["card_number"])
+	}
+	if body["cvv"] != redactedValue {
+		t.Fatalf("expected body.cvv to be redacted, got %#v", body["cvv"])
+	}
+}
+
+func TestSanitizeFieldValue_RawJSON_LogsStructured(t *testing.T) {
+	t.Parallel()
+
+	raw := RawJSON([]byte(`{"card_number":"4111111111111111","cvv":"123"}`))
+	out := SanitizeFieldValue("payload", raw)
+
+	m, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map output, got %T (%#v)", out, out)
+	}
+	if m["card_number"] != "411111******1111" {
+		t.Fatalf("expected card_number to be masked, got %#v", m["card_number"])
+	}
+	if m["cvv"] != redactedValue {
+		t.Fatalf("expected cvv to be redacted, got %#v", m["cvv"])
+	}
+}

@@ -73,3 +73,46 @@ patterns:
         consequences:
           - "parity drift across languages"
           - "missed edge cases (ALB/SNS/WebSockets)"
+
+  sanitize_before_logging:
+    name: "Sanitize payloads before logging"
+    problem: "Import pipelines often handle PCI/PII; logging raw payloads leaks sensitive data and may enable log forging."
+    solution: "Sanitize log strings and structured fields, and log sanitized JSON/XML instead of raw payload dumps."
+    correct_example: |
+      // CORRECT (Go)
+      msg := sanitization.SanitizeLogString("import\nstart")
+      fields := map[string]any{
+        "tenant_id": tenantID,
+        "pan_value": "4111111111111111",
+      }
+      logger.Info(msg, sanitization.SanitizeFieldValue("fields", fields))
+    anti_patterns:
+      - name: "Logging raw payloads"
+        why: "Raw payloads can contain PAN/SSN/tokens and untrusted control characters."
+        incorrect_example: |
+          // INCORRECT
+          logger.Info("payload", map[string]any{"body": string(raw)})
+        consequences:
+          - "PCI/PII leakage"
+          - "log forging / broken log parsing"
+
+  jobs_ledger_for_long_running_jobs:
+    name: "Use the jobs ledger for long-running imports"
+    problem: "Retries, partial failures, and concurrency make job status/idempotency bespoke and inconsistent across services."
+    solution: "Use the jobs ledger primitives for job lifecycle, per-record status, leases, and idempotency."
+    correct_example: |
+      // CORRECT (pseudo-code)
+      ledger.CreateJob(jobID, tenantID)
+      ledger.AcquireLease(jobID, workerID, ttlSeconds)
+      ledger.CreateIdempotencyRecord(jobID, recordKey)
+      ledger.UpsertRecordStatus(jobID, recordID, "COMPLETED", nil)
+      ledger.CompleteIdempotencyRecord(jobID, recordKey)
+    anti_patterns:
+      - name: "Relying on at-least-once triggers without idempotency"
+        why: "Event sources and retries will produce duplicate deliveries."
+        incorrect_example: |
+          // INCORRECT
+          processRecord(record) // no idempotency guard
+        consequences:
+          - "double processing"
+          - "inconsistent job state"

@@ -1,4 +1,4 @@
-import { paymentXMLPatterns, rapidConnectXMLPatterns, sanitizeFieldValue, sanitizeJSON, sanitizeLogString, sanitizeXML } from "./sanitization.js";
+import { paymentXMLPatterns, rapidConnectXMLPatterns, sanitizeFieldValue, sanitizeJSON, sanitizeJSONValue, sanitizeLogString, sanitizeXML } from "./sanitization.js";
 export type LogFields = Record<string, unknown>;
 export interface StructuredLogger {
     debug(message: string, ...fields: LogFields[]): void;
@@ -19,4 +19,4 @@ export interface StructuredLogger {
 }
 export declare function getLogger(): StructuredLogger;
 export declare function setLogger(logger: StructuredLogger | null | undefined): void;
-export { paymentXMLPatterns, rapidConnectXMLPatterns, sanitizeFieldValue, sanitizeJSON, sanitizeLogString, sanitizeXML, };
+export { paymentXMLPatterns, rapidConnectXMLPatterns, sanitizeFieldValue, sanitizeJSON, sanitizeJSONValue, sanitizeLogString, sanitizeXML, };

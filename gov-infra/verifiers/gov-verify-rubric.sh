@@ -1770,9 +1770,31 @@ check_supply_chain_apptheory() {
     "examples/cdk/ssr-site"
   )
 
+  require_cmd_or_blocked git || return $?
+  require_cmd_or_blocked tar || return $?
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local tmp_repo="${tmp_dir}/repo"
+
+  mkdir -p "${tmp_repo}"
+
+  # Snapshot the repo deterministically from the working tree (tracked + non-ignored).
+  #
+  # Rationale: some Node projects use local `file:` dependencies (examples -> cdk, and/or vendor tarballs).
+  # Copying only a subdirectory breaks those relative paths and makes this verifier depend on npm cache state.
+  if ! git ls-files -z --cached --others --exclude-standard \
+    | tar --ignore-failed-read --null -T - -cf - \
+    | tar -xf - -C "${tmp_repo}"; then
+    echo "BLOCKED: failed to snapshot repo for Node supply-chain scan" >&2
+    rm -rf "${tmp_dir}"
+    return 2
+  fi
+
   local proj
   for proj in "${node_projects[@]}"; do
-    if [[ ! -d "${proj}" ]]; then
+    local proj_dir="${tmp_repo}/${proj}"
+    if [[ ! -d "${proj_dir}" ]]; then
       echo "FAIL: expected Node project directory missing: ${proj}" >&2
       fail=1
       continue
@@ -1781,31 +1803,21 @@ check_supply_chain_apptheory() {
     echo ""
     echo "=== Node supply-chain project: ${proj} ==="
 
-    local tmp_dir
-    tmp_dir="$(mktemp -d)"
-    # Use a local cleanup to avoid leaving node_modules around.
-    local cleanup_proj
-    cleanup_proj() { rm -rf "${tmp_dir}"; }
-
-    cp -a "${proj}" "${tmp_dir}/proj"
-
     set +e
-    install_node_deps_ignore_scripts_in_dir "${tmp_dir}/proj"
+    install_node_deps_ignore_scripts_in_dir "${proj_dir}"
     local ec_install=$?
     set -e
 
     if [[ $ec_install -eq 2 ]]; then
       blocked=1
-      cleanup_proj
       continue
     elif [[ $ec_install -ne 0 ]]; then
       fail=1
-      cleanup_proj
       continue
     fi
 
     set +e
-    scan_node_modules_supply_chain_in_dir "${tmp_dir}/proj" "${allowlist}"
+    scan_node_modules_supply_chain_in_dir "${proj_dir}" "${allowlist}"
     local ec_scan=$?
     set -e
 
@@ -1815,8 +1827,10 @@ check_supply_chain_apptheory() {
       fail=1
     fi
 
-    cleanup_proj
+    rm -rf "${proj_dir}/node_modules" >/dev/null 2>&1 || true
   done
+
+  rm -rf "${tmp_dir}"
 
   set +e
   ensure_cdk_dist_go_bindings_generated
