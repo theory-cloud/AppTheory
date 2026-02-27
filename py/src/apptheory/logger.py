@@ -7,6 +7,7 @@ from apptheory.sanitization import (
     rapid_connect_xml_patterns,
     sanitize_field_value,
     sanitize_json,
+    sanitize_json_value,
     sanitize_log_string,
     sanitize_xml,
 )
@@ -112,6 +113,7 @@ __all__ = [
     "rapid_connect_xml_patterns",
     "sanitize_field_value",
     "sanitize_json",
+    "sanitize_json_value",
     "sanitize_log_string",
     "sanitize_xml",
     "set_logger",

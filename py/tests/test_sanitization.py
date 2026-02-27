@@ -14,6 +14,7 @@ from apptheory.sanitization import (  # noqa: E402
     payment_xml_patterns,
     sanitize_field_value,
     sanitize_json,
+    sanitize_json_value,
     sanitize_log_string,
     sanitize_xml,
 )
@@ -63,6 +64,21 @@ class TestSanitization(unittest.TestCase):
         self.assertIn('"authorization": "[REDACTED]"', out)
         self.assertIn('"body": "{\\"card_number\\":\\"424242******4242\\"}"', out)
 
+    def test_sanitize_json_value_returns_structured_json(self) -> None:
+        out = sanitize_json_value(
+            json.dumps(
+                {
+                    "ok": "v",
+                    "body": '{"card_number":"4242 4242 4242 4242","cvv":"123"}',
+                }
+            )
+        )
+        self.assertIsInstance(out, dict)
+        self.assertIn("body", out)
+        self.assertIsInstance(out["body"], dict)
+        self.assertEqual(out["body"]["card_number"], "424242******4242")
+        self.assertEqual(out["body"]["cvv"], "[REDACTED]")
+
     def test_sanitize_xml_masks_payment_fields(self) -> None:
         xml = "<CardNum>4242424242424242</CardNum><CVV>123</CVV><TransArmorToken>abcd1234</TransArmorToken>"
         out = sanitize_xml(xml, payment_xml_patterns)
@@ -75,6 +91,15 @@ class TestSanitization(unittest.TestCase):
         self.assertEqual(sanitize_field_value("card_bin", "424242"), "424242")
         self.assertEqual(sanitize_field_value("api_key", "x"), "[REDACTED]")
         self.assertEqual(sanitize_field_value("root", b"a\nb"), "ab")
+
+        self.assertEqual(sanitize_field_value("authorization_id", "auth_123"), "auth_123")
+        self.assertEqual(sanitize_field_value("authorizationId", "auth_123"), "auth_123")
+
+        self.assertEqual(sanitize_field_value("cardNumber", "4242 4242 4242 4242"), "424242******4242")
+        self.assertEqual(sanitize_field_value("panValue", "4242 4242 4242 4242"), "424242******4242")
+
+        self.assertEqual(sanitize_field_value("privateKey", "x"), "[REDACTED]")
+        self.assertEqual(sanitize_field_value("apiKey", "x"), "[REDACTED]")
 
         self.assertEqual(sanitize_field_value("ssn", "1234"), "****")
         self.assertEqual(sanitize_field_value("ssn", "123456"), "**3456")

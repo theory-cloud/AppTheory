@@ -112,8 +112,8 @@ contract uses `app.rate_limited` with deterministic `Retry-After` when known.
 
 AppTheory includes safe logging utilities intended to prevent sensitive data leaks in logs (PCI/PII-heavy workflows):
 - Go: `pkg/sanitization`
-- TypeScript: exported from `@theory-cloud/apptheory` (`sanitizeLogString`, `sanitizeFieldValue`, `sanitizeJSON`, `sanitizeXML`)
-- Python: exported from `apptheory` (`sanitize_log_string`, `sanitize_field_value`, `sanitize_json`, `sanitize_xml`)
+- TypeScript: exported from `@theory-cloud/apptheory` (`sanitizeLogString`, `sanitizeFieldValue`, `sanitizeJSON`, `sanitizeJSONValue`, `sanitizeXML`)
+- Python: exported from `apptheory` (`sanitize_log_string`, `sanitize_field_value`, `sanitize_json`, `sanitize_json_value`, `sanitize_xml`)
 
 Guide: `docs/sanitization.md`
 

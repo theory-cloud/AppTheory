@@ -47,6 +47,13 @@ func SanitizeJSON(jsonBytes []byte) string {
 	return sanitization.SanitizeJSON(jsonBytes)
 }
 
+// SanitizeJSONValue returns a sanitized JSON structure for structured logging.
+//
+// Prefer this over SanitizeJSON when using a JSON logger; it avoids escaping JSON as a string.
+func SanitizeJSONValue(jsonBytes []byte) any {
+	return sanitization.SanitizeJSONValue(jsonBytes)
+}
+
 // SanitizeXML masks sensitive data in XML using the provided patterns.
 func SanitizeXML(xmlString string, patterns []sanitization.XMLSanitizationPattern) string {
 	return sanitization.SanitizeXML(xmlString, patterns)
@@ -57,3 +64,6 @@ var PaymentXMLPatterns = sanitization.PaymentXMLPatterns
 
 // RapidConnectXMLPatterns are aliases for PaymentXMLPatterns.
 var RapidConnectXMLPatterns = sanitization.RapidConnectXMLPatterns
+
+// RawJSON is a marker type for JSON payloads that should be sanitized and logged as structured JSON.
+type RawJSON = sanitization.RawJSON
