@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/theory-cloud/apptheory/pkg/observability"
@@ -70,4 +71,33 @@ func TestLogger_SetLoggerAcceptsZap(t *testing.T) {
 		t.Logf("Close: %v", err)
 	}
 	SetLogger(nil)
+}
+
+func TestLogger_SanitizationWrappers(t *testing.T) {
+	if got := SanitizeLogString("a\r\nb"); got != "ab" {
+		t.Fatalf("SanitizeLogString: expected %q, got %q", "ab", got)
+	}
+
+	if got := SanitizeFieldValue("cvv", "123"); got != "[REDACTED]" {
+		t.Fatalf("SanitizeFieldValue: expected cvv to be redacted, got %#v", got)
+	}
+
+	jsonOut := SanitizeJSON([]byte(`{"cvv":"123","ok":"v"}`))
+	if strings.Contains(jsonOut, "123") {
+		t.Fatalf("SanitizeJSON: expected cvv to be redacted, got %s", jsonOut)
+	}
+
+	structOut := SanitizeJSONValue([]byte(`{"cvv":"123","ok":"v"}`))
+	m, ok := structOut.(map[string]any)
+	if !ok {
+		t.Fatalf("SanitizeJSONValue: expected map output, got %T (%#v)", structOut, structOut)
+	}
+	if m["cvv"] != "[REDACTED]" {
+		t.Fatalf("SanitizeJSONValue: expected cvv to be redacted, got %#v", m["cvv"])
+	}
+
+	xmlOut := SanitizeXML("<CVV>123</CVV>", PaymentXMLPatterns)
+	if strings.Contains(xmlOut, "123") {
+		t.Fatalf("SanitizeXML: expected CVV to be redacted, got %s", xmlOut)
+	}
 }

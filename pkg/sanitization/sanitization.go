@@ -18,6 +18,11 @@ var AllowedFields = map[string]bool{
 	"card_bin":   true,
 	"card_brand": true,
 	"card_type":  true,
+
+	// Common system identifiers that are safe/necessary for debugging and correlation.
+	"transaction_id":   true,
+	"authorization_id": true,
+	"merchant_uid":     true,
 }
 
 // SanitizationType defines how to sanitize a field.
@@ -62,8 +67,67 @@ var SensitiveFields = map[string]SanitizationType{
 	"api_token":            FullyRedact,
 	"api_key_id":           PartialMask,
 	"authorization":        FullyRedact,
-	"authorization_id":     FullyRedact,
 	"authorization_header": FullyRedact,
+}
+
+func init() {
+	addSanitizationKeyAliases(AllowedFields)
+	addSanitizationKeyAliasesSensitive(SensitiveFields)
+}
+
+func addSanitizationKeyAliases(fields map[string]bool) {
+	if len(fields) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	for _, k := range keys {
+		alias := canonicalizeSanitizationKey(k)
+		if alias == "" || alias == k {
+			continue
+		}
+		fields[alias] = true
+	}
+}
+
+func addSanitizationKeyAliasesSensitive(fields map[string]SanitizationType) {
+	if len(fields) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	for _, k := range keys {
+		alias := canonicalizeSanitizationKey(k)
+		if alias == "" || alias == k {
+			continue
+		}
+		if _, exists := fields[alias]; exists {
+			continue
+		}
+		fields[alias] = fields[k]
+	}
+}
+
+func canonicalizeSanitizationKey(key string) string {
+	k := strings.ToLower(strings.TrimSpace(key))
+	if k == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(k))
+	for _, r := range k {
+		switch r {
+		case '_', '-', ' ':
+			continue
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // SanitizeLogString removes control characters that could enable log forging.
@@ -93,7 +157,8 @@ func SanitizeFieldValue(key string, value any) any {
 		case FullyRedact:
 			return redactedValue
 		case PartialMask:
-			if keyLower == "card_number" || keyLower == "number" || keyLower == "pan_value" || keyLower == "pan" || keyLower == "primary_account_number" {
+			keyCanonical := canonicalizeSanitizationKey(keyLower)
+			if keyCanonical == "cardnumber" || keyCanonical == "number" || keyCanonical == "panvalue" || keyCanonical == "pan" || keyCanonical == "primaryaccountnumber" {
 				return maskCardNumberValue(value)
 			}
 			return maskRestrictedValue(value)
@@ -108,8 +173,10 @@ func SanitizeFieldValue(key string, value any) any {
 		"token",
 		"password",
 		"private_key",
+		"privatekey",
 		"client_secret",
 		"api_key",
+		"apikey",
 		"authorization",
 	}
 	for _, substr := range blockedSubstrings {
@@ -147,6 +214,8 @@ func sanitizeValue(value any) any {
 		return nil
 	case string:
 		return SanitizeLogString(typed)
+	case RawJSON:
+		return SanitizeJSONValue([]byte(typed))
 	case []byte:
 		return SanitizeLogString(string(typed))
 	case map[string]any:

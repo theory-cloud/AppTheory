@@ -65,3 +65,11 @@ new AppTheoryS3Ingest(stack, "Ingest", {
 
 If another AWS account needs to write objects into the ingest bucket, provide `writerPrincipals` to add explicit bucket policies (least privilege, no hidden assume-role behavior).
 
+```typescript
+import { AppTheoryS3Ingest } from "@theory-cloud/apptheory-cdk";
+import * as iam from "aws-cdk-lib/aws-iam";
+
+new AppTheoryS3Ingest(stack, "Ingest", {
+  writerPrincipals: [new iam.AccountPrincipal("123456789012")],
+});
+```

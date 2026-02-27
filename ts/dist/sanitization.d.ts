@@ -3,6 +3,7 @@ export declare function maskFirstLast(value: string, prefixLen: number, suffixLe
 export declare function maskFirstLast4(value: string): string;
 export declare function sanitizeFieldValue(key: string, value: unknown): unknown;
 export declare function sanitizeJSON(jsonBytes: Uint8Array | string): string;
+export declare function sanitizeJSONValue(jsonBytes: Uint8Array | string): unknown;
 export interface XMLSanitizationPattern {
     name: string;
     pattern: RegExp;
