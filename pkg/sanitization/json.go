@@ -5,6 +5,10 @@ import (
 	"fmt"
 )
 
+// RawJSON is a marker type for JSON payloads that should be sanitized and logged as structured JSON
+// (object/array) rather than as an escaped string.
+type RawJSON []byte
+
 // SanitizeJSON recursively sanitizes JSON data for logging.
 //
 // It returns a formatted JSON string with known sensitive fields masked/redacted while preserving structure.
@@ -18,7 +22,7 @@ func SanitizeJSON(jsonBytes []byte) string {
 		return fmt.Sprintf("(malformed JSON: %s)", err.Error())
 	}
 
-	sanitized := sanitizeJSONValue(data)
+	sanitized := sanitizeJSONValue(data, sanitizeJSONOptions{KeepBodyString: true})
 	out, err := json.MarshalIndent(sanitized, "", "  ")
 	if err != nil {
 		return "(error marshaling sanitized JSON)"
@@ -26,51 +30,82 @@ func SanitizeJSON(jsonBytes []byte) string {
 	return string(out)
 }
 
-func sanitizeJSONValue(value any) any {
-	switch v := value.(type) {
-	case map[string]any:
-		return sanitizeJSONObject(v)
-	case []any:
-		return sanitizeJSONArray(v)
-	default:
-		return sanitizeValue(v)
+// SanitizeJSONValue returns a sanitized JSON structure suitable for structured logging.
+//
+// Unlike SanitizeJSON, this function preserves JSON structure (map/slice) so JSON loggers (zap, pino, etc)
+// will emit the value as nested JSON instead of an escaped string.
+func SanitizeJSONValue(jsonBytes []byte) any {
+	if len(jsonBytes) == 0 {
+		return emptyMaskedValue
 	}
+
+	var data any
+	if err := json.Unmarshal(jsonBytes, &data); err != nil {
+		return fmt.Sprintf("(malformed JSON: %s)", err.Error())
+	}
+
+	return sanitizeJSONValue(data, sanitizeJSONOptions{KeepBodyString: false})
 }
 
-func sanitizeJSONObject(obj map[string]any) map[string]any {
-	result := make(map[string]any, len(obj))
-	for key, value := range obj {
-		// Special case: "body" may contain a JSON string (common in AWS events).
+type sanitizeJSONOptions struct {
+	KeepBodyString bool
+}
+
+func sanitizeJSONValue(value any, opts sanitizeJSONOptions) any {
+	sanitized := sanitizeValue(value)
+	return sanitizeEmbeddedBodyJSON(sanitized, opts)
+}
+
+func sanitizeEmbeddedBodyJSON(value any, opts sanitizeJSONOptions) any {
+	if v, ok := value.(map[string]any); ok {
+		return sanitizeEmbeddedBodyJSONMap(v, opts)
+	}
+	if v, ok := value.([]any); ok {
+		return sanitizeEmbeddedBodyJSONArray(v, opts)
+	}
+	return value
+}
+
+func sanitizeEmbeddedBodyJSONMap(value map[string]any, opts sanitizeJSONOptions) map[string]any {
+	out := make(map[string]any, len(value))
+	for key, raw := range value {
 		if key == "body" {
-			if bodyStr, ok := value.(string); ok {
-				var bodyData any
-				if err := json.Unmarshal([]byte(bodyStr), &bodyData); err == nil {
-					sanitizedBody := sanitizeJSONValue(bodyData)
-					if bodyJSON, err := json.Marshal(sanitizedBody); err == nil {
-						result[key] = string(bodyJSON)
-						continue
-					}
-				}
+			if sanitizedBody, ok := sanitizeBodyJSONString(raw, opts); ok {
+				out[key] = sanitizedBody
+				continue
 			}
 		}
-
-		sanitizedValue := SanitizeFieldValue(key, value)
-		switch sv := sanitizedValue.(type) {
-		case map[string]any:
-			result[key] = sanitizeJSONObject(sv)
-		case []any:
-			result[key] = sanitizeJSONArray(sv)
-		default:
-			result[key] = sanitizedValue
-		}
+		out[key] = sanitizeEmbeddedBodyJSON(raw, opts)
 	}
-	return result
+	return out
 }
 
-func sanitizeJSONArray(arr []any) []any {
-	result := make([]any, len(arr))
-	for i := range arr {
-		result[i] = sanitizeJSONValue(arr[i])
+func sanitizeEmbeddedBodyJSONArray(value []any, opts sanitizeJSONOptions) []any {
+	out := make([]any, len(value))
+	for i := range value {
+		out[i] = sanitizeEmbeddedBodyJSON(value[i], opts)
 	}
-	return result
+	return out
+}
+
+func sanitizeBodyJSONString(raw any, opts sanitizeJSONOptions) (any, bool) {
+	bodyStr, ok := raw.(string)
+	if !ok {
+		return nil, false
+	}
+
+	var bodyData any
+	if err := json.Unmarshal([]byte(bodyStr), &bodyData); err != nil {
+		return nil, false
+	}
+
+	sanitizedBody := sanitizeJSONValue(bodyData, opts)
+	if opts.KeepBodyString {
+		bodyJSON, err := json.Marshal(sanitizedBody)
+		if err != nil {
+			return nil, false
+		}
+		return string(bodyJSON), true
+	}
+	return sanitizedBody, true
 }

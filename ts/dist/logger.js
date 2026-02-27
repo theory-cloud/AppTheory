@@ -1,4 +1,4 @@
-import { paymentXMLPatterns, rapidConnectXMLPatterns, sanitizeFieldValue, sanitizeJSON, sanitizeLogString, sanitizeXML, } from "./sanitization.js";
+import { paymentXMLPatterns, rapidConnectXMLPatterns, sanitizeFieldValue, sanitizeJSON, sanitizeJSONValue, sanitizeLogString, sanitizeXML, } from "./sanitization.js";
 class NoOpLogger {
     debug(_message, ..._fields) { }
     info(_message, ..._fields) { }
@@ -39,4 +39,4 @@ export function getLogger() {
 export function setLogger(logger) {
     globalLogger = logger ?? new NoOpLogger();
 }
-export { paymentXMLPatterns, rapidConnectXMLPatterns, sanitizeFieldValue, sanitizeJSON, sanitizeLogString, sanitizeXML, };
+export { paymentXMLPatterns, rapidConnectXMLPatterns, sanitizeFieldValue, sanitizeJSON, sanitizeJSONValue, sanitizeLogString, sanitizeXML, };

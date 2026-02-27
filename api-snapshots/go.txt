@@ -583,11 +583,15 @@ var PaymentXMLPatterns = sanitization.PaymentXMLPatterns
 
 var RapidConnectXMLPatterns = sanitization.RapidConnectXMLPatterns
 
+type RawJSON = sanitization.RawJSON
+
 func Logger() observability.StructuredLogger
 
 func SanitizeFieldValue(string, any) any
 
 func SanitizeJSON([]byte) string
+
+func SanitizeJSONValue([]byte) any
 
 func SanitizeLogString(string) string
 
@@ -849,6 +853,10 @@ var AllowedFields = map[string]bool{
 	"card_bin":   true,
 	"card_brand": true,
 	"card_type":  true,
+
+	"transaction_id":   true,
+	"authorization_id": true,
+	"merchant_uid":     true,
 }
 
 var PaymentXMLPatterns = []XMLSanitizationPattern{
@@ -942,9 +950,10 @@ var SensitiveFields = map[string]SanitizationType{
 	"api_token":            FullyRedact,
 	"api_key_id":           PartialMask,
 	"authorization":        FullyRedact,
-	"authorization_id":     FullyRedact,
 	"authorization_header": FullyRedact,
 }
+
+type RawJSON []byte
 
 type SanitizationType int
 
@@ -967,6 +976,8 @@ func MaskTokenLastFour(string) string
 func SanitizeFieldValue(string, any) any
 
 func SanitizeJSON([]byte) string
+
+func SanitizeJSONValue([]byte) any
 
 func SanitizeLogString(string) string
 
