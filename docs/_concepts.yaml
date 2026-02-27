@@ -87,6 +87,54 @@ concepts:
     configuration:
       - cdk/
 
+  sanitization:
+    type: component
+    purpose: "Safe logging utilities (redaction + masking) intended to prevent sensitive data leaks in logs."
+    provides:
+      - sanitize_log_string
+      - sanitize_structured_fields
+      - sanitize_json
+      - sanitize_xml
+      - payment_xml_masking_patterns
+    docs:
+      - docs/sanitization.md
+
+  jobs_ledger:
+    type: component
+    purpose: "TableTheory-backed job ledger primitives for long-running workflows (jobs + records + leases + idempotency)."
+    provides:
+      - job_lifecycle_tracking
+      - per_record_status
+      - leases
+      - idempotency
+      - safe_error_envelopes
+    configuration:
+      - "DynamoDB: pk/sk schema (JOB#..., META/REC#/LOCK/REQ#...)"
+    docs:
+      - docs/jobs-ledger.md
+      - cdk/docs/jobs-table.md
+      - examples/cdk/import-pipeline/README.md
+
+  import_pipeline_support_pack:
+    type: workflow
+    purpose: "AWS-native import pipeline primitives (S3 ingest + job ledger + optional batch runner) intended to be assembled into production workloads."
+    provides:
+      - s3_ingest_front_door
+      - job_and_record_auditing
+      - per_record_workers
+      - optional_batch_steps
+      - safe_logging_defaults
+    related:
+      - jobs_ledger
+      - sanitization
+      - cdk_constructs
+    docs:
+      - examples/cdk/import-pipeline/README.md
+      - cdk/docs/s3-ingest.md
+      - cdk/docs/eventbridge-rule-target.md
+      - cdk/docs/jobs-table.md
+      - cdk/docs/codebuild-job-runner.md
+
   mcp_gateway:
     type: component
     purpose: "Expose MCP (Model Context Protocol) over HTTP for Bedrock AgentCore tool integrations."
