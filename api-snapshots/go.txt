@@ -627,14 +627,15 @@ type LogEntry struct {
 }
 
 type LoggerConfig struct {
-	Format       string        `json:"format"`
-	Level        string        `json:"level"`
-	RetryDelay   time.Duration `json:"retry_delay"`
-	BatchSize    int           `json:"batch_size"`
-	BufferSize   int           `json:"buffer_size"`
-	MaxRetries   int           `json:"max_retries"`
-	EnableStack  bool          `json:"enable_stack"`
-	EnableCaller bool          `json:"enable_caller"`
+	Format             string               `json:"format"`
+	Level              string               `json:"level"`
+	RetryDelay         time.Duration        `json:"retry_delay"`
+	BatchSize          int                  `json:"batch_size"`
+	BufferSize         int                  `json:"buffer_size"`
+	MaxRetries         int                  `json:"max_retries"`
+	EnableStack        bool                 `json:"enable_stack"`
+	EnableCaller       bool                 `json:"enable_caller"`
+	SanitizationPolicy *sanitization.Policy `json:"sanitization,omitempty"`
 }
 
 type LoggerFactory interface {
@@ -849,6 +850,12 @@ const FullyRedact SanitizationType = iota
 
 const PartialMask
 
+const PolicyAllow PolicyAction = "allow"
+
+const PolicyFullyRedact PolicyAction = "fully_redact"
+
+const PolicyPartialMask PolicyAction = "partial_mask"
+
 var AllowedFields = map[string]bool{
 	"card_bin":   true,
 	"card_brand": true,
@@ -857,6 +864,12 @@ var AllowedFields = map[string]bool{
 	"transaction_id":   true,
 	"authorization_id": true,
 	"merchant_uid":     true,
+
+	"mid":         true,
+	"merchant_id": true,
+	"acceptor_id": true,
+	"tid":         true,
+	"terminal_id": true,
 }
 
 var PaymentXMLPatterns = []XMLSanitizationPattern{
@@ -947,10 +960,31 @@ var SensitiveFields = map[string]SanitizationType{
 	"private_key": FullyRedact,
 	"secret_key":  FullyRedact,
 
+	"access_token":         FullyRedact,
+	"refresh_token":        FullyRedact,
+	"id_token":             FullyRedact,
+	"token":                FullyRedact,
+	"client_secret":        FullyRedact,
+	"api_key":              FullyRedact,
 	"api_token":            FullyRedact,
 	"api_key_id":           PartialMask,
 	"authorization":        FullyRedact,
 	"authorization_header": FullyRedact,
+}
+
+type Policy struct {
+	AllowedFields     []string     `json:"allowed_fields,omitempty"`
+	FullyRedactFields []string     `json:"fully_redact_fields,omitempty"`
+	PartialMaskFields []string     `json:"partial_mask_fields,omitempty"`
+	Rules             []PolicyRule `json:"rules,omitempty"`
+}
+
+type PolicyAction string
+
+type PolicyRule struct {
+	ParentKey string       `json:"parent_key,omitempty"`
+	Key       string       `json:"key"`
+	Action    PolicyAction `json:"action"`
 }
 
 type RawJSON []byte
@@ -973,6 +1007,8 @@ func MaskFirstLast4(string) string
 
 func MaskTokenLastFour(string) string
 
+func NewPolicySanitizer(*Policy) (func(string, any) any, error)
+
 func SanitizeFieldValue(string, any) any
 
 func SanitizeJSON([]byte) string
@@ -982,6 +1018,8 @@ func SanitizeJSONValue([]byte) any
 func SanitizeLogString(string) string
 
 func SanitizeXML(string, []XMLSanitizationPattern) string
+
+func (*policySanitizer) SanitizeFieldValue(string, any) any
 
 ## github.com/theory-cloud/apptheory/pkg/services
 

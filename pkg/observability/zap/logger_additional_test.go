@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/theory-cloud/apptheory/pkg/observability"
+	"github.com/theory-cloud/apptheory/pkg/sanitization"
 )
 
 type syncErrorWriter struct{}
@@ -116,5 +117,50 @@ func TestZapLogger_CustomSanitizerIsUsed(t *testing.T) {
 	}
 	if got := entries[0].ContextMap()["authorization"]; got != "masked" {
 		t.Fatalf("expected custom sanitizer to be used, got %#v", got)
+	}
+}
+
+func TestZapLogger_SanitizationPolicyIsApplied(t *testing.T) {
+	t.Parallel()
+
+	core, observed := observer.New(zapcore.DebugLevel)
+	base := ubzap.New(core)
+
+	logger, err := NewZapLogger(observability.LoggerConfig{
+		SanitizationPolicy: &sanitization.Policy{
+			Rules: []sanitization.PolicyRule{
+				{Key: "authorization_id", Action: sanitization.PolicyFullyRedact},
+			},
+		},
+	}, WithZapLogger(base))
+	if err != nil {
+		t.Fatalf("NewZapLogger: %v", err)
+	}
+
+	logger.Info("ok", map[string]any{"authorization_id": "auth_123"})
+	entries := observed.All()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if got := entries[0].ContextMap()["authorization_id"]; got != "[REDACTED]" {
+		t.Fatalf("expected policy to override defaults, got %#v", got)
+	}
+}
+
+func TestZapLogger_InvalidSanitizationPolicyFailsFast(t *testing.T) {
+	t.Parallel()
+
+	core, _ := observer.New(zapcore.DebugLevel)
+	base := ubzap.New(core)
+
+	_, err := NewZapLogger(observability.LoggerConfig{
+		SanitizationPolicy: &sanitization.Policy{
+			Rules: []sanitization.PolicyRule{
+				{Key: "authorization_id", Action: sanitization.PolicyAction("nope")},
+			},
+		},
+	}, WithZapLogger(base))
+	if err == nil {
+		t.Fatal("expected invalid sanitization policy to return error")
 	}
 }
