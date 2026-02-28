@@ -973,18 +973,18 @@ var SensitiveFields = map[string]SanitizationType{
 }
 
 type Policy struct {
-	AllowedFields     []string     `json:"allowed_fields,omitempty"`
-	FullyRedactFields []string     `json:"fully_redact_fields,omitempty"`
-	PartialMaskFields []string     `json:"partial_mask_fields,omitempty"`
-	Rules             []PolicyRule `json:"rules,omitempty"`
+	AllowedFields     []string     `json:"allowed_fields,omitempty" yaml:"allowed_fields,omitempty"`
+	FullyRedactFields []string     `json:"fully_redact_fields,omitempty" yaml:"fully_redact_fields,omitempty"`
+	PartialMaskFields []string     `json:"partial_mask_fields,omitempty" yaml:"partial_mask_fields,omitempty"`
+	Rules             []PolicyRule `json:"rules,omitempty" yaml:"rules,omitempty"`
 }
 
 type PolicyAction string
 
 type PolicyRule struct {
-	ParentKey string       `json:"parent_key,omitempty"`
-	Key       string       `json:"key"`
-	Action    PolicyAction `json:"action"`
+	ParentKey string       `json:"parent_key,omitempty" yaml:"parent_key,omitempty"`
+	Key       string       `json:"key" yaml:"key"`
+	Action    PolicyAction `json:"action" yaml:"action"`
 }
 
 type RawJSON []byte
@@ -1009,6 +1009,10 @@ func MaskTokenLastFour(string) string
 
 func NewPolicySanitizer(*Policy) (func(string, any) any, error)
 
+func PolicyFromEnv(string) (*Policy, error)
+
+func PolicyFromText(string) (*Policy, error)
+
 func SanitizeFieldValue(string, any) any
 
 func SanitizeJSON([]byte) string
@@ -1018,6 +1022,8 @@ func SanitizeJSONValue([]byte) any
 func SanitizeLogString(string) string
 
 func SanitizeXML(string, []XMLSanitizationPattern) string
+
+func ScrubFreeText(string) string
 
 func (*policySanitizer) SanitizeFieldValue(string, any) any
 
