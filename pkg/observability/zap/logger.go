@@ -99,9 +99,18 @@ var _ observability.StructuredLogger = (*Logger)(nil)
 func NewZapLogger(config observability.LoggerConfig, options ...Option) (observability.StructuredLogger, error) {
 	cfg := normalizeLoggerConfig(config)
 
+	baseSanitizer := sanitization.SanitizeFieldValue
+	if cfg.SanitizationPolicy != nil {
+		policySanitizer, err := sanitization.NewPolicySanitizer(cfg.SanitizationPolicy)
+		if err != nil {
+			return nil, err
+		}
+		baseSanitizer = policySanitizer
+	}
+
 	opts := &loggerOptions{
 		zapLogger:  nil,
-		sanitizer:  sanitization.SanitizeFieldValue,
+		sanitizer:  baseSanitizer,
 		notifier:   nil,
 		maxRetries: cfg.MaxRetries,
 		retryDelay: cfg.RetryDelay,
