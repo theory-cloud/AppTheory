@@ -12,6 +12,7 @@ from apptheory.sanitization import (  # noqa: E402
     mask_first_last,
     mask_first_last4,
     payment_xml_patterns,
+    rapid_connect_xml_patterns,
     sanitize_field_value,
     sanitize_json,
     sanitize_json_value,
@@ -87,13 +88,24 @@ class TestSanitization(unittest.TestCase):
             "<CardNum>424242******4242</CardNum><CVV>[REDACTED]</CVV><TransArmorToken>****1234</TransArmorToken>",
         )
 
-    def test_sanitize_field_value_edge_cases_and_substring_blocks(self) -> None:
+    def test_sanitize_xml_masks_rapid_connect_fixture(self) -> None:
+        xml = "<AcctNum>4111111111111111</AcctNum><CVV2>123</CVV2><TransArmorToken>abcd1234</TransArmorToken>"
+        out = sanitize_xml(xml, rapid_connect_xml_patterns)
+        self.assertEqual(
+            out,
+            "<AcctNum>411111******1111</AcctNum><CVV2>[REDACTED]</CVV2><TransArmorToken>****1234</TransArmorToken>",
+        )
+
+    def test_sanitize_field_value_edge_cases_and_allowed_aliases(self) -> None:
         self.assertEqual(sanitize_field_value("card_bin", "424242"), "424242")
         self.assertEqual(sanitize_field_value("api_key", "x"), "[REDACTED]")
         self.assertEqual(sanitize_field_value("root", b"a\nb"), "ab")
 
         self.assertEqual(sanitize_field_value("authorization_id", "auth_123"), "auth_123")
         self.assertEqual(sanitize_field_value("authorizationId", "auth_123"), "auth_123")
+        self.assertEqual(sanitize_field_value("authorizationCode", "ok_1"), "ok_1")
+        self.assertEqual(sanitize_field_value("tokenization_method", "apple_pay"), "apple_pay")
+        self.assertEqual(sanitize_field_value("merchantId", "m_123"), "m_123")
 
         self.assertEqual(sanitize_field_value("cardNumber", "4242 4242 4242 4242"), "424242******4242")
         self.assertEqual(sanitize_field_value("panValue", "4242 4242 4242 4242"), "424242******4242")
@@ -106,6 +118,54 @@ class TestSanitization(unittest.TestCase):
         self.assertEqual(sanitize_field_value("ssn", "abcd"), "...abcd")
 
         self.assertEqual(sanitize_field_value("card_number", "4242424242"), "******4242")
+
+    def test_sanitize_field_value_context_aware_account_number_masking(self) -> None:
+        card_ctx = sanitize_field_value(
+            "root",
+            {"cardWithPanDetails": {"accountNumber": "4111111111111111"}},
+        )
+        self.assertIsInstance(card_ctx, dict)
+        self.assertEqual(card_ctx["cardWithPanDetails"]["accountNumber"], "411111******1111")
+
+        bank_ctx = sanitize_field_value(
+            "root",
+            {"achDetails": {"accountNumber": "123456789"}},
+        )
+        self.assertIsInstance(bank_ctx, dict)
+        self.assertEqual(bank_ctx["achDetails"]["accountNumber"], "*****6789")
+
+        snake_case = sanitize_field_value(
+            "root",
+            {"cardWithPanDetails": {"account_number": "4111111111111111"}},
+        )
+        self.assertIsInstance(snake_case, dict)
+        self.assertEqual(snake_case["cardWithPanDetails"]["account_number"], "************1111")
+
+    def test_sanitize_field_value_tesouro_graphql_fixture(self) -> None:
+        out = sanitize_field_value(
+            "root",
+            {
+                "data": {
+                    "transaction": {
+                        "authorizationId": "auth_123",
+                        "authorizationCode": "ok_1",
+                        "tokenization_method": "apple_pay",
+                        "accessToken": "secret",
+                        "mid": "mid_1",
+                        "cardWithPanDetails": {"accountNumber": "4111111111111111", "cvv": "123"},
+                        "achDetails": {"accountNumber": "123456789"},
+                    }
+                }
+            },
+        )
+        self.assertEqual(out["data"]["transaction"]["authorizationId"], "auth_123")
+        self.assertEqual(out["data"]["transaction"]["authorizationCode"], "ok_1")
+        self.assertEqual(out["data"]["transaction"]["tokenization_method"], "apple_pay")
+        self.assertEqual(out["data"]["transaction"]["accessToken"], "[REDACTED]")
+        self.assertEqual(out["data"]["transaction"]["mid"], "mid_1")
+        self.assertEqual(out["data"]["transaction"]["cardWithPanDetails"]["accountNumber"], "411111******1111")
+        self.assertEqual(out["data"]["transaction"]["cardWithPanDetails"]["cvv"], "[REDACTED]")
+        self.assertEqual(out["data"]["transaction"]["achDetails"]["accountNumber"], "*****6789")
 
     def test_sanitize_xml_handles_escaped_tags_and_empty_token_fields(self) -> None:
         escaped = "&lt;CardNum&gt;4242424242424242&lt;/CardNum&gt;&lt;CVV&gt;123&lt;/CVV&gt;"

@@ -18,6 +18,12 @@ _ALLOWED_FIELDS: set[str] = {
     "transaction_id",
     "authorization_id",
     "merchant_uid",
+    # External system identifiers (MIDs, acceptor IDs, terminal IDs, etc.).
+    "mid",
+    "merchant_id",
+    "acceptor_id",
+    "tid",
+    "terminal_id",
 }
 
 _SENSITIVE_FIELDS: dict[str, str] = {
@@ -43,6 +49,12 @@ _SENSITIVE_FIELDS: dict[str, str] = {
     "secret": "fully",
     "private_key": "fully",
     "secret_key": "fully",
+    "access_token": "fully",
+    "refresh_token": "fully",
+    "id_token": "fully",
+    "token": "fully",
+    "client_secret": "fully",
+    "api_key": "fully",
     "api_token": "fully",
     "api_key_id": "partial",
     "authorization": "fully",
@@ -129,40 +141,53 @@ def _mask_card_number_string(value: str) -> str:
 
 
 def sanitize_field_value(key: str, value: Any) -> Any:
-    k = str(key or "").strip().lower()
-    if not k:
-        return _sanitize_value(value)
-    if k in _ALLOWED_FIELDS:
-        return _sanitize_value(value)
+    return _sanitize_field_value_with_parent("", key, value)
 
-    explicit = _SENSITIVE_FIELDS.get(k)
+
+def _should_mask_account_number_as_bank(parent_key: str, key_lower: str) -> bool:
+    # Snake_case is treated as bank/ACH by default to avoid PAN leakage.
+    if "_" in str(key_lower or ""):
+        return True
+
+    parent_canonical = _canonicalize_sanitization_key(parent_key)
+    return parent_canonical in {"achdetails", "bankaccount", "bankaccountdetails", "bankdetails"}
+
+
+def _should_mask_account_number_as_card(parent_key: str) -> bool:
+    parent_canonical = _canonicalize_sanitization_key(parent_key)
+    return parent_canonical in {"cardwithpandetails", "cardpandetails", "pandetails"}
+
+
+def _sanitize_field_value_with_parent(parent_key: str, key: str, value: Any) -> Any:
+    k = str(key or "").strip().lower()
+    canonical = _canonicalize_sanitization_key(k)
+    if not k or not canonical:
+        return _sanitize_value_with_parent(parent_key, value)
+    if k in _ALLOWED_FIELDS or canonical in _ALLOWED_FIELDS:
+        return _sanitize_value_with_parent(k, value)
+
+    explicit = _SENSITIVE_FIELDS.get(k) or _SENSITIVE_FIELDS.get(canonical)
     if explicit == "fully":
         return _REDACTED_VALUE
     if explicit == "partial":
-        canonical = _canonicalize_sanitization_key(k)
         if canonical in {"cardnumber", "number", "panvalue", "pan", "primaryaccountnumber"}:
             return _mask_card_number_string(str(value or ""))
+        if canonical == "accountnumber":
+            if _should_mask_account_number_as_bank(parent_key, k):
+                return _mask_restricted_string(str(value or ""))
+            if _should_mask_account_number_as_card(parent_key):
+                return _mask_card_number_string(str(value or ""))
+            return _mask_restricted_string(str(value or ""))
         return _mask_restricted_string(str(value or ""))
 
-    blocked_substrings = [
-        "secret",
-        "token",
-        "password",
-        "private_key",
-        "privatekey",
-        "client_secret",
-        "api_key",
-        "apikey",
-        "authorization",
-    ]
-    for s in blocked_substrings:
-        if s in k:
-            return _REDACTED_VALUE
-
-    return _sanitize_value(value)
+    return _sanitize_value_with_parent(k, value)
 
 
 def _sanitize_value(value: Any) -> Any:
+    return _sanitize_value_with_parent("", value)
+
+
+def _sanitize_value_with_parent(parent_key: str, value: Any) -> Any:
     if value is None:
         return None
     if isinstance(value, str):
@@ -170,9 +195,9 @@ def _sanitize_value(value: Any) -> Any:
     if isinstance(value, (bytes, bytearray)):
         return sanitize_log_string(bytes(value).decode("utf-8", errors="replace"))
     if isinstance(value, list):
-        return [_sanitize_value(v) for v in value]
+        return [_sanitize_value_with_parent(parent_key, v) for v in value]
     if isinstance(value, dict):
-        return {k: sanitize_field_value(str(k), v) for k, v in value.items()}
+        return {k: _sanitize_field_value_with_parent(parent_key, str(k), v) for k, v in value.items()}
     return sanitize_log_string(str(value))
 
 
