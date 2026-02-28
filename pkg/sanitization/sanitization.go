@@ -23,6 +23,13 @@ var AllowedFields = map[string]bool{
 	"transaction_id":   true,
 	"authorization_id": true,
 	"merchant_uid":     true,
+
+	// External system identifiers (MIDs, acceptor IDs, terminal IDs, etc.).
+	"mid":         true,
+	"merchant_id": true,
+	"acceptor_id": true,
+	"tid":         true,
+	"terminal_id": true,
 }
 
 // SanitizationType defines how to sanitize a field.
@@ -64,6 +71,12 @@ var SensitiveFields = map[string]SanitizationType{
 	"private_key": FullyRedact,
 	"secret_key":  FullyRedact,
 
+	"access_token":         FullyRedact,
+	"refresh_token":        FullyRedact,
+	"id_token":             FullyRedact,
+	"token":                FullyRedact,
+	"client_secret":        FullyRedact,
+	"api_key":              FullyRedact,
 	"api_token":            FullyRedact,
 	"api_key_id":           PartialMask,
 	"authorization":        FullyRedact,
@@ -144,48 +157,7 @@ func SanitizeLogString(value string) string {
 //
 // This function is intentionally deterministic and safe-by-default for known sensitive keys.
 func SanitizeFieldValue(key string, value any) any {
-	keyLower := strings.ToLower(strings.TrimSpace(key))
-	if keyLower == "" {
-		return sanitizeValue(value)
-	}
-	if AllowedFields[keyLower] {
-		return sanitizeValue(value)
-	}
-
-	if typ, ok := SensitiveFields[keyLower]; ok {
-		switch typ {
-		case FullyRedact:
-			return redactedValue
-		case PartialMask:
-			keyCanonical := canonicalizeSanitizationKey(keyLower)
-			if keyCanonical == "cardnumber" || keyCanonical == "number" || keyCanonical == "panvalue" || keyCanonical == "pan" || keyCanonical == "primaryaccountnumber" {
-				return maskCardNumberValue(value)
-			}
-			return maskRestrictedValue(value)
-		default:
-			return redactedValue
-		}
-	}
-
-	// Substring-based fallback: treat obvious secrets/tokens as fully redacted.
-	blockedSubstrings := []string{
-		"secret",
-		"token",
-		"password",
-		"private_key",
-		"privatekey",
-		"client_secret",
-		"api_key",
-		"apikey",
-		"authorization",
-	}
-	for _, substr := range blockedSubstrings {
-		if strings.Contains(keyLower, substr) {
-			return redactedValue
-		}
-	}
-
-	return sanitizeValue(value)
+	return sanitizeFieldValueWithParent("", key, value)
 }
 
 // MaskFirstLast keeps the first prefixLen and last suffixLen characters and masks the middle.
@@ -208,7 +180,102 @@ func MaskFirstLast4(value string) string {
 	return MaskFirstLast(value, 4, 4)
 }
 
+func sanitizeFieldValueWithParent(parentKey string, key string, value any) any {
+	keyLower := strings.ToLower(strings.TrimSpace(key))
+	keyCanonical := canonicalizeSanitizationKey(keyLower)
+	if keyLower == "" || keyCanonical == "" {
+		return sanitizeValueWithParent(parentKey, value)
+	}
+
+	if isAllowedField(keyLower, keyCanonical) {
+		return sanitizeValueWithParent(keyLower, value)
+	}
+
+	if typ, ok := sensitiveFieldType(keyLower, keyCanonical); ok {
+		return sanitizeSensitiveFieldValue(parentKey, keyLower, keyCanonical, value, typ)
+	}
+
+	return sanitizeValueWithParent(keyLower, value)
+}
+
+func isAllowedField(keyLower, keyCanonical string) bool {
+	return AllowedFields[keyLower] || AllowedFields[keyCanonical]
+}
+
+func sensitiveFieldType(keyLower, keyCanonical string) (SanitizationType, bool) {
+	typ, ok := SensitiveFields[keyLower]
+	if !ok {
+		typ, ok = SensitiveFields[keyCanonical]
+	}
+	return typ, ok
+}
+
+func sanitizeSensitiveFieldValue(parentKey, keyLower, keyCanonical string, value any, typ SanitizationType) any {
+	switch typ {
+	case FullyRedact:
+		return redactedValue
+	case PartialMask:
+		return sanitizePartialMaskedValue(parentKey, keyLower, keyCanonical, value)
+	default:
+		return redactedValue
+	}
+}
+
+func sanitizePartialMaskedValue(parentKey, keyLower, keyCanonical string, value any) string {
+	if isCardNumberKey(keyCanonical) {
+		return maskCardNumberValue(value)
+	}
+	if keyCanonical == "accountnumber" {
+		if shouldMaskAccountNumberAsBank(parentKey, keyLower) {
+			return maskRestrictedValue(value)
+		}
+		if shouldMaskAccountNumberAsCard(parentKey) {
+			return maskCardNumberValue(value)
+		}
+		return maskRestrictedValue(value)
+	}
+	return maskRestrictedValue(value)
+}
+
+func isCardNumberKey(keyCanonical string) bool {
+	switch keyCanonical {
+	case "cardnumber", "number", "panvalue", "pan", "primaryaccountnumber":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldMaskAccountNumberAsBank(parentKey string, keyLower string) bool {
+	// Snake_case is treated as bank/ACH by default to avoid PAN leakage.
+	if strings.Contains(keyLower, "_") {
+		return true
+	}
+
+	parentCanonical := canonicalizeSanitizationKey(parentKey)
+	switch parentCanonical {
+	case "achdetails", "bankaccount", "bankaccountdetails", "bankdetails":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldMaskAccountNumberAsCard(parentKey string) bool {
+	parentCanonical := canonicalizeSanitizationKey(parentKey)
+	switch parentCanonical {
+	case "cardwithpandetails", "cardpandetails", "pandetails":
+		return true
+	default:
+		return false
+	}
+}
+
 func sanitizeValue(value any) any {
+	return sanitizeValueWithParent("", value)
+}
+
+func sanitizeValueWithParent(parentKey string, value any) any {
 	switch typed := value.(type) {
 	case nil:
 		return nil
@@ -221,13 +288,13 @@ func sanitizeValue(value any) any {
 	case map[string]any:
 		out := make(map[string]any, len(typed))
 		for k, v := range typed {
-			out[k] = SanitizeFieldValue(k, v)
+			out[k] = sanitizeFieldValueWithParent(parentKey, k, v)
 		}
 		return out
 	case []any:
 		out := make([]any, len(typed))
 		for i := range typed {
-			out[i] = sanitizeValue(typed[i])
+			out[i] = sanitizeValueWithParent(parentKey, typed[i])
 		}
 		return out
 	default:
