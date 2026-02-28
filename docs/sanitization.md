@@ -16,6 +16,8 @@ Sanitization is a **last line of defense**. Prefer not to log secrets at all, an
 
 - Go: `pkg/sanitization`
   - `SanitizeLogString`, `SanitizeFieldValue`, `SanitizeJSON`, `SanitizeJSONValue`, `SanitizeXML`
+  - `PolicyFromEnv`, `PolicyFromText` (load/validate `Policy` from config text)
+  - `ScrubFreeText` (best-effort scrubbing for unstructured provider error strings)
   - `RawJSON` (marker type for structured JSON logging)
   - `PaymentXMLPatterns` (and alias `RapidConnectXMLPatterns`)
   - `MaskFirstLast`, `MaskFirstLast4`
@@ -75,6 +77,12 @@ If you need to tune sanitization without writing a custom sanitizer function, se
 
 Rules are evaluated **before** the built-in defaults, so policies can override both allowlisted IDs and default
 redactions/masks.
+
+For runtime-configurable policies, load a `*sanitization.Policy` from env/JSON/YAML:
+
+```go
+policy, err := sanitization.PolicyFromEnv("APP_SANITIZATION_POLICY")
+```
 
 ## Stability
 
