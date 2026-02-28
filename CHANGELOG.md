@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.1](https://github.com/theory-cloud/AppTheory/compare/v0.13.0...v0.13.1) (2026-02-28)
+
+
+### Bug Fixes
+
+* **sanitization:** close logging gaps (issue [#190](https://github.com/theory-cloud/AppTheory/issues/190)) ([0fe53d2](https://github.com/theory-cloud/AppTheory/commit/0fe53d29f7ce900b02a0816158c10473a814bf40))
+* **sanitization:** context-aware accountNumber + policy overrides ([0fec764](https://github.com/theory-cloud/AppTheory/commit/0fec764f43b4f7b82da482653e8d1d7a520dc626))
+
 ## [0.13.0-rc.2](https://github.com/theory-cloud/AppTheory/compare/v0.13.0-rc.1...v0.13.0-rc.2) (2026-02-28)
 
 
