@@ -18,7 +18,7 @@ func TestSanitizeFieldValue_RedactsMasksAndRecurses(t *testing.T) {
 	}
 
 	if got := SanitizeFieldValue("access_token", "tok"); got != redactedValue {
-		t.Fatalf("expected substring token to be redacted, got %#v", got)
+		t.Fatalf("expected access_token to be redacted, got %#v", got)
 	}
 
 	if got := SanitizeFieldValue("ssn", "123-45-6789"); got != "*****6789" {
@@ -136,6 +136,16 @@ func TestXMLMaskHelpers_HandleEscapedAndShortValues(t *testing.T) {
 	}
 }
 
+func TestSanitizeXML_RapidConnectFixture(t *testing.T) {
+	t.Parallel()
+
+	xml := "<AcctNum>4111111111111111</AcctNum><CVV2>123</CVV2><TransArmorToken>abcd1234</TransArmorToken>"
+	out := SanitizeXML(xml, RapidConnectXMLPatterns)
+	if out != "<AcctNum>411111******1111</AcctNum><CVV2>"+redactedValue+"</CVV2><TransArmorToken>****1234</TransArmorToken>" {
+		t.Fatalf("expected rapid connect xml to be sanitized, got %s", out)
+	}
+}
+
 func TestSanitizeFieldValue_AllowsAuthorizationID_AndAliases(t *testing.T) {
 	t.Parallel()
 
@@ -144,6 +154,100 @@ func TestSanitizeFieldValue_AllowsAuthorizationID_AndAliases(t *testing.T) {
 	}
 	if got := SanitizeFieldValue("authorizationId", "auth_123"); got != "auth_123" {
 		t.Fatalf("expected authorizationId alias to be preserved, got %#v", got)
+	}
+}
+
+func TestSanitizeFieldValue_DoesNotSubstringRedactBusinessKeys(t *testing.T) {
+	t.Parallel()
+
+	if got := SanitizeFieldValue("authorizationCode", "ok_1"); got != "ok_1" {
+		t.Fatalf("expected authorizationCode to be preserved, got %#v", got)
+	}
+	if got := SanitizeFieldValue("tokenization_method", "apple_pay"); got != "apple_pay" {
+		t.Fatalf("expected tokenization_method to be preserved, got %#v", got)
+	}
+
+	if got := SanitizeFieldValue("mid", "mid_1"); got != "mid_1" {
+		t.Fatalf("expected mid to be preserved, got %#v", got)
+	}
+	if got := SanitizeFieldValue("acceptorId", "acceptor_1"); got != "acceptor_1" {
+		t.Fatalf("expected acceptorId to be preserved, got %#v", got)
+	}
+	if got := SanitizeFieldValue("tid", "tid_1"); got != "tid_1" {
+		t.Fatalf("expected tid to be preserved, got %#v", got)
+	}
+}
+
+func TestSanitizeFieldValue_TesouroGraphQLFixture(t *testing.T) {
+	t.Parallel()
+
+	fixture := map[string]any{
+		"data": map[string]any{
+			"transaction": map[string]any{
+				"authorizationId":     "auth_123",
+				"authorizationCode":   "ok_1",
+				"tokenization_method": "apple_pay",
+				"accessToken":         "secret",
+				"mid":                 "mid_1",
+				"cardWithPanDetails": map[string]any{
+					"accountNumber": "4111111111111111",
+					"cvv":           "123",
+				},
+				"achDetails": map[string]any{
+					"accountNumber": "123456789",
+				},
+			},
+		},
+	}
+
+	out, ok := SanitizeFieldValue("root", fixture).(map[string]any)
+	if !ok {
+		t.Fatalf("expected map output, got %T (%#v)", out, out)
+	}
+
+	data, ok := out["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data to be map, got %T (%#v)", out["data"], out["data"])
+	}
+
+	tx, ok := data["transaction"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected transaction to be map, got %T (%#v)", data["transaction"], data["transaction"])
+	}
+
+	if tx["authorizationId"] != "auth_123" {
+		t.Fatalf("expected transaction.authorizationId to be preserved, got %#v", tx["authorizationId"])
+	}
+	if tx["authorizationCode"] != "ok_1" {
+		t.Fatalf("expected transaction.authorizationCode to be preserved, got %#v", tx["authorizationCode"])
+	}
+	if tx["tokenization_method"] != "apple_pay" {
+		t.Fatalf("expected transaction.tokenization_method to be preserved, got %#v", tx["tokenization_method"])
+	}
+	if tx["accessToken"] != redactedValue {
+		t.Fatalf("expected transaction.accessToken to be redacted, got %#v", tx["accessToken"])
+	}
+	if tx["mid"] != "mid_1" {
+		t.Fatalf("expected transaction.mid to be preserved, got %#v", tx["mid"])
+	}
+
+	cardDetails, ok := tx["cardWithPanDetails"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected cardWithPanDetails to be map, got %T (%#v)", tx["cardWithPanDetails"], tx["cardWithPanDetails"])
+	}
+	if cardDetails["accountNumber"] != "411111******1111" {
+		t.Fatalf("expected cardWithPanDetails.accountNumber to be pci-masked, got %#v", cardDetails["accountNumber"])
+	}
+	if cardDetails["cvv"] != redactedValue {
+		t.Fatalf("expected cardWithPanDetails.cvv to be redacted, got %#v", cardDetails["cvv"])
+	}
+
+	achDetails, ok := tx["achDetails"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected achDetails to be map, got %T (%#v)", tx["achDetails"], tx["achDetails"])
+	}
+	if achDetails["accountNumber"] != "*****6789" {
+		t.Fatalf("expected achDetails.accountNumber to be last4-masked, got %#v", achDetails["accountNumber"])
 	}
 }
 
@@ -161,6 +265,62 @@ func TestSanitizeFieldValue_MasksCamelCaseSensitiveKeys(t *testing.T) {
 	}
 	if got := SanitizeFieldValue("apiKey", "k"); got != redactedValue {
 		t.Fatalf("expected apiKey to be redacted, got %#v", got)
+	}
+}
+
+func TestSanitizeFieldValue_ContextAwareAccountNumberMasking(t *testing.T) {
+	t.Parallel()
+
+	cardContext := map[string]any{
+		"cardWithPanDetails": map[string]any{
+			"accountNumber": "4111111111111111",
+		},
+	}
+	out, ok := SanitizeFieldValue("root", cardContext).(map[string]any)
+	if !ok {
+		t.Fatalf("expected map output, got %T (%#v)", out, out)
+	}
+	cardDetails, ok := out["cardWithPanDetails"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected cardWithPanDetails to be map, got %T (%#v)", out["cardWithPanDetails"], out["cardWithPanDetails"])
+	}
+	if cardDetails["accountNumber"] != "411111******1111" {
+		t.Fatalf("expected cardWithPanDetails.accountNumber to be pci-masked, got %#v", cardDetails["accountNumber"])
+	}
+
+	bankContext := map[string]any{
+		"achDetails": map[string]any{
+			"accountNumber": "123456789",
+		},
+	}
+	out2, ok := SanitizeFieldValue("root", bankContext).(map[string]any)
+	if !ok {
+		t.Fatalf("expected map output, got %T (%#v)", out2, out2)
+	}
+	achDetails, ok := out2["achDetails"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected achDetails to be map, got %T (%#v)", out2["achDetails"], out2["achDetails"])
+	}
+	if achDetails["accountNumber"] != "*****6789" {
+		t.Fatalf("expected achDetails.accountNumber to be last4-masked, got %#v", achDetails["accountNumber"])
+	}
+
+	// Snake_case account_number should default to bank/ACH masking even in a card-like parent context.
+	snakeCase := map[string]any{
+		"cardWithPanDetails": map[string]any{
+			"account_number": "4111111111111111",
+		},
+	}
+	out3, ok := SanitizeFieldValue("root", snakeCase).(map[string]any)
+	if !ok {
+		t.Fatalf("expected map output, got %T (%#v)", out3, out3)
+	}
+	cardDetails2, ok := out3["cardWithPanDetails"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected cardWithPanDetails to be map, got %T (%#v)", out3["cardWithPanDetails"], out3["cardWithPanDetails"])
+	}
+	if cardDetails2["account_number"] != "************1111" {
+		t.Fatalf("expected account_number to be last4-masked, got %#v", cardDetails2["account_number"])
 	}
 }
 

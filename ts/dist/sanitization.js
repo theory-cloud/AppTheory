@@ -11,6 +11,12 @@ const allowedSanitizeFields = new Set([
     "transaction_id",
     "authorization_id",
     "merchant_uid",
+    // External system identifiers (MIDs, acceptor IDs, terminal IDs, etc.).
+    "mid",
+    "merchant_id",
+    "acceptor_id",
+    "tid",
+    "terminal_id",
 ]);
 const sensitiveSanitizeFields = new Map([
     ["cvv", "fully"],
@@ -35,6 +41,12 @@ const sensitiveSanitizeFields = new Map([
     ["secret", "fully"],
     ["private_key", "fully"],
     ["secret_key", "fully"],
+    ["access_token", "fully"],
+    ["refresh_token", "fully"],
+    ["id_token", "fully"],
+    ["token", "fully"],
+    ["client_secret", "fully"],
+    ["api_key", "fully"],
     ["api_token", "fully"],
     ["api_key_id", "partial"],
     ["authorization", "fully"],
@@ -112,7 +124,25 @@ function maskCardNumberString(value) {
     }
     return "****";
 }
+function shouldMaskAccountNumberAsBank(parentKey, keyLower) {
+    if (String(keyLower ?? "").includes("_"))
+        return true;
+    const parentCanonical = canonicalizeSanitizationKey(parentKey);
+    return (parentCanonical === "achdetails" ||
+        parentCanonical === "bankaccount" ||
+        parentCanonical === "bankaccountdetails" ||
+        parentCanonical === "bankdetails");
+}
+function shouldMaskAccountNumberAsCard(parentKey) {
+    const parentCanonical = canonicalizeSanitizationKey(parentKey);
+    return (parentCanonical === "cardwithpandetails" ||
+        parentCanonical === "cardpandetails" ||
+        parentCanonical === "pandetails");
+}
 function sanitizeValue(value) {
+    return sanitizeValueWithParent("", value);
+}
+function sanitizeValueWithParent(parentKey, value) {
     if (value === null || value === undefined)
         return null;
     if (typeof value === "string")
@@ -120,53 +150,48 @@ function sanitizeValue(value) {
     if (value instanceof Uint8Array)
         return sanitizeLogString(Buffer.from(value).toString("utf8"));
     if (Array.isArray(value))
-        return value.map((v) => sanitizeValue(v));
+        return value.map((v) => sanitizeValueWithParent(parentKey, v));
     if (typeof value === "object") {
         const out = {};
         for (const [k, v] of Object.entries(value)) {
-            out[k] = sanitizeFieldValue(k, v);
+            out[k] = sanitizeFieldValueWithParent(parentKey, k, v);
         }
         return out;
     }
     return sanitizeLogString(String(value));
 }
 export function sanitizeFieldValue(key, value) {
+    return sanitizeFieldValueWithParent("", key, value);
+}
+function sanitizeFieldValueWithParent(parentKey, key, value) {
     const k = String(key ?? "")
         .trim()
         .toLowerCase();
-    if (!k)
-        return sanitizeValue(value);
-    if (allowedSanitizeFields.has(k))
-        return sanitizeValue(value);
-    const explicit = sensitiveSanitizeFields.get(k);
+    const canonical = canonicalizeSanitizationKey(k);
+    if (!k || !canonical)
+        return sanitizeValueWithParent(parentKey, value);
+    if (allowedSanitizeFields.has(k) || allowedSanitizeFields.has(canonical))
+        return sanitizeValueWithParent(k, value);
+    const explicit = sensitiveSanitizeFields.get(k) ?? sensitiveSanitizeFields.get(canonical);
     if (explicit === "fully")
         return REDACTED_VALUE;
     if (explicit === "partial") {
-        const canonical = canonicalizeSanitizationKey(k);
         if (canonical === "cardnumber" ||
             canonical === "number" ||
             canonical === "panvalue" ||
             canonical === "pan" ||
             canonical === "primaryaccountnumber")
             return maskCardNumberString(value);
+        if (canonical === "accountnumber") {
+            if (shouldMaskAccountNumberAsBank(parentKey, k))
+                return maskRestrictedString(value);
+            if (shouldMaskAccountNumberAsCard(parentKey))
+                return maskCardNumberString(value);
+            return maskRestrictedString(value);
+        }
         return maskRestrictedString(value);
     }
-    const blockedSubstrings = [
-        "secret",
-        "token",
-        "password",
-        "private_key",
-        "privatekey",
-        "client_secret",
-        "api_key",
-        "apikey",
-        "authorization",
-    ];
-    for (const s of blockedSubstrings) {
-        if (k.includes(s))
-            return REDACTED_VALUE;
-    }
-    return sanitizeValue(value);
+    return sanitizeValueWithParent(k, value);
 }
 export function sanitizeJSON(jsonBytes) {
     const buf = typeof jsonBytes === "string"

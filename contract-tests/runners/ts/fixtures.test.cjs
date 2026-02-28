@@ -614,6 +614,66 @@ test("sanitization: sanitizeFieldValue masks sensitive fields", async () => {
   });
 });
 
+test("sanitization: sanitizeFieldValue context-aware accountNumber masking", async () => {
+  const { sanitizeFieldValue } = await importDist("sanitization.js");
+
+  const cardCtx = sanitizeFieldValue("root", {
+    cardWithPanDetails: { accountNumber: "4111111111111111" },
+  });
+  assert.equal(cardCtx.cardWithPanDetails.accountNumber, "411111******1111");
+
+  const bankCtx = sanitizeFieldValue("root", {
+    achDetails: { accountNumber: "123456789" },
+  });
+  assert.equal(bankCtx.achDetails.accountNumber, "*****6789");
+
+  const snakeCase = sanitizeFieldValue("root", {
+    cardWithPanDetails: { account_number: "4111111111111111" },
+  });
+  assert.equal(snakeCase.cardWithPanDetails.account_number, "************1111");
+});
+
+test("sanitization: sanitizeFieldValue does not substring-redact business fields", async () => {
+  const { sanitizeFieldValue } = await importDist("sanitization.js");
+
+  assert.equal(sanitizeFieldValue("authorization_id", "auth_123"), "auth_123");
+  assert.equal(sanitizeFieldValue("authorizationId", "auth_123"), "auth_123");
+  assert.equal(sanitizeFieldValue("authorizationCode", "ok_1"), "ok_1");
+  assert.equal(sanitizeFieldValue("tokenization_method", "apple_pay"), "apple_pay");
+
+  assert.equal(sanitizeFieldValue("mid", "mid_1"), "mid_1");
+  assert.equal(sanitizeFieldValue("acceptorId", "acceptor_1"), "acceptor_1");
+  assert.equal(sanitizeFieldValue("tid", "tid_1"), "tid_1");
+});
+
+test("sanitization: Tesouro GraphQL fixture", async () => {
+  const { sanitizeFieldValue } = await importDist("sanitization.js");
+
+  const out = sanitizeFieldValue("root", {
+    data: {
+      transaction: {
+        authorizationId: "auth_123",
+        authorizationCode: "ok_1",
+        tokenization_method: "apple_pay",
+        accessToken: "secret",
+        mid: "mid_1",
+        cardWithPanDetails: { accountNumber: "4111111111111111", cvv: "123" },
+        achDetails: { accountNumber: "123456789" },
+      },
+    },
+  });
+
+  const tx = out.data.transaction;
+  assert.equal(tx.authorizationId, "auth_123");
+  assert.equal(tx.authorizationCode, "ok_1");
+  assert.equal(tx.tokenization_method, "apple_pay");
+  assert.equal(tx.accessToken, "[REDACTED]");
+  assert.equal(tx.mid, "mid_1");
+  assert.equal(tx.cardWithPanDetails.accountNumber, "411111******1111");
+  assert.equal(tx.cardWithPanDetails.cvv, "[REDACTED]");
+  assert.equal(tx.achDetails.accountNumber, "*****6789");
+});
+
 test("sanitization: sanitizeJSON sanitizes nested body JSON strings", async () => {
   const { sanitizeJSON } = await importDist("sanitization.js");
 
@@ -638,6 +698,17 @@ test("sanitization: sanitizeXML applies payment patterns", async () => {
   assert.equal(
     out,
     "<CardNum>424242******4242</CardNum><CVV>[REDACTED]</CVV><TransArmorToken>****1234</TransArmorToken>",
+  );
+});
+
+test("sanitization: sanitizeXML Rapid Connect fixture", async () => {
+  const { sanitizeXML, rapidConnectXMLPatterns } = await importDist("sanitization.js");
+
+  const xml = "<AcctNum>4111111111111111</AcctNum><CVV2>123</CVV2><TransArmorToken>abcd1234</TransArmorToken>";
+  const out = sanitizeXML(xml, rapidConnectXMLPatterns);
+  assert.equal(
+    out,
+    "<AcctNum>411111******1111</AcctNum><CVV2>[REDACTED]</CVV2><TransArmorToken>****1234</TransArmorToken>",
   );
 });
 
