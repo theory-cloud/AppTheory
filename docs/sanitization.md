@@ -37,16 +37,44 @@ Sanitization is key-name driven:
 - Common PAN aliases used in import/migration datasets are treated as card numbers and **masked accordingly**:
   `pan_value`, `pan`, `primary_account_number`.
 
-Unknown keys fall back to safe string sanitization, with an additional substring-based blocklist (e.g. `*secret*`,
-`*token*`, `*authorization*`).
+Unknown keys fall back to safe string sanitization (strip `\r`/`\n`) and recursive sanitization for nested objects.
+AppTheory intentionally avoids substring-based redaction rules because they can over-redact non-secret business fields
+(for example GraphQL response fields that contain `"authorization"` in the name).
+
+### Context-aware `accountNumber`
+
+Some upstream payloads use the key `accountNumber` for both card PANs and bank accounts. AppTheory masks this key
+based on immediate parent context:
+
+- Card PAN contexts (e.g. `cardWithPanDetails`, `panDetails`): **PAN mask** (`BIN + **** + last4` when available).
+- ACH/bank contexts (e.g. `achDetails`, `bankDetails`) or snake_case `account_number`: **restricted mask** (`****last4`).
 
 ## Usage guidance
 
 - Prefer sanitizing **structured fields** (`sanitize_field_value` / `SanitizeFieldValue`) over dumping raw payloads.
 - If you must log JSON payloads (e.g. event envelopes):
   - Console/text logs: log `sanitize_json(...)` / `SanitizeJSON(...)` output.
-  - Structured JSON logs: prefer `sanitize_json_value(...)` / `sanitizeJSONValue(...)` / `SanitizeJSONValue(...)` (or Go `RawJSON`) to avoid escaping JSON as a string.
+  - Structured JSON logs:
+    - Go: wrap payload bytes with `sanitization.RawJSON(...)` (recommended) or call `SanitizeJSONValue(...)`.
+    - TypeScript/Python: prefer `sanitizeJSONValue(...)` / `sanitize_json_value(...)`.
+    This keeps JSON nested/typed in the logger output instead of logging an escaped JSON string.
 - For XML payloads, use `sanitize_xml(xml, payment_xml_patterns)` / `SanitizeXML(xml, PaymentXMLPatterns)`.
+
+### AWS event `"body"` parsing
+
+AWS HTTP-style events commonly store the request body as a JSON-encoded **string** under the key `"body"`.
+AppTheory treats `"body"` specially when it contains valid JSON:
+
+- `SanitizeJSON(...)` / `sanitize_json(...)` keeps `"body"` as a string (rewritten to sanitized JSON).
+- `SanitizeJSONValue(...)` / `sanitizeJSONValue(...)` / `sanitize_json_value(...)` parses `"body"` into a nested object for structured logging.
+
+## Policy overrides (Go)
+
+If you need to tune sanitization without writing a custom sanitizer function, set
+`observability.LoggerConfig.SanitizationPolicy`.
+
+Rules are evaluated **before** the built-in defaults, so policies can override both allowlisted IDs and default
+redactions/masks.
 
 ## Stability
 

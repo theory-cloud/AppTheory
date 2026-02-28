@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.0](https://github.com/theory-cloud/AppTheory/compare/v0.12.0...v0.13.0) (2026-02-27)
+
+
+### Features
+
+* enhanced logging ([95d29c7](https://github.com/theory-cloud/AppTheory/commit/95d29c73b35ae9fd0caeacae0efbe1ad9ef51941))
+
+## [0.12.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v0.12.0-rc...v0.12.0-rc.1) (2026-02-27)
+
+
+### Features
+
+* enhanced logging ([95d29c7](https://github.com/theory-cloud/AppTheory/commit/95d29c73b35ae9fd0caeacae0efbe1ad9ef51941))
+
 ## [0.12.0](https://github.com/theory-cloud/AppTheory/compare/v0.11.1...v0.12.0) (2026-02-26)
 
 
