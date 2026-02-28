@@ -18,19 +18,19 @@ const (
 
 type PolicyRule struct {
 	// ParentKey scopes the rule to a single parent key. When empty, the rule applies globally.
-	ParentKey string       `json:"parent_key,omitempty"`
-	Key       string       `json:"key"`
-	Action    PolicyAction `json:"action"`
+	ParentKey string       `json:"parent_key,omitempty" yaml:"parent_key,omitempty"`
+	Key       string       `json:"key" yaml:"key"`
+	Action    PolicyAction `json:"action" yaml:"action"`
 }
 
 // Policy allows services to override field sanitization behavior without providing custom code.
 //
 // Rules are evaluated before the built-in AllowedFields/SensitiveFields defaults.
 type Policy struct {
-	AllowedFields     []string     `json:"allowed_fields,omitempty"`
-	FullyRedactFields []string     `json:"fully_redact_fields,omitempty"`
-	PartialMaskFields []string     `json:"partial_mask_fields,omitempty"`
-	Rules             []PolicyRule `json:"rules,omitempty"`
+	AllowedFields     []string     `json:"allowed_fields,omitempty" yaml:"allowed_fields,omitempty"`
+	FullyRedactFields []string     `json:"fully_redact_fields,omitempty" yaml:"fully_redact_fields,omitempty"`
+	PartialMaskFields []string     `json:"partial_mask_fields,omitempty" yaml:"partial_mask_fields,omitempty"`
+	Rules             []PolicyRule `json:"rules,omitempty" yaml:"rules,omitempty"`
 }
 
 // NewPolicySanitizer returns a sanitizer function based on the provided policy.
