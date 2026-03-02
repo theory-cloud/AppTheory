@@ -266,3 +266,44 @@ func TestToolsCallStreaming_CanResumeViaGETWithLastEventID(t *testing.T) {
 		t.Fatalf("expected resumed stream to contain final result, got:\n%s", all)
 	}
 }
+
+func TestGET_NoLastEventID_OpensSessionListenerAndKeepsAlive(t *testing.T) {
+	s := NewServer("test-server", "1.0.0")
+	sessionID := initializeSession(t, s)
+
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"text/event-stream"}
+
+	reqCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	resp, err := invokeHandlerWithMethod(reqCtx, s, "GET", nil, headers)
+	if err != nil {
+		t.Fatalf("invoke GET: %v", err)
+	}
+	if resp.BodyReader == nil {
+		t.Fatalf("expected GET listener BodyReader to be set")
+	}
+
+	reader := bufio.NewReader(resp.BodyReader)
+
+	done := make(chan struct{})
+	var frame string
+	var readErr error
+	go func() {
+		defer close(done)
+		frame, readErr = readSSEFrame(reader)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for keepalive frame")
+	}
+	if readErr != nil {
+		t.Fatalf("read keepalive SSE frame: %v (frame=%q)", readErr, frame)
+	}
+	if !strings.HasPrefix(frame, ":") || !strings.Contains(frame, "keepalive") {
+		t.Fatalf("expected keepalive comment frame, got:\n%s", frame)
+	}
+}
