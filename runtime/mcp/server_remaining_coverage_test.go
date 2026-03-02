@@ -311,6 +311,11 @@ func TestServerHelpersAndInternalBranches(t *testing.T) {
 			t.Fatalf("expected default protocolVersion, got pv=%q err=%+v", pv, errResp)
 		}
 
+		pv, errResp = s.negotiateInitializeProtocolVersion(&Request{ID: 1, Params: json.RawMessage(`{"protocolVersion":"` + protocolVersionPrior + `"}`)})
+		if errResp != nil || pv != protocolVersionPrior {
+			t.Fatalf("expected prior protocolVersion, got pv=%q err=%+v", pv, errResp)
+		}
+
 		pv, errResp = s.negotiateInitializeProtocolVersion(&Request{ID: 1, Params: json.RawMessage(`{"protocolVersion":"` + protocolVersionLegacy + `"}`)})
 		if errResp != nil || pv != protocolVersionLegacy {
 			t.Fatalf("expected legacy protocolVersion, got pv=%q err=%+v", pv, errResp)
