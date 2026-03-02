@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -451,8 +452,40 @@ type toolsCallParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 	Meta      struct {
-		ProgressToken string `json:"progressToken,omitempty"`
+		ProgressToken json.RawMessage `json:"progressToken,omitempty"`
 	} `json:"_meta,omitempty"`
+}
+
+func normalizeProgressToken(raw json.RawMessage) json.RawMessage {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return nil
+	}
+
+	if raw[0] == '"' {
+		var token string
+		if err := json.Unmarshal(raw, &token); err != nil {
+			return nil
+		}
+		token = strings.TrimSpace(token)
+		if token == "" {
+			return nil
+		}
+		normalized, err := json.Marshal(token)
+		if err != nil {
+			return nil
+		}
+		return normalized
+	}
+
+	if raw[0] == '-' || ('0' <= raw[0] && raw[0] <= '9') {
+		if !json.Valid(raw) {
+			return nil
+		}
+		return raw
+	}
+
+	return nil
 }
 
 // handleToolsCall invokes a registered tool by name (buffered JSON mode).
@@ -925,11 +958,11 @@ func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID strin
 		return
 	}
 
-	progressToken := strings.TrimSpace(params.Meta.ProgressToken)
+	progressToken := normalizeProgressToken(params.Meta.ProgressToken)
 	progressSeq := 0.0
 
 	emit := func(ev SSEEvent) {
-		if progressToken == "" {
+		if progressToken == nil {
 			return
 		}
 

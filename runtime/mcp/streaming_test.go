@@ -56,7 +56,7 @@ func TestToolsCallStreaming_StreamsProgressIncrementally(t *testing.T) {
 	}
 
 	params := toolsCallParams{Name: "slow_tool", Arguments: json.RawMessage(`{}`)}
-	params.Meta.ProgressToken = "pt-123"
+	params.Meta.ProgressToken = json.RawMessage(`"pt-123"`)
 
 	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: mustMarshal(t, params)})
 
@@ -148,6 +148,76 @@ func TestToolsCallStreaming_StreamsProgressIncrementally(t *testing.T) {
 	}
 }
 
+func TestToolsCallStreaming_ProgressToken_NumberIsPreserved(t *testing.T) {
+	s := NewServer("test-server", "1.0.0")
+	sessionID := initializeSession(t, s)
+
+	firstEmitted := make(chan struct{})
+	continueTool := make(chan struct{})
+
+	if err := s.registry.RegisterStreamingTool(
+		ToolDef{
+			Name:        "slow_tool",
+			Description: "Emits progress then blocks",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+		},
+		func(ctx context.Context, _ json.RawMessage, emit func(SSEEvent)) (*ToolResult, error) {
+			emit(SSEEvent{Data: map[string]any{"seq": 1}})
+			close(firstEmitted)
+
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-continueTool:
+			}
+
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
+		},
+	); err != nil {
+		t.Fatalf("register streaming tool: %v", err)
+	}
+
+	params := toolsCallParams{Name: "slow_tool", Arguments: json.RawMessage(`{}`)}
+	params.Meta.ProgressToken = json.RawMessage(`123`)
+	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: mustMarshal(t, params)})
+
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"text/event-stream"}
+
+	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if resp.BodyReader == nil {
+		t.Fatalf("expected streaming response BodyReader to be set")
+	}
+
+	reader := bufio.NewReader(resp.BodyReader)
+
+	select {
+	case <-firstEmitted:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for first progress emission")
+	}
+
+	firstFrame, err := readSSEFrame(reader)
+	if err != nil {
+		t.Fatalf("read first SSE frame: %v", err)
+	}
+	if !strings.Contains(firstFrame, `"method":"notifications/progress"`) {
+		t.Fatalf("expected first frame to be progress notification, got:\n%s", firstFrame)
+	}
+	if !strings.Contains(firstFrame, `"progressToken":123`) {
+		t.Fatalf("expected first frame to contain numeric progressToken, got:\n%s", firstFrame)
+	}
+
+	close(continueTool)
+
+	if _, err := io.ReadAll(reader); err != nil {
+		t.Fatalf("read rest of SSE stream: %v", err)
+	}
+}
+
 func TestToolsCallStreaming_CanResumeViaGETWithLastEventID(t *testing.T) {
 	s := NewServer("test-server", "1.0.0")
 	sessionID := initializeSession(t, s)
@@ -180,7 +250,7 @@ func TestToolsCallStreaming_CanResumeViaGETWithLastEventID(t *testing.T) {
 	}
 
 	params := toolsCallParams{Name: "slow_tool", Arguments: json.RawMessage(`{}`)}
-	params.Meta.ProgressToken = "pt-123"
+	params.Meta.ProgressToken = json.RawMessage(`"pt-123"`)
 	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: mustMarshal(t, params)})
 
 	headers := sessionHeaders(sessionID)
