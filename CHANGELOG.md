@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.1](https://github.com/theory-cloud/AppTheory/compare/v0.14.0...v0.14.1) (2026-03-02)
+
+
+### Bug Fixes
+
+* **mcp:** support 2025-11-25 version negotiation ([1a65188](https://github.com/theory-cloud/AppTheory/commit/1a65188f9b5a280ad9df8a709bb3cca348618347))
+* **mcp:** support 2025-11-25 version negotiation ([8028b60](https://github.com/theory-cloud/AppTheory/commit/8028b60ea1b8b628017d8777ffc19be80e49b128))
+
 ## [0.14.0-rc.2](https://github.com/theory-cloud/AppTheory/compare/v0.14.0-rc.1...v0.14.0-rc.2) (2026-03-02)
 
 
