@@ -56,7 +56,7 @@ func NewClient(server *mcpruntime.Server, env *testkit.Env) *Client {
 		server:   server,
 		env:      env,
 		app:      app,
-		protocol: "2025-06-18",
+		protocol: "2025-11-25",
 	}
 }
 
@@ -72,7 +72,7 @@ func (c *Client) Initialize(ctx context.Context) (*mcpruntime.Response, error) {
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "initialize",
-		Params:  json.RawMessage(`{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"apptheory-testkit","version":"dev"}}`),
+		Params:  json.RawMessage(`{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"apptheory-testkit","version":"dev"}}`),
 	}
 	resp, err := c.Raw(ctx, req)
 	if err != nil {

@@ -47,7 +47,7 @@ func buildApp() *apptheory.App {
 ```
 
 Important behaviors for Claude compatibility:
-- `initialize` returns `Mcp-Session-Id` and must negotiate `protocolVersion` (`2025-06-18`).
+- `initialize` returns `Mcp-Session-Id` and must negotiate `protocolVersion` (`2025-11-25`).
 - `notifications/initialized` must return `202 Accepted` with no body.
 - `tools/call` may stream with SSE when the client includes `Accept: text/event-stream`.
 - Disconnections are not cancellation; resumability uses `GET /mcp` + `Last-Event-ID`.
@@ -101,4 +101,3 @@ See the compatibility contract + transcripts:
 - Tools-only server: `examples/mcp/tools-only`
 - Tools + resources + prompts: `examples/mcp/tools-resources-prompts`
 - Resumable SSE tool call: `examples/mcp/resumable-sse`
-

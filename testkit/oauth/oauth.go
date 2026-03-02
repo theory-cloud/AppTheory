@@ -165,7 +165,7 @@ func (c *ClaudePublicClient) Authorize(ctx context.Context, opts AuthorizeOption
 
 func (c *ClaudePublicClient) discover(ctx context.Context, mcpEndpoint, origin string) (*Discovery, error) {
 	// A) Call MCP without a token to get the RFC9728 discovery challenge.
-	initializeBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"Claude","version":"unknown"}}}`)
+	initializeBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"Claude","version":"unknown"}}}`)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, mcpEndpoint, bytes.NewReader(initializeBody))
 	if err != nil {
