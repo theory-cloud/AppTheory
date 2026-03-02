@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strconv"
@@ -272,8 +273,9 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 
 	lastEventID := firstHeader(c.Request.Headers, headerLastEventID)
 	if lastEventID == "" {
-		// No resumable stream requested.
-		return apptheory.SSEResponse(200)
+		// No resumable stream requested. Keep the connection open as a session-level
+		// SSE listener (clients will reconnect in a tight loop if we return EOF).
+		return s.openSessionListener(ctx, sessionID)
 	}
 
 	streamID, err := s.streamStore.StreamForEvent(ctx, sessionID, lastEventID)
@@ -295,6 +297,50 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 	}
 
 	return s.streamToSSE(ctx, sessionID, events)
+}
+
+func (s *Server) openSessionListener(ctx context.Context, sessionID string) (*apptheory.Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	pr, pw := io.Pipe()
+
+	go func() {
+		defer pw.Close()
+
+		// Emit an initial keepalive comment so the stream produces output quickly
+		// (useful for clients/proxies that expect early bytes).
+		_, _ = pw.Write([]byte(": keepalive\n\n"))
+
+		// Keepalives prevent API Gateway idle timeouts (Regional endpoints idle out
+		// after ~5 minutes without data).
+		ticker := time.NewTicker(2 * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if _, err := pw.Write([]byte(": keepalive\n\n")); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	resp := &apptheory.Response{
+		Status: 200,
+		Headers: map[string][]string{
+			"content-type":     {"text/event-stream"},
+			"cache-control":    {"no-cache"},
+			"connection":       {"keep-alive"},
+			headerMcpSessionID: {sessionID},
+		},
+		BodyReader: pr,
+	}
+	return resp, nil
 }
 
 func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error) {
