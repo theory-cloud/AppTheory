@@ -354,6 +354,44 @@ func TestProperty10_ResponseFormatMatchesAcceptHeader(t *testing.T) {
 	})
 }
 
+func TestToolsCall_AcceptsNumericProgressToken(t *testing.T) {
+	s := newTestServer()
+	sessionID := initializeSession(t, s)
+
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"message":"hello"},"_meta":{"progressToken":123}}}`)
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"application/json"}
+
+	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	rpcResp, err := parseJSONRPCResponse(resp)
+	if err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if rpcResp.Error != nil {
+		t.Fatalf("expected success response, got error: %+v", rpcResp.Error)
+	}
+
+	resultBytes, err := json.Marshal(rpcResp.Result)
+	if err != nil {
+		t.Fatalf("failed to marshal result: %v", err)
+	}
+
+	var toolRes ToolResult
+	if err := json.Unmarshal(resultBytes, &toolRes); err != nil {
+		t.Fatalf("failed to parse tool result: %v (result: %s)", err, resultBytes)
+	}
+	if len(toolRes.Content) != 1 {
+		t.Fatalf("expected 1 content block, got %d", len(toolRes.Content))
+	}
+	if toolRes.Content[0].Text != "hello" {
+		t.Fatalf("content mismatch: got %q, want %q", toolRes.Content[0].Text, "hello")
+	}
+}
+
 // Feature: cloud-mcp-gateway, Property 11: Batch Request Handling
 // Validates: Requirements 7.5
 //

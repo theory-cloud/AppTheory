@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.15.0](https://github.com/theory-cloud/AppTheory/compare/v0.14.1...v0.15.0) (2026-03-02)
+
+
+### Bug Fixes
+
+* **mcp:** errcheck in SSE keepalive ([9fb854a](https://github.com/theory-cloud/AppTheory/commit/9fb854ac72bf44932edb8ad7eb2a841aefd2d1a0))
+* **mcp:** keep GET /mcp SSE listener open ([6f73df2](https://github.com/theory-cloud/AppTheory/commit/6f73df25bf39b1138a97690e6b2869f838cb4749))
+* **mcp:** keep GET SSE listener open ([cbbce46](https://github.com/theory-cloud/AppTheory/commit/cbbce4634a54acd8e2f778ce1e6bd94d3641cb8a))
+
 ## [0.15.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v0.14.1-rc.1...v0.15.0-rc.1) (2026-03-02)
 
 
