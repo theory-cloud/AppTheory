@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.0-rc.2](https://github.com/theory-cloud/AppTheory/compare/v0.15.0-rc.1...v0.15.0-rc.2) (2026-03-02)
+
+
+### Bug Fixes
+
+* **mcp:** accept string or integer progressToken ([0209319](https://github.com/theory-cloud/AppTheory/commit/02093193fcc21d64bc2af0d2dfa6c4fecbf2f7f0))
+* **mcp:** accept string or integer progressToken ([1a59516](https://github.com/theory-cloud/AppTheory/commit/1a5951693f6a83faf5a4219275808c1b1b212ca7))
+
 ## [0.15.0](https://github.com/theory-cloud/AppTheory/compare/v0.14.1...v0.15.0) (2026-03-02)
 
 
