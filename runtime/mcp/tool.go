@@ -9,9 +9,36 @@ import (
 
 // ToolDef defines an MCP tool's metadata and input schema.
 type ToolDef struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"inputSchema"`
+	Name        string           `json:"name"`
+	Title       string           `json:"title,omitempty"`
+	Description string           `json:"description,omitempty"`
+	Annotations *ToolAnnotations `json:"annotations,omitempty"`
+
+	Icons        []Icon          `json:"icons,omitempty"`
+	Execution    *ToolExecution  `json:"execution,omitempty"`
+	InputSchema  json.RawMessage `json:"inputSchema"`
+	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
+}
+
+type ToolAnnotations struct {
+	Title           string `json:"title,omitempty"`
+	ReadOnlyHint    *bool  `json:"readOnlyHint,omitempty"`
+	DestructiveHint *bool  `json:"destructiveHint,omitempty"`
+	IdempotentHint  *bool  `json:"idempotentHint,omitempty"`
+	OpenWorldHint   *bool  `json:"openWorldHint,omitempty"`
+}
+
+type ToolExecution struct {
+	// TaskSupport indicates if the tool supports task-augmented execution.
+	// Values: "forbidden", "optional", "required".
+	TaskSupport string `json:"taskSupport,omitempty"`
+}
+
+type Icon struct {
+	Src      string   `json:"src"`
+	MimeType string   `json:"mimeType,omitempty"`
+	Sizes    []string `json:"sizes,omitempty"`
+	Theme    string   `json:"theme,omitempty"` // "light" or "dark"
 }
 
 // ToolHandler is the function signature for tool implementations.

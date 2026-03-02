@@ -46,7 +46,7 @@ func TestClaudeRemoteMcp_UnauthorizedChallenge_AndProtectedResourceMetadata(t *t
   "id": 1,
   "method": "initialize",
   "params": {
-    "protocolVersion": "2025-06-18",
+    "protocolVersion": "2025-11-25",
     "capabilities": {},
     "clientInfo": { "name": "Claude", "version": "unknown" }
   }
@@ -165,7 +165,7 @@ func TestClaudeRemoteMcp_Lifecycle_AndStreamingResume_WithBearerAuth(t *testing.
   "id": 1,
   "method": "initialize",
   "params": {
-    "protocolVersion": "2025-06-18",
+    "protocolVersion": "2025-11-25",
     "capabilities": {},
     "clientInfo": { "name": "Claude", "version": "unknown" }
   }
@@ -207,8 +207,8 @@ func TestClaudeRemoteMcp_Lifecycle_AndStreamingResume_WithBearerAuth(t *testing.
 	if unmarshalErr := json.Unmarshal(initResultBytes, &initResult); unmarshalErr != nil {
 		t.Fatalf("unmarshal initialize result: %v", unmarshalErr)
 	}
-	if strings.TrimSpace(initResult.ProtocolVersion) != "2025-06-18" {
-		t.Fatalf("expected protocolVersion=2025-06-18, got %q", initResult.ProtocolVersion)
+	if strings.TrimSpace(initResult.ProtocolVersion) != "2025-11-25" {
+		t.Fatalf("expected protocolVersion=2025-11-25, got %q", initResult.ProtocolVersion)
 	}
 
 	initializedBody := []byte(`{ "jsonrpc":"2.0", "method":"notifications/initialized" }`)
@@ -221,7 +221,7 @@ func TestClaudeRemoteMcp_Lifecycle_AndStreamingResume_WithBearerAuth(t *testing.
 			"origin":               {"https://claude.ai"},
 			"authorization":        {"Bearer token-123"},
 			"mcp-session-id":       {sessionID},
-			"mcp-protocol-version": {"2025-06-18"},
+			"mcp-protocol-version": {"2025-11-25"},
 		},
 		Body: initializedBody,
 	})
@@ -234,7 +234,7 @@ func TestClaudeRemoteMcp_Lifecycle_AndStreamingResume_WithBearerAuth(t *testing.
 		env:       env,
 		app:       app,
 		sessionID: sessionID,
-		protocol:  "2025-06-18",
+		protocol:  "2025-11-25",
 	}
 
 	params := map[string]any{
