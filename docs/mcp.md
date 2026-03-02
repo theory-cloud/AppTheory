@@ -36,7 +36,7 @@ app.Get("/mcp", h)
 app.Delete("/mcp", h)
 ```
 
-Protocol version implemented (method surface / payloads): `2025-06-18`.
+Supported protocol versions (negotiated on `initialize`): `2025-11-25` (latest), `2025-06-18`, `2025-03-26` (legacy).
 
 ---
 
