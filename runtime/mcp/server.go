@@ -14,10 +14,11 @@ import (
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
-// protocolVersion is the MCP protocol version supported by this server.
-const protocolVersion = "2025-06-18"
+// protocolVersion is the latest MCP protocol version supported by this server.
+const protocolVersion = "2025-11-25"
 
 const (
+	protocolVersionPrior  = "2025-06-18"
 	protocolVersionLegacy = "2025-03-26"
 
 	headerMcpProtocolVersion = "mcp-protocol-version"
@@ -336,7 +337,11 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
 	switch req.Method {
 	case methodInitialize:
-		return s.handleInitialize(req, protocolVersion)
+		selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
+		if errResp != nil {
+			return errResp
+		}
+		return s.handleInitialize(req, selectedPV)
 	case methodPing:
 		return NewResultResponse(req.ID, map[string]any{})
 	case methodToolsList:
@@ -658,7 +663,7 @@ func (s *Server) validateOrigin(headers map[string][]string) *apptheory.Response
 }
 
 func isSupportedProtocolVersion(v string) bool {
-	return v == protocolVersion || v == protocolVersionLegacy
+	return v == protocolVersion || v == protocolVersionPrior || v == protocolVersionLegacy
 }
 
 func (s *Server) requireProtocolVersion(headers map[string][]string, sess *Session) *apptheory.Response {
@@ -749,10 +754,16 @@ func (s *Server) negotiateInitializeProtocolVersion(req *Request) (string, *Resp
 	if params.ProtocolVersion == "" {
 		return selected, nil
 	}
-	if !isSupportedProtocolVersion(params.ProtocolVersion) {
-		return "", NewErrorResponse(req.ID, CodeInvalidParams, fmt.Sprintf("Unsupported protocolVersion: %s", params.ProtocolVersion))
+	requested := strings.TrimSpace(params.ProtocolVersion)
+	if requested == "" {
+		return selected, nil
 	}
-	return params.ProtocolVersion, nil
+	if !isSupportedProtocolVersion(requested) {
+		// Spec-compliant negotiation: for unsupported versions, counter-propose the
+		// latest protocol version supported by the server instead of returning an error.
+		return selected, nil
+	}
+	return requested, nil
 }
 
 func (s *Server) createSession(ctx context.Context, selectedPV string) (*Session, error) {

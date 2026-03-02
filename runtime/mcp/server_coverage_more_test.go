@@ -117,9 +117,9 @@ func TestNegotiateInitializeProtocolVersion_InvalidParamsAndUnsupported(t *testi
 		t.Fatalf("expected invalid params error response, got: %+v", errResp)
 	}
 
-	_, errResp = s.negotiateInitializeProtocolVersion(&Request{ID: 1, Params: json.RawMessage(`{"protocolVersion":"not-supported"}`)})
-	if errResp == nil || errResp.Error == nil || errResp.Error.Code != CodeInvalidParams {
-		t.Fatalf("expected invalid params error response, got: %+v", errResp)
+	pv, errResp := s.negotiateInitializeProtocolVersion(&Request{ID: 1, Params: json.RawMessage(`{"protocolVersion":"not-supported"}`)})
+	if errResp != nil || pv != protocolVersion {
+		t.Fatalf("expected unsupported protocol to negotiate to latest, got pv=%q err=%+v", pv, errResp)
 	}
 }
 

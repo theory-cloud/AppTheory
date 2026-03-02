@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.0](https://github.com/theory-cloud/AppTheory/compare/v0.13.1...v0.14.0) (2026-03-01)
+
+
+### Features
+
+* **sanitization:** policy loader + free-text scrub ([e1ba690](https://github.com/theory-cloud/AppTheory/commit/e1ba69075b087e5f360e8e2a38e28fd20cd7082b))
+* **sanitization:** policy loader + free-text scrub ([b53ae5a](https://github.com/theory-cloud/AppTheory/commit/b53ae5a1565594c79edfe18b8ba38a99b7c0fe8c))
+
 ## [0.14.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v0.13.2-rc.1...v0.14.0-rc.1) (2026-03-01)
 
 
