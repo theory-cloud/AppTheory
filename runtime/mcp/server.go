@@ -307,11 +307,17 @@ func (s *Server) openSessionListener(ctx context.Context, sessionID string) (*ap
 	pr, pw := io.Pipe()
 
 	go func() {
-		defer pw.Close()
+		defer func() {
+			if err := pw.Close(); err != nil && !errors.Is(err, io.ErrClosedPipe) {
+				s.logger.WarnContext(ctx, "session listener close error", "sessionId", sessionID, "error", err)
+			}
+		}()
 
 		// Emit an initial keepalive comment so the stream produces output quickly
 		// (useful for clients/proxies that expect early bytes).
-		_, _ = pw.Write([]byte(": keepalive\n\n"))
+		if _, err := pw.Write([]byte(": keepalive\n\n")); err != nil {
+			return
+		}
 
 		// Keepalives prevent API Gateway idle timeouts (Regional endpoints idle out
 		// after ~5 minutes without data).
