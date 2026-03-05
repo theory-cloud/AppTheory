@@ -5,7 +5,7 @@ This guide gets you from zero to a working AppTheory handler with a deterministi
 ## Prerequisites
 
 **Required:**
-- Go **1.25.x** (for the Go runtime)
+- Go **1.26.x** (for the Go runtime)
 - Node.js **24** (for the TypeScript runtime and jsii CDK constructs)
 - Python **3.14** (for the Python runtime and Python CDK bindings)
 
