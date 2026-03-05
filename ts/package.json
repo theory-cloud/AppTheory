@@ -1,6 +1,6 @@
 {
   "name": "@theory-cloud/apptheory",
-  "version": "0.15.1",
+  "version": "0.16.0-rc.1",
   "description": "AppTheory — multi-language serverless application framework (TypeScript package)",
   "type": "module",
   "license": "Apache-2.0",
@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-apigatewaymanagementapi": "^3.971.0",
-    "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v1.4.1/theory-cloud-tabletheory-ts-1.4.1.tgz"
+    "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v1.4.2/theory-cloud-tabletheory-ts-1.4.2.tgz"
   },
   "overrides": {
     "@typescript-eslint/typescript-estree": {
