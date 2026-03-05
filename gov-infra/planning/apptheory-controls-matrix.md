@@ -6,7 +6,7 @@ engineering-focused: it does not claim compliance, but it makes security/quality
 ## Scope
 - **System:** AppTheory — a multi-language (Go/TypeScript/Python) serverless application framework that normalizes AWS event inputs, provides a consistent routing/middleware/response model (including streaming), and verifies behavior via contract fixtures.
 - **In-scope data:** request/response payloads (may contain user-provided data, potentially including PII), headers, auth tokens, secrets passed via env vars/config, build artifacts, telemetry/logs.
-- **Environments:** local dev, CI, user deployments on AWS (Lambda + API Gateway/ALB/WebSockets/Step Functions). “prod-like” means: same runtimes (Go 1.25.x, Node 24.x, Python 3.14.x) and the same packaging steps used for releases.
+- **Environments:** local dev, CI, user deployments on AWS (Lambda + API Gateway/ALB/WebSockets/Step Functions). “prod-like” means: same runtimes (Go 1.26.x, Node 24.x, Python 3.14.x) and the same packaging steps used for releases.
 - **Third parties:** AWS, GitHub Actions, npm registry, PyPI, Go module ecosystem (proxy/sumdb), and CDK tooling.
 - **Out of scope:** AWS account/IAM configuration for user applications; user application code; customer data retention policies in downstream services; operational monitoring stacks (unless provided by AppTheory itself).
 - **Assurance target:** “audit-ready engineering controls” — deterministic verifiers, pinned toolchains, repeatable evidence, and anti-drift guardrails.
