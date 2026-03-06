@@ -11,10 +11,10 @@ import (
 
 // sessionRecord is the DynamoDB representation of an MCP session.
 type sessionRecord struct {
-	SessionID string            `theorydb:"pk" json:"sessionId"`
-	CreatedAt time.Time         `json:"createdAt"`
-	ExpiresAt int64             `theorydb:"ttl" json:"expiresAt"`
-	Data      map[string]string `json:"data,omitempty"`
+	SessionID string            `theorydb:"pk,attr:sessionId" json:"sessionId"`
+	CreatedAt time.Time         `theorydb:"attr:createdAt" json:"createdAt"`
+	ExpiresAt int64             `theorydb:"ttl,attr:expiresAt" json:"expiresAt"`
+	Data      map[string]string `theorydb:"attr:data,omitempty" json:"data,omitempty"`
 }
 
 func (sessionRecord) TableName() string {
