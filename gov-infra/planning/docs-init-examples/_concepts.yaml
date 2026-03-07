@@ -1,0 +1,63 @@
+# Machine-readable concept map for AppTheory
+
+concepts:
+  apptheory_runtime:
+    type: framework
+    language: multi
+    purpose: "Cross-language AWS Lambda runtime contract shared across Go, TypeScript, and Python."
+    tagline: "Portable serverless application behavior with drift prevention."
+    provides:
+      - routing_and_middleware
+      - aws_event_adapters
+      - deterministic_test_environments
+      - cross_language_behavior_parity
+    requires:
+      - Go 1.26.0 for the Go module
+      - Node.js 24 for TypeScript and jsii/CDK package work
+      - Python 3.14 for the Python package
+    use_when:
+      - "You need equivalent serverless request/response semantics across multiple languages."
+      - "You want fixture-backed and snapshot-backed drift prevention for public behavior."
+    dont_use_when:
+      - "You need a general-purpose web framework unrelated to AWS Lambda adapters."
+
+  public_api_snapshots:
+    type: component
+    purpose: "Canonical source-of-truth snapshots for the confirmed public API surface."
+    provides:
+      - go_public_surface_in_api_snapshots_go_txt
+      - typescript_public_surface_in_api_snapshots_ts_txt
+      - python_public_surface_in_api_snapshots_py_txt
+    requires:
+      - scripts/update-api-snapshots.sh
+    use_when:
+      - "You are documenting or reviewing exported interfaces."
+    dont_use_when:
+      - "You need internal implementation details that are not part of the supported public surface."
+
+  universal_lambda_dispatch:
+    type: workflow
+    purpose: "Single Lambda entrypoint that dispatches mixed AWS event shapes to the correct runtime adapter."
+    provides:
+      - HandleLambda_in_Go
+      - handleLambda_in_TypeScript
+      - handle_lambda_in_Python
+    failure_modes:
+      - unknown_event_shape_rejected_by_strict_dispatch
+
+  jobs_ledger:
+    type: component
+    purpose: "TableTheory-backed job lifecycle, record status, lease, and idempotency primitives."
+    provides:
+      - APPTHEORY_JOBS_TABLE_NAME_configuration_surface
+      - job_status_tracking
+      - record_status_tracking
+      - lease_management
+      - idempotency_records
+    requires:
+      - TableTheory_backing_store
+      - DynamoDB_table_for_jobs_ledger
+    use_when:
+      - "You need long-running or retry-prone workflows with durable status and deduplication."
+    dont_use_when:
+      - "A one-shot Lambda does not need persistent job state or idempotency bookkeeping."

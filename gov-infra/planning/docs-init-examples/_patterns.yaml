@@ -1,0 +1,80 @@
+# Machine-readable usage patterns for AppTheory
+
+patterns:
+  document_from_snapshots:
+    name: "Document public APIs from api-snapshots first"
+    problem: "Public interface docs drift quickly when they are reconstructed from scattered implementation files."
+    solution: "Use api-snapshots/go.txt, api-snapshots/ts.txt, and api-snapshots/py.txt as the canonical public surface for repo-level API docs."
+    correct_example: |
+      # CORRECT: review the canonical snapshots before editing docs/api-reference.md
+      less api-snapshots/go.txt
+      less api-snapshots/ts.txt
+      less api-snapshots/py.txt
+    anti_patterns:
+      - name: "Guessing exports from internal files"
+        why: "Undocumented or private symbols can be mistaken for supported interfaces."
+        incorrect_example: |
+          # INCORRECT: documenting a symbol because it appears in an internal package path
+          TODO: avoid deriving the public contract from unreviewed internal files alone
+        consequences:
+          - undocumented_behavior_gets_treated_as_supported
+          - docs_and_release_artifacts_drift
+
+  use_universal_dispatch_for_mixed_triggers:
+    name: "Use the runtime's universal Lambda dispatcher for mixed AWS triggers"
+    problem: "Manual event-shape branching is easy to get wrong and hard to keep consistent across languages."
+    solution: "Delegate to HandleLambda, handleLambda, or handle_lambda when one function may receive multiple AWS event shapes."
+    correct_example: |
+      # CORRECT (Go)
+      func handler(ctx context.Context, event json.RawMessage) (any, error) {
+          return app.HandleLambda(ctx, event)
+      }
+    anti_patterns:
+      - name: "Hand-rolled partial dispatch"
+        why: "Custom branching misses edge cases like ALB, SNS, or WebSocket events and drifts from the documented contract."
+        incorrect_example: |
+          # INCORRECT
+          if event.requestContext != nil {
+              return app.ServeAPIGatewayV2(ctx, event)
+          }
+        consequences:
+          - cross_language_parity_breaks
+          - unsupported_event_shapes_fail_in_production
+
+  headers_are_case_insensitive_but_lowercased_on_output:
+    name: "Treat headers as case-insensitive and expect lowercase output keys"
+    problem: "Mixed-case header assertions become flaky across languages when output maps are canonicalized."
+    solution: "Read headers case-insensitively and write response-map expectations in lowercase."
+    correct_example: |
+      # CORRECT (Go)
+      reqID := ctx.Header("X-Request-Id")
+      resp.Headers["x-request-id"] = []string{reqID}
+    anti_patterns:
+      - name: "Asserting mixed-case output header keys"
+        why: "AppTheory normalizes output header map keys for parity."
+        incorrect_example: |
+          # INCORRECT
+          resp.Headers["X-Request-Id"] = []string{reqID}
+        consequences:
+          - test_failures
+          - confusing_cross_language_behavior
+
+  keep_versions_and_generated_artifacts_aligned:
+    name: "Update versions and generated artifacts together"
+    problem: "Cross-language release artifacts drift when VERSION, manifests, dist outputs, and API snapshots are updated independently."
+    solution: "Keep VERSION, ts/package.json, py/pyproject.toml, cdk/package.json, generated dist outputs, and api-snapshots aligned."
+    correct_example: |
+      # CORRECT
+      ./scripts/verify-version-alignment.sh
+      ./scripts/update-api-snapshots.sh
+      make rubric
+    anti_patterns:
+      - name: "Changing source without regenerating outputs"
+        why: "The repo intentionally treats generated package artifacts and snapshots as reviewable public contract evidence."
+        incorrect_example: |
+          # INCORRECT
+          cd ts && npm run build  # run locally
+          # but do not commit ts/dist/** or updated snapshots
+        consequences:
+          - CI_snapshot_or_packaging_failures
+          - stale_docs_examples

@@ -1,0 +1,52 @@
+# Machine-readable decision guidance for AppTheory
+
+decisions:
+  choose_runtime_surface:
+    question: "Which AppTheory surface should the docs emphasize first?"
+    decision_tree:
+      - condition: "The reader is adopting the repo-level runtime contract."
+        check: "Do they need cross-language behavior and AWS adapter coverage?"
+        if_yes:
+          choice: "Start with the repo-level docs and api-snapshots"
+          reason: "The root docs and snapshots define the supported public contract across Go, TypeScript, and Python."
+          example: |
+            Read docs/getting-started.md first, then confirm interfaces in api-snapshots/go.txt, api-snapshots/ts.txt, and api-snapshots/py.txt.
+        if_no:
+          choice: "TODO: confirm whether package-specific docs alone are sufficient"
+          reason: "Bounded discovery confirmed package docs domains, but not every downstream reader journey."
+
+  choose_lambda_entrypoint:
+    question: "Which Lambda entrypoint pattern should a consumer use?"
+    decision_tree:
+      - condition: "One Lambda may receive multiple AWS event shapes."
+        check: "Do you want one documented handler for HTTP, queue, stream, or EventBridge triggers?"
+        if_yes:
+          choice: "Use the universal dispatcher"
+          reason: "HandleLambda, handleLambda, and handle_lambda are the documented cross-language dispatch surfaces."
+          example: |
+            Go: return app.HandleLambda(ctx, event)
+        if_no:
+          choice: "Use the adapter-specific entrypoint"
+          reason: "ServeAPIGatewayV2, ServeLambdaFunctionURL, and the documented adapter helpers are clearer when the trigger is fixed."
+
+  choose_migration_path:
+    question: "How should an existing service migrate into AppTheory?"
+    decision_tree:
+      - condition: "The service currently uses Lift in Go."
+        check: "Is there already migration material under docs/migration/?"
+        if_yes:
+          choice: "Adapt and expand docs/migration/from-lift.md and the repo migration guide"
+          reason: "The repo already contains sanctioned migration content for Lift consumers."
+          example: |
+            Start at docs/migration/from-lift.md, then validate with make rubric.
+        if_no:
+          choice: "Create a task-oriented migration guide with explicit parity and verification steps"
+          reason: "Migration behavior must be documented from confirmed interfaces, not assumed."
+      - condition: "The service uses raw AWS Lambda handlers rather than Lift."
+        check: "Can the handler logic be wrapped in an AppTheory App container and adapter-specific entrypoint?"
+        if_yes:
+          choice: "Migrate incrementally through App, routes, middleware, and adapter entrypoints"
+          reason: "The existing docs describe this order and it preserves verifiable behavior during cutover."
+        if_no:
+          choice: "TODO: document the unsupported gap before migration"
+          reason: "The docs contract must not imply silent compatibility."
