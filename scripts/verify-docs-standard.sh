@@ -55,6 +55,28 @@ for d in "${required_dirs[@]}"; do
     fi
   fi
 
+  if [[ "${d}" == "docs" ]]; then
+    contract="${d}/_contract.yaml"
+    if [[ ! -f "${contract}" ]]; then
+      echo "FAIL: missing required docs contract file: ${contract}" >&2
+      fail=1
+    elif ! grep -q '^contract:' "${contract}"; then
+      echo "FAIL: ${contract} missing top-level 'contract:' key" >&2
+      fail=1
+    fi
+
+    if [[ -f "${readme}" ]] && ! grep -q '\./_contract.yaml' "${readme}"; then
+      echo "FAIL: ${readme} missing link to docs contract" >&2
+      fail=1
+    fi
+
+    dev_guidelines="${d}/development-guidelines.md"
+    if [[ -f "${dev_guidelines}" ]] && ! grep -qi 'contract-only' "${dev_guidelines}"; then
+      echo "FAIL: ${dev_guidelines} must clearly state contract-only scope" >&2
+      fail=1
+    fi
+  fi
+
   concepts="${d}/_concepts.yaml"
   patterns="${d}/_patterns.yaml"
   decisions="${d}/_decisions.yaml"
@@ -78,4 +100,3 @@ if [[ "${fail}" -ne 0 ]]; then
 fi
 
 echo "docs-standard: PASS"
-
