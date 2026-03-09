@@ -9,17 +9,25 @@
 - [Getting Started](./getting-started.md) — install and run your first route locally.
 
 ### 📚 Core documentation
+- [Docs Contract](./_contract.yaml) — canonical TypeScript package knowledgebase scope: fixed ingestible, optional ingestible, and contract-only docs.
 - [API Reference](./api-reference.md) — key exports and where to find the authoritative type surface.
 - [Core Patterns](./core-patterns.md) — routing, middleware, streaming, SSE, and error patterns.
-- [Development Guidelines](./development-guidelines.md) — build/lint steps and how to keep `dist/` in sync.
+- [Development Guidelines](./development-guidelines.md) — contract-only maintainer guidance for keeping the package docs set aligned.
 - [Testing Guide](./testing-guide.md) — unit tests and contract parity checks.
 - [Troubleshooting](./troubleshooting.md) — common failures and fixes.
 - [Migration Guide](./migration-guide.md) — moving from raw Lambda handlers.
 
 ### 🤖 AI knowledge base (YAML triad)
+- Docs Contract: `ts/docs/_contract.yaml`
 - Concepts: `ts/docs/_concepts.yaml`
 - Patterns: `ts/docs/_patterns.yaml`
 - Decisions: `ts/docs/_decisions.yaml`
+
+## Knowledgebase Canonical Set
+
+- TypeScript package knowledgebases should ingest the `fixed_ingestible` set declared in `ts/docs/_contract.yaml` as the canonical core.
+- `ts/docs/_contract.yaml` and `ts/docs/development-guidelines.md` are contract-only maintainer surfaces and should not be treated as user-facing knowledgebase content.
+- `api-snapshots/ts.txt` and `ts/README.md` are sanctioned optional sources when a knowledgebase needs export-level or package-root context.
 
 ## What this package is
 
@@ -31,4 +39,3 @@ AppTheory TypeScript provides:
 
 Contract note: portable behavior is defined by the fixture-backed contract:
 `docs/development/planning/apptheory/supporting/apptheory-runtime-contract-v0.md`.
-
