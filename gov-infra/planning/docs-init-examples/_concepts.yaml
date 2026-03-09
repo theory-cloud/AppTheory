@@ -1,0 +1,56 @@
+# Example for docs/_concepts.yaml
+
+concepts:
+  apptheory_runtime_contract:
+    type: framework
+    language_surface:
+      - go
+      - typescript
+      - python
+    purpose: "Cross-language serverless runtime contract for AWS Lambda applications with drift prevention."
+    canonical_sources:
+      - README.md
+      - docs/api-reference.md
+      - api-snapshots/go.txt
+      - api-snapshots/ts.txt
+      - api-snapshots/py.txt
+    provides:
+      - Shared App/Request/Response/Context model across languages.
+      - Runtime adapters for AWS-triggered workloads documented in API reference.
+    requires:
+      - Go 1.26.x
+      - Node.js 24+
+      - Python 3.14+
+    use_when:
+      - You need equivalent API behavior across Go, TypeScript, and Python.
+    dont_use_when:
+      - You need undocumented behavior that is not present in docs or API snapshots.
+
+  api_snapshot_drift_gate:
+    type: compatibility_contract
+    purpose: "Public API drift prevention using per-language export snapshots."
+    canonical_sources:
+      - docs/api-reference.md
+      - api-snapshots/go.txt
+      - api-snapshots/ts.txt
+      - api-snapshots/py.txt
+    provides:
+      - Reviewable export baselines during release and migration work.
+    failure_modes:
+      - Runtime docs reference symbols absent from snapshot files.
+      - Code exports changed without snapshot updates.
+
+  parity_verification_workflow:
+    type: workflow
+    purpose: "Deterministic verification before merge/release."
+    canonical_sources:
+      - Makefile
+      - docs/testing-guide.md
+      - scripts/verify-contract-tests.sh
+      - scripts/verify-version-alignment.sh
+    provides:
+      - Fast local checks (`make test-unit`).
+      - Full gates (`make rubric`) and contract checks.
+    failure_modes:
+      - Version misalignment across manifests.
+      - Contract test or snapshot drift not reconciled.

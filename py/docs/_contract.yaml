@@ -1,0 +1,25 @@
+contract:
+  fixed_ingestible:
+    - py/docs/README.md
+    - py/docs/getting-started.md
+    - py/docs/api-reference.md
+    - py/docs/core-patterns.md
+    - py/docs/testing-guide.md
+    - py/docs/troubleshooting.md
+    - py/docs/migration-guide.md
+    - py/docs/_concepts.yaml
+    - py/docs/_patterns.yaml
+    - py/docs/_decisions.yaml
+  fixed_contract_only:
+    - py/docs/_contract.yaml
+    - py/docs/development-guidelines.md
+  sanctioned_optional_ingestible:
+    - api-snapshots/py.txt
+    - py/README.md
+  out_of_scope:
+    - docs/development/**
+    - docs/planning/**
+    - docs/archive/**
+    - gov-infra/planning/**
+    - gov-infra/evidence/**
+  contract_only_note: "contract-only surfaces are maintainer-only and not ingestible: py/docs/_contract.yaml, py/docs/development-guidelines.md"
