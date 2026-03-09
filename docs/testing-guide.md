@@ -1,36 +1,60 @@
 # AppTheory Testing Guide
 
-AppTheory relies on three complementary test layers: unit tests, contract fixtures, and deterministic “real-shape” examples.
+AppTheory relies on layered deterministic verification: fast unit tests, contract fixtures, snapshot checks, build
+checks, and full rubric validation.
 
-## Fast loop
+## Fast local loop
 
 ```bash
 make test-unit
 ```
 
-## Full repo gates (recommended before PR)
+This runs `go test ./...` from the repo root and is the fastest default check.
 
-```bash
-make rubric
-```
+## Targeted verification
 
-This includes linting, packaging/build verification, API snapshot checks, contract tests, and testkit/examples verification.
-
-## Contract tests (cross-language parity)
+Run the contract suite when behavior changes span language boundaries:
 
 ```bash
 ./scripts/verify-contract-tests.sh
 ```
 
-✅ CORRECT: if you change behavior, update fixtures/tests first; don’t “fix” drift by weakening gates.
+Refresh public API snapshots when exported surfaces change:
 
-## GovTheory rubric (governance bundle)
+```bash
+./scripts/update-api-snapshots.sh
+```
+
+Package-focused checks that are part of the repo tooling:
+
+```bash
+cd ts && npm run check
+cd py && python -m unittest discover -s tests
+cd cdk && npm test
+```
+
+## Full repo gates
+
+```bash
+make rubric
+```
+
+`make rubric` runs version alignment, formatting, Go/TS/Python linting, packaging/build verification, CDK synth checks,
+API snapshot verification, contract tests, testkit/example verification, and docs-standard checks.
+
+## Evidence to capture
+
+- commands run
+- pass or fail outcomes
+- snapshot updates, generated outputs, or logs that explain the change
+- explicit gaps when a check was not run
+
+✅ CORRECT: if behavior changes, update tests or fixtures first. Do not “fix” drift by weakening the gates.
+
+## Governance bundle
 
 ```bash
 bash gov-infra/verifiers/gov-verify-rubric.sh
 ```
 
-Evidence is written to:
-- `gov-infra/evidence/gov-rubric-report.json`
-- `gov-infra/evidence/*-output.log`
-
+Evidence is written to `gov-infra/evidence/`.
