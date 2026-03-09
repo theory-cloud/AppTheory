@@ -39,6 +39,7 @@ Non-goals (near-term):
 ## Documentation
 
 - Main docs index: `docs/README.md`
+- Canonical knowledgebase contract: `docs/_contract.yaml`
 - TypeScript package docs: `ts/docs/README.md`
 - Python package docs: `py/docs/README.md`
 - CDK package docs: `cdk/docs/README.md`
