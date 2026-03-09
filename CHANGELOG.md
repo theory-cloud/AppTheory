@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.0](https://github.com/theory-cloud/AppTheory/compare/v0.16.0...v0.17.0) (2026-03-09)
+
+
+### Features
+
+* **docs:** add package knowledgebase contracts ([0ef6068](https://github.com/theory-cloud/AppTheory/commit/0ef60689225da7202e016e6ff43be7dcb43ef44e))
+* **docs:** add package knowledgebase contracts ([843b9bd](https://github.com/theory-cloud/AppTheory/commit/843b9bdb53866df5b9d6e86a0eaf2f0c6918d077))
+
 ## [0.16.0-rc.2](https://github.com/theory-cloud/AppTheory/compare/v0.16.0-rc.1...v0.16.0-rc.2) (2026-03-09)
 
 
