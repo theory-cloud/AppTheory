@@ -9,9 +9,10 @@
 - [Getting Started](./getting-started.md) — deploy a minimal API backed by an AppTheory Lambda.
 
 ### 📚 Core documentation
+- [Docs Contract](./_contract.yaml) — canonical CDK package knowledgebase scope: fixed ingestible, optional ingestible, and contract-only docs.
 - [API Reference](./api-reference.md) — construct inventory and key props.
 - [Core Patterns](./core-patterns.md) — safe defaults, domains/certs, alarms, and proxy routing.
-- [Development Guidelines](./development-guidelines.md) — jsii build flow and regeneration steps.
+- [Development Guidelines](./development-guidelines.md) — contract-only maintainer guidance for keeping the package docs set aligned.
 - [Testing Guide](./testing-guide.md) — how to run CDK tests and synth checks.
 - [Troubleshooting](./troubleshooting.md) — common synth/deploy failures.
 - [Migration Guide](./migration-guide.md) — moving from ad-hoc CDK stacks.
@@ -31,9 +32,16 @@
 - [Media CDN Pattern](./media-cdn.md) — S3 + CloudFront distribution for media subdomains (optional private media).
 
 ### 🤖 AI knowledge base (YAML triad)
+- Docs Contract: `cdk/docs/_contract.yaml`
 - Concepts: `cdk/docs/_concepts.yaml`
 - Patterns: `cdk/docs/_patterns.yaml`
 - Decisions: `cdk/docs/_decisions.yaml`
+
+## Knowledgebase Canonical Set
+
+- CDK package knowledgebases should ingest the `fixed_ingestible` set declared in `cdk/docs/_contract.yaml` as the canonical core.
+- `cdk/docs/_contract.yaml` and `cdk/docs/development-guidelines.md` are contract-only maintainer surfaces and should not be treated as user-facing knowledgebase content.
+- The guide pages linked above are sanctioned optional ingestible sources for infrastructure-specific KB scopes.
 
 ## What this package is
 
