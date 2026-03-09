@@ -1,0 +1,57 @@
+# Example for docs/_patterns.yaml
+
+patterns:
+  api_snapshot_first:
+    name: "Treat api-snapshots as authoritative public API"
+    problem: "How do maintainers avoid documenting APIs that are not actually exported?"
+    solution: "Update and verify `api-snapshots/go.txt`, `api-snapshots/ts.txt`, and `api-snapshots/py.txt` before finalizing API docs."
+    correct_example: |
+      # CORRECT
+      ./scripts/update-api-snapshots.sh
+      make rubric
+    anti_patterns:
+      - name: "Writing API prose without snapshot verification"
+        why: "Unverified docs drift from exported runtime/package surfaces."
+        incorrect_example: |
+          # INCORRECT
+          # Edit docs/api-reference.md with guessed symbols, skip snapshot updates
+          echo "skip snapshots"
+        consequences:
+          - Migration guidance becomes unreliable
+          - AI retrieval answers include non-existent APIs
+
+  keep_versions_aligned:
+    name: "Keep VERSION and package manifests aligned"
+    problem: "How do AppTheory releases avoid cross-package version drift?"
+    solution: "Keep `VERSION`, `ts/package.json`, `py/pyproject.toml`, and `cdk/package.json` at the same version."
+    correct_example: |
+      # CORRECT
+      ./scripts/verify-version-alignment.sh
+    anti_patterns:
+      - name: "Bumping one manifest only"
+        why: "Version drift breaks verification gates and creates release ambiguity."
+        incorrect_example: |
+          # INCORRECT
+          npm version patch --prefix ts
+        consequences:
+          - CI failures in alignment checks
+          - Inconsistent release artifact expectations
+
+  deterministic_verification:
+    name: "Run deterministic parity checks before cloud-only testing"
+    problem: "How should users verify behavior without relying on manual AWS checks?"
+    solution: "Use repo verification gates first (`make test-unit`, contract tests, rubric)."
+    correct_example: |
+      # CORRECT
+      make test-unit
+      ./scripts/verify-contract-tests.sh
+      make rubric
+    anti_patterns:
+      - name: "Only manual invoke validation"
+        why: "Manual checks miss parity and snapshot drift."
+        incorrect_example: |
+          # INCORRECT
+          aws lambda invoke ...
+        consequences:
+          - Cross-language regressions detected late
+          - Higher risk of publishing unsupported behavior
