@@ -1,0 +1,25 @@
+contract:
+  fixed_ingestible:
+    - ts/docs/README.md
+    - ts/docs/getting-started.md
+    - ts/docs/api-reference.md
+    - ts/docs/core-patterns.md
+    - ts/docs/testing-guide.md
+    - ts/docs/troubleshooting.md
+    - ts/docs/migration-guide.md
+    - ts/docs/_concepts.yaml
+    - ts/docs/_patterns.yaml
+    - ts/docs/_decisions.yaml
+  fixed_contract_only:
+    - ts/docs/_contract.yaml
+    - ts/docs/development-guidelines.md
+  sanctioned_optional_ingestible:
+    - api-snapshots/ts.txt
+    - ts/README.md
+  out_of_scope:
+    - docs/development/**
+    - docs/planning/**
+    - docs/archive/**
+    - gov-infra/planning/**
+    - gov-infra/evidence/**
+  contract_only_note: "contract-only surfaces are maintainer-only and not ingestible: ts/docs/_contract.yaml, ts/docs/development-guidelines.md"

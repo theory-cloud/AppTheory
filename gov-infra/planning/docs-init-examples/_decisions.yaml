@@ -1,0 +1,48 @@
+# Example for docs/_decisions.yaml
+
+decisions:
+  lambda_dispatch_model:
+    question: "Should a service use one universal Lambda handler or separate handlers per trigger type?"
+    decision_tree:
+      - condition: "A single function must accept multiple AWS event shapes."
+        check: "Can the runtime dispatcher entrypoint be used (`HandleLambda` / `handleLambda` / `handle_lambda`)?"
+        if_yes:
+          choice: "Use the universal dispatcher entrypoint."
+          reason: "The API reference documents deterministic event-shape routing across supported adapters."
+          example: |
+            # Go
+            func handler(ctx context.Context, event json.RawMessage) (any, error) {
+              return app.HandleLambda(ctx, event)
+            }
+        if_no:
+          choice: "Use explicit adapter handlers per function."
+          reason: "Single-trigger functions are easier to reason about and test."
+
+  api_change_publication_gate:
+    question: "How should maintainers validate API documentation updates?"
+    decision_tree:
+      - condition: "Any exported symbol changes in Go, TS, or Python packages."
+        check: "Were `api-snapshots/go.txt`, `api-snapshots/ts.txt`, and/or `api-snapshots/py.txt` updated and reviewed?"
+        if_yes:
+          choice: "Proceed with API and migration doc updates."
+          reason: "Snapshots are the declared public-surface source of truth."
+          example: |
+            ./scripts/update-api-snapshots.sh
+            make rubric
+        if_no:
+          choice: "Block publication until snapshots are updated."
+          reason: "Unverified docs can describe non-existent interfaces."
+
+  release_alignment_gate:
+    question: "What must happen before release/docs publish when version files drift?"
+    decision_tree:
+      - condition: "`VERSION`, `ts/package.json`, `py/pyproject.toml`, and `cdk/package.json` are out of sync."
+        check: "Does `./scripts/verify-version-alignment.sh` pass?"
+        if_yes:
+          choice: "Continue release and docs publication flow."
+          reason: "Cross-package version contract is satisfied."
+        if_no:
+          choice: "Align all version files first."
+          reason: "Troubleshooting and CI gates treat this as a hard failure."
+          example: |
+            ./scripts/verify-version-alignment.sh
