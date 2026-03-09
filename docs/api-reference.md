@@ -1,80 +1,67 @@
 # AppTheory API Reference
 
-This is the human-readable API overview. The authoritative “no drift” source of truth is the generated snapshots in `api-snapshots/`.
+This page is the canonical human-readable map of the AppTheory surface. Treat the generated snapshots as the
+release-gated source of truth, and use this document to understand which surface to reach for.
 
-## Source of truth (drift gates)
+## Source of truth
 
-✅ CORRECT: Treat these as the canonical public surface for review and migrations:
+Use these files when reviewing or documenting external interfaces:
+
 - Go: `api-snapshots/go.txt` (exports from `runtime/`, `pkg/`, and `testkit/`)
 - TypeScript: `api-snapshots/ts.txt` (exports from `ts/dist/index.d.ts`)
-- Python: `api-snapshots/py.txt` (exports from `py/src/apptheory/__init__.py`)
+- Python: `api-snapshots/py.txt` (exports from `py/src/apptheory/__init__.py` and `py/src/apptheory/limited/__init__.py`)
+- CDK: `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`
 
-## Core primitives (shared concepts)
+Known CLI surface:
 
-### App container
-Problem: you need a single place to register routes/middleware and then serve AWS events.
+- `cmd/lift-migrate` exists as a Go migration helper with `-root` and `-apply` flags
+- `UNKNOWN:` no broader stable public CLI contract is documented for `cmd/`
 
-Solution: use the `App` container in your language runtime:
-- Go: `apptheory.New(...)`
-- TypeScript: `createApp(...)`
-- Python: `create_app(...)`
+## Core runtime entrypoints
 
-### Request/Response types
-All runtimes use the same conceptual model:
-- `Request`: method/path/headers/query/body
-- `Response`: status/headers/cookies/body (+ streaming in supported adapters)
-- `Context`: per-request helper surface (request id, tenant id, storage via `set/get`, clock, id generator)
+| Concern | Go | TypeScript | Python |
+| --- | --- | --- | --- |
+| App container | `apptheory.New(...)` | `createApp()` | `create_app()` |
+| Deterministic test env | `testkit.New()` | `createTestEnv()` | `create_test_env()` |
+| Universal Lambda dispatcher | `app.HandleLambda(ctx, event)` | `app.handleLambda(event, ctx)` | `app.handle_lambda(event, ctx)` |
+| Strict route registration | `app.GetStrict(...)`, `app.HandleStrict(...)` | `app.handleStrict(...)` | `app.handle_strict(...)` |
+| HTTP entrypoints | `ServeAPIGatewayV2`, `ServeLambdaFunctionURL`, `ServeAPIGatewayProxy` | `serveAPIGatewayV2`, `serveLambdaFunctionURL`, `serveAPIGatewayProxy` | `serve_apigw_v2`, `serve_lambda_function_url`, `serve_apigw_proxy` |
+| Streaming helpers | `SSEResponse`, `SSEStreamResponse` | `htmlStream`, `sseEventStream`, `createLambdaFunctionURLStreamingHandler` | `html_stream`, `sse_event_stream` |
 
-### Routing methods
-Each runtime exposes method helpers (examples): `get`, `post`, `put`, `delete`, `patch`, `options`, and a lower-level `handle`.
+Shared request model:
 
-### Middleware
-Use middleware to wrap handlers and attach request-scoped values:
-- Go: `app.Use(mw)` (where `mw` is `apptheory.Middleware`)
-- TypeScript: `app.use(mw)` (async)
-- Python: `app.use(mw)` (sync)
+- `Request`: method, path, headers, query, and body
+- `Response`: status, headers, cookies, body, and streaming fields where supported
+- `Context`: request-scoped accessors for headers, params, request ID, tenant, clock, IDs, and middleware state
 
-### AWS adapters and event sources
-AppTheory includes adapters/helpers for:
-- HTTP (API Gateway v2, Lambda Function URL, ALB)
-- Common event sources (SQS/SNS/Kinesis/EventBridge/DynamoDB Streams)
-- WebSockets (event shapes + management client abstraction)
+## Universal Lambda entrypoint
 
-See language-specific docs for the full list and examples.
+When one Lambda must accept multiple AWS trigger types, keep the handler thin and delegate dispatch to the runtime.
 
-## Universal Lambda entrypoint (`HandleLambda` / `handleLambda` / `handle_lambda`)
-
-Problem: you want one Lambda handler that can accept many AWS triggers.
-
-Solution: delegate to the runtime’s “untyped event” router.
-
-✅ CORRECT (Go):
 ```go
 func handler(ctx context.Context, event json.RawMessage) (any, error) {
-    return app.HandleLambda(ctx, event)
+	return app.HandleLambda(ctx, event)
 }
 ```
 
-✅ CORRECT (TypeScript):
 ```ts
 export const handler = async (event: unknown, ctx: unknown) =>
   app.handleLambda(event, ctx);
 ```
 
-✅ CORRECT (Python):
 ```py
 def handler(event, ctx):
     return app.handle_lambda(event, ctx)
 ```
 
-### Event shape → entrypoint mapping (high-level)
+### Event shape to entrypoint mapping
 
 | Event shape | Detection heuristic | Entry point called |
 | --- | --- | --- |
 | SQS | `Records[0].eventSource == "aws:sqs"` | `ServeSQS` / `serveSQSEvent` / `serve_sqs` |
 | DynamoDB Streams | `Records[0].eventSource == "aws:dynamodb"` | `ServeDynamoDBStream` / `serveDynamoDBStream` / `serve_dynamodb_stream` |
 | Kinesis | `Records[0].eventSource == "aws:kinesis"` | `ServeKinesis` / `serveKinesisEvent` / `serve_kinesis` |
-| SNS | `Records[0].Sns` (or `EventSource == "aws:sns"` in Python) | `ServeSNS` / `serveSNSEvent` / `serve_sns` |
+| SNS | `Records[0].Sns` or `EventSource == "aws:sns"` | `ServeSNS` / `serveSNSEvent` / `serve_sns` |
 | EventBridge | `detail-type` or `detailType` | `ServeEventBridge` / `serveEventBridge` / `serve_eventbridge` |
 | WebSocket (APIGW v2) | `requestContext.connectionId` | `ServeWebSocket` / `serveWebSocket` / `serve_websocket` |
 | API Gateway v2 (HTTP API) | `requestContext.http` + `routeKey` | `ServeAPIGatewayV2` / `serveAPIGatewayV2` / `serve_apigw_v2` |
@@ -83,80 +70,86 @@ def handler(event, ctx):
 | API Gateway v1 (REST proxy) | `httpMethod` | `ServeAPIGatewayProxy` / `serveAPIGatewayProxy` / `serve_apigw_proxy` |
 
 Notes:
-- The dispatcher is intentionally strict: unknown shapes raise/throw.
-- Exact field casing varies by AWS integration; use the deterministic event builders in the `testkit`.
 
-## Strict route registration (`HandleStrict` / `handleStrict` / `handle_strict`)
+- Unknown shapes fail closed
+- Exact field casing varies by AWS integration; prefer deterministic event builders from the test envs
 
-Invalid route patterns are fail-closed across runtimes. By default, registration is **silently ignored** to preserve
-backwards compatibility.
+## Strict route registration
 
-✅ CORRECT: use the strict variant in tests/CI when you want fast feedback.
+Invalid route patterns are fail closed across runtimes. Default registration remains compatibility-oriented, so invalid
+patterns may be ignored unless you opt into the strict helpers.
 
-Examples:
+Use these in tests and CI:
+
 - Go: `app.GetStrict("/users/{id}", h)` or `app.HandleStrict("GET", "/users/{id}", h)`
-- TypeScript: `app.handleStrict("GET", "/users/{id}", h)` (throws on invalid patterns)
-- Python: `app.handle_strict("GET", "/users/{id}", h)` (raises `ValueError`)
+- TypeScript: `app.handleStrict("GET", "/users/{id}", h)`
+- Python: `app.handle_strict("GET", "/users/{id}", h)`
 
-## Rate limiting (`limited`)
+## Cross-language feature surfaces
 
-AppTheory includes a DynamoDB-backed rate limiter with portable semantics:
-- Go: `pkg/limited` (+ optional `runtime.RateLimitMiddleware`)
-- TypeScript: exported from `@theory-cloud/apptheory` as `limited/*`
-- Python: available as `apptheory.limited`
+### Rate limiting
 
-Use it when you need **cross-instance** rate limiting (DynamoDB is the coordination layer). The portable response
-contract uses `app.rate_limited` with deterministic `Retry-After` when known.
+The `limited` feature set provides DynamoDB-backed cross-instance rate limiting.
 
-## Sanitization (`sanitization`)
+- Go: `pkg/limited`
+- TypeScript: exports in `api-snapshots/ts.txt` including `DynamoRateLimiter`, `FixedWindowStrategy`, `SlidingWindowStrategy`, and `MultiWindowStrategy`
+- Python: exports in `api-snapshots/py.txt` under `apptheory.limited`
 
-AppTheory includes safe logging utilities intended to prevent sensitive data leaks in logs (PCI/PII-heavy workflows):
+### Sanitization
+
+Safe logging helpers are exported in all three runtimes:
+
 - Go: `pkg/sanitization`
-- TypeScript: exported from `@theory-cloud/apptheory` (`sanitizeLogString`, `sanitizeFieldValue`, `sanitizeJSON`, `sanitizeJSONValue`, `sanitizeXML`)
-- Python: exported from `apptheory` (`sanitize_log_string`, `sanitize_field_value`, `sanitize_json`, `sanitize_json_value`, `sanitize_xml`)
+- TypeScript: `sanitizeLogString`, `sanitizeFieldValue`, `sanitizeJSON`, `sanitizeJSONValue`, `sanitizeXML`
+- Python: `sanitize_log_string`, `sanitize_field_value`, `sanitize_json`, `sanitize_json_value`, `sanitize_xml`
 
-Guide: `docs/sanitization.md`
+Guide: [Sanitization](./sanitization.md)
 
-## Jobs ledger (`jobs`)
+### Jobs ledger
 
-AppTheory includes TableTheory-backed job ledger primitives intended for long-running “jobs” that need:
-- job lifecycle tracking (optimistic concurrency via versioning)
-- per-record status + safe error envelopes
-- idempotency across retries
-- lease/lock semantics to prevent double-processing
+TableTheory-backed job ledger primitives exist for long-running workflows that need job state, record state,
+idempotency, and leases.
 
-Surfaces:
-- Go runtime package: `pkg/jobs`
-- TypeScript: exported from `@theory-cloud/apptheory` (see `api-snapshots/ts.txt`)
-- Python: exported from `apptheory` (see `api-snapshots/py.txt`)
+- Go: `pkg/jobs`
+- TypeScript: exports in `api-snapshots/ts.txt` including `DynamoJobLedger`, `CreateJobInput`, `JobMeta`, and related status types
+- Python: exports in `api-snapshots/py.txt` including `DynamoJobLedger`, `JobsConfig`, and related helpers
 
-Guide: `docs/jobs-ledger.md`
-Reference: `examples/cdk/import-pipeline/` (Issue `#169`)
+Guide: [Jobs Ledger](./jobs-ledger.md)
+Reference stack: `examples/cdk/import-pipeline/`
 
-## MCP server (Bedrock AgentCore)
+### MCP and OAuth
 
-AppTheory includes an MCP (Model Context Protocol) server implementation intended for **Bedrock AgentCore** tool integrations.
+AppTheory includes Go runtime support for MCP and OAuth-adjacent remote-MCP flows:
 
-- Go runtime package: `runtime/mcp` (JSON-RPC methods: `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `prompts/list`, `prompts/get`)
-- Go test helpers: `testkit/mcp` (deterministic in-process MCP client + Streamable HTTP SSE helpers)
-- CDK construct (jsii): `AppTheoryMcpServer` (HTTP API v2 `POST /mcp` → Lambda, optional session table + custom domain)
-- CDK construct (jsii): `AppTheoryRemoteMcpServer` (REST API v1 streaming `/mcp` for Claude Remote MCP / Streamable HTTP)
-- CDK construct (jsii): `AppTheoryMcpProtectedResource` (REST API v1 `/.well-known/oauth-protected-resource` for OAuth discovery)
+- `runtime/mcp`: JSON-RPC server methods, registries, and session support
+- `testkit/mcp`: deterministic in-process MCP test helpers
+- `runtime/oauth`: protected-resource metadata, challenges, DCR, PKCE, and token-store helpers
+- `testkit/oauth`: end-to-end OAuth flow helpers for remote MCP tests
 
 Guides:
-- AgentCore deployment: `docs/agentcore-mcp.md` and `cdk/docs/mcp-server-agentcore.md`
-- Claude Remote MCP: `docs/remote-mcp.md` and `cdk/docs/mcp-server-remote-mcp.md`
-- Full MCP method surface + payload shapes: `docs/mcp.md`
 
-## OAuth primitives (Remote MCP / Autheory)
+- [Bedrock AgentCore MCP](./agentcore-mcp.md)
+- [Remote MCP](./remote-mcp.md)
+- [Remote MCP + Autheory](./remote-mcp-autheory.md)
+- [MCP Method Surface](./mcp.md)
 
-For Claude connectors, AppTheory also includes OAuth wire-level helpers used by:
-- protected MCP resource servers (challenge + metadata)
-- Autheory (OAuth Authorization Server) implementations (DCR/PKCE helpers)
+## CDK construct overview
 
-Surfaces:
-- Go runtime package: `runtime/oauth` (protected resource metadata + `WWW-Authenticate` challenge, RFC8414 metadata helpers, RFC7591 DCR types/validation, PKCE utilities, in-memory code/refresh stores)
-- Go test helpers: `testkit/oauth` (Claude-like DCR → PKCE auth code → token exchange → refresh harness)
+Canonical CDK guidance lives under [docs/cdk](./cdk/README.md). The construct inventory exported by `cdk/lib/index.ts`
+includes:
 
-Guide:
-- Autheory (OAuth AS) for Claude Remote MCP: `docs/remote-mcp-autheory.md`
+- `AppTheoryHttpApi`
+- `AppTheoryRestApi`
+- `AppTheoryRestApiRouter`
+- `AppTheoryMcpServer`
+- `AppTheoryRemoteMcpServer`
+- `AppTheoryMcpProtectedResource`
+- `AppTheoryJobsTable`
+- `AppTheoryS3Ingest`
+- `AppTheoryCodeBuildJobRunner`
+
+Start with:
+
+- [CDK Getting Started](./cdk/getting-started.md)
+- [CDK API Reference](./cdk/api-reference.md)
+- [CDK Import Pipeline Guides](./cdk/import-pipeline.md)

@@ -1,29 +1,36 @@
 # Getting Started with AppTheory
 
-This guide gets you from zero to a working AppTheory handler with a deterministic local test, then points you at the AWS entrypoints.
+This guide gets a local AppTheory workspace running, shows the smallest deterministic app path, and points you at the
+canonical API and deployment docs.
 
 ## Prerequisites
 
-**Required:**
-- Go **1.26.x** (for the Go runtime)
-- Node.js **24** (for the TypeScript runtime and jsii CDK constructs)
-- Python **3.14** (for the Python runtime and Python CDK bindings)
+- Go `1.26.x` (`go.mod` / `toolchain go1.26.1`)
+- Node.js `>=24` (`ts/package.json` and `cdk/package.json`)
+- Python `>=3.14` (`py/pyproject.toml`)
+- `make` and `git`
 
-**Recommended:**
-- AWS CDK v2 (for infrastructure examples)
+## Install from repo
 
-## Install
+```bash
+git clone https://github.com/theory-cloud/AppTheory.git
+cd AppTheory
 
-AppTheory is distributed via **GitHub Releases** (no npm/PyPI registry publishing).
+go mod download
+(cd ts && npm ci)
+(cd py && python -m pip install -e .)
+(cd cdk && npm ci)
+```
 
-- **Go:** add the module normally (example): `go get github.com/theory-cloud/apptheory@vX.Y.Z`
-- **TypeScript:** download the release tarball and install it (example): `npm i ./theory-cloud-apptheory-X.Y.Z.tgz`
-- **Python:** download the wheel and install it (example): `python -m pip install ./apptheory-X.Y.Z-py3-none-any.whl`
+AppTheory release artifacts are also published via GitHub Releases:
 
-## First local run (Go)
+- Go module: `go get github.com/theory-cloud/apptheory@vX.Y.Z`
+- TypeScript tarball: `npm i ./theory-cloud-apptheory-X.Y.Z.tgz`
+- Python wheel: `python -m pip install ./apptheory-X.Y.Z-py3-none-any.whl`
+
+## First deterministic local invocation (Go)
 
 ```go
-// CORRECT: Use testkit for deterministic unit tests (time + IDs + event builders).
 package mysvc
 
 import (
@@ -45,18 +52,47 @@ func Example() {
 }
 ```
 
-## Deploy to AWS (choose an adapter)
+Equivalent deterministic local entrypoints exist in the other runtimes:
 
-AppTheory’s contract currently covers these HTTP adapters:
-- API Gateway v2 (HTTP API)
-- Lambda Function URL
+- TypeScript: `createTestEnv()`, `env.app()`, `env.invoke(...)`
+- Python: `create_test_env()`, `env.app()`, `env.invoke(...)`
 
-Use the adapter entrypoints on `*apptheory.App`:
-- Go: `app.ServeAPIGatewayV2(...)`, `app.ServeLambdaFunctionURL(...)`
-- TypeScript: `createLambdaFunctionURLStreamingHandler(...)` and event adapters under `build*Request(...)`
-- Python: `invoke_apigw_v2(...)` / `invoke_lambda_function_url(...)` in the test env, and adapter helpers under `build_*_request(...)`
+## Verification
 
-Next:
-- See package-specific docs for full examples: `ts/docs/README.md`, `py/docs/README.md`, `cdk/docs/README.md`.
-- If you’re integrating with Bedrock AgentCore, start here: `docs/agentcore-mcp.md`.
-- If you’re migrating from Lift, start at `docs/migration/from-lift.md`.
+Run the fast local check first:
+
+```bash
+make test-unit
+```
+
+Run the contract and full repo gates before opening a PR:
+
+```bash
+./scripts/verify-contract-tests.sh
+make rubric
+```
+
+If you changed exported APIs, also refresh and commit the public API snapshots:
+
+```bash
+./scripts/update-api-snapshots.sh
+```
+
+## AWS entrypoints
+
+Use the runtime entrypoint that matches your deployment shape:
+
+- Mixed-trigger Lambda: `app.HandleLambda(...)`, `app.handleLambda(...)`, or `app.handle_lambda(...)`
+- HTTP API v2: `ServeAPIGatewayV2`, `serveAPIGatewayV2`, `serve_apigw_v2`
+- Lambda Function URL: `ServeLambdaFunctionURL`, `serveLambdaFunctionURL`, `serve_lambda_function_url`
+- REST API v1: `ServeAPIGatewayProxy`, `serveAPIGatewayProxy`, `serve_apigw_proxy`
+- TypeScript Lambda Function URL streaming: `createLambdaFunctionURLStreamingHandler(app)`
+
+## Next reads
+
+- [API Reference](./api-reference.md)
+- [Core Patterns](./core-patterns.md)
+- [Testing Guide](./testing-guide.md)
+- [CDK Guides](./cdk/README.md)
+- [Bedrock AgentCore MCP](./agentcore-mcp.md)
+- [Lift Migration Guide](./migration/from-lift.md)
