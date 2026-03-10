@@ -1,27 +1,25 @@
-# AppTheory Development Guidelines (Example)
+# AppTheory Development Guidelines
 
-This file is an example for `docs/development-guidelines.md`.
-
-This guide is **contract-only** maintainer guidance.
+This is an example target for `docs/development-guidelines.md`.
 
 ## Standards
 
-- Keep docs grounded in canonical repo evidence (`api-snapshots/*`, `Makefile`, `scripts/*`, manifests).
-- Do not present unverified behavior as fact.
-- Keep ingestible docs free of planning/process internals.
-- Preserve explicit CORRECT/INCORRECT examples in pattern-oriented docs.
+- Keep canonical docs aligned with runtime behavior and verified evidence.
+- Use snapshot evidence (`api-snapshots/go.txt`, `api-snapshots/ts.txt`, `api-snapshots/py.txt`) before documenting API changes.
+- Keep examples deterministic and runnable in CI.
+- Record unknowns explicitly instead of guessing.
 
 ## Review Checklist
 
-- API claims are validated against `api-snapshots/go.txt`, `api-snapshots/ts.txt`, and `api-snapshots/py.txt`.
-- Verification commands are runnable and repo-realistic.
-- Required headings and fixed contract sections are present in each docs file.
-- Troubleshooting entries include concrete verification steps.
-- Migration guidance remains user-facing.
+- `docs/api-reference.md` reflects current, snapshot-backed interfaces.
+- `docs/core-patterns.md` contains both **CORRECT** and **INCORRECT** examples.
+- `docs/testing-guide.md` lists active verification commands.
+- `docs/troubleshooting.md` includes symptom, fix, and verification guidance.
+- `docs/migration-guide.md` remains task-oriented for users.
 
 ## Documentation Expectations
 
-- Use concise, reproducible commands for evidence.
-- Mark missing details as `TODO:` or `UNKNOWN:` rather than guessing.
-- Keep contract-only surfaces limited to maintainer alignment.
-- Avoid linking ingestible docs to out-of-scope trees (`docs/development/**`, `docs/planning/**`, `docs/archive/**`).
+- Update documentation in the same change that alters public behavior.
+- Prefer clear headings, short procedures, and concrete command examples.
+- Avoid planning-only notes in canonical docs pages.
+- Keep terminology and links consistent across the docs set.
