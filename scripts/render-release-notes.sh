@@ -65,7 +65,6 @@ Python:
 ## Lift migration
 - Draft guide: ${docs_base}/docs/migration/from-lift.md
 - Migration roadmap: ${docs_base}/docs/development/planning/apptheory/subroadmaps/SR-MIGRATION.md
-- Deprecation posture (Pay Theory): ${docs_base}/docs/migration/lift-deprecation.md
 
 ## Verification
 - \`make rubric\`

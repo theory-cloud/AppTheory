@@ -1,13 +1,15 @@
-# AppTheory Testing Guide (Example)
+# AppTheory Testing Guide
 
-This file is an example for `docs/testing-guide.md`.
+This is an example target for `docs/testing-guide.md`.
 
 ## Test Strategy
 
-AppTheory verification should combine:
-- fast unit checks for local iteration,
-- cross-language contract tests for parity,
-- rubric/build checks before publishing.
+AppTheory verification is layered so interface drift is caught early:
+
+- Fast unit checks for local iteration (`make test-unit`)
+- Cross-language contract checks (`./scripts/verify-contract-tests.sh`)
+- Public API drift checks (`./scripts/update-api-snapshots.sh`, `./scripts/verify-api-snapshots.sh`)
+- Full repo release gates (`make rubric`)
 
 ## Unit Tests
 
@@ -15,43 +17,42 @@ AppTheory verification should combine:
 make test-unit
 ```
 
-Expected result:
-- `go test ./...` passes (via Makefile `test-unit` target).
+What it does:
 
-## Contract Tests (Cross-language parity)
+- Runs `go test ./...` from the repository root (as defined in `Makefile`)
+
+## Integration / Workflow Verification
 
 ```bash
 ./scripts/verify-contract-tests.sh
-```
-
-✅ CORRECT:
-- Update fixtures/snapshots deliberately when behavior changes.
-- Keep docs changes and parity checks in the same PR.
-
-## Full Verification Gate (Pre-PR / Pre-release)
-
-```bash
+./scripts/update-api-snapshots.sh
+./scripts/verify-api-snapshots.sh
 make rubric
 ```
 
-This runs repository verification gates (including lint/build/snapshot alignment workflows described in repo docs and scripts).
-
-## Additional Drift Checks
+## Package-Focused Checks
 
 ```bash
-./scripts/verify-version-alignment.sh
-./scripts/update-api-snapshots.sh
+(cd ts && npm run check)
+(cd py && python -m unittest discover -s tests)
+(cd cdk && npm test)
 ```
 
 ## Evidence To Capture
 
-- Command output proving unit and rubric checks passed.
-- API snapshot diffs when public interfaces changed (`api-snapshots/go.txt`, `api-snapshots/ts.txt`, `api-snapshots/py.txt`).
-- Any contract-test fixture updates required for behavior changes.
+- Commands executed
+- Pass/fail status and relevant logs
+- Snapshot diffs when public APIs changed
+- `TODO:` If a gate is intentionally skipped, record why and when it will be run
 
-## Failure Handling
+## CORRECT vs INCORRECT Test Documentation
 
-If a check fails:
-1. Record the failing command and error output.
-2. Reconcile docs with canonical sources (`api-snapshots/*`, `go.mod`, package manifests, and script outputs).
-3. Re-run the failing command until clean.
+✅ CORRECT:
+
+- Tie docs examples to runnable repo commands.
+- Treat snapshot changes as public API changes.
+
+❌ INCORRECT:
+
+- Claim parity without running `./scripts/verify-contract-tests.sh`.
+- Update docs for new APIs without refreshing snapshots.

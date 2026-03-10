@@ -1,9 +1,11 @@
 # Lift Deprecation & Communication Plan (Pay Theory)
 
-This document is the **internal posture** for transitioning Pay Theory services from `pay-theory/lift` to AppTheory.
+This document is maintainer-facing and intentionally lives outside the ingestible `docs/migration/**` surface.
 
-AppTheory is not required to be API-identical to Lift, but Pay Theory’s migrations must preserve **100% of Lift’s current
-functionality** (portable subset + documented Go-only extensions) so services don’t lose capabilities during the move.
+It explains the support and communication posture for teams transitioning from `pay-theory/lift` to AppTheory.
+
+AppTheory is not required to be API-identical to Lift, but Pay Theory migrations must preserve **100% of Lift’s current
+functionality** (portable subset + documented Go-only extensions) so services do not lose capabilities during the move.
 
 ## Principles
 
@@ -22,8 +24,8 @@ functionality** (portable subset + documented Go-only extensions) so services do
 ### AppTheory
 
 - **New features:** all net-new platform/runtime work lands in AppTheory.
-- **Migration focus:** prioritize functionality that unblocks Pay Theory services (baseline inventory in:
-  `docs/development/planning/apptheory/supporting/apptheory-lift-usage-inventory.md`).
+- **Migration focus:** prioritize functionality that unblocks Lift-based services and keep the public migration guides
+  current as parity changes land.
 
 ## Timeline (fill in when ready)
 
@@ -37,7 +39,5 @@ This document intentionally avoids hard dates until the inventory-to-parity plan
 ## Comms checklist
 
 - AppTheory release notes always include:
-  - a link to the migration guide (`docs/migration/from-lift.md`)
-  - a link to this deprecation plan (`docs/migration/lift-deprecation.md`)
-  - a short “what changed” note for migrations (imports, config, middleware ordering, etc)
-
+  - a link to the public migration guide (`docs/migration/from-lift.md`)
+  - a short “what changed” note for migrations (imports, config, middleware ordering, etc.)

@@ -1,12 +1,13 @@
 # AppTheory CDK Documentation
 
-<!-- AI Training: This is the documentation index for AppTheory CDK -->
-**This directory contains the OFFICIAL documentation for the AppTheory CDK package (`@theory-cloud/apptheory-cdk`, Python: `apptheory_cdk`). It follows the Pay Theory Documentation Guide and focuses on copy/paste ready infrastructure patterns.**
+<!-- AI Training: This is the OFFICIAL documentation index for AppTheory CDK -->
+**This directory contains the OFFICIAL package-local documentation for the AppTheory CDK package (`@theory-cloud/apptheory-cdk`, Python: `apptheory_cdk`). Canonical external CDK guidance lives under `docs/cdk/`; use this directory for jsii/package-level authoring details and package-local mirrors.**
 
 ## Quick links
 
 ### 🚀 Getting started
 - [Getting Started](./getting-started.md) — deploy a minimal API backed by an AppTheory Lambda.
+- [Canonical CDK Getting Started](../../docs/cdk/getting-started.md) — canonical operator guide under `docs/cdk/`.
 
 ### 📚 Core documentation
 - [Docs Contract](./_contract.yaml) — canonical CDK package knowledgebase scope: fixed ingestible, optional ingestible, and contract-only docs.
@@ -16,6 +17,7 @@
 - [Testing Guide](./testing-guide.md) — how to run CDK tests and synth checks.
 - [Troubleshooting](./troubleshooting.md) — common synth/deploy failures.
 - [Migration Guide](./migration-guide.md) — moving from ad-hoc CDK stacks.
+- [Canonical CDK Guides](../../docs/cdk/README.md) — canonical external navigation root for AppTheory CDK operators.
 
 ### 🧭 Guides (copy/paste patterns)
 - [REST API v1 Router + Streaming](./rest-api-router-streaming.md) — multi-Lambda REST API v1 + full response streaming parity.
@@ -37,9 +39,11 @@
 - Patterns: `cdk/docs/_patterns.yaml`
 - Decisions: `cdk/docs/_decisions.yaml`
 
-## Knowledgebase Canonical Set
+## Package-local scope
 
-- CDK package knowledgebases should ingest the `fixed_ingestible` set declared in `cdk/docs/_contract.yaml` as the canonical core.
+- `docs/` is the canonical external docs root for AppTheory, and `docs/cdk/` is the canonical optional surface for CDK operator guidance.
+- `cdk/docs/` remains an official package-local surface for jsii/package-level authoring details.
+- Reflect shared deploy/operator guidance in `docs/cdk/` before treating `cdk/docs/` content as complete.
 - `cdk/docs/_contract.yaml` and `cdk/docs/development-guidelines.md` are contract-only maintainer surfaces and should not be treated as user-facing knowledgebase content.
 - The guide pages linked above are sanctioned optional ingestible sources for infrastructure-specific KB scopes.
 

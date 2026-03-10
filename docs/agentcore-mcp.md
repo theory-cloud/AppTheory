@@ -98,7 +98,7 @@ func main() {
 
 Use the CDK construct to provision the HTTP API + `POST /mcp` route + optional session table and domain.
 
-See: `cdk/docs/mcp-server-agentcore.md`.
+See: `docs/cdk/mcp-server-agentcore.md`.
 
 ---
 
