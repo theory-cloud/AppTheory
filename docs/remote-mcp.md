@@ -74,8 +74,8 @@ Use these CDK constructs:
 - `AppTheoryMcpProtectedResource` — adds `/.well-known/oauth-protected-resource` for discovery
 
 See:
-- `cdk/docs/mcp-server-remote-mcp.md`
-- `cdk/docs/mcp-protected-resource.md`
+- `docs/cdk/mcp-server-remote-mcp.md`
+- `docs/cdk/mcp-protected-resource.md`
 
 ## 4) Testing (no AWS required)
 
@@ -92,9 +92,8 @@ API Gateway REST response streaming connections are time-bounded and can disconn
 - keep tool output durable (event log + `Last-Event-ID` replay)
 - execute long work asynchronously (worker Lambdas) and append progress/results into the event log
 
-See the compatibility contract + transcripts:
-- `docs/development/planning/apptheory/remote-mcp/COMPATIBILITY_CONTRACT.md`
-- `docs/development/planning/apptheory/remote-mcp/HTTP_TRANSCRIPTS.md`
+Detailed compatibility notes and HTTP transcripts are maintained in non-canonical planning docs and intentionally kept
+out of this user-facing guide.
 
 ## Examples
 

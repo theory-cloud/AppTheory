@@ -1,57 +1,74 @@
-# Example for docs/_patterns.yaml
-
 patterns:
-  api_snapshot_first:
-    name: "Treat api-snapshots as authoritative public API"
-    problem: "How do maintainers avoid documenting APIs that are not actually exported?"
-    solution: "Update and verify `api-snapshots/go.txt`, `api-snapshots/ts.txt`, and `api-snapshots/py.txt` before finalizing API docs."
+  api_snapshots_first:
+    name: "Treat API snapshots as the public interface source of truth"
+    problem: "Human docs can drift from exported symbols across Go, TypeScript, and Python."
+    solution: "Use api-snapshots/go.txt, api-snapshots/ts.txt, and api-snapshots/py.txt as release-gated evidence before publishing API docs."
     correct_example: |
       # CORRECT
       ./scripts/update-api-snapshots.sh
-      make rubric
+      ./scripts/verify-api-snapshots.sh
     anti_patterns:
-      - name: "Writing API prose without snapshot verification"
-        why: "Unverified docs drift from exported runtime/package surfaces."
+      - name: "Documenting symbols not present in snapshots"
+        why: "This creates hallucinated APIs and breaks migration safety."
         incorrect_example: |
           # INCORRECT
-          # Edit docs/api-reference.md with guessed symbols, skip snapshot updates
-          echo "skip snapshots"
+          # Add docs for a new exported function before snapshot updates.
         consequences:
-          - Migration guidance becomes unreliable
-          - AI retrieval answers include non-existent APIs
+          - "Users depend on interfaces that are not actually exported"
+          - "Cross-language docs drift"
 
-  keep_versions_aligned:
-    name: "Keep VERSION and package manifests aligned"
-    problem: "How do AppTheory releases avoid cross-package version drift?"
-    solution: "Keep `VERSION`, `ts/package.json`, `py/pyproject.toml`, and `cdk/package.json` at the same version."
+  thin_lambda_entrypoint:
+    name: "Keep Lambda handlers thin and delegate dispatch"
+    problem: "Manual event-shape branching is brittle and drifts from the runtime contract."
+    solution: "Delegate untyped events to HandleLambda/handleLambda/handle_lambda."
+    correct_example: |
+      # CORRECT (Go)
+      func handler(ctx context.Context, event json.RawMessage) (any, error) {
+        return app.HandleLambda(ctx, event)
+      }
+    anti_patterns:
+      - name: "Hand-rolled shape detection"
+        why: "Custom dispatch misses supported triggers and diverges across languages."
+        incorrect_example: |
+          # INCORRECT
+          if event.RequestContext.HTTP.Method != "" {
+            return app.ServeAPIGatewayV2(ctx, parsed)
+          }
+        consequences:
+          - "Unhandled event shapes"
+          - "Parity regressions"
+
+  strict_route_registration:
+    name: "Use strict route registration in tests and CI"
+    problem: "Invalid patterns may be ignored on non-strict registration paths."
+    solution: "Use GetStrict/HandleStrict/handleStrict/handle_strict to fail fast."
     correct_example: |
       # CORRECT
-      ./scripts/verify-version-alignment.sh
+      if _, err := app.GetStrict("/users/{id}", h); err != nil {
+        panic(err)
+      }
     anti_patterns:
-      - name: "Bumping one manifest only"
-        why: "Version drift breaks verification gates and creates release ambiguity."
+      - name: "Assuming invalid routes will always error"
+        why: "Compatibility behavior can hide invalid route declarations."
         incorrect_example: |
           # INCORRECT
-          npm version patch --prefix ts
+          app.Get("/{proxy+}/x", h)
         consequences:
-          - CI failures in alignment checks
-          - Inconsistent release artifact expectations
+          - "Unexpected 404 responses"
 
-  deterministic_verification:
-    name: "Run deterministic parity checks before cloud-only testing"
-    problem: "How should users verify behavior without relying on manual AWS checks?"
-    solution: "Use repo verification gates first (`make test-unit`, contract tests, rubric)."
+  sanitize_before_logging:
+    name: "Sanitize payloads before logging"
+    problem: "Import and event payloads may contain sensitive data or control characters."
+    solution: "Use sanitization helpers before writing logs."
     correct_example: |
       # CORRECT
-      make test-unit
-      ./scripts/verify-contract-tests.sh
-      make rubric
+      msg := sanitization.SanitizeLogString("import\nstart")
+      logger.Info(msg)
     anti_patterns:
-      - name: "Only manual invoke validation"
-        why: "Manual checks miss parity and snapshot drift."
+      - name: "Logging raw payload bodies"
+        why: "Can leak PCI/PII and produce unsafe logs."
         incorrect_example: |
           # INCORRECT
-          aws lambda invoke ...
+          logger.Info("payload", map[string]any{"body": string(raw)})
         consequences:
-          - Cross-language regressions detected late
-          - Higher risk of publishing unsupported behavior
+          - "Sensitive data exposure"
