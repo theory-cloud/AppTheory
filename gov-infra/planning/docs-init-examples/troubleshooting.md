@@ -1,56 +1,57 @@
-# AppTheory Troubleshooting (Example)
+# AppTheory Troubleshooting
 
-This file is an example for `docs/troubleshooting.md`.
+This is an example target for `docs/troubleshooting.md`, organized by symptom and verified fix path.
 
 ## Quick Diagnosis
 
-| Symptom | Likely Cause | First Check |
-|---|---|---|
-| Version alignment script fails | Manifest/version drift | `./scripts/verify-version-alignment.sh` |
-| API docs drift detected | Snapshots not refreshed | `./scripts/update-api-snapshots.sh` |
-| Header assertion case mismatch | Expected mixed-case output keys | Header normalization assumptions |
+| Symptom | First check | Expected next step |
+| --- | --- | --- |
+| Version checks fail early | `./scripts/verify-version-alignment.sh` | Align version metadata and rerun |
+| API docs differ from exports | `./scripts/verify-api-snapshots.sh` | Regenerate snapshots and verify |
+| Behavior differs by language/runtime | `./scripts/verify-contract-tests.sh` | Fix parity and rerun tests |
 
 ## Common Issues
 
-### Issue: Version alignment failure
+### Issue: version alignment check fails
 
-**Cause**
-- `VERSION`, TS, Python, and/or CDK manifests are out of sync.
+**Symptoms**
+- `./scripts/verify-version-alignment.sh` exits non-zero.
 
-**Fix**
-
-```bash
-./scripts/verify-version-alignment.sh
-```
-
-**Verify**
-
+**Solution**
 ```bash
 ./scripts/verify-version-alignment.sh
 make rubric
 ```
 
-### Issue: API reference and export mismatch
+**Verification**
+- Alignment script passes and rubric proceeds.
 
-**Cause**
-- Public symbol changes were not reflected in `api-snapshots/*`.
+### Issue: API snapshot drift after code changes
 
-**Fix**
+**Symptoms**
+- `./scripts/verify-api-snapshots.sh` fails.
 
+**Solution**
 ```bash
 ./scripts/update-api-snapshots.sh
+./scripts/verify-api-snapshots.sh
 ```
 
-**Verify**
+**Verification**
+- Snapshot verification passes with intentional diff only.
 
-```bash
-./scripts/update-api-snapshots.sh
-make rubric
-```
+### Issue: route appears registered but never matches
+
+**Symptoms**
+- Requests return `404` unexpectedly.
+
+**Solution**
+- Use strict route registration and fail on invalid patterns.
+
+**Verification**
+- Route-matching tests pass and invalid patterns fail fast.
 
 ## Getting Help
 
-- Capture the exact failing command and output.
-- Include affected file paths and recent change context.
-- Open a maintainer issue with reproduction steps.
-- No canonical issue template is defined under `.github/ISSUE_TEMPLATE/`; include reproduction steps directly in the issue or PR body.
+- Capture failing command output, expected behavior, and actual behavior.
+- Open a focused issue with reproduction steps and environment details.

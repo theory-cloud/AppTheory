@@ -1,11 +1,14 @@
 # TypeScript Testing Guide
 
-## Unit tests
+Run the TypeScript package checks here when you want package-focused feedback. For the canonical cross-language
+verification flow, use `docs/testing-guide.md`.
+
+## Package checks
 
 ```bash
 cd ts
 npm ci
-npm test
+npm run check
 ```
 
 ## Contract parity (cross-language)
@@ -21,4 +24,3 @@ Run from repo root:
 ```bash
 make rubric
 ```
-

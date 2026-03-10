@@ -1,52 +1,73 @@
 # AppTheory Documentation
 
-<!-- AI Training: This is the documentation index for AppTheory -->
-**This directory contains the OFFICIAL documentation for AppTheory. It follows the Pay Theory Documentation Guide so both humans and AI assistants can learn the runtime contract, apply correct patterns, and troubleshoot drift.**
+<!-- AI Training: This is the OFFICIAL documentation index for AppTheory -->
+This directory contains the OFFICIAL documentation for AppTheory.
 
-## Quick links
+`docs/` is the canonical documentation root for AppTheory. Use the pages in this directory for user-facing guidance,
+AI ingestion, and migration-safe references.
 
-### 🚀 Getting started
-- [Getting Started](./getting-started.md) — install, run locally, and deploy.
+## Canonical root
 
-### 📚 Core documentation
-- [Docs Contract](./_contract.yaml) — canonical AppTheory knowledgebase scope: fixed ingestible, optional ingestible, and contract-only docs.
-- [API Reference](./api-reference.md) — public surfaces + where to find the authoritative snapshots.
-- [Core Patterns](./core-patterns.md) — canonical patterns (and anti-patterns) for routing, middleware, streaming, and errors.
-- [Sanitization (Safe Logging)](./sanitization.md) — redact/mask PCI/PII fields and prevent log forging.
-- [Jobs Ledger (Import Pipelines)](./jobs-ledger.md) — job/record status, leases, and idempotency primitives.
-- [Bedrock AgentCore (MCP Gateway)](./agentcore-mcp.md) — deploy an MCP tool server for AgentCore (Go runtime + CDK).
-- [MCP Server (Full Surface)](./mcp.md) — JSON-RPC methods, registries (tools/resources/prompts), payload shapes, and streaming notes.
-- [Development Guidelines](./development-guidelines.md) — contract-only maintainer guidance for keeping the docs set aligned.
-- [Testing Guide](./testing-guide.md) — unit tests, contract tests, and rubric verification.
-- [Troubleshooting](./troubleshooting.md) — common symptoms → verified fixes.
-- [Migration Guide](./migration-guide.md) — Lift → AppTheory and other migrations.
+- Canonical KT source root: `docs/`
+- Public API truth: `api-snapshots/go.txt`, `api-snapshots/ts.txt`, `api-snapshots/py.txt`
+- CDK construct truth: `cdk/.jsii` and `cdk/lib/*.d.ts`
+- Package-local docs in `ts/docs/`, `py/docs/`, and `cdk/docs/` are official package-level mirrors and maintainer
+  surfaces, not the canonical external root
 
-### 🧭 Reference examples
-- [Import Pipeline Reference Stack](../examples/cdk/import-pipeline/README.md) — end-to-end wiring for Issue `#169` (S3 ingest → jobs ledger → SQS workers + optional CodeBuild step).
+## Fixed ingestible docs
 
-### 🧩 Language and package docs
-- TypeScript package docs: `ts/docs/README.md`
-- Python package docs: `py/docs/README.md`
-- CDK constructs docs: `cdk/docs/README.md`
+- [Documentation Index](./README.md)
+- [Concepts](./_concepts.yaml)
+- [Patterns](./_patterns.yaml)
+- [Decisions](./_decisions.yaml)
+- [Getting Started](./getting-started.md)
+- [API Reference](./api-reference.md)
+- [Core Patterns](./core-patterns.md)
+- [Testing Guide](./testing-guide.md)
+- [Troubleshooting](./troubleshooting.md)
+- [Migration Guide](./migration-guide.md)
 
-### 🤖 AI knowledge base (YAML triad)
-- Docs Contract: `docs/_contract.yaml`
-- Concepts: `docs/_concepts.yaml`
-- Patterns: `docs/_patterns.yaml`
-- Decisions: `docs/_decisions.yaml`
+## Fixed contract-only docs
 
-## Knowledgebase Canonical Set
+- [Docs Contract](./_contract.yaml)
+- [Development Guidelines](./development-guidelines.md)
 
-- AppTheory knowledgebases should ingest the `fixed_ingestible` set declared in `docs/_contract.yaml` as the canonical core.
-- `docs/_contract.yaml` and `docs/development-guidelines.md` are contract-only maintainer surfaces and should not be treated as user-facing knowledgebase content.
-- Specialized root docs, package docs (`ts/docs/**`, `py/docs/**`, `cdk/docs/**`), and approved examples may be added only when the knowledgebase scope requires them.
-- Planning material under `docs/development/**`, `docs/planning/**`, and `gov-infra/planning/**` is not canonical product documentation.
+These pages are versioned with the docs contract, but they are not part of the ingestible user-doc set. The root
+`development-guidelines.md` file should remain a short boundary marker, not a maintainer-process dump.
 
-## Audience
-- Platform/application teams building AWS Lambda APIs in Go/TypeScript/Python.
-- Contributors maintaining cross-language parity and release artifacts.
-- AI assistants answering questions about AppTheory usage and pitfalls.
+## Sanctioned optional ingestible surfaces
 
-## Planning vs. official docs
-- **Official docs**: everything under this `docs/` folder (the files linked above).
-- **Planning/roadmaps**: `docs/development/planning/apptheory/README.md` (workstreams, gap analyses, milestones).
+- [Migration Procedures](./migration/from-lift.md) and related files under `docs/migration/**`
+- [CDK Guides](./cdk/README.md) and related files under `docs/cdk/**`
+- `docs/llm-faq/**` is reserved as an optional ingestible surface if it is added later
+
+## Additional repo guides outside the current KT ingest set
+
+- [Sanitization](./sanitization.md)
+- [Jobs Ledger](./jobs-ledger.md)
+- [Bedrock AgentCore MCP](./agentcore-mcp.md)
+- [Remote MCP](./remote-mcp.md)
+- [Remote MCP + Autheory](./remote-mcp-autheory.md)
+- [MCP Method Surface](./mcp.md)
+- [Import Pipeline Reference Stack](../examples/cdk/import-pipeline/README.md)
+
+These pages remain useful repo docs, but they are not part of the fixed or sanctioned ingestible KT publish set
+declared in [Docs Contract](./_contract.yaml).
+
+## Secondary package-local surfaces
+
+- [TypeScript package docs](../ts/docs/README.md) for package-local quick starts and build details
+- [Python package docs](../py/docs/README.md) for package-local quick starts and build details
+- [CDK package docs](../cdk/docs/README.md) for jsii/package-level authoring details
+
+Use `docs/` and `docs/cdk/` for canonical external guidance. Package-local docs should link back here when the same
+topic is described in both places.
+
+## Non-canonical roots
+
+These roots are intentionally outside the ingestible documentation surface and are not linked from canonical guide pages:
+
+- `docs/development/**`
+- `docs/planning/**`
+- `docs/internal/**`
+- `docs/archive/**`

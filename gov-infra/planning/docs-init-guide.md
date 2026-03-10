@@ -2,86 +2,146 @@
 
 Generated: 2026-03-09
 
+This artifact is **guide-only**. **Do not modify docs/ directly** from this action.
+A local agent must apply or adapt the example outputs under `gov-infra/planning/docs-init-examples/` to the canonical docs surface.
+
 ## Purpose
 
-This is a **guide-only** docs initialization package for AppTheory.
+- Scope summary: `UNKNOWN:` no explicit scope summary was provided in inputs; this guide is grounded in repository evidence.
+- Canonical KT source root: `docs/`
+- Selected documentation domains:
+  - Runtime + public API surface (Go, TypeScript, Python)
+  - Verification and quality gates
+  - Migration and compatibility (Lift → AppTheory)
+  - CDK operator surface
+- Public/external surface summary:
+  - Multi-language runtime package interfaces with snapshot-backed exports
+  - Lambda HTTP/event adapter entrypoints and deterministic testkit APIs
+  - Migration helper CLI (`cmd/lift-migrate`) with `-root` and `-apply`
+  - Verification command surface (`make test-unit`, `./scripts/verify-contract-tests.sh`, `./scripts/update-api-snapshots.sh`, `make rubric`)
+- Canonical sources consulted by domain:
+  - Runtime/API: `docs/api-reference.md`, `api-snapshots/go.txt`, `api-snapshots/ts.txt`, `api-snapshots/py.txt`
+  - Toolchains/first-run: `README.md`, `docs/getting-started.md`, `go.mod`, `Makefile`
+  - Patterns/testing/troubleshooting: `docs/core-patterns.md`, `docs/testing-guide.md`, `docs/troubleshooting.md`
+  - Migration: `docs/migration-guide.md`, `docs/migration/from-lift.md`, `cmd/lift-migrate/main.go`
+  - Docs contract policy: `docs/README.md`, `docs/_contract.yaml`
+  - Stranded runtime docs to consolidate: `ts/docs/README.md`, `py/docs/README.md`, `cdk/docs/README.md`
 
-**Do not modify docs/ directly** in this action. A local agent should apply/adapt the example files under `gov-infra/planning/docs-init-examples/`.
+## Canonical KT Surface
 
-Selected documentation domains:
-1. Runtime/user docs (`docs/*.md` + YAML triad)
-2. Public API snapshots (`api-snapshots/*`)
-3. Toolchain + verification surface (`go.mod`, `Makefile`, package manifests, `VERSION`, `scripts/*`)
-4. Migration/compatibility docs (`docs/migration-guide.md`, `docs/migration/**`)
-5. Package docs routers (`ts/docs/README.md`, `py/docs/README.md`, `cdk/docs/README.md`)
-
-Canonical sources consulted by domain:
-- Runtime docs: `README.md`, `docs/README.md`, `docs/getting-started.md`, `docs/api-reference.md`, `docs/core-patterns.md`, `docs/testing-guide.md`, `docs/troubleshooting.md`, `docs/migration-guide.md`, `docs/development-guidelines.md`, `docs/sanitization.md`, `docs/jobs-ledger.md`, `docs/agentcore-mcp.md`, `docs/mcp.md`, `docs/remote-mcp.md`, `docs/remote-mcp-autheory.md`
-- API contracts: `docs/api-reference.md`, `api-snapshots/go.txt`, `api-snapshots/ts.txt`, `api-snapshots/py.txt`
-- Toolchains/verification: `go.mod`, `Makefile`, `VERSION`, `ts/package.json`, `py/pyproject.toml`, `cdk/package.json`, `scripts/verify-version-alignment.sh`, `scripts/update-api-snapshots.sh`, `scripts/verify-contract-tests.sh`
-- Migration sources: `docs/migration-guide.md`, `docs/migration/from-lift.md`
-- Language docs routers: `ts/docs/README.md`, `py/docs/README.md`, `cdk/docs/README.md`
-
-External/public surfaces identified:
-- App container + routing/middleware APIs across Go/TypeScript/Python
-- AWS adapter entrypoints (APIGW v2, Lambda Function URL, and documented event-shape dispatch)
-- Universal Lambda dispatcher (`HandleLambda` / `handleLambda` / `handle_lambda`)
-- Drift gates via `api-snapshots/*`
-- Version alignment and build/test gates via manifests, `Makefile`, and `scripts/*`
+- Canonical KT source root: `docs/`
+- Fixed ingestible docs:
+  - `docs/README.md`
+  - `docs/_concepts.yaml`
+  - `docs/_patterns.yaml`
+  - `docs/_decisions.yaml`
+  - `docs/getting-started.md`
+  - `docs/api-reference.md`
+  - `docs/core-patterns.md`
+  - `docs/testing-guide.md`
+  - `docs/troubleshooting.md`
+  - `docs/migration-guide.md`
+- Fixed contract-only docs:
+  - `docs/_contract.yaml`
+  - `docs/development-guidelines.md`
+- Sanctioned optional ingestible surfaces:
+  - `docs/migration/**`
+  - `docs/llm-faq/**`
+  - `docs/cdk/**`
+- Non-canonical docs roots:
+  - `docs/development/**`
+  - `docs/planning/**`
+  - `docs/internal/**`
+  - `docs/archive/**`
 
 ## Example Outputs
 
-| Target docs path | Example path | Suggested local action | Notes |
-|---|---|---|---|
-| `docs/README.md` | `gov-infra/planning/docs-init-examples/README.md` | adapt | Keep current index strengths; ensure full contract summary + required links, and preserve repo-specific guides already linked from the AppTheory docs index. |
-| `docs/_contract.yaml` | `gov-infra/planning/docs-init-examples/_contract.yaml` | create | Missing in repo; create using the fixed contract shape exactly. |
-| `docs/_concepts.yaml` | `gov-infra/planning/docs-init-examples/_concepts.yaml` | adapt | Preserve repo-specific concepts, align with canonical sources. |
-| `docs/_patterns.yaml` | `gov-infra/planning/docs-init-examples/_patterns.yaml` | adapt | Keep concrete CORRECT/INCORRECT guidance tied to real commands. |
-| `docs/_decisions.yaml` | `gov-infra/planning/docs-init-examples/_decisions.yaml` | adapt | Keep decision trees grounded in snapshots/manifests/scripts. |
-| `docs/getting-started.md` | `gov-infra/planning/docs-init-examples/getting-started.md` | adapt | Must include prerequisites, installation, and verification. |
-| `docs/api-reference.md` | `gov-infra/planning/docs-init-examples/api-reference.md` | adapt | Keep snapshot-first source-of-truth policy. |
-| `docs/core-patterns.md` | `gov-infra/planning/docs-init-examples/core-patterns.md` | adapt | Preserve explicit `CORRECT` and `INCORRECT` sections. |
-| `docs/development-guidelines.md` | `gov-infra/planning/docs-init-examples/development-guidelines.md` | adapt | Must remain contract-only maintainer guidance. |
-| `docs/testing-guide.md` | `gov-infra/planning/docs-init-examples/testing-guide.md` | expand | Add deterministic verification and evidence expectations. |
-| `docs/troubleshooting.md` | `gov-infra/planning/docs-init-examples/troubleshooting.md` | expand | Keep quick diagnosis + concrete symptom/cause/fix/verification entries. |
-| `docs/migration-guide.md` | `gov-infra/planning/docs-init-examples/migration-guide.md` | adapt | Keep user-facing migration path; avoid out-of-scope links. |
+These examples are scaffolding artifacts only. They map 1:1 to target docs paths.
 
-Optional surfaces:
-- `docs/migration/**`: keep/expand existing migration leaf docs (`docs/migration/from-lift.md`, `docs/migration/g4-representative-migration.md`, `docs/migration/lift-deprecation.md`).
-- `docs/llm-faq/**`: do not create in this cycle unless an evidence-backed FAQ set is identified.
-- `docs/cdk/**`: do not materialize a root `docs/cdk/**` tree in this cycle; keep CDK operator docs in `cdk/docs/**` and repo-level operator guides in `docs/*.md`.
+| Example path (guide artifact) | Target repo path | Suggested local action | Evidence basis |
+|---|---|---|---|
+| `gov-infra/planning/docs-init-examples/README.md` | `docs/README.md` | adapt | `docs/README.md`, `README.md` |
+| `gov-infra/planning/docs-init-examples/_contract.yaml` | `docs/_contract.yaml` | adapt | `docs/_contract.yaml` + server contract override |
+| `gov-infra/planning/docs-init-examples/_concepts.yaml` | `docs/_concepts.yaml` | adapt | `docs/_concepts.yaml`, `README.md`, `docs/api-reference.md` |
+| `gov-infra/planning/docs-init-examples/_patterns.yaml` | `docs/_patterns.yaml` | adapt | `docs/_patterns.yaml`, `docs/core-patterns.md` |
+| `gov-infra/planning/docs-init-examples/_decisions.yaml` | `docs/_decisions.yaml` | adapt | `docs/_decisions.yaml`, `docs/migration-guide.md` |
+| `gov-infra/planning/docs-init-examples/getting-started.md` | `docs/getting-started.md` | adapt | `docs/getting-started.md`, `go.mod`, `Makefile` |
+| `gov-infra/planning/docs-init-examples/api-reference.md` | `docs/api-reference.md` | adapt | `docs/api-reference.md`, `api-snapshots/*`, `cmd/lift-migrate/main.go` |
+| `gov-infra/planning/docs-init-examples/core-patterns.md` | `docs/core-patterns.md` | keep + expand | `docs/core-patterns.md` |
+| `gov-infra/planning/docs-init-examples/development-guidelines.md` | `docs/development-guidelines.md` | adapt | `docs/development-guidelines.md` |
+| `gov-infra/planning/docs-init-examples/testing-guide.md` | `docs/testing-guide.md` | keep + adapt | `docs/testing-guide.md`, `Makefile` |
+| `gov-infra/planning/docs-init-examples/troubleshooting.md` | `docs/troubleshooting.md` | keep + expand | `docs/troubleshooting.md` |
+| `gov-infra/planning/docs-init-examples/migration-guide.md` | `docs/migration-guide.md` | keep + adapt | `docs/migration-guide.md`, `docs/migration/from-lift.md` |
+
+Decisions for sanctioned optional surfaces:
+
+- `docs/migration/**`: keep + expand (already used and canonical)
+- `docs/cdk/**`: keep + expand (canonical optional destination for infra guidance)
+- `docs/llm-faq/**`: create only if repo owners provide stable user-facing Q/A content
+
+## Cleanup And Consolidation Plan
+
+1. Preserve `docs/` as the only canonical KT root for ingestible and contract-only docs.
+2. Merge or move user-facing runtime guidance stranded outside canonical root:
+   - `ts/docs/**` → merge missing user-facing runtime details into `docs/getting-started.md`, `docs/api-reference.md`, and `docs/core-patterns.md`.
+   - `py/docs/**` → merge missing parity/testing guidance into `docs/testing-guide.md` and `docs/troubleshooting.md`.
+   - `cdk/docs/**` → move/merge canonical operator guidance into `docs/cdk/**` (sanctioned optional ingestible surface).
+3. Remove duplicate canonical claims in non-canonical/package-local docs roots after merge to reduce drift.
+4. Split oversized pages only when needed:
+   - keep fixed filenames intact,
+   - place overflow migration content under `docs/migration/**`,
+   - place CDK operator overflow under `docs/cdk/**`.
+5. Do not place user-facing canonical guidance in `docs/development/**`, `docs/planning/**`, `docs/internal/**`, or `docs/archive/**`.
 
 ## Local Agent Apply Steps
 
-1. Copy/adapt each example file into its mapped `docs/` target.
-2. Apply action intent per file: keep, adapt, expand, create, and for optional surfaces split/move when needed.
-3. Keep every claim grounded in canonical sources (`api-snapshots/*`, manifests, `Makefile`, scripts, existing docs).
-4. Preserve required conventions:
-   - examples first
-   - explicit `CORRECT` / `INCORRECT`
-   - machine-readable YAML roots: `contract`, `concepts`, `patterns`, `decisions`
-   - troubleshooting and migration content in problem → solution framing
-5. If detail is unconfirmed, keep explicit `TODO:` / `UNKNOWN:` text (do not invent behavior).
-6. Ensure ingestible docs do not link to `docs/development/**`, `docs/planning/**`, or `docs/archive/**`.
+1. Treat this plan as guide-only scaffolding; apply changes in `docs/` with adaptation over wholesale replacement.
+2. For each mapped file above, copy structure from its example and merge repository-specific content already present in canonical docs.
+3. Keep/expand existing high-quality repo-grounded sections (especially in `docs/api-reference.md`, `docs/core-patterns.md`, `docs/testing-guide.md`, `docs/troubleshooting.md`, and `docs/migration-guide.md`).
+4. Enforce canonical vs non-canonical boundaries:
+   - canonical: fixed docs + sanctioned optional surfaces under `docs/`
+   - non-canonical: `docs/development/**`, `docs/planning/**`, `docs/internal/**`, `docs/archive/**`
+5. Consolidate runtime docs currently outside `docs/` by merging or moving user-facing content from `ts/docs/**`, `py/docs/**`, and `cdk/docs/**` into canonical destinations.
+6. Preserve explicit uncertainty instead of guessing:
+   - `UNKNOWN:` broader stable CLI contract beyond `cmd/lift-migrate` is not confirmed.
+   - `UNKNOWN:` complete env-var/config-key inventory is not centralized in one canonical file.
+   - `TODO:` add a dedicated canonical configuration section once source-of-truth ownership is declared.
+7. Validate doc correctness against repo commands/interfaces before publish:
+   - `make test-unit`
+   - `./scripts/verify-contract-tests.sh`
+   - `./scripts/update-api-snapshots.sh`
+   - `./scripts/verify-api-snapshots.sh`
+   - `./scripts/verify-docs-standard.sh`
+   - `make rubric`
 
 ## Review Checklist
 
-- All required target docs paths are mapped and applied.
-- `docs/_contract.yaml` matches the fixed required shape exactly.
-- `docs/README.md` links to every fixed docs file.
-- `docs/README.md` preserves current AppTheory-specific official docs links that remain in scope.
-- `docs/getting-started.md` includes prerequisites, installation, and verification.
-- `docs/core-patterns.md` includes both `CORRECT` and `INCORRECT`.
-- `docs/development-guidelines.md` explicitly states contract-only scope.
-- `docs/troubleshooting.md` has quick diagnosis and concrete issue/fix entries.
-- `docs/migration-guide.md` stays user-facing and avoids forbidden link targets.
-- Unknowns are marked as `TODO:` / `UNKNOWN:` and not guessed.
+- Canonical KT source root is explicitly `docs/`.
+- Canonical vs non-canonical docs roots are clearly separated.
+- Every target docs file has a mapped example under `gov-infra/planning/docs-init-examples/`.
+- `docs/README.md` links to all fixed docs and machine-readable files.
+- `_contract.yaml` example uses top-level `contract:` map and server-required shape.
+- `_concepts.yaml`, `_patterns.yaml`, `_decisions.yaml` examples use required top-level roots and include repo-specific entries.
+- `getting-started.md` includes prerequisites, installation, and verification.
+- `core-patterns.md` includes explicit `CORRECT` and `INCORRECT` examples.
+- `development-guidelines.md` explicitly states contract-only usage.
+- `troubleshooting.md` includes quick diagnosis and concrete issue/fix entries.
+- `migration-guide.md` does not direct readers to `docs/development/**`, `docs/planning/**`, `docs/internal/**`, or `docs/archive/**`.
+- No unresolved template placeholder tokens remain.
+
+## Publish Acceptance Criteria
+
+- Canonical publish set exists under `docs/` and matches fixed filenames.
+- Contract-only pages remain clearly identified and do not absorb user-facing planning/process material.
+- Ingestible docs do not link to non-canonical roots (`docs/development/**`, `docs/planning/**`, `docs/internal/**`, `docs/archive/**`).
+- API claims are grounded in snapshots/docs evidence; unknowns are marked as `UNKNOWN:` or `TODO:`.
+- Optional surfaces are limited to sanctioned paths (`docs/migration/**`, `docs/llm-faq/**`, `docs/cdk/**`).
+- Runtime guidance stranded outside canonical root has an explicit merge/move outcome.
 
 ## Publish Notes
 
-- This action only prepares planning-side examples under `gov-infra/planning/`.
-- Prefer adapting strong existing AppTheory docs over wholesale replacement.
-- The current docs index already carries AppTheory-specific official guides such as `docs/sanitization.md`, `docs/jobs-ledger.md`, `docs/agentcore-mcp.md`, and `docs/mcp.md`; keep them when adapting `docs/README.md` unless they are intentionally retired.
-- `docs/llm-faq/**` is deferred for this cycle because no evidence-backed FAQ surface was identified in reviewed canonical docs.
-- Keep CDK operator material in `cdk/docs/**`; a root `docs/cdk/**` tree is not required for this cycle.
-- No explicit migration rollback runbook was found in `docs/migration-guide.md` or `docs/migration/**`; preserve that gap explicitly if migration docs are regenerated.
+- This scaffold intentionally favors grounded partial output over speculative completeness.
+- `UNKNOWN:` Full, stable public CLI contract for all `cmd/**` binaries beyond `lift-migrate` remains to be confirmed.
+- `UNKNOWN:` A complete canonical config/env matrix is not currently centralized.
+- `TODO:` After consolidation, re-run docs verification and snapshot gates to ensure no drift.
+- Reminder: this action remains guide-only and local-agent-applied.
