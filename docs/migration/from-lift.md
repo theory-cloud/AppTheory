@@ -7,11 +7,10 @@ functionality remains available for Go users** (portable subset + documented Go-
 
 ## Start Here
 
-- Baseline inventory (Pay Theory): `docs/development/planning/apptheory/supporting/apptheory-lift-usage-inventory.md`
-- Mapping reference (seed): `docs/development/planning/apptheory/supporting/apptheory-lift-to-apptheory-mapping.md`
-- Workstream roadmap: `docs/development/planning/apptheory/subroadmaps/SR-MIGRATION.md`
-- Lift deprecation posture: `docs/migration/lift-deprecation.md`
 - Representative migration notes: `docs/migration/g4-representative-migration.md`
+- Canonical interface map: `docs/api-reference.md`
+- Canonical runtime patterns: `docs/core-patterns.md`
+- Canonical verification flow: `docs/testing-guide.md`
 
 ## Quick Start (Go Service)
 
@@ -359,8 +358,8 @@ Common Lift construct mappings used by Lesser:
 
 ## Practical Mapping Table (High-Leverage)
 
-This table is a migration-focused subset. For the broader mapping seed, see:
-`docs/development/planning/apptheory/supporting/apptheory-lift-to-apptheory-mapping.md`.
+This table is a migration-focused subset. Internal planning inventories may exist outside the canonical docs root, but
+they are intentionally omitted from this user-facing guide.
 
 | Lift symbol/pattern | AppTheory equivalent | Notes |
 | --- | --- | --- |

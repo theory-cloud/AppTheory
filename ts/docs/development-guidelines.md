@@ -4,7 +4,8 @@ This guide is contract-only maintainer guidance. It defines how the TypeScript p
 
 ## Knowledgebase contract
 
-`ts/docs/_contract.yaml` is the canonical declaration for TypeScript package knowledgebase scope.
+`ts/docs/_contract.yaml` defines the package-local TypeScript docs scope. Canonical external guidance still lives under
+`docs/`.
 
 ✅ CORRECT:
 - Treat `fixed_ingestible` as the mandatory TypeScript package knowledgebase core.

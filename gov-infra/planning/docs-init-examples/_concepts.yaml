@@ -1,56 +1,55 @@
-# Example for docs/_concepts.yaml
-
 concepts:
-  apptheory_runtime_contract:
+  apptheory:
     type: framework
-    language_surface:
-      - go
-      - typescript
-      - python
-    purpose: "Cross-language serverless runtime contract for AWS Lambda applications with drift prevention."
-    canonical_sources:
-      - README.md
-      - docs/api-reference.md
-      - api-snapshots/go.txt
-      - api-snapshots/ts.txt
-      - api-snapshots/py.txt
+    language: multi
+    purpose: "Cross-language AWS Lambda runtime contract for Go, TypeScript, and Python."
+    tagline: "One runtime contract with snapshot-backed drift prevention."
     provides:
-      - Shared App/Request/Response/Context model across languages.
-      - Runtime adapters for AWS-triggered workloads documented in API reference.
+      - "App container and routing primitives across Go/TypeScript/Python"
+      - "Universal Lambda dispatch entrypoints for HTTP, queues, streams, and WebSockets"
+      - "Deterministic local test environments: testkit.New(), createTestEnv(), create_test_env()"
     requires:
-      - Go 1.26.x
-      - Node.js 24+
-      - Python 3.14+
+      - "Go 1.26.x (toolchain go1.26.1 from go.mod)"
+      - "Node.js >=24 for ts/ and cdk/ package workflows"
+      - "Python >=3.14 for py/ package workflows"
     use_when:
-      - You need equivalent API behavior across Go, TypeScript, and Python.
+      - "You need equivalent runtime behavior across Go, TypeScript, and Python services."
+      - "You need release-gated API drift controls using snapshots."
     dont_use_when:
-      - You need undocumented behavior that is not present in docs or API snapshots.
+      - "You need a non-AWS, general-purpose web framework with no Lambda adapter focus."
 
-  api_snapshot_drift_gate:
-    type: compatibility_contract
-    purpose: "Public API drift prevention using per-language export snapshots."
-    canonical_sources:
-      - docs/api-reference.md
-      - api-snapshots/go.txt
-      - api-snapshots/ts.txt
-      - api-snapshots/py.txt
+  canonical_docs_root:
+    type: documentation_contract
+    purpose: "Define the canonical KnowledgeTheory source surface for external docs."
     provides:
-      - Reviewable export baselines during release and migration work.
-    failure_modes:
-      - Runtime docs reference symbols absent from snapshot files.
-      - Code exports changed without snapshot updates.
+      - "Canonical root at docs/"
+      - "Fixed ingestible docs plus sanctioned optional ingestible surfaces"
+      - "Explicit exclusion of non-canonical roots from ingestible guidance"
+    configuration:
+      - "docs/README.md"
+      - "docs/_contract.yaml"
+      - "docs/migration/**"
+      - "docs/cdk/**"
 
-  parity_verification_workflow:
+  public_interface_sources:
+    type: source_of_truth
+    purpose: "Authoritative evidence for AppTheory external interfaces."
+    provides:
+      - "api-snapshots/go.txt"
+      - "api-snapshots/ts.txt"
+      - "api-snapshots/py.txt"
+      - "docs/api-reference.md"
+      - "cdk/.jsii (for CDK construct surface)"
+    failure_modes:
+      - "Documentation drift when snapshot updates are skipped after export changes."
+      - "UNKNOWN: interface stability for symbols not yet present in snapshots."
+
+  migration_surface:
     type: workflow
-    purpose: "Deterministic verification before merge/release."
-    canonical_sources:
-      - Makefile
-      - docs/testing-guide.md
-      - scripts/verify-contract-tests.sh
-      - scripts/verify-version-alignment.sh
+    purpose: "Move Lift or raw Lambda handlers to AppTheory with parity-focused checks."
     provides:
-      - Fast local checks (`make test-unit`).
-      - Full gates (`make rubric`) and contract checks.
+      - "Lift migration path via docs/migration/from-lift.md"
+      - "Go migration helper CLI at cmd/lift-migrate (flags include -root and -apply)"
+      - "Validation gates via ./scripts/verify-contract-tests.sh and make rubric"
     failure_modes:
-      - Version misalignment across manifests.
-      - Contract test or snapshot drift not reconciled.
+      - "Migrated behavior can drift if contract fixtures and snapshots are not updated together."

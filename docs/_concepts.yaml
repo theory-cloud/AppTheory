@@ -1,34 +1,60 @@
-# _concepts.yaml - Machine-readable concept map for AppTheory
-# This file is intentionally compact and versioned in git.
-
 concepts:
   apptheory:
     type: framework
     language: multi
-    purpose: "Cross-language serverless runtime contract for AWS Lambda apps (Go/TypeScript/Python)."
+    purpose: "Cross-language serverless runtime contract for AWS Lambda apps in Go, TypeScript, and Python."
+    tagline: "One runtime contract, three language SDKs, snapshot-backed drift prevention."
     provides:
-      - routing
-      - middleware
-      - request_response_normalization
-      - aws_event_adapters
-      - deterministic_testing
-      - drift_prevention
+      - "App container and routing primitives across Go/TypeScript/Python"
+      - "AWS adapter entrypoints for HTTP, event sources, and WebSockets"
+      - "Deterministic testkit helpers for event building, time control, and ID control"
+      - "Public API drift gates via api-snapshots/go.txt, api-snapshots/ts.txt, api-snapshots/py.txt"
     requires:
-      - aws_lambda
-      - github_releases
+      - "Go 1.26.x toolchain for Go runtime development"
+      - "Node.js 24+ for TypeScript and jsii/CDK workflows"
+      - "Python 3.14+ for Python runtime workflows"
     use_when:
-      - "You need equivalent behavior across Go, TypeScript, and Python."
-      - "You want fixture-backed contract tests to prevent drift."
+      - "You need equivalent Lambda runtime behavior across Go, TypeScript, and Python."
+      - "You want contract tests and API snapshots to prevent cross-language drift."
     dont_use_when:
-      - "You want a general-purpose web framework (templates/ORM/server)."
+      - "You need a general-purpose web framework unrelated to AWS serverless adapters."
 
-  tiers:
+  canonical_docs_root:
+    type: documentation_contract
+    purpose: "Canonical external documentation root used by humans and AI ingestion."
+    provides:
+      - "Fixed ingestible docs under docs/"
+      - "Contract-only docs under docs/_contract.yaml and docs/development-guidelines.md"
+      - "Sanctioned optional ingestible docs under docs/migration/** and docs/cdk/**"
+      - "Package-local docs under ts/docs/, py/docs/, and cdk/docs/ as secondary authoring surfaces, not the canonical external root"
+    configuration:
+      - docs/
+      - docs/_contract.yaml
+      - "ts/docs/ (secondary package-local docs)"
+      - "py/docs/ (secondary package-local docs)"
+      - "cdk/docs/ (secondary package-local docs)"
+    failure_modes:
+      - "Duplicate canonical claims across package-local docs create drift and conflicting navigation."
+
+  public_contract_sources:
+    type: source_of_truth
+    purpose: "Authoritative external surface definitions used for docs updates and migration safety."
+    provides:
+      - "Go public exports snapshot: api-snapshots/go.txt"
+      - "TypeScript public exports snapshot: api-snapshots/ts.txt"
+      - "Python public exports snapshot: api-snapshots/py.txt"
+      - "CDK construct manifest: cdk/.jsii"
+      - "Human-readable interface map: docs/api-reference.md"
+    failure_modes:
+      - "If snapshots or jsii output are stale, docs can drift from published interfaces."
+
+  runtime_tiers:
     type: concept
     purpose: "Runtime feature tiers: P0 core, P1 platform defaults, P2 production hooks."
     key_methods:
       - TierP0: "Minimal core surface."
       - TierP1: "Adds request-id, auth hooks, CORS, limits."
-      - TierP2: "Adds observability/policy hooks and rate limiting semantics."
+      - TierP2: "Adds observability, policy hooks, and rate limiting semantics."
 
   contract_tests:
     type: component
@@ -40,7 +66,7 @@ concepts:
 
   api_snapshots:
     type: component
-    purpose: "Public API drift gate for Go/TypeScript/Python."
+    purpose: "Public API drift gate for Go, TypeScript, and Python."
     provides:
       - exported_surface_snapshots
     configuration:
@@ -48,13 +74,13 @@ concepts:
 
   testkits:
     type: component
-    purpose: "Deterministic test environments per language (clock + ids + event builders)."
+    purpose: "Deterministic test environments per language (clock, IDs, and AWS event builders)."
     provides:
       - deterministic_time
       - deterministic_ids
       - aws_event_builders
 
-  handle_lambda_dispatch:
+  universal_lambda_dispatch:
     type: component
     purpose: "Universal Lambda entrypoint that dispatches untyped AWS events to the correct adapter."
     key_methods:
@@ -67,7 +93,7 @@ concepts:
 
   limited_rate_limiting:
     type: component
-    purpose: "DynamoDB-backed rate limiting (the `limited` feature set) with equivalent capabilities across languages."
+    purpose: "DynamoDB-backed rate limiting (the limited feature set) with equivalent capabilities across languages."
     provides:
       - fixed_window_limits
       - sliding_window_limits
@@ -76,16 +102,6 @@ concepts:
       - usage_stats
     configuration:
       - "DynamoDB table: rate-limits (default)"
-
-  cdk_constructs:
-    type: component
-    purpose: "jsii CDK constructs that deploy AppTheory apps with consistent defaults."
-    provides:
-      - http_api_constructs
-      - rest_api_constructs
-      - lambda_defaults
-    configuration:
-      - cdk/
 
   sanitization:
     type: component
@@ -101,7 +117,7 @@ concepts:
 
   jobs_ledger:
     type: component
-    purpose: "TableTheory-backed job ledger primitives for long-running workflows (jobs + records + leases + idempotency)."
+    purpose: "TableTheory-backed job ledger primitives for long-running workflows (jobs, records, leases, and idempotency)."
     provides:
       - job_lifecycle_tracking
       - per_record_status
@@ -112,7 +128,6 @@ concepts:
       - "DynamoDB: pk/sk schema (JOB#..., META/REC#/LOCK/REQ#...)"
     docs:
       - docs/jobs-ledger.md
-      - cdk/docs/jobs-table.md
       - examples/cdk/import-pipeline/README.md
 
   import_pipeline_support_pack:
@@ -130,14 +145,24 @@ concepts:
       - cdk_constructs
     docs:
       - examples/cdk/import-pipeline/README.md
-      - cdk/docs/s3-ingest.md
-      - cdk/docs/eventbridge-rule-target.md
-      - cdk/docs/jobs-table.md
-      - cdk/docs/codebuild-job-runner.md
+      - docs/cdk/import-pipeline.md
 
-  mcp_gateway:
+  cdk_constructs:
     type: component
-    purpose: "Expose MCP (Model Context Protocol) over HTTP for Bedrock AgentCore tool integrations."
+    purpose: "jsii CDK constructs that deploy AppTheory apps with consistent defaults."
+    provides:
+      - http_api_constructs
+      - rest_api_constructs
+      - mcp_server_constructs
+      - import_pipeline_constructs
+      - lambda_defaults
+    configuration:
+      - cdk/
+      - docs/cdk/
+
+  mcp_runtime:
+    type: component
+    purpose: "Expose MCP (Model Context Protocol) over HTTP for Bedrock AgentCore and remote-MCP integrations."
     provides:
       - jsonrpc_2_0_methods
       - tools_registry
@@ -147,8 +172,11 @@ concepts:
       - optional_sse_progress_streaming
     configuration:
       - runtime/mcp/
+      - runtime/oauth/
       - cdk/lib/mcp-server.ts
+      - cdk/lib/remote-mcp-server.ts
     docs:
       - docs/agentcore-mcp.md
       - docs/mcp.md
-      - cdk/docs/mcp-server-agentcore.md
+      - docs/remote-mcp.md
+      - docs/cdk/mcp-server-agentcore.md
