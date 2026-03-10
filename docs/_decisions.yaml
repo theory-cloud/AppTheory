@@ -1,6 +1,53 @@
-# _decisions.yaml - Decision trees for AppTheory
-
 decisions:
+  choose_entrypoint_shape:
+    question: "How should Lambda handlers be wired when integrating AppTheory?"
+    decision_tree:
+      - condition: "The Lambda may receive multiple AWS trigger types (HTTP, queues, streams, or WebSockets)."
+        check: "Can you delegate event detection to the runtime dispatcher?"
+        if_yes:
+          choice: "Use the universal dispatcher entrypoint"
+          reason: "HandleLambda / handleLambda / handle_lambda is contract-tested for event-shape routing across runtimes."
+          example: |
+            func handler(ctx context.Context, event json.RawMessage) (any, error) {
+              return app.HandleLambda(ctx, event)
+            }
+        if_no:
+          choice: "Document the gap before custom branching"
+          reason: "Manual branching is high drift risk and must be explicitly justified."
+          example: |
+            TODO: If a custom dispatcher is required, document unsupported event shapes and add parity tests.
+
+  choose_api_source_of_truth:
+    question: "What source should drive API docs and migration guidance?"
+    decision_tree:
+      - condition: "You are documenting exported APIs for Go, TypeScript, or Python."
+        check: "Do matching entries exist in api-snapshots/go.txt, api-snapshots/ts.txt, and api-snapshots/py.txt?"
+        if_yes:
+          choice: "Publish or update docs from the snapshots plus canonical user docs"
+          reason: "Snapshots are release-gated drift controls and are safer than inference from internal code paths."
+          example: |
+            ./scripts/update-api-snapshots.sh
+            make rubric
+        if_no:
+          choice: "Mark the interface UNKNOWN and open a TODO"
+          reason: "Missing snapshot evidence must not be documented as fact."
+          example: |
+            UNKNOWN: exported symbol not yet present in api-snapshots/*.txt
+
+  choose_docs_domain_consolidation:
+    question: "How should language-specific docs domains be reflected in canonical docs/?"
+    decision_tree:
+      - condition: "Useful runtime guidance exists in package-local docs outside the canonical root."
+        check: "Is the content user-facing and currently absent from canonical docs/ pages?"
+        if_yes:
+          choice: "Move or merge it into docs/ fixed files or sanctioned optional surfaces, then keep package-local docs as mirrors"
+          reason: "docs/ is the canonical root; package-local docs may remain, but they should not compete as the external source of truth."
+          example: |
+            TODO: Merge key runtime guidance into docs/getting-started.md, docs/api-reference.md, or docs/testing-guide.md before publishing.
+        if_no:
+          choice: "Keep the package-local source as a secondary authoring surface with explicit links back to docs/"
+          reason: "Package-local docs are useful for language-specific details, but canonical external guidance still belongs under docs/."
+
   choose_tier:
     question: "Which tier should I use (P0/P1/P2)?"
     decision_tree:
@@ -14,7 +61,7 @@ decisions:
         if_no:
           choice: "Use TierP0"
           reason: "P0 keeps the core minimal for custom runtimes."
-      - condition: "You want production hooks (observability/policy/rate limiting semantics)."
+      - condition: "You want production hooks (observability, policy, or rate limiting semantics)."
         check: "Is your threat model okay with fail-open rate limiting during dependency outages?"
         if_yes:
           choice: "Use TierP2 + fail-open policy"
@@ -22,4 +69,3 @@ decisions:
         if_no:
           choice: "Use TierP2 + fail-closed policy"
           reason: "Prefer strict enforcement when limits are a security boundary."
-

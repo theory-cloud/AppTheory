@@ -4,8 +4,8 @@ This document describes AppTheory’s **MCP server implementation** (`github.com
 
 If you’re specifically integrating with **Bedrock AgentCore**, start with `docs/agentcore-mcp.md` (it focuses on what to deploy and how AgentCore calls tools).
 
-For the Claude-first Remote MCP roadmap (Streamable HTTP + OAuth/DCR), see:
-- `docs/remote-mcp.md` (implementation guide) and `docs/development/planning/apptheory/remote-mcp/README.md` (roadmap + contract)
+For the Claude-first Remote MCP deployment guide, see:
+- `docs/remote-mcp.md`
 
 OAuth helper surfaces used by Remote MCP deployments and Autheory are in:
 - `github.com/theory-cloud/apptheory/runtime/oauth`

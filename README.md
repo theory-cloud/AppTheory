@@ -32,14 +32,13 @@ Non-goals (near-term):
 
 ## Supported Runtimes (M0)
 
-- Go toolchain: `1.26.0`
+- Go toolchain: `1.26.1`
 - Node.js: `24`
 - Python: `3.14`
 
 ## Documentation
 
 - Main docs index: `docs/README.md`
-- Canonical knowledgebase contract: `docs/_contract.yaml`
 - TypeScript package docs: `ts/docs/README.md`
 - Python package docs: `py/docs/README.md`
 - CDK package docs: `cdk/docs/README.md`
