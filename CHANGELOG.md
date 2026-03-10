@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.1-rc](https://github.com/theory-cloud/AppTheory/compare/v0.17.0...v0.17.1-rc) (2026-03-10)
+
+
+### Bug Fixes
+
+* **mcp:** align Dynamo session schema with CDK tables ([ada83a7](https://github.com/theory-cloud/AppTheory/commit/ada83a7170acf604b7213b9dd01d93f5b905070a))
+* **mcp:** align session schema and docs surface ([2b1543d](https://github.com/theory-cloud/AppTheory/commit/2b1543d0498633149f51ba6110ec3d65dbd1dace))
+
 ## [0.17.0](https://github.com/theory-cloud/AppTheory/compare/v0.16.0...v0.17.0) (2026-03-09)
 
 
