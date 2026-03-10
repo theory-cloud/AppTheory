@@ -1,63 +1,68 @@
-# AppTheory Core Patterns (Example)
+# AppTheory Core Patterns
 
-This file is an example for `docs/core-patterns.md`.
+This is an example target for `docs/core-patterns.md`.
 
 ## Canonical Patterns
 
-### Pattern: Case-insensitive request headers, lowercase response header keys
+### Pattern: use snapshot-backed API evidence
+
+**Problem:** External docs can drift from real exports.
+
+**CORRECT**
+
+```bash
+./scripts/update-api-snapshots.sh
+./scripts/verify-api-snapshots.sh
+```
+
+Why this is correct:
+- `api-snapshots/go.txt`, `api-snapshots/ts.txt`, and `api-snapshots/py.txt` are canonical public API evidence.
+
+**INCORRECT**
+
+```text
+Document a new exported symbol in docs first, then update snapshots later.
+```
+
+Why this is incorrect:
+- It creates hallucinated APIs and breaks migration safety.
+
+### Pattern: keep Lambda entrypoints thin
 
 **CORRECT**
 
 ```go
-requestID := ctx.Header("X-Request-Id")
-resp.Headers["x-request-id"] = []string{requestID}
+func handler(ctx context.Context, event json.RawMessage) (any, error) {
+  return app.HandleLambda(ctx, event)
+}
 ```
-
-Reason: response headers are normalized; tests stay deterministic across languages.
 
 **INCORRECT**
 
 ```go
-resp.Headers["X-Request-Id"] = []string{"abc-123"}
-// test expects mixed-case output key to remain unchanged
+if event.RequestContext.HTTP.Method != "" {
+  return app.ServeAPIGatewayV2(ctx, parsed)
+}
+return nil, errors.New("unsupported")
 ```
 
-Reason: this assumption drifts from normalization behavior.
+Why this is incorrect:
+- It can miss supported trigger shapes already handled by runtime dispatch.
 
-### Pattern: Prefer deterministic verification gates over ad-hoc manual checks
+### Pattern: sanitize payloads before logging
 
 **CORRECT**
 
-```bash
-make test-unit
-./scripts/verify-contract-tests.sh
-```
-
-Reason: validates repo contract behavior consistently.
-
-**INCORRECT**
-
-```bash
-# Only do manual cloud invocation and skip contract checks
-aws lambda invoke ...
-```
-
-Reason: misses cross-language parity and can hide regressions.
-
-### Pattern: Keep versions aligned before publishing docs claims
-
-**CORRECT**
-
-```bash
-./scripts/verify-version-alignment.sh
-make rubric
+```go
+safe := sanitization.SanitizeLogString("import\nstart")
+logger.Info(safe)
 ```
 
 **INCORRECT**
 
-```bash
-# Bump one package in isolation
-npm version patch --prefix ts
+```go
+logger.Info("payload", map[string]any{"body": string(rawPayload)})
 ```
 
-Reason: single-surface version bumps cause manifest drift.
+Why this is incorrect:
+- Raw payload logging can expose sensitive values and produce unsafe log output.

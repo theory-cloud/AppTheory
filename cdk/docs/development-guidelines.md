@@ -4,7 +4,8 @@ This guide is contract-only maintainer guidance. It defines how the CDK package 
 
 ## Knowledgebase contract
 
-`cdk/docs/_contract.yaml` is the canonical declaration for CDK package knowledgebase scope.
+`cdk/docs/_contract.yaml` defines the package-local CDK docs scope. Canonical external guidance for operators lives
+under `docs/cdk/`.
 
 ✅ CORRECT:
 - Treat `fixed_ingestible` as the mandatory CDK package knowledgebase core.

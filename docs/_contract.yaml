@@ -1,36 +1,28 @@
 contract:
   fixed_ingestible:
     - docs/README.md
+    - docs/_concepts.yaml
+    - docs/_patterns.yaml
+    - docs/_decisions.yaml
     - docs/getting-started.md
     - docs/api-reference.md
     - docs/core-patterns.md
     - docs/testing-guide.md
     - docs/troubleshooting.md
     - docs/migration-guide.md
-    - docs/_concepts.yaml
-    - docs/_patterns.yaml
-    - docs/_decisions.yaml
   fixed_contract_only:
     - docs/_contract.yaml
     - docs/development-guidelines.md
   sanctioned_optional_ingestible:
     - docs/migration/**
-    - docs/sanitization.md
-    - docs/jobs-ledger.md
-    - docs/agentcore-mcp.md
-    - docs/mcp.md
-    - docs/remote-mcp.md
-    - docs/remote-mcp-autheory.md
-    - ts/docs/**
-    - py/docs/**
-    - cdk/docs/**
-    - examples/cdk/import-pipeline/README.md
     - docs/llm-faq/**
     - docs/cdk/**
   out_of_scope:
     - docs/development/**
     - docs/planning/**
+    - docs/internal/**
     - docs/archive/**
-    - gov-infra/planning/**
-    - gov-infra/evidence/**
-  contract_only_note: "contract-only surfaces are maintainer-only and not ingestible: docs/_contract.yaml, docs/development-guidelines.md"
+
+notes:
+  guidance: contract-only
+  contract_only_layout: "Keep docs/development-guidelines.md as a short root boundary stub; move substantive maintainer/process guidance under docs/development/**."

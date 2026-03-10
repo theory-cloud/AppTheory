@@ -4,7 +4,8 @@ This guide is contract-only maintainer guidance. It defines how the Python packa
 
 ## Knowledgebase contract
 
-`py/docs/_contract.yaml` is the canonical declaration for Python package knowledgebase scope.
+`py/docs/_contract.yaml` defines the package-local Python docs scope. Canonical external guidance still lives under
+`docs/`.
 
 ✅ CORRECT:
 - Treat `fixed_ingestible` as the mandatory Python package knowledgebase core.

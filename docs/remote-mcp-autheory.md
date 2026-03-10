@@ -46,7 +46,6 @@ Use the Claude-like harness in AppTheory to pin behavior in CI:
 - `testkit/oauth` (`ClaudePublicClient`)
 - It exercises: discovery → DCR → PKCE auth code → token → refresh.
 
-## Related planning notes
+## Related notes
 
-- `docs/development/planning/apptheory/remote-mcp/autheory.md`
-
+Additional maintainer planning notes exist outside the canonical docs root and are intentionally omitted here.

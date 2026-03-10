@@ -1,118 +1,115 @@
-# _patterns.yaml - Machine-readable patterns for AppTheory
-
 patterns:
-  headers_canonicalization:
-    name: "Treat headers case-insensitively; expect lowercase keys"
-    problem: "Header names are case-insensitive, but map keys are not. Drift can break tests and middleware."
-    solution: "Normalize inputs and write output header keys in lowercase for parity."
+  api_snapshot_as_source_of_truth:
+    name: "Use API snapshots as the canonical external surface"
+    problem: "Human docs can lag behind exported package or module interfaces."
+    solution: "Treat api-snapshots/go.txt, api-snapshots/ts.txt, and api-snapshots/py.txt as release-gated public API truth."
     correct_example: |
-      // CORRECT (Go): read case-insensitively, set lowercase output keys
+      # CORRECT: update snapshots and docs together after external API changes
+      ./scripts/update-api-snapshots.sh
+      make rubric
+    anti_patterns:
+      - name: "Documenting unconfirmed exports"
+        why: "Invented interfaces break trust and migration safety."
+        incorrect_example: |
+          # INCORRECT
+          # Add docs for an API before it appears in api-snapshots/*
+        consequences:
+          - "No hallucinated APIs violation"
+          - "Broken client integrations"
+
+  universal_lambda_dispatch:
+    name: "Delegate mixed AWS trigger handling to the runtime dispatcher"
+    problem: "Manual event-shape branching in Lambda handlers drifts across languages and misses edge event types."
+    solution: "Use AppTheory dispatcher entrypoints (HandleLambda, handleLambda, handle_lambda) so routing behavior stays contract-tested."
+    correct_example: |
+      # CORRECT: keep the Lambda entrypoint thin and delegate dispatch.
+      func handler(ctx context.Context, event json.RawMessage) (any, error) {
+        return app.HandleLambda(ctx, event)
+      }
+    anti_patterns:
+      - name: "Hand-rolled shape detection"
+        why: "Custom branching diverges from fixture-backed dispatch behavior."
+        incorrect_example: |
+          # INCORRECT: partial/manual branching that misses supported event variants
+          if event.requestContext.http != nil {
+            return app.ServeAPIGatewayV2(ctx, parsed)
+          }
+        consequences:
+          - "Cross-language behavior drift"
+          - "Unhandled production event shapes"
+
+  headers_canonicalization:
+    name: "Treat headers case-insensitively and assert lowercase response keys"
+    problem: "Header-map casing assumptions cause brittle tests and inconsistent client behavior."
+    solution: "Read headers case-insensitively and write or verify lowercase response header keys."
+    correct_example: |
+      # CORRECT (Go)
       reqID := ctx.Header("X-Request-Id")
       resp.Headers["x-request-id"] = []string{reqID}
     anti_patterns:
-      - name: "Assuming mixed-case header keys are preserved"
-        why: "Map keys may be canonicalized; tests and cross-language parity will fail."
+      - name: "Asserting mixed-case response keys"
+        why: "AppTheory normalizes response header keys for parity."
         incorrect_example: |
-          // INCORRECT: relying on mixed-case keys in output
-          resp.Headers["X-Request-Id"] = []string{reqID}
+          # INCORRECT
+          assert.Equal(t, "abc", resp.Headers["X-Request-Id"])
         consequences:
-          - "contract tests fail"
-          - "users observe inconsistent header casing"
-
-  router_specificity_order:
-    name: "Register specific routes first"
-    problem: "Equally-specific routes must resolve deterministically across languages."
-    solution: "Prefer earlier registration order when specificity ties; register specific routes before fallbacks."
-    correct_example: |
-      // CORRECT
-      app.Get("/users/me", handleMe)
-      app.Get("/users/{id}", handleUser)
-    anti_patterns:
-      - name: "Relying on unspecified tie-break behavior"
-        why: "Non-determinism becomes cross-language drift."
-        incorrect_example: |
-          // INCORRECT: assuming the last registered route wins
-          app.Get("/users/{id}", handleUser)
-          app.Get("/users/me", handleMe)
-        consequences:
-          - "route mismatch between runtimes"
-          - "hard-to-debug production behavior"
+          - "False-negative tests"
+          - "Confusion during migration"
 
   strict_route_registration:
     name: "Use strict route registration for fast feedback"
     problem: "Invalid route patterns are fail-closed and may be silently ignored by default for backwards compatibility."
-    solution: "Use the strict variant during tests/CI to fail fast when a route pattern is invalid."
+    solution: "Use the strict variant during tests and CI to fail fast when a route pattern is invalid."
     correct_example: |
-      // CORRECT (Go): fail fast on invalid patterns
-      if _, err := apptheory.New().HandleStrict(apptheory.GET, "/users/{id}", handleUser); err != nil {
-          panic(err)
+      # CORRECT (Go): fail fast on invalid patterns
+      if _, err := app.GetStrict("/users/{id}", handleUser); err != nil {
+        panic(err)
       }
     anti_patterns:
       - name: "Assuming all routes register successfully"
         why: "Silent registration failures can lead to missing routes and unexpected 404s."
         incorrect_example: |
-          // INCORRECT: this may not register, and you might not notice until runtime
+          # INCORRECT
           app.Get("/{proxy+}/x", handleUser)
         consequences:
-          - "unexpected 404s"
-          - "slow debugging cycles"
-
-  universal_lambda_dispatch:
-    name: "Delegate to HandleLambda/handleLambda/handle_lambda for mixed triggers"
-    problem: "A Lambda function may be triggered by many AWS event shapes; manual branching is error-prone."
-    solution: "Use the runtime's universal dispatcher so event routing stays contract-defined and tested."
-    correct_example: |
-      // CORRECT (TypeScript): keep the Lambda entrypoint thin
-      export const handler = async (event, ctx) => app.handleLambda(event, ctx)
-    anti_patterns:
-      - name: "Hand-rolling event shape detection"
-        why: "Custom branching quickly drifts from the contract and becomes untestable."
-        incorrect_example: |
-          // INCORRECT: partial detection logic that will drift
-          if (event?.requestContext?.http) return app.serveAPIGatewayV2(event)
-        consequences:
-          - "parity drift across languages"
-          - "missed edge cases (ALB/SNS/WebSockets)"
+          - "Unexpected 404s"
+          - "Slow debugging cycles"
 
   sanitize_before_logging:
     name: "Sanitize payloads before logging"
     problem: "Import pipelines often handle PCI/PII; logging raw payloads leaks sensitive data and may enable log forging."
-    solution: "Sanitize log strings and structured fields, and log sanitized JSON/XML instead of raw payload dumps."
+    solution: "Sanitize log strings and structured fields, and log sanitized JSON or XML instead of raw payload dumps."
     correct_example: |
-      // CORRECT (Go)
+      # CORRECT (Go)
       msg := sanitization.SanitizeLogString("import\nstart")
-      fields := map[string]any{
-        "tenant_id": tenantID,
-        "pan_value": "4111111111111111",
-      }
-      logger.Info(msg, sanitization.SanitizeFieldValue("fields", fields))
+      logger.Info(msg, sanitization.SanitizeFieldValue("body", payload))
     anti_patterns:
       - name: "Logging raw payloads"
-        why: "Raw payloads can contain PAN/SSN/tokens and untrusted control characters."
+        why: "Raw payloads can contain PAN, SSN, tokens, and untrusted control characters."
         incorrect_example: |
-          // INCORRECT
+          # INCORRECT
           logger.Info("payload", map[string]any{"body": string(raw)})
         consequences:
           - "PCI/PII leakage"
-          - "log forging / broken log parsing"
+          - "Log forging or broken log parsing"
 
   jobs_ledger_for_long_running_jobs:
     name: "Use the jobs ledger for long-running imports"
-    problem: "Retries, partial failures, and concurrency make job status/idempotency bespoke and inconsistent across services."
+    problem: "Retries, partial failures, and concurrency make job status and idempotency bespoke and inconsistent across services."
     solution: "Use the jobs ledger primitives for job lifecycle, per-record status, leases, and idempotency."
     correct_example: |
-      // CORRECT (pseudo-code)
+      # CORRECT (pseudo-code)
       ledger.CreateJob(jobID, tenantID)
       ledger.AcquireLease(jobID, workerID, ttlSeconds)
       ledger.CreateIdempotencyRecord(jobID, recordKey)
-      ledger.UpsertRecordStatus(jobID, recordID, "COMPLETED", nil)
+      ledger.UpsertRecordStatus(jobID, recordID, "SUCCEEDED", nil)
       ledger.CompleteIdempotencyRecord(jobID, recordKey)
     anti_patterns:
       - name: "Relying on at-least-once triggers without idempotency"
         why: "Event sources and retries will produce duplicate deliveries."
         incorrect_example: |
-          // INCORRECT
-          processRecord(record) // no idempotency guard
+          # INCORRECT
+          processRecord(record)  # no idempotency guard
         consequences:
-          - "double processing"
-          - "inconsistent job state"
+          - "Double processing"
+          - "Inconsistent job state"

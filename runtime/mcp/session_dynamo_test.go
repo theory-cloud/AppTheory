@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -97,4 +98,24 @@ func TestSessionRecord_TableName_Default(t *testing.T) {
 func TestSessionRecord_TableName_EnvOverride(t *testing.T) {
 	t.Setenv("MCP_SESSION_TABLE", "custom-sessions")
 	require.Equal(t, "custom-sessions", sessionRecord{}.TableName())
+}
+
+func TestSessionRecord_TheoryDBTagsMatchCanonicalSessionTableSchema(t *testing.T) {
+	tp := reflect.TypeOf(sessionRecord{})
+
+	sessionID, ok := tp.FieldByName("SessionID")
+	require.True(t, ok)
+	require.Equal(t, "pk,attr:sessionId", sessionID.Tag.Get("theorydb"))
+
+	createdAt, ok := tp.FieldByName("CreatedAt")
+	require.True(t, ok)
+	require.Equal(t, "attr:createdAt", createdAt.Tag.Get("theorydb"))
+
+	expiresAt, ok := tp.FieldByName("ExpiresAt")
+	require.True(t, ok)
+	require.Equal(t, "ttl,attr:expiresAt", expiresAt.Tag.Get("theorydb"))
+
+	data, ok := tp.FieldByName("Data")
+	require.True(t, ok)
+	require.Equal(t, "attr:data,omitempty", data.Tag.Get("theorydb"))
 }
