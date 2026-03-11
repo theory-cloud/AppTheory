@@ -21,6 +21,8 @@ Known CLI surface:
 Verification command surface:
 
 - `make test-unit`
+- `./scripts/verify-ts-tests.sh`
+- `./scripts/verify-python-tests.sh`
 - `./scripts/verify-contract-tests.sh`
 - `./scripts/update-api-snapshots.sh`
 - `./scripts/verify-api-snapshots.sh`

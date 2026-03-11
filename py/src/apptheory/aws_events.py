@@ -45,11 +45,7 @@ def build_appsync_event(
         "identity": dict(identity or {}),
         "source": dict(source or {}),
         "request": {
-            "headers": {
-                str(key): str(value)
-                for key, value in dict(headers or {}).items()
-                if str(key).strip()
-            }
+            "headers": {str(key): str(value) for key, value in dict(headers or {}).items() if str(key).strip()}
         },
         "info": {
             "fieldName": str(field_name or "").strip() or "field",
