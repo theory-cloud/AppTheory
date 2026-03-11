@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 
 import type { AppSyncResolverEvent } from "../aws-types.js";
+import { AppSyncContext } from "../context.js";
 import { AppError } from "../errors.js";
 import type { Context } from "../context.js";
 import type { Request, Response } from "../types.js";
@@ -107,6 +108,39 @@ export function applyAppSyncContextValues(
     event.request?.headers ?? {},
   );
   requestCtx.set("apptheory.appsync.raw_event", event);
+}
+
+export function createAppSyncContext(
+  event: AppSyncResolverEvent,
+): AppSyncContext {
+  return new AppSyncContext({
+    fieldName: event.info.fieldName,
+    parentTypeName: event.info.parentTypeName,
+    arguments:
+      event.arguments && typeof event.arguments === "object"
+        ? { ...event.arguments }
+        : {},
+    identity:
+      event.identity && typeof event.identity === "object"
+        ? { ...event.identity }
+        : {},
+    source:
+      event.source && typeof event.source === "object"
+        ? { ...event.source }
+        : {},
+    variables:
+      event.info.variables && typeof event.info.variables === "object"
+        ? { ...event.info.variables }
+        : {},
+    stash:
+      event.stash && typeof event.stash === "object" ? { ...event.stash } : {},
+    prev: event.prev ?? null,
+    requestHeaders:
+      event.request?.headers && typeof event.request.headers === "object"
+        ? { ...event.request.headers }
+        : {},
+    rawEvent: event,
+  });
 }
 
 export function appSyncPayloadFromResponse(response: Response): unknown {

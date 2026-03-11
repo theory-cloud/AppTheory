@@ -1219,6 +1219,19 @@ type AppError struct {
 	Message string
 }
 
+type AppSyncContext struct {
+	FieldName      string
+	ParentTypeName string
+	Arguments      map[string]any
+	Identity       map[string]any
+	Source         map[string]any
+	Variables      map[string]any
+	Stash          map[string]any
+	Prev           any
+	RequestHeaders map[string]string
+	RawEvent       AppSyncResolverEvent
+}
+
 type AppSyncResolverEvent struct {
 	Arguments map[string]any         `json:"arguments"`
 	Identity  map[string]any         `json:"identity,omitempty"`
@@ -1280,7 +1293,8 @@ type Context struct {
 	RemainingMS     int
 	MiddlewareTrace []string
 
-	ws *WebSocketContext
+	ws      *WebSocketContext
+	appsync *AppSyncContext
 
 	values map[string]any
 }
@@ -1641,6 +1655,8 @@ func (*AppTheoryError) WithStatusCode(int) *AppTheoryError
 func (*AppTheoryError) WithTimestamp(time.Time) *AppTheoryError
 
 func (*AppTheoryError) WithTraceID(string) *AppTheoryError
+
+func (*Context) AsAppSync() *AppSyncContext
 
 func (*Context) AsWebSocket() *WebSocketContext
 

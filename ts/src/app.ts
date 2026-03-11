@@ -38,6 +38,7 @@ import { RandomIdGenerator, type IdGenerator } from "./ids.js";
 import {
   applyAppSyncContextValues,
   appSyncPayloadFromResponse,
+  createAppSyncContext,
   isAppSyncResolverEvent,
   requestFromAppSync,
 } from "./internal/aws-appsync.js";
@@ -205,6 +206,10 @@ type EventBridgeRoute = {
   handler: EventBridgeHandler;
 };
 type DynamoDBRoute = { tableName: string; handler: DynamoDBStreamHandler };
+type RequestContextOptions = {
+  appSync?: ReturnType<Context["asAppSync"]>;
+  configure?: (requestCtx: Context) => void;
+};
 
 export class App {
   private readonly _router: Router<Handler>;
@@ -422,7 +427,7 @@ export class App {
   private async _serve(
     request: Request,
     ctx?: unknown,
-    configureContext?: (requestCtx: Context) => void,
+    contextOptions?: RequestContextOptions,
   ): Promise<Response> {
     if (this._tier === "p0") {
       let normalized: Context["request"];
@@ -451,8 +456,9 @@ export class App {
         clock: this._clock,
         ids: this._ids,
         ctx,
+        appSync: contextOptions?.appSync ?? null,
       });
-      configureContext?.(requestCtx);
+      contextOptions?.configure?.(requestCtx);
 
       try {
         const handler = this._applyMiddlewares(match.route.handler) as Handler;
@@ -570,8 +576,9 @@ export class App {
       authIdentity: "",
       remainingMs,
       middlewareTrace,
+      appSync: contextOptions?.appSync ?? null,
     });
-    configureContext?.(requestCtx);
+    contextOptions?.configure?.(requestCtx);
 
     if (enableP2 && typeof this._policyHook === "function") {
       let decision: PolicyDecision | null | undefined;
@@ -732,8 +739,11 @@ export class App {
     }
 
     try {
-      const resp = await this._serve(request, ctx, (requestCtx) => {
-        applyAppSyncContextValues(requestCtx, event);
+      const resp = await this._serve(request, ctx, {
+        appSync: createAppSyncContext(event),
+        configure: (requestCtx) => {
+          applyAppSyncContextValues(requestCtx, event);
+        },
       });
       return appSyncPayloadFromResponse(resp);
     } catch (err) {

@@ -3,7 +3,7 @@ import { RealClock } from "./clock.js";
 import { Context, EventContext, WebSocketContext } from "./context.js";
 import { AppError, AppTheoryError } from "./errors.js";
 import { RandomIdGenerator } from "./ids.js";
-import { applyAppSyncContextValues, appSyncPayloadFromResponse, isAppSyncResolverEvent, requestFromAppSync, } from "./internal/aws-appsync.js";
+import { applyAppSyncContextValues, appSyncPayloadFromResponse, createAppSyncContext, isAppSyncResolverEvent, requestFromAppSync, } from "./internal/aws-appsync.js";
 import { albTargetGroupResponseFromResponse, apigatewayProxyResponseFromResponse, apigatewayV2ResponseFromResponse, lambdaFunctionURLResponseFromResponse, requestFromALBTargetGroup, requestFromAPIGatewayProxy, requestFromAPIGatewayV2, requestFromLambdaFunctionURL, requestFromWebSocketEvent, } from "./internal/aws-http.js";
 import { serveLambdaFunctionURLStreaming, } from "./internal/aws-lambda-streaming.js";
 import { dynamoDBTableNameFromStreamArn, eventBridgeRuleNameFromArn, kinesisStreamNameFromArn, snsTopicNameFromArn, sqsQueueNameFromArn, webSocketManagementEndpoint, } from "./internal/aws-names.js";
@@ -189,7 +189,7 @@ export class App {
     async serve(request, ctx) {
         return this._serve(request, ctx);
     }
-    async _serve(request, ctx, configureContext) {
+    async _serve(request, ctx, contextOptions) {
         if (this._tier === "p0") {
             let normalized;
             try {
@@ -213,8 +213,9 @@ export class App {
                 clock: this._clock,
                 ids: this._ids,
                 ctx,
+                appSync: contextOptions?.appSync ?? null,
             });
-            configureContext?.(requestCtx);
+            contextOptions?.configure?.(requestCtx);
             try {
                 const handler = this._applyMiddlewares(match.route.handler);
                 const out = await handler(requestCtx);
@@ -296,8 +297,9 @@ export class App {
             authIdentity: "",
             remainingMs,
             middlewareTrace,
+            appSync: contextOptions?.appSync ?? null,
         });
-        configureContext?.(requestCtx);
+        contextOptions?.configure?.(requestCtx);
         if (enableP2 && typeof this._policyHook === "function") {
             let decision;
             try {
@@ -410,8 +412,11 @@ export class App {
             return appSyncPayloadFromResponse(responseForError(err));
         }
         try {
-            const resp = await this._serve(request, ctx, (requestCtx) => {
-                applyAppSyncContextValues(requestCtx, event);
+            const resp = await this._serve(request, ctx, {
+                appSync: createAppSyncContext(event),
+                configure: (requestCtx) => {
+                    applyAppSyncContextValues(requestCtx, event);
+                },
             });
             return appSyncPayloadFromResponse(resp);
         }
