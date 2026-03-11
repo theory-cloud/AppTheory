@@ -96,7 +96,7 @@ These are required for Lift parity (e.g. Lesser usage) and must become fixture-b
 | Trigger routing: SQS | m1 | ✅ | ✅ | ✅ | `app.SQS(...)` parity |
 | Trigger routing: EventBridge | m1 | ✅ | ✅ | ✅ | `app.EventBridge(...)` parity |
 | Trigger routing: DynamoDB Streams | m1 | ✅ | ✅ | ✅ | `app.DynamoDB(...)` parity |
-| Trigger routing: AppSync resolvers | SR-APPSYNC | ⬜ | ⬜ | ⬜ | plan of record: `docs/development/planning/apptheory/subroadmaps/SR-APPSYNC.md` |
+| Trigger routing: AppSync resolvers | SR-APPSYNC | ✅ | ✅ | ✅ | shared `p2` fixtures + typed context + public migration/docs support |
 | Trigger routing: WebSockets | m2 | ✅ | ✅ | ✅ | `$connect/$disconnect/$default` routing |
 | WebSocket management client (`streamer`) | m2 | ✅ | ✅ | ✅ | `PostToConnection/GetConnection/DeleteConnection` parity |
 
