@@ -226,6 +226,56 @@ func SNSEvent(opts SNSEventOptions) events.SNSEvent {
 	return out
 }
 
+type AppSyncEventOptions struct {
+	FieldName      string
+	ParentTypeName string
+	Arguments      map[string]any
+	Identity       map[string]any
+	Source         map[string]any
+	Headers        map[string]string
+	Variables      map[string]any
+	Prev           any
+	Stash          map[string]any
+}
+
+func AppSyncEvent(opts AppSyncEventOptions) apptheory.AppSyncResolverEvent {
+	fieldName := strings.TrimSpace(opts.FieldName)
+	if fieldName == "" {
+		fieldName = "field"
+	}
+	parentTypeName := strings.TrimSpace(opts.ParentTypeName)
+	if parentTypeName == "" {
+		parentTypeName = "Mutation"
+	}
+
+	return apptheory.AppSyncResolverEvent{
+		Arguments: cloneAppSyncAnyMap(opts.Arguments),
+		Identity:  cloneAppSyncAnyMap(opts.Identity),
+		Source:    cloneAppSyncAnyMap(opts.Source),
+		Request: apptheory.AppSyncResolverRequest{
+			Headers: cloneHeaderMap(opts.Headers),
+		},
+		Info: apptheory.AppSyncResolverInfo{
+			FieldName:      fieldName,
+			ParentTypeName: parentTypeName,
+			Variables:      cloneAppSyncAnyMap(opts.Variables),
+		},
+		Prev:  opts.Prev,
+		Stash: cloneAppSyncAnyMap(opts.Stash),
+	}
+}
+
+func cloneAppSyncAnyMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
 func (e *Env) InvokeSQS(ctx context.Context, app *apptheory.App, event events.SQSEvent) events.SQSEventResponse {
 	if ctx == nil {
 		ctx = context.Background()
@@ -271,6 +321,13 @@ func (e *Env) InvokeSNS(ctx context.Context, app *apptheory.App, event events.SN
 		ctx = context.Background()
 	}
 	return app.ServeSNS(ctx, event)
+}
+
+func (e *Env) InvokeAppSync(ctx context.Context, app *apptheory.App, event apptheory.AppSyncResolverEvent) any {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return app.ServeAppSync(ctx, event)
 }
 
 type StepFunctionsTaskTokenEventOptions struct {

@@ -2201,6 +2201,18 @@ func (*ProtectedResourceMetadata) MarshalJSONBytes() ([]byte, error)
 
 ## github.com/theory-cloud/apptheory/testkit
 
+type AppSyncEventOptions struct {
+	FieldName      string
+	ParentTypeName string
+	Arguments      map[string]any
+	Identity       map[string]any
+	Source         map[string]any
+	Headers        map[string]string
+	Variables      map[string]any
+	Prev           any
+	Stash          map[string]any
+}
+
 type DynamoDBStreamEventOptions struct {
 	StreamARN string
 	Records   []DynamoDBStreamRecordOptions
@@ -2353,6 +2365,8 @@ func ALBTargetGroupRequest(string, string, HTTPEventOptions) events.ALBTargetGro
 
 func APIGatewayV2Request(string, string, HTTPEventOptions) events.APIGatewayV2HTTPRequest
 
+func AppSyncEvent(AppSyncEventOptions) apptheory.AppSyncResolverEvent
+
 func DynamoDBStreamEvent(DynamoDBStreamEventOptions) events.DynamoDBEvent
 
 func EventBridgeEvent(EventBridgeEventOptions) events.EventBridgeEvent
@@ -2396,6 +2410,8 @@ func (*Env) InvokeAPIGatewayV2(
 	*apptheory.App,
 	events.APIGatewayV2HTTPRequest,
 ) events.APIGatewayV2HTTPResponse
+
+func (*Env) InvokeAppSync(context.Context, *apptheory.App, apptheory.AppSyncResolverEvent) any
 
 func (*Env) InvokeDynamoDBStream(
 	context.Context,

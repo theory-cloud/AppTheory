@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from apptheory.app import App, AuthHook, Limits, ObservabilityHooks, PolicyHook, create_app
+from apptheory.aws_events import AppSyncResolverEvent, build_appsync_event as _build_appsync_event
 from apptheory.clock import ManualClock
 from apptheory.context import WebSocketClientFactory
 from apptheory.errors import AppError, AppTheoryError
@@ -130,6 +131,11 @@ class TestEnv:
     def invoke_sns(self, app: App, event: dict[str, object], ctx: object | None = None) -> object:
         return app.serve_sns(event, ctx=ctx)
 
+    def invoke_appsync(
+        self, app: App, event: AppSyncResolverEvent, ctx: object | None = None
+    ) -> object:
+        return app.serve_appsync(event, ctx=ctx)
+
     def invoke_websocket(self, app: App, event: dict[str, object], ctx: object | None = None) -> dict[str, object]:
         return app.serve_websocket(event, ctx=ctx)
 
@@ -139,6 +145,10 @@ class TestEnv:
 
 def create_test_env(*, now: dt.datetime | None = None) -> TestEnv:
     return TestEnv(now=now)
+
+
+def build_appsync_event(**kwargs: Any) -> AppSyncResolverEvent:
+    return _build_appsync_event(**kwargs)
 
 
 def build_websocket_event(
