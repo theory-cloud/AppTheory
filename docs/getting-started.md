@@ -101,11 +101,16 @@ make test-unit
 Run the parity and release gates before opening a PR:
 
 ```bash
+./scripts/verify-ts-tests.sh
+./scripts/verify-python-tests.sh
 ./scripts/verify-contract-tests.sh
 ./scripts/verify-api-snapshots.sh
 ./scripts/verify-docs-standard.sh
 make rubric
 ```
+
+`make rubric` now covers Go unit tests, TypeScript unit tests, Python unit tests, shared contract fixtures, snapshots,
+docs checks, and release-packaging verifiers.
 
 If you changed exported APIs, refresh and re-verify the public API snapshots:
 

@@ -454,7 +454,10 @@ class App:
         trace.append("auth")
         if self._auth_hook is None:
             if error_responder is not None:
-                return error_responder(AppError("app.unauthorized", "unauthorized"), request_ctx.request, request_id), "app.unauthorized"
+                return (
+                    error_responder(AppError("app.unauthorized", "unauthorized"), request_ctx.request, request_id),
+                    "app.unauthorized",
+                )
             resp = error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id)
             return resp, "app.unauthorized"
 
@@ -468,14 +471,17 @@ class App:
 
         if not str(identity or "").strip():
             if error_responder is not None:
-                return error_responder(AppError("app.unauthorized", "unauthorized"), request_ctx.request, request_id), "app.unauthorized"
+                return (
+                    error_responder(AppError("app.unauthorized", "unauthorized"), request_ctx.request, request_id),
+                    "app.unauthorized",
+                )
             resp = error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id)
             return resp, "app.unauthorized"
 
         request_ctx.auth_identity = str(identity)
         return None
 
-    def _serve_portable(
+    def _serve_portable(  # noqa: C901
         self,
         request: Request,
         ctx: Any | None,
@@ -497,7 +503,11 @@ class App:
         method = str(request.method or "").strip().upper()
         path = str(request.path or "").strip() or "/"
 
-        request_id = _first_header_value(pre_headers, "x-request-id") or str(fallback_request_id or "").strip() or self._id_generator.new_id()
+        request_id = (
+            _first_header_value(pre_headers, "x-request-id")
+            or str(fallback_request_id or "").strip()
+            or self._id_generator.new_id()
+        )
         origin = _first_header_value(pre_headers, "origin")
         tenant_id = _extract_tenant_id(pre_headers, pre_query)
         remaining_ms = _remaining_ms(ctx)
@@ -549,7 +559,11 @@ class App:
             if error_responder is not None:
                 if allowed:
                     return finish(
-                        respond_to_error(AppError("app.method_not_allowed", "method not allowed"), normalized, request_id),
+                        respond_to_error(
+                            AppError("app.method_not_allowed", "method not allowed"),
+                            normalized,
+                            request_id,
+                        ),
                         "app.method_not_allowed",
                     )
                 return finish(
@@ -742,9 +756,7 @@ class App:
         try:
             request = _request_from_appsync_event(event)
         except Exception as exc:  # noqa: BLE001
-            return _appsync_payload_from_response(
-                _appsync_error_response(exc, request_metadata, fallback_request_id)
-            )
+            return _appsync_payload_from_response(_appsync_error_response(exc, request_metadata, fallback_request_id))
 
         resp: Response | None = None
         try:
@@ -1440,7 +1452,7 @@ def _appsync_payload_from_response(resp: Response) -> Any:
         if str(value).strip().lower().startswith("application/json"):
             try:
                 return json.loads(normalized.body.decode("utf-8"))
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 raise AppError("app.internal", "internal error") from exc
 
     first_content_type = str(content_type_values[0]).strip().lower() if content_type_values else ""

@@ -47,7 +47,9 @@ class AppSyncContext:
         self.variables = dict(variables or {})
         self.stash = dict(stash or {})
         self.prev = prev
-        self.request_headers = {str(key): str(value) for key, value in dict(request_headers or {}).items() if str(key).strip()}
+        self.request_headers = {
+            str(key): str(value) for key, value in dict(request_headers or {}).items() if str(key).strip()
+        }
         self.raw_event = dict(raw_event or {})
 
 

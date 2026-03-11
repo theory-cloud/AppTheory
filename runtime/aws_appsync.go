@@ -404,29 +404,34 @@ func appSyncErrorResponse(err error, request Request, requestID string) Response
 	}
 }
 
+func appSyncErrorPayloadForResponse(err error, request Request, requestID string) any {
+	payload, payloadErr := appSyncPayloadFromResponse(appSyncErrorResponse(err, request, requestID))
+	if payloadErr != nil {
+		return appSyncErrorPayload(err, request, requestID)
+	}
+	return payload
+}
+
 // ServeAppSync adapts an AppSync Lambda resolver event into AppTheory routing semantics.
 func (a *App) ServeAppSync(ctx context.Context, event AppSyncResolverEvent) any {
 	requestID := appSyncRequestIDFromContext(ctx)
 	requestMeta := appSyncRequestForEvent(event)
 	request, err := requestFromAppSync(event)
 	if err != nil {
-		payload, _ := appSyncPayloadFromResponse(appSyncErrorResponse(err, requestMeta, requestID))
-		return payload
+		return appSyncErrorPayloadForResponse(err, requestMeta, requestID)
 	}
 
 	resp := a.serveWithOptions(ctx, request, serveOptions{
 		configure: func(requestCtx *Context) {
 			applyAppSyncContextValues(requestCtx, event)
 		},
-		errorResponder: func(err error, request Request, requestID string) Response {
-			return appSyncErrorResponse(err, request, requestID)
-		},
+		errorResponder:    appSyncErrorResponse,
 		fallbackRequestID: requestID,
 	})
 
 	payload, err := appSyncPayloadFromResponse(resp)
 	if err != nil {
-		payload, _ = appSyncPayloadFromResponse(appSyncErrorResponse(err, requestMeta, appSyncRequestIDFromResponse(resp, requestID)))
+		return appSyncErrorPayloadForResponse(err, requestMeta, appSyncRequestIDFromResponse(resp, requestID))
 	}
 	return payload
 }

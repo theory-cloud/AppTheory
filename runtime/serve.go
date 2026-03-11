@@ -108,10 +108,6 @@ type serveOptions struct {
 	fallbackRequestID string
 }
 
-func (a *App) serveWithContextConfigurer(ctx context.Context, req Request, configure requestContextConfigurer) (resp Response) {
-	return a.serveWithOptions(ctx, req, serveOptions{configure: configure})
-}
-
 func (a *App) serveWithOptions(ctx context.Context, req Request, opts serveOptions) (resp Response) {
 	if a == nil || a.router == nil {
 		return errorResponse(errorCodeInternal, errorMessageInternal, nil)
@@ -237,15 +233,7 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 
 	state.method = strings.ToUpper(strings.TrimSpace(req.Method))
 	state.path = normalizePath(req.Path)
-
-	state.requestID = firstHeaderValue(headers, "x-request-id")
-	if state.requestID == "" {
-		if strings.TrimSpace(opts.fallbackRequestID) != "" {
-			state.requestID = strings.TrimSpace(opts.fallbackRequestID)
-		} else {
-			state.requestID = a.newRequestID()
-		}
-	}
+	state.requestID = a.resolvePortableRequestID(headers, opts)
 
 	state.origin = firstHeaderValue(headers, "origin")
 	state.tenantID = extractTenantID(headers, query)
@@ -333,6 +321,16 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 	}
 
 	return resp
+}
+
+func (a *App) resolvePortableRequestID(headers map[string][]string, opts serveOptions) string {
+	if requestID := strings.TrimSpace(firstHeaderValue(headers, "x-request-id")); requestID != "" {
+		return requestID
+	}
+	if fallbackRequestID := strings.TrimSpace(opts.fallbackRequestID); fallbackRequestID != "" {
+		return fallbackRequestID
+	}
+	return a.newRequestID()
 }
 
 func portableTrace(origin string) []string {
