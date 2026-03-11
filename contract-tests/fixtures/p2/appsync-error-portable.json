@@ -1,0 +1,47 @@
+{
+  "id": "p2.appsync.error_portable",
+  "tier": "p2",
+  "name": "AppSync portable errors use Lift-compatible envelopes",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/createThing", "handler": "portable_error" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "appsync",
+      "event": {
+        "arguments": {
+          "id": "thing_123"
+        },
+        "info": {
+          "fieldName": "createThing",
+          "parentTypeName": "Mutation"
+        }
+      }
+    }
+  },
+  "expect": {
+    "output_json": {
+      "pay_theory_error": true,
+      "error_message": "conflict",
+      "error_type": "CLIENT_ERROR",
+      "error_data": {
+        "status_code": 409,
+        "request_id": "req_test_123",
+        "trace_id": "trace_456",
+        "timestamp": "2024-01-02T03:04:05Z"
+      },
+      "error_info": {
+        "code": "app.conflict",
+        "details": {
+          "field": "email",
+          "retryable": false
+        },
+        "path": "/createThing",
+        "method": "POST",
+        "trigger_type": "appsync"
+      }
+    }
+  }
+}

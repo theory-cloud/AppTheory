@@ -30,6 +30,7 @@ cat > dist/RELEASE_NOTES.md <<EOF
 
 ## Highlights
 - Multi-language runtime (Go/TypeScript/Python) with fixture-backed contract tests.
+- Lift-compatible AppSync Lambda resolver support across Go, TypeScript, and Python.
 - Multi-language CDK (jsii) constructs (TypeScript/Python + Go bindings).
 - Deterministic, verifiable release artifacts (checksums + reproducibility gates).
 
@@ -64,6 +65,7 @@ Python:
 
 ## Lift migration
 - Draft guide: ${docs_base}/docs/migration/from-lift.md
+- AppSync resolver recipe: ${docs_base}/docs/migration/appsync-lambda-resolvers.md
 - Migration roadmap: ${docs_base}/docs/development/planning/apptheory/subroadmaps/SR-MIGRATION.md
 
 ## Verification
