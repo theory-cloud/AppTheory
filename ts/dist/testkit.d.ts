@@ -1,5 +1,5 @@
 import { type App } from "./app.js";
-import type { ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyResponse, APIGatewayProxyRequest, APIGatewayV2HTTPRequest, APIGatewayV2HTTPResponse, DynamoDBStreamEvent, DynamoDBStreamEventResponse, DynamoDBStreamRecord, EventBridgeEvent, KinesisEventResponse, KinesisEvent, KinesisEventRecordInput, LambdaFunctionURLResponse, LambdaFunctionURLRequest, SNSEvent, SQSEventResponse, SNSEventRecordInput, SQSEvent, SQSMessage } from "./aws-types.js";
+import type { AppSyncResolverEvent, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyResponse, APIGatewayProxyRequest, APIGatewayV2HTTPRequest, APIGatewayV2HTTPResponse, DynamoDBStreamEvent, DynamoDBStreamEventResponse, DynamoDBStreamRecord, EventBridgeEvent, KinesisEventResponse, KinesisEvent, KinesisEventRecordInput, LambdaFunctionURLResponse, LambdaFunctionURLRequest, SNSEvent, SQSEventResponse, SNSEventRecordInput, SQSEvent, SQSMessage } from "./aws-types.js";
 import { ManualClock } from "./clock.js";
 import { ManualIdGenerator } from "./ids.js";
 import type { Headers, Query, Request, Response } from "./types.js";
@@ -38,6 +38,7 @@ export declare class TestEnv {
     invokeDynamoDBStream(app: App, event: DynamoDBStreamEvent, ctx?: unknown): Promise<DynamoDBStreamEventResponse>;
     invokeKinesis(app: App, event: KinesisEvent, ctx?: unknown): Promise<KinesisEventResponse>;
     invokeSNS(app: App, event: SNSEvent, ctx?: unknown): Promise<unknown[]>;
+    invokeAppSync(app: App, event: AppSyncResolverEvent, ctx?: unknown): Promise<unknown>;
     invokeLambda(app: App, event: unknown, ctx?: unknown): Promise<unknown>;
 }
 export declare function createTestEnv(options?: {
@@ -65,6 +66,17 @@ export declare function buildALBTargetGroupRequest(method: string, path: string,
     isBase64?: boolean;
     targetGroupArn?: string;
 }): ALBTargetGroupRequest;
+export declare function buildAppSyncEvent(options?: {
+    fieldName?: string;
+    parentTypeName?: string;
+    arguments?: Record<string, unknown>;
+    identity?: Record<string, unknown> | null;
+    source?: Record<string, unknown> | null;
+    headers?: Record<string, string>;
+    variables?: Record<string, unknown>;
+    prev?: unknown;
+    stash?: Record<string, unknown> | null;
+}): AppSyncResolverEvent;
 export declare function buildSQSEvent(queueArn: string, records?: Array<Partial<SQSMessage>>): SQSEvent;
 export declare function buildEventBridgeEvent(options?: {
     ruleArn?: string;

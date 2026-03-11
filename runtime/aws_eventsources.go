@@ -722,6 +722,17 @@ func (a *App) handleLambdaEventBridge(ctx context.Context, event json.RawMessage
 	return out, true, err
 }
 
+func (a *App) handleLambdaAppSync(ctx context.Context, event json.RawMessage) (any, bool, error) {
+	appSyncEvent, ok, err := appSyncEventFromRawMessage(event)
+	if err != nil {
+		return nil, true, fmt.Errorf("apptheory: parse appsync event: %w", err)
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	return a.ServeAppSync(ctx, appSyncEvent), true, nil
+}
+
 func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMessage, env lambdaEnvelope) (any, bool, error) {
 	if len(env.RequestContext) == 0 {
 		return nil, false, nil
@@ -797,6 +808,7 @@ func (a *App) handleLambdaRequestContext(ctx context.Context, event json.RawMess
 // - SNS
 // - EventBridge
 // - DynamoDB Streams
+// - AppSync Lambda resolver
 // - API Gateway v2 (WebSocket API)
 func (a *App) HandleLambda(ctx context.Context, event json.RawMessage) (any, error) {
 	if a == nil {
@@ -820,6 +832,14 @@ func (a *App) HandleLambda(ctx context.Context, event json.RawMessage) (any, err
 	}
 
 	out, ok, err = a.handleLambdaEventBridge(ctx, event, env)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		return out, nil
+	}
+
+	out, ok, err = a.handleLambdaAppSync(ctx, event)
 	if err != nil {
 		return nil, err
 	}

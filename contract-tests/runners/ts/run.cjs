@@ -613,6 +613,14 @@ async function runFixture(fixture) {
     return compareFixture(fixture, actual, effects);
   }
   if (tier === "p2") {
+    const expect = fixture.expect ?? {};
+    if (
+      Object.prototype.hasOwnProperty.call(expect, "output_json") ||
+      Object.prototype.hasOwnProperty.call(expect, "error")
+    ) {
+      const { actualOutput, actualError } = await runFixtureP2Output(fixture);
+      return compareFixtureM1Result(fixture, { actualOutput, actualError });
+    }
     const { actual, effects } = await runFixtureP2(fixture);
     return compareFixture(fixture, actual, effects);
   }
@@ -1787,6 +1795,104 @@ async function runFixtureP2(fixture) {
   return { actual, effects };
 }
 
+async function runFixtureP2Output(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+
+  const ids = new runtime.ManualIdGenerator();
+  ids.queue("req_test_123");
+
+  const effects = { logs: [], metrics: [], spans: [] };
+  const limits = fixture.setup?.limits ?? {};
+  const corsSetup = fixture.setup?.cors ?? null;
+  const cors =
+    corsSetup && typeof corsSetup === "object"
+      ? {
+          allowedOrigins: corsSetup.allowed_origins,
+          allowCredentials: Boolean(corsSetup.allow_credentials),
+          allowHeaders: corsSetup.allow_headers,
+        }
+      : undefined;
+  const app = runtime.createApp({
+    tier: "p2",
+    ids,
+    limits: {
+      maxRequestBytes: Number(limits.max_request_bytes ?? 0),
+      maxResponseBytes: Number(limits.max_response_bytes ?? 0),
+    },
+    ...(cors ? { cors } : {}),
+    authHook: (ctx) => {
+      const authz = firstHeaderValue(ctx.request.headers ?? {}, "authorization").trim();
+      if (!authz) {
+        throw new runtime.AppError("app.unauthorized", "unauthorized");
+      }
+      return "authorized";
+    },
+    policyHook: (ctx) => {
+      if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-rate-limit-content-type")) {
+        return {
+          code: "app.rate_limited",
+          message: "rate limited",
+          headers: { "retry-after": ["1"], "Content-Type": ["text/plain; charset=utf-8"] },
+        };
+      }
+      if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-rate-limit")) {
+        return { code: "app.rate_limited", message: "rate limited", headers: { "retry-after": ["1"] } };
+      }
+      if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-shed")) {
+        return { code: "app.overloaded", message: "overloaded", headers: { "retry-after": ["1"] } };
+      }
+      return null;
+    },
+    observability: {
+      log: (r) => {
+        effects.logs.push({
+          level: r.level,
+          event: r.event,
+          request_id: r.requestId,
+          tenant_id: r.tenantId,
+          method: r.method,
+          path: r.path,
+          status: r.status,
+          error_code: r.errorCode,
+        });
+      },
+      metric: (r) => {
+        effects.metrics.push({ name: r.name, value: r.value, tags: r.tags });
+      },
+      span: (r) => {
+        effects.spans.push({ name: r.name, attributes: r.attributes });
+      },
+    },
+  });
+
+  for (const route of fixture.setup?.routes ?? []) {
+    const handler = builtInAppTheoryHandler(runtime, route.handler);
+    if (!handler) {
+      throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
+    }
+    app.handle(route.method, route.path, handler, { authRequired: Boolean(route.auth_required) });
+  }
+
+  const awsEvent = fixture.input?.aws_event ?? null;
+  if (!awsEvent) {
+    throw new Error("fixture missing input.aws_event");
+  }
+  const source = String(awsEvent.source ?? "").trim().toLowerCase();
+  if (source !== "appsync") {
+    throw new Error(`unknown aws_event source ${JSON.stringify(awsEvent.source)}`);
+  }
+
+  let actualOutput = null;
+  let actualError = null;
+  try {
+    actualOutput = await app.handleLambda(awsEvent.event ?? {}, {});
+  } catch (err) {
+    actualError = err;
+  }
+
+  return { actualOutput, actualError, effects };
+}
+
 function builtInAppTheoryHandler(runtime, name) {
   switch (name) {
     case "static_pong":
@@ -1813,6 +1919,26 @@ function builtInAppTheoryHandler(runtime, name) {
         });
     case "parse_json_echo":
       return (ctx) => runtime.json(200, ctx.jsonValue());
+    case "echo_appsync_context":
+      return (ctx) => {
+        const appsync = ctx.asAppSync();
+        return runtime.json(200, {
+          field_name: appsync?.fieldName ?? "",
+          parent_type_name: appsync?.parentTypeName ?? "",
+          arguments: appsync?.arguments ?? {},
+          identity: appsync?.identity ?? {},
+          source: appsync?.source ?? {},
+          variables: appsync?.variables ?? {},
+          stash: appsync?.stash ?? {},
+          prev: appsync?.prev ?? null,
+          request_headers: appsync?.requestHeaders ?? {},
+          raw_event_field: appsync?.rawEvent?.info?.fieldName ?? "",
+          ctx_trigger_type: ctx.get("apptheory.trigger_type") ?? null,
+          ctx_field_name: ctx.get("apptheory.appsync.field_name") ?? null,
+          ctx_parent_type: ctx.get("apptheory.appsync.parent_type_name") ?? null,
+          ctx_request_headers: ctx.get("apptheory.appsync.request_headers") ?? null,
+        });
+      };
     case "panic":
       return () => {
         throw new Error("boom");

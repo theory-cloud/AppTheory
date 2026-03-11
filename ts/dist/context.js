@@ -4,6 +4,80 @@ import { AppError } from "./errors.js";
 import { RandomIdGenerator } from "./ids.js";
 import { toBuffer } from "./internal/http.js";
 import { hasJSONContentType } from "./internal/response.js";
+export class AppSyncContext {
+    fieldName;
+    parentTypeName;
+    arguments;
+    identity;
+    source;
+    variables;
+    stash;
+    prev;
+    requestHeaders;
+    rawEvent;
+    constructor(options) {
+        this.fieldName = String(options.fieldName ?? "").trim();
+        this.parentTypeName = String(options.parentTypeName ?? "").trim();
+        this.arguments =
+            options.arguments && typeof options.arguments === "object"
+                ? { ...options.arguments }
+                : {};
+        this.identity =
+            options.identity && typeof options.identity === "object"
+                ? { ...options.identity }
+                : {};
+        this.source =
+            options.source && typeof options.source === "object"
+                ? { ...options.source }
+                : {};
+        this.variables =
+            options.variables && typeof options.variables === "object"
+                ? { ...options.variables }
+                : {};
+        this.stash =
+            options.stash && typeof options.stash === "object"
+                ? { ...options.stash }
+                : {};
+        this.prev = options.prev ?? null;
+        this.requestHeaders =
+            options.requestHeaders && typeof options.requestHeaders === "object"
+                ? { ...options.requestHeaders }
+                : {};
+        const rawInfo = options.rawEvent.info ?? {};
+        this.rawEvent = {
+            ...options.rawEvent,
+            arguments: options.rawEvent.arguments &&
+                typeof options.rawEvent.arguments === "object"
+                ? { ...options.rawEvent.arguments }
+                : {},
+            identity: options.rawEvent.identity &&
+                typeof options.rawEvent.identity === "object"
+                ? { ...options.rawEvent.identity }
+                : {},
+            source: options.rawEvent.source && typeof options.rawEvent.source === "object"
+                ? { ...options.rawEvent.source }
+                : {},
+            stash: options.rawEvent.stash && typeof options.rawEvent.stash === "object"
+                ? { ...options.rawEvent.stash }
+                : {},
+            ...(options.rawEvent.request &&
+                typeof options.rawEvent.request === "object" &&
+                options.rawEvent.request.headers &&
+                typeof options.rawEvent.request.headers === "object"
+                ? { request: { headers: { ...options.rawEvent.request.headers } } }
+                : {}),
+            info: {
+                ...rawInfo,
+                ...(rawInfo.variables && typeof rawInfo.variables === "object"
+                    ? { variables: { ...rawInfo.variables } }
+                    : {}),
+                ...(Array.isArray(rawInfo.selectionSetList)
+                    ? { selectionSetList: [...rawInfo.selectionSetList] }
+                    : {}),
+            },
+        };
+    }
+}
 export class Context {
     ctx;
     request;
@@ -16,6 +90,7 @@ export class Context {
     _clock;
     _ids;
     _webSocket;
+    _appSync;
     _values;
     constructor(options) {
         this.ctx = options.ctx ?? null;
@@ -31,6 +106,7 @@ export class Context {
             ? options.middlewareTrace
             : [];
         this._webSocket = options.webSocket ?? null;
+        this._appSync = options.appSync ?? null;
         this._values = new Map();
     }
     now() {
@@ -70,6 +146,9 @@ export class Context {
     }
     asWebSocket() {
         return this._webSocket;
+    }
+    asAppSync() {
+        return this._appSync;
     }
 }
 export class EventContext {

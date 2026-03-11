@@ -21,12 +21,13 @@ from apptheory.app import (  # noqa: E402
     event_bridge_rule,
     _eventbridge_rule_name_from_arn,
     _kinesis_stream_name_from_arn,
+    _appsync_payload_from_response,
     _request_from_websocket_event,
     _sns_topic_name_from_arn,
     _sqs_queue_name_from_arn,
     _websocket_management_endpoint,
 )
-from apptheory.errors import AppError  # noqa: E402
+from apptheory.errors import AppError, AppTheoryError  # noqa: E402
 from apptheory.request import Request  # noqa: E402
 from apptheory.response import Response  # noqa: E402
 
@@ -229,6 +230,266 @@ class TestApp(unittest.TestCase):
         self.assertEqual(app.serve_lambda_function_url(None)["statusCode"], 500)  # type: ignore[arg-type]
         self.assertEqual(app.serve_apigw_proxy(None)["statusCode"], 500)  # type: ignore[arg-type]
         self.assertEqual(app.serve_alb(None)["statusCode"], 500)  # type: ignore[arg-type]
+
+    def test_serve_appsync_adapts_request_and_projects_payload(self) -> None:
+        app = create_app(tier="p2")
+
+        def mutation(ctx) -> Response:
+            self.assertEqual(ctx.request.method, "POST")
+            self.assertEqual(ctx.request.path, "/createThing")
+            self.assertEqual(ctx.request.headers["x-test-header"], ["present"])
+            payload = ctx.json_value()
+            return Response(
+                status=200,
+                headers={"content-type": ["application/json; charset=utf-8"]},
+                cookies=[],
+                body=json.dumps({"method": ctx.request.method, "arguments": payload}, sort_keys=True).encode("utf-8"),
+                is_base64=False,
+            )
+
+        app.post("/createThing", mutation)
+        out = app.serve_appsync(
+            {
+                "arguments": {"id": "thing_123", "name": "example"},
+                "request": {"headers": {"x-test-header": "present"}},
+                "info": {"fieldName": "createThing", "parentTypeName": "Mutation"},
+            }
+        )
+        self.assertEqual(out["method"], "POST")
+        self.assertEqual(out["arguments"]["id"], "thing_123")
+        self.assertEqual(out["arguments"]["name"], "example")
+
+        app.get(
+            "/getThing",
+            lambda ctx: Response(
+                status=200,
+                headers={"content-type": ["text/plain; charset=utf-8"]},
+                cookies=[],
+                body=f"{ctx.request.method}:{ctx.request.path}".encode("utf-8"),
+                is_base64=False,
+            ),
+        )
+        out2 = app.serve_appsync(
+            {
+                "arguments": {},
+                "info": {"fieldName": "getThing", "parentTypeName": "Query"},
+            }
+        )
+        self.assertEqual(out2, "GET:/getThing")
+
+        app.get(
+            "/emptyThing",
+            lambda _ctx: Response(status=204, headers={}, cookies=[], body=b"", is_base64=False),
+        )
+        out3 = app.serve_appsync(
+            {
+                "arguments": {},
+                "info": {"fieldName": "emptyThing", "parentTypeName": "Query"},
+            }
+        )
+        self.assertIsNone(out3)
+
+    def test_appsync_payload_projection_rejects_binary_and_streaming_bodies(self) -> None:
+        with self.assertRaises(AppTheoryError) as binary_err:
+            _appsync_payload_from_response(
+                Response(status=200, headers={}, cookies=[], body=b"abc", is_base64=True)
+            )
+        self.assertEqual(binary_err.exception.code, "app.internal")
+        self.assertEqual(binary_err.exception.message, "unsupported appsync response")
+        self.assertEqual(binary_err.exception.details, {"reason": "binary_body_unsupported"})
+
+        with self.assertRaises(AppTheoryError) as stream_err:
+            _appsync_payload_from_response(
+                Response(
+                    status=200,
+                    headers={},
+                    cookies=[],
+                    body=b"",
+                    is_base64=False,
+                    body_stream=iter([b"chunk"]),
+                )
+            )
+        self.assertEqual(stream_err.exception.code, "app.internal")
+        self.assertEqual(stream_err.exception.message, "unsupported appsync response")
+        self.assertEqual(stream_err.exception.details, {"reason": "streaming_body_unsupported"})
+
+    def test_handle_lambda_routes_appsync_and_preserves_metadata(self) -> None:
+        app = create_app(tier="p2")
+
+        def mutation(ctx) -> Response:
+            self.assertEqual(ctx.get("apptheory.trigger_type"), "appsync")
+            appsync = ctx.as_appsync()
+            self.assertIsNotNone(appsync)
+            self.assertEqual(appsync.field_name, "createThing")
+            self.assertEqual(appsync.parent_type_name, "Mutation")
+            self.assertEqual(appsync.arguments, {"id": "thing_123"})
+            self.assertEqual(appsync.identity, {"username": "user_1"})
+            self.assertEqual(appsync.source, {"id": "parent_1"})
+            self.assertEqual(appsync.variables, {"tenantId": "tenant_1"})
+            self.assertEqual(appsync.stash, {"trace": "abc123"})
+            self.assertEqual(appsync.prev, "prev_value")
+            self.assertEqual(appsync.request_headers, {"x-appsync": "yes"})
+            self.assertEqual(appsync.raw_event["info"]["fieldName"], "createThing")
+            self.assertEqual(ctx.get("apptheory.appsync.field_name"), "createThing")
+            self.assertEqual(ctx.get("apptheory.appsync.parent_type_name"), "Mutation")
+            self.assertEqual(ctx.get("apptheory.appsync.identity"), {"username": "user_1"})
+            self.assertEqual(ctx.get("apptheory.appsync.source"), {"id": "parent_1"})
+            self.assertEqual(ctx.get("apptheory.appsync.variables"), {"tenantId": "tenant_1"})
+            self.assertEqual(ctx.get("apptheory.appsync.prev"), "prev_value")
+            self.assertEqual(ctx.get("apptheory.appsync.stash"), {"trace": "abc123"})
+            self.assertEqual(ctx.get("apptheory.appsync.request_headers"), {"x-appsync": "yes"})
+            self.assertEqual(ctx.get("apptheory.appsync.raw_event")["info"]["fieldName"], "createThing")
+
+            return Response(
+                status=200,
+                headers={"content-type": ["application/json; charset=utf-8"]},
+                cookies=[],
+                body=json.dumps({"arguments": ctx.json_value()}, sort_keys=True).encode("utf-8"),
+                is_base64=False,
+            )
+
+        app.post("/createThing", mutation)
+        out = app.handle_lambda(
+            {
+                "arguments": {"id": "thing_123"},
+                "identity": {"username": "user_1"},
+                "source": {"id": "parent_1"},
+                "request": {"headers": {"x-appsync": "yes"}},
+                "info": {
+                    "fieldName": "createThing",
+                    "parentTypeName": "Mutation",
+                    "variables": {"tenantId": "tenant_1"},
+                },
+                "prev": "prev_value",
+                "stash": {"trace": "abc123"},
+            }
+        )
+        self.assertEqual(out, {"arguments": {"id": "thing_123"}})
+
+    def test_handle_lambda_does_not_treat_blank_appsync_field_names_as_appsync(self) -> None:
+        app = create_app(tier="p2")
+
+        with self.assertRaisesRegex(RuntimeError, "unknown event type"):
+            app.handle_lambda(
+                {
+                    "arguments": {},
+                    "info": {
+                        "fieldName": " ",
+                        "parentTypeName": "Mutation",
+                    },
+                }
+            )
+
+    def test_serve_appsync_formats_portable_errors(self) -> None:
+        app = create_app(tier="p2")
+
+        def boom(_ctx) -> Response:
+            raise AppTheoryError(
+                code="app.validation_failed",
+                message="bad input",
+                status_code=422,
+                details={"field": "name"},
+                trace_id="trace_1",
+                timestamp="2026-03-11T15:04:05Z",
+            )
+
+        class Ctx:
+            aws_request_id = "aws_req_1"
+
+        app.post("/createThing", boom)
+        out = app.serve_appsync(
+            {
+                "arguments": {"id": "thing_123"},
+                "info": {"fieldName": "createThing", "parentTypeName": "Mutation"},
+            },
+            ctx=Ctx(),
+        )
+
+        self.assertEqual(
+            out,
+            {
+                "pay_theory_error": True,
+                "error_message": "bad input",
+                "error_type": "CLIENT_ERROR",
+                "error_data": {
+                    "status_code": 422,
+                    "request_id": "aws_req_1",
+                    "trace_id": "trace_1",
+                    "timestamp": "2026-03-11T15:04:05Z",
+                },
+                "error_info": {
+                    "code": "app.validation_failed",
+                    "details": {"field": "name"},
+                    "path": "/createThing",
+                    "method": "POST",
+                    "trigger_type": "appsync",
+                },
+            },
+        )
+
+    def test_serve_appsync_formats_app_errors(self) -> None:
+        app = create_app(tier="p2")
+
+        def boom(_ctx) -> Response:
+            raise AppError("app.forbidden", "forbidden")
+
+        app.post("/createThing", boom)
+
+        class Ctx:
+            aws_request_id = "aws_req_2"
+
+        out = app.serve_appsync(
+            {
+                "arguments": {"id": "thing_123"},
+                "info": {"fieldName": "createThing", "parentTypeName": "Mutation"},
+            },
+            ctx=Ctx(),
+        )
+
+        self.assertEqual(
+            out,
+            {
+                "pay_theory_error": True,
+                "error_message": "forbidden",
+                "error_type": "CLIENT_ERROR",
+                "error_data": {
+                    "status_code": 403,
+                    "request_id": "aws_req_2",
+                },
+                "error_info": {
+                    "code": "app.forbidden",
+                    "path": "/createThing",
+                    "method": "POST",
+                    "trigger_type": "appsync",
+                },
+            },
+        )
+
+    def test_serve_appsync_formats_unexpected_errors(self) -> None:
+        app = create_app(tier="p2")
+
+        def boom(_ctx) -> Response:
+            raise RuntimeError("boom")
+
+        app.post("/createThing", boom)
+
+        out = app.serve_appsync(
+            {
+                "arguments": {"id": "thing_123"},
+                "info": {"fieldName": "createThing", "parentTypeName": "Mutation"},
+            }
+        )
+
+        self.assertEqual(
+            out,
+            {
+                "pay_theory_error": True,
+                "error_message": "boom",
+                "error_type": "SYSTEM_ERROR",
+                "error_data": {},
+                "error_info": {},
+            },
+        )
 
     def test_websocket_helpers_and_not_found_route(self) -> None:
         app = create_app(tier="p2")
