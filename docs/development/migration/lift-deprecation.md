@@ -41,3 +41,5 @@ This document intentionally avoids hard dates until the inventory-to-parity plan
 - AppTheory release notes always include:
   - a link to the public migration guide (`docs/migration/from-lift.md`)
   - a short “what changed” note for migrations (imports, config, middleware ordering, etc.)
+  - when AppSync resolver support or behavior changes ship, a link to `docs/migration/appsync-lambda-resolvers.md` and
+    a short callout that the release includes Lift-compatible AppSync resolver behavior

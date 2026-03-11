@@ -9,6 +9,7 @@ sys.path.insert(0, str(REPO_ROOT / "py" / "src"))
 
 from apptheory.testkit import (  # noqa: E402
     FakeWebSocketManagementClient,
+    build_appsync_event,
     build_websocket_event,
     create_fake_websocket_client_factory,
     create_test_env,
@@ -46,6 +47,15 @@ class TestTestkit(unittest.TestCase):
         self.assertEqual(evt["queryStringParameters"]["a"], "b")
         self.assertEqual(evt["requestContext"]["connectionId"], "c1")
         self.assertEqual(evt["requestContext"]["routeKey"], "$default")
+
+    def test_build_appsync_event(self) -> None:
+        evt = build_appsync_event(
+            arguments={"id": "thing_123"},
+            headers={"x-appsync": "yes"},
+        )
+        self.assertEqual(evt["info"]["fieldName"], "field")
+        self.assertEqual(evt["info"]["parentTypeName"], "Mutation")
+        self.assertEqual(evt["request"]["headers"], {"x-appsync": "yes"})
 
     def test_fake_websocket_management_client_records_calls(self) -> None:
         ws = FakeWebSocketManagementClient("https://example.com/dev")
@@ -165,6 +175,10 @@ class TestTestkit(unittest.TestCase):
                 self.calls.append(("sns", ctx))
                 return []
 
+            def serve_appsync(self, event, *, ctx=None):  # noqa: ANN001
+                self.calls.append(("appsync", ctx))
+                return {"ok": True, "event": event}
+
             def serve_websocket(self, event, *, ctx=None):  # noqa: ANN001
                 self.calls.append(("websocket", ctx))
                 return {"ok": True}
@@ -182,6 +196,11 @@ class TestTestkit(unittest.TestCase):
         self.assertEqual(env.invoke_dynamodb_stream(fake, {}), {"ok": True})
         self.assertEqual(env.invoke_kinesis(fake, {}), {"ok": True})
         self.assertEqual(env.invoke_sns(fake, {}), [])
+        appsync_event = build_appsync_event()
+        self.assertEqual(
+            env.invoke_appsync(fake, appsync_event),
+            {"ok": True, "event": appsync_event},
+        )
         self.assertEqual(env.invoke_websocket(fake, {}), {"ok": True})
         self.assertEqual(env.invoke_lambda(fake, {}), {"ok": True})
-        self.assertEqual(len(fake.calls), 10)
+        self.assertEqual(len(fake.calls), 11)

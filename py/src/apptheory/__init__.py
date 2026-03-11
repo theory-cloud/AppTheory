@@ -14,6 +14,9 @@ from apptheory.app import (
     event_bridge_rule,
 )
 from apptheory.aws_events import (
+    AppSyncResolverEvent,
+    AppSyncResolverInfo,
+    AppSyncResolverRequest,
     build_dynamodb_stream_event,
     build_eventbridge_event,
     build_kinesis_event,
@@ -26,7 +29,7 @@ from apptheory.aws_http import build_alb_target_group_request, build_apigw_v2_re
 from apptheory.cache import cache_control_isr, cache_control_ssg, cache_control_ssr, etag, matches_if_none_match, vary
 from apptheory.clock import Clock, ManualClock, RealClock
 from apptheory.cloudfront import client_ip, origin_url
-from apptheory.context import Context, EventContext, WebSocketContext
+from apptheory.context import AppSyncContext, Context, EventContext, WebSocketContext
 from apptheory.errors import AppError, AppTheoryError
 from apptheory.ids import IDGenerator, IdGenerator, ManualIdGenerator, RealIdGenerator
 
@@ -144,6 +147,7 @@ from apptheory.testkit import (
     StreamResult,
     TestEnv,
     WebSocketCall,
+    build_appsync_event,
     build_websocket_event,
     create_fake_websocket_client_factory,
     create_test_env,
@@ -153,6 +157,10 @@ __all__ = [
     "DEFAULT_JOBS_TABLE_NAME",
     "App",
     "AppError",
+    "AppSyncContext",
+    "AppSyncResolverEvent",
+    "AppSyncResolverInfo",
+    "AppSyncResolverRequest",
     "AppTheoryError",
     "CORSConfig",
     "Clock",
@@ -188,6 +196,7 @@ __all__ = [
     "binary",
     "build_alb_target_group_request",
     "build_apigw_v2_request",
+    "build_appsync_event",
     "build_dynamodb_stream_event",
     "build_eventbridge_event",
     "build_kinesis_event",

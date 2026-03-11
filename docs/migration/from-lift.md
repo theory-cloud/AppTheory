@@ -330,6 +330,48 @@ DynamoDB Streams:
 For local tests:
 
 - Go testkit builders: `testkit.SQSEvent(...)`, `testkit.EventBridgeEvent(...)`, `testkit.DynamoDBStreamEvent(...)`
+- AppSync builders: `testkit.AppSyncEvent(...)`, `buildAppSyncEvent(...)`, `build_appsync_event(...)`
+
+### 11a) AppSync resolvers
+
+AppTheory supports standard AWS AppSync direct Lambda resolver events in Go, TypeScript, and Python.
+
+Compatibility posture:
+
+- Legacy reference: `github.com/pay-theory/lift`
+- Explicit entrypoints:
+  - Go: `app.ServeAppSync(ctx, event)`
+  - TypeScript: `app.serveAppSync(event, ctx)`
+  - Python: `app.serve_appsync(event, ctx)`
+- Universal dispatch:
+  - `HandleLambda`, `handleLambda`, and `handle_lambda` detect standard AppSync events by
+    `info.fieldName`, `info.parentTypeName`, and `arguments`
+- Lift-compatible request adaptation:
+  - `Mutation -> POST /fieldName`
+  - `Query -> GET /fieldName`
+  - `Subscription -> GET /fieldName`
+  - top-level `arguments` become the JSON request body
+  - `request.headers` are forwarded
+- Lift-compatible response behavior:
+  - successful resolvers return the resolver payload directly, not an HTTP proxy envelope
+  - handler failures return AppSync error objects with `pay_theory_error`, `error_message`, `error_type`,
+    `error_data`, and `error_info`
+
+Typed resolver metadata:
+
+- Go: `ctx.AsAppSync()`
+- TypeScript: `ctx.asAppSync()`
+- Python: `ctx.as_appsync()`
+
+Out of scope differences that still remain:
+
+- AppSync Lambda authorizers are not part of this runtime feature set
+- binary and streaming response bodies fail closed with deterministic AppSync system errors
+- AppTheory does not generate GraphQL schemas or AppSync request/response mapping templates
+
+Reference recipe:
+
+- `docs/migration/appsync-lambda-resolvers.md`
 
 ### 12) One-entrypoint router (Lift-style)
 
@@ -343,6 +385,7 @@ This entrypoint routes:
 - Lambda URL, API Gateway v2, API Gateway REST v1
 - WebSockets (APIGW v2 WebSocket API)
 - SQS, EventBridge, DynamoDB Streams
+- AppSync direct Lambda resolver events
 
 ### 13) CDK migration notes (Lift constructs → AppTheory constructs)
 
@@ -367,6 +410,7 @@ they are intentionally omitted from this user-facing guide.
 | `app.Get("/path", handler)` | `app.Get("/path", handler)` | handler signature changes to portable `*Context` |
 | Lift handler funcs | `apptheory.Handler` | `func(*apptheory.Context) (*apptheory.Response, error)` |
 | Lift JSON helpers | `ctx.JSONValue()` + `json.Unmarshal` | portable JSON parsing semantics are contract-defined |
+| Lift AppSync resolver adapter | `HandleLambda(...)` or `ServeAppSync(...)` | standard AppSync direct Lambda event shape; `ctx.AsAppSync()` exposes resolver metadata |
 | `lift.SSEResponse` / `lift.SSEEvent` | `apptheory.SSEResponse` / `apptheory.SSEEvent` | REST API v1 + SSE helpers |
 | Lift `app.Use(...)` + `ctx.Set/Get` | `app.Use(...)` + `ctx.Set/Get` | global middleware pipeline + context value bag |
 | Lift `pkg/naming` | `pkg/naming` | deterministic naming helpers (stage/name builders) |

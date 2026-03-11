@@ -8,6 +8,7 @@ runtime. AppTheory is migration-oriented, but it is not a promise of drop-in API
 Start here:
 
 - `docs/migration/from-lift.md`
+- `docs/migration/appsync-lambda-resolvers.md`
 - `docs/migration/g4-representative-migration.md`
 - `docs/api-reference.md`
 - `docs/testing-guide.md`
@@ -22,7 +23,15 @@ Start here:
 1. Confirm the current runtime entrypoint and Lift-specific imports.
 2. Rewrite or replace Lift imports with AppTheory equivalents.
 3. Move mixed-trigger Lambdas to `HandleLambda`, `handleLambda`, or `handle_lambda` unless a narrower adapter is required.
-4. Run parity, snapshot, and docs checks before rollout.
+4. For AppSync resolvers, keep the standard direct Lambda event shape and switch to `ServeAppSync`, `serveAppSync`,
+   `serve_appsync`, or the universal dispatcher.
+5. Run parity, snapshot, and docs checks before rollout.
+
+AppSync note:
+
+- Standard AppSync direct Lambda resolver events are supported without request mapping template changes.
+- Resolver metadata is available through `AsAppSync()`, `asAppSync()`, and `as_appsync()`.
+- See `docs/migration/appsync-lambda-resolvers.md` for wiring and route-shaping details.
 
 ## Migration commands
 
