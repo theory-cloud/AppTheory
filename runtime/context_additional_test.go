@@ -24,6 +24,9 @@ func TestContext_Basics_SetGetParamAndJSONValue(t *testing.T) {
 	if got := (*Context)(nil).AsWebSocket(); got != nil {
 		t.Fatalf("expected nil Context().AsWebSocket() to return nil, got %#v", got)
 	}
+	if got := (*Context)(nil).AsAppSync(); got != nil {
+		t.Fatalf("expected nil Context().AsAppSync() to return nil, got %#v", got)
+	}
 
 	fixedNow := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	c := &Context{
@@ -33,7 +36,8 @@ func TestContext_Basics_SetGetParamAndJSONValue(t *testing.T) {
 		Params: map[string]string{
 			"p": "v",
 		},
-		ws: &WebSocketContext{},
+		ws:      &WebSocketContext{},
+		appsync: &AppSyncContext{FieldName: "field"},
 	}
 
 	if got := c.Now(); !got.Equal(fixedNow) {
@@ -47,6 +51,9 @@ func TestContext_Basics_SetGetParamAndJSONValue(t *testing.T) {
 	}
 	if got := c.AsWebSocket(); got == nil {
 		t.Fatal("expected AsWebSocket() to return websocket context")
+	}
+	if got := c.AsAppSync(); got == nil || got.FieldName != "field" {
+		t.Fatalf("expected AsAppSync() to return appsync context, got %#v", got)
 	}
 
 	c.Set("  ", "ignored")

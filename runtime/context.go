@@ -21,9 +21,24 @@ type Context struct {
 	RemainingMS     int
 	MiddlewareTrace []string
 
-	ws *WebSocketContext
+	ws      *WebSocketContext
+	appsync *AppSyncContext
 
 	values map[string]any
+}
+
+// AppSyncContext exposes AppSync-specific resolver metadata on request contexts.
+type AppSyncContext struct {
+	FieldName      string
+	ParentTypeName string
+	Arguments      map[string]any
+	Identity       map[string]any
+	Source         map[string]any
+	Variables      map[string]any
+	Stash          map[string]any
+	Prev           any
+	RequestHeaders map[string]string
+	RawEvent       AppSyncResolverEvent
 }
 
 func (c *Context) Context() context.Context {
@@ -77,6 +92,13 @@ func (c *Context) AsWebSocket() *WebSocketContext {
 		return nil
 	}
 	return c.ws
+}
+
+func (c *Context) AsAppSync() *AppSyncContext {
+	if c == nil {
+		return nil
+	}
+	return c.appsync
 }
 
 func (c *Context) Set(key string, value any) {

@@ -95,6 +95,20 @@ func (a *App) DeleteStrict(pattern string, handler Handler, opts ...RouteOption)
 }
 
 func (a *App) Serve(ctx context.Context, req Request) (resp Response) {
+	return a.serveWithOptions(ctx, req, serveOptions{})
+}
+
+type requestContextConfigurer func(*Context)
+
+type requestErrorResponder func(error, Request, string) Response
+
+type serveOptions struct {
+	configure         requestContextConfigurer
+	errorResponder    requestErrorResponder
+	fallbackRequestID string
+}
+
+func (a *App) serveWithOptions(ctx context.Context, req Request, opts serveOptions) (resp Response) {
 	if a == nil || a.router == nil {
 		return errorResponse(errorCodeInternal, errorMessageInternal, nil)
 	}
@@ -104,24 +118,40 @@ func (a *App) Serve(ctx context.Context, req Request) (resp Response) {
 
 	switch a.tier {
 	case TierP0:
-		return a.serveP0(ctx, req)
+		return a.serveP0(ctx, req, opts)
 	case TierP1:
-		return a.serveP1(ctx, req)
+		return a.serveP1(ctx, req, opts)
 	case TierP2:
-		return a.serveP2(ctx, req)
+		return a.serveP2(ctx, req, opts)
 	default:
-		return a.serveP2(ctx, req)
+		return a.serveP2(ctx, req, opts)
 	}
 }
 
-func (a *App) serveP0(ctx context.Context, req Request) (resp Response) {
+func respondToServeError(opts serveOptions, err error, req Request, requestID string) Response {
+	if opts.errorResponder != nil {
+		return opts.errorResponder(err, req, requestID)
+	}
+	if requestID != "" {
+		return responseForErrorWithRequestID(err, requestID)
+	}
+	return responseForError(err)
+}
+
+func (a *App) serveP0(ctx context.Context, req Request, opts serveOptions) (resp Response) {
 	normalized, err := normalizeRequest(req)
 	if err != nil {
-		return responseForError(err)
+		return respondToServeError(opts, err, req, opts.fallbackRequestID)
 	}
 
 	match, allowed := a.router.match(normalized.Method, normalized.Path)
 	if match == nil {
+		if opts.errorResponder != nil {
+			if len(allowed) > 0 {
+				return respondToServeError(opts, &AppError{Code: errorCodeMethodNotAllowed, Message: errorMessageMethodNotAllowed}, normalized, opts.fallbackRequestID)
+			}
+			return respondToServeError(opts, &AppError{Code: errorCodeNotFound, Message: errorMessageNotFound}, normalized, opts.fallbackRequestID)
+		}
 		if len(allowed) > 0 {
 			headers := map[string][]string{
 				"allow": {formatAllowHeader(allowed)},
@@ -138,28 +168,33 @@ func (a *App) serveP0(ctx context.Context, req Request) (resp Response) {
 		clock:   a.clock,
 		ids:     a.ids,
 	}
+	if opts.configure != nil {
+		opts.configure(requestCtx)
+	}
 
 	defer func() {
 		if r := recover(); r != nil {
-			resp = errorResponse(errorCodeInternal, errorMessageInternal, nil)
+			resp = respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, normalized, opts.fallbackRequestID)
 		}
 	}()
 
 	handler := a.applyMiddlewares(match.Route.Handler)
 	out, handlerErr := handler(requestCtx)
 	if handlerErr != nil {
-		return responseForError(handlerErr)
+		return respondToServeError(opts, handlerErr, normalized, opts.fallbackRequestID)
 	}
-
+	if out == nil {
+		return respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, normalized, opts.fallbackRequestID)
+	}
 	return normalizeResponse(out)
 }
 
-func (a *App) serveP1(ctx context.Context, req Request) (resp Response) {
-	return a.servePortable(ctx, req, false)
+func (a *App) serveP1(ctx context.Context, req Request, opts serveOptions) (resp Response) {
+	return a.servePortable(ctx, req, false, opts)
 }
 
-func (a *App) serveP2(ctx context.Context, req Request) (resp Response) {
-	return a.servePortable(ctx, req, true)
+func (a *App) serveP2(ctx context.Context, req Request, opts serveOptions) (resp Response) {
+	return a.servePortable(ctx, req, true, opts)
 }
 
 type portableServeState struct {
@@ -171,7 +206,7 @@ type portableServeState struct {
 	errorCode string
 }
 
-func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool) (resp Response) {
+func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool, opts serveOptions) (resp Response) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -180,7 +215,7 @@ func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool) (re
 	defer func() {
 		if r := recover(); r != nil {
 			state.errorCode = errorCodeInternal
-			resp = errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, state.requestID)
+			resp = respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, req, state.requestID)
 		}
 		resp = finalizeP1Response(resp, state.requestID, state.origin, a.cors)
 		if enableP2 {
@@ -188,21 +223,17 @@ func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool) (re
 		}
 	}()
 
-	resp = a.servePortableCore(ctx, req, enableP2, &state)
+	resp = a.servePortableCore(ctx, req, enableP2, &state, opts)
 	return resp
 }
 
-func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool, state *portableServeState) Response {
+func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool, state *portableServeState, opts serveOptions) Response {
 	headers := canonicalizeHeaders(req.Headers)
 	query := cloneQuery(req.Query)
 
 	state.method = strings.ToUpper(strings.TrimSpace(req.Method))
 	state.path = normalizePath(req.Path)
-
-	state.requestID = firstHeaderValue(headers, "x-request-id")
-	if state.requestID == "" {
-		state.requestID = a.newRequestID()
-	}
+	state.requestID = a.resolvePortableRequestID(headers, opts)
 
 	state.origin = firstHeaderValue(headers, "origin")
 	state.tenantID = extractTenantID(headers, query)
@@ -217,7 +248,7 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 	normalized, err := normalizeRequest(req)
 	if err != nil {
 		state.errorCode = errorCodeForError(err)
-		return responseForErrorWithRequestID(err, state.requestID)
+		return respondToServeError(opts, err, req, state.requestID)
 	}
 
 	state.method = normalized.Method
@@ -234,26 +265,37 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 		RemainingMS:     remainingMS,
 		MiddlewareTrace: trace,
 	}
+	if opts.configure != nil {
+		opts.configure(requestCtx)
+	}
 
 	if maxBytes := a.limits.MaxRequestBytes; maxBytes > 0 && len(normalized.Body) > maxBytes {
 		state.errorCode = errorCodeTooLarge
-		return errorResponseWithRequestID(errorCodeTooLarge, errorMessageRequestTooLarge, nil, state.requestID)
+		return respondToServeError(opts, &AppError{Code: errorCodeTooLarge, Message: errorMessageRequestTooLarge}, normalized, state.requestID)
 	}
 
 	match, allowed := a.router.match(state.method, state.path)
 	if match == nil {
+		if opts.errorResponder != nil {
+			if len(allowed) > 0 {
+				state.errorCode = errorCodeMethodNotAllowed
+				return respondToServeError(opts, &AppError{Code: errorCodeMethodNotAllowed, Message: errorMessageMethodNotAllowed}, normalized, state.requestID)
+			}
+			state.errorCode = errorCodeNotFound
+			return respondToServeError(opts, &AppError{Code: errorCodeNotFound, Message: errorMessageNotFound}, normalized, state.requestID)
+		}
 		resp, errorCode := routeNotFoundResponse(allowed, state.requestID)
 		state.errorCode = errorCode
 		return resp
 	}
 	requestCtx.Params = match.Params
 
-	if resp, errorCode, ok := a.applyPolicy(enableP2, requestCtx, state.requestID); ok {
+	if resp, errorCode, ok := a.applyPolicy(enableP2, requestCtx, state.requestID, opts.errorResponder); ok {
 		state.errorCode = errorCode
 		return resp
 	}
 
-	if resp, errorCode, ok := a.authorize(match.Route.AuthRequired, requestCtx, state.requestID); ok {
+	if resp, errorCode, ok := a.authorize(match.Route.AuthRequired, requestCtx, state.requestID, opts.errorResponder); ok {
 		state.errorCode = errorCode
 		return resp
 	}
@@ -264,21 +306,31 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 	out, handlerErr := handler(requestCtx)
 	if handlerErr != nil {
 		state.errorCode = errorCodeForError(handlerErr)
-		return responseForErrorWithRequestID(handlerErr, state.requestID)
+		return respondToServeError(opts, handlerErr, normalized, state.requestID)
 	}
 
 	if out == nil {
 		state.errorCode = errorCodeInternal
-		return errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, state.requestID)
+		return respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, normalized, state.requestID)
 	}
 
 	resp := normalizeResponse(out)
 	if maxBytes := a.limits.MaxResponseBytes; maxBytes > 0 && len(resp.Body) > maxBytes {
 		state.errorCode = errorCodeTooLarge
-		return errorResponseWithRequestID(errorCodeTooLarge, errorMessageResponseTooLarge, nil, state.requestID)
+		return respondToServeError(opts, &AppError{Code: errorCodeTooLarge, Message: errorMessageResponseTooLarge}, normalized, state.requestID)
 	}
 
 	return resp
+}
+
+func (a *App) resolvePortableRequestID(headers map[string][]string, opts serveOptions) string {
+	if requestID := strings.TrimSpace(firstHeaderValue(headers, "x-request-id")); requestID != "" {
+		return requestID
+	}
+	if fallbackRequestID := strings.TrimSpace(opts.fallbackRequestID); fallbackRequestID != "" {
+		return fallbackRequestID
+	}
+	return a.newRequestID()
 }
 
 func portableTrace(origin string) []string {
@@ -324,13 +376,21 @@ func routeNotFoundResponse(allowed []string, requestID string) (Response, string
 	return errorResponseWithRequestID(errorCodeNotFound, errorMessageNotFound, nil, requestID), errorCodeNotFound
 }
 
-func (a *App) applyPolicy(enableP2 bool, requestCtx *Context, requestID string) (Response, string, bool) {
+func (a *App) applyPolicy(
+	enableP2 bool,
+	requestCtx *Context,
+	requestID string,
+	errorResponder requestErrorResponder,
+) (Response, string, bool) {
 	if !enableP2 || a.policy == nil {
 		return Response{}, "", false
 	}
 
 	decision, err := a.policy(requestCtx)
 	if err != nil {
+		if errorResponder != nil {
+			return errorResponder(err, requestCtx.Request, requestID), errorCodeForError(err), true
+		}
 		return errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, requestID), errorCodeInternal, true
 	}
 	if decision == nil {
@@ -347,10 +407,18 @@ func (a *App) applyPolicy(enableP2 bool, requestCtx *Context, requestID string) 
 		message = defaultPolicyMessage(code)
 	}
 
+	if errorResponder != nil {
+		return errorResponder(&AppError{Code: code, Message: message}, requestCtx.Request, requestID), code, true
+	}
 	return errorResponseWithRequestID(code, message, decision.Headers, requestID), code, true
 }
 
-func (a *App) authorize(authRequired bool, requestCtx *Context, requestID string) (Response, string, bool) {
+func (a *App) authorize(
+	authRequired bool,
+	requestCtx *Context,
+	requestID string,
+	errorResponder requestErrorResponder,
+) (Response, string, bool) {
 	if !authRequired {
 		return Response{}, "", false
 	}
@@ -358,16 +426,25 @@ func (a *App) authorize(authRequired bool, requestCtx *Context, requestID string
 	requestCtx.MiddlewareTrace = append(requestCtx.MiddlewareTrace, "auth")
 
 	if a.auth == nil {
+		if errorResponder != nil {
+			return errorResponder(&AppError{Code: errorCodeUnauthorized, Message: errorMessageUnauthorized}, requestCtx.Request, requestID), errorCodeUnauthorized, true
+		}
 		return errorResponseWithRequestID(errorCodeUnauthorized, errorMessageUnauthorized, nil, requestID), errorCodeUnauthorized, true
 	}
 
 	identity, err := a.auth(requestCtx)
 	if err != nil {
+		if errorResponder != nil {
+			return errorResponder(err, requestCtx.Request, requestID), errorCodeForError(err), true
+		}
 		return responseForErrorWithRequestID(err, requestID), errorCodeForError(err), true
 	}
 
 	identity = strings.TrimSpace(identity)
 	if identity == "" {
+		if errorResponder != nil {
+			return errorResponder(&AppError{Code: errorCodeUnauthorized, Message: errorMessageUnauthorized}, requestCtx.Request, requestID), errorCodeUnauthorized, true
+		}
 		return errorResponseWithRequestID(errorCodeUnauthorized, errorMessageUnauthorized, nil, requestID), errorCodeUnauthorized, true
 	}
 
