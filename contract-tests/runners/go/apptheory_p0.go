@@ -277,6 +277,28 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		}
 		return apptheory.JSON(200, value)
 	},
+	"echo_appsync_context": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		appsync := ctx.AsAppSync()
+		if appsync == nil {
+			return apptheory.JSON(200, map[string]any{"appsync": nil})
+		}
+		return apptheory.JSON(200, map[string]any{
+			"field_name":          appsync.FieldName,
+			"parent_type_name":    appsync.ParentTypeName,
+			"arguments":           appsync.Arguments,
+			"identity":            appsync.Identity,
+			"source":              appsync.Source,
+			"variables":           appsync.Variables,
+			"stash":               appsync.Stash,
+			"prev":                appsync.Prev,
+			"request_headers":     appsync.RequestHeaders,
+			"raw_event_field":     appsync.RawEvent.Info.FieldName,
+			"ctx_trigger_type":    ctx.Get("apptheory.trigger_type"),
+			"ctx_field_name":      ctx.Get("apptheory.appsync.field_name"),
+			"ctx_parent_type":     ctx.Get("apptheory.appsync.parent_type_name"),
+			"ctx_request_headers": ctx.Get("apptheory.appsync.request_headers"),
+		})
+	},
 	"panic": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		panic("boom")
 	},

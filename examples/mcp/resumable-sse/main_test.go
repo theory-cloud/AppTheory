@@ -72,3 +72,23 @@ func TestResumableSSEExample(t *testing.T) {
 		t.Fatalf("expected final JSON-RPC result in resumed stream; got %d messages", len(msgs))
 	}
 }
+
+func TestResumableSSEBuildApp(t *testing.T) {
+	env := testkit.New()
+	app := buildApp()
+	if app == nil {
+		t.Fatal("expected app")
+	}
+
+	event := testkit.APIGatewayV2Request("POST", "/mcp", testkit.HTTPEventOptions{
+		Headers: map[string]string{"content-type": "application/json"},
+		Body:    []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`),
+	})
+	resp := env.InvokeAPIGatewayV2(context.Background(), app, event)
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+	if resp.Headers["mcp-session-id"] == "" {
+		t.Fatalf("expected mcp-session-id header, got %#v", resp.Headers)
+	}
+}
