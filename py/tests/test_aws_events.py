@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "py" / "src"))
 
 from apptheory.aws_events import (  # noqa: E402
+    build_appsync_event,
     build_eventbridge_event,
     build_kinesis_event,
     build_sns_event,
@@ -18,6 +19,13 @@ from apptheory.aws_events import (  # noqa: E402
 
 
 class TestAwsEvents(unittest.TestCase):
+    def test_build_appsync_event_defaults(self) -> None:
+        event = build_appsync_event(arguments={"id": "thing_123"}, headers={"x-appsync": "yes"})
+        self.assertEqual(event["info"]["fieldName"], "field")
+        self.assertEqual(event["info"]["parentTypeName"], "Mutation")
+        self.assertEqual(event["arguments"], {"id": "thing_123"})
+        self.assertEqual(event["request"]["headers"], {"x-appsync": "yes"})
+
     def test_build_sqs_event_defaults(self) -> None:
         event = build_sqs_event("arn:aws:sqs:us-east-1:000000000000:q", records=[{"body": "ok"}])
         self.assertIn("Records", event)
@@ -46,4 +54,3 @@ class TestAwsEvents(unittest.TestCase):
         self.assertEqual(stepfunctions_task_token({"TaskToken": "x"}), "x")
         self.assertEqual(stepfunctions_task_token({"task_token": "y"}), "y")
         self.assertEqual(stepfunctions_task_token({"nope": True}), "")
-

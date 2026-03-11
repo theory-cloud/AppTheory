@@ -1,0 +1,41 @@
+{
+  "id": "p2.appsync.header_passthrough",
+  "tier": "p2",
+  "name": "AppSync request headers are forwarded to routed handlers",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/createThing", "handler": "echo_request" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "appsync",
+      "event": {
+        "arguments": {},
+        "request": {
+          "headers": {
+            "x-appsync": "yes"
+          }
+        },
+        "info": {
+          "fieldName": "createThing",
+          "parentTypeName": "Mutation"
+        }
+      }
+    }
+  },
+  "expect": {
+    "output_json": {
+      "method": "POST",
+      "path": "/createThing",
+      "query": {},
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-appsync": ["yes"]
+      },
+      "cookies": {},
+      "body_b64": "",
+      "is_base64": false
+    }
+  }
+}

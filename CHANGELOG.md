@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.18.0-rc](https://github.com/theory-cloud/AppTheory/compare/v0.17.1-rc...v0.18.0-rc) (2026-03-11)
+
+
+### Features
+
+* add full AppSync resolver support across AppTheory runtimes ([56cab82](https://github.com/theory-cloud/AppTheory/commit/56cab824761992aef5f5a37e27fa00f207e59fa5))
+* complete SR-APPSYNC A1 ([5578bbb](https://github.com/theory-cloud/AppTheory/commit/5578bbb4a42568703b572f669f8779484ba57298))
+* complete SR-APPSYNC A2 ([0dd443c](https://github.com/theory-cloud/AppTheory/commit/0dd443c3985d15dd3f1c1272e5fe2ddd603ce4c1))
+* complete SR-APPSYNC A3 ([907aa7b](https://github.com/theory-cloud/AppTheory/commit/907aa7bb92d8a4799b58d8cf5ef3f8cf4ef6193f))
+* complete SR-APPSYNC A4 ([d2c7e66](https://github.com/theory-cloud/AppTheory/commit/d2c7e669c5e40e72e2e9cfcaa130a4f428ae15f5))
+* complete SR-APPSYNC A5 ([980650d](https://github.com/theory-cloud/AppTheory/commit/980650d7c6d21bbfc724e86107090d614c50366a))
+* complete SR-APPSYNC A6 ([0f7dd11](https://github.com/theory-cloud/AppTheory/commit/0f7dd11ab717c68039d88ac4c03fced04c810225))
+* complete SR-APPSYNC A8 ([ae0ad95](https://github.com/theory-cloud/AppTheory/commit/ae0ad95e1d3c4d7f5f2cc307e08d0a7b5b3c9e9e))
+
+
+### Bug Fixes
+
+* resolve staging into premain merge ([c1fa797](https://github.com/theory-cloud/AppTheory/commit/c1fa79779d522d93cb2560da57b47d0e5968dfdd))
+* resolve staging into premain merge ([311d239](https://github.com/theory-cloud/AppTheory/commit/311d239cdae372497f0d23dcf2cc4180e55fc2b6))
+* satisfy CI lint for AppSync methods ([4831de8](https://github.com/theory-cloud/AppTheory/commit/4831de8de33d1c5a860ea0f7c6e458bee2a6f1d5))
+* sync premain stable manifest with main ([2d06edd](https://github.com/theory-cloud/AppTheory/commit/2d06edd8cbb8fc6089334a3685b6c323cd85c35f))
+
 ## [0.17.1](https://github.com/theory-cloud/AppTheory/compare/v0.17.0...v0.17.1) (2026-03-10)
 
 

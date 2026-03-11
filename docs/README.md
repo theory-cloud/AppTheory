@@ -38,6 +38,7 @@ These pages are versioned with the docs contract, but they are not part of the i
 ## Sanctioned optional ingestible surfaces
 
 - [Migration Procedures](./migration/from-lift.md) and related files under `docs/migration/**`
+- [AppSync Lambda Resolver Recipe](./migration/appsync-lambda-resolvers.md)
 - [CDK Guides](./cdk/README.md) and related files under `docs/cdk/**`
 - `docs/llm-faq/**` is reserved as an optional ingestible surface if it is added later
 
