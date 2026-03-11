@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { AppSyncContext } from "../context.js";
 import { AppError } from "../errors.js";
 import { firstHeaderValue } from "./http.js";
 import { hasJSONContentType, normalizeResponse } from "./response.js";
@@ -80,6 +81,30 @@ export function applyAppSyncContextValues(requestCtx, event) {
     requestCtx.set("apptheory.appsync.stash", event.stash ?? {});
     requestCtx.set("apptheory.appsync.request_headers", event.request?.headers ?? {});
     requestCtx.set("apptheory.appsync.raw_event", event);
+}
+export function createAppSyncContext(event) {
+    return new AppSyncContext({
+        fieldName: event.info.fieldName,
+        parentTypeName: event.info.parentTypeName,
+        arguments: event.arguments && typeof event.arguments === "object"
+            ? { ...event.arguments }
+            : {},
+        identity: event.identity && typeof event.identity === "object"
+            ? { ...event.identity }
+            : {},
+        source: event.source && typeof event.source === "object"
+            ? { ...event.source }
+            : {},
+        variables: event.info.variables && typeof event.info.variables === "object"
+            ? { ...event.info.variables }
+            : {},
+        stash: event.stash && typeof event.stash === "object" ? { ...event.stash } : {},
+        prev: event.prev ?? null,
+        requestHeaders: event.request?.headers && typeof event.request.headers === "object"
+            ? { ...event.request.headers }
+            : {},
+        rawEvent: event,
+    });
 }
 export function appSyncPayloadFromResponse(response) {
     const normalized = normalizeResponse(response);

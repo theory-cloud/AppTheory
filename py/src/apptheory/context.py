@@ -5,10 +5,50 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from apptheory.aws_events import AppSyncResolverEvent
 from apptheory.clock import Clock, RealClock
 from apptheory.errors import AppError
 from apptheory.ids import IdGenerator, RealIdGenerator
 from apptheory.request import Request
+
+
+@dataclass(slots=True)
+class AppSyncContext:
+    field_name: str
+    parent_type_name: str
+    arguments: dict[str, Any]
+    identity: dict[str, Any]
+    source: dict[str, Any]
+    variables: dict[str, Any]
+    stash: dict[str, Any]
+    prev: Any | None
+    request_headers: dict[str, str]
+    raw_event: AppSyncResolverEvent | dict[str, Any]
+
+    def __init__(
+        self,
+        *,
+        field_name: str = "",
+        parent_type_name: str = "",
+        arguments: dict[str, Any] | None = None,
+        identity: dict[str, Any] | None = None,
+        source: dict[str, Any] | None = None,
+        variables: dict[str, Any] | None = None,
+        stash: dict[str, Any] | None = None,
+        prev: Any | None = None,
+        request_headers: dict[str, str] | None = None,
+        raw_event: AppSyncResolverEvent | dict[str, Any] | None = None,
+    ) -> None:
+        self.field_name = str(field_name or "").strip()
+        self.parent_type_name = str(parent_type_name or "").strip()
+        self.arguments = dict(arguments or {})
+        self.identity = dict(identity or {})
+        self.source = dict(source or {})
+        self.variables = dict(variables or {})
+        self.stash = dict(stash or {})
+        self.prev = prev
+        self.request_headers = {str(key): str(value) for key, value in dict(request_headers or {}).items() if str(key).strip()}
+        self.raw_event = dict(raw_event or {})
 
 
 @dataclass(slots=True)
@@ -24,6 +64,7 @@ class Context:
     remaining_ms: int
     middleware_trace: list[str]
     websocket: WebSocketContext | None
+    appsync: AppSyncContext | None
     _values: dict[str, Any]
 
     def __init__(
@@ -40,6 +81,7 @@ class Context:
         remaining_ms: int = 0,
         middleware_trace: list[str] | None = None,
         websocket: WebSocketContext | None = None,
+        appsync: AppSyncContext | None = None,
     ) -> None:
         self.request = request
         self.params = params or {}
@@ -52,6 +94,7 @@ class Context:
         self.remaining_ms = int(remaining_ms or 0)
         self.middleware_trace = middleware_trace if middleware_trace is not None else []
         self.websocket = websocket
+        self.appsync = appsync
         self._values = {}
 
     def now(self):
@@ -77,6 +120,9 @@ class Context:
 
     def as_websocket(self) -> WebSocketContext | None:
         return self.websocket
+
+    def as_appsync(self) -> AppSyncContext | None:
+        return self.appsync
 
     def json_value(self) -> Any:
         if not _has_json_content_type(self.request.headers):

@@ -20,7 +20,7 @@ from apptheory.aws_http import (
 )
 from apptheory.cache import vary
 from apptheory.clock import Clock, RealClock
-from apptheory.context import Context, EventContext, WebSocketClientFactory, WebSocketContext
+from apptheory.context import AppSyncContext, Context, EventContext, WebSocketClientFactory, WebSocketContext
 from apptheory.errors import (
     AppError,
     AppTheoryError,
@@ -324,11 +324,24 @@ class App:
         request: Request,
         ctx: Any | None = None,
         context_configurer: Callable[[Context], None] | None = None,
+        appsync: AppSyncContext | None = None,
     ) -> Response:
         if self._tier == "p1":
-            return self._serve_portable(request, ctx, enable_p2=False, context_configurer=context_configurer)
+            return self._serve_portable(
+                request,
+                ctx,
+                enable_p2=False,
+                context_configurer=context_configurer,
+                appsync=appsync,
+            )
         if self._tier == "p2":
-            return self._serve_portable(request, ctx, enable_p2=True, context_configurer=context_configurer)
+            return self._serve_portable(
+                request,
+                ctx,
+                enable_p2=True,
+                context_configurer=context_configurer,
+                appsync=appsync,
+            )
 
         try:
             normalized = normalize_request(request)
@@ -351,6 +364,7 @@ class App:
             clock=self._clock,
             id_generator=self._id_generator,
             ctx=ctx,
+            appsync=appsync,
         )
         if context_configurer is not None:
             context_configurer(request_ctx)
@@ -423,6 +437,7 @@ class App:
         *,
         enable_p2: bool,
         context_configurer: Callable[[Context], None] | None = None,
+        appsync: AppSyncContext | None = None,
     ) -> Response:
         pre_headers = canonicalize_headers(request.headers)
         pre_query = clone_query(request.query)
@@ -500,6 +515,7 @@ class App:
             auth_identity="",
             remaining_ms=remaining_ms,
             middleware_trace=trace,
+            appsync=appsync,
         )
         if context_configurer is not None:
             context_configurer(request_ctx)
@@ -643,7 +659,12 @@ class App:
             return _appsync_payload_from_response(response_for_error(exc))
 
         try:
-            resp = self._serve(request, ctx, lambda request_ctx: _apply_appsync_context_values(request_ctx, event))
+            resp = self._serve(
+                request,
+                ctx,
+                lambda request_ctx: _apply_appsync_context_values(request_ctx, event),
+                _appsync_context_from_event(event),
+            )
             return _appsync_payload_from_response(resp)
         except Exception as exc:  # noqa: BLE001
             return _appsync_payload_from_response(response_for_error(exc))
@@ -1087,6 +1108,8 @@ def _apply_appsync_context_values(request_ctx: Context, event: AppSyncResolverEv
     if not isinstance(event, dict):
         return
 
+    request_ctx.appsync = _appsync_context_from_event(event)
+
     info = event.get("info") or {}
     if not isinstance(info, dict):
         info = {}
@@ -1112,6 +1135,35 @@ def _apply_appsync_context_values(request_ctx: Context, event: AppSyncResolverEv
         {str(key): str(value) for key, value in request_headers.items() if str(key).strip()},
     )
     request_ctx.set("apptheory.appsync.raw_event", event)
+
+
+def _appsync_context_from_event(event: AppSyncResolverEvent | dict[str, Any]) -> AppSyncContext:
+    if not isinstance(event, dict):
+        return AppSyncContext()
+
+    info = event.get("info") or {}
+    if not isinstance(info, dict):
+        info = {}
+
+    request_info = event.get("request") or {}
+    if not isinstance(request_info, dict):
+        request_info = {}
+    request_headers = request_info.get("headers") or {}
+    if not isinstance(request_headers, dict):
+        request_headers = {}
+
+    return AppSyncContext(
+        field_name=str(info.get("fieldName") or "").strip(),
+        parent_type_name=str(info.get("parentTypeName") or "").strip(),
+        arguments=dict(event.get("arguments") or {}),
+        identity=dict(event.get("identity") or {}),
+        source=dict(event.get("source") or {}),
+        variables=dict(info.get("variables") or {}),
+        stash=dict(event.get("stash") or {}),
+        prev=event.get("prev"),
+        request_headers={str(key): str(value) for key, value in request_headers.items() if str(key).strip()},
+        raw_event=dict(event),
+    )
 
 
 def _appsync_method(parent_type_name: str) -> str:

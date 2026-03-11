@@ -281,6 +281,18 @@ class TestApp(unittest.TestCase):
 
         def mutation(ctx) -> Response:
             self.assertEqual(ctx.get("apptheory.trigger_type"), "appsync")
+            appsync = ctx.as_appsync()
+            self.assertIsNotNone(appsync)
+            self.assertEqual(appsync.field_name, "createThing")
+            self.assertEqual(appsync.parent_type_name, "Mutation")
+            self.assertEqual(appsync.arguments, {"id": "thing_123"})
+            self.assertEqual(appsync.identity, {"username": "user_1"})
+            self.assertEqual(appsync.source, {"id": "parent_1"})
+            self.assertEqual(appsync.variables, {"tenantId": "tenant_1"})
+            self.assertEqual(appsync.stash, {"trace": "abc123"})
+            self.assertEqual(appsync.prev, "prev_value")
+            self.assertEqual(appsync.request_headers, {"x-appsync": "yes"})
+            self.assertEqual(appsync.raw_event["info"]["fieldName"], "createThing")
             self.assertEqual(ctx.get("apptheory.appsync.field_name"), "createThing")
             self.assertEqual(ctx.get("apptheory.appsync.parent_type_name"), "Mutation")
             self.assertEqual(ctx.get("apptheory.appsync.identity"), {"username": "user_1"})

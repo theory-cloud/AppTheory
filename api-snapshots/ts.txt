@@ -15,6 +15,7 @@ APIGatewayWebSocketProxyRequest	interface
 AcquireLeaseInput	type
 App	class
 AppError	class
+AppSyncContext	class
 AppSyncResolverEvent	interface
 AppSyncResolverInfo	interface
 AppSyncResolverRequest	interface

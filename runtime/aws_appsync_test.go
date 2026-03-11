@@ -186,3 +186,75 @@ func TestHandleLambda_AppSyncRequiresNonEmptyFieldName(t *testing.T) {
 		t.Fatal("expected non-appsync event to remain unrecognized when fieldName is blank")
 	}
 }
+
+func TestServeAppSync_PopulatesTypedContext(t *testing.T) {
+	app := New(WithTier(TierP2))
+	app.Post("/createThing", func(ctx *Context) (*Response, error) {
+		appsync := ctx.AsAppSync()
+		if appsync == nil {
+			t.Fatal("expected appsync context")
+		}
+		if appsync.FieldName != "createThing" || appsync.ParentTypeName != "Mutation" {
+			t.Fatalf("unexpected typed context route info: %#v", appsync)
+		}
+		if appsync.Arguments["id"] != "thing_123" {
+			t.Fatalf("unexpected typed context arguments: %#v", appsync.Arguments)
+		}
+		if appsync.Identity["username"] != "user_1" {
+			t.Fatalf("unexpected typed context identity: %#v", appsync.Identity)
+		}
+		if appsync.Source["id"] != "parent_1" {
+			t.Fatalf("unexpected typed context source: %#v", appsync.Source)
+		}
+		if appsync.Variables["tenantId"] != "tenant_1" {
+			t.Fatalf("unexpected typed context variables: %#v", appsync.Variables)
+		}
+		if appsync.Stash["trace"] != "abc123" {
+			t.Fatalf("unexpected typed context stash: %#v", appsync.Stash)
+		}
+		if appsync.Prev != "prev_value" {
+			t.Fatalf("unexpected typed context prev: %#v", appsync.Prev)
+		}
+		if appsync.RequestHeaders["x-appsync"] != "yes" {
+			t.Fatalf("unexpected typed context request headers: %#v", appsync.RequestHeaders)
+		}
+		if appsync.RawEvent.Info.FieldName != "createThing" {
+			t.Fatalf("unexpected typed context raw event: %#v", appsync.RawEvent)
+		}
+
+		return MustJSON(200, map[string]any{"ok": true}), nil
+	})
+
+	out := app.ServeAppSync(context.Background(), AppSyncResolverEvent{
+		Arguments: map[string]any{
+			"id": "thing_123",
+		},
+		Identity: map[string]any{
+			"username": "user_1",
+		},
+		Source: map[string]any{
+			"id": "parent_1",
+		},
+		Request: AppSyncResolverRequest{
+			Headers: map[string]string{
+				"x-appsync": "yes",
+			},
+		},
+		Info: AppSyncResolverInfo{
+			FieldName:      "createThing",
+			ParentTypeName: "Mutation",
+			Variables: map[string]any{
+				"tenantId": "tenant_1",
+			},
+		},
+		Prev: "prev_value",
+		Stash: map[string]any{
+			"trace": "abc123",
+		},
+	})
+
+	payload, ok := out.(map[string]any)
+	if !ok || payload["ok"] != true {
+		t.Fatalf("unexpected payload: %#v (%T)", out, out)
+	}
+}

@@ -46,6 +46,59 @@ type AppSyncResolverInfo struct {
 	SelectionSetGraphQL string         `json:"selectionSetGraphQL,omitempty"`
 }
 
+func cloneStringAnyMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneStringStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func newAppSyncContext(event AppSyncResolverEvent) *AppSyncContext {
+	return &AppSyncContext{
+		FieldName:      strings.TrimSpace(event.Info.FieldName),
+		ParentTypeName: strings.TrimSpace(event.Info.ParentTypeName),
+		Arguments:      cloneStringAnyMap(event.Arguments),
+		Identity:       cloneStringAnyMap(event.Identity),
+		Source:         cloneStringAnyMap(event.Source),
+		Variables:      cloneStringAnyMap(event.Info.Variables),
+		Stash:          cloneStringAnyMap(event.Stash),
+		Prev:           event.Prev,
+		RequestHeaders: cloneStringStringMap(event.Request.Headers),
+		RawEvent: AppSyncResolverEvent{
+			Arguments: cloneStringAnyMap(event.Arguments),
+			Identity:  cloneStringAnyMap(event.Identity),
+			Source:    cloneStringAnyMap(event.Source),
+			Request: AppSyncResolverRequest{
+				Headers: cloneStringStringMap(event.Request.Headers),
+			},
+			Info: AppSyncResolverInfo{
+				FieldName:           strings.TrimSpace(event.Info.FieldName),
+				ParentTypeName:      strings.TrimSpace(event.Info.ParentTypeName),
+				Variables:           cloneStringAnyMap(event.Info.Variables),
+				SelectionSetList:    append([]string(nil), event.Info.SelectionSetList...),
+				SelectionSetGraphQL: event.Info.SelectionSetGraphQL,
+			},
+			Prev:  event.Prev,
+			Stash: cloneStringAnyMap(event.Stash),
+		},
+	}
+}
+
 func requestFromAppSync(event AppSyncResolverEvent) (Request, error) {
 	fieldName := strings.TrimSpace(event.Info.FieldName)
 	parentTypeName := strings.TrimSpace(event.Info.ParentTypeName)
@@ -129,6 +182,7 @@ func applyAppSyncContextValues(ctx *Context, event AppSyncResolverEvent) {
 	if ctx == nil {
 		return
 	}
+	ctx.appsync = newAppSyncContext(event)
 	ctx.Set(contextKeyTriggerType, "appsync")
 	ctx.Set(contextKeyAppSyncFieldName, event.Info.FieldName)
 	ctx.Set(contextKeyAppSyncParentTypeName, event.Info.ParentTypeName)
