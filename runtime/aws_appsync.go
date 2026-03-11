@@ -23,6 +23,8 @@ const (
 	contextKeyAppSyncStash          = "apptheory.appsync.stash"
 	contextKeyAppSyncRequestHeaders = "apptheory.appsync.request_headers"
 	contextKeyAppSyncRawEvent       = "apptheory.appsync.raw_event"
+	appSyncMethodGet                = "GET"
+	appSyncMethodPost               = "POST"
 	appSyncProjectionMessage        = "unsupported appsync response"
 	appSyncProjectionBinaryReason   = "binary_body_unsupported"
 	appSyncProjectionStreamReason   = "streaming_body_unsupported"
@@ -181,9 +183,9 @@ func appSyncEventFromRawMessage(raw json.RawMessage) (AppSyncResolverEvent, bool
 func appSyncMethod(parentTypeName string) string {
 	switch strings.TrimSpace(parentTypeName) {
 	case "Query", "Subscription":
-		return "GET"
+		return appSyncMethodGet
 	default:
-		return "POST"
+		return appSyncMethodPost
 	}
 }
 
