@@ -696,6 +696,9 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
     if tier == "p1":
         return run_fixture_p1(fixture)
     if tier == "p2":
+        expect_obj = fixture.get("expect", {}) or {}
+        if "output_json" in expect_obj or "error" in expect_obj:
+            return run_fixture_p2_output(fixture)
         return run_fixture_p2(fixture)
     if tier == "m1":
         return run_fixture_m1(fixture)
@@ -827,6 +830,33 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
 
     if name == "parse_json_echo":
         return lambda ctx: runtime.json(200, ctx.json_value())
+
+    if name == "echo_appsync_context":
+        def handler(ctx):
+            appsync = ctx.as_appsync()
+            return runtime.json(
+                200,
+                {
+                    "field_name": getattr(appsync, "field_name", "") if appsync is not None else "",
+                    "parent_type_name": getattr(appsync, "parent_type_name", "") if appsync is not None else "",
+                    "arguments": getattr(appsync, "arguments", {}) if appsync is not None else {},
+                    "identity": getattr(appsync, "identity", {}) if appsync is not None else {},
+                    "source": getattr(appsync, "source", {}) if appsync is not None else {},
+                    "variables": getattr(appsync, "variables", {}) if appsync is not None else {},
+                    "stash": getattr(appsync, "stash", {}) if appsync is not None else {},
+                    "prev": getattr(appsync, "prev", None) if appsync is not None else None,
+                    "request_headers": getattr(appsync, "request_headers", {}) if appsync is not None else {},
+                    "raw_event_field": ((getattr(appsync, "raw_event", {}) or {}).get("info") or {}).get("fieldName", "")
+                    if appsync is not None
+                    else "",
+                    "ctx_trigger_type": ctx.get("apptheory.trigger_type"),
+                    "ctx_field_name": ctx.get("apptheory.appsync.field_name"),
+                    "ctx_parent_type": ctx.get("apptheory.appsync.parent_type_name"),
+                    "ctx_request_headers": ctx.get("apptheory.appsync.request_headers"),
+                },
+            )
+
+        return handler
 
     if name == "panic":
         def handler(_ctx):
@@ -2018,6 +2048,119 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
 
     expected = fixture.get("expect", {}).get("response", {})
     return run_fixture_compare(fixture, actual, expected, effects)
+
+
+def run_fixture_p2_output(fixture: dict[str, Any]) -> tuple[bool, str, dict[str, Any], dict[str, Any], FixtureApp]:
+    runtime = _load_apptheory_runtime()
+    ids = runtime.ManualIdGenerator()
+    ids.push("req_test_123")
+
+    effects = _DummyEffectsApp()
+
+    setup = fixture.get("setup", {})
+    limits = setup.get("limits", {}) or {}
+    cors_setup = setup.get("cors", None)
+    cors = None
+    if isinstance(cors_setup, dict):
+        allowed_origins = None
+        if "allowed_origins" in cors_setup:
+            raw = cors_setup.get("allowed_origins")
+            allowed_origins = [str(v) for v in raw] if isinstance(raw, list) else []
+
+        allow_headers = None
+        if "allow_headers" in cors_setup:
+            raw = cors_setup.get("allow_headers")
+            allow_headers = [str(v) for v in raw] if isinstance(raw, list) else []
+
+        if allowed_origins is not None or allow_headers is not None or bool(cors_setup.get("allow_credentials")):
+            cors = runtime.CORSConfig(
+                allowed_origins=allowed_origins,
+                allow_credentials=bool(cors_setup.get("allow_credentials")),
+                allow_headers=allow_headers,
+            )
+    app = runtime.create_app(
+        tier="p2",
+        id_generator=ids,
+        limits=runtime.Limits(
+            max_request_bytes=int(limits.get("max_request_bytes") or 0),
+            max_response_bytes=int(limits.get("max_response_bytes") or 0),
+        ),
+        cors=cors,
+        auth_hook=lambda ctx: _fixture_auth_hook(runtime, ctx),
+        policy_hook=lambda ctx: _fixture_policy_hook(runtime, ctx),
+        observability=runtime.ObservabilityHooks(
+            log=lambda r: effects.logs.append(
+                {
+                    "level": r.level,
+                    "event": r.event,
+                    "request_id": r.request_id,
+                    "tenant_id": r.tenant_id,
+                    "method": r.method,
+                    "path": r.path,
+                    "status": r.status,
+                    "error_code": r.error_code,
+                }
+            ),
+            metric=lambda r: effects.metrics.append({"name": r.name, "value": r.value, "tags": r.tags}),
+            span=lambda r: effects.spans.append({"name": r.name, "attributes": r.attributes}),
+        ),
+    )
+
+    for route in setup.get("routes", []) or []:
+        name = str(route.get("handler", ""))
+        handler = _built_in_apptheory_handler(runtime, name)
+        if handler is None:
+            raise RuntimeError(f"unknown handler {name!r}")
+        app.handle(
+            route.get("method", ""),
+            route.get("path", ""),
+            handler,
+            auth_required=bool(route.get("auth_required")),
+        )
+
+    aws_event = (fixture.get("input", {}) or {}).get("aws_event")
+    if not aws_event:
+        raise RuntimeError("fixture missing input.aws_event")
+    source = str((aws_event or {}).get("source") or "").strip().lower()
+    if source != "appsync":
+        raise RuntimeError(f"unknown aws_event source {source!r}")
+
+    actual_output = None
+    actual_error: Exception | None = None
+    try:
+        actual_output = app.handle_lambda((aws_event or {}).get("event") or {}, ctx={})
+    except Exception as exc:  # noqa: BLE001
+        actual_error = exc
+
+    expect_obj = fixture.get("expect", {}) or {}
+    if "error" in expect_obj:
+        if "output_json" in expect_obj:
+            return (
+                False,
+                "fixture expect cannot set both error and output_json",
+                {"message": str(actual_error or "").strip()} if actual_error else None,
+                expect_obj.get("error"),
+                effects,
+            )
+        expected_error = expect_obj.get("error") or {}
+        expected_msg = str((expected_error or {}).get("message") or "").strip()
+        if actual_error is None:
+            return False, "expected error, got none", actual_output, expected_error, effects
+        actual_msg = str(actual_error).strip()
+        if expected_msg and actual_msg != expected_msg:
+            return False, "error mismatch", {"message": actual_msg}, expected_error, effects
+        return True, "", {"message": actual_msg}, expected_error, effects
+
+    if "output_json" not in expect_obj:
+        return False, "missing expect.output_json or expect.error", actual_output, None, effects
+    if actual_error is not None:
+        return False, "unexpected error", {"message": str(actual_error).strip()}, expect_obj.get("output_json"), effects
+
+    expected_output = expect_obj.get("output_json")
+    if stable_json(expected_output) != stable_json(actual_output):
+        return False, "output_json mismatch", actual_output, expected_output, effects
+
+    return True, "", actual_output, expected_output, effects
 
 
 def _fixture_policy_hook(runtime, ctx):

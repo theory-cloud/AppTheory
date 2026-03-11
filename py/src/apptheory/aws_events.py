@@ -1,9 +1,61 @@
 from __future__ import annotations
 
 import base64
-from typing import Any
+from typing import Any, TypedDict
 
 from apptheory.util import to_bytes
+
+
+class AppSyncResolverRequest(TypedDict, total=False):
+    headers: dict[str, str]
+
+
+class AppSyncResolverInfo(TypedDict, total=False):
+    fieldName: str
+    parentTypeName: str
+    variables: dict[str, Any]
+    selectionSetList: list[str]
+    selectionSetGraphQL: str
+
+
+class AppSyncResolverEvent(TypedDict, total=False):
+    arguments: dict[str, Any]
+    identity: dict[str, Any] | None
+    source: dict[str, Any] | None
+    request: AppSyncResolverRequest
+    info: AppSyncResolverInfo
+    prev: Any
+    stash: dict[str, Any] | None
+
+
+def build_appsync_event(
+    *,
+    field_name: str = "field",
+    parent_type_name: str = "Mutation",
+    arguments: dict[str, Any] | None = None,
+    identity: dict[str, Any] | None = None,
+    source: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+    variables: dict[str, Any] | None = None,
+    prev: Any = None,
+    stash: dict[str, Any] | None = None,
+) -> AppSyncResolverEvent:
+    out: AppSyncResolverEvent = {
+        "arguments": dict(arguments or {}),
+        "identity": dict(identity or {}),
+        "source": dict(source or {}),
+        "request": {
+            "headers": {str(key): str(value) for key, value in dict(headers or {}).items() if str(key).strip()}
+        },
+        "info": {
+            "fieldName": str(field_name or "").strip() or "field",
+            "parentTypeName": str(parent_type_name or "").strip() or "Mutation",
+            "variables": dict(variables or {}),
+        },
+        "prev": prev,
+        "stash": dict(stash or {}),
+    }
+    return out
 
 
 def build_sqs_event(queue_arn: str, records: list[dict[str, Any]] | None = None) -> dict[str, Any]:

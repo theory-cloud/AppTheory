@@ -1,0 +1,29 @@
+{
+  "id": "p2.appsync.subscription",
+  "tier": "p2",
+  "name": "AppSync subscription events route through GET handlers",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/onThing", "handler": "parse_json_echo" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "appsync",
+      "event": {
+        "arguments": {
+          "topic": "things"
+        },
+        "info": {
+          "fieldName": "onThing",
+          "parentTypeName": "Subscription"
+        }
+      }
+    }
+  },
+  "expect": {
+    "output_json": {
+      "topic": "things"
+    }
+  }
+}

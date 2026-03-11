@@ -18,7 +18,7 @@ It also wires up the same non-HTTP event sources to each Lambda:
 ## Prerequisites
 
 - Node.js `>=24` + `npm`
-- Go `1.26.0` (for local bundling of the Go Lambda)
+- Go `1.26.1` (for local bundling of the Go Lambda)
 - Python `3.14`
 - AWS credentials configured (for deploy; synth does not require AWS access)
 
