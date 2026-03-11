@@ -28,6 +28,7 @@ from apptheory.errors import (
     error_response_with_request_id,
     response_for_error,
     response_for_error_with_request_id,
+    status_for_error_code,
 )
 from apptheory.ids import IdGenerator, RealIdGenerator
 from apptheory.request import Request, normalize_request
@@ -325,7 +326,16 @@ class App:
         ctx: Any | None = None,
         context_configurer: Callable[[Context], None] | None = None,
         appsync: AppSyncContext | None = None,
+        error_responder: Callable[[Exception, Request, str], Response] | None = None,
+        fallback_request_id: str = "",
     ) -> Response:
+        def respond_to_error(exc: Exception, error_request: Request, request_id: str) -> Response:
+            if error_responder is not None:
+                return error_responder(exc, error_request, request_id)
+            if request_id:
+                return response_for_error_with_request_id(exc, request_id)
+            return response_for_error(exc)
+
         if self._tier == "p1":
             return self._serve_portable(
                 request,
@@ -333,6 +343,8 @@ class App:
                 enable_p2=False,
                 context_configurer=context_configurer,
                 appsync=appsync,
+                error_responder=error_responder,
+                fallback_request_id=fallback_request_id,
             )
         if self._tier == "p2":
             return self._serve_portable(
@@ -341,15 +353,29 @@ class App:
                 enable_p2=True,
                 context_configurer=context_configurer,
                 appsync=appsync,
+                error_responder=error_responder,
+                fallback_request_id=fallback_request_id,
             )
 
         try:
             normalized = normalize_request(request)
         except Exception as exc:  # noqa: BLE001
-            return response_for_error(exc)
+            return respond_to_error(exc, request, fallback_request_id)
 
         match, allowed = self._router.match(normalized.method, normalized.path)
         if match is None:
+            if error_responder is not None:
+                if allowed:
+                    return respond_to_error(
+                        AppError("app.method_not_allowed", "method not allowed"),
+                        normalized,
+                        fallback_request_id,
+                    )
+                return respond_to_error(
+                    AppError("app.not_found", "not found"),
+                    normalized,
+                    fallback_request_id,
+                )
             if allowed:
                 return error_response(
                     "app.method_not_allowed",
@@ -373,7 +399,14 @@ class App:
         try:
             resp = _resolve(handler(request_ctx))
         except Exception as exc:  # noqa: BLE001
-            return response_for_error(exc)
+            return respond_to_error(exc, normalized, fallback_request_id)
+
+        if resp is None:
+            return respond_to_error(
+                AppError("app.internal", "internal error"),
+                normalized,
+                fallback_request_id,
+            )
 
         return normalize_response(resp)
 
@@ -383,6 +416,7 @@ class App:
         request_id: str,
         *,
         enable_p2: bool,
+        error_responder: Callable[[Exception, Request, str], Response] | None = None,
     ) -> tuple[Response, str] | None:
         if not enable_p2 or self._policy_hook is None:
             return None
@@ -391,6 +425,8 @@ class App:
             decision = _resolve(self._policy_hook(request_ctx))
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
+            if error_responder is not None:
+                return error_responder(exc, request_ctx.request, request_id), error_code
             return response_for_error_with_request_id(exc, request_id), error_code
 
         if decision is None or not str(getattr(decision, "code", "")).strip():
@@ -398,6 +434,8 @@ class App:
 
         code = str(decision.code).strip()
         message = str(getattr(decision, "message", "")).strip() or _default_policy_message(code)
+        if error_responder is not None:
+            return error_responder(AppError(code, message), request_ctx.request, request_id), code
         resp = error_response_with_request_id(code, message, headers=decision.headers, request_id=request_id)
         return resp, code
 
@@ -408,12 +446,15 @@ class App:
         auth_required: bool,
         request_id: str,
         trace: list[str],
+        error_responder: Callable[[Exception, Request, str], Response] | None = None,
     ) -> tuple[Response, str] | None:
         if not auth_required:
             return None
 
         trace.append("auth")
         if self._auth_hook is None:
+            if error_responder is not None:
+                return error_responder(AppError("app.unauthorized", "unauthorized"), request_ctx.request, request_id), "app.unauthorized"
             resp = error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id)
             return resp, "app.unauthorized"
 
@@ -421,9 +462,13 @@ class App:
             identity = _resolve(self._auth_hook(request_ctx))
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
+            if error_responder is not None:
+                return error_responder(exc, request_ctx.request, request_id), error_code
             return response_for_error_with_request_id(exc, request_id), error_code
 
         if not str(identity or "").strip():
+            if error_responder is not None:
+                return error_responder(AppError("app.unauthorized", "unauthorized"), request_ctx.request, request_id), "app.unauthorized"
             resp = error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id)
             return resp, "app.unauthorized"
 
@@ -438,14 +483,21 @@ class App:
         enable_p2: bool,
         context_configurer: Callable[[Context], None] | None = None,
         appsync: AppSyncContext | None = None,
+        error_responder: Callable[[Exception, Request, str], Response] | None = None,
+        fallback_request_id: str = "",
     ) -> Response:
+        def respond_to_error(exc: Exception, error_request: Request, request_id: str) -> Response:
+            if error_responder is not None:
+                return error_responder(exc, error_request, request_id)
+            return response_for_error_with_request_id(exc, request_id)
+
         pre_headers = canonicalize_headers(request.headers)
         pre_query = clone_query(request.query)
 
         method = str(request.method or "").strip().upper()
         path = str(request.path or "").strip() or "/"
 
-        request_id = _first_header_value(pre_headers, "x-request-id") or self._id_generator.new_id()
+        request_id = _first_header_value(pre_headers, "x-request-id") or str(fallback_request_id or "").strip() or self._id_generator.new_id()
         origin = _first_header_value(pre_headers, "origin")
         tenant_id = _extract_tenant_id(pre_headers, pre_query)
         remaining_ms = _remaining_ms(ctx)
@@ -475,13 +527,18 @@ class App:
             normalized = normalize_request(request)
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
-            return finish(response_for_error_with_request_id(exc, request_id), error_code)
+            return finish(respond_to_error(exc, request, request_id), error_code)
 
         method = normalized.method
         path = normalized.path
         tenant_id = _extract_tenant_id(normalized.headers, normalized.query)
 
         if self._limits.max_request_bytes > 0 and len(normalized.body) > self._limits.max_request_bytes:
+            if error_responder is not None:
+                return finish(
+                    respond_to_error(AppError("app.too_large", "request too large"), normalized, request_id),
+                    "app.too_large",
+                )
             return finish(
                 error_response_with_request_id("app.too_large", "request too large", request_id=request_id),
                 "app.too_large",
@@ -489,6 +546,16 @@ class App:
 
         match, allowed = self._router.match(normalized.method, normalized.path)
         if match is None:
+            if error_responder is not None:
+                if allowed:
+                    return finish(
+                        respond_to_error(AppError("app.method_not_allowed", "method not allowed"), normalized, request_id),
+                        "app.method_not_allowed",
+                    )
+                return finish(
+                    respond_to_error(AppError("app.not_found", "not found"), normalized, request_id),
+                    "app.not_found",
+                )
             if allowed:
                 return finish(
                     error_response_with_request_id(
@@ -520,7 +587,12 @@ class App:
         if context_configurer is not None:
             context_configurer(request_ctx)
 
-        policy_outcome = self._policy_check(request_ctx, request_id, enable_p2=enable_p2)
+        policy_outcome = self._policy_check(
+            request_ctx,
+            request_id,
+            enable_p2=enable_p2,
+            error_responder=error_responder,
+        )
         if policy_outcome is not None:
             resp, error_code = policy_outcome
             return finish(resp, error_code)
@@ -530,6 +602,7 @@ class App:
             auth_required=match.auth_required,
             request_id=request_id,
             trace=trace,
+            error_responder=error_responder,
         )
         if auth_outcome is not None:
             resp, error_code = auth_outcome
@@ -542,7 +615,13 @@ class App:
             resp = _resolve(handler(request_ctx))
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
-            return finish(response_for_error_with_request_id(exc, request_id), error_code)
+            return finish(respond_to_error(exc, normalized, request_id), error_code)
+
+        if resp is None:
+            return finish(
+                respond_to_error(AppError("app.internal", "internal error"), normalized, request_id),
+                "app.internal",
+            )
 
         resp = normalize_response(resp)
         if (
@@ -550,6 +629,11 @@ class App:
             and resp.body_stream is None
             and len(resp.body) > self._limits.max_response_bytes
         ):
+            if error_responder is not None:
+                return finish(
+                    respond_to_error(AppError("app.too_large", "response too large"), normalized, request_id),
+                    "app.too_large",
+                )
             return finish(
                 error_response_with_request_id("app.too_large", "response too large", request_id=request_id),
                 "app.too_large",
@@ -653,21 +737,34 @@ class App:
         return alb_target_group_response_from_response(resp)
 
     def serve_appsync(self, event: AppSyncResolverEvent, ctx: Any | None = None) -> Any:
+        fallback_request_id = _appsync_request_id_from_ctx(ctx)
+        request_metadata = _appsync_request_from_event(event)
         try:
             request = _request_from_appsync_event(event)
         except Exception as exc:  # noqa: BLE001
-            return _appsync_payload_from_response(response_for_error(exc))
+            return _appsync_payload_from_response(
+                _appsync_error_response(exc, request_metadata, fallback_request_id)
+            )
 
+        resp: Response | None = None
         try:
             resp = self._serve(
                 request,
                 ctx,
                 lambda request_ctx: _apply_appsync_context_values(request_ctx, event),
                 _appsync_context_from_event(event),
+                lambda exc, error_request, request_id: _appsync_error_response(exc, error_request, request_id),
+                fallback_request_id,
             )
             return _appsync_payload_from_response(resp)
         except Exception as exc:  # noqa: BLE001
-            return _appsync_payload_from_response(response_for_error(exc))
+            return _appsync_payload_from_response(
+                _appsync_error_response(
+                    exc,
+                    request_metadata,
+                    _appsync_request_id_from_response(resp, fallback_request_id),
+                )
+            )
 
     def serve_websocket(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
         try:
@@ -1176,6 +1273,147 @@ def _appsync_method(parent_type_name: str) -> str:
 _APPSYNC_PROJECTION_MESSAGE = "unsupported appsync response"
 _APPSYNC_PROJECTION_BINARY_REASON = "binary_body_unsupported"
 _APPSYNC_PROJECTION_STREAM_REASON = "streaming_body_unsupported"
+_APPSYNC_ERROR_TYPE_CLIENT = "CLIENT_ERROR"
+_APPSYNC_ERROR_TYPE_SYSTEM = "SYSTEM_ERROR"
+
+
+def _appsync_request_from_event(event: AppSyncResolverEvent) -> Request:
+    info = event.get("info") or {}
+    if not isinstance(info, dict):
+        info = {}
+    field_name = str(info.get("fieldName") or "").strip()
+    parent_type_name = str(info.get("parentTypeName") or "").strip()
+    if not field_name or not parent_type_name:
+        return Request(method="", path="/", headers={}, body=b"", is_base64=False)
+    return Request(
+        method=_appsync_method(parent_type_name),
+        path="/" + field_name,
+        headers={},
+        body=b"",
+        is_base64=False,
+    )
+
+
+def _appsync_request_id_from_ctx(ctx: Any | None) -> str:
+    return str(getattr(ctx, "aws_request_id", "") or getattr(ctx, "awsRequestId", "") or "").strip()
+
+
+def _appsync_request_id_from_response(resp: Response | None, fallback_request_id: str) -> str:
+    if resp is None:
+        return str(fallback_request_id or "").strip()
+    normalized = normalize_response(resp)
+    return _first_header_value(normalized.headers, "x-request-id") or str(fallback_request_id or "").strip()
+
+
+def _appsync_error_type_for_status(status: int) -> str:
+    return _APPSYNC_ERROR_TYPE_CLIENT if 400 <= int(status) < 500 else _APPSYNC_ERROR_TYPE_SYSTEM
+
+
+def _appsync_status_for_error(exc: Exception) -> int:
+    if isinstance(exc, AppTheoryError):
+        if exc.status_code and exc.status_code > 0:
+            return int(exc.status_code)
+        return status_for_error_code(exc.code)
+    if isinstance(exc, AppError):
+        return status_for_error_code(exc.code)
+    return 500
+
+
+def _appsync_portable_error_payload(
+    *,
+    code: str,
+    message: str,
+    status: int,
+    details: dict[str, Any] | None,
+    request_id: str,
+    trace_id: str,
+    timestamp: str,
+    request: Request,
+) -> dict[str, Any]:
+    resolved_code = str(code or "").strip() or "app.internal"
+    resolved_status = int(status) if int(status) > 0 else status_for_error_code(resolved_code)
+
+    error_data: dict[str, Any] = {"status_code": resolved_status}
+    resolved_request_id = str(request_id or "").strip()
+    if resolved_request_id:
+        error_data["request_id"] = resolved_request_id
+    resolved_trace_id = str(trace_id or "").strip()
+    if resolved_trace_id:
+        error_data["trace_id"] = resolved_trace_id
+    resolved_timestamp = str(timestamp or "").strip()
+    if resolved_timestamp:
+        error_data["timestamp"] = resolved_timestamp
+
+    error_info: dict[str, Any] = {
+        "code": resolved_code,
+        "trigger_type": "appsync",
+    }
+    method = str(request.method or "").strip()
+    if method:
+        error_info["method"] = method
+    path = str(request.path or "").strip()
+    if path:
+        error_info["path"] = path
+    if details:
+        error_info["details"] = dict(details)
+
+    return {
+        "pay_theory_error": True,
+        "error_message": str(message or ""),
+        "error_type": _appsync_error_type_for_status(resolved_status),
+        "error_data": error_data,
+        "error_info": error_info,
+    }
+
+
+def _appsync_error_payload(exc: Exception, request: Request, request_id: str) -> dict[str, Any]:
+    if isinstance(exc, AppTheoryError):
+        return _appsync_portable_error_payload(
+            code=exc.code,
+            message=exc.message,
+            status=exc.status_code or status_for_error_code(exc.code),
+            details=exc.details,
+            request_id=str(exc.request_id or "").strip() or str(request_id or "").strip(),
+            trace_id=str(exc.trace_id or "").strip(),
+            timestamp=str(exc.timestamp or "").strip(),
+            request=request,
+        )
+    if isinstance(exc, AppError):
+        return _appsync_portable_error_payload(
+            code=exc.code,
+            message=exc.message,
+            status=status_for_error_code(exc.code),
+            details=None,
+            request_id=str(request_id or "").strip(),
+            trace_id="",
+            timestamp="",
+            request=request,
+        )
+
+    return {
+        "pay_theory_error": True,
+        "error_message": str(exc or "internal error"),
+        "error_type": _APPSYNC_ERROR_TYPE_SYSTEM,
+        "error_data": {},
+        "error_info": {},
+    }
+
+
+def _appsync_error_response(exc: Exception, request: Request, request_id: str) -> Response:
+    body = json.dumps(
+        _appsync_error_payload(exc, request, request_id),
+        ensure_ascii=False,
+        sort_keys=True,
+    ).encode("utf-8")
+    return normalize_response(
+        Response(
+            status=_appsync_status_for_error(exc),
+            headers={"content-type": ["application/json; charset=utf-8"]},
+            cookies=[],
+            body=body,
+            is_base64=False,
+        )
+    )
 
 
 def _appsync_payload_from_response(resp: Response) -> Any:
