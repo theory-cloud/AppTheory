@@ -51,6 +51,7 @@ Fix:
 
 ```bash
 ./scripts/update-api-snapshots.sh
+./scripts/verify-api-snapshots.sh
 make rubric
 ```
 
@@ -79,6 +80,7 @@ Verification:
 
 ```bash
 ./scripts/update-api-snapshots.sh
+./scripts/verify-api-snapshots.sh
 make rubric
 ```
 
@@ -128,3 +130,69 @@ Fix:
 
 - route untyped events through `HandleLambda`, `handleLambda`, or `handle_lambda`
 - use the deterministic event builders in the test env when reproducing the failure
+
+## Issue: Python build fails in CI but passes locally
+
+Symptoms:
+
+- `./scripts/verify-python-build.sh` fails in CI
+- local virtualenv hides a missing dependency or stale build artifact
+
+Cause:
+
+- local package state differs from the isolated build environment used by the repo verifiers
+
+Fix:
+
+```bash
+./scripts/verify-python-build.sh
+```
+
+If the verifier fails after a Python packaging change, fix the package metadata or generated artifacts instead of
+relying on the local virtualenv state.
+
+## Issue: CDK synth fails in CI
+
+Symptoms:
+
+- `./scripts/verify-cdk-synth.sh` fails
+- `make rubric` fails in the CDK verification stage
+
+Cause:
+
+- a construct change, example drift, or generated-output mismatch broke deterministic synth
+
+Fix:
+
+```bash
+./scripts/verify-cdk-synth.sh
+make rubric
+```
+
+Review the failing synth example or construct before changing the verifier.
+
+## Issue: docs-standard fails after a docs change
+
+Symptoms:
+
+- `./scripts/verify-docs-standard.sh` fails
+- a docs page was added, renamed, or reworded in a way that broke the fixed docs contract
+
+Cause:
+
+- a required file is missing
+- a README stopped linking `./_contract.yaml`
+- a contract-only page no longer clearly states its scope
+- package-local docs started competing with `docs/` as the canonical external root
+
+Fix:
+
+- restore the required fixed files under `docs/`
+- keep package-local docs in `ts/docs/`, `py/docs/`, and `cdk/docs/` clearly secondary to `docs/`
+- ensure contract-only pages still say `contract-only`
+
+Verification:
+
+```bash
+./scripts/verify-docs-standard.sh
+```

@@ -26,9 +26,15 @@ concepts:
       - "Fixed ingestible docs under docs/"
       - "Contract-only docs under docs/_contract.yaml and docs/development-guidelines.md"
       - "Sanctioned optional ingestible docs under docs/migration/** and docs/cdk/**"
+      - "Package-local docs under ts/docs/, py/docs/, and cdk/docs/ as secondary authoring surfaces, not the canonical external root"
     configuration:
       - docs/
       - docs/_contract.yaml
+      - "ts/docs/ (secondary package-local docs)"
+      - "py/docs/ (secondary package-local docs)"
+      - "cdk/docs/ (secondary package-local docs)"
+    failure_modes:
+      - "Duplicate canonical claims across package-local docs create drift and conflicting navigation."
 
   public_contract_sources:
     type: source_of_truth

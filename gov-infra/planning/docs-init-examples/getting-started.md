@@ -1,38 +1,29 @@
-# Getting Started with AppTheory (Example)
+# Getting Started with AppTheory
 
-This file is an example for `docs/getting-started.md`.
+This is an example target for `docs/getting-started.md`.
 
 ## Prerequisites
 
-**Required**
-- Go `1.26.x` (see `go.mod` toolchain `go1.26.0`)
-- Node.js `24+` (see `ts/package.json` and `cdk/package.json` engines)
-- Python `3.14+` (see `py/pyproject.toml`)
-
-**Recommended**
-- AWS account and Lambda familiarity
-- AWS CDK v2 for infrastructure flows
+- Go `1.26.x` (`go.mod` + `toolchain go1.26.1`)
+- Node.js `>=24` for TypeScript and CDK workflows
+- Python `>=3.14` for Python workflows
+- `make`, `git`, and a Unix-like shell
 
 ## Installation
 
-AppTheory is distributed through GitHub Releases (not npm/PyPI registries).
+### 1) Clone and install workspace dependencies
 
-### Go module
 ```bash
-go get github.com/theory-cloud/apptheory@v0.16.0
+git clone https://github.com/theory-cloud/AppTheory.git
+cd AppTheory
+
+go mod download
+(cd ts && npm ci)
+(cd py && python -m pip install -e .)
+(cd cdk && npm ci)
 ```
 
-### TypeScript package (release tarball)
-```bash
-npm i ./theory-cloud-apptheory-0.16.0.tgz
-```
-
-### Python package (release wheel)
-```bash
-python -m pip install ./apptheory-0.16.0-py3-none-any.whl
-```
-
-## First Local Run (Go)
+### 2) Run a first deterministic local invocation
 
 ```go
 package mysvc
@@ -56,18 +47,35 @@ func Example() {
 }
 ```
 
+Equivalent deterministic test environments are available in TypeScript (`createTestEnv`) and Python (`create_test_env`).
+
 ## Verification
+
+Run fast checks first:
 
 ```bash
 make test-unit
-./scripts/verify-contract-tests.sh
 ```
 
-Expected success signals:
-- Go tests pass without runtime or adapter errors
-- Contract test script exits zero
+Run parity and release gates before publishing docs/API changes:
+
+```bash
+./scripts/verify-contract-tests.sh
+./scripts/update-api-snapshots.sh
+make rubric
+```
+
+Expected result:
+
+- Unit tests pass
+- Contract tests pass
+- Snapshot verification is clean after updates
+- Rubric gate succeeds
 
 ## Next Steps
+
 - [API Reference](./api-reference.md)
 - [Core Patterns](./core-patterns.md)
+- [Testing Guide](./testing-guide.md)
 - [Troubleshooting](./troubleshooting.md)
+- [Migration Guide](./migration-guide.md)

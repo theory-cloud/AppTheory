@@ -1,7 +1,7 @@
 # Getting Started with AppTheory
 
-This guide gets a local AppTheory workspace running, shows the smallest deterministic app path, and points you at the
-canonical API and deployment docs.
+This guide gets a local AppTheory workspace running, shows the smallest deterministic app path in each runtime, and
+points you at the canonical API and deployment docs.
 
 ## Prerequisites
 
@@ -28,7 +28,9 @@ AppTheory release artifacts are also published via GitHub Releases:
 - TypeScript tarball: `npm i ./theory-cloud-apptheory-X.Y.Z.tgz`
 - Python wheel: `python -m pip install ./apptheory-X.Y.Z-py3-none-any.whl`
 
-## First deterministic local invocation (Go)
+## First deterministic local invocation
+
+### Go
 
 ```go
 package mysvc
@@ -52,10 +54,41 @@ func Example() {
 }
 ```
 
-Equivalent deterministic local entrypoints exist in the other runtimes:
+### TypeScript
 
-- TypeScript: `createTestEnv()`, `env.app()`, `env.invoke(...)`
-- Python: `create_test_env()`, `env.app()`, `env.invoke(...)`
+```ts
+import { createTestEnv, text } from "@theory-cloud/apptheory";
+
+export async function example() {
+  const env = createTestEnv();
+  const app = env.app();
+
+  app.get("/ping", () => text(200, "pong"));
+
+  const resp = await env.invoke(app, { method: "GET", path: "/ping" });
+  console.log(resp.status);
+}
+```
+
+### Python
+
+```py
+from apptheory import Request, create_test_env, text
+
+env = create_test_env()
+app = env.app()
+
+app.get("/ping", lambda ctx: text(200, "pong"))
+
+resp = env.invoke(app, Request(method="GET", path="/ping"))
+assert resp.status == 200
+```
+
+Equivalent deterministic test environments exist in all three runtimes:
+
+- Go: `testkit.New()`
+- TypeScript: `createTestEnv()`
+- Python: `create_test_env()`
 
 ## Verification
 
@@ -65,17 +98,20 @@ Run the fast local check first:
 make test-unit
 ```
 
-Run the contract and full repo gates before opening a PR:
+Run the parity and release gates before opening a PR:
 
 ```bash
 ./scripts/verify-contract-tests.sh
+./scripts/verify-api-snapshots.sh
+./scripts/verify-docs-standard.sh
 make rubric
 ```
 
-If you changed exported APIs, also refresh and commit the public API snapshots:
+If you changed exported APIs, refresh and re-verify the public API snapshots:
 
 ```bash
 ./scripts/update-api-snapshots.sh
+./scripts/verify-api-snapshots.sh
 ```
 
 ## AWS entrypoints
@@ -90,9 +126,16 @@ Use the runtime entrypoint that matches your deployment shape:
 
 ## Next reads
 
+- [Documentation Index](./README.md)
 - [API Reference](./api-reference.md)
 - [Core Patterns](./core-patterns.md)
 - [Testing Guide](./testing-guide.md)
 - [CDK Guides](./cdk/README.md)
-- [Bedrock AgentCore MCP](./agentcore-mcp.md)
 - [Lift Migration Guide](./migration/from-lift.md)
+
+Additional repo guide outside the current KT ingest set:
+
+- [Bedrock AgentCore MCP](./agentcore-mcp.md)
+
+Package-local quick starts still exist under `ts/docs/` and `py/docs/`, but the canonical cross-language guidance
+starts in `docs/`.

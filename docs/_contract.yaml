@@ -25,3 +25,4 @@ contract:
 
 notes:
   guidance: contract-only
+  contract_only_layout: "Keep docs/development-guidelines.md as a short root boundary stub; move substantive maintainer/process guidance under docs/development/**."

@@ -1,7 +1,18 @@
 # AppTheory Testing Guide
 
-AppTheory relies on layered deterministic verification: fast unit tests, contract fixtures, snapshot checks, build
-checks, and full rubric validation.
+AppTheory relies on layered deterministic verification: fast unit tests, package-focused checks, contract fixtures,
+snapshot checks, docs contract checks, and full rubric validation.
+
+## Test strategy
+
+Use the smallest gate that proves the change, then escalate to the full rubric before merge:
+
+- fast local loop: `make test-unit`
+- package-focused checks: `cd ts && npm run check`, `cd py && python -m unittest discover -s tests`, `cd cdk && npm test`
+- cross-language parity: `./scripts/verify-contract-tests.sh`
+- public API drift: `./scripts/update-api-snapshots.sh`, `./scripts/verify-api-snapshots.sh`
+- docs contract: `./scripts/verify-docs-standard.sh`
+- full repo gate: `make rubric`
 
 ## Fast local loop
 
@@ -11,21 +22,7 @@ make test-unit
 
 This runs `go test ./...` from the repo root and is the fastest default check.
 
-## Targeted verification
-
-Run the contract suite when behavior changes span language boundaries:
-
-```bash
-./scripts/verify-contract-tests.sh
-```
-
-Refresh public API snapshots when exported surfaces change:
-
-```bash
-./scripts/update-api-snapshots.sh
-```
-
-Package-focused checks that are part of the repo tooling:
+## Package-focused checks
 
 ```bash
 cd ts && npm run check
@@ -33,14 +30,25 @@ cd py && python -m unittest discover -s tests
 cd cdk && npm test
 ```
 
-## Full repo gates
+Use these when you need quicker feedback inside one language/package before running the cross-language gates.
+
+## Cross-language and release verification
+
+Run these from the repo root when behavior changes span runtimes or documentation claims:
 
 ```bash
+./scripts/verify-contract-tests.sh
+./scripts/verify-api-snapshots.sh
+./scripts/verify-docs-standard.sh
 make rubric
 ```
 
-`make rubric` runs version alignment, formatting, Go/TS/Python linting, packaging/build verification, CDK synth checks,
-API snapshot verification, contract tests, testkit/example verification, and docs-standard checks.
+If exported APIs changed, refresh snapshots first and then re-run snapshot verification:
+
+```bash
+./scripts/update-api-snapshots.sh
+./scripts/verify-api-snapshots.sh
+```
 
 ## Evidence to capture
 
@@ -49,7 +57,19 @@ API snapshot verification, contract tests, testkit/example verification, and doc
 - snapshot updates, generated outputs, or logs that explain the change
 - explicit gaps when a check was not run
 
-✅ CORRECT: if behavior changes, update tests or fixtures first. Do not “fix” drift by weakening the gates.
+## CORRECT vs INCORRECT test posture
+
+CORRECT:
+
+- tie docs examples to runnable repo commands
+- treat snapshot changes as public API changes
+- update fixtures or tests before weakening a gate
+
+INCORRECT:
+
+- claiming parity without running `./scripts/verify-contract-tests.sh`
+- updating API docs without refreshing `api-snapshots/*` when exports changed
+- publishing docs changes that fail `./scripts/verify-docs-standard.sh`
 
 ## Governance bundle
 

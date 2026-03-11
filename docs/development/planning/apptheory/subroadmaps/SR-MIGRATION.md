@@ -112,7 +112,7 @@ Representative migration (rate limiting):
 
 Artifacts:
 
-- Deprecation posture: `docs/migration/lift-deprecation.md`
+- Deprecation posture: `docs/development/migration/lift-deprecation.md`
 - Release notes template: `scripts/render-release-notes.sh`
 
 ## Risks and mitigation

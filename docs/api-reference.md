@@ -15,7 +15,17 @@ Use these files when reviewing or documenting external interfaces:
 Known CLI surface:
 
 - `cmd/lift-migrate` exists as a Go migration helper with `-root` and `-apply` flags
+- `./scripts/migrate-from-lift-go.sh` is the repo wrapper for `go run ./cmd/lift-migrate`
 - `UNKNOWN:` no broader stable public CLI contract is documented for `cmd/`
+
+Verification command surface:
+
+- `make test-unit`
+- `./scripts/verify-contract-tests.sh`
+- `./scripts/update-api-snapshots.sh`
+- `./scripts/verify-api-snapshots.sh`
+- `./scripts/verify-docs-standard.sh`
+- `make rubric`
 
 ## Core runtime entrypoints
 
@@ -33,6 +43,14 @@ Shared request model:
 - `Request`: method, path, headers, query, and body
 - `Response`: status, headers, cookies, body, and streaming fields where supported
 - `Context`: request-scoped accessors for headers, params, request ID, tenant, clock, IDs, and middleware state
+
+Common helper exports:
+
+| Concern | Go | TypeScript | Python |
+| --- | --- | --- | --- |
+| App creation | `apptheory.New(...)` | `createApp()` | `create_app()` |
+| Deterministic HTTP builders | `testkit.APIGatewayV2Request`, `testkit.LambdaFunctionURLRequest` | `buildAPIGatewayV2Request`, `buildLambdaFunctionURLRequest` | `build_apigw_v2_request`, `build_lambda_function_url_request` |
+| Basic response helpers | `Text`, `JSON`, `Binary` | `text`, `json`, `html`, `binary`, `sse` | `text`, `json`, `html`, `binary`, `sse` |
 
 ## Universal Lambda entrypoint
 
@@ -73,6 +91,7 @@ Notes:
 
 - Unknown shapes fail closed
 - Exact field casing varies by AWS integration; prefer deterministic event builders from the test envs
+- Package-local runtime docs may add language-specific examples, but the canonical cross-language dispatch guidance lives here
 
 ## Strict route registration
 
@@ -117,6 +136,21 @@ idempotency, and leases.
 Guide: [Jobs Ledger](./jobs-ledger.md)
 Reference stack: `examples/cdk/import-pipeline/`
 
+## Migration and configuration notes
+
+Confirmed migration surface:
+
+- Dry run: `go run ./cmd/lift-migrate -root ./path/to/service`
+- Apply rewrite: `go run ./cmd/lift-migrate -root ./path/to/service -apply`
+- Repo wrapper: `./scripts/migrate-from-lift-go.sh -root ./path/to/service [-apply]`
+
+Known configuration keys surfaced by canonical docs:
+
+- `APPTHEORY_EVENTBUS_TABLE_NAME`
+- `ERROR_NOTIFICATION_SNS_TOPIC_ARN`
+- `APPTHEORY_JOBS_TABLE_NAME`
+- `UNKNOWN:` a complete stable env-var/config-key catalog is not yet centralized in one canonical index
+
 ### MCP and OAuth
 
 AppTheory includes Go runtime support for MCP and OAuth-adjacent remote-MCP flows:
@@ -126,7 +160,7 @@ AppTheory includes Go runtime support for MCP and OAuth-adjacent remote-MCP flow
 - `runtime/oauth`: protected-resource metadata, challenges, DCR, PKCE, and token-store helpers
 - `testkit/oauth`: end-to-end OAuth flow helpers for remote MCP tests
 
-Guides:
+Related repo guides outside the current KT ingest set:
 
 - [Bedrock AgentCore MCP](./agentcore-mcp.md)
 - [Remote MCP](./remote-mcp.md)
@@ -153,3 +187,6 @@ Start with:
 - [CDK Getting Started](./cdk/getting-started.md)
 - [CDK API Reference](./cdk/api-reference.md)
 - [CDK Import Pipeline Guides](./cdk/import-pipeline.md)
+
+Package-local docs remain available under `ts/docs/`, `py/docs/`, and `cdk/docs/` for language-specific examples, but
+they should not be treated as the canonical external root.

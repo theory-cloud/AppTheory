@@ -1,65 +1,29 @@
 # AppTheory Development Guidelines
 
-This repository is a multi-language monorepo. This page is contract-only: it defines contributor expectations for keeping
-the canonical docs surface, generated outputs, and public APIs aligned.
+This page is contract-only. It exists at this fixed root path to mark the maintainer-only boundary of the docs contract,
+and it is not part of the ingestible user-facing docs set.
 
-## What to keep aligned
+Detailed maintainer workflow belongs outside the ingestible surface under `docs/development/**`. Keep this root file
+short so contract-only guidance is layout-resistant and does not accumulate user-facing process material.
 
-✅ CORRECT: when bumping versions, keep these aligned:
+## Root boundary rules
 
-- `VERSION`
-- `ts/package.json`
-- `py/pyproject.toml`
-- `cdk/package.json`
+- keep this file short
+- keep substantive maintainer process docs under `docs/development/**`
+- do not add user-facing product guidance here
+- do not treat this file as part of the KT ingestible publish set
 
-Verification: `./scripts/verify-version-alignment.sh`.
+## Contract boundary
 
-## Generated outputs you must commit
+- Canonical external root: `docs/`
+- Fixed contract-only files: `docs/_contract.yaml`, `docs/development-guidelines.md`
+- Sanctioned optional ingestible surfaces: `docs/migration/**`, `docs/cdk/**`, `docs/llm-faq/**`
+- Verification: `./scripts/verify-docs-standard.sh`, `make rubric`
 
-✅ CORRECT:
+## Maintainer detail
 
-- If you change TypeScript source (`ts/src/**`), regenerate and commit `ts/dist/**`.
-- If you change CDK TypeScript source (`cdk/**`), regenerate and commit `cdk/lib/**` and `cdk/.jsii`.
-- If you change exported APIs, update `api-snapshots/` via `./scripts/update-api-snapshots.sh`.
+For the detailed docs maintainer workflow, version alignment rules, generated-output checklist, and local verification
+sequence, use [docs/development/docs-maintainer-guide.md](./development/docs-maintainer-guide.md).
 
-## Canonical docs contract
-
-The canonical external root is `docs/`.
-
-Required fixed files:
-
-- `docs/README.md`
-- `docs/_concepts.yaml`
-- `docs/_patterns.yaml`
-- `docs/_decisions.yaml`
-- `docs/getting-started.md`
-- `docs/api-reference.md`
-- `docs/core-patterns.md`
-- `docs/testing-guide.md`
-- `docs/troubleshooting.md`
-- `docs/migration-guide.md`
-- `docs/_contract.yaml`
-- `docs/development-guidelines.md`
-
-Sanctioned optional ingestible surfaces:
-
-- `docs/migration/**`
-- `docs/cdk/**`
-- `docs/llm-faq/**`
-
-Package-local docs may still exist for maintainers, but external guidance must be reflected under `docs/` before release.
-
-Verification:
-
-- Repo docs contract: `./scripts/verify-docs-standard.sh`
-- Full repo gates: `make rubric`
-
-## Local workflow
-
-```bash
-make fmt
-make lint
-make test-unit
-make test
-make rubric
-```
+This indirection is intentional: the fixed root contract-only file remains minimal, while the maintainer procedure lives
+under the non-canonical `docs/development/**` tree.
