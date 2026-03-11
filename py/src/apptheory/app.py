@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
+from apptheory.aws_events import AppSyncResolverEvent
 from apptheory.aws_http import (
     alb_target_group_response_from_response,
     apigw_proxy_response_from_response,
@@ -615,6 +617,18 @@ class App:
         resp = self.serve(request, ctx)
         return alb_target_group_response_from_response(resp)
 
+    def serve_appsync(self, event: AppSyncResolverEvent, ctx: Any | None = None) -> Any:
+        try:
+            request = _request_from_appsync_event(event)
+        except Exception as exc:  # noqa: BLE001
+            return _appsync_payload_from_response(response_for_error(exc))
+
+        try:
+            resp = self.serve(request, ctx)
+            return _appsync_payload_from_response(resp)
+        except Exception as exc:  # noqa: BLE001
+            return _appsync_payload_from_response(response_for_error(exc))
+
     def serve_websocket(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
         try:
             request = _request_from_websocket_event(event)
@@ -991,6 +1005,74 @@ def _request_from_websocket_event(event: dict[str, Any]) -> Request:
         body=str(event.get("body") or ""),
         is_base64=bool(event.get("isBase64Encoded")),
     )
+
+
+def _request_from_appsync_event(event: AppSyncResolverEvent | dict[str, Any]) -> Request:
+    if not isinstance(event, dict):
+        raise AppError("app.bad_request", "invalid appsync event")
+
+    info = event.get("info") or {}
+    if not isinstance(info, dict):
+        info = {}
+
+    field_name = str(info.get("fieldName") or "").strip()
+    parent_type_name = str(info.get("parentTypeName") or "").strip()
+    if not field_name or not parent_type_name:
+        raise AppError("app.bad_request", "invalid appsync event")
+
+    request_info = event.get("request") or {}
+    if not isinstance(request_info, dict):
+        request_info = {}
+    headers = request_info.get("headers") or {}
+    if not isinstance(headers, dict):
+        headers = {}
+    normalized_headers = {str(key): str(value) for key, value in headers.items() if str(key).strip()}
+    if "content-type" not in {str(key).strip().lower() for key in normalized_headers}:
+        normalized_headers["content-type"] = "application/json; charset=utf-8"
+
+    arguments = event.get("arguments")
+    if arguments is None:
+        body = b""
+    elif isinstance(arguments, dict):
+        body = json.dumps(arguments, ensure_ascii=False, sort_keys=True).encode("utf-8") if arguments else b""
+    else:
+        raise AppError("app.bad_request", "invalid appsync event")
+
+    return Request(
+        method=_appsync_method(parent_type_name),
+        path=f"/{field_name}",
+        headers=normalized_headers,
+        body=body,
+        is_base64=False,
+    )
+
+
+def _appsync_method(parent_type_name: str) -> str:
+    parent = str(parent_type_name or "").strip()
+    if parent in {"Query", "Subscription"}:
+        return "GET"
+    return "POST"
+
+
+def _appsync_payload_from_response(resp: Response) -> Any:
+    normalized = normalize_response(resp)
+    if normalized.body_stream is not None or normalized.is_base64:
+        raise AppError("app.internal", "internal error")
+    if not normalized.body:
+        return None
+
+    content_type_values = normalized.headers.get("content-type", [])
+    for value in content_type_values:
+        if str(value).strip().lower().startswith("application/json"):
+            try:
+                return json.loads(normalized.body.decode("utf-8"))
+            except Exception as exc:  # noqa: BLE001
+                raise AppError("app.internal", "internal error") from exc
+
+    first_content_type = str(content_type_values[0]).strip().lower() if content_type_values else ""
+    if first_content_type.startswith("text/"):
+        return normalized.body.decode("utf-8", errors="replace")
+    return normalized.body.decode("utf-8", errors="replace")
 
 
 def _websocket_management_endpoint(domain_name: str, stage: str, path: str = "") -> str:

@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import type {
   ALBTargetGroupRequest,
   ALBTargetGroupResponse,
+  AppSyncResolverEvent,
   APIGatewayProxyRequest,
   APIGatewayProxyResponse,
   APIGatewayV2HTTPRequest,
@@ -34,6 +35,10 @@ import type {
 } from "./context.js";
 import { AppError, AppTheoryError } from "./errors.js";
 import { RandomIdGenerator, type IdGenerator } from "./ids.js";
+import {
+  appSyncPayloadFromResponse,
+  requestFromAppSync,
+} from "./internal/aws-appsync.js";
 import {
   albTargetGroupResponseFromResponse,
   apigatewayProxyResponseFromResponse,
@@ -701,6 +706,25 @@ export class App {
     }
     const resp = await this.serve(request, ctx);
     return albTargetGroupResponseFromResponse(resp);
+  }
+
+  async serveAppSync(
+    event: AppSyncResolverEvent,
+    ctx?: unknown,
+  ): Promise<unknown> {
+    let request: Request;
+    try {
+      request = requestFromAppSync(event);
+    } catch (err) {
+      return appSyncPayloadFromResponse(responseForError(err));
+    }
+
+    try {
+      const resp = await this.serve(request, ctx);
+      return appSyncPayloadFromResponse(resp);
+    } catch (err) {
+      return appSyncPayloadFromResponse(responseForError(err));
+    }
   }
 
   private _webSocketHandlerForEvent(

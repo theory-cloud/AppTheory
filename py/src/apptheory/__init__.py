@@ -14,6 +14,9 @@ from apptheory.app import (
     event_bridge_rule,
 )
 from apptheory.aws_events import (
+    AppSyncResolverEvent,
+    AppSyncResolverInfo,
+    AppSyncResolverRequest,
     build_dynamodb_stream_event,
     build_eventbridge_event,
     build_kinesis_event,
@@ -153,6 +156,9 @@ __all__ = [
     "DEFAULT_JOBS_TABLE_NAME",
     "App",
     "AppError",
+    "AppSyncResolverEvent",
+    "AppSyncResolverInfo",
+    "AppSyncResolverRequest",
     "AppTheoryError",
     "CORSConfig",
     "Clock",

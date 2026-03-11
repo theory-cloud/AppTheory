@@ -1219,6 +1219,28 @@ type AppError struct {
 	Message string
 }
 
+type AppSyncResolverEvent struct {
+	Arguments map[string]any         `json:"arguments"`
+	Identity  map[string]any         `json:"identity,omitempty"`
+	Source    map[string]any         `json:"source,omitempty"`
+	Request   AppSyncResolverRequest `json:"request,omitempty"`
+	Info      AppSyncResolverInfo    `json:"info"`
+	Prev      any                    `json:"prev,omitempty"`
+	Stash     map[string]any         `json:"stash,omitempty"`
+}
+
+type AppSyncResolverInfo struct {
+	FieldName           string         `json:"fieldName"`
+	ParentTypeName      string         `json:"parentTypeName"`
+	Variables           map[string]any `json:"variables,omitempty"`
+	SelectionSetList    []string       `json:"selectionSetList,omitempty"`
+	SelectionSetGraphQL string         `json:"selectionSetGraphQL,omitempty"`
+}
+
+type AppSyncResolverRequest struct {
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
 type AppTheoryError struct {
 	Code       string
 	Message    string
@@ -1577,6 +1599,8 @@ func (*App) ServeALB(context.Context, events.ALBTargetGroupRequest) events.ALBTa
 func (*App) ServeAPIGatewayProxy(context.Context, events.APIGatewayProxyRequest) events.APIGatewayProxyResponse
 
 func (*App) ServeAPIGatewayV2(context.Context, events.APIGatewayV2HTTPRequest) events.APIGatewayV2HTTPResponse
+
+func (*App) ServeAppSync(context.Context, AppSyncResolverEvent) any
 
 func (*App) ServeDynamoDBStream(context.Context, events.DynamoDBEvent) events.DynamoDBEventResponse
 
