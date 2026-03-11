@@ -96,6 +96,31 @@ export interface APIGatewayWebSocketProxyRequest extends APIGatewayProxyRequest 
   };
 }
 
+export interface AppSyncResolverRequest {
+  headers?: Record<string, string>;
+  [key: string]: unknown;
+}
+
+export interface AppSyncResolverInfo {
+  fieldName: string;
+  parentTypeName: string;
+  variables?: Record<string, unknown>;
+  selectionSetList?: string[];
+  selectionSetGraphQL?: string;
+  [key: string]: unknown;
+}
+
+export interface AppSyncResolverEvent {
+  arguments: Record<string, unknown>;
+  identity?: Record<string, unknown> | null;
+  source?: Record<string, unknown> | null;
+  request?: AppSyncResolverRequest;
+  info: AppSyncResolverInfo;
+  prev?: unknown;
+  stash?: Record<string, unknown> | null;
+  [key: string]: unknown;
+}
+
 export interface SQSEvent {
   Records: SQSMessage[];
 }

@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 
+import type { AppSyncResolverEvent } from "./aws-types.js";
 import { RealClock, type Clock } from "./clock.js";
 import { AppError } from "./errors.js";
 import { RandomIdGenerator, type IdGenerator } from "./ids.js";
@@ -20,6 +21,97 @@ export type WebSocketClientFactory = (
   endpoint: string,
   ctx: unknown | null,
 ) => WebSocketManagementClientLike | Promise<WebSocketManagementClientLike>;
+
+export class AppSyncContext {
+  readonly fieldName: string;
+  readonly parentTypeName: string;
+  readonly arguments: Record<string, unknown>;
+  readonly identity: Record<string, unknown>;
+  readonly source: Record<string, unknown>;
+  readonly variables: Record<string, unknown>;
+  readonly stash: Record<string, unknown>;
+  readonly prev: unknown;
+  readonly requestHeaders: Record<string, string>;
+  readonly rawEvent: AppSyncResolverEvent;
+
+  constructor(options: {
+    fieldName?: string;
+    parentTypeName?: string;
+    arguments?: Record<string, unknown>;
+    identity?: Record<string, unknown>;
+    source?: Record<string, unknown>;
+    variables?: Record<string, unknown>;
+    stash?: Record<string, unknown>;
+    prev?: unknown;
+    requestHeaders?: Record<string, string>;
+    rawEvent: AppSyncResolverEvent;
+  }) {
+    this.fieldName = String(options.fieldName ?? "").trim();
+    this.parentTypeName = String(options.parentTypeName ?? "").trim();
+    this.arguments =
+      options.arguments && typeof options.arguments === "object"
+        ? { ...options.arguments }
+        : {};
+    this.identity =
+      options.identity && typeof options.identity === "object"
+        ? { ...options.identity }
+        : {};
+    this.source =
+      options.source && typeof options.source === "object"
+        ? { ...options.source }
+        : {};
+    this.variables =
+      options.variables && typeof options.variables === "object"
+        ? { ...options.variables }
+        : {};
+    this.stash =
+      options.stash && typeof options.stash === "object"
+        ? { ...options.stash }
+        : {};
+    this.prev = options.prev ?? null;
+    this.requestHeaders =
+      options.requestHeaders && typeof options.requestHeaders === "object"
+        ? { ...options.requestHeaders }
+        : {};
+    const rawInfo = options.rawEvent.info ?? {};
+    this.rawEvent = {
+      ...options.rawEvent,
+      arguments:
+        options.rawEvent.arguments &&
+        typeof options.rawEvent.arguments === "object"
+          ? { ...options.rawEvent.arguments }
+          : {},
+      identity:
+        options.rawEvent.identity &&
+        typeof options.rawEvent.identity === "object"
+          ? { ...options.rawEvent.identity }
+          : {},
+      source:
+        options.rawEvent.source && typeof options.rawEvent.source === "object"
+          ? { ...options.rawEvent.source }
+          : {},
+      stash:
+        options.rawEvent.stash && typeof options.rawEvent.stash === "object"
+          ? { ...options.rawEvent.stash }
+          : {},
+      ...(options.rawEvent.request &&
+      typeof options.rawEvent.request === "object" &&
+      options.rawEvent.request.headers &&
+      typeof options.rawEvent.request.headers === "object"
+        ? { request: { headers: { ...options.rawEvent.request.headers } } }
+        : {}),
+      info: {
+        ...rawInfo,
+        ...(rawInfo.variables && typeof rawInfo.variables === "object"
+          ? { variables: { ...rawInfo.variables } }
+          : {}),
+        ...(Array.isArray(rawInfo.selectionSetList)
+          ? { selectionSetList: [...rawInfo.selectionSetList] }
+          : {}),
+      },
+    };
+  }
+}
 
 export class Context {
   readonly ctx: unknown | null;
@@ -43,6 +135,7 @@ export class Context {
   private readonly _clock: Clock;
   private readonly _ids: IdGenerator;
   private readonly _webSocket: WebSocketContext | null;
+  private readonly _appSync: AppSyncContext | null;
   private readonly _values: Map<string, unknown>;
 
   constructor(options: {
@@ -57,6 +150,7 @@ export class Context {
     remainingMs?: number;
     middlewareTrace?: string[];
     webSocket?: WebSocketContext | null;
+    appSync?: AppSyncContext | null;
   }) {
     this.ctx = options.ctx ?? null;
     this.request = options.request;
@@ -71,6 +165,7 @@ export class Context {
       ? options.middlewareTrace
       : [];
     this._webSocket = options.webSocket ?? null;
+    this._appSync = options.appSync ?? null;
     this._values = new Map();
   }
 
@@ -114,6 +209,10 @@ export class Context {
 
   asWebSocket(): WebSocketContext | null {
     return this._webSocket;
+  }
+
+  asAppSync(): AppSyncContext | null {
+    return this._appSync;
   }
 }
 

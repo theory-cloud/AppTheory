@@ -1,0 +1,25 @@
+{
+  "id": "p2.appsync.missing_field_name",
+  "tier": "p2",
+  "name": "AppSync detection requires a non-empty field name",
+  "setup": {
+    "routes": []
+  },
+  "input": {
+    "aws_event": {
+      "source": "appsync",
+      "event": {
+        "arguments": {},
+        "info": {
+          "fieldName": " ",
+          "parentTypeName": "Mutation"
+        }
+      }
+    }
+  },
+  "expect": {
+    "error": {
+      "message": "apptheory: unknown event type"
+    }
+  }
+}

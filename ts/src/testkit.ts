@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 
 import { createApp, type App } from "./app.js";
 import type {
+  AppSyncResolverEvent,
   ALBTargetGroupRequest,
   ALBTargetGroupResponse,
   APIGatewayProxyResponse,
@@ -234,6 +235,14 @@ export class TestEnv {
     return app.serveSNSEvent(event, ctx);
   }
 
+  invokeAppSync(
+    app: App,
+    event: AppSyncResolverEvent,
+    ctx?: unknown,
+  ): Promise<unknown> {
+    return app.serveAppSync(event, ctx);
+  }
+
   invokeLambda(app: App, event: unknown, ctx?: unknown): Promise<unknown> {
     return app.handleLambda(event, ctx);
   }
@@ -394,6 +403,65 @@ export function buildALBTargetGroupRequest(
   if (Object.keys(multiValueHeaders).length > 0) {
     out.multiValueHeaders = multiValueHeaders;
   }
+  return out;
+}
+
+export function buildAppSyncEvent(
+  options: {
+    fieldName?: string;
+    parentTypeName?: string;
+    arguments?: Record<string, unknown>;
+    identity?: Record<string, unknown> | null;
+    source?: Record<string, unknown> | null;
+    headers?: Record<string, string>;
+    variables?: Record<string, unknown>;
+    prev?: unknown;
+    stash?: Record<string, unknown> | null;
+  } = {},
+): AppSyncResolverEvent {
+  const out: AppSyncResolverEvent = {
+    arguments:
+      options.arguments &&
+      typeof options.arguments === "object" &&
+      !Array.isArray(options.arguments)
+        ? { ...options.arguments }
+        : {},
+    identity:
+      options.identity &&
+      typeof options.identity === "object" &&
+      !Array.isArray(options.identity)
+        ? { ...options.identity }
+        : {},
+    source:
+      options.source &&
+      typeof options.source === "object" &&
+      !Array.isArray(options.source)
+        ? { ...options.source }
+        : {},
+    request: {
+      headers:
+        options.headers && typeof options.headers === "object"
+          ? { ...options.headers }
+          : {},
+    },
+    info: {
+      fieldName: String(options.fieldName ?? "").trim() || "field",
+      parentTypeName: String(options.parentTypeName ?? "").trim() || "Mutation",
+      variables:
+        options.variables &&
+        typeof options.variables === "object" &&
+        !Array.isArray(options.variables)
+          ? { ...options.variables }
+          : {},
+    },
+    prev: options.prev ?? null,
+    stash:
+      options.stash &&
+      typeof options.stash === "object" &&
+      !Array.isArray(options.stash)
+        ? { ...options.stash }
+        : {},
+  };
   return out;
 }
 

@@ -11,6 +11,8 @@ bash ./scripts/verify-branch-version-sync.sh
 ./scripts/verify-ts-lint.sh
 ./scripts/verify-python-lint.sh
 ./scripts/verify-go.sh
+./scripts/verify-ts-tests.sh
+./scripts/verify-python-tests.sh
 ./scripts/verify-ts-pack.sh
 ./scripts/verify-python-build.sh
 ./scripts/verify-cdk-constructs.sh
