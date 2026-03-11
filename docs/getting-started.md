@@ -119,10 +119,14 @@ If you changed exported APIs, refresh and re-verify the public API snapshots:
 Use the runtime entrypoint that matches your deployment shape:
 
 - Mixed-trigger Lambda: `app.HandleLambda(...)`, `app.handleLambda(...)`, or `app.handle_lambda(...)`
+- AppSync resolver Lambda: `ServeAppSync`, `serveAppSync`, `serve_appsync`
 - HTTP API v2: `ServeAPIGatewayV2`, `serveAPIGatewayV2`, `serve_apigw_v2`
 - Lambda Function URL: `ServeLambdaFunctionURL`, `serveLambdaFunctionURL`, `serve_lambda_function_url`
 - REST API v1: `ServeAPIGatewayProxy`, `serveAPIGatewayProxy`, `serve_apigw_proxy`
 - TypeScript Lambda Function URL streaming: `createLambdaFunctionURLStreamingHandler(app)`
+
+Standard AppSync direct Lambda resolver events also route through the mixed-trigger dispatcher, so a Lift-style
+single-Lambda entrypoint can continue to use `HandleLambda`, `handleLambda`, or `handle_lambda`.
 
 ## Next reads
 
@@ -132,6 +136,7 @@ Use the runtime entrypoint that matches your deployment shape:
 - [Testing Guide](./testing-guide.md)
 - [CDK Guides](./cdk/README.md)
 - [Lift Migration Guide](./migration/from-lift.md)
+- [AppSync Lambda Resolver Recipe](./migration/appsync-lambda-resolvers.md)
 
 Additional repo guide outside the current KT ingest set:
 

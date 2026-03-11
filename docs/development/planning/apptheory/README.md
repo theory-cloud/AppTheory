@@ -41,7 +41,7 @@ Primary goals:
 - `docs/development/planning/apptheory/subroadmaps/SR-NAMING.md` (deterministic naming helpers)
 - `docs/development/planning/apptheory/subroadmaps/SR-MIGRATION.md` (Lift → AppTheory migration plan)
 - `docs/development/planning/apptheory/subroadmaps/SR-EVENTSOURCES.md` (SQS/EventBridge/DynamoDB Streams parity)
-- `docs/development/planning/apptheory/subroadmaps/SR-APPSYNC.md` (AppSync resolver runtime + Lift compatibility)
+- `docs/development/planning/apptheory/subroadmaps/SR-APPSYNC.md` (AppSync resolver runtime + Lift compatibility; shipped in Go/TS/Py)
 - `docs/development/planning/apptheory/subroadmaps/SR-WEBSOCKETS.md` (WebSocket runtime + `streamer` parity)
 - `docs/development/planning/apptheory/subroadmaps/SR-REMOTE-MCP.md` (Claude-first Remote MCP: Streamable HTTP + OAuth/DCR)
 - `docs/development/planning/apptheory/subroadmaps/SR-SSE.md` (API Gateway REST v1 + SSE streaming parity)
