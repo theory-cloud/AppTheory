@@ -331,6 +331,15 @@ For local tests:
 
 - Go testkit builders: `testkit.SQSEvent(...)`, `testkit.EventBridgeEvent(...)`, `testkit.DynamoDBStreamEvent(...)`
 
+### 11a) AppSync resolvers
+
+AppSync resolver compatibility is being implemented as a dedicated Lift-parity workstream.
+
+- Plan of record: `docs/development/planning/apptheory/subroadmaps/SR-APPSYNC.md`
+- Legacy compatibility reference: `github.com/pay-theory/lift`
+- Until that roadmap is complete, do not treat `main` as having full Lift-compatible AppSync behavior through
+  `HandleLambda`
+
 ### 12) One-entrypoint router (Lift-style)
 
 If your Lift app handled multiple AWS trigger types in a single Lambda, AppTheory provides the same posture via a single
@@ -343,6 +352,7 @@ This entrypoint routes:
 - Lambda URL, API Gateway v2, API Gateway REST v1
 - WebSockets (APIGW v2 WebSocket API)
 - SQS, EventBridge, DynamoDB Streams
+- AppSync support is tracked separately in `docs/development/planning/apptheory/subroadmaps/SR-APPSYNC.md`
 
 ### 13) CDK migration notes (Lift constructs → AppTheory constructs)
 
