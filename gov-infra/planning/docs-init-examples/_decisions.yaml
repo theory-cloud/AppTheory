@@ -1,48 +1,67 @@
-# Example for docs/_decisions.yaml
-
 decisions:
-  lambda_dispatch_model:
-    question: "Should a service use one universal Lambda handler or separate handlers per trigger type?"
+  choose_runtime_entrypoint:
+    question: "How should a Lambda handler be wired in AppTheory?"
     decision_tree:
-      - condition: "A single function must accept multiple AWS event shapes."
-        check: "Can the runtime dispatcher entrypoint be used (`HandleLambda` / `handleLambda` / `handle_lambda`)?"
+      - condition: "The function may receive multiple AWS trigger types (HTTP, SQS, EventBridge, streams, or WebSockets)."
+        check: "Can the event be passed through the runtime dispatcher without custom branching?"
         if_yes:
-          choice: "Use the universal dispatcher entrypoint."
-          reason: "The API reference documents deterministic event-shape routing across supported adapters."
+          choice: "Use universal dispatcher entrypoints"
+          reason: "`HandleLambda` (Go), `handleLambda` (TypeScript), and `handle_lambda` (Python) are documented in docs/api-reference.md and validated by contract tests."
           example: |
-            # Go
             func handler(ctx context.Context, event json.RawMessage) (any, error) {
               return app.HandleLambda(ctx, event)
             }
         if_no:
-          choice: "Use explicit adapter handlers per function."
-          reason: "Single-trigger functions are easier to reason about and test."
+          choice: "Document gap and add TODO before custom branch logic"
+          reason: "Manual shape detection is drift-prone and should not be treated as canonical without tests."
+          example: |
+            TODO: Add fixture coverage for unsupported event shape before shipping custom dispatch.
 
-  api_change_publication_gate:
-    question: "How should maintainers validate API documentation updates?"
+  choose_public_api_source:
+    question: "What evidence should drive API documentation updates?"
     decision_tree:
-      - condition: "Any exported symbol changes in Go, TS, or Python packages."
-        check: "Were `api-snapshots/go.txt`, `api-snapshots/ts.txt`, and/or `api-snapshots/py.txt` updated and reviewed?"
+      - condition: "You are documenting exported interfaces or migration-safe names."
+        check: "Do symbols exist in api-snapshots/go.txt, api-snapshots/ts.txt, and/or api-snapshots/py.txt?"
         if_yes:
-          choice: "Proceed with API and migration doc updates."
-          reason: "Snapshots are the declared public-surface source of truth."
+          choice: "Use snapshots + docs/api-reference.md as canonical evidence"
+          reason: "Snapshots are release-gated and reduce hallucinated API risk."
           example: |
             ./scripts/update-api-snapshots.sh
-            make rubric
+            ./scripts/verify-api-snapshots.sh
         if_no:
-          choice: "Block publication until snapshots are updated."
-          reason: "Unverified docs can describe non-existent interfaces."
-
-  release_alignment_gate:
-    question: "What must happen before release/docs publish when version files drift?"
-    decision_tree:
-      - condition: "`VERSION`, `ts/package.json`, `py/pyproject.toml`, and `cdk/package.json` are out of sync."
-        check: "Does `./scripts/verify-version-alignment.sh` pass?"
-        if_yes:
-          choice: "Continue release and docs publication flow."
-          reason: "Cross-package version contract is satisfied."
-        if_no:
-          choice: "Align all version files first."
-          reason: "Troubleshooting and CI gates treat this as a hard failure."
+          choice: "Mark as UNKNOWN and open a concrete TODO"
+          reason: "Missing snapshot evidence must not be published as stable API."
           example: |
-            ./scripts/verify-version-alignment.sh
+            UNKNOWN: symbol not present in api-snapshots/*.txt yet.
+
+  choose_migration_path:
+    question: "How should Lift migrations be executed and verified?"
+    decision_tree:
+      - condition: "Service currently imports Lift/limited surfaces."
+        check: "Can the import rewrite be handled by the migration helper CLI?"
+        if_yes:
+          choice: "Run cmd/lift-migrate in dry-run then apply mode"
+          reason: "`cmd/lift-migrate/main.go` exposes `-root` and `-apply` for controlled updates."
+          example: |
+            go run ./cmd/lift-migrate -root ./path/to/service
+            go run ./cmd/lift-migrate -root ./path/to/service -apply
+        if_no:
+          choice: "Perform manual migration with explicit parity validation"
+          reason: "Some runtime behavior requires targeted updates and verification beyond import rewrites."
+          example: |
+            ./scripts/verify-contract-tests.sh
+            make rubric
+
+  choose_docs_consolidation:
+    question: "What should happen to runtime docs outside docs/?"
+    decision_tree:
+      - condition: "User-facing guidance exists in ts/docs/, py/docs/, or cdk/docs/."
+        check: "Is equivalent guidance already present in docs/ fixed files or sanctioned optional surfaces?"
+        if_yes:
+          choice: "Keep package-local docs as secondary, and maintain canonical links in docs/"
+          reason: "Avoid duplicate canonical sources while preserving package-focused authoring surfaces."
+        if_no:
+          choice: "Move or merge missing runtime guidance into docs/ or sanctioned optional surfaces"
+          reason: "Canonical KT source root is docs/, so external guidance should not remain stranded outside it."
+          example: |
+            TODO: Merge any missing TypeScript/Python runtime quick-start deltas into docs/getting-started.md.

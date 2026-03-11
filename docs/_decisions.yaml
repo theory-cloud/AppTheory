@@ -40,13 +40,13 @@ decisions:
       - condition: "Useful runtime guidance exists in package-local docs outside the canonical root."
         check: "Is the content user-facing and currently absent from canonical docs/ pages?"
         if_yes:
-          choice: "Move or merge it into docs/ canonical files or sanctioned optional surfaces"
-          reason: "docs/ is the canonical root; external guidance should not remain stranded outside it."
+          choice: "Move or merge it into docs/ fixed files or sanctioned optional surfaces, then keep package-local docs as mirrors"
+          reason: "docs/ is the canonical root; package-local docs may remain, but they should not compete as the external source of truth."
           example: |
-            TODO: Merge key CDK deployment guidance into docs/cdk/**.
+            TODO: Merge key runtime guidance into docs/getting-started.md, docs/api-reference.md, or docs/testing-guide.md before publishing.
         if_no:
-          choice: "Keep the package-local source but avoid canonical links until mapping is complete"
-          reason: "Duplicate docs drift is worse than a smaller canonical surface."
+          choice: "Keep the package-local source as a secondary authoring surface with explicit links back to docs/"
+          reason: "Package-local docs are useful for language-specific details, but canonical external guidance still belongs under docs/."
 
   choose_tier:
     question: "Which tier should I use (P0/P1/P2)?"

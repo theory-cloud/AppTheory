@@ -7,7 +7,6 @@ functionality remains available for Go users** (portable subset + documented Go-
 
 ## Start Here
 
-- Lift deprecation posture: `docs/migration/lift-deprecation.md`
 - Representative migration notes: `docs/migration/g4-representative-migration.md`
 - Canonical interface map: `docs/api-reference.md`
 - Canonical runtime patterns: `docs/core-patterns.md`

@@ -1,17 +1,16 @@
 contract:
   fixed_ingestible:
     - docs/README.md
+    - docs/_concepts.yaml
+    - docs/_patterns.yaml
+    - docs/_decisions.yaml
     - docs/getting-started.md
     - docs/api-reference.md
     - docs/core-patterns.md
     - docs/testing-guide.md
     - docs/troubleshooting.md
     - docs/migration-guide.md
-    - docs/_concepts.yaml
-    - docs/_patterns.yaml
-    - docs/_decisions.yaml
   fixed_contract_only:
-    - docs/_contract.yaml
     - docs/development-guidelines.md
   sanctioned_optional_ingestible:
     - docs/migration/**
@@ -20,5 +19,8 @@ contract:
   out_of_scope:
     - docs/development/**
     - docs/planning/**
+    - docs/internal/**
     - docs/archive/**
-  contract_only_note: "contract-only surfaces are maintainer-only and not ingestible: docs/_contract.yaml, docs/development-guidelines.md"
+
+notes:
+  guidance: contract-only
