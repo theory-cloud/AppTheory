@@ -3,7 +3,11 @@ package apptheory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
+	"time"
+
+	"github.com/aws/aws-lambda-go/lambdacontext"
 )
 
 func TestServeAppSync_AdaptsMutationAndProjectsJSON(t *testing.T) {
@@ -321,5 +325,124 @@ func TestServeAppSync_PopulatesTypedContext(t *testing.T) {
 	payload, ok := out.(map[string]any)
 	if !ok || payload["ok"] != true {
 		t.Fatalf("unexpected payload: %#v (%T)", out, out)
+	}
+}
+
+func TestServeAppSync_FormatsPortableErrors(t *testing.T) {
+	app := New(WithTier(TierP2))
+	app.Post("/createThing", func(_ *Context) (*Response, error) {
+		return nil, NewAppTheoryError(errorCodeValidationFailed, "bad input").
+			WithStatusCode(422).
+			WithDetails(map[string]any{"field": "name"}).
+			WithTraceID("trace_1").
+			WithTimestamp(time.Date(2026, time.March, 11, 15, 4, 5, 0, time.UTC))
+	})
+
+	lc := &lambdacontext.LambdaContext{AwsRequestID: "aws_req_1"}
+	out := app.ServeAppSync(lambdacontext.NewContext(context.Background(), lc), AppSyncResolverEvent{
+		Arguments: map[string]any{"id": "thing_123"},
+		Info: AppSyncResolverInfo{
+			FieldName:      "createThing",
+			ParentTypeName: "Mutation",
+		},
+	})
+
+	payload, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("expected appsync error payload, got %T", out)
+	}
+	if payload["pay_theory_error"] != true || payload["error_message"] != "bad input" || payload["error_type"] != appSyncErrorTypeClient {
+		t.Fatalf("unexpected appsync portable error payload: %#v", payload)
+	}
+
+	errorData, ok := payload["error_data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected error_data object, got %#v", payload["error_data"])
+	}
+	if errorData["status_code"] != float64(422) && errorData["status_code"] != 422 {
+		t.Fatalf("expected 422 status code, got %#v", errorData["status_code"])
+	}
+	if errorData["request_id"] != "aws_req_1" || errorData["trace_id"] != "trace_1" {
+		t.Fatalf("unexpected appsync error_data: %#v", errorData)
+	}
+	if errorData["timestamp"] != "2026-03-11T15:04:05Z" {
+		t.Fatalf("unexpected appsync timestamp: %#v", errorData["timestamp"])
+	}
+
+	errorInfo, ok := payload["error_info"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected error_info object, got %#v", payload["error_info"])
+	}
+	if errorInfo["code"] != errorCodeValidationFailed || errorInfo["path"] != "/createThing" || errorInfo["method"] != "POST" || errorInfo["trigger_type"] != "appsync" {
+		t.Fatalf("unexpected appsync error_info: %#v", errorInfo)
+	}
+	if details, ok := errorInfo["details"].(map[string]any); !ok || details["field"] != "name" {
+		t.Fatalf("unexpected appsync error details: %#v", errorInfo["details"])
+	}
+}
+
+func TestServeAppSync_FormatsAppErrors(t *testing.T) {
+	app := New(WithTier(TierP2))
+	app.Post("/createThing", func(_ *Context) (*Response, error) {
+		return nil, &AppError{Code: errorCodeForbidden, Message: errorMessageForbidden}
+	})
+
+	lc := &lambdacontext.LambdaContext{AwsRequestID: "aws_req_2"}
+	out := app.ServeAppSync(lambdacontext.NewContext(context.Background(), lc), AppSyncResolverEvent{
+		Arguments: map[string]any{"id": "thing_123"},
+		Info: AppSyncResolverInfo{
+			FieldName:      "createThing",
+			ParentTypeName: "Mutation",
+		},
+	})
+
+	payload, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("expected appsync error payload, got %T", out)
+	}
+	if payload["pay_theory_error"] != true || payload["error_message"] != errorMessageForbidden || payload["error_type"] != appSyncErrorTypeClient {
+		t.Fatalf("unexpected appsync app error payload: %#v", payload)
+	}
+
+	errorData, ok := payload["error_data"].(map[string]any)
+	if !ok || errorData["status_code"] != float64(403) && errorData["status_code"] != 403 {
+		t.Fatalf("unexpected appsync app error_data: %#v", payload["error_data"])
+	}
+	if errorData["request_id"] != "aws_req_2" {
+		t.Fatalf("expected propagated request_id, got %#v", errorData["request_id"])
+	}
+
+	errorInfo, ok := payload["error_info"].(map[string]any)
+	if !ok || errorInfo["code"] != errorCodeForbidden || errorInfo["path"] != "/createThing" || errorInfo["method"] != "POST" || errorInfo["trigger_type"] != "appsync" {
+		t.Fatalf("unexpected appsync app error_info: %#v", payload["error_info"])
+	}
+}
+
+func TestServeAppSync_FormatsUnexpectedErrors(t *testing.T) {
+	app := New(WithTier(TierP2))
+	app.Post("/createThing", func(_ *Context) (*Response, error) {
+		return nil, errors.New("boom")
+	})
+
+	out := app.ServeAppSync(context.Background(), AppSyncResolverEvent{
+		Arguments: map[string]any{"id": "thing_123"},
+		Info: AppSyncResolverInfo{
+			FieldName:      "createThing",
+			ParentTypeName: "Mutation",
+		},
+	})
+
+	payload, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("expected appsync error payload, got %T", out)
+	}
+	if payload["pay_theory_error"] != true || payload["error_message"] != "boom" || payload["error_type"] != appSyncErrorTypeSystem {
+		t.Fatalf("unexpected appsync unexpected-error payload: %#v", payload)
+	}
+	if errorData, ok := payload["error_data"].(map[string]any); !ok || len(errorData) != 0 {
+		t.Fatalf("expected empty error_data for unexpected errors, got %#v", payload["error_data"])
+	}
+	if errorInfo, ok := payload["error_info"].(map[string]any); !ok || len(errorInfo) != 0 {
+		t.Fatalf("expected empty error_info for unexpected errors, got %#v", payload["error_info"])
 	}
 }

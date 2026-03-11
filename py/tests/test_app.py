@@ -380,6 +380,117 @@ class TestApp(unittest.TestCase):
                 }
             )
 
+    def test_serve_appsync_formats_portable_errors(self) -> None:
+        app = create_app(tier="p2")
+
+        def boom(_ctx) -> Response:
+            raise AppTheoryError(
+                code="app.validation_failed",
+                message="bad input",
+                status_code=422,
+                details={"field": "name"},
+                trace_id="trace_1",
+                timestamp="2026-03-11T15:04:05Z",
+            )
+
+        class Ctx:
+            aws_request_id = "aws_req_1"
+
+        app.post("/createThing", boom)
+        out = app.serve_appsync(
+            {
+                "arguments": {"id": "thing_123"},
+                "info": {"fieldName": "createThing", "parentTypeName": "Mutation"},
+            },
+            ctx=Ctx(),
+        )
+
+        self.assertEqual(
+            out,
+            {
+                "pay_theory_error": True,
+                "error_message": "bad input",
+                "error_type": "CLIENT_ERROR",
+                "error_data": {
+                    "status_code": 422,
+                    "request_id": "aws_req_1",
+                    "trace_id": "trace_1",
+                    "timestamp": "2026-03-11T15:04:05Z",
+                },
+                "error_info": {
+                    "code": "app.validation_failed",
+                    "details": {"field": "name"},
+                    "path": "/createThing",
+                    "method": "POST",
+                    "trigger_type": "appsync",
+                },
+            },
+        )
+
+    def test_serve_appsync_formats_app_errors(self) -> None:
+        app = create_app(tier="p2")
+
+        def boom(_ctx) -> Response:
+            raise AppError("app.forbidden", "forbidden")
+
+        app.post("/createThing", boom)
+
+        class Ctx:
+            aws_request_id = "aws_req_2"
+
+        out = app.serve_appsync(
+            {
+                "arguments": {"id": "thing_123"},
+                "info": {"fieldName": "createThing", "parentTypeName": "Mutation"},
+            },
+            ctx=Ctx(),
+        )
+
+        self.assertEqual(
+            out,
+            {
+                "pay_theory_error": True,
+                "error_message": "forbidden",
+                "error_type": "CLIENT_ERROR",
+                "error_data": {
+                    "status_code": 403,
+                    "request_id": "aws_req_2",
+                },
+                "error_info": {
+                    "code": "app.forbidden",
+                    "path": "/createThing",
+                    "method": "POST",
+                    "trigger_type": "appsync",
+                },
+            },
+        )
+
+    def test_serve_appsync_formats_unexpected_errors(self) -> None:
+        app = create_app(tier="p2")
+
+        def boom(_ctx) -> Response:
+            raise RuntimeError("boom")
+
+        app.post("/createThing", boom)
+
+        out = app.serve_appsync(
+            {
+                "arguments": {"id": "thing_123"},
+                "info": {"fieldName": "createThing", "parentTypeName": "Mutation"},
+            }
+        )
+
+        self.assertEqual(
+            out,
+            {
+                "pay_theory_error": True,
+                "error_message": "boom",
+                "error_type": "SYSTEM_ERROR",
+                "error_data": {},
+                "error_info": {},
+            },
+        )
+
     def test_websocket_helpers_and_not_found_route(self) -> None:
         app = create_app(tier="p2")
 

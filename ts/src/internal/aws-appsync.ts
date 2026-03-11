@@ -12,6 +12,8 @@ import { hasJSONContentType, normalizeResponse } from "./response.js";
 export const APPSYNC_PROJECTION_MESSAGE = "unsupported appsync response";
 export const APPSYNC_PROJECTION_BINARY_REASON = "binary_body_unsupported";
 export const APPSYNC_PROJECTION_STREAM_REASON = "streaming_body_unsupported";
+export const APPSYNC_ERROR_TYPE_CLIENT = "CLIENT_ERROR";
+export const APPSYNC_ERROR_TYPE_SYSTEM = "SYSTEM_ERROR";
 
 function appSyncMethod(parentTypeName: unknown): string {
   const parent = String(parentTypeName ?? "").trim();
@@ -179,4 +181,224 @@ export function appSyncPayloadFromResponse(response: Response): unknown {
     return normalized.body.toString("utf8");
   }
   return normalized.body.toString("utf8");
+}
+
+function statusForErrorCode(code: string): number {
+  switch (String(code ?? "").trim()) {
+    case "app.bad_request":
+    case "app.validation_failed":
+      return 400;
+    case "app.unauthorized":
+      return 401;
+    case "app.forbidden":
+      return 403;
+    case "app.not_found":
+      return 404;
+    case "app.method_not_allowed":
+      return 405;
+    case "app.conflict":
+      return 409;
+    case "app.too_large":
+      return 413;
+    case "app.timeout":
+      return 408;
+    case "app.rate_limited":
+      return 429;
+    case "app.overloaded":
+      return 503;
+    case "app.internal":
+      return 500;
+    default:
+      return 500;
+  }
+}
+
+function appSyncErrorTypeForStatus(status: number): string {
+  return status >= 400 && status < 500
+    ? APPSYNC_ERROR_TYPE_CLIENT
+    : APPSYNC_ERROR_TYPE_SYSTEM;
+}
+
+function appSyncStatusForError(err: unknown): number {
+  if (err instanceof AppTheoryError) {
+    return typeof err.statusCode === "number" && err.statusCode > 0
+      ? err.statusCode
+      : statusForErrorCode(String(err.code ?? "").trim() || "app.internal");
+  }
+  if (err instanceof AppError) {
+    return statusForErrorCode(err.code);
+  }
+  return 500;
+}
+
+export function appSyncRequestFromEvent(event: AppSyncResolverEvent): Request {
+  const fieldName = String(event?.info?.fieldName ?? "").trim();
+  const parentTypeName = String(event?.info?.parentTypeName ?? "").trim();
+  if (!fieldName || !parentTypeName) {
+    return {
+      method: "",
+      path: "/",
+      headers: {},
+      body: Buffer.alloc(0),
+      isBase64: false,
+    };
+  }
+  return {
+    method: appSyncMethod(parentTypeName),
+    path: `/${fieldName}`,
+    headers: {},
+    body: Buffer.alloc(0),
+    isBase64: false,
+  };
+}
+
+export function appSyncRequestIdFromContext(ctx: unknown): string {
+  return ctx &&
+    typeof ctx === "object" &&
+    typeof (ctx as Record<string, unknown>)["awsRequestId"] === "string"
+    ? String((ctx as Record<string, unknown>)["awsRequestId"]).trim()
+    : "";
+}
+
+export function appSyncRequestIdFromResponse(
+  response: Response,
+  fallbackRequestId: string,
+): string {
+  return (
+    firstHeaderValue(
+      normalizeResponse(response).headers,
+      "x-request-id",
+    ).trim() || String(fallbackRequestId ?? "").trim()
+  );
+}
+
+function appSyncPortableErrorPayload(
+  code: string,
+  message: string,
+  status: number,
+  details: Record<string, unknown> | undefined,
+  requestId: string,
+  traceId: string,
+  timestamp: string,
+  request: Request,
+): Record<string, unknown> {
+  const resolvedCode = String(code ?? "").trim() || "app.internal";
+  const resolvedStatus =
+    Number.isFinite(status) && status > 0
+      ? Math.floor(status)
+      : statusForErrorCode(resolvedCode);
+
+  const errorData: Record<string, unknown> = {
+    status_code: resolvedStatus,
+  };
+  const resolvedRequestId = String(requestId ?? "").trim();
+  if (resolvedRequestId) {
+    errorData["request_id"] = resolvedRequestId;
+  }
+  const resolvedTraceId = String(traceId ?? "").trim();
+  if (resolvedTraceId) {
+    errorData["trace_id"] = resolvedTraceId;
+  }
+  const resolvedTimestamp = String(timestamp ?? "").trim();
+  if (resolvedTimestamp) {
+    errorData["timestamp"] = resolvedTimestamp;
+  }
+
+  const errorInfo: Record<string, unknown> = {
+    code: resolvedCode,
+    trigger_type: "appsync",
+  };
+  const method = String(request?.method ?? "").trim();
+  if (method) {
+    errorInfo["method"] = method;
+  }
+  const path = String(request?.path ?? "").trim();
+  if (path) {
+    errorInfo["path"] = path;
+  }
+  if (details && Object.keys(details).length > 0) {
+    errorInfo["details"] = { ...details };
+  }
+
+  return {
+    pay_theory_error: true,
+    error_message: String(message ?? ""),
+    error_type: appSyncErrorTypeForStatus(resolvedStatus),
+    error_data: errorData,
+    error_info: errorInfo,
+  };
+}
+
+export function appSyncErrorPayload(
+  err: unknown,
+  request: Request,
+  requestId: string,
+): Record<string, unknown> {
+  if (err instanceof AppTheoryError) {
+    return appSyncPortableErrorPayload(
+      err.code,
+      err.message,
+      typeof err.statusCode === "number" && err.statusCode > 0
+        ? err.statusCode
+        : statusForErrorCode(err.code),
+      err.details,
+      String(err.requestId ?? "").trim() || String(requestId ?? "").trim(),
+      String(err.traceId ?? "").trim(),
+      String(err.timestamp ?? "").trim(),
+      request,
+    );
+  }
+  if (err instanceof AppError) {
+    return appSyncPortableErrorPayload(
+      err.code,
+      err.message,
+      statusForErrorCode(err.code),
+      undefined,
+      String(requestId ?? "").trim(),
+      "",
+      "",
+      request,
+    );
+  }
+  const message = err instanceof Error ? err.message : String(err ?? "").trim();
+  return {
+    pay_theory_error: true,
+    error_message: message || "internal error",
+    error_type: APPSYNC_ERROR_TYPE_SYSTEM,
+    error_data: {},
+    error_info: {},
+  };
+}
+
+export function appSyncErrorResponse(
+  err: unknown,
+  request: Request,
+  requestId: string,
+): Response {
+  let body: Buffer;
+  try {
+    body = Buffer.from(
+      JSON.stringify(appSyncErrorPayload(err, request, requestId)),
+      "utf8",
+    );
+  } catch {
+    body = Buffer.from(
+      JSON.stringify({
+        pay_theory_error: true,
+        error_message: "internal error",
+        error_type: APPSYNC_ERROR_TYPE_SYSTEM,
+        error_data: {},
+        error_info: {},
+      }),
+      "utf8",
+    );
+  }
+
+  return normalizeResponse({
+    status: appSyncStatusForError(err),
+    headers: { "content-type": ["application/json; charset=utf-8"] },
+    cookies: [],
+    body,
+    isBase64: false,
+  });
 }

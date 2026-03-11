@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
+	"time"
+
+	"github.com/aws/aws-lambda-go/lambdacontext"
 )
 
 const (
@@ -22,6 +26,8 @@ const (
 	appSyncProjectionMessage        = "unsupported appsync response"
 	appSyncProjectionBinaryReason   = "binary_body_unsupported"
 	appSyncProjectionStreamReason   = "streaming_body_unsupported"
+	appSyncErrorTypeClient          = "CLIENT_ERROR"
+	appSyncErrorTypeSystem          = "SYSTEM_ERROR"
 )
 
 // AppSyncResolverEvent is the standard AWS AppSync Lambda resolver event shape.
@@ -228,19 +234,199 @@ func appSyncPayloadFromResponse(resp Response) (any, error) {
 	return string(resp.Body), nil
 }
 
+func appSyncRequestForEvent(event AppSyncResolverEvent) Request {
+	fieldName := strings.TrimSpace(event.Info.FieldName)
+	parentTypeName := strings.TrimSpace(event.Info.ParentTypeName)
+	if fieldName == "" || parentTypeName == "" {
+		return Request{}
+	}
+	return Request{
+		Method: appSyncMethod(parentTypeName),
+		Path:   "/" + fieldName,
+	}
+}
+
+func appSyncRequestIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if lc, ok := lambdacontext.FromContext(ctx); ok {
+		return strings.TrimSpace(lc.AwsRequestID)
+	}
+	return ""
+}
+
+func appSyncRequestIDFromResponse(resp Response, fallback string) string {
+	if requestID := strings.TrimSpace(firstHeaderValue(resp.Headers, "x-request-id")); requestID != "" {
+		return requestID
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func appSyncErrorTypeForStatus(status int) string {
+	if status >= 400 && status < 500 {
+		return appSyncErrorTypeClient
+	}
+	return appSyncErrorTypeSystem
+}
+
+func appSyncErrorPayload(err error, request Request, requestID string) map[string]any {
+	if portableErr, ok := AsAppTheoryError(err); ok {
+		return appSyncPortableErrorPayload(
+			strings.TrimSpace(portableErr.Code),
+			portableErr.Message,
+			appSyncStatusForPortableError(portableErr),
+			portableErr.Details,
+			resolveAppSyncRequestID(strings.TrimSpace(portableErr.RequestID), requestID),
+			strings.TrimSpace(portableErr.TraceID),
+			portableErr.Timestamp,
+			request,
+		)
+	}
+
+	var appErr *AppError
+	if errors.As(err, &appErr) {
+		return appSyncPortableErrorPayload(
+			strings.TrimSpace(appErr.Code),
+			appErr.Message,
+			statusForErrorCode(appErr.Code),
+			nil,
+			strings.TrimSpace(requestID),
+			"",
+			time.Time{},
+			request,
+		)
+	}
+
+	message := errorMessageInternal
+	if err != nil && strings.TrimSpace(err.Error()) != "" {
+		message = err.Error()
+	}
+	return map[string]any{
+		"pay_theory_error": true,
+		"error_message":    message,
+		"error_type":       appSyncErrorTypeSystem,
+		"error_data":       map[string]any{},
+		"error_info":       map[string]any{},
+	}
+}
+
+func appSyncPortableErrorPayload(
+	code string,
+	message string,
+	status int,
+	details map[string]any,
+	requestID string,
+	traceID string,
+	timestamp time.Time,
+	request Request,
+) map[string]any {
+	if code == "" {
+		code = errorCodeInternal
+	}
+	if status == 0 {
+		status = statusForErrorCode(code)
+	}
+	errorData := map[string]any{
+		"status_code": status,
+	}
+	if requestID = strings.TrimSpace(requestID); requestID != "" {
+		errorData["request_id"] = requestID
+	}
+	if traceID = strings.TrimSpace(traceID); traceID != "" {
+		errorData["trace_id"] = traceID
+	}
+	if !timestamp.IsZero() {
+		errorData["timestamp"] = timestamp.UTC().Format(time.RFC3339Nano)
+	}
+
+	errorInfo := map[string]any{
+		"code":         code,
+		"trigger_type": "appsync",
+	}
+	if method := strings.TrimSpace(request.Method); method != "" {
+		errorInfo["method"] = method
+	}
+	if path := strings.TrimSpace(request.Path); path != "" {
+		errorInfo["path"] = path
+	}
+	if len(details) > 0 {
+		errorInfo["details"] = details
+	}
+
+	return map[string]any{
+		"pay_theory_error": true,
+		"error_message":    message,
+		"error_type":       appSyncErrorTypeForStatus(status),
+		"error_data":       errorData,
+		"error_info":       errorInfo,
+	}
+}
+
+func appSyncStatusForPortableError(err *AppTheoryError) int {
+	if err == nil {
+		return 0
+	}
+	if err.StatusCode > 0 {
+		return err.StatusCode
+	}
+	return statusForErrorCode(err.Code)
+}
+
+func resolveAppSyncRequestID(primary string, fallback string) string {
+	if strings.TrimSpace(primary) != "" {
+		return strings.TrimSpace(primary)
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func appSyncErrorResponse(err error, request Request, requestID string) Response {
+	status := statusForErrorCode(errorCodeInternal)
+	if portableErr, ok := AsAppTheoryError(err); ok {
+		status = appSyncStatusForPortableError(portableErr)
+	} else {
+		var appErr *AppError
+		if errors.As(err, &appErr) {
+			status = statusForErrorCode(appErr.Code)
+		}
+	}
+	body, marshalErr := json.Marshal(appSyncErrorPayload(err, request, requestID))
+	if marshalErr != nil {
+		body = []byte(`{"pay_theory_error":true,"error_message":"internal error","error_type":"SYSTEM_ERROR","error_data":{},"error_info":{}}`)
+	}
+	return Response{
+		Status: status,
+		Headers: map[string][]string{
+			"content-type": {"application/json; charset=utf-8"},
+		},
+		Body:     body,
+		IsBase64: false,
+	}
+}
+
 // ServeAppSync adapts an AppSync Lambda resolver event into AppTheory routing semantics.
 func (a *App) ServeAppSync(ctx context.Context, event AppSyncResolverEvent) any {
+	requestID := appSyncRequestIDFromContext(ctx)
+	requestMeta := appSyncRequestForEvent(event)
 	request, err := requestFromAppSync(event)
 	if err != nil {
-		payload, _ := appSyncPayloadFromResponse(responseForError(err))
+		payload, _ := appSyncPayloadFromResponse(appSyncErrorResponse(err, requestMeta, requestID))
 		return payload
 	}
 
-	payload, err := appSyncPayloadFromResponse(a.serveWithContextConfigurer(ctx, request, func(requestCtx *Context) {
-		applyAppSyncContextValues(requestCtx, event)
-	}))
+	resp := a.serveWithOptions(ctx, request, serveOptions{
+		configure: func(requestCtx *Context) {
+			applyAppSyncContextValues(requestCtx, event)
+		},
+		errorResponder: func(err error, request Request, requestID string) Response {
+			return appSyncErrorResponse(err, request, requestID)
+		},
+		fallbackRequestID: requestID,
+	})
+
+	payload, err := appSyncPayloadFromResponse(resp)
 	if err != nil {
-		payload, _ = appSyncPayloadFromResponse(responseForError(err))
+		payload, _ = appSyncPayloadFromResponse(appSyncErrorResponse(err, requestMeta, appSyncRequestIDFromResponse(resp, requestID)))
 	}
 	return payload
 }
