@@ -83,7 +83,7 @@ class AppTheoryRemoteMcpServer extends constructs_1.Construct {
 }
 exports.AppTheoryRemoteMcpServer = AppTheoryRemoteMcpServer;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryRemoteMcpServer[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServer", version: "0.17.1-rc" };
+AppTheoryRemoteMcpServer[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServer", version: "0.18.0-rc" };
 function computeMcpEndpoint(router, stageName, domain) {
     if (!domain) {
         const stack = aws_cdk_lib_1.Stack.of(router);
