@@ -3,6 +3,7 @@ import { RealClock } from "./clock.js";
 import { Context, EventContext, WebSocketContext } from "./context.js";
 import { AppError, AppTheoryError } from "./errors.js";
 import { RandomIdGenerator } from "./ids.js";
+import { applyAppSyncContextValues, appSyncErrorResponse, appSyncPayloadFromResponse, appSyncRequestFromEvent, appSyncRequestIdFromContext, appSyncRequestIdFromResponse, createAppSyncContext, isAppSyncResolverEvent, requestFromAppSync, } from "./internal/aws-appsync.js";
 import { albTargetGroupResponseFromResponse, apigatewayProxyResponseFromResponse, apigatewayV2ResponseFromResponse, lambdaFunctionURLResponseFromResponse, requestFromALBTargetGroup, requestFromAPIGatewayProxy, requestFromAPIGatewayV2, requestFromLambdaFunctionURL, requestFromWebSocketEvent, } from "./internal/aws-http.js";
 import { serveLambdaFunctionURLStreaming, } from "./internal/aws-lambda-streaming.js";
 import { dynamoDBTableNameFromStreamArn, eventBridgeRuleNameFromArn, kinesisStreamNameFromArn, snsTopicNameFromArn, sqsQueueNameFromArn, webSocketManagementEndpoint, } from "./internal/aws-names.js";
@@ -186,16 +187,34 @@ export class App {
         return this;
     }
     async serve(request, ctx) {
+        return this._serve(request, ctx);
+    }
+    async _serve(request, ctx, contextOptions) {
+        const respondToServeError = (err, errorRequest, requestId) => {
+            if (typeof contextOptions?.errorResponder === "function") {
+                return contextOptions.errorResponder(err, errorRequest, requestId);
+            }
+            if (requestId) {
+                return responseForErrorWithRequestId(err, requestId);
+            }
+            return responseForError(err);
+        };
         if (this._tier === "p0") {
             let normalized;
             try {
                 normalized = normalizeRequest(request);
             }
             catch (err) {
-                return responseForError(err);
+                return respondToServeError(err, request, String(contextOptions?.fallbackRequestId ?? "").trim());
             }
             const { match, allowed } = this._router.match(normalized.method, normalized.path);
             if (!match) {
+                if (typeof contextOptions?.errorResponder === "function") {
+                    if (allowed.length > 0) {
+                        return respondToServeError(new AppError("app.method_not_allowed", "method not allowed"), normalized, String(contextOptions?.fallbackRequestId ?? "").trim());
+                    }
+                    return respondToServeError(new AppError("app.not_found", "not found"), normalized, String(contextOptions?.fallbackRequestId ?? "").trim());
+                }
                 if (allowed.length > 0) {
                     return errorResponse("app.method_not_allowed", "method not allowed", {
                         allow: [formatAllowHeader(allowed)],
@@ -209,14 +228,19 @@ export class App {
                 clock: this._clock,
                 ids: this._ids,
                 ctx,
+                appSync: contextOptions?.appSync ?? null,
             });
+            contextOptions?.configure?.(requestCtx);
             try {
                 const handler = this._applyMiddlewares(match.route.handler);
                 const out = await handler(requestCtx);
+                if (!out) {
+                    return respondToServeError(new AppError("app.internal", "internal error"), normalized, String(contextOptions?.fallbackRequestId ?? "").trim());
+                }
                 return normalizeResponse(out);
             }
             catch (err) {
-                return responseForError(err);
+                return respondToServeError(err, normalized, String(contextOptions?.fallbackRequestId ?? "").trim());
             }
         }
         const preHeaders = canonicalizeHeaders(request.headers);
@@ -225,7 +249,10 @@ export class App {
         let path = normalizePath(request.path);
         let requestId = firstHeaderValue(preHeaders, "x-request-id");
         if (!requestId) {
-            requestId = this._ids.newId();
+            requestId = String(contextOptions?.fallbackRequestId ?? "").trim();
+            if (!requestId) {
+                requestId = this._ids.newId();
+            }
         }
         const origin = firstHeaderValue(preHeaders, "origin");
         const middlewareTrace = ["request_id", "recovery", "logging"];
@@ -265,16 +292,25 @@ export class App {
         }
         catch (err) {
             const code = errorCodeFrom(err);
-            return finish(responseForErrorWithRequestId(err, requestId), code);
+            return finish(respondToServeError(err, request, requestId), code);
         }
         method = normalized.method;
         path = normalized.path;
         if (this._limits.maxRequestBytes > 0 &&
             Buffer.from(normalized.body).length > this._limits.maxRequestBytes) {
+            if (typeof contextOptions?.errorResponder === "function") {
+                return finish(respondToServeError(new AppError("app.too_large", "request too large"), normalized, requestId), "app.too_large");
+            }
             return finish(errorResponseWithRequestId("app.too_large", "request too large", {}, requestId), "app.too_large");
         }
         const { match, allowed } = this._router.match(normalized.method, normalized.path);
         if (!match) {
+            if (typeof contextOptions?.errorResponder === "function") {
+                if (allowed.length > 0) {
+                    return finish(respondToServeError(new AppError("app.method_not_allowed", "method not allowed"), normalized, requestId), "app.method_not_allowed");
+                }
+                return finish(respondToServeError(new AppError("app.not_found", "not found"), normalized, requestId), "app.not_found");
+            }
             if (allowed.length > 0) {
                 return finish(errorResponseWithRequestId("app.method_not_allowed", "method not allowed", { allow: [formatAllowHeader(allowed)] }, requestId), "app.method_not_allowed");
             }
@@ -291,7 +327,9 @@ export class App {
             authIdentity: "",
             remainingMs,
             middlewareTrace,
+            appSync: contextOptions?.appSync ?? null,
         });
+        contextOptions?.configure?.(requestCtx);
         if (enableP2 && typeof this._policyHook === "function") {
             let decision;
             try {
@@ -299,11 +337,14 @@ export class App {
             }
             catch (err) {
                 const code = errorCodeFrom(err);
-                return finish(responseForErrorWithRequestId(err, requestId), code);
+                return finish(respondToServeError(err, normalized, requestId), code);
             }
             const code = String(decision?.code ?? "").trim();
             if (code) {
                 const message = String(decision?.message ?? "").trim() || defaultPolicyMessage(code);
+                if (typeof contextOptions?.errorResponder === "function") {
+                    return finish(respondToServeError(new AppError(code, message), normalized, requestId), code);
+                }
                 return finish(errorResponseWithRequestId(code, message, decision?.headers ?? {}, requestId), code);
             }
         }
@@ -321,7 +362,7 @@ export class App {
             }
             catch (err) {
                 const code = errorCodeFrom(err);
-                return finish(responseForErrorWithRequestId(err, requestId), code);
+                return finish(respondToServeError(err, normalized, requestId), code);
             }
         }
         middlewareTrace.push("handler");
@@ -332,10 +373,10 @@ export class App {
         }
         catch (err) {
             const code = errorCodeFrom(err);
-            return finish(responseForErrorWithRequestId(err, requestId), code);
+            return finish(respondToServeError(err, normalized, requestId), code);
         }
         if (!out) {
-            return finish(errorResponseWithRequestId("app.internal", "internal error", {}, requestId), "app.internal");
+            return finish(respondToServeError(new AppError("app.internal", "internal error"), normalized, requestId), "app.internal");
         }
         let resp;
         try {
@@ -343,10 +384,13 @@ export class App {
         }
         catch (err) {
             const code = errorCodeFrom(err);
-            return finish(responseForErrorWithRequestId(err, requestId), code);
+            return finish(respondToServeError(err, normalized, requestId), code);
         }
         if (this._limits.maxResponseBytes > 0 &&
             Buffer.from(resp.body).length > this._limits.maxResponseBytes) {
+            if (typeof contextOptions?.errorResponder === "function") {
+                return finish(respondToServeError(new AppError("app.too_large", "response too large"), normalized, requestId), "app.too_large");
+            }
             return finish(errorResponseWithRequestId("app.too_large", "response too large", {}, requestId), "app.too_large");
         }
         return finish(resp, "");
@@ -394,6 +438,34 @@ export class App {
         }
         const resp = await this.serve(request, ctx);
         return albTargetGroupResponseFromResponse(resp);
+    }
+    async serveAppSync(event, ctx) {
+        const fallbackRequestId = appSyncRequestIdFromContext(ctx);
+        const requestMetadata = appSyncRequestFromEvent(event);
+        let request;
+        try {
+            request = requestFromAppSync(event);
+        }
+        catch (err) {
+            return appSyncPayloadFromResponse(appSyncErrorResponse(err, requestMetadata, fallbackRequestId));
+        }
+        let resp = null;
+        try {
+            resp = await this._serve(request, ctx, {
+                appSync: createAppSyncContext(event),
+                fallbackRequestId,
+                configure: (requestCtx) => {
+                    applyAppSyncContextValues(requestCtx, event);
+                },
+                errorResponder: (err, errorRequest, requestId) => appSyncErrorResponse(err, errorRequest, requestId),
+            });
+            return appSyncPayloadFromResponse(resp);
+        }
+        catch (err) {
+            return appSyncPayloadFromResponse(appSyncErrorResponse(err, requestMetadata, resp
+                ? appSyncRequestIdFromResponse(resp, fallbackRequestId)
+                : fallbackRequestId));
+        }
     }
     _webSocketHandlerForEvent(event) {
         const routeKey = String(event?.requestContext?.routeKey ?? "").trim();
@@ -720,6 +792,9 @@ export class App {
         }
         if (typeof record["detailType"] === "string") {
             return this.serveEventBridge(event, ctx);
+        }
+        if (isAppSyncResolverEvent(event)) {
+            return this.serveAppSync(event, ctx);
         }
         if (record["requestContext"] &&
             typeof record["requestContext"] === "object") {
