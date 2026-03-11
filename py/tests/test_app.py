@@ -21,12 +21,13 @@ from apptheory.app import (  # noqa: E402
     event_bridge_rule,
     _eventbridge_rule_name_from_arn,
     _kinesis_stream_name_from_arn,
+    _appsync_payload_from_response,
     _request_from_websocket_event,
     _sns_topic_name_from_arn,
     _sqs_queue_name_from_arn,
     _websocket_management_endpoint,
 )
-from apptheory.errors import AppError  # noqa: E402
+from apptheory.errors import AppError, AppTheoryError  # noqa: E402
 from apptheory.request import Request  # noqa: E402
 from apptheory.response import Response  # noqa: E402
 
@@ -275,6 +276,42 @@ class TestApp(unittest.TestCase):
             }
         )
         self.assertEqual(out2, "GET:/getThing")
+
+        app.get(
+            "/emptyThing",
+            lambda _ctx: Response(status=204, headers={}, cookies=[], body=b"", is_base64=False),
+        )
+        out3 = app.serve_appsync(
+            {
+                "arguments": {},
+                "info": {"fieldName": "emptyThing", "parentTypeName": "Query"},
+            }
+        )
+        self.assertIsNone(out3)
+
+    def test_appsync_payload_projection_rejects_binary_and_streaming_bodies(self) -> None:
+        with self.assertRaises(AppTheoryError) as binary_err:
+            _appsync_payload_from_response(
+                Response(status=200, headers={}, cookies=[], body=b"abc", is_base64=True)
+            )
+        self.assertEqual(binary_err.exception.code, "app.internal")
+        self.assertEqual(binary_err.exception.message, "unsupported appsync response")
+        self.assertEqual(binary_err.exception.details, {"reason": "binary_body_unsupported"})
+
+        with self.assertRaises(AppTheoryError) as stream_err:
+            _appsync_payload_from_response(
+                Response(
+                    status=200,
+                    headers={},
+                    cookies=[],
+                    body=b"",
+                    is_base64=False,
+                    body_stream=iter([b"chunk"]),
+                )
+            )
+        self.assertEqual(stream_err.exception.code, "app.internal")
+        self.assertEqual(stream_err.exception.message, "unsupported appsync response")
+        self.assertEqual(stream_err.exception.details, {"reason": "streaming_body_unsupported"})
 
     def test_handle_lambda_routes_appsync_and_preserves_metadata(self) -> None:
         app = create_app(tier="p2")

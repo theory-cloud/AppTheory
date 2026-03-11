@@ -88,6 +88,71 @@ func TestServeAppSync_AdaptsQueryAndProjectsText(t *testing.T) {
 	}
 }
 
+func TestServeAppSync_ProjectsEmptyBodyToNil(t *testing.T) {
+	app := New(WithTier(TierP2))
+	app.Get("/emptyThing", func(_ *Context) (*Response, error) {
+		return &Response{Status: 204, Headers: map[string][]string{}, Body: nil}, nil
+	})
+
+	out := app.ServeAppSync(context.Background(), AppSyncResolverEvent{
+		Arguments: map[string]any{},
+		Info: AppSyncResolverInfo{
+			FieldName:      "emptyThing",
+			ParentTypeName: "Query",
+		},
+	})
+
+	if out != nil {
+		t.Fatalf("expected nil payload for empty response body, got %#v", out)
+	}
+}
+
+func TestAppSyncPayloadFromResponse_RejectsBinaryBody(t *testing.T) {
+	_, err := appSyncPayloadFromResponse(Response{
+		Status:   200,
+		Headers:  map[string][]string{},
+		Body:     []byte("abc"),
+		IsBase64: true,
+	})
+	if err == nil {
+		t.Fatal("expected binary response projection to fail")
+	}
+
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Code != errorCodeInternal || appErr.Message != appSyncProjectionMessage {
+		t.Fatalf("unexpected error: %#v", appErr)
+	}
+	if got := appErr.Details["reason"]; got != appSyncProjectionBinaryReason {
+		t.Fatalf("expected binary projection reason, got %#v", got)
+	}
+}
+
+func TestAppSyncPayloadFromResponse_RejectsStreamingBody(t *testing.T) {
+	_, err := appSyncPayloadFromResponse(Response{
+		Status:     200,
+		Headers:    map[string][]string{},
+		Body:       nil,
+		BodyStream: StreamBytes([]byte("chunk")),
+	})
+	if err == nil {
+		t.Fatal("expected streaming response projection to fail")
+	}
+
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Code != errorCodeInternal || appErr.Message != appSyncProjectionMessage {
+		t.Fatalf("unexpected error: %#v", appErr)
+	}
+	if got := appErr.Details["reason"]; got != appSyncProjectionStreamReason {
+		t.Fatalf("expected streaming projection reason, got %#v", got)
+	}
+}
+
 func TestHandleLambda_AppSyncDispatchPreservesMetadata(t *testing.T) {
 	app := New(WithTier(TierP2))
 	app.Post("/createThing", func(ctx *Context) (*Response, error) {

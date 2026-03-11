@@ -19,6 +19,9 @@ const (
 	contextKeyAppSyncStash          = "apptheory.appsync.stash"
 	contextKeyAppSyncRequestHeaders = "apptheory.appsync.request_headers"
 	contextKeyAppSyncRawEvent       = "apptheory.appsync.raw_event"
+	appSyncProjectionMessage        = "unsupported appsync response"
+	appSyncProjectionBinaryReason   = "binary_body_unsupported"
+	appSyncProjectionStreamReason   = "streaming_body_unsupported"
 )
 
 // AppSyncResolverEvent is the standard AWS AppSync Lambda resolver event shape.
@@ -197,8 +200,15 @@ func applyAppSyncContextValues(ctx *Context, event AppSyncResolverEvent) {
 }
 
 func appSyncPayloadFromResponse(resp Response) (any, error) {
-	if resp.BodyReader != nil || resp.BodyStream != nil || resp.IsBase64 {
-		return nil, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}
+	if resp.IsBase64 {
+		return nil, NewAppTheoryError(errorCodeInternal, appSyncProjectionMessage).
+			WithStatusCode(500).
+			WithDetails(map[string]any{"reason": appSyncProjectionBinaryReason})
+	}
+	if resp.BodyReader != nil || resp.BodyStream != nil {
+		return nil, NewAppTheoryError(errorCodeInternal, appSyncProjectionMessage).
+			WithStatusCode(500).
+			WithDetails(map[string]any{"reason": appSyncProjectionStreamReason})
 	}
 	if len(resp.Body) == 0 {
 		return nil, nil

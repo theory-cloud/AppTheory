@@ -1173,10 +1173,27 @@ def _appsync_method(parent_type_name: str) -> str:
     return "POST"
 
 
+_APPSYNC_PROJECTION_MESSAGE = "unsupported appsync response"
+_APPSYNC_PROJECTION_BINARY_REASON = "binary_body_unsupported"
+_APPSYNC_PROJECTION_STREAM_REASON = "streaming_body_unsupported"
+
+
 def _appsync_payload_from_response(resp: Response) -> Any:
     normalized = normalize_response(resp)
-    if normalized.body_stream is not None or normalized.is_base64:
-        raise AppError("app.internal", "internal error")
+    if normalized.is_base64:
+        raise AppTheoryError(
+            code="app.internal",
+            message=_APPSYNC_PROJECTION_MESSAGE,
+            status_code=500,
+            details={"reason": _APPSYNC_PROJECTION_BINARY_REASON},
+        )
+    if normalized.body_stream is not None:
+        raise AppTheoryError(
+            code="app.internal",
+            message=_APPSYNC_PROJECTION_MESSAGE,
+            status_code=500,
+            details={"reason": _APPSYNC_PROJECTION_STREAM_REASON},
+        )
     if not normalized.body:
         return None
 
