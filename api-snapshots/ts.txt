@@ -133,6 +133,7 @@ baseName	function
 binary	function
 buildALBTargetGroupRequest	function
 buildAPIGatewayV2Request	function
+buildAppSyncEvent	function
 buildDynamoDBStreamEvent	function
 buildEventBridgeEvent	function
 buildKinesisEvent	function

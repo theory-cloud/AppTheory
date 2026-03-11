@@ -1,0 +1,42 @@
+{
+  "id": "p2.appsync.streaming_unsupported",
+  "tier": "p2",
+  "name": "AppSync streamed responses return deterministic unsupported errors",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/streamThing", "handler": "html_stream_two_chunks" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "appsync",
+      "event": {
+        "arguments": {},
+        "info": {
+          "fieldName": "streamThing",
+          "parentTypeName": "Query"
+        }
+      }
+    }
+  },
+  "expect": {
+    "output_json": {
+      "pay_theory_error": true,
+      "error_message": "unsupported appsync response",
+      "error_type": "SYSTEM_ERROR",
+      "error_data": {
+        "status_code": 500,
+        "request_id": "req_test_123"
+      },
+      "error_info": {
+        "code": "app.internal",
+        "details": {
+          "reason": "streaming_body_unsupported"
+        },
+        "path": "/streamThing",
+        "method": "GET",
+        "trigger_type": "appsync"
+      }
+    }
+  }
+}

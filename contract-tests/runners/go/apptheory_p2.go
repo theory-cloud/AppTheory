@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -98,6 +99,15 @@ func runFixtureP2(f Fixture) error {
 			opts = append(opts, apptheory.RequireAuth())
 		}
 		app.Handle(r.Method, r.Path, handler, opts...)
+	}
+
+	if f.Input.AWSEvent != nil {
+		source := strings.ToLower(strings.TrimSpace(f.Input.AWSEvent.Source))
+		if source != "appsync" {
+			return fmt.Errorf("unknown aws_event source %q", f.Input.AWSEvent.Source)
+		}
+		out, err := app.HandleLambda(context.Background(), f.Input.AWSEvent.Event)
+		return compareFixtureM1Result(f, out, err)
 	}
 
 	if f.Input.Request == nil {

@@ -1,0 +1,29 @@
+{
+  "id": "p2.appsync.query",
+  "tier": "p2",
+  "name": "AppSync query events route through GET handlers",
+  "setup": {
+    "routes": [
+      { "method": "GET", "path": "/getThing", "handler": "parse_json_echo" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "appsync",
+      "event": {
+        "arguments": {
+          "id": "thing_456"
+        },
+        "info": {
+          "fieldName": "getThing",
+          "parentTypeName": "Query"
+        }
+      }
+    }
+  },
+  "expect": {
+    "output_json": {
+      "id": "thing_456"
+    }
+  }
+}

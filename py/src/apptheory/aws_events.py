@@ -28,6 +28,40 @@ class AppSyncResolverEvent(TypedDict, total=False):
     stash: dict[str, Any] | None
 
 
+def build_appsync_event(
+    *,
+    field_name: str = "field",
+    parent_type_name: str = "Mutation",
+    arguments: dict[str, Any] | None = None,
+    identity: dict[str, Any] | None = None,
+    source: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+    variables: dict[str, Any] | None = None,
+    prev: Any = None,
+    stash: dict[str, Any] | None = None,
+) -> AppSyncResolverEvent:
+    out: AppSyncResolverEvent = {
+        "arguments": dict(arguments or {}),
+        "identity": dict(identity or {}),
+        "source": dict(source or {}),
+        "request": {
+            "headers": {
+                str(key): str(value)
+                for key, value in dict(headers or {}).items()
+                if str(key).strip()
+            }
+        },
+        "info": {
+            "fieldName": str(field_name or "").strip() or "field",
+            "parentTypeName": str(parent_type_name or "").strip() or "Mutation",
+            "variables": dict(variables or {}),
+        },
+        "prev": prev,
+        "stash": dict(stash or {}),
+    }
+    return out
+
+
 def build_sqs_event(queue_arn: str, records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     arn = str(queue_arn or "").strip()
     out_records: list[dict[str, Any]] = []
