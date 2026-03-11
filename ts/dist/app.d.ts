@@ -108,6 +108,7 @@ export declare class App {
     eventBridge(selector: EventBridgeSelector, handler: EventBridgeHandler): this;
     dynamoDB(tableName: string, handler: DynamoDBStreamHandler): this;
     serve(request: Request, ctx?: unknown): Promise<Response>;
+    private _serve;
     serveAPIGatewayV2(event: APIGatewayV2HTTPRequest, ctx?: unknown): Promise<APIGatewayV2HTTPResponse>;
     serveLambdaFunctionURL(event: LambdaFunctionURLRequest, ctx?: unknown): Promise<LambdaFunctionURLResponse>;
     serveAPIGatewayProxy(event: APIGatewayProxyRequest, ctx?: unknown): Promise<APIGatewayProxyResponse>;

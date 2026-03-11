@@ -3,7 +3,7 @@ import { RealClock } from "./clock.js";
 import { Context, EventContext, WebSocketContext } from "./context.js";
 import { AppError, AppTheoryError } from "./errors.js";
 import { RandomIdGenerator } from "./ids.js";
-import { appSyncPayloadFromResponse, requestFromAppSync, } from "./internal/aws-appsync.js";
+import { applyAppSyncContextValues, appSyncPayloadFromResponse, isAppSyncResolverEvent, requestFromAppSync, } from "./internal/aws-appsync.js";
 import { albTargetGroupResponseFromResponse, apigatewayProxyResponseFromResponse, apigatewayV2ResponseFromResponse, lambdaFunctionURLResponseFromResponse, requestFromALBTargetGroup, requestFromAPIGatewayProxy, requestFromAPIGatewayV2, requestFromLambdaFunctionURL, requestFromWebSocketEvent, } from "./internal/aws-http.js";
 import { serveLambdaFunctionURLStreaming, } from "./internal/aws-lambda-streaming.js";
 import { dynamoDBTableNameFromStreamArn, eventBridgeRuleNameFromArn, kinesisStreamNameFromArn, snsTopicNameFromArn, sqsQueueNameFromArn, webSocketManagementEndpoint, } from "./internal/aws-names.js";
@@ -187,6 +187,9 @@ export class App {
         return this;
     }
     async serve(request, ctx) {
+        return this._serve(request, ctx);
+    }
+    async _serve(request, ctx, configureContext) {
         if (this._tier === "p0") {
             let normalized;
             try {
@@ -211,6 +214,7 @@ export class App {
                 ids: this._ids,
                 ctx,
             });
+            configureContext?.(requestCtx);
             try {
                 const handler = this._applyMiddlewares(match.route.handler);
                 const out = await handler(requestCtx);
@@ -293,6 +297,7 @@ export class App {
             remainingMs,
             middlewareTrace,
         });
+        configureContext?.(requestCtx);
         if (enableP2 && typeof this._policyHook === "function") {
             let decision;
             try {
@@ -405,7 +410,9 @@ export class App {
             return appSyncPayloadFromResponse(responseForError(err));
         }
         try {
-            const resp = await this.serve(request, ctx);
+            const resp = await this._serve(request, ctx, (requestCtx) => {
+                applyAppSyncContextValues(requestCtx, event);
+            });
             return appSyncPayloadFromResponse(resp);
         }
         catch (err) {
@@ -737,6 +744,9 @@ export class App {
         }
         if (typeof record["detailType"] === "string") {
             return this.serveEventBridge(event, ctx);
+        }
+        if (isAppSyncResolverEvent(event)) {
+            return this.serveAppSync(event, ctx);
         }
         if (record["requestContext"] &&
             typeof record["requestContext"] === "object") {
