@@ -230,6 +230,52 @@ class TestApp(unittest.TestCase):
         self.assertEqual(app.serve_apigw_proxy(None)["statusCode"], 500)  # type: ignore[arg-type]
         self.assertEqual(app.serve_alb(None)["statusCode"], 500)  # type: ignore[arg-type]
 
+    def test_serve_appsync_adapts_request_and_projects_payload(self) -> None:
+        app = create_app(tier="p2")
+
+        def mutation(ctx) -> Response:
+            self.assertEqual(ctx.request.method, "POST")
+            self.assertEqual(ctx.request.path, "/createThing")
+            self.assertEqual(ctx.request.headers["x-test-header"], ["present"])
+            payload = ctx.json_value()
+            return Response(
+                status=200,
+                headers={"content-type": ["application/json; charset=utf-8"]},
+                cookies=[],
+                body=json.dumps({"method": ctx.request.method, "arguments": payload}, sort_keys=True).encode("utf-8"),
+                is_base64=False,
+            )
+
+        app.post("/createThing", mutation)
+        out = app.serve_appsync(
+            {
+                "arguments": {"id": "thing_123", "name": "example"},
+                "request": {"headers": {"x-test-header": "present"}},
+                "info": {"fieldName": "createThing", "parentTypeName": "Mutation"},
+            }
+        )
+        self.assertEqual(out["method"], "POST")
+        self.assertEqual(out["arguments"]["id"], "thing_123")
+        self.assertEqual(out["arguments"]["name"], "example")
+
+        app.get(
+            "/getThing",
+            lambda ctx: Response(
+                status=200,
+                headers={"content-type": ["text/plain; charset=utf-8"]},
+                cookies=[],
+                body=f"{ctx.request.method}:{ctx.request.path}".encode("utf-8"),
+                is_base64=False,
+            ),
+        )
+        out2 = app.serve_appsync(
+            {
+                "arguments": {},
+                "info": {"fieldName": "getThing", "parentTypeName": "Query"},
+            }
+        )
+        self.assertEqual(out2, "GET:/getThing")
+
     def test_websocket_helpers_and_not_found_route(self) -> None:
         app = create_app(tier="p2")
 

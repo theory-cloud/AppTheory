@@ -1,9 +1,31 @@
 from __future__ import annotations
 
 import base64
-from typing import Any
+from typing import Any, TypedDict
 
 from apptheory.util import to_bytes
+
+
+class AppSyncResolverRequest(TypedDict, total=False):
+    headers: dict[str, str]
+
+
+class AppSyncResolverInfo(TypedDict, total=False):
+    fieldName: str
+    parentTypeName: str
+    variables: dict[str, Any]
+    selectionSetList: list[str]
+    selectionSetGraphQL: str
+
+
+class AppSyncResolverEvent(TypedDict, total=False):
+    arguments: dict[str, Any]
+    identity: dict[str, Any] | None
+    source: dict[str, Any] | None
+    request: AppSyncResolverRequest
+    info: AppSyncResolverInfo
+    prev: Any
+    stash: dict[str, Any] | None
 
 
 def build_sqs_event(queue_arn: str, records: list[dict[str, Any]] | None = None) -> dict[str, Any]:

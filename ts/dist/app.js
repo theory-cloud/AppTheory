@@ -3,6 +3,7 @@ import { RealClock } from "./clock.js";
 import { Context, EventContext, WebSocketContext } from "./context.js";
 import { AppError, AppTheoryError } from "./errors.js";
 import { RandomIdGenerator } from "./ids.js";
+import { appSyncPayloadFromResponse, requestFromAppSync, } from "./internal/aws-appsync.js";
 import { albTargetGroupResponseFromResponse, apigatewayProxyResponseFromResponse, apigatewayV2ResponseFromResponse, lambdaFunctionURLResponseFromResponse, requestFromALBTargetGroup, requestFromAPIGatewayProxy, requestFromAPIGatewayV2, requestFromLambdaFunctionURL, requestFromWebSocketEvent, } from "./internal/aws-http.js";
 import { serveLambdaFunctionURLStreaming, } from "./internal/aws-lambda-streaming.js";
 import { dynamoDBTableNameFromStreamArn, eventBridgeRuleNameFromArn, kinesisStreamNameFromArn, snsTopicNameFromArn, sqsQueueNameFromArn, webSocketManagementEndpoint, } from "./internal/aws-names.js";
@@ -394,6 +395,22 @@ export class App {
         }
         const resp = await this.serve(request, ctx);
         return albTargetGroupResponseFromResponse(resp);
+    }
+    async serveAppSync(event, ctx) {
+        let request;
+        try {
+            request = requestFromAppSync(event);
+        }
+        catch (err) {
+            return appSyncPayloadFromResponse(responseForError(err));
+        }
+        try {
+            const resp = await this.serve(request, ctx);
+            return appSyncPayloadFromResponse(resp);
+        }
+        catch (err) {
+            return appSyncPayloadFromResponse(responseForError(err));
+        }
     }
     _webSocketHandlerForEvent(event) {
         const routeKey = String(event?.requestContext?.routeKey ?? "").trim();

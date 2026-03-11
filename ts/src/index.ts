@@ -1,5 +1,8 @@
 export type { Headers, Query, Request, Response } from "./types.js";
 export type {
+  AppSyncResolverEvent,
+  AppSyncResolverInfo,
+  AppSyncResolverRequest,
   ALBTargetGroupRequest,
   ALBTargetGroupResponse,
   APIGatewayProxyRequest,
