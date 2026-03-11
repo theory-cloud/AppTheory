@@ -104,6 +104,19 @@ func TestSNSEvent_Defaults(t *testing.T) {
 	}
 }
 
+func TestAppSyncEvent_Defaults(t *testing.T) {
+	out := AppSyncEvent(AppSyncEventOptions{
+		Arguments: map[string]any{"id": "thing_123"},
+		Headers:   map[string]string{"x-appsync": "yes"},
+	})
+	if out.Info.FieldName != "field" || out.Info.ParentTypeName != "Mutation" {
+		t.Fatalf("unexpected appsync defaults: %#v", out.Info)
+	}
+	if out.Arguments["id"] != "thing_123" || out.Request.Headers["x-appsync"] != "yes" {
+		t.Fatalf("unexpected appsync event: %#v", out)
+	}
+}
+
 func TestStepFunctionsTaskTokenEvent(t *testing.T) {
 	out := StepFunctionsTaskTokenEvent(StepFunctionsTaskTokenEventOptions{
 		TaskToken: " tok ",
@@ -148,5 +161,21 @@ func TestEnv_InvokeEventSources(t *testing.T) {
 	}
 	if string(b) == "null" {
 		t.Fatalf("unexpected eventbridge output: %v", out)
+	}
+
+	app.Post("/createThing", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"method": ctx.Request.Method,
+			"path":   ctx.Request.Path,
+		})
+	})
+	appsyncOut := env.InvokeAppSync(context.Background(), app, AppSyncEvent(AppSyncEventOptions{
+		FieldName:      "createThing",
+		ParentTypeName: "Mutation",
+		Arguments:      map[string]any{"id": "thing_123"},
+	}))
+	payload, ok := appsyncOut.(map[string]any)
+	if !ok || payload["method"] != "POST" || payload["path"] != "/createThing" {
+		t.Fatalf("unexpected appsync invoke output: %#v", appsyncOut)
 	}
 }

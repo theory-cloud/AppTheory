@@ -115,6 +115,9 @@ export class TestEnv {
     invokeSNS(app, event, ctx) {
         return app.serveSNSEvent(event, ctx);
     }
+    invokeAppSync(app, event, ctx) {
+        return app.serveAppSync(event, ctx);
+    }
     invokeLambda(app, event, ctx) {
         return app.handleLambda(event, ctx);
     }
@@ -235,6 +238,46 @@ export function buildALBTargetGroupRequest(method, path, options = {}) {
     if (Object.keys(multiValueHeaders).length > 0) {
         out.multiValueHeaders = multiValueHeaders;
     }
+    return out;
+}
+export function buildAppSyncEvent(options = {}) {
+    const out = {
+        arguments: options.arguments &&
+            typeof options.arguments === "object" &&
+            !Array.isArray(options.arguments)
+            ? { ...options.arguments }
+            : {},
+        identity: options.identity &&
+            typeof options.identity === "object" &&
+            !Array.isArray(options.identity)
+            ? { ...options.identity }
+            : {},
+        source: options.source &&
+            typeof options.source === "object" &&
+            !Array.isArray(options.source)
+            ? { ...options.source }
+            : {},
+        request: {
+            headers: options.headers && typeof options.headers === "object"
+                ? { ...options.headers }
+                : {},
+        },
+        info: {
+            fieldName: String(options.fieldName ?? "").trim() || "field",
+            parentTypeName: String(options.parentTypeName ?? "").trim() || "Mutation",
+            variables: options.variables &&
+                typeof options.variables === "object" &&
+                !Array.isArray(options.variables)
+                ? { ...options.variables }
+                : {},
+        },
+        prev: options.prev ?? null,
+        stash: options.stash &&
+            typeof options.stash === "object" &&
+            !Array.isArray(options.stash)
+            ? { ...options.stash }
+            : {},
+    };
     return out;
 }
 export function buildSQSEvent(queueArn, records = []) {

@@ -21,6 +21,8 @@ Known CLI surface:
 Verification command surface:
 
 - `make test-unit`
+- `./scripts/verify-ts-tests.sh`
+- `./scripts/verify-python-tests.sh`
 - `./scripts/verify-contract-tests.sh`
 - `./scripts/update-api-snapshots.sh`
 - `./scripts/verify-api-snapshots.sh`
@@ -34,6 +36,7 @@ Verification command surface:
 | App container | `apptheory.New(...)` | `createApp()` | `create_app()` |
 | Deterministic test env | `testkit.New()` | `createTestEnv()` | `create_test_env()` |
 | Universal Lambda dispatcher | `app.HandleLambda(ctx, event)` | `app.handleLambda(event, ctx)` | `app.handle_lambda(event, ctx)` |
+| AppSync resolver entrypoint | `app.ServeAppSync(ctx, event)` | `app.serveAppSync(event, ctx)` | `app.serve_appsync(event, ctx)` |
 | Strict route registration | `app.GetStrict(...)`, `app.HandleStrict(...)` | `app.handleStrict(...)` | `app.handle_strict(...)` |
 | HTTP entrypoints | `ServeAPIGatewayV2`, `ServeLambdaFunctionURL`, `ServeAPIGatewayProxy` | `serveAPIGatewayV2`, `serveLambdaFunctionURL`, `serveAPIGatewayProxy` | `serve_apigw_v2`, `serve_lambda_function_url`, `serve_apigw_proxy` |
 | Streaming helpers | `SSEResponse`, `SSEStreamResponse` | `htmlStream`, `sseEventStream`, `createLambdaFunctionURLStreamingHandler` | `html_stream`, `sse_event_stream` |
@@ -50,6 +53,7 @@ Common helper exports:
 | --- | --- | --- | --- |
 | App creation | `apptheory.New(...)` | `createApp()` | `create_app()` |
 | Deterministic HTTP builders | `testkit.APIGatewayV2Request`, `testkit.LambdaFunctionURLRequest` | `buildAPIGatewayV2Request`, `buildLambdaFunctionURLRequest` | `build_apigw_v2_request`, `build_lambda_function_url_request` |
+| Deterministic AppSync builders | `testkit.AppSyncEvent` | `buildAppSyncEvent` | `build_appsync_event` |
 | Basic response helpers | `Text`, `JSON`, `Binary` | `text`, `json`, `html`, `binary`, `sse` | `text`, `json`, `html`, `binary`, `sse` |
 
 ## Universal Lambda entrypoint
@@ -81,6 +85,7 @@ def handler(event, ctx):
 | Kinesis | `Records[0].eventSource == "aws:kinesis"` | `ServeKinesis` / `serveKinesisEvent` / `serve_kinesis` |
 | SNS | `Records[0].Sns` or `EventSource == "aws:sns"` | `ServeSNS` / `serveSNSEvent` / `serve_sns` |
 | EventBridge | `detail-type` or `detailType` | `ServeEventBridge` / `serveEventBridge` / `serve_eventbridge` |
+| AppSync resolver | `info.fieldName` + `info.parentTypeName` + `arguments` | `ServeAppSync` / `serveAppSync` / `serve_appsync` |
 | WebSocket (APIGW v2) | `requestContext.connectionId` | `ServeWebSocket` / `serveWebSocket` / `serve_websocket` |
 | API Gateway v2 (HTTP API) | `requestContext.http` + `routeKey` | `ServeAPIGatewayV2` / `serveAPIGatewayV2` / `serve_apigw_v2` |
 | Lambda Function URL | `requestContext.http` + no `routeKey` | `ServeLambdaFunctionURL` / `serveLambdaFunctionURL` / `serve_lambda_function_url` |
@@ -92,6 +97,37 @@ Notes:
 - Unknown shapes fail closed
 - Exact field casing varies by AWS integration; prefer deterministic event builders from the test envs
 - Package-local runtime docs may add language-specific examples, but the canonical cross-language dispatch guidance lives here
+
+### AppSync resolvers
+
+AppTheory supports the standard AWS direct Lambda resolver event shape in all three runtimes.
+
+- Event models:
+  - Go: `AppSyncResolverEvent`, `AppSyncResolverInfo`, `AppSyncResolverRequest`
+  - TypeScript: `AppSyncResolverEvent`, `AppSyncResolverInfo`, `AppSyncResolverRequest`
+  - Python: `AppSyncResolverEvent`, `AppSyncResolverInfo`, `AppSyncResolverRequest`
+- Typed context:
+  - Go: `ctx.AsAppSync()`
+  - TypeScript: `ctx.asAppSync()`
+  - Python: `ctx.as_appsync()`
+- Request adaptation:
+  - `Mutation -> POST /fieldName`
+  - `Query -> GET /fieldName`
+  - `Subscription -> GET /fieldName`
+  - top-level `arguments` become the JSON request body
+  - `request.headers` are forwarded and `content-type: application/json` is synthesized when absent
+- Response behavior:
+  - JSON bodies project back to native resolver payloads
+  - `text/*` bodies project to UTF-8 strings
+  - empty bodies project to `null`
+  - binary and streaming bodies fail closed with deterministic AppSync system errors
+- Error behavior:
+  - handler failures return Lift-compatible AppSync error objects with `pay_theory_error`, `error_message`,
+    `error_type`, `error_data`, and `error_info`
+
+Recipe:
+
+- [AppSync Lambda Resolvers](./migration/appsync-lambda-resolvers.md)
 
 ## Strict route registration
 
