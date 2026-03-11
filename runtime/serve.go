@@ -95,6 +95,12 @@ func (a *App) DeleteStrict(pattern string, handler Handler, opts ...RouteOption)
 }
 
 func (a *App) Serve(ctx context.Context, req Request) (resp Response) {
+	return a.serveWithContextConfigurer(ctx, req, nil)
+}
+
+type requestContextConfigurer func(*Context)
+
+func (a *App) serveWithContextConfigurer(ctx context.Context, req Request, configure requestContextConfigurer) (resp Response) {
 	if a == nil || a.router == nil {
 		return errorResponse(errorCodeInternal, errorMessageInternal, nil)
 	}
@@ -104,17 +110,17 @@ func (a *App) Serve(ctx context.Context, req Request) (resp Response) {
 
 	switch a.tier {
 	case TierP0:
-		return a.serveP0(ctx, req)
+		return a.serveP0(ctx, req, configure)
 	case TierP1:
-		return a.serveP1(ctx, req)
+		return a.serveP1(ctx, req, configure)
 	case TierP2:
-		return a.serveP2(ctx, req)
+		return a.serveP2(ctx, req, configure)
 	default:
-		return a.serveP2(ctx, req)
+		return a.serveP2(ctx, req, configure)
 	}
 }
 
-func (a *App) serveP0(ctx context.Context, req Request) (resp Response) {
+func (a *App) serveP0(ctx context.Context, req Request, configure requestContextConfigurer) (resp Response) {
 	normalized, err := normalizeRequest(req)
 	if err != nil {
 		return responseForError(err)
@@ -138,6 +144,9 @@ func (a *App) serveP0(ctx context.Context, req Request) (resp Response) {
 		clock:   a.clock,
 		ids:     a.ids,
 	}
+	if configure != nil {
+		configure(requestCtx)
+	}
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -154,12 +163,12 @@ func (a *App) serveP0(ctx context.Context, req Request) (resp Response) {
 	return normalizeResponse(out)
 }
 
-func (a *App) serveP1(ctx context.Context, req Request) (resp Response) {
-	return a.servePortable(ctx, req, false)
+func (a *App) serveP1(ctx context.Context, req Request, configure requestContextConfigurer) (resp Response) {
+	return a.servePortable(ctx, req, false, configure)
 }
 
-func (a *App) serveP2(ctx context.Context, req Request) (resp Response) {
-	return a.servePortable(ctx, req, true)
+func (a *App) serveP2(ctx context.Context, req Request, configure requestContextConfigurer) (resp Response) {
+	return a.servePortable(ctx, req, true, configure)
 }
 
 type portableServeState struct {
@@ -171,7 +180,7 @@ type portableServeState struct {
 	errorCode string
 }
 
-func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool) (resp Response) {
+func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool, configure requestContextConfigurer) (resp Response) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -188,11 +197,11 @@ func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool) (re
 		}
 	}()
 
-	resp = a.servePortableCore(ctx, req, enableP2, &state)
+	resp = a.servePortableCore(ctx, req, enableP2, &state, configure)
 	return resp
 }
 
-func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool, state *portableServeState) Response {
+func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool, state *portableServeState, configure requestContextConfigurer) Response {
 	headers := canonicalizeHeaders(req.Headers)
 	query := cloneQuery(req.Query)
 
@@ -233,6 +242,9 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 		TenantID:        state.tenantID,
 		RemainingMS:     remainingMS,
 		MiddlewareTrace: trace,
+	}
+	if configure != nil {
+		configure(requestCtx)
 	}
 
 	if maxBytes := a.limits.MaxRequestBytes; maxBytes > 0 && len(normalized.Body) > maxBytes {

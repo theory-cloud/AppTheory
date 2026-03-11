@@ -317,10 +317,18 @@ class App:
         return wrapped
 
     def serve(self, request: Request, ctx: Any | None = None) -> Response:
+        return self._serve(request, ctx)
+
+    def _serve(
+        self,
+        request: Request,
+        ctx: Any | None = None,
+        context_configurer: Callable[[Context], None] | None = None,
+    ) -> Response:
         if self._tier == "p1":
-            return self._serve_portable(request, ctx, enable_p2=False)
+            return self._serve_portable(request, ctx, enable_p2=False, context_configurer=context_configurer)
         if self._tier == "p2":
-            return self._serve_portable(request, ctx, enable_p2=True)
+            return self._serve_portable(request, ctx, enable_p2=True, context_configurer=context_configurer)
 
         try:
             normalized = normalize_request(request)
@@ -344,6 +352,8 @@ class App:
             id_generator=self._id_generator,
             ctx=ctx,
         )
+        if context_configurer is not None:
+            context_configurer(request_ctx)
 
         handler = self._apply_middlewares(match.handler)
         try:
@@ -406,7 +416,14 @@ class App:
         request_ctx.auth_identity = str(identity)
         return None
 
-    def _serve_portable(self, request: Request, ctx: Any | None, *, enable_p2: bool) -> Response:
+    def _serve_portable(
+        self,
+        request: Request,
+        ctx: Any | None,
+        *,
+        enable_p2: bool,
+        context_configurer: Callable[[Context], None] | None = None,
+    ) -> Response:
         pre_headers = canonicalize_headers(request.headers)
         pre_query = clone_query(request.query)
 
@@ -484,6 +501,8 @@ class App:
             remaining_ms=remaining_ms,
             middleware_trace=trace,
         )
+        if context_configurer is not None:
+            context_configurer(request_ctx)
 
         policy_outcome = self._policy_check(request_ctx, request_id, enable_p2=enable_p2)
         if policy_outcome is not None:
@@ -624,7 +643,7 @@ class App:
             return _appsync_payload_from_response(response_for_error(exc))
 
         try:
-            resp = self.serve(request, ctx)
+            resp = self._serve(request, ctx, lambda request_ctx: _apply_appsync_context_values(request_ctx, event))
             return _appsync_payload_from_response(resp)
         except Exception as exc:  # noqa: BLE001
             return _appsync_payload_from_response(response_for_error(exc))
@@ -925,6 +944,8 @@ class App:
 
         if "detail-type" in event or "detailType" in event:
             return self.serve_eventbridge(event, ctx=ctx)
+        if _is_appsync_event(event):
+            return self.serve_appsync(event, ctx=ctx)
 
         if "requestContext" in event:
             request_context = event.get("requestContext") or {}
@@ -1045,6 +1066,52 @@ def _request_from_appsync_event(event: AppSyncResolverEvent | dict[str, Any]) ->
         body=body,
         is_base64=False,
     )
+
+
+def _is_appsync_event(event: Any) -> bool:
+    if not isinstance(event, dict):
+        return False
+    if "arguments" not in event:
+        return False
+
+    info = event.get("info") or {}
+    if not isinstance(info, dict):
+        return False
+
+    field_name = str(info.get("fieldName") or "").strip()
+    parent_type_name = str(info.get("parentTypeName") or "").strip()
+    return bool(field_name and parent_type_name)
+
+
+def _apply_appsync_context_values(request_ctx: Context, event: AppSyncResolverEvent | dict[str, Any]) -> None:
+    if not isinstance(event, dict):
+        return
+
+    info = event.get("info") or {}
+    if not isinstance(info, dict):
+        info = {}
+
+    request_info = event.get("request") or {}
+    if not isinstance(request_info, dict):
+        request_info = {}
+    request_headers = request_info.get("headers") or {}
+    if not isinstance(request_headers, dict):
+        request_headers = {}
+
+    request_ctx.set("apptheory.trigger_type", "appsync")
+    request_ctx.set("apptheory.appsync.field_name", str(info.get("fieldName") or "").strip())
+    request_ctx.set("apptheory.appsync.parent_type_name", str(info.get("parentTypeName") or "").strip())
+    request_ctx.set("apptheory.appsync.arguments", event.get("arguments") or {})
+    request_ctx.set("apptheory.appsync.identity", event.get("identity") or {})
+    request_ctx.set("apptheory.appsync.source", event.get("source") or {})
+    request_ctx.set("apptheory.appsync.variables", info.get("variables") or {})
+    request_ctx.set("apptheory.appsync.prev", event.get("prev"))
+    request_ctx.set("apptheory.appsync.stash", event.get("stash") or {})
+    request_ctx.set(
+        "apptheory.appsync.request_headers",
+        {str(key): str(value) for key, value in request_headers.items() if str(key).strip()},
+    )
+    request_ctx.set("apptheory.appsync.raw_event", event)
 
 
 def _appsync_method(parent_type_name: str) -> str:

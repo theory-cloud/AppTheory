@@ -36,7 +36,9 @@ import type {
 import { AppError, AppTheoryError } from "./errors.js";
 import { RandomIdGenerator, type IdGenerator } from "./ids.js";
 import {
+  applyAppSyncContextValues,
   appSyncPayloadFromResponse,
+  isAppSyncResolverEvent,
   requestFromAppSync,
 } from "./internal/aws-appsync.js";
 import {
@@ -414,6 +416,14 @@ export class App {
   }
 
   async serve(request: Request, ctx?: unknown): Promise<Response> {
+    return this._serve(request, ctx);
+  }
+
+  private async _serve(
+    request: Request,
+    ctx?: unknown,
+    configureContext?: (requestCtx: Context) => void,
+  ): Promise<Response> {
     if (this._tier === "p0") {
       let normalized: Context["request"];
       try {
@@ -442,6 +452,7 @@ export class App {
         ids: this._ids,
         ctx,
       });
+      configureContext?.(requestCtx);
 
       try {
         const handler = this._applyMiddlewares(match.route.handler) as Handler;
@@ -560,6 +571,7 @@ export class App {
       remainingMs,
       middlewareTrace,
     });
+    configureContext?.(requestCtx);
 
     if (enableP2 && typeof this._policyHook === "function") {
       let decision: PolicyDecision | null | undefined;
@@ -720,7 +732,9 @@ export class App {
     }
 
     try {
-      const resp = await this.serve(request, ctx);
+      const resp = await this._serve(request, ctx, (requestCtx) => {
+        applyAppSyncContextValues(requestCtx, event);
+      });
       return appSyncPayloadFromResponse(resp);
     } catch (err) {
       return appSyncPayloadFromResponse(responseForError(err));
@@ -1128,6 +1142,9 @@ export class App {
     }
     if (typeof record["detailType"] === "string") {
       return this.serveEventBridge(event as EventBridgeEvent, ctx);
+    }
+    if (isAppSyncResolverEvent(event)) {
+      return this.serveAppSync(event as AppSyncResolverEvent, ctx);
     }
 
     if (

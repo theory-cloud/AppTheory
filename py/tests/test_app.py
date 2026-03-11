@@ -276,6 +276,61 @@ class TestApp(unittest.TestCase):
         )
         self.assertEqual(out2, "GET:/getThing")
 
+    def test_handle_lambda_routes_appsync_and_preserves_metadata(self) -> None:
+        app = create_app(tier="p2")
+
+        def mutation(ctx) -> Response:
+            self.assertEqual(ctx.get("apptheory.trigger_type"), "appsync")
+            self.assertEqual(ctx.get("apptheory.appsync.field_name"), "createThing")
+            self.assertEqual(ctx.get("apptheory.appsync.parent_type_name"), "Mutation")
+            self.assertEqual(ctx.get("apptheory.appsync.identity"), {"username": "user_1"})
+            self.assertEqual(ctx.get("apptheory.appsync.source"), {"id": "parent_1"})
+            self.assertEqual(ctx.get("apptheory.appsync.variables"), {"tenantId": "tenant_1"})
+            self.assertEqual(ctx.get("apptheory.appsync.prev"), "prev_value")
+            self.assertEqual(ctx.get("apptheory.appsync.stash"), {"trace": "abc123"})
+            self.assertEqual(ctx.get("apptheory.appsync.request_headers"), {"x-appsync": "yes"})
+            self.assertEqual(ctx.get("apptheory.appsync.raw_event")["info"]["fieldName"], "createThing")
+
+            return Response(
+                status=200,
+                headers={"content-type": ["application/json; charset=utf-8"]},
+                cookies=[],
+                body=json.dumps({"arguments": ctx.json_value()}, sort_keys=True).encode("utf-8"),
+                is_base64=False,
+            )
+
+        app.post("/createThing", mutation)
+        out = app.handle_lambda(
+            {
+                "arguments": {"id": "thing_123"},
+                "identity": {"username": "user_1"},
+                "source": {"id": "parent_1"},
+                "request": {"headers": {"x-appsync": "yes"}},
+                "info": {
+                    "fieldName": "createThing",
+                    "parentTypeName": "Mutation",
+                    "variables": {"tenantId": "tenant_1"},
+                },
+                "prev": "prev_value",
+                "stash": {"trace": "abc123"},
+            }
+        )
+        self.assertEqual(out, {"arguments": {"id": "thing_123"}})
+
+    def test_handle_lambda_does_not_treat_blank_appsync_field_names_as_appsync(self) -> None:
+        app = create_app(tier="p2")
+
+        with self.assertRaisesRegex(RuntimeError, "unknown event type"):
+            app.handle_lambda(
+                {
+                    "arguments": {},
+                    "info": {
+                        "fieldName": " ",
+                        "parentTypeName": "Mutation",
+                    },
+                }
+            )
+
     def test_websocket_helpers_and_not_found_route(self) -> None:
         app = create_app(tier="p2")
 
