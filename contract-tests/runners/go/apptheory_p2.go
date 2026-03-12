@@ -18,6 +18,7 @@ func runFixtureP2(f Fixture) error {
 
 	app := apptheory.New(
 		apptheory.WithTier(apptheory.TierP2),
+		apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormat(f.Setup.HTTPErrorFormat)),
 		apptheory.WithClock(fixedClock{now: now}),
 		apptheory.WithIDGenerator(fixedIDGenerator{id: "req_test_123"}),
 		apptheory.WithLimits(apptheory.Limits{

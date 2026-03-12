@@ -98,6 +98,33 @@ func (a *App) Serve(ctx context.Context, req Request) (resp Response) {
 	return a.serveWithOptions(ctx, req, serveOptions{})
 }
 
+func (a *App) httpErrorFormatValue() HTTPErrorFormat {
+	if a == nil {
+		return HTTPErrorFormatNested
+	}
+	return normalizeHTTPErrorFormat(a.httpErrorFormat)
+}
+
+func (a *App) httpErrorResponse(code, message string, headers map[string][]string) Response {
+	return errorResponseWithFormat(a.httpErrorFormatValue(), code, message, headers)
+}
+
+func (a *App) httpErrorResponseWithRequestID(
+	code, message string,
+	headers map[string][]string,
+	requestID string,
+) Response {
+	return errorResponseWithRequestIDAndFormat(a.httpErrorFormatValue(), code, message, headers, requestID)
+}
+
+func (a *App) responseForHTTPError(err error) Response {
+	return responseForErrorWithFormat(a.httpErrorFormatValue(), err)
+}
+
+func (a *App) responseForHTTPErrorWithRequestID(err error, requestID string) Response {
+	return responseForErrorWithRequestIDAndFormat(a.httpErrorFormatValue(), err, requestID)
+}
+
 type requestContextConfigurer func(*Context)
 
 type requestErrorResponder func(error, Request, string) Response
@@ -110,7 +137,7 @@ type serveOptions struct {
 
 func (a *App) serveWithOptions(ctx context.Context, req Request, opts serveOptions) (resp Response) {
 	if a == nil || a.router == nil {
-		return errorResponse(errorCodeInternal, errorMessageInternal, nil)
+		return a.httpErrorResponse(errorCodeInternal, errorMessageInternal, nil)
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -128,37 +155,37 @@ func (a *App) serveWithOptions(ctx context.Context, req Request, opts serveOptio
 	}
 }
 
-func respondToServeError(opts serveOptions, err error, req Request, requestID string) Response {
+func (a *App) respondToServeError(opts serveOptions, err error, req Request, requestID string) Response {
 	if opts.errorResponder != nil {
 		return opts.errorResponder(err, req, requestID)
 	}
 	if requestID != "" {
-		return responseForErrorWithRequestID(err, requestID)
+		return a.responseForHTTPErrorWithRequestID(err, requestID)
 	}
-	return responseForError(err)
+	return a.responseForHTTPError(err)
 }
 
 func (a *App) serveP0(ctx context.Context, req Request, opts serveOptions) (resp Response) {
 	normalized, err := normalizeRequest(req)
 	if err != nil {
-		return respondToServeError(opts, err, req, opts.fallbackRequestID)
+		return a.respondToServeError(opts, err, req, opts.fallbackRequestID)
 	}
 
 	match, allowed := a.router.match(normalized.Method, normalized.Path)
 	if match == nil {
 		if opts.errorResponder != nil {
 			if len(allowed) > 0 {
-				return respondToServeError(opts, &AppError{Code: errorCodeMethodNotAllowed, Message: errorMessageMethodNotAllowed}, normalized, opts.fallbackRequestID)
+				return a.respondToServeError(opts, &AppError{Code: errorCodeMethodNotAllowed, Message: errorMessageMethodNotAllowed}, normalized, opts.fallbackRequestID)
 			}
-			return respondToServeError(opts, &AppError{Code: errorCodeNotFound, Message: errorMessageNotFound}, normalized, opts.fallbackRequestID)
+			return a.respondToServeError(opts, &AppError{Code: errorCodeNotFound, Message: errorMessageNotFound}, normalized, opts.fallbackRequestID)
 		}
 		if len(allowed) > 0 {
 			headers := map[string][]string{
 				"allow": {formatAllowHeader(allowed)},
 			}
-			return errorResponse(errorCodeMethodNotAllowed, errorMessageMethodNotAllowed, headers)
+			return a.httpErrorResponse(errorCodeMethodNotAllowed, errorMessageMethodNotAllowed, headers)
 		}
-		return errorResponse(errorCodeNotFound, errorMessageNotFound, nil)
+		return a.httpErrorResponse(errorCodeNotFound, errorMessageNotFound, nil)
 	}
 
 	requestCtx := &Context{
@@ -174,17 +201,17 @@ func (a *App) serveP0(ctx context.Context, req Request, opts serveOptions) (resp
 
 	defer func() {
 		if r := recover(); r != nil {
-			resp = respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, normalized, opts.fallbackRequestID)
+			resp = a.respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, normalized, opts.fallbackRequestID)
 		}
 	}()
 
 	handler := a.applyMiddlewares(match.Route.Handler)
 	out, handlerErr := handler(requestCtx)
 	if handlerErr != nil {
-		return respondToServeError(opts, handlerErr, normalized, opts.fallbackRequestID)
+		return a.respondToServeError(opts, handlerErr, normalized, opts.fallbackRequestID)
 	}
 	if out == nil {
-		return respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, normalized, opts.fallbackRequestID)
+		return a.respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, normalized, opts.fallbackRequestID)
 	}
 	return normalizeResponse(out)
 }
@@ -215,7 +242,7 @@ func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool, opt
 	defer func() {
 		if r := recover(); r != nil {
 			state.errorCode = errorCodeInternal
-			resp = respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, req, state.requestID)
+			resp = a.respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, req, state.requestID)
 		}
 		resp = finalizeP1Response(resp, state.requestID, state.origin, a.cors)
 		if enableP2 {
@@ -248,7 +275,7 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 	normalized, err := normalizeRequest(req)
 	if err != nil {
 		state.errorCode = errorCodeForError(err)
-		return respondToServeError(opts, err, req, state.requestID)
+		return a.respondToServeError(opts, err, req, state.requestID)
 	}
 
 	state.method = normalized.Method
@@ -271,7 +298,7 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 
 	if maxBytes := a.limits.MaxRequestBytes; maxBytes > 0 && len(normalized.Body) > maxBytes {
 		state.errorCode = errorCodeTooLarge
-		return respondToServeError(opts, &AppError{Code: errorCodeTooLarge, Message: errorMessageRequestTooLarge}, normalized, state.requestID)
+		return a.respondToServeError(opts, &AppError{Code: errorCodeTooLarge, Message: errorMessageRequestTooLarge}, normalized, state.requestID)
 	}
 
 	match, allowed := a.router.match(state.method, state.path)
@@ -279,12 +306,12 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 		if opts.errorResponder != nil {
 			if len(allowed) > 0 {
 				state.errorCode = errorCodeMethodNotAllowed
-				return respondToServeError(opts, &AppError{Code: errorCodeMethodNotAllowed, Message: errorMessageMethodNotAllowed}, normalized, state.requestID)
+				return a.respondToServeError(opts, &AppError{Code: errorCodeMethodNotAllowed, Message: errorMessageMethodNotAllowed}, normalized, state.requestID)
 			}
 			state.errorCode = errorCodeNotFound
-			return respondToServeError(opts, &AppError{Code: errorCodeNotFound, Message: errorMessageNotFound}, normalized, state.requestID)
+			return a.respondToServeError(opts, &AppError{Code: errorCodeNotFound, Message: errorMessageNotFound}, normalized, state.requestID)
 		}
-		resp, errorCode := routeNotFoundResponse(allowed, state.requestID)
+		resp, errorCode := a.routeNotFoundResponse(allowed, state.requestID)
 		state.errorCode = errorCode
 		return resp
 	}
@@ -306,18 +333,18 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 	out, handlerErr := handler(requestCtx)
 	if handlerErr != nil {
 		state.errorCode = errorCodeForError(handlerErr)
-		return respondToServeError(opts, handlerErr, normalized, state.requestID)
+		return a.respondToServeError(opts, handlerErr, normalized, state.requestID)
 	}
 
 	if out == nil {
 		state.errorCode = errorCodeInternal
-		return respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, normalized, state.requestID)
+		return a.respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, normalized, state.requestID)
 	}
 
 	resp := normalizeResponse(out)
 	if maxBytes := a.limits.MaxResponseBytes; maxBytes > 0 && len(resp.Body) > maxBytes {
 		state.errorCode = errorCodeTooLarge
-		return respondToServeError(opts, &AppError{Code: errorCodeTooLarge, Message: errorMessageResponseTooLarge}, normalized, state.requestID)
+		return a.respondToServeError(opts, &AppError{Code: errorCodeTooLarge, Message: errorMessageResponseTooLarge}, normalized, state.requestID)
 	}
 
 	return resp
@@ -366,14 +393,14 @@ func errorCodeForError(err error) string {
 	return errorCodeInternal
 }
 
-func routeNotFoundResponse(allowed []string, requestID string) (Response, string) {
+func (a *App) routeNotFoundResponse(allowed []string, requestID string) (Response, string) {
 	if len(allowed) > 0 {
 		headers := map[string][]string{
 			"allow": {formatAllowHeader(allowed)},
 		}
-		return errorResponseWithRequestID(errorCodeMethodNotAllowed, errorMessageMethodNotAllowed, headers, requestID), errorCodeMethodNotAllowed
+		return a.httpErrorResponseWithRequestID(errorCodeMethodNotAllowed, errorMessageMethodNotAllowed, headers, requestID), errorCodeMethodNotAllowed
 	}
-	return errorResponseWithRequestID(errorCodeNotFound, errorMessageNotFound, nil, requestID), errorCodeNotFound
+	return a.httpErrorResponseWithRequestID(errorCodeNotFound, errorMessageNotFound, nil, requestID), errorCodeNotFound
 }
 
 func (a *App) applyPolicy(
@@ -391,7 +418,7 @@ func (a *App) applyPolicy(
 		if errorResponder != nil {
 			return errorResponder(err, requestCtx.Request, requestID), errorCodeForError(err), true
 		}
-		return errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, requestID), errorCodeInternal, true
+		return a.httpErrorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, requestID), errorCodeInternal, true
 	}
 	if decision == nil {
 		return Response{}, "", false
@@ -410,7 +437,7 @@ func (a *App) applyPolicy(
 	if errorResponder != nil {
 		return errorResponder(&AppError{Code: code, Message: message}, requestCtx.Request, requestID), code, true
 	}
-	return errorResponseWithRequestID(code, message, decision.Headers, requestID), code, true
+	return a.httpErrorResponseWithRequestID(code, message, decision.Headers, requestID), code, true
 }
 
 func (a *App) authorize(
@@ -429,7 +456,7 @@ func (a *App) authorize(
 		if errorResponder != nil {
 			return errorResponder(&AppError{Code: errorCodeUnauthorized, Message: errorMessageUnauthorized}, requestCtx.Request, requestID), errorCodeUnauthorized, true
 		}
-		return errorResponseWithRequestID(errorCodeUnauthorized, errorMessageUnauthorized, nil, requestID), errorCodeUnauthorized, true
+		return a.httpErrorResponseWithRequestID(errorCodeUnauthorized, errorMessageUnauthorized, nil, requestID), errorCodeUnauthorized, true
 	}
 
 	identity, err := a.auth(requestCtx)
@@ -437,7 +464,7 @@ func (a *App) authorize(
 		if errorResponder != nil {
 			return errorResponder(err, requestCtx.Request, requestID), errorCodeForError(err), true
 		}
-		return responseForErrorWithRequestID(err, requestID), errorCodeForError(err), true
+		return a.responseForHTTPErrorWithRequestID(err, requestID), errorCodeForError(err), true
 	}
 
 	identity = strings.TrimSpace(identity)
@@ -445,7 +472,7 @@ func (a *App) authorize(
 		if errorResponder != nil {
 			return errorResponder(&AppError{Code: errorCodeUnauthorized, Message: errorMessageUnauthorized}, requestCtx.Request, requestID), errorCodeUnauthorized, true
 		}
-		return errorResponseWithRequestID(errorCodeUnauthorized, errorMessageUnauthorized, nil, requestID), errorCodeUnauthorized, true
+		return a.httpErrorResponseWithRequestID(errorCodeUnauthorized, errorMessageUnauthorized, nil, requestID), errorCodeUnauthorized, true
 	}
 
 	requestCtx.AuthIdentity = identity
