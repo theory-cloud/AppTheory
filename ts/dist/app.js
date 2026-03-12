@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { RealClock } from "./clock.js";
 import { Context, EventContext, WebSocketContext } from "./context.js";
 import { AppError, AppTheoryError } from "./errors.js";
+import { normalizeHTTPErrorFormat, } from "./http-error-format.js";
 import { RandomIdGenerator } from "./ids.js";
 import { applyAppSyncContextValues, appSyncErrorResponse, appSyncPayloadFromResponse, appSyncRequestFromEvent, appSyncRequestIdFromContext, appSyncRequestIdFromResponse, createAppSyncContext, isAppSyncResolverEvent, requestFromAppSync, } from "./internal/aws-appsync.js";
 import { albTargetGroupResponseFromResponse, apigatewayProxyResponseFromResponse, apigatewayV2ResponseFromResponse, lambdaFunctionURLResponseFromResponse, requestFromALBTargetGroup, requestFromAPIGatewayProxy, requestFromAPIGatewayV2, requestFromLambdaFunctionURL, requestFromWebSocketEvent, } from "./internal/aws-http.js";
@@ -9,7 +10,7 @@ import { serveLambdaFunctionURLStreaming, } from "./internal/aws-lambda-streamin
 import { dynamoDBTableNameFromStreamArn, eventBridgeRuleNameFromArn, kinesisStreamNameFromArn, snsTopicNameFromArn, sqsQueueNameFromArn, webSocketManagementEndpoint, } from "./internal/aws-names.js";
 import { canonicalizeHeaders, cloneQuery, firstHeaderValue, normalizeMethod, normalizePath, } from "./internal/http.js";
 import { normalizeRequest } from "./internal/request.js";
-import { errorResponse, errorResponseWithRequestId, normalizeResponse, responseForError, responseForErrorWithRequestId, } from "./internal/response.js";
+import { errorResponse, errorResponseWithFormat, errorResponseWithRequestId, errorResponseWithRequestIdAndFormat, normalizeResponse, responseForError, responseForErrorWithFormat, responseForErrorWithRequestId, responseForErrorWithRequestIdAndFormat, } from "./internal/response.js";
 import { Router } from "./internal/router.js";
 import { vary } from "./response.js";
 import { WebSocketManagementClient } from "./websocket-management.js";
@@ -24,11 +25,13 @@ function errorCodeFrom(err) {
     }
     return "app.internal";
 }
+export { HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED, } from "./http-error-format.js";
 export class App {
     _router;
     _clock;
     _ids;
     _tier;
+    _httpErrorFormat;
     _limits;
     _cors;
     _authHook;
@@ -51,6 +54,7 @@ export class App {
             options.tier === "p0" || options.tier === "p1" || options.tier === "p2"
                 ? options.tier
                 : "p2";
+        this._httpErrorFormat = normalizeHTTPErrorFormat(options.httpErrorFormat);
         this._limits = {
             maxRequestBytes: Number(options.limits?.maxRequestBytes ?? 0),
             maxResponseBytes: Number(options.limits?.maxResponseBytes ?? 0),
@@ -71,6 +75,9 @@ export class App {
         this._dynamoDBRoutes = [];
         this._middlewares = [];
         this._eventMiddlewares = [];
+    }
+    getHTTPErrorFormat() {
+        return this._httpErrorFormat;
     }
     handle(method, pattern, handler, options = {}) {
         this._router.add(method, pattern, handler, options);
@@ -138,6 +145,18 @@ export class App {
         }
         return wrapped;
     }
+    _httpErrorResponse(code, message, headers = {}) {
+        return errorResponseWithFormat(this._httpErrorFormat, code, message, headers);
+    }
+    _httpErrorResponseWithRequestId(code, message, headers = {}, requestId = "") {
+        return errorResponseWithRequestIdAndFormat(this._httpErrorFormat, code, message, headers, requestId);
+    }
+    _responseForHTTPError(err) {
+        return responseForErrorWithFormat(this._httpErrorFormat, err);
+    }
+    _responseForHTTPErrorWithRequestId(err, requestId) {
+        return responseForErrorWithRequestIdAndFormat(this._httpErrorFormat, err, requestId);
+    }
     webSocket(routeKey, handler) {
         const key = String(routeKey ?? "").trim();
         if (!key || typeof handler !== "function")
@@ -195,9 +214,9 @@ export class App {
                 return contextOptions.errorResponder(err, errorRequest, requestId);
             }
             if (requestId) {
-                return responseForErrorWithRequestId(err, requestId);
+                return this._responseForHTTPErrorWithRequestId(err, requestId);
             }
-            return responseForError(err);
+            return this._responseForHTTPError(err);
         };
         if (this._tier === "p0") {
             let normalized;
@@ -216,11 +235,11 @@ export class App {
                     return respondToServeError(new AppError("app.not_found", "not found"), normalized, String(contextOptions?.fallbackRequestId ?? "").trim());
                 }
                 if (allowed.length > 0) {
-                    return errorResponse("app.method_not_allowed", "method not allowed", {
+                    return this._httpErrorResponse("app.method_not_allowed", "method not allowed", {
                         allow: [formatAllowHeader(allowed)],
                     });
                 }
-                return errorResponse("app.not_found", "not found");
+                return this._httpErrorResponse("app.not_found", "not found");
             }
             const requestCtx = new Context({
                 request: normalized,
@@ -301,7 +320,7 @@ export class App {
             if (typeof contextOptions?.errorResponder === "function") {
                 return finish(respondToServeError(new AppError("app.too_large", "request too large"), normalized, requestId), "app.too_large");
             }
-            return finish(errorResponseWithRequestId("app.too_large", "request too large", {}, requestId), "app.too_large");
+            return finish(this._httpErrorResponseWithRequestId("app.too_large", "request too large", {}, requestId), "app.too_large");
         }
         const { match, allowed } = this._router.match(normalized.method, normalized.path);
         if (!match) {
@@ -312,9 +331,9 @@ export class App {
                 return finish(respondToServeError(new AppError("app.not_found", "not found"), normalized, requestId), "app.not_found");
             }
             if (allowed.length > 0) {
-                return finish(errorResponseWithRequestId("app.method_not_allowed", "method not allowed", { allow: [formatAllowHeader(allowed)] }, requestId), "app.method_not_allowed");
+                return finish(this._httpErrorResponseWithRequestId("app.method_not_allowed", "method not allowed", { allow: [formatAllowHeader(allowed)] }, requestId), "app.method_not_allowed");
             }
-            return finish(errorResponseWithRequestId("app.not_found", "not found", {}, requestId), "app.not_found");
+            return finish(this._httpErrorResponseWithRequestId("app.not_found", "not found", {}, requestId), "app.not_found");
         }
         const requestCtx = new Context({
             request: normalized,
@@ -345,7 +364,7 @@ export class App {
                 if (typeof contextOptions?.errorResponder === "function") {
                     return finish(respondToServeError(new AppError(code, message), normalized, requestId), code);
                 }
-                return finish(errorResponseWithRequestId(code, message, decision?.headers ?? {}, requestId), code);
+                return finish(this._httpErrorResponseWithRequestId(code, message, decision?.headers ?? {}, requestId), code);
             }
         }
         if (match.route.authRequired) {
@@ -391,7 +410,7 @@ export class App {
             if (typeof contextOptions?.errorResponder === "function") {
                 return finish(respondToServeError(new AppError("app.too_large", "response too large"), normalized, requestId), "app.too_large");
             }
-            return finish(errorResponseWithRequestId("app.too_large", "response too large", {}, requestId), "app.too_large");
+            return finish(this._httpErrorResponseWithRequestId("app.too_large", "response too large", {}, requestId), "app.too_large");
         }
         return finish(resp, "");
     }
@@ -401,7 +420,7 @@ export class App {
             request = requestFromAPIGatewayV2(event);
         }
         catch (err) {
-            return apigatewayV2ResponseFromResponse(responseForError(err));
+            return apigatewayV2ResponseFromResponse(this._responseForHTTPError(err));
         }
         const resp = await this.serve(request, ctx);
         return apigatewayV2ResponseFromResponse(resp);
@@ -412,7 +431,7 @@ export class App {
             request = requestFromLambdaFunctionURL(event);
         }
         catch (err) {
-            return lambdaFunctionURLResponseFromResponse(responseForError(err));
+            return lambdaFunctionURLResponseFromResponse(this._responseForHTTPError(err));
         }
         const resp = await this.serve(request, ctx);
         return lambdaFunctionURLResponseFromResponse(resp);
@@ -423,7 +442,7 @@ export class App {
             request = requestFromAPIGatewayProxy(event);
         }
         catch (err) {
-            return apigatewayProxyResponseFromResponse(responseForError(err));
+            return apigatewayProxyResponseFromResponse(this._responseForHTTPError(err));
         }
         const resp = await this.serve(request, ctx);
         return apigatewayProxyResponseFromResponse(resp);
@@ -434,7 +453,7 @@ export class App {
             request = requestFromALBTargetGroup(event);
         }
         catch (err) {
-            return albTargetGroupResponseFromResponse(responseForError(err));
+            return albTargetGroupResponseFromResponse(this._responseForHTTPError(err));
         }
         const resp = await this.serve(request, ctx);
         return albTargetGroupResponseFromResponse(resp);

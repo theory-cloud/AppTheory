@@ -30,7 +30,12 @@ from apptheory.cache import cache_control_isr, cache_control_ssg, cache_control_
 from apptheory.clock import Clock, ManualClock, RealClock
 from apptheory.cloudfront import client_ip, origin_url
 from apptheory.context import AppSyncContext, Context, EventContext, WebSocketContext
-from apptheory.errors import AppError, AppTheoryError
+from apptheory.errors import (
+    HTTP_ERROR_FORMAT_FLAT_LEGACY,
+    HTTP_ERROR_FORMAT_NESTED,
+    AppError,
+    AppTheoryError,
+)
 from apptheory.ids import IDGenerator, IdGenerator, ManualIdGenerator, RealIdGenerator
 
 try:
@@ -155,6 +160,8 @@ from apptheory.testkit import (
 
 __all__ = [
     "DEFAULT_JOBS_TABLE_NAME",
+    "HTTP_ERROR_FORMAT_FLAT_LEGACY",
+    "HTTP_ERROR_FORMAT_NESTED",
     "App",
     "AppError",
     "AppSyncContext",

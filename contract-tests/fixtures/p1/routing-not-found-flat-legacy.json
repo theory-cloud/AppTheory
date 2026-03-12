@@ -1,0 +1,34 @@
+{
+  "id": "p1.routing.not_found_flat_legacy",
+  "tier": "p1",
+  "name": "Framework not-found errors support the legacy flat body shape",
+  "setup": {
+    "http_error_format": "flat_legacy",
+    "routes": []
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/missing",
+      "query": {},
+      "headers": { "x-request-id": ["req_123"] },
+      "body": { "encoding": "utf8", "value": "" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 404,
+      "headers": {
+        "content-type": ["application/json; charset=utf-8"],
+        "x-request-id": ["req_123"]
+      },
+      "cookies": [],
+      "body_json": {
+        "code": "app.not_found",
+        "message": "not found"
+      },
+      "is_base64": false
+    }
+  }
+}

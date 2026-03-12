@@ -8,8 +8,13 @@ import (
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
-func newAppTheoryFixtureAppP1(now time.Time, limits FixtureLimits, cors FixtureCORSConfig) *apptheory.App {
-	return apptheory.New(
+func newAppTheoryFixtureAppP1(
+	now time.Time,
+	limits FixtureLimits,
+	cors FixtureCORSConfig,
+	httpErrorFormat string,
+) *apptheory.App {
+	opts := []apptheory.Option{
 		apptheory.WithTier(apptheory.TierP1),
 		apptheory.WithClock(fixedClock{now: now}),
 		apptheory.WithIDGenerator(fixedIDGenerator{id: "req_test_123"}),
@@ -32,7 +37,12 @@ func newAppTheoryFixtureAppP1(now time.Time, limits FixtureLimits, cors FixtureC
 			}
 			return authorizedIdentity, nil
 		}),
-	)
+	}
+	if strings.TrimSpace(httpErrorFormat) != "" {
+		opts = append(opts, apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormat(httpErrorFormat)))
+	}
+
+	return apptheory.New(opts...)
 }
 
 func fixtureContext(now time.Time, remainingMS int) (context.Context, context.CancelFunc) {
