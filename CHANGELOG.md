@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.18.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v0.18.0-rc...v0.18.0-rc.1) (2026-03-12)
+
+
+### Bug Fixes
+
+* add legacy flat HTTP error compatibility ([c977173](https://github.com/theory-cloud/AppTheory/commit/c97717394ddd89f9573699b8de901b35acddab1b))
+* add legacy flat HTTP error compatibility ([dbe5544](https://github.com/theory-cloud/AppTheory/commit/dbe55449bea18e0b4dcf362113089c7beabc2ede))
+* **ci:** handle premain-target promotion PRs ([f219a8d](https://github.com/theory-cloud/AppTheory/commit/f219a8d8cfd205421058d1ea7d1f47e4e2552c86))
+* regenerate cdk artifacts for main promotion ([457cd74](https://github.com/theory-cloud/AppTheory/commit/457cd7487b5b4256b4ee50f602f0558253f90371))
+* resolve premain into main merge ([fd15467](https://github.com/theory-cloud/AppTheory/commit/fd15467628f5b5bdb9b1bc3c5dbd2945786a0ec7))
+* resolve premain into main merge ([ee32380](https://github.com/theory-cloud/AppTheory/commit/ee3238034d0aa7537ab31a3b567a4869134211fe))
+* satisfy CI for legacy HTTP error compatibility ([8b8b546](https://github.com/theory-cloud/AppTheory/commit/8b8b546c0924f37846a4a25992443ea2ad9ce7f5))
+* sync main into premain ([e3b6ae3](https://github.com/theory-cloud/AppTheory/commit/e3b6ae33f47b6b4457fe986f3a6d6e526747878e))
+
 ## [0.18.0](https://github.com/theory-cloud/AppTheory/compare/v0.17.1...v0.18.0) (2026-03-11)
 
 
