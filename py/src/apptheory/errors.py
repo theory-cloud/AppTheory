@@ -7,6 +7,15 @@ from typing import Any
 from apptheory.response import Response, normalize_response
 from apptheory.util import canonicalize_headers
 
+HTTP_ERROR_FORMAT_NESTED = "nested"
+HTTP_ERROR_FORMAT_FLAT_LEGACY = "flat_legacy"
+
+
+def normalize_http_error_format(value: str | None) -> str:
+    if str(value or "").strip() == HTTP_ERROR_FORMAT_FLAT_LEGACY:
+        return HTTP_ERROR_FORMAT_FLAT_LEGACY
+    return HTTP_ERROR_FORMAT_NESTED
+
 
 @dataclass(slots=True)
 class AppError(Exception):
@@ -95,14 +104,20 @@ def status_for_error_code(code: str) -> int:
 
 
 def error_response(code: str, message: str, *, headers: dict[str, Any] | None = None) -> Response:
+    return error_response_with_format(HTTP_ERROR_FORMAT_NESTED, code, message, headers=headers)
+
+
+def error_response_with_format(
+    error_format: str,
+    code: str,
+    message: str,
+    *,
+    headers: dict[str, Any] | None = None,
+) -> Response:
     headers_out = canonicalize_headers(headers or {})
     headers_out["content-type"] = ["application/json; charset=utf-8"]
 
-    body = json.dumps(
-        {"error": {"code": code, "message": message}},
-        ensure_ascii=False,
-        sort_keys=True,
-    ).encode("utf-8")
+    body = _serialize_http_error_body(error_format, {"code": code, "message": message})
 
     return normalize_response(
         Response(
@@ -122,18 +137,31 @@ def error_response_with_request_id(
     headers: dict[str, Any] | None = None,
     request_id: str = "",
 ) -> Response:
+    return error_response_with_request_id_and_format(
+        HTTP_ERROR_FORMAT_NESTED,
+        code,
+        message,
+        headers=headers,
+        request_id=request_id,
+    )
+
+
+def error_response_with_request_id_and_format(
+    error_format: str,
+    code: str,
+    message: str,
+    *,
+    headers: dict[str, Any] | None = None,
+    request_id: str = "",
+) -> Response:
     headers_out = canonicalize_headers(headers or {})
     headers_out["content-type"] = ["application/json; charset=utf-8"]
 
     error: dict[str, Any] = {"code": code, "message": message}
-    if request_id:
+    if normalize_http_error_format(error_format) != HTTP_ERROR_FORMAT_FLAT_LEGACY and request_id:
         error["request_id"] = str(request_id)
 
-    body = json.dumps(
-        {"error": error},
-        ensure_ascii=False,
-        sort_keys=True,
-    ).encode("utf-8")
+    body = _serialize_http_error_body(error_format, error)
 
     return normalize_response(
         Response(
@@ -152,33 +180,46 @@ def error_response_from_app_theory_error(
     headers: dict[str, Any] | None = None,
     request_id: str = "",
 ) -> Response:
+    return error_response_from_app_theory_error_with_format(
+        HTTP_ERROR_FORMAT_NESTED,
+        exc,
+        headers=headers,
+        request_id=request_id,
+    )
+
+
+def error_response_from_app_theory_error_with_format(
+    error_format: str,
+    exc: AppTheoryError,
+    *,
+    headers: dict[str, Any] | None = None,
+    request_id: str = "",
+) -> Response:
     headers_out = canonicalize_headers(headers or {})
     headers_out["content-type"] = ["application/json; charset=utf-8"]
+    normalized_format = normalize_http_error_format(error_format)
 
     code = str(exc.code or "").strip() or "app.internal"
     status = int(exc.status_code) if exc.status_code and exc.status_code > 0 else status_for_error_code(code)
 
     error: dict[str, Any] = {"code": code, "message": str(exc.message)}
-    if exc.status_code and exc.status_code > 0:
+    if normalized_format != HTTP_ERROR_FORMAT_FLAT_LEGACY and exc.status_code and exc.status_code > 0:
         error["status_code"] = int(exc.status_code)
     if exc.details is not None:
         error["details"] = exc.details
 
-    resolved_request_id = str(exc.request_id or "").strip() or str(request_id or "").strip()
-    if resolved_request_id:
-        error["request_id"] = resolved_request_id
-    if str(exc.trace_id or "").strip():
-        error["trace_id"] = str(exc.trace_id)
-    if str(exc.timestamp or "").strip():
-        error["timestamp"] = str(exc.timestamp)
-    if str(exc.stack_trace or "").strip():
-        error["stack_trace"] = str(exc.stack_trace)
+    if normalized_format != HTTP_ERROR_FORMAT_FLAT_LEGACY:
+        resolved_request_id = str(exc.request_id or "").strip() or str(request_id or "").strip()
+        if resolved_request_id:
+            error["request_id"] = resolved_request_id
+        if str(exc.trace_id or "").strip():
+            error["trace_id"] = str(exc.trace_id)
+        if str(exc.timestamp or "").strip():
+            error["timestamp"] = str(exc.timestamp)
+        if str(exc.stack_trace or "").strip():
+            error["stack_trace"] = str(exc.stack_trace)
 
-    body = json.dumps(
-        {"error": error},
-        ensure_ascii=False,
-        sort_keys=True,
-    ).encode("utf-8")
+    body = _serialize_http_error_body(error_format, error)
 
     return normalize_response(
         Response(
@@ -192,16 +233,39 @@ def error_response_from_app_theory_error(
 
 
 def response_for_error(exc: Exception) -> Response:
+    return response_for_error_with_format(HTTP_ERROR_FORMAT_NESTED, exc)
+
+
+def response_for_error_with_format(error_format: str, exc: Exception) -> Response:
     if isinstance(exc, AppTheoryError):
-        return error_response_from_app_theory_error(exc)
+        return error_response_from_app_theory_error_with_format(error_format, exc)
     if isinstance(exc, AppError):
-        return error_response(exc.code, exc.message)
-    return error_response("app.internal", "internal error")
+        return error_response_with_format(error_format, exc.code, exc.message)
+    return error_response_with_format(error_format, "app.internal", "internal error")
 
 
 def response_for_error_with_request_id(exc: Exception, request_id: str) -> Response:
+    return response_for_error_with_request_id_and_format(HTTP_ERROR_FORMAT_NESTED, exc, request_id)
+
+
+def response_for_error_with_request_id_and_format(error_format: str, exc: Exception, request_id: str) -> Response:
     if isinstance(exc, AppTheoryError):
-        return error_response_from_app_theory_error(exc, request_id=request_id)
+        return error_response_from_app_theory_error_with_format(error_format, exc, request_id=request_id)
     if isinstance(exc, AppError):
-        return error_response_with_request_id(exc.code, exc.message, request_id=request_id)
-    return error_response_with_request_id("app.internal", "internal error", request_id=request_id)
+        return error_response_with_request_id_and_format(
+            error_format,
+            exc.code,
+            exc.message,
+            request_id=request_id,
+        )
+    return error_response_with_request_id_and_format(
+        error_format,
+        "app.internal",
+        "internal error",
+        request_id=request_id,
+    )
+
+
+def _serialize_http_error_body(error_format: str, error: dict[str, Any]) -> bytes:
+    payload = error if normalize_http_error_format(error_format) == HTTP_ERROR_FORMAT_FLAT_LEGACY else {"error": error}
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")

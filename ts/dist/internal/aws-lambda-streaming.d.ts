@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import type { LambdaFunctionURLRequest } from "../aws-types.js";
+import { type HTTPErrorFormat } from "../http-error-format.js";
 import type { Request, Response } from "../types.js";
 type LambdaResponseMeta = {
     statusCode: number;
@@ -13,6 +14,7 @@ export type HttpResponseStreamLike = {
 };
 type AppLike = {
     serve: (request: Request, ctx?: unknown) => Promise<Response>;
+    getHTTPErrorFormat?: () => HTTPErrorFormat;
 };
 export declare function serveLambdaFunctionURLStreaming(app: AppLike, event: LambdaFunctionURLRequest, responseStream: HttpResponseStreamLike, ctx?: unknown): Promise<string>;
 export declare class CapturedHttpResponseStream implements HttpResponseStreamLike {

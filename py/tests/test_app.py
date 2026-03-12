@@ -231,6 +231,45 @@ class TestApp(unittest.TestCase):
         self.assertEqual(app.serve_apigw_proxy(None)["statusCode"], 500)  # type: ignore[arg-type]
         self.assertEqual(app.serve_alb(None)["statusCode"], 500)  # type: ignore[arg-type]
 
+    def test_legacy_http_error_format_preserves_flat_error_body(self) -> None:
+        app = create_app(tier="p2", http_error_format="flat_legacy")
+
+        def portable(_ctx) -> Response:
+            raise AppTheoryError(
+                code="VALIDATION_ERROR",
+                message="bad input",
+                status_code=422,
+                details={"field": "config_type"},
+                trace_id="trace_1",
+                request_id="req_from_error",
+            )
+
+        app.get("/portable", portable)
+        resp = app.serve(
+            Request(method="GET", path="/portable", headers={"x-request-id": "req_123"}, body="")
+        )
+        self.assertEqual(resp.status, 422)
+        self.assertEqual(resp.headers["x-request-id"], ["req_123"])
+        self.assertEqual(
+            json.loads(resp.body),
+            {
+                "code": "VALIDATION_ERROR",
+                "message": "bad input",
+                "details": {"field": "config_type"},
+            },
+        )
+
+        missing = app.serve(Request(method="GET", path="/missing", headers={"x-request-id": "req_456"}, body=""))
+        self.assertEqual(missing.status, 404)
+        self.assertEqual(missing.headers["x-request-id"], ["req_456"])
+        self.assertEqual(json.loads(missing.body), {"code": "app.not_found", "message": "not found"})
+
+    def test_legacy_http_error_format_applies_to_http_adapter_parse_failures(self) -> None:
+        app = create_app(tier="p2", http_error_format="flat_legacy")
+        out = app.serve_apigw_v2(None)  # type: ignore[arg-type]
+        self.assertEqual(out["statusCode"], 500)
+        self.assertEqual(json.loads(out["body"]), {"code": "app.internal", "message": "internal error"})
+
     def test_serve_appsync_adapts_request_and_projects_payload(self) -> None:
         app = create_app(tier="p2")
 

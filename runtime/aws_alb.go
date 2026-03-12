@@ -13,7 +13,7 @@ import (
 func (a *App) ServeALB(ctx context.Context, event events.ALBTargetGroupRequest) events.ALBTargetGroupResponse {
 	req, err := requestFromALB(event)
 	if err != nil {
-		return albTargetGroupResponseFromResponse(responseForError(err))
+		return albTargetGroupResponseFromResponse(a.responseForHTTPError(err))
 	}
 	return albTargetGroupResponseFromResponse(a.Serve(ctx, req))
 }
