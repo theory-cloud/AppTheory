@@ -27,12 +27,10 @@ from apptheory.errors import (
     AppTheoryError,
     error_response,
     error_response_with_format,
-    error_response_with_request_id,
     error_response_with_request_id_and_format,
     normalize_http_error_format,
     response_for_error,
     response_for_error_with_format,
-    response_for_error_with_request_id,
     response_for_error_with_request_id_and_format,
     status_for_error_code,
 )

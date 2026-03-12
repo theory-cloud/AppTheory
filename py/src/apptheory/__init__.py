@@ -160,6 +160,8 @@ from apptheory.testkit import (
 
 __all__ = [
     "DEFAULT_JOBS_TABLE_NAME",
+    "HTTP_ERROR_FORMAT_FLAT_LEGACY",
+    "HTTP_ERROR_FORMAT_NESTED",
     "App",
     "AppError",
     "AppSyncContext",
@@ -176,8 +178,6 @@ __all__ = [
     "EventContext",
     "FakeWebSocketClientFactory",
     "FakeWebSocketManagementClient",
-    "HTTP_ERROR_FORMAT_FLAT_LEGACY",
-    "HTTP_ERROR_FORMAT_NESTED",
     "IDGenerator",
     "IdGenerator",
     "JobLedgerError",

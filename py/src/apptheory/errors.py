@@ -12,7 +12,9 @@ HTTP_ERROR_FORMAT_FLAT_LEGACY = "flat_legacy"
 
 
 def normalize_http_error_format(value: str | None) -> str:
-    return HTTP_ERROR_FORMAT_FLAT_LEGACY if str(value or "").strip() == HTTP_ERROR_FORMAT_FLAT_LEGACY else HTTP_ERROR_FORMAT_NESTED
+    if str(value or "").strip() == HTTP_ERROR_FORMAT_FLAT_LEGACY:
+        return HTTP_ERROR_FORMAT_FLAT_LEGACY
+    return HTTP_ERROR_FORMAT_NESTED
 
 
 @dataclass(slots=True)
@@ -195,17 +197,18 @@ def error_response_from_app_theory_error_with_format(
 ) -> Response:
     headers_out = canonicalize_headers(headers or {})
     headers_out["content-type"] = ["application/json; charset=utf-8"]
+    normalized_format = normalize_http_error_format(error_format)
 
     code = str(exc.code or "").strip() or "app.internal"
     status = int(exc.status_code) if exc.status_code and exc.status_code > 0 else status_for_error_code(code)
 
     error: dict[str, Any] = {"code": code, "message": str(exc.message)}
-    if normalize_http_error_format(error_format) != HTTP_ERROR_FORMAT_FLAT_LEGACY and exc.status_code and exc.status_code > 0:
+    if normalized_format != HTTP_ERROR_FORMAT_FLAT_LEGACY and exc.status_code and exc.status_code > 0:
         error["status_code"] = int(exc.status_code)
     if exc.details is not None:
         error["details"] = exc.details
 
-    if normalize_http_error_format(error_format) != HTTP_ERROR_FORMAT_FLAT_LEGACY:
+    if normalized_format != HTTP_ERROR_FORMAT_FLAT_LEGACY:
         resolved_request_id = str(exc.request_id or "").strip() or str(request_id or "").strip()
         if resolved_request_id:
             error["request_id"] = resolved_request_id
@@ -264,9 +267,5 @@ def response_for_error_with_request_id_and_format(error_format: str, exc: Except
 
 
 def _serialize_http_error_body(error_format: str, error: dict[str, Any]) -> bytes:
-    payload: dict[str, Any]
-    if normalize_http_error_format(error_format) == HTTP_ERROR_FORMAT_FLAT_LEGACY:
-        payload = error
-    else:
-        payload = {"error": error}
+    payload = error if normalize_http_error_format(error_format) == HTTP_ERROR_FORMAT_FLAT_LEGACY else {"error": error}
     return json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")

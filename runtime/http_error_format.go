@@ -9,7 +9,7 @@ const (
 )
 
 func normalizeHTTPErrorFormat(format HTTPErrorFormat) HTTPErrorFormat {
-	switch HTTPErrorFormat(format) {
+	switch format {
 	case HTTPErrorFormatFlatLegacy:
 		return HTTPErrorFormatFlatLegacy
 	default:
