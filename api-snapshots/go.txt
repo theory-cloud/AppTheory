@@ -1182,6 +1182,10 @@ func (*client) PostToConnection(context.Context, string, []byte) error
 
 ## github.com/theory-cloud/apptheory/runtime
 
+const HTTPErrorFormatFlatLegacy HTTPErrorFormat = "flat_legacy"
+
+const HTTPErrorFormatNested HTTPErrorFormat = "nested"
+
 const RateLimitDecisionKey = "rate_limit_decision"
 
 const TierP0 Tier = "p0"
@@ -1195,6 +1199,7 @@ type App struct {
 	clock            Clock
 	ids              IDGenerator
 	tier             Tier
+	httpErrorFormat  HTTPErrorFormat
 	limits           Limits
 	cors             CORSConfig
 	auth             AuthHook
@@ -1324,6 +1329,8 @@ type EventContext struct {
 type EventHandler func(*EventContext, any) (any, error)
 
 type EventMiddleware func(EventHandler) EventHandler
+
+type HTTPErrorFormat string
 
 type Handler func(*Context) (*Response, error)
 
@@ -1550,7 +1557,11 @@ func WithCORS(CORSConfig) Option
 
 func WithClock(Clock) Option
 
+func WithHTTPErrorFormat(HTTPErrorFormat) Option
+
 func WithIDGenerator(IDGenerator) Option
+
+func WithLegacyHTTPErrorShape() Option
 
 func WithLimits(Limits) Option
 

@@ -42,3 +42,14 @@ func TestWithIDGenerator_SetsAndDefaults(t *testing.T) {
 	_, ok := app.ids.(RandomIDGenerator)
 	require.True(t, ok)
 }
+
+func TestWithHTTPErrorFormat_SetsAndNormalizes(t *testing.T) {
+	app := New(WithHTTPErrorFormat(HTTPErrorFormatFlatLegacy))
+	require.Equal(t, HTTPErrorFormatFlatLegacy, app.httpErrorFormat)
+
+	app = New(WithHTTPErrorFormat("invalid"))
+	require.Equal(t, HTTPErrorFormatNested, app.httpErrorFormat)
+
+	app = New(WithLegacyHTTPErrorShape())
+	require.Equal(t, HTTPErrorFormatFlatLegacy, app.httpErrorFormat)
+}

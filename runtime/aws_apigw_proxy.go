@@ -12,7 +12,7 @@ import (
 func (a *App) ServeAPIGatewayProxy(ctx context.Context, event events.APIGatewayProxyRequest) events.APIGatewayProxyResponse {
 	req, err := requestFromAPIGatewayProxy(event)
 	if err != nil {
-		return apigatewayProxyResponseFromResponse(responseForError(err))
+		return apigatewayProxyResponseFromResponse(a.responseForHTTPError(err))
 	}
 	return apigatewayProxyResponseFromResponse(a.Serve(ctx, req))
 }
@@ -20,7 +20,7 @@ func (a *App) ServeAPIGatewayProxy(ctx context.Context, event events.APIGatewayP
 func (a *App) serveAPIGatewayProxyLambda(ctx context.Context, event events.APIGatewayProxyRequest) any {
 	req, err := requestFromAPIGatewayProxy(event)
 	if err != nil {
-		return apigatewayProxyResponseFromResponse(responseForError(err))
+		return apigatewayProxyResponseFromResponse(a.responseForHTTPError(err))
 	}
 
 	resp := a.Serve(ctx, req)

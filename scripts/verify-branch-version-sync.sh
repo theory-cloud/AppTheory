@@ -50,7 +50,13 @@ fi
 
 mode="skip"
 if [[ "${branch}" == "premain" ]]; then
-  mode="premain"
+  if [[ -n "${head_ref}" ]]; then
+    # Pull requests targeting premain run on a synthetic merge ref. Validate the
+    # actual remote premain branch in that case instead of the merge ref's files.
+    mode="promotion"
+  else
+    mode="premain"
+  fi
 elif [[ "${branch}" == "main" && "${head_ref}" == "premain" ]]; then
   mode="promotion"
 fi
@@ -196,4 +202,3 @@ if premain_tuple < main_tuple:
 PY
 
 echo "branch-version-sync: PASS (main=${main_stable}, premain=${premain_version})"
-

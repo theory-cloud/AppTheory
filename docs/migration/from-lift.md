@@ -211,6 +211,11 @@ Notes:
 - `AppError` remains supported for simple code/message responses.
 - `request_id` is automatically injected from the runtime when available; you can override it on the error if needed.
 - `stack_trace` is opt-in and never emitted by default.
+- HTTP services that must preserve Lift’s flat `{ code, message, details? }` response body can opt in without changing
+  AppSync or WebSocket error behavior:
+  - Go: `apptheory.New(apptheory.WithLegacyHTTPErrorShape())`
+  - TypeScript: `createApp({ httpErrorFormat: HTTP_ERROR_FORMAT_FLAT_LEGACY })`
+  - Python: `create_app(http_error_format=HTTP_ERROR_FORMAT_FLAT_LEGACY)`
 
 ### 7b) Global logger singleton (LiftLogger parity)
 
