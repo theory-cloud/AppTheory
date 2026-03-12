@@ -9,6 +9,7 @@ type App struct {
 	clock            Clock
 	ids              IDGenerator
 	tier             Tier
+	httpErrorFormat  HTTPErrorFormat
 	limits           Limits
 	cors             CORSConfig
 	auth             AuthHook
@@ -48,15 +49,16 @@ type AuthHook func(*Context) (identity string, err error)
 // New creates a new AppTheory application container.
 func New(opts ...Option) *App {
 	app := &App{
-		router: newRouter(),
-		clock:  RealClock{},
-		ids:    RandomIDGenerator{},
-		tier:   TierP2,
-		limits: Limits{},
-		cors:   CORSConfig{},
-		auth:   nil,
-		obs:    ObservabilityHooks{},
-		policy: nil,
+		router:          newRouter(),
+		clock:           RealClock{},
+		ids:             RandomIDGenerator{},
+		tier:            TierP2,
+		httpErrorFormat: HTTPErrorFormatNested,
+		limits:          Limits{},
+		cors:            CORSConfig{},
+		auth:            nil,
+		obs:             ObservabilityHooks{},
+		policy:          nil,
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -96,6 +98,16 @@ func WithTier(tier Tier) Option {
 	return func(app *App) {
 		app.tier = tier
 	}
+}
+
+func WithHTTPErrorFormat(format HTTPErrorFormat) Option {
+	return func(app *App) {
+		app.httpErrorFormat = normalizeHTTPErrorFormat(format)
+	}
+}
+
+func WithLegacyHTTPErrorShape() Option {
+	return WithHTTPErrorFormat(HTTPErrorFormatFlatLegacy)
 }
 
 func WithLimits(limits Limits) Option {

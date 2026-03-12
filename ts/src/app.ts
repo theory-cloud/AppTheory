@@ -34,6 +34,10 @@ import type {
   WebSocketClientFactory,
 } from "./context.js";
 import { AppError, AppTheoryError } from "./errors.js";
+import {
+  type HTTPErrorFormat,
+  normalizeHTTPErrorFormat,
+} from "./http-error-format.js";
 import { RandomIdGenerator, type IdGenerator } from "./ids.js";
 import {
   applyAppSyncContextValues,
@@ -79,10 +83,14 @@ import {
 import { normalizeRequest } from "./internal/request.js";
 import {
   errorResponse,
+  errorResponseWithFormat,
   errorResponseWithRequestId,
+  errorResponseWithRequestIdAndFormat,
   normalizeResponse,
   responseForError,
+  responseForErrorWithFormat,
   responseForErrorWithRequestId,
+  responseForErrorWithRequestIdAndFormat,
 } from "./internal/response.js";
 import { Router } from "./internal/router.js";
 import { vary } from "./response.js";
@@ -169,6 +177,12 @@ export interface TimeoutConfig {
   timeoutMessage?: string;
 }
 
+export type { HTTPErrorFormat } from "./http-error-format.js";
+export {
+  HTTP_ERROR_FORMAT_FLAT_LEGACY,
+  HTTP_ERROR_FORMAT_NESTED,
+} from "./http-error-format.js";
+
 export type SQSHandler = (
   ctx: EventContext,
   message: SQSMessage,
@@ -226,6 +240,7 @@ export class App {
   private readonly _clock: Clock;
   private readonly _ids: IdGenerator;
   private readonly _tier: Tier;
+  private readonly _httpErrorFormat: HTTPErrorFormat;
   private readonly _limits: NormalizedLimits;
   private readonly _cors: NormalizedCORSConfig;
   private readonly _authHook: AuthHook | null;
@@ -246,6 +261,7 @@ export class App {
       clock?: Clock;
       ids?: IdGenerator;
       tier?: Tier;
+      httpErrorFormat?: HTTPErrorFormat;
       limits?: Limits;
       cors?: CORSConfig;
       authHook?: AuthHook;
@@ -261,6 +277,7 @@ export class App {
       options.tier === "p0" || options.tier === "p1" || options.tier === "p2"
         ? options.tier
         : "p2";
+    this._httpErrorFormat = normalizeHTTPErrorFormat(options.httpErrorFormat);
     this._limits = {
       maxRequestBytes: Number(options.limits?.maxRequestBytes ?? 0),
       maxResponseBytes: Number(options.limits?.maxResponseBytes ?? 0),
@@ -281,6 +298,10 @@ export class App {
     this._dynamoDBRoutes = [];
     this._middlewares = [];
     this._eventMiddlewares = [];
+  }
+
+  getHTTPErrorFormat(): HTTPErrorFormat {
+    return this._httpErrorFormat;
   }
 
   handle(
@@ -380,6 +401,49 @@ export class App {
     return wrapped;
   }
 
+  private _httpErrorResponse(
+    code: string,
+    message: string,
+    headers: Headers = {},
+  ): Response {
+    return errorResponseWithFormat(
+      this._httpErrorFormat,
+      code,
+      message,
+      headers,
+    );
+  }
+
+  private _httpErrorResponseWithRequestId(
+    code: string,
+    message: string,
+    headers: Headers = {},
+    requestId: string = "",
+  ): Response {
+    return errorResponseWithRequestIdAndFormat(
+      this._httpErrorFormat,
+      code,
+      message,
+      headers,
+      requestId,
+    );
+  }
+
+  private _responseForHTTPError(err: unknown): Response {
+    return responseForErrorWithFormat(this._httpErrorFormat, err);
+  }
+
+  private _responseForHTTPErrorWithRequestId(
+    err: unknown,
+    requestId: string,
+  ): Response {
+    return responseForErrorWithRequestIdAndFormat(
+      this._httpErrorFormat,
+      err,
+      requestId,
+    );
+  }
+
   webSocket(routeKey: string, handler: Handler): this {
     const key = String(routeKey ?? "").trim();
     if (!key || typeof handler !== "function") return this;
@@ -448,9 +512,9 @@ export class App {
         return contextOptions.errorResponder(err, errorRequest, requestId);
       }
       if (requestId) {
-        return responseForErrorWithRequestId(err, requestId);
+        return this._responseForHTTPErrorWithRequestId(err, requestId);
       }
-      return responseForError(err);
+      return this._responseForHTTPError(err);
     };
 
     if (this._tier === "p0") {
@@ -485,11 +549,15 @@ export class App {
           );
         }
         if (allowed.length > 0) {
-          return errorResponse("app.method_not_allowed", "method not allowed", {
-            allow: [formatAllowHeader(allowed)],
-          });
+          return this._httpErrorResponse(
+            "app.method_not_allowed",
+            "method not allowed",
+            {
+              allow: [formatAllowHeader(allowed)],
+            },
+          );
         }
-        return errorResponse("app.not_found", "not found");
+        return this._httpErrorResponse("app.not_found", "not found");
       }
 
       const requestCtx = new Context({
@@ -599,7 +667,7 @@ export class App {
         );
       }
       return finish(
-        errorResponseWithRequestId(
+        this._httpErrorResponseWithRequestId(
           "app.too_large",
           "request too large",
           {},
@@ -636,7 +704,7 @@ export class App {
       }
       if (allowed.length > 0) {
         return finish(
-          errorResponseWithRequestId(
+          this._httpErrorResponseWithRequestId(
             "app.method_not_allowed",
             "method not allowed",
             { allow: [formatAllowHeader(allowed)] },
@@ -646,7 +714,12 @@ export class App {
         );
       }
       return finish(
-        errorResponseWithRequestId("app.not_found", "not found", {}, requestId),
+        this._httpErrorResponseWithRequestId(
+          "app.not_found",
+          "not found",
+          {},
+          requestId,
+        ),
         "app.not_found",
       );
     }
@@ -690,7 +763,7 @@ export class App {
           );
         }
         return finish(
-          errorResponseWithRequestId(
+          this._httpErrorResponseWithRequestId(
             code,
             message,
             decision?.headers ?? {},
@@ -763,7 +836,7 @@ export class App {
         );
       }
       return finish(
-        errorResponseWithRequestId(
+        this._httpErrorResponseWithRequestId(
           "app.too_large",
           "response too large",
           {},
@@ -784,7 +857,7 @@ export class App {
     try {
       request = requestFromAPIGatewayV2(event);
     } catch (err) {
-      return apigatewayV2ResponseFromResponse(responseForError(err));
+      return apigatewayV2ResponseFromResponse(this._responseForHTTPError(err));
     }
     const resp = await this.serve(request, ctx);
     return apigatewayV2ResponseFromResponse(resp);
@@ -798,7 +871,9 @@ export class App {
     try {
       request = requestFromLambdaFunctionURL(event);
     } catch (err) {
-      return lambdaFunctionURLResponseFromResponse(responseForError(err));
+      return lambdaFunctionURLResponseFromResponse(
+        this._responseForHTTPError(err),
+      );
     }
     const resp = await this.serve(request, ctx);
     return lambdaFunctionURLResponseFromResponse(resp);
@@ -812,7 +887,9 @@ export class App {
     try {
       request = requestFromAPIGatewayProxy(event);
     } catch (err) {
-      return apigatewayProxyResponseFromResponse(responseForError(err));
+      return apigatewayProxyResponseFromResponse(
+        this._responseForHTTPError(err),
+      );
     }
     const resp = await this.serve(request, ctx);
     return apigatewayProxyResponseFromResponse(resp);
@@ -826,7 +903,9 @@ export class App {
     try {
       request = requestFromALBTargetGroup(event);
     } catch (err) {
-      return albTargetGroupResponseFromResponse(responseForError(err));
+      return albTargetGroupResponseFromResponse(
+        this._responseForHTTPError(err),
+      );
     }
     const resp = await this.serve(request, ctx);
     return albTargetGroupResponseFromResponse(resp);
@@ -1328,6 +1407,7 @@ export function createApp(
     clock?: Clock;
     ids?: IdGenerator;
     tier?: Tier;
+    httpErrorFormat?: HTTPErrorFormat;
     limits?: Limits;
     cors?: CORSConfig;
     authHook?: AuthHook;

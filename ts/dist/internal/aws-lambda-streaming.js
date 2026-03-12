@@ -1,8 +1,9 @@
 import { Buffer } from "node:buffer";
 import { AppError, AppTheoryError } from "../errors.js";
+import { HTTP_ERROR_FORMAT_NESTED, normalizeHTTPErrorFormat, } from "../http-error-format.js";
 import { requestFromLambdaFunctionURL } from "./aws-http.js";
 import { firstHeaderValue } from "./http.js";
-import { responseForError, responseForErrorWithRequestId } from "./response.js";
+import { responseForErrorWithFormat, responseForErrorWithRequestIdAndFormat, } from "./response.js";
 function lambdaFunctionURLSingleHeaders(headers) {
     const out = {};
     for (const [key, values] of Object.entries(headers ?? {})) {
@@ -39,7 +40,7 @@ function streamErrorCodeForError(err) {
     }
     return "app.internal";
 }
-async function writeStreamedLambdaFunctionURLResponse(responseStream, resp) {
+async function writeStreamedLambdaFunctionURLResponse(responseStream, resp, httpErrorFormat) {
     if (resp.isBase64) {
         throw new TypeError("apptheory: cannot stream isBase64 responses");
     }
@@ -67,7 +68,7 @@ async function writeStreamedLambdaFunctionURLResponse(responseStream, resp) {
         }
         catch (err) {
             const requestId = firstHeaderValue(resp.headers ?? {}, "x-request-id");
-            const early = responseForErrorWithRequestId(err, requestId);
+            const early = responseForErrorWithRequestIdAndFormat(httpErrorFormat, err, requestId);
             const earlyMeta = {
                 statusCode: Number(early.status ?? 200),
                 headers: lambdaFunctionURLSingleHeaders(early.headers),
@@ -109,16 +110,17 @@ async function writeStreamedLambdaFunctionURLResponse(responseStream, resp) {
     return streamErrorCode;
 }
 export async function serveLambdaFunctionURLStreaming(app, event, responseStream, ctx) {
+    const httpErrorFormat = normalizeHTTPErrorFormat(app.getHTTPErrorFormat?.() ?? HTTP_ERROR_FORMAT_NESTED);
     let request;
     try {
         request = requestFromLambdaFunctionURL(event);
     }
     catch (err) {
-        const resp = responseForError(err);
-        return await writeStreamedLambdaFunctionURLResponse(responseStream, resp);
+        const resp = responseForErrorWithFormat(httpErrorFormat, err);
+        return await writeStreamedLambdaFunctionURLResponse(responseStream, resp, httpErrorFormat);
     }
     const resp = await app.serve(request, ctx);
-    return await writeStreamedLambdaFunctionURLResponse(responseStream, resp);
+    return await writeStreamedLambdaFunctionURLResponse(responseStream, resp, httpErrorFormat);
 }
 export class CapturedHttpResponseStream {
     statusCode = 0;

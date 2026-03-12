@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { AppError, AppTheoryError } from "../errors.js";
+import { HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED, normalizeHTTPErrorFormat, } from "../http-error-format.js";
 import { canonicalizeHeaders, normalizeBodyStream, toBuffer } from "./http.js";
 export function normalizeResponse(response) {
     if (!response) {
@@ -63,34 +64,44 @@ function statusForErrorCode(code) {
             return 500;
     }
 }
-function errorBodyFromAppTheoryError(err, requestId) {
+function errorBodyFromAppTheoryError(format, err, requestId) {
     const code = String(err.code ?? "").trim() || "app.internal";
     const error = {
         code,
         message: String(err.message ?? ""),
     };
-    if (typeof err.statusCode === "number" && err.statusCode > 0) {
+    if (normalizeHTTPErrorFormat(format) !== HTTP_ERROR_FORMAT_FLAT_LEGACY &&
+        typeof err.statusCode === "number" &&
+        err.statusCode > 0) {
         error["status_code"] = err.statusCode;
     }
     if (err.details !== undefined) {
         error["details"] = err.details;
     }
-    const resolvedRequestId = String(err.requestId ?? "").trim() || String(requestId ?? "").trim();
-    if (resolvedRequestId) {
-        error["request_id"] = resolvedRequestId;
-    }
-    if (String(err.traceId ?? "").trim()) {
-        error["trace_id"] = String(err.traceId);
-    }
-    if (String(err.timestamp ?? "").trim()) {
-        error["timestamp"] = String(err.timestamp);
-    }
-    if (String(err.stackTrace ?? "").trim()) {
-        error["stack_trace"] = String(err.stackTrace);
+    if (normalizeHTTPErrorFormat(format) !== HTTP_ERROR_FORMAT_FLAT_LEGACY) {
+        const resolvedRequestId = String(err.requestId ?? "").trim() || String(requestId ?? "").trim();
+        if (resolvedRequestId) {
+            error["request_id"] = resolvedRequestId;
+        }
+        if (String(err.traceId ?? "").trim()) {
+            error["trace_id"] = String(err.traceId);
+        }
+        if (String(err.timestamp ?? "").trim()) {
+            error["timestamp"] = String(err.timestamp);
+        }
+        if (String(err.stackTrace ?? "").trim()) {
+            error["stack_trace"] = String(err.stackTrace);
+        }
     }
     return error;
 }
-function errorResponseFromAppTheoryError(err, headers = {}, requestId = "") {
+function serializeHTTPErrorBody(format, error) {
+    if (normalizeHTTPErrorFormat(format) === HTTP_ERROR_FORMAT_FLAT_LEGACY) {
+        return Buffer.from(JSON.stringify(error), "utf8");
+    }
+    return Buffer.from(JSON.stringify({ error }), "utf8");
+}
+function errorResponseFromAppTheoryErrorWithFormat(format, err, headers = {}, requestId = "") {
     const outHeaders = { ...canonicalizeHeaders(headers) };
     outHeaders["content-type"] = ["application/json; charset=utf-8"];
     const code = String(err.code ?? "").trim() || "app.internal";
@@ -101,51 +112,64 @@ function errorResponseFromAppTheoryError(err, headers = {}, requestId = "") {
         status,
         headers: outHeaders,
         cookies: [],
-        body: Buffer.from(JSON.stringify({ error: errorBodyFromAppTheoryError(err, requestId) }), "utf8"),
+        body: serializeHTTPErrorBody(format, errorBodyFromAppTheoryError(format, err, requestId)),
         isBase64: false,
     });
 }
 export function errorResponse(code, message, headers = {}) {
+    return errorResponseWithFormat(HTTP_ERROR_FORMAT_NESTED, code, message, headers);
+}
+export function errorResponseWithFormat(format, code, message, headers = {}) {
     const outHeaders = { ...canonicalizeHeaders(headers) };
     outHeaders["content-type"] = ["application/json; charset=utf-8"];
     return normalizeResponse({
         status: statusForErrorCode(code),
         headers: outHeaders,
         cookies: [],
-        body: Buffer.from(JSON.stringify({ error: { code, message } }), "utf8"),
+        body: serializeHTTPErrorBody(format, { code, message }),
         isBase64: false,
     });
 }
 export function errorResponseWithRequestId(code, message, headers = {}, requestId = "") {
+    return errorResponseWithRequestIdAndFormat(HTTP_ERROR_FORMAT_NESTED, code, message, headers, requestId);
+}
+export function errorResponseWithRequestIdAndFormat(format, code, message, headers = {}, requestId = "") {
     const outHeaders = { ...canonicalizeHeaders(headers) };
     outHeaders["content-type"] = ["application/json; charset=utf-8"];
     const error = { code, message };
-    if (requestId) {
+    if (normalizeHTTPErrorFormat(format) !== HTTP_ERROR_FORMAT_FLAT_LEGACY &&
+        requestId) {
         error["request_id"] = String(requestId);
     }
     return normalizeResponse({
         status: statusForErrorCode(code),
         headers: outHeaders,
         cookies: [],
-        body: Buffer.from(JSON.stringify({ error }), "utf8"),
+        body: serializeHTTPErrorBody(format, error),
         isBase64: false,
     });
 }
 export function responseForError(err) {
+    return responseForErrorWithFormat(HTTP_ERROR_FORMAT_NESTED, err);
+}
+export function responseForErrorWithFormat(format, err) {
     if (err instanceof AppTheoryError) {
-        return errorResponseFromAppTheoryError(err);
+        return errorResponseFromAppTheoryErrorWithFormat(format, err);
     }
     if (err instanceof AppError) {
-        return errorResponse(err.code, err.message);
+        return errorResponseWithFormat(format, err.code, err.message);
     }
-    return errorResponse("app.internal", "internal error");
+    return errorResponseWithFormat(format, "app.internal", "internal error");
 }
 export function responseForErrorWithRequestId(err, requestId) {
+    return responseForErrorWithRequestIdAndFormat(HTTP_ERROR_FORMAT_NESTED, err, requestId);
+}
+export function responseForErrorWithRequestIdAndFormat(format, err, requestId) {
     if (err instanceof AppTheoryError) {
-        return errorResponseFromAppTheoryError(err, {}, requestId);
+        return errorResponseFromAppTheoryErrorWithFormat(format, err, {}, requestId);
     }
     if (err instanceof AppError) {
-        return errorResponseWithRequestId(err.code, err.message, {}, requestId);
+        return errorResponseWithRequestIdAndFormat(format, err.code, err.message, {}, requestId);
     }
-    return errorResponseWithRequestId("app.internal", "internal error", {}, requestId);
+    return errorResponseWithRequestIdAndFormat(format, "app.internal", "internal error", {}, requestId);
 }
