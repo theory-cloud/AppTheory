@@ -1334,6 +1334,9 @@ async function runFixtureM12(fixture) {
   const app = runtime.createApp({
     tier: "p1",
     ids,
+    ...(fixture.setup?.http_error_format
+      ? { httpErrorFormat: fixture.setup.http_error_format }
+      : {}),
     limits: {
       maxRequestBytes: Number(limits.max_request_bytes ?? 0),
       maxResponseBytes: Number(limits.max_response_bytes ?? 0),
@@ -1410,6 +1413,9 @@ async function runFixtureM14(fixture) {
   const app = runtime.createApp({
     tier: "p1",
     ids,
+    ...(fixture.setup?.http_error_format
+      ? { httpErrorFormat: fixture.setup.http_error_format }
+      : {}),
     limits: {
       maxRequestBytes: Number(limits.max_request_bytes ?? 0),
       maxResponseBytes: Number(limits.max_response_bytes ?? 0),
@@ -1643,6 +1649,9 @@ async function runFixtureP1(fixture) {
   const app = runtime.createApp({
     tier: "p1",
     ids,
+    ...(fixture.setup?.http_error_format
+      ? { httpErrorFormat: fixture.setup.http_error_format }
+      : {}),
     limits: {
       maxRequestBytes: Number(limits.max_request_bytes ?? 0),
       maxResponseBytes: Number(limits.max_response_bytes ?? 0),
@@ -1713,6 +1722,9 @@ async function runFixtureP2(fixture) {
   const app = runtime.createApp({
     tier: "p2",
     ids,
+    ...(fixture.setup?.http_error_format
+      ? { httpErrorFormat: fixture.setup.http_error_format }
+      : {}),
     limits: {
       maxRequestBytes: Number(limits.max_request_bytes ?? 0),
       maxResponseBytes: Number(limits.max_response_bytes ?? 0),
@@ -1815,6 +1827,9 @@ async function runFixtureP2Output(fixture) {
   const app = runtime.createApp({
     tier: "p2",
     ids,
+    ...(fixture.setup?.http_error_format
+      ? { httpErrorFormat: fixture.setup.http_error_format }
+      : {}),
     limits: {
       maxRequestBytes: Number(limits.max_request_bytes ?? 0),
       maxResponseBytes: Number(limits.max_response_bytes ?? 0),
