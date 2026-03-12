@@ -47,17 +47,19 @@ func statusForErrorCode(code string) int {
 }
 
 func errorResponse(code, message string, headers map[string][]string) Response {
+	return errorResponseWithFormat(HTTPErrorFormatNested, code, message, headers)
+}
+
+func errorResponseWithFormat(format HTTPErrorFormat, code, message string, headers map[string][]string) Response {
 	headers = canonicalizeHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
-	body, err := json.Marshal(map[string]any{
-		"error": map[string]any{
-			"code":    code,
-			"message": message,
-		},
+	body, err := marshalHTTPErrorBody(format, map[string]any{
+		"code":    code,
+		"message": message,
 	})
 	if err != nil {
-		body = []byte(`{"error":{"code":"app.internal","message":"internal error"}}`)
+		body = fallbackHTTPErrorBody(format)
 	}
 
 	return Response{
@@ -70,6 +72,15 @@ func errorResponse(code, message string, headers map[string][]string) Response {
 }
 
 func errorResponseFromAppTheoryError(err *AppTheoryError, headers map[string][]string, requestID string) Response {
+	return errorResponseFromAppTheoryErrorWithFormat(HTTPErrorFormatNested, err, headers, requestID)
+}
+
+func errorResponseFromAppTheoryErrorWithFormat(
+	format HTTPErrorFormat,
+	err *AppTheoryError,
+	headers map[string][]string,
+	requestID string,
+) Response {
 	headers = canonicalizeHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
@@ -87,32 +98,32 @@ func errorResponseFromAppTheoryError(err *AppTheoryError, headers map[string][]s
 		"code":    code,
 		"message": err.Message,
 	}
-	if err.StatusCode != 0 {
+	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested && err.StatusCode != 0 {
 		errBody["status_code"] = err.StatusCode
 	}
 	if len(err.Details) > 0 {
 		errBody["details"] = err.Details
 	}
-	if err.RequestID != "" {
-		errBody["request_id"] = err.RequestID
-	} else if requestID != "" {
-		errBody["request_id"] = requestID
-	}
-	if err.TraceID != "" {
-		errBody["trace_id"] = err.TraceID
-	}
-	if !err.Timestamp.IsZero() {
-		errBody["timestamp"] = err.Timestamp.UTC().Format(time.RFC3339Nano)
-	}
-	if err.StackTrace != "" {
-		errBody["stack_trace"] = err.StackTrace
+	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested {
+		if err.RequestID != "" {
+			errBody["request_id"] = err.RequestID
+		} else if requestID != "" {
+			errBody["request_id"] = requestID
+		}
+		if err.TraceID != "" {
+			errBody["trace_id"] = err.TraceID
+		}
+		if !err.Timestamp.IsZero() {
+			errBody["timestamp"] = err.Timestamp.UTC().Format(time.RFC3339Nano)
+		}
+		if err.StackTrace != "" {
+			errBody["stack_trace"] = err.StackTrace
+		}
 	}
 
-	body, jsonErr := json.Marshal(map[string]any{
-		"error": errBody,
-	})
+	body, jsonErr := marshalHTTPErrorBody(format, errBody)
 	if jsonErr != nil {
-		body = []byte(`{"error":{"code":"app.internal","message":"internal error"}}`)
+		body = fallbackHTTPErrorBody(format)
 	}
 
 	return Response{
@@ -125,6 +136,15 @@ func errorResponseFromAppTheoryError(err *AppTheoryError, headers map[string][]s
 }
 
 func errorResponseWithRequestID(code, message string, headers map[string][]string, requestID string) Response {
+	return errorResponseWithRequestIDAndFormat(HTTPErrorFormatNested, code, message, headers, requestID)
+}
+
+func errorResponseWithRequestIDAndFormat(
+	format HTTPErrorFormat,
+	code, message string,
+	headers map[string][]string,
+	requestID string,
+) Response {
 	headers = canonicalizeHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
@@ -132,14 +152,12 @@ func errorResponseWithRequestID(code, message string, headers map[string][]strin
 		"code":    code,
 		"message": message,
 	}
-	if requestID != "" {
+	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested && requestID != "" {
 		errBody["request_id"] = requestID
 	}
-	body, err := json.Marshal(map[string]any{
-		"error": errBody,
-	})
+	body, err := marshalHTTPErrorBody(format, errBody)
 	if err != nil {
-		body = []byte(`{"error":{"code":"app.internal","message":"internal error"}}`)
+		body = fallbackHTTPErrorBody(format)
 	}
 
 	return Response{
@@ -152,25 +170,49 @@ func errorResponseWithRequestID(code, message string, headers map[string][]strin
 }
 
 func responseForError(err error) Response {
+	return responseForErrorWithFormat(HTTPErrorFormatNested, err)
+}
+
+func responseForErrorWithFormat(format HTTPErrorFormat, err error) Response {
 	var portableErr *AppTheoryError
 	if errors.As(err, &portableErr) {
-		return errorResponseFromAppTheoryError(portableErr, nil, "")
+		return errorResponseFromAppTheoryErrorWithFormat(format, portableErr, nil, "")
 	}
 	var appErr *AppError
 	if errors.As(err, &appErr) {
-		return errorResponse(appErr.Code, appErr.Message, nil)
+		return errorResponseWithFormat(format, appErr.Code, appErr.Message, nil)
 	}
-	return errorResponse(errorCodeInternal, errorMessageInternal, nil)
+	return errorResponseWithFormat(format, errorCodeInternal, errorMessageInternal, nil)
 }
 
 func responseForErrorWithRequestID(err error, requestID string) Response {
+	return responseForErrorWithRequestIDAndFormat(HTTPErrorFormatNested, err, requestID)
+}
+
+func responseForErrorWithRequestIDAndFormat(format HTTPErrorFormat, err error, requestID string) Response {
 	var portableErr *AppTheoryError
 	if errors.As(err, &portableErr) {
-		return errorResponseFromAppTheoryError(portableErr, nil, requestID)
+		return errorResponseFromAppTheoryErrorWithFormat(format, portableErr, nil, requestID)
 	}
 	var appErr *AppError
 	if errors.As(err, &appErr) {
-		return errorResponseWithRequestID(appErr.Code, appErr.Message, nil, requestID)
+		return errorResponseWithRequestIDAndFormat(format, appErr.Code, appErr.Message, nil, requestID)
 	}
-	return errorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, requestID)
+	return errorResponseWithRequestIDAndFormat(format, errorCodeInternal, errorMessageInternal, nil, requestID)
+}
+
+func marshalHTTPErrorBody(format HTTPErrorFormat, errBody map[string]any) ([]byte, error) {
+	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatFlatLegacy {
+		return json.Marshal(errBody)
+	}
+	return json.Marshal(map[string]any{
+		"error": errBody,
+	})
+}
+
+func fallbackHTTPErrorBody(format HTTPErrorFormat) []byte {
+	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatFlatLegacy {
+		return []byte(`{"code":"app.internal","message":"internal error"}`)
+	}
+	return []byte(`{"error":{"code":"app.internal","message":"internal error"}}`)
 }

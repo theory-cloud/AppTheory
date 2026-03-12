@@ -1646,6 +1646,7 @@ def run_fixture_m12(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespon
     limits = setup.get("limits", {}) or {}
     app = runtime.create_app(
         tier="p1",
+        http_error_format=str(setup.get("http_error_format") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
@@ -1706,6 +1707,7 @@ def run_fixture_m14(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespon
     limits = setup.get("limits", {}) or {}
     app = runtime.create_app(
         tier="p1",
+        http_error_format=str(setup.get("http_error_format") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
@@ -1911,6 +1913,7 @@ def run_fixture_p1(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
             )
     app = runtime.create_app(
         tier="p1",
+        http_error_format=str(setup.get("http_error_format") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
@@ -1987,6 +1990,7 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
             )
     app = runtime.create_app(
         tier="p2",
+        http_error_format=str(setup.get("http_error_format") or ""),
         id_generator=ids,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),

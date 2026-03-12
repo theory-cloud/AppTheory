@@ -22,12 +22,16 @@ from apptheory.cache import vary
 from apptheory.clock import Clock, RealClock
 from apptheory.context import AppSyncContext, Context, EventContext, WebSocketClientFactory, WebSocketContext
 from apptheory.errors import (
+    HTTP_ERROR_FORMAT_NESTED,
     AppError,
     AppTheoryError,
     error_response,
-    error_response_with_request_id,
+    error_response_with_format,
+    error_response_with_request_id_and_format,
+    normalize_http_error_format,
     response_for_error,
-    response_for_error_with_request_id,
+    response_for_error_with_format,
+    response_for_error_with_request_id_and_format,
     status_for_error_code,
 )
 from apptheory.ids import IdGenerator, RealIdGenerator
@@ -148,6 +152,7 @@ class App:
     _clock: Clock
     _id_generator: IdGenerator
     _tier: str
+    _http_error_format: str
     _limits: Limits
     _cors: CORSConfig
     _auth_hook: AuthHook | None
@@ -169,6 +174,7 @@ class App:
         clock: Clock | None = None,
         id_generator: IdGenerator | None = None,
         tier: str = "p2",
+        http_error_format: str = HTTP_ERROR_FORMAT_NESTED,
         limits: Limits | None = None,
         cors: CORSConfig | None = None,
         auth_hook: AuthHook | None = None,
@@ -183,6 +189,7 @@ class App:
         if tier_value not in {"p0", "p1", "p2"}:
             tier_value = "p2"
         self._tier = tier_value
+        self._http_error_format = normalize_http_error_format(http_error_format)
         self._limits = limits or Limits()
         self._cors = _normalize_cors_config(cors)
         self._auth_hook = auth_hook
@@ -317,6 +324,40 @@ class App:
             wrapped = apply_one(wrapped)
         return wrapped
 
+    def get_http_error_format(self) -> str:
+        return self._http_error_format
+
+    def _http_error_response(
+        self,
+        code: str,
+        message: str,
+        *,
+        headers: dict[str, Any] | None = None,
+    ) -> Response:
+        return error_response_with_format(self._http_error_format, code, message, headers=headers)
+
+    def _http_error_response_with_request_id(
+        self,
+        code: str,
+        message: str,
+        *,
+        headers: dict[str, Any] | None = None,
+        request_id: str = "",
+    ) -> Response:
+        return error_response_with_request_id_and_format(
+            self._http_error_format,
+            code,
+            message,
+            headers=headers,
+            request_id=request_id,
+        )
+
+    def _response_for_http_error(self, exc: Exception) -> Response:
+        return response_for_error_with_format(self._http_error_format, exc)
+
+    def _response_for_http_error_with_request_id(self, exc: Exception, request_id: str) -> Response:
+        return response_for_error_with_request_id_and_format(self._http_error_format, exc, request_id)
+
     def serve(self, request: Request, ctx: Any | None = None) -> Response:
         return self._serve(request, ctx)
 
@@ -333,8 +374,8 @@ class App:
             if error_responder is not None:
                 return error_responder(exc, error_request, request_id)
             if request_id:
-                return response_for_error_with_request_id(exc, request_id)
-            return response_for_error(exc)
+                return self._response_for_http_error_with_request_id(exc, request_id)
+            return self._response_for_http_error(exc)
 
         if self._tier == "p1":
             return self._serve_portable(
@@ -377,12 +418,12 @@ class App:
                     fallback_request_id,
                 )
             if allowed:
-                return error_response(
+                return self._http_error_response(
                     "app.method_not_allowed",
                     "method not allowed",
                     headers={"allow": [self._router.format_allow_header(allowed)]},
                 )
-            return error_response("app.not_found", "not found")
+            return self._http_error_response("app.not_found", "not found")
 
         request_ctx = Context(
             request=normalized,
@@ -427,7 +468,7 @@ class App:
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
             if error_responder is not None:
                 return error_responder(exc, request_ctx.request, request_id), error_code
-            return response_for_error_with_request_id(exc, request_id), error_code
+            return self._response_for_http_error_with_request_id(exc, request_id), error_code
 
         if decision is None or not str(getattr(decision, "code", "")).strip():
             return None
@@ -436,7 +477,12 @@ class App:
         message = str(getattr(decision, "message", "")).strip() or _default_policy_message(code)
         if error_responder is not None:
             return error_responder(AppError(code, message), request_ctx.request, request_id), code
-        resp = error_response_with_request_id(code, message, headers=decision.headers, request_id=request_id)
+        resp = self._http_error_response_with_request_id(
+            code,
+            message,
+            headers=decision.headers,
+            request_id=request_id,
+        )
         return resp, code
 
     def _auth_check(
@@ -458,7 +504,11 @@ class App:
                     error_responder(AppError("app.unauthorized", "unauthorized"), request_ctx.request, request_id),
                     "app.unauthorized",
                 )
-            resp = error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id)
+            resp = self._http_error_response_with_request_id(
+                "app.unauthorized",
+                "unauthorized",
+                request_id=request_id,
+            )
             return resp, "app.unauthorized"
 
         try:
@@ -467,7 +517,7 @@ class App:
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
             if error_responder is not None:
                 return error_responder(exc, request_ctx.request, request_id), error_code
-            return response_for_error_with_request_id(exc, request_id), error_code
+            return self._response_for_http_error_with_request_id(exc, request_id), error_code
 
         if not str(identity or "").strip():
             if error_responder is not None:
@@ -475,7 +525,11 @@ class App:
                     error_responder(AppError("app.unauthorized", "unauthorized"), request_ctx.request, request_id),
                     "app.unauthorized",
                 )
-            resp = error_response_with_request_id("app.unauthorized", "unauthorized", request_id=request_id)
+            resp = self._http_error_response_with_request_id(
+                "app.unauthorized",
+                "unauthorized",
+                request_id=request_id,
+            )
             return resp, "app.unauthorized"
 
         request_ctx.auth_identity = str(identity)
@@ -495,7 +549,7 @@ class App:
         def respond_to_error(exc: Exception, error_request: Request, request_id: str) -> Response:
             if error_responder is not None:
                 return error_responder(exc, error_request, request_id)
-            return response_for_error_with_request_id(exc, request_id)
+            return self._response_for_http_error_with_request_id(exc, request_id)
 
         pre_headers = canonicalize_headers(request.headers)
         pre_query = clone_query(request.query)
@@ -550,7 +604,11 @@ class App:
                     "app.too_large",
                 )
             return finish(
-                error_response_with_request_id("app.too_large", "request too large", request_id=request_id),
+                self._http_error_response_with_request_id(
+                    "app.too_large",
+                    "request too large",
+                    request_id=request_id,
+                ),
                 "app.too_large",
             )
 
@@ -572,7 +630,7 @@ class App:
                 )
             if allowed:
                 return finish(
-                    error_response_with_request_id(
+                    self._http_error_response_with_request_id(
                         "app.method_not_allowed",
                         "method not allowed",
                         headers={"allow": [self._router.format_allow_header(allowed)]},
@@ -581,7 +639,11 @@ class App:
                     "app.method_not_allowed",
                 )
             return finish(
-                error_response_with_request_id("app.not_found", "not found", request_id=request_id),
+                self._http_error_response_with_request_id(
+                    "app.not_found",
+                    "not found",
+                    request_id=request_id,
+                ),
                 "app.not_found",
             )
 
@@ -649,7 +711,11 @@ class App:
                     "app.too_large",
                 )
             return finish(
-                error_response_with_request_id("app.too_large", "response too large", request_id=request_id),
+                self._http_error_response_with_request_id(
+                    "app.too_large",
+                    "response too large",
+                    request_id=request_id,
+                ),
                 "app.too_large",
             )
 
@@ -718,7 +784,7 @@ class App:
         try:
             request = request_from_apigw_v2(event)
         except Exception as exc:  # noqa: BLE001
-            return apigw_v2_response_from_response(response_for_error(exc))
+            return apigw_v2_response_from_response(self._response_for_http_error(exc))
 
         resp = self.serve(request, ctx)
         return apigw_v2_response_from_response(resp)
@@ -727,7 +793,7 @@ class App:
         try:
             request = request_from_lambda_function_url(event)
         except Exception as exc:  # noqa: BLE001
-            return lambda_function_url_response_from_response(response_for_error(exc))
+            return lambda_function_url_response_from_response(self._response_for_http_error(exc))
 
         resp = self.serve(request, ctx)
         return lambda_function_url_response_from_response(resp)
@@ -736,7 +802,7 @@ class App:
         try:
             request = request_from_apigw_proxy(event)
         except Exception as exc:  # noqa: BLE001
-            return apigw_proxy_response_from_response(response_for_error(exc))
+            return apigw_proxy_response_from_response(self._response_for_http_error(exc))
 
         resp = self.serve(request, ctx)
         return apigw_proxy_response_from_response(resp)
@@ -745,7 +811,7 @@ class App:
         try:
             request = request_from_alb_target_group(event)
         except Exception as exc:  # noqa: BLE001
-            return alb_target_group_response_from_response(response_for_error(exc))
+            return alb_target_group_response_from_response(self._response_for_http_error(exc))
 
         resp = self.serve(request, ctx)
         return alb_target_group_response_from_response(resp)
@@ -1102,6 +1168,7 @@ def create_app(
     clock: Clock | None = None,
     id_generator: IdGenerator | None = None,
     tier: str = "p2",
+    http_error_format: str = HTTP_ERROR_FORMAT_NESTED,
     limits: Limits | None = None,
     cors: CORSConfig | None = None,
     auth_hook: AuthHook | None = None,
@@ -1113,6 +1180,7 @@ def create_app(
         clock=clock,
         id_generator=id_generator,
         tier=tier,
+        http_error_format=http_error_format,
         limits=limits,
         cors=cors,
         auth_hook=auth_hook,

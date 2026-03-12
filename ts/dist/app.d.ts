@@ -2,6 +2,7 @@ import type { ALBTargetGroupRequest, ALBTargetGroupResponse, AppSyncResolverEven
 import { type Clock } from "./clock.js";
 import { Context, EventContext } from "./context.js";
 import type { EventMiddleware, Handler, Middleware, WebSocketClientFactory } from "./context.js";
+import { type HTTPErrorFormat } from "./http-error-format.js";
 import { type IdGenerator } from "./ids.js";
 import type { Headers, Request, Response } from "./types.js";
 export type Tier = "p0" | "p1" | "p2";
@@ -54,6 +55,8 @@ export interface TimeoutConfig {
     tenantTimeoutsMs?: Record<string, number>;
     timeoutMessage?: string;
 }
+export type { HTTPErrorFormat } from "./http-error-format.js";
+export { HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED, } from "./http-error-format.js";
 export type SQSHandler = (ctx: EventContext, message: SQSMessage) => void | Promise<void>;
 export type KinesisHandler = (ctx: EventContext, record: KinesisEventRecord) => void | Promise<void>;
 export type SNSHandler = (ctx: EventContext, record: SNSEventRecord) => unknown | Promise<unknown>;
@@ -64,6 +67,7 @@ export declare class App {
     private readonly _clock;
     private readonly _ids;
     private readonly _tier;
+    private readonly _httpErrorFormat;
     private readonly _limits;
     private readonly _cors;
     private readonly _authHook;
@@ -82,6 +86,7 @@ export declare class App {
         clock?: Clock;
         ids?: IdGenerator;
         tier?: Tier;
+        httpErrorFormat?: HTTPErrorFormat;
         limits?: Limits;
         cors?: CORSConfig;
         authHook?: AuthHook;
@@ -89,6 +94,7 @@ export declare class App {
         observability?: ObservabilityHooks;
         webSocketClientFactory?: WebSocketClientFactory;
     });
+    getHTTPErrorFormat(): HTTPErrorFormat;
     handle(method: string, pattern: string, handler: Handler, options?: RouteOptions): this;
     handleStrict(method: string, pattern: string, handler: Handler, options?: RouteOptions): this;
     get(pattern: string, handler: Handler): this;
@@ -101,6 +107,10 @@ export declare class App {
     useEvents(middleware: EventMiddleware): this;
     private _applyMiddlewares;
     private _applyEventMiddlewares;
+    private _httpErrorResponse;
+    private _httpErrorResponseWithRequestId;
+    private _responseForHTTPError;
+    private _responseForHTTPErrorWithRequestId;
     webSocket(routeKey: string, handler: Handler): this;
     sqs(queueName: string, handler: SQSHandler): this;
     kinesis(streamName: string, handler: KinesisHandler): this;
@@ -133,6 +143,7 @@ export declare function createApp(options?: {
     clock?: Clock;
     ids?: IdGenerator;
     tier?: Tier;
+    httpErrorFormat?: HTTPErrorFormat;
     limits?: Limits;
     cors?: CORSConfig;
     authHook?: AuthHook;

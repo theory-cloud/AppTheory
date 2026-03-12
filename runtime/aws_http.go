@@ -12,7 +12,7 @@ import (
 func (a *App) ServeAPIGatewayV2(ctx context.Context, event events.APIGatewayV2HTTPRequest) events.APIGatewayV2HTTPResponse {
 	req, err := requestFromAPIGatewayV2(event)
 	if err != nil {
-		return apigatewayV2ResponseFromResponse(responseForError(err))
+		return apigatewayV2ResponseFromResponse(a.responseForHTTPError(err))
 	}
 	return apigatewayV2ResponseFromResponse(a.Serve(ctx, req))
 }
@@ -20,7 +20,7 @@ func (a *App) ServeAPIGatewayV2(ctx context.Context, event events.APIGatewayV2HT
 func (a *App) ServeLambdaFunctionURL(ctx context.Context, event events.LambdaFunctionURLRequest) events.LambdaFunctionURLResponse {
 	req, err := requestFromLambdaFunctionURL(event)
 	if err != nil {
-		return lambdaFunctionURLResponseFromResponse(responseForError(err))
+		return lambdaFunctionURLResponseFromResponse(a.responseForHTTPError(err))
 	}
 	return lambdaFunctionURLResponseFromResponse(a.Serve(ctx, req))
 }
