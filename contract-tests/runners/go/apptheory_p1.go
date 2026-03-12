@@ -33,7 +33,7 @@ func headerFirstValue(headers map[string][]string, key string) string {
 
 func runFixtureP1(f Fixture) error {
 	now := time.Unix(0, 0).UTC()
-	app := newAppTheoryFixtureAppP1(now, f.Setup.Limits, f.Setup.CORS)
+	app := newAppTheoryFixtureAppP1(now, f.Setup.Limits, f.Setup.CORS, f.Setup.HTTPErrorFormat)
 
 	for _, r := range f.Setup.Routes {
 		handler := builtInAppTheoryHandler(r.Handler)

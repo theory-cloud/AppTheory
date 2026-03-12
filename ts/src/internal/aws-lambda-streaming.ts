@@ -2,11 +2,19 @@ import { Buffer } from "node:buffer";
 
 import type { LambdaFunctionURLRequest } from "../aws-types.js";
 import { AppError, AppTheoryError } from "../errors.js";
+import {
+  HTTP_ERROR_FORMAT_NESTED,
+  type HTTPErrorFormat,
+  normalizeHTTPErrorFormat,
+} from "../http-error-format.js";
 import type { Request, Response } from "../types.js";
 
 import { requestFromLambdaFunctionURL } from "./aws-http.js";
 import { firstHeaderValue } from "./http.js";
-import { responseForError, responseForErrorWithRequestId } from "./response.js";
+import {
+  responseForErrorWithFormat,
+  responseForErrorWithRequestIdAndFormat,
+} from "./response.js";
 
 type LambdaResponseMeta = {
   statusCode: number;
@@ -29,6 +37,7 @@ export type HttpResponseStreamLike = {
 
 type AppLike = {
   serve: (request: Request, ctx?: unknown) => Promise<Response>;
+  getHTTPErrorFormat?: () => HTTPErrorFormat;
 };
 
 function lambdaFunctionURLSingleHeaders(
@@ -86,6 +95,7 @@ function streamErrorCodeForError(err: unknown): string {
 async function writeStreamedLambdaFunctionURLResponse(
   responseStream: HttpResponseStreamLike,
   resp: Response,
+  httpErrorFormat: HTTPErrorFormat,
 ): Promise<string> {
   if (resp.isBase64) {
     throw new TypeError("apptheory: cannot stream isBase64 responses");
@@ -117,7 +127,11 @@ async function writeStreamedLambdaFunctionURLResponse(
       }
     } catch (err) {
       const requestId = firstHeaderValue(resp.headers ?? {}, "x-request-id");
-      const early = responseForErrorWithRequestId(err, requestId);
+      const early = responseForErrorWithRequestIdAndFormat(
+        httpErrorFormat,
+        err,
+        requestId,
+      );
       const earlyMeta: LambdaResponseMeta = {
         statusCode: Number(early.status ?? 200),
         headers: lambdaFunctionURLSingleHeaders(early.headers),
@@ -166,16 +180,27 @@ export async function serveLambdaFunctionURLStreaming(
   responseStream: HttpResponseStreamLike,
   ctx?: unknown,
 ): Promise<string> {
+  const httpErrorFormat = normalizeHTTPErrorFormat(
+    app.getHTTPErrorFormat?.() ?? HTTP_ERROR_FORMAT_NESTED,
+  );
   let request: Request;
   try {
     request = requestFromLambdaFunctionURL(event);
   } catch (err) {
-    const resp = responseForError(err);
-    return await writeStreamedLambdaFunctionURLResponse(responseStream, resp);
+    const resp = responseForErrorWithFormat(httpErrorFormat, err);
+    return await writeStreamedLambdaFunctionURLResponse(
+      responseStream,
+      resp,
+      httpErrorFormat,
+    );
   }
 
   const resp = await app.serve(request, ctx);
-  return await writeStreamedLambdaFunctionURLResponse(responseStream, resp);
+  return await writeStreamedLambdaFunctionURLResponse(
+    responseStream,
+    resp,
+    httpErrorFormat,
+  );
 }
 
 export class CapturedHttpResponseStream implements HttpResponseStreamLike {

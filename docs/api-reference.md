@@ -56,6 +56,15 @@ Common helper exports:
 | Deterministic AppSync builders | `testkit.AppSyncEvent` | `buildAppSyncEvent` | `build_appsync_event` |
 | Basic response helpers | `Text`, `JSON`, `Binary` | `text`, `json`, `html`, `binary`, `sse` | `text`, `json`, `html`, `binary`, `sse` |
 
+HTTP error compatibility:
+
+- Default HTTP error bodies remain nested under `error`.
+- Lift-compatible flat HTTP error bodies are opt-in:
+  - Go: `apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormatFlatLegacy)` or `apptheory.WithLegacyHTTPErrorShape()`
+  - TypeScript: `createApp({ httpErrorFormat: HTTP_ERROR_FORMAT_FLAT_LEGACY })`
+  - Python: `create_app(http_error_format=HTTP_ERROR_FORMAT_FLAT_LEGACY)`
+- This setting applies to HTTP serialization only. AppSync and WebSocket error payloads keep their existing shapes.
+
 ## Universal Lambda entrypoint
 
 When one Lambda must accept multiple AWS trigger types, keep the handler thin and delegate dispatch to the runtime.
