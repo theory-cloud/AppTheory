@@ -347,9 +347,14 @@ Low-level JSON-RPC request builders:
 
 SSE helpers and assertions:
 
+- `Stream.Response`
+- `Stream.Cancel`
 - `Stream.Next`
 - `Stream.ReadAll`
 - `ReadSSEMessage`
 - `AssertError`
 - `AssertHasTools`
 - `AssertToolResult`
+
+Use `Stream.Response()` to assert the initial HTTP status, headers, and negotiated `mcp-session-id`.
+Use `Stream.Cancel()` to simulate a client disconnect before calling `ResumeStream(...)`.
