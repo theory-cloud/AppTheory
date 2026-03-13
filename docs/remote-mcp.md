@@ -71,6 +71,10 @@ You typically:
 2) Expose `/.well-known/oauth-protected-resource` (often via CDK mock integration; see below).
 3) Validate Bearer tokens against Autheory (JWT verify via JWKS or introspection).
 
+When you deploy with `AppTheoryRemoteMcpServer`, the construct injects `MCP_ENDPOINT`. If
+`RequireBearerTokenMiddleware(...)` is used without an explicit `ResourceMetadataURL`, the middleware derives the
+RFC9728 protected-resource metadata challenge URL from that endpoint by default.
+
 ## 3) Deploy on AWS (REST API v1 response streaming)
 
 Use these CDK constructs:
@@ -91,7 +95,24 @@ Deterministic test helpers:
 - Streamable HTTP MCP client: `testkit/mcp`
   - buffered JSON calls: `NewClient(...).Initialize/ListTools/CallTool`
   - streaming SSE: `Client.RawStream(...)` + `Client.ResumeStream(...)`
+  - disconnect/replay assertions: `Stream.Response()`, `Stream.Cancel()`, `Stream.Next()`, `Stream.ReadAll()`
 - Claude-like OAuth harness (DCR → PKCE → refresh): `testkit/oauth`
+
+Example OAuth harness usage:
+
+```go
+oauthClient := oauthtest.NewClaudePublicClient(nil)
+
+discovery, dcr, tokenResp, refreshResp, err := oauthClient.Authorize(ctx, oauthtest.AuthorizeOptions{
+  McpEndpoint: "https://api.example.com/prod/mcp",
+})
+```
+
+Notes:
+
+- `AuthorizeOptions.Origin` defaults to `https://claude.ai`
+- `AuthorizeOptions.RedirectURI` defaults to `https://claude.ai/api/mcp/auth_callback`
+- `McpEndpoint` is normalized to the canonical `/mcp` resource URL before discovery starts
 
 ## 5) Operational constraints (design for reconnect)
 

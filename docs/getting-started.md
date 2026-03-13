@@ -133,6 +133,9 @@ Use the runtime entrypoint that matches your deployment shape:
 Standard AppSync direct Lambda resolver events also route through the mixed-trigger dispatcher, so a Lift-style
 single-Lambda entrypoint can continue to use `HandleLambda`, `handleLambda`, or `handle_lambda`.
 
+For the GraphQL front door itself, use native AppSync infrastructure such as `aws-cdk-lib/aws-appsync`; AppTheory owns
+the Lambda resolver adapter, not the GraphQL API construct.
+
 ## Next reads
 
 - [Documentation Index](./README.md)
@@ -142,6 +145,7 @@ single-Lambda entrypoint can continue to use `HandleLambda`, `handleLambda`, or 
 - [CDK Guides](./cdk/README.md)
 - [Lift Migration Guide](./migration/from-lift.md)
 - [AppSync Lambda Resolver Recipe](./migration/appsync-lambda-resolvers.md)
+- [CDK AppSync Lambda Resolvers](./cdk/appsync-lambda-resolvers.md)
 
 Additional repo guide outside the current KT ingest set:
 

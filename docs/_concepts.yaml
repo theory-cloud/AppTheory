@@ -6,7 +6,7 @@ concepts:
     tagline: "One runtime contract, three language SDKs, snapshot-backed drift prevention."
     provides:
       - "App container and routing primitives across Go/TypeScript/Python"
-      - "AWS adapter entrypoints for HTTP, event sources, and WebSockets"
+      - "AWS adapter entrypoints for HTTP, AppSync, event sources, and WebSockets"
       - "Deterministic testkit helpers for event building, time control, and ID control"
       - "Public API drift gates via api-snapshots/go.txt, api-snapshots/ts.txt, api-snapshots/py.txt"
     requires:
@@ -89,7 +89,35 @@ concepts:
       - handle_lambda: "Python universal dispatcher (dict event)."
     provides:
       - event_shape_detection
+      - appsync_resolver_detection
       - single_lambda_entrypoint
+
+  appsync_resolvers:
+    type: component
+    purpose: "Direct Lambda resolver support that adapts standard AWS AppSync events into the normal AppTheory router."
+    provides:
+      - explicit_appsync_entrypoints
+      - standard_resolver_event_detection
+      - typed_appsync_context
+      - resolver_payload_projection
+      - lift_compatible_error_envelopes
+      - deterministic_appsync_test_builders
+    configuration:
+      - runtime/aws_appsync.go
+      - runtime/context.go
+      - ts/src/internal/aws-appsync.ts
+      - py/src/apptheory/aws_events.py
+      - testkit/event_sources.go
+      - ts/src/testkit.ts
+      - py/src/apptheory/testkit.py
+    related:
+      - universal_lambda_dispatch
+      - testkits
+    docs:
+      - docs/api-reference.md
+      - docs/getting-started.md
+      - docs/migration/appsync-lambda-resolvers.md
+      - docs/cdk/appsync-lambda-resolvers.md
 
   limited_rate_limiting:
     type: component
@@ -162,14 +190,17 @@ concepts:
 
   mcp_runtime:
     type: component
-    purpose: "Expose MCP (Model Context Protocol) over HTTP for Bedrock AgentCore and remote-MCP integrations."
+    purpose: "Expose MCP (Model Context Protocol) over Streamable HTTP for Bedrock AgentCore and remote-MCP integrations."
     provides:
+      - streamable_http_transport
+      - protocol_version_negotiation
       - jsonrpc_2_0_methods
       - tools_registry
       - resources_registry
       - prompts_registry
       - session_management
-      - optional_sse_progress_streaming
+      - origin_validation
+      - resumable_sse_progress_streaming
     configuration:
       - runtime/mcp/
       - runtime/oauth/
@@ -179,4 +210,7 @@ concepts:
       - docs/agentcore-mcp.md
       - docs/mcp.md
       - docs/remote-mcp.md
+      - docs/remote-mcp-autheory.md
       - docs/cdk/mcp-server-agentcore.md
+      - docs/cdk/mcp-server-remote-mcp.md
+      - docs/cdk/mcp-protected-resource.md
