@@ -1,30 +1,62 @@
 # MCP (Model Context Protocol) Server (Go runtime)
 
-This document describes AppTheory’s **MCP server implementation** (`github.com/theory-cloud/apptheory/runtime/mcp`) — the JSON-RPC method surface, registries, payload shapes, sessions, and streaming behavior.
+This document describes AppTheory's MCP server implementation (`github.com/theory-cloud/apptheory/runtime/mcp`) for
+the Go runtime: transport behavior, JSON-RPC surface, registries, sessions, streaming, and test helpers.
 
-If you’re specifically integrating with **Bedrock AgentCore**, start with `docs/agentcore-mcp.md` (it focuses on what to deploy and how AgentCore calls tools).
+If you're specifically integrating with Bedrock AgentCore, start with `docs/agentcore-mcp.md`.
 
 For the Claude-first Remote MCP deployment guide, see:
+
 - `docs/remote-mcp.md`
 
 OAuth helper surfaces used by Remote MCP deployments and Autheory are in:
+
 - `github.com/theory-cloud/apptheory/runtime/oauth`
 
 ---
 
 ## Transport + endpoint
 
-AppTheory’s MCP server implements **MCP Streamable HTTP** on a single endpoint path:
+AppTheory implements MCP Streamable HTTP on a single path:
 
-- `POST /mcp`
-- `GET /mcp` (resume/replay via `Last-Event-ID`)
-- `DELETE /mcp` (terminate session)
+- `POST /mcp`: JSON-RPC requests, notifications, and client responses
+- `GET /mcp`: resumable SSE replay via `Last-Event-ID`, or a keepalive listener when `Last-Event-ID` is absent
+- `DELETE /mcp`: session termination
 
-- Request body: JSON-RPC `{ "jsonrpc": "2.0", "id": ..., "method": "...", "params": { ... } }`
-- Session header: `Mcp-Session-Id` (issued by the server on `initialize`)
-- Protocol header: `MCP-Protocol-Version` (required after initialization)
+Header names are case-insensitive on the wire. The examples in this doc use lowercase HTTP headers.
 
-It is not a stdio transport — you mount it on AppTheory routes:
+- Session header: `mcp-session-id`
+- Protocol header: `mcp-protocol-version`
+- Resume header: `last-event-id`
+
+Important transport behavior:
+
+- `initialize` is the only request that creates a session and returns `mcp-session-id`
+- subsequent `POST /mcp`, `GET /mcp`, and `DELETE /mcp` calls require `mcp-session-id`
+- missing session header returns `400`
+- unknown or expired sessions return `404`
+- `mcp-protocol-version` is optional after initialization; when present it must be supported and must match the
+  session's negotiated protocol version
+- JSON-RPC success and error payloads return HTTP `200`; transport-level failures such as missing sessions, bad
+  protocol headers, rejected origins, or missing replay events return HTTP `4xx` / `5xx`
+
+Supported protocol versions negotiated on `initialize`:
+
+- `2025-11-25` (latest)
+- `2025-06-18`
+- `2025-03-26` (legacy compatibility / batch mode)
+
+If the client requests an unsupported protocol version during `initialize`, AppTheory counter-proposes the latest
+supported version instead of failing the request.
+
+If a request includes an `Origin` header, AppTheory validates it fail-closed. The default allowlist is:
+
+- `https://claude.ai`
+- `https://claude.com`
+
+Use `mcp.WithOriginValidator(...)` to replace that policy for other browser-based callers.
+
+Mounting the handler is still just normal AppTheory routing:
 
 ```go
 srv := mcp.NewServer("my-mcp-server", "dev")
@@ -36,15 +68,14 @@ app.Get("/mcp", h)
 app.Delete("/mcp", h)
 ```
 
-Supported protocol versions (negotiated on `initialize`): `2025-11-25` (latest), `2025-06-18`, `2025-03-26` (legacy).
-
 ---
 
-## Supported JSON-RPC methods
+## Supported JSON-RPC surface
 
-AppTheory currently dispatches these MCP JSON-RPC methods:
+AppTheory currently dispatches these MCP request methods:
 
 - `initialize`
+- `ping`
 - `tools/list`
 - `tools/call`
 - `resources/list`
@@ -52,16 +83,27 @@ AppTheory currently dispatches these MCP JSON-RPC methods:
 - `prompts/list`
 - `prompts/get`
 
+Accepted notification methods:
+
+- `notifications/initialized`
+- `notifications/cancelled`
+
+Other transport notes:
+
+- posted client responses are accepted for Streamable HTTP compliance and return `202 Accepted` with no body
+- notifications also return `202 Accepted` with no body
+- JSON-RPC batch requests are only supported for legacy `2025-03-26` callers
+
 ### Capabilities advertisement (`initialize`)
 
 The `initialize` result always advertises `tools`.
 
-It advertises `resources` and `prompts` **only when something is registered**:
+It advertises `resources` and `prompts` only when something is registered:
 
-- if `srv.Resources().Len() > 0` → `"resources": {}`
-- if `srv.Prompts().Len() > 0` → `"prompts": {}`
+- if `srv.Resources().Len() > 0` -> `"resources": {}`
+- if `srv.Prompts().Len() > 0` -> `"prompts": {}`
 
-This keeps “tools-only” clients stable while still exposing the full MCP surface when you opt in.
+This keeps tools-only clients stable while still exposing the broader MCP surface when you opt in.
 
 ---
 
@@ -89,31 +131,41 @@ _ = srv.Registry().RegisterTool(mcp.ToolDef{
 })
 ```
 
-### Tool results: `ContentBlock` shapes
+`ToolDef` exposes more than the minimal name + schema shape:
 
-Tool results return `content: []ContentBlock` where each content block is one of:
+- required: `Name`, `InputSchema`
+- optional: `Title`, `Description`, `OutputSchema`
+- optional annotations: `Title`, `ReadOnlyHint`, `DestructiveHint`, `IdempotentHint`, `OpenWorldHint`
+- optional icons: `Src`, `MimeType`, `Sizes`, `Theme`
+- optional execution metadata: `TaskSupport` (`"forbidden"`, `"optional"`, `"required"`)
 
-- **Text**: `{ "type": "text", "text": "..." }`
-- **Image**: `{ "type": "image", "data": "<base64>", "mimeType": "image/png" }`
-- **Audio**: `{ "type": "audio", "data": "<base64>", "mimeType": "audio/wav" }`
-- **Resource link**: `{ "type": "resource_link", "uri": "file://...", "name": "..." }`
-- **Embedded resource**:
-  `{ "type": "resource", "resource": { "uri": "file://...", "text": "..." } }`
+### Tool results
 
-If you want to include structured output in addition to the `content` blocks, set:
+`ToolResult` supports:
 
-- `ToolResult.StructuredContent` (encoded into `structuredContent`)
+- `Content`: ordered `[]ContentBlock`
+- `StructuredContent`: serialized as `structuredContent`
+- `IsError`: serialized as `isError`
+
+`ContentBlock` shapes:
+
+- text: `{ "type": "text", "text": "..." }`
+- image: `{ "type": "image", "data": "<base64>", "mimeType": "image/png" }`
+- audio: `{ "type": "audio", "data": "<base64>", "mimeType": "audio/wav" }`
+- resource link:
+  `{ "type": "resource_link", "uri": "file://...", "name": "...", "title": "...", "description": "...", "size": 123 }`
+- embedded resource:
+  `{ "type": "resource", "resource": { "uri": "file://...", "text": "...", "mimeType": "text/plain" } }`
 
 ### Streaming tool progress (SSE)
 
-If the client includes `Accept: text/event-stream` on a `tools/call`, AppTheory may format the response as SSE:
+If the client includes `Accept: text/event-stream` on `tools/call`, AppTheory may respond as SSE:
 
-- Every server message is delivered as an SSE event:
-  - `event: message`
-  - `data: <single JSON-RPC message>`
-- Progress is delivered as JSON-RPC notifications:
-  - `method: "notifications/progress"`
-  - correlated via `params._meta.progressToken` from the original request
+- every SSE frame is `event: message`
+- the frame `data:` is always a single JSON-RPC message
+- progress is emitted as JSON-RPC `notifications/progress`
+- the progress notification is correlated with `params._meta.progressToken` from the original `tools/call`
+- `progressToken` may be a string or an integer
 
 Register a streaming tool with `RegisterStreamingTool`:
 
@@ -132,24 +184,25 @@ _ = srv.Registry().RegisterStreamingTool(mcp.ToolDef{
 
 Important deployment note:
 
-- **True incremental SSE streaming requires a response-streaming adapter**.
-  AppTheory’s `SSEStreamResponse` is supported by the API Gateway **REST API v1** adapter (`ServeAPIGatewayProxy` via `HandleLambda`).
-  If you’re behind an adapter that buffers (common with HTTP API v2), clients may receive progress only after completion.
+- true incremental SSE delivery requires a response-streaming adapter
+- AppTheory's `SSEStreamResponse` is supported by the API Gateway REST API v1 adapter (`ServeAPIGatewayProxy` via
+  `HandleLambda`)
+- if you're behind an adapter that buffers responses, clients may receive progress only after completion
 
-### Resumability (GET + `Last-Event-ID`)
+### Resumability
 
-For streaming tool calls, the server includes `id: <id>` on SSE events.
+For streaming tool calls, AppTheory assigns SSE event ids and persists them in the active `StreamStore`.
 
-If the client disconnects, it can resume by calling:
-
-- `GET /mcp` with `Last-Event-ID: <id>`
-- plus the same `Mcp-Session-Id` (and usually `MCP-Protocol-Version`)
+- `GET /mcp` with `last-event-id: <id>` resumes or replays that stream
+- clients must reuse the same `mcp-session-id`
+- `GET /mcp` without `last-event-id` opens a session listener that stays alive with keepalive comments so reconnecting
+  clients do not hit immediate EOF loops
 
 ---
 
 ## Resources
 
-Resources are “things the server can read” by URI.
+Resources are URI-addressable things the server can read.
 
 Register resources on the resource registry:
 
@@ -165,22 +218,28 @@ _ = srv.Resources().RegisterResource(mcp.ResourceDef{
 })
 ```
 
-Handlers return one or more `ResourceContent` items:
+`ResourceDef` fields:
 
-- Text content: `{ "uri": "...", "text": "..." }`
-- Binary content: `{ "uri": "...", "blob": "<base64>" }`
-- Optional: `mimeType`
+- required: `URI`, `Name`
+- optional: `Title`, `Description`, `MimeType`, `Size`
+
+`ResourceContent` fields:
+
+- required: `URI`
+- optional: `MimeType`
+- exactly one of `Text` or `Blob`
+- `Blob` is expected to be base64-encoded content
 
 Supported methods:
 
-- `resources/list` → `{ "resources": []ResourceDef }`
-- `resources/read` → `{ "contents": []ResourceContent }`
+- `resources/list` -> `{ "resources": []ResourceDef }`
+- `resources/read` -> `{ "contents": []ResourceContent }`
 
 ---
 
 ## Prompts
 
-Prompts are named templates that return a sequence of messages for the client/LLM.
+Prompts are named templates that return a sequence of messages for the client or LLM.
 
 Register prompts on the prompt registry:
 
@@ -202,30 +261,56 @@ _ = srv.Prompts().RegisterPrompt(mcp.PromptDef{
 })
 ```
 
+`PromptDef` fields:
+
+- `Name`, `Title`, `Description`
+- `Arguments` as `[]PromptArgument`
+
+`PromptArgument` fields:
+
+- `Name`
+- optional `Title`, `Description`
+- optional `Required`
+
+`PromptResult` fields:
+
+- optional `Description`
+- required `Messages`
+
 Supported methods:
 
-- `prompts/list` → `{ "prompts": []PromptDef }`
-- `prompts/get` → `PromptResult` (`{ "description": "...", "messages": [...] }`)
+- `prompts/list` -> `{ "prompts": []PromptDef }`
+- `prompts/get` -> `PromptResult`
 
 ---
 
-## Sessions
+## Sessions + persistence
 
-Sessions are tracked via the `Mcp-Session-Id` HTTP header:
+Sessions are tracked with the `mcp-session-id` header.
 
-- The server issues a session id on the **`initialize`** HTTP response.
-- After initialization, clients must send:
-  - `Mcp-Session-Id: ...`
-  - `MCP-Protocol-Version: 2025-06-18` (or `2025-03-26` for legacy/batch compatibility)
-- TTL is controlled by `MCP_SESSION_TTL_MINUTES` (default: `60`).
+- `initialize` creates the session and returns `mcp-session-id` on the HTTP response
+- session TTL is controlled by `MCP_SESSION_TTL_MINUTES` (default `60`)
+- session TTL is refreshed on access (sliding window)
+- `notifications/initialized` persists an `"initialized": "true"` marker in the session data
+- `DELETE /mcp` returns `202 Accepted` and deletes the session plus best-effort stream state for that session
 
-The default store is in-memory. For persistent storage across cold starts, use the Dynamo-backed store (see `docs/agentcore-mcp.md`).
+Persistence options:
+
+- default session store: in-memory
+- persistent sessions: `mcp.WithSessionStore(mcp.NewDynamoSessionStore(db))`
+- default Dynamo table name: `MCP_SESSION_TABLE` when set, otherwise `mcp-sessions`
+
+Stream persistence note:
+
+- the built-in runtime ships `MemoryStreamStore`
+- durable replay across cold starts requires your own `StreamStore` wired with `mcp.WithStreamStore(...)`
+- the CDK Remote MCP stream table is infrastructure only until the application provides a matching `StreamStore`
 
 ---
 
 ## Local testing (no AWS required)
 
-Use the deterministic testkit client in `testkit/mcp`:
+Use the deterministic `testkit/mcp` client for in-process tests:
 
 ```go
 env := testkit.New()
@@ -237,6 +322,34 @@ tools, _ := client.ListTools(context.Background())
 _ = tools
 ```
 
-For Streamable HTTP SSE streaming, use:
-- `Client.RawStream(...)` (POST stream)
-- `Client.ResumeStream(...)` (GET replay/resume with `Last-Event-ID`)
+High-level helpers on `Client`:
+
+- `Initialize`
+- `ListTools`
+- `CallTool`
+- `ListResources`
+- `ReadResource`
+- `ListPrompts`
+- `GetPrompt`
+- `Raw`
+- `RawStream`
+- `ResumeStream`
+
+Low-level JSON-RPC request builders:
+
+- `InitializeRequest`
+- `ListToolsRequest`
+- `CallToolRequest`
+- `ListResourcesRequest`
+- `ReadResourceRequest`
+- `ListPromptsRequest`
+- `GetPromptRequest`
+
+SSE helpers and assertions:
+
+- `Stream.Next`
+- `Stream.ReadAll`
+- `ReadSSEMessage`
+- `AssertError`
+- `AssertHasTools`
+- `AssertToolResult`

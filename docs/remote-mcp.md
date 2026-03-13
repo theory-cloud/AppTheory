@@ -50,7 +50,11 @@ Important behaviors for Claude compatibility:
 - `initialize` returns `Mcp-Session-Id` and must negotiate `protocolVersion` (`2025-11-25`).
 - `notifications/initialized` must return `202 Accepted` with no body.
 - `tools/call` may stream with SSE when the client includes `Accept: text/event-stream`.
+- SSE frames stay on `event: message`; progress is emitted as JSON-RPC `notifications/progress`, not custom SSE event names.
 - Disconnections are not cancellation; resumability uses `GET /mcp` + `Last-Event-ID`.
+- `GET /mcp` without `Last-Event-ID` stays open as a keepalive listener for the current session.
+- If the request includes an `Origin` header, the default runtime allowlist is Claude-oriented (`https://claude.ai`,
+  `https://claude.com`); use `mcp.WithOriginValidator(...)` for other browser origins.
 
 ## 2) Add OAuth protection (Remote MCP auth `2025-06-18`)
 
@@ -77,6 +81,10 @@ See:
 - `docs/cdk/mcp-server-remote-mcp.md`
 - `docs/cdk/mcp-protected-resource.md`
 
+If you enable the optional Remote MCP stream table, treat it as infrastructure only until your app wires a concrete
+`StreamStore` with `mcp.WithStreamStore(...)`. The built-in runtime ships `MemoryStreamStore`, not a Dynamo-backed
+stream store.
+
 ## 4) Testing (no AWS required)
 
 Deterministic test helpers:
@@ -89,7 +97,7 @@ Deterministic test helpers:
 
 API Gateway REST response streaming connections are time-bounded and can disconnect. For “hours-long” logical sessions:
 - keep sessions durable (`SessionStore` backed by DynamoDB)
-- keep tool output durable (event log + `Last-Event-ID` replay)
+- keep tool output durable (event log + `Last-Event-ID` replay) by providing your own persistent `StreamStore`
 - execute long work asynchronously (worker Lambdas) and append progress/results into the event log
 
 Detailed compatibility notes and HTTP transcripts are maintained in non-canonical planning docs and intentionally kept

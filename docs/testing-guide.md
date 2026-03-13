@@ -56,6 +56,20 @@ If exported APIs changed, refresh snapshots first and then re-run snapshot verif
 ./scripts/verify-api-snapshots.sh
 ```
 
+## Feature-specific deterministic harnesses
+
+Use the repo testkits to prove feature behavior without deploying infrastructure:
+
+- AppSync resolvers:
+  - Go: `testkit.AppSyncEvent(...)`, `env.InvokeAppSync(...)`
+  - TypeScript: `buildAppSyncEvent(...)`, `env.invokeAppSync(...)`
+  - Python: `build_appsync_event(...)`, `env.invoke_appsync(...)`
+- MCP servers:
+  - high-level client: `testkit/mcp` `NewClient(...).Initialize/ListTools/CallTool/ListResources/ReadResource/ListPrompts/GetPrompt`
+  - streaming helpers: `Client.RawStream(...)`, `Client.ResumeStream(...)`
+  - low-level JSON-RPC builders: `InitializeRequest`, `ListToolsRequest`, `CallToolRequest`, `ListResourcesRequest`,
+    `ReadResourceRequest`, `ListPromptsRequest`, `GetPromptRequest`
+
 ## Evidence to capture
 
 - commands run

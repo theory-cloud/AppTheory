@@ -146,6 +146,8 @@ single-Lambda entrypoint can continue to use `HandleLambda`, `handleLambda`, or 
 Additional repo guide outside the current KT ingest set:
 
 - [Bedrock AgentCore MCP](./agentcore-mcp.md)
+- [Claude Remote MCP](./remote-mcp.md)
+- [MCP Method Surface](./mcp.md)
 
 Package-local quick starts still exist under `ts/docs/` and `py/docs/`, but the canonical cross-language guidance
 starts in `docs/`.
