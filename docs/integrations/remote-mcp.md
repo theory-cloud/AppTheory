@@ -7,7 +7,7 @@ Locked decisions:
 - **AWS edge for streaming:** API Gateway **REST API v1** + Lambda **response streaming**
 - **Auth (day‑1):** OAuth + DCR (public clients) compatible with MCP auth `2025-06-18`
 
-If you’re looking for the full method surface and payload shapes, start with `docs/mcp.md`.
+If you’re looking for the full method surface and payload shapes, start with `docs/integrations/mcp.md`.
 
 ## 1) Build a Streamable HTTP MCP server (Go)
 

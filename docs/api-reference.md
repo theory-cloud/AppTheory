@@ -181,6 +181,8 @@ Use these in tests and CI:
 
 ## Cross-language feature surfaces
 
+These feature areas extend the core runtime and have dedicated guides when you need deeper operational detail.
+
 ### Rate limiting
 
 The `limited` feature set provides DynamoDB-backed cross-instance rate limiting.
@@ -197,7 +199,7 @@ Safe logging helpers are exported in all three runtimes:
 - TypeScript: `sanitizeLogString`, `sanitizeFieldValue`, `sanitizeJSON`, `sanitizeJSONValue`, `sanitizeXML`
 - Python: `sanitize_log_string`, `sanitize_field_value`, `sanitize_json`, `sanitize_json_value`, `sanitize_xml`
 
-Guide: [Sanitization](./sanitization.md)
+Guide: [Sanitization](./features/sanitization.md)
 
 ### Jobs ledger
 
@@ -208,7 +210,7 @@ idempotency, and leases.
 - TypeScript: exports in `api-snapshots/ts.txt` including `DynamoJobLedger`, `CreateJobInput`, `JobMeta`, and related status types
 - Python: exports in `api-snapshots/py.txt` including `DynamoJobLedger`, `JobsConfig`, and related helpers
 
-Guide: [Jobs Ledger](./jobs-ledger.md)
+Guide: [Jobs Ledger](./features/jobs-ledger.md)
 Reference stack: `examples/cdk/import-pipeline/`
 
 ## Migration and configuration notes
@@ -240,12 +242,13 @@ AppTheory includes Go runtime support for MCP and OAuth-adjacent remote-MCP flow
 - `testkit/oauth`: Claude-like end-to-end OAuth flow helpers for remote MCP tests (`NewClaudePublicClient`,
   `AuthorizeOptions`, `Authorize`)
 
-Related repo guides outside the current KT ingest set:
+Related canonical integration guides:
 
-- [Bedrock AgentCore MCP](./agentcore-mcp.md)
-- [Remote MCP](./remote-mcp.md)
-- [Remote MCP + Autheory](./remote-mcp-autheory.md)
-- [MCP Method Surface](./mcp.md)
+- [Integration Guides](./integrations/README.md)
+- [Bedrock AgentCore MCP](./integrations/agentcore-mcp.md)
+- [Remote MCP](./integrations/remote-mcp.md)
+- [Remote MCP + Autheory](./integrations/remote-mcp-autheory.md)
+- [MCP Method Surface](./integrations/mcp.md)
 
 ## CDK construct overview
 
