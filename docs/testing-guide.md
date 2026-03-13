@@ -66,9 +66,11 @@ Use the repo testkits to prove feature behavior without deploying infrastructure
   - Python: `build_appsync_event(...)`, `env.invoke_appsync(...)`
 - MCP servers:
   - high-level client: `testkit/mcp` `NewClient(...).Initialize/ListTools/CallTool/ListResources/ReadResource/ListPrompts/GetPrompt`
-  - streaming helpers: `Client.RawStream(...)`, `Client.ResumeStream(...)`
+  - streaming helpers: `Client.RawStream(...)`, `Client.ResumeStream(...)`, `Stream.Response()`, `Stream.Cancel()`,
+    `Stream.Next()`, `Stream.ReadAll()`
   - low-level JSON-RPC builders: `InitializeRequest`, `ListToolsRequest`, `CallToolRequest`, `ListResourcesRequest`,
     `ReadResourceRequest`, `ListPromptsRequest`, `GetPromptRequest`
+  - OAuth harness: `testkit/oauth` `NewClaudePublicClient(nil).Authorize(...)`
 
 ## Evidence to capture
 

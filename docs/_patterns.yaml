@@ -20,7 +20,7 @@ patterns:
   universal_lambda_dispatch:
     name: "Delegate mixed AWS trigger handling to the runtime dispatcher"
     problem: "Manual event-shape branching in Lambda handlers drifts across languages and misses edge event types."
-    solution: "Use AppTheory dispatcher entrypoints (HandleLambda, handleLambda, handle_lambda) so routing behavior stays contract-tested."
+    solution: "Use AppTheory dispatcher entrypoints (HandleLambda, handleLambda, handle_lambda) so routing behavior stays contract-tested, including standard AppSync resolver event detection."
     correct_example: |
       # CORRECT: keep the Lambda entrypoint thin and delegate dispatch.
       func handler(ctx context.Context, event json.RawMessage) (any, error) {
@@ -37,6 +37,29 @@ patterns:
         consequences:
           - "Cross-language behavior drift"
           - "Unhandled production event shapes"
+
+  appsync_router_adaptation:
+    name: "Route AppSync resolvers through the normal AppTheory router"
+    problem: "Treating AppSync as a bespoke handler path duplicates request adaptation and bypasses the runtime's typed resolver context."
+    solution: "Register routes that match the GraphQL field name (`Query` and `Subscription` -> `GET /fieldName`, `Mutation` -> `POST /fieldName`) and read resolver metadata from the typed AppSync context. Use the explicit AppSync entrypoint for AppSync-only Lambdas, or keep mixed-trigger handlers on the universal dispatcher."
+    correct_example: |
+      # CORRECT: let the runtime adapt Query.getThing into GET /getThing.
+      app.Get("/getThing", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+        appsync := ctx.AsAppSync()
+        return apptheory.JSON(200, map[string]any{"field": appsync.FieldName})
+      })
+    anti_patterns:
+      - name: "Handling GraphQL fields outside the router"
+        why: "Bypassing AppTheory routing loses the shared request model, typed AppSync context, and tested error projection."
+        incorrect_example: |
+          # INCORRECT
+          switch event.Info.FieldName {
+          case "getThing":
+            // bespoke resolver handling here
+          }
+        consequences:
+          - "Cross-language AppSync drift"
+          - "Inconsistent error and metadata handling"
 
   headers_canonicalization:
     name: "Treat headers case-insensitively and assert lowercase response keys"
@@ -74,6 +97,26 @@ patterns:
         consequences:
           - "Unexpected 404s"
           - "Slow debugging cycles"
+
+  mcp_deployment_shape:
+    name: "Choose the MCP deployment shape by client and transport requirements"
+    problem: "Bedrock AgentCore and Claude Remote MCP do not have the same transport, streaming, or OAuth discovery requirements."
+    solution: "Use `AppTheoryMcpServer` on HTTP API v2 for AgentCore-style POST-only deployments. Use `AppTheoryRemoteMcpServer` plus `AppTheoryMcpProtectedResource` when you need Streamable HTTP `POST/GET/DELETE /mcp`, OAuth protected-resource discovery, and a streaming-capable REST API v1 edge. Durable replay still requires application code to provide a persistent `StreamStore`."
+    correct_example: |
+      # CORRECT: choose the Remote MCP stack when the client needs resumable SSE.
+      new AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
+        handler,
+        enableSessionTable: true,
+      })
+    anti_patterns:
+      - name: "Using the AgentCore construct as a drop-in Remote MCP edge"
+        why: "HTTP API v2 POST-only deployments do not provide the same transport surface or streaming behavior as the Remote MCP stack."
+        incorrect_example: |
+          # INCORRECT
+          new AppTheoryMcpServer(stack, "McpServer", { handler })
+        consequences:
+          - "Missing GET /mcp and DELETE /mcp support"
+          - "Remote-MCP reconnect and replay gaps"
 
   sanitize_before_logging:
     name: "Sanitize payloads before logging"
