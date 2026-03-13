@@ -115,10 +115,32 @@ AppTheory supports the standard AWS direct Lambda resolver event shape in all th
   - Go: `AppSyncResolverEvent`, `AppSyncResolverInfo`, `AppSyncResolverRequest`
   - TypeScript: `AppSyncResolverEvent`, `AppSyncResolverInfo`, `AppSyncResolverRequest`
   - Python: `AppSyncResolverEvent`, `AppSyncResolverInfo`, `AppSyncResolverRequest`
+- Core event fields:
+  - `arguments`: top-level resolver arguments; adapted into the JSON request body
+  - `info.fieldName` + `info.parentTypeName`: determine the AppTheory route and method
+  - `info.variables`: preserved on the typed context and raw event
+  - `info.selectionSetList` + `info.selectionSetGraphQL`: preserved on the exported event types and available on the raw event for selection-set-aware handlers
+  - `request.headers`: forwarded to the synthesized request
+  - `identity`, `source`, `prev`, and `stash`: preserved on the typed context and portable metadata keys
 - Typed context:
   - Go: `ctx.AsAppSync()`
   - TypeScript: `ctx.asAppSync()`
   - Python: `ctx.as_appsync()`
+- Portable context metadata keys:
+
+| Key | Meaning |
+| --- | --- |
+| `apptheory.trigger_type` | Constant `"appsync"` |
+| `apptheory.appsync.field_name` | GraphQL field name |
+| `apptheory.appsync.parent_type_name` | GraphQL parent type |
+| `apptheory.appsync.arguments` | Top-level resolver arguments |
+| `apptheory.appsync.identity` | Resolver identity payload |
+| `apptheory.appsync.source` | Parent/source object |
+| `apptheory.appsync.variables` | GraphQL variables |
+| `apptheory.appsync.prev` | Previous resolver result |
+| `apptheory.appsync.stash` | Resolver stash map |
+| `apptheory.appsync.request_headers` | Forwarded AppSync request headers |
+| `apptheory.appsync.raw_event` | Full resolver event |
 - Request adaptation:
   - `Mutation -> POST /fieldName`
   - `Query -> GET /fieldName`
@@ -127,12 +149,14 @@ AppTheory supports the standard AWS direct Lambda resolver event shape in all th
   - `request.headers` are forwarded and `content-type: application/json` is synthesized when absent
 - Response behavior:
   - JSON bodies project back to native resolver payloads
-  - `text/*` bodies project to UTF-8 strings
   - empty bodies project to `null`
+  - any other non-empty body projects to a UTF-8 string
   - binary and streaming bodies fail closed with deterministic AppSync system errors
 - Error behavior:
   - handler failures return Lift-compatible AppSync error objects with `pay_theory_error`, `error_message`,
     `error_type`, `error_data`, and `error_info`
+  - portable AppTheory/AppError payloads include `error_data.status_code` and may include `request_id`, `trace_id`,
+    `timestamp`, plus `error_info.code`, `trigger_type`, `method`, `path`, and optional `details`
 
 Recipe:
 
@@ -200,8 +224,12 @@ Known configuration keys surfaced by canonical docs:
 
 AppTheory includes Go runtime support for MCP and OAuth-adjacent remote-MCP flows:
 
-- `runtime/mcp`: JSON-RPC server methods, registries, and session support
-- `testkit/mcp`: deterministic in-process MCP test helpers
+- `runtime/mcp`: Streamable HTTP `POST/GET/DELETE /mcp`, protocol negotiation, origin validation, sessions, resumable
+  SSE, and the MCP request surface (`initialize`, `ping`, `tools/*`, `resources/*`, `prompts/*`, plus accepted
+  `notifications/initialized` / `notifications/cancelled`)
+- `testkit/mcp`: deterministic in-process MCP client helpers (`NewClient`, `Initialize`, `ListTools`, `CallTool`,
+  `ListResources`, `ReadResource`, `ListPrompts`, `GetPrompt`, `RawStream`, `ResumeStream`) plus JSON-RPC request
+  builders and assertions
 - `runtime/oauth`: protected-resource metadata, challenges, DCR, PKCE, and token-store helpers
 - `testkit/oauth`: end-to-end OAuth flow helpers for remote MCP tests
 
