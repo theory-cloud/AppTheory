@@ -72,6 +72,6 @@ For SSE connections, expect disconnects (idle timeouts, client refresh, Lambda m
 
 ## Related docs
 
-- Go runtime MCP server: `docs/mcp.md`
+- Go runtime MCP server: `docs/integrations/mcp.md`
 - Remote MCP planning + compatibility contract: `docs/development/planning/apptheory/remote-mcp/README.md`
 - Protected resource metadata (RFC9728): `cdk/docs/mcp-protected-resource.md`

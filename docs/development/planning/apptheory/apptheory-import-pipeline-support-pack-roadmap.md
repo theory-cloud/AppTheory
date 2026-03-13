@@ -208,7 +208,7 @@ This epic should make cross-account posture easy and safe, but not opaque:
   `contract-tests/runners/ts/fixtures.test.cjs`
 - Python: `py/src/apptheory/jobs.py` (`DynamoJobLedger` + canonical item dataclasses) + tests in `py/tests/test_jobs.py`
   + exported via `py/src/apptheory/__init__.py`
-- Docs: `docs/jobs-ledger.md`
+- Docs: `docs/features/jobs-ledger.md`
 
 ---
 

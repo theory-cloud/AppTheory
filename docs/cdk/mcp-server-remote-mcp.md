@@ -133,6 +133,6 @@ Use `mcp.WithOriginValidator(...)` when you need other browser origins.
 
 ## Related docs
 
-- `docs/mcp.md`
-- `docs/remote-mcp.md`
+- `docs/integrations/mcp.md`
+- `docs/integrations/remote-mcp.md`
 - `docs/cdk/mcp-protected-resource.md`

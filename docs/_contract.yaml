@@ -17,6 +17,8 @@ contract:
     - docs/migration/**
     - docs/llm-faq/**
     - docs/cdk/**
+    - docs/features/**
+    - docs/integrations/**
   out_of_scope:
     - docs/development/**
     - docs/planning/**
@@ -26,3 +28,4 @@ contract:
 notes:
   guidance: contract-only
   contract_only_layout: "Keep docs/development-guidelines.md as a short root boundary stub; move substantive maintainer/process guidance under docs/development/**."
+  public_layout: "Put public capability docs under docs/features/**, docs/integrations/**, docs/cdk/**, or docs/migration/** instead of adding new root-level feature guides."

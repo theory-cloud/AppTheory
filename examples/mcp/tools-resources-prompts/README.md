@@ -5,5 +5,4 @@ This example builds an MCP server that exposes:
 - resources (`resources/list`, `resources/read`)
 - prompts (`prompts/list`, `prompts/get`)
 
-For the full MCP wire behavior, see `docs/mcp.md`.
-
+For the full MCP wire behavior, see `docs/integrations/mcp.md`.
