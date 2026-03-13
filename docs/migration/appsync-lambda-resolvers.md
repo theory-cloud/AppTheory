@@ -45,6 +45,26 @@ Resolver metadata stays available on the request context:
 The typed AppSync context exposes field name, parent type name, arguments, identity, source, variables, stash, prev,
 request headers, and the raw event.
 
+Selection-set-aware handlers can read the preserved raw event data directly:
+
+- Go: `ctx.AsAppSync().RawEvent.Info.SelectionSetList`, `SelectionSetGraphQL`
+- TypeScript: `ctx.asAppSync()?.rawEvent.info.selectionSetList`, `selectionSetGraphQL`
+- Python: `ctx.as_appsync().raw_event["info"]["selectionSetList"]`, `selectionSetGraphQL`
+
+Portable metadata keys are also populated on the generic request context:
+
+- `apptheory.trigger_type`
+- `apptheory.appsync.field_name`
+- `apptheory.appsync.parent_type_name`
+- `apptheory.appsync.arguments`
+- `apptheory.appsync.identity`
+- `apptheory.appsync.source`
+- `apptheory.appsync.variables`
+- `apptheory.appsync.prev`
+- `apptheory.appsync.stash`
+- `apptheory.appsync.request_headers`
+- `apptheory.appsync.raw_event`
+
 ## Minimal shape
 
 Given a GraphQL field like `Query.getThing`, register the matching AppTheory route as `GET /getThing`.
@@ -143,8 +163,8 @@ def handler(event: AppSyncResolverEvent, ctx: Any) -> Any:
 Successful AppSync handlers return resolver payloads, not API Gateway-style envelopes:
 
 - JSON bodies project to native resolver values
-- `text/*` bodies project to strings
 - empty bodies project to `null`
+- any other non-empty body projects to a UTF-8 string
 
 Handler failures return Lift-compatible AppSync error objects:
 
@@ -153,6 +173,12 @@ Handler failures return Lift-compatible AppSync error objects:
 - `error_type`
 - `error_data`
 - `error_info`
+
+Portable AppTheory/AppError values also carry deterministic metadata:
+
+- `error_data.status_code`
+- optional `error_data.request_id`, `trace_id`, `timestamp`
+- `error_info.code`, `trigger_type`, `method`, `path`, and optional `details`
 
 Binary and streaming response bodies are intentionally out of scope for AppSync and fail closed with deterministic
 system-error envelopes.
