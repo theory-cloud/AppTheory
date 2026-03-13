@@ -141,7 +141,7 @@ concepts:
       - sanitize_xml
       - payment_xml_masking_patterns
     docs:
-      - docs/sanitization.md
+      - docs/features/sanitization.md
 
   jobs_ledger:
     type: component
@@ -155,7 +155,7 @@ concepts:
     configuration:
       - "DynamoDB: pk/sk schema (JOB#..., META/REC#/LOCK/REQ#...)"
     docs:
-      - docs/jobs-ledger.md
+      - docs/features/jobs-ledger.md
       - examples/cdk/import-pipeline/README.md
 
   import_pipeline_support_pack:
@@ -207,10 +207,10 @@ concepts:
       - cdk/lib/mcp-server.ts
       - cdk/lib/remote-mcp-server.ts
     docs:
-      - docs/agentcore-mcp.md
-      - docs/mcp.md
-      - docs/remote-mcp.md
-      - docs/remote-mcp-autheory.md
+      - docs/integrations/agentcore-mcp.md
+      - docs/integrations/mcp.md
+      - docs/integrations/remote-mcp.md
+      - docs/integrations/remote-mcp-autheory.md
       - docs/cdk/mcp-server-agentcore.md
       - docs/cdk/mcp-server-remote-mcp.md
       - docs/cdk/mcp-protected-resource.md

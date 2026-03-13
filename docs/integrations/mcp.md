@@ -3,11 +3,11 @@
 This document describes AppTheory's MCP server implementation (`github.com/theory-cloud/apptheory/runtime/mcp`) for
 the Go runtime: transport behavior, JSON-RPC surface, registries, sessions, streaming, and test helpers.
 
-If you're specifically integrating with Bedrock AgentCore, start with `docs/agentcore-mcp.md`.
+If you're specifically integrating with Bedrock AgentCore, start with `docs/integrations/agentcore-mcp.md`.
 
 For the Claude-first Remote MCP deployment guide, see:
 
-- `docs/remote-mcp.md`
+- `docs/integrations/remote-mcp.md`
 
 OAuth helper surfaces used by Remote MCP deployments and Autheory are in:
 

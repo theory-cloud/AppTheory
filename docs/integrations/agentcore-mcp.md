@@ -7,7 +7,7 @@ AppTheory provides two building blocks:
 - **Runtime (Go):** `github.com/theory-cloud/apptheory/runtime/mcp` — an MCP JSON-RPC handler (`initialize`, `tools/*`, plus optional `resources/*` and `prompts/*`), registries, sessions, and optional SSE progress streaming.
 - **CDK (TypeScript/Python):** `AppTheoryMcpServer` — an API Gateway v2 HTTP API with `POST /mcp` → Lambda, optional session table, optional custom domain, and optional stage logging/throttling.
 
-For the full MCP method surface (including `resources/*` and `prompts/*`), see `docs/mcp.md`.
+For the full MCP method surface (including `resources/*` and `prompts/*`), see `docs/integrations/mcp.md`.
 
 If you’re trying to answer “what do I deploy and what code do I write?”, start with **Quick Start** below.
 
@@ -111,7 +111,7 @@ AppTheory’s MCP server implements these JSON-RPC methods:
 - `tools/list`
 - `tools/call`
 
-AgentCore typically uses only the tools surface. AppTheory also supports additional MCP methods for non-AgentCore clients (`resources/*`, `prompts/*`) — see `docs/mcp.md`.
+AgentCore typically uses only the tools surface. AppTheory also supports additional MCP methods for non-AgentCore clients (`resources/*`, `prompts/*`) — see `docs/integrations/mcp.md`.
 
 ### Example: initialize
 
@@ -302,6 +302,9 @@ func TestMcpServer(t *testing.T) {
 ---
 
 ## Troubleshooting
+
+These checks cover the most common deployment and protocol mismatches when AgentCore cannot call the AppTheory MCP
+server successfully.
 
 ### 404 / “not found”
 
