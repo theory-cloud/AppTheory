@@ -37,3 +37,14 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - Use `AppTheoryMcpServer` for Bedrock AgentCore
 - Use `AppTheoryRemoteMcpServer` plus `AppTheoryMcpProtectedResource` for Claude Remote MCP
 - Use `AppTheoryJobsTable`, `AppTheoryS3Ingest`, and `AppTheoryCodeBuildJobRunner` for import pipelines
+
+## AppSync note
+
+AppTheory does not currently export an AppSync-specific CDK construct.
+
+Use `aws-cdk-lib/aws-appsync` for the GraphQL API, schema, auth, and Lambda data source wiring, and keep the Lambda
+handler on AppTheory's AppSync runtime entrypoints.
+
+Guide:
+
+- [AppSync Lambda Resolvers](./appsync-lambda-resolvers.md)

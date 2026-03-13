@@ -63,6 +63,7 @@ This deploys:
 
 - HTTP API Gateway v2
 - `POST /mcp` route -> your Lambda
+- Lambda env var `MCP_ENDPOINT` pointing at the resolved `/mcp` URL
 - output `mcp.endpoint` (the URL you configure in AgentCore)
 
 ---

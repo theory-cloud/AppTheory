@@ -5,6 +5,8 @@ Use this guide when wiring an AWS AppSync Lambda data source to an AppTheory app
 AppTheory supports the standard direct Lambda resolver event shape in Go, TypeScript, and Python. You do not need
 request mapping template rewrites to use the runtime adapters documented here.
 
+If you also need the infrastructure side, see [CDK AppSync Lambda Resolvers](../cdk/appsync-lambda-resolvers.md).
+
 ## Choose the entrypoint
 
 Use the explicit AppSync entrypoint when the Lambda is dedicated to AppSync:

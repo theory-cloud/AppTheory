@@ -2,6 +2,22 @@ decisions:
   choose_entrypoint_shape:
     question: "How should Lambda handlers be wired when integrating AppTheory?"
     decision_tree:
+      - condition: "The Lambda is dedicated to standard AWS AppSync resolver events."
+        check: "Can the handler accept the AppSync resolver event type directly?"
+        if_yes:
+          choice: "Use the explicit AppSync entrypoint"
+          reason: "ServeAppSync / serveAppSync / serve_appsync keeps the resolver contract obvious while still routing through the normal AppTheory router."
+          example: |
+            func handler(ctx context.Context, event apptheory.AppSyncResolverEvent) any {
+              return app.ServeAppSync(ctx, event)
+            }
+        if_no:
+          choice: "Use the universal dispatcher entrypoint"
+          reason: "HandleLambda / handleLambda / handle_lambda still detect standard AppSync resolver events for mixed-trigger or generic handlers."
+          example: |
+            func handler(ctx context.Context, event json.RawMessage) (any, error) {
+              return app.HandleLambda(ctx, event)
+            }
       - condition: "The Lambda may receive multiple AWS trigger types (HTTP, queues, streams, or WebSockets)."
         check: "Can you delegate event detection to the runtime dispatcher?"
         if_yes:
@@ -16,6 +32,37 @@ decisions:
           reason: "Manual branching is high drift risk and must be explicitly justified."
           example: |
             TODO: If a custom dispatcher is required, document unsupported event shapes and add parity tests.
+
+  choose_mcp_deployment_shape:
+    question: "Which MCP deployment shape should I choose?"
+    decision_tree:
+      - condition: "The client is Bedrock AgentCore or another POST-only MCP caller."
+        check: "Do you only need the simpler HTTP API v2 edge and not Streamable HTTP replay semantics?"
+        if_yes:
+          choice: "Use AppTheoryMcpServer"
+          reason: "It provisions the AgentCore-oriented POST /mcp edge with optional session storage and domain mapping."
+          example: |
+            new AppTheoryMcpServer(this, "McpServer", { handler })
+        if_no:
+          choice: "Use AppTheoryRemoteMcpServer plus AppTheoryMcpProtectedResource"
+          reason: "Claude Remote MCP needs Streamable HTTP POST/GET/DELETE, OAuth protected-resource discovery, and a streaming-capable REST API v1 edge."
+          example: |
+            new AppTheoryRemoteMcpServer(this, "RemoteMcp", {
+              handler,
+              enableSessionTable: true,
+            })
+      - condition: "You enabled the Remote MCP stream table."
+        check: "Did the application also provide a persistent StreamStore implementation?"
+        if_yes:
+          choice: "Document replay as durable"
+          reason: "The runtime can now persist stream events across reconnects and cold starts."
+          example: |
+            srv := mcp.NewServer("server", "dev", mcp.WithStreamStore(myPersistentStore))
+        if_no:
+          choice: "Treat the table as infrastructure only"
+          reason: "The built-in runtime ships MemoryStreamStore; enableStreamTable alone does not make replay durable."
+          example: |
+            TODO: wire mcp.WithStreamStore(...) before claiming durable replay.
 
   choose_api_source_of_truth:
     question: "What source should drive API docs and migration guidance?"

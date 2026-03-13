@@ -161,6 +161,12 @@ AppTheory supports the standard AWS direct Lambda resolver event shape in all th
 Recipe:
 
 - [AppSync Lambda Resolvers](./migration/appsync-lambda-resolvers.md)
+- [CDK AppSync Lambda Resolvers](./cdk/appsync-lambda-resolvers.md)
+
+Infrastructure note:
+
+- use `aws-cdk-lib/aws-appsync` for the GraphQL API, schema, auth, and Lambda data source wiring
+- AppTheory does not currently export an AppSync-specific CDK construct
 
 ## Strict route registration
 
@@ -228,10 +234,11 @@ AppTheory includes Go runtime support for MCP and OAuth-adjacent remote-MCP flow
   SSE, and the MCP request surface (`initialize`, `ping`, `tools/*`, `resources/*`, `prompts/*`, plus accepted
   `notifications/initialized` / `notifications/cancelled`)
 - `testkit/mcp`: deterministic in-process MCP client helpers (`NewClient`, `Initialize`, `ListTools`, `CallTool`,
-  `ListResources`, `ReadResource`, `ListPrompts`, `GetPrompt`, `RawStream`, `ResumeStream`) plus JSON-RPC request
-  builders and assertions
+  `ListResources`, `ReadResource`, `ListPrompts`, `GetPrompt`, `RawStream`, `ResumeStream`, `Stream.Response`,
+  `Stream.Cancel`, `Stream.Next`, `Stream.ReadAll`) plus JSON-RPC request builders and assertions
 - `runtime/oauth`: protected-resource metadata, challenges, DCR, PKCE, and token-store helpers
-- `testkit/oauth`: end-to-end OAuth flow helpers for remote MCP tests
+- `testkit/oauth`: Claude-like end-to-end OAuth flow helpers for remote MCP tests (`NewClaudePublicClient`,
+  `AuthorizeOptions`, `Authorize`)
 
 Related repo guides outside the current KT ingest set:
 
