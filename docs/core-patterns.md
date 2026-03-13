@@ -179,7 +179,7 @@ INCORRECT:
 - logging raw request bodies or third-party payloads directly
 - assuming internal batch jobs can skip sanitization
 
-Guide: [Sanitization](./sanitization.md)
+Guide: [Sanitization](./features/sanitization.md)
 
 ## Pattern: use the jobs ledger for long-running import workflows
 
@@ -193,3 +193,5 @@ INCORRECT:
 
 - relying on at-least-once delivery without idempotency state
 - storing job progress only in logs
+
+Guide: [Jobs Ledger](./features/jobs-ledger.md)

@@ -20,6 +20,8 @@ Start here:
 
 ## Migration plan
 
+This checklist is the shortest cross-language path from a legacy handler shape to the canonical AppTheory runtime.
+
 1. Confirm the current runtime entrypoint and Lift-specific imports.
 2. Rewrite or replace Lift imports with AppTheory equivalents.
 3. Move mixed-trigger Lambdas to `HandleLambda`, `handleLambda`, or `handle_lambda` unless a narrower adapter is required.

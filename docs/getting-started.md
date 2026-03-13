@@ -30,6 +30,9 @@ AppTheory release artifacts are also published via GitHub Releases:
 
 ## First deterministic local invocation
 
+Each runtime exposes the same basic deterministic flow: create a test environment, register a route, invoke the app,
+and assert on the response.
+
 ### Go
 
 ```go
@@ -147,11 +150,13 @@ the Lambda resolver adapter, not the GraphQL API construct.
 - [AppSync Lambda Resolver Recipe](./migration/appsync-lambda-resolvers.md)
 - [CDK AppSync Lambda Resolvers](./cdk/appsync-lambda-resolvers.md)
 
-Additional repo guide outside the current KT ingest set:
+Additional canonical capability guides:
 
-- [Bedrock AgentCore MCP](./agentcore-mcp.md)
-- [Claude Remote MCP](./remote-mcp.md)
-- [MCP Method Surface](./mcp.md)
+- [Feature Guides](./features/README.md)
+- [Integration Guides](./integrations/README.md)
+- [Bedrock AgentCore MCP](./integrations/agentcore-mcp.md)
+- [Claude Remote MCP](./integrations/remote-mcp.md)
+- [MCP Method Surface](./integrations/mcp.md)
 
 Package-local quick starts still exist under `ts/docs/` and `py/docs/`, but the canonical cross-language guidance
 starts in `docs/`.

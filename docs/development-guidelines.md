@@ -12,6 +12,7 @@ short so contract-only guidance is layout-resistant and does not accumulate user
 - keep substantive maintainer process docs under `docs/development/**`
 - do not add user-facing product guidance here
 - do not treat this file as part of the KT ingestible publish set
+- keep public capability docs under `docs/features/**`, `docs/integrations/**`, `docs/cdk/**`, or `docs/migration/**`
 
 ## Contract boundary
 
