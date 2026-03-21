@@ -6,6 +6,9 @@ This directory contains the OFFICIAL documentation for AppTheory.
 `docs/` is the canonical documentation root for AppTheory. Use the pages in this directory for user-facing guidance,
 AI ingestion, and migration-safe references.
 
+All public AppTheory functionality should be represented either in the fixed ingestible set below or in one of the
+sanctioned category roots. Avoid adding new root-level feature guides when a category root already exists.
+
 ## Canonical root
 
 - Canonical KT source root: `docs/`
@@ -40,20 +43,28 @@ These pages are versioned with the docs contract, but they are not part of the i
 - [Migration Procedures](./migration/from-lift.md) and related files under `docs/migration/**`
 - [AppSync Lambda Resolver Recipe](./migration/appsync-lambda-resolvers.md)
 - [CDK Guides](./cdk/README.md) and related files under `docs/cdk/**`
+- [Feature Guides](./features/README.md) and related files under `docs/features/**`
+- [Integration Guides](./integrations/README.md) and related files under `docs/integrations/**`
 - `docs/llm-faq/**` is reserved as an optional ingestible surface if it is added later
+
+## Functional guides now covered by the canonical ingest surface
+
+- [Sanitization](./features/sanitization.md)
+- [Jobs Ledger](./features/jobs-ledger.md)
+- [MCP Runtime](./integrations/mcp.md)
+- [Bedrock AgentCore MCP](./integrations/agentcore-mcp.md)
+- [Remote MCP](./integrations/remote-mcp.md)
+- [Remote MCP + Autheory](./integrations/remote-mcp-autheory.md)
+
+These capability guides are now part of the sanctioned optional ingestible surface declared in
+[Docs Contract](./_contract.yaml).
 
 ## Additional repo guides outside the current KT ingest set
 
-- [Sanitization](./sanitization.md)
-- [Jobs Ledger](./jobs-ledger.md)
-- [Bedrock AgentCore MCP](./agentcore-mcp.md)
-- [Remote MCP](./remote-mcp.md)
-- [Remote MCP + Autheory](./remote-mcp-autheory.md)
-- [MCP Method Surface](./mcp.md)
 - [Import Pipeline Reference Stack](../examples/cdk/import-pipeline/README.md)
 
-These pages remain useful repo docs, but they are not part of the fixed or sanctioned ingestible KT publish set
-declared in [Docs Contract](./_contract.yaml).
+These repo guides remain useful, but they are not part of the canonical external AppTheory docs surface unless they
+are promoted into one of the sanctioned category roots above.
 
 ## Secondary package-local surfaces
 

@@ -9,7 +9,7 @@ import { AppTheoryRestApiRouter } from "./rest-api-router";
  *
  * This construct adds the RFC9728 protected resource metadata endpoint required
  * by MCP auth (2025-06-18):
- * - GET `/.well-known/oauth-protected-resource`
+ * - GET `/.well-known/oauth-protected-resource/...resource path...`
  */
 export interface AppTheoryMcpProtectedResourceProps {
   /**
@@ -34,7 +34,7 @@ export interface AppTheoryMcpProtectedResourceProps {
 }
 
 /**
- * Adds `/.well-known/oauth-protected-resource` metadata (RFC9728) to a REST API.
+ * Adds path-scoped `/.well-known/oauth-protected-resource/...` metadata (RFC9728) to a REST API.
  */
 export class AppTheoryMcpProtectedResource extends Construct {
   constructor(scope: Construct, id: string, props: AppTheoryMcpProtectedResourceProps) {
@@ -56,9 +56,10 @@ export class AppTheoryMcpProtectedResource extends Construct {
       throw new Error("AppTheoryMcpProtectedResource: authorizationServers is required");
     }
 
-    const wellKnown = router.api.root.getResource(".well-known") ?? router.api.root.addResource(".well-known");
-    const endpoint = wellKnown.getResource("oauth-protected-resource")
-      ?? wellKnown.addResource("oauth-protected-resource");
+    const endpoint = ensureResourcePath(
+      router.api.root,
+      metadataPathFromResourceURL(resource),
+    );
 
     const body = Stack.of(this).toJsonString({
       resource,
@@ -92,3 +93,28 @@ export class AppTheoryMcpProtectedResource extends Construct {
   }
 }
 
+function metadataPathFromResourceURL(resource: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(resource);
+  } catch {
+    throw new Error("AppTheoryMcpProtectedResource: resource must be an absolute URL");
+  }
+
+  const resourcePath = decodeURIComponent(parsed.pathname || "");
+  return `/.well-known/oauth-protected-resource${resourcePath}`;
+}
+
+function ensureResourcePath(root: apigw.IResource, path: string): apigw.IResource {
+  let current = root;
+  const trimmed = String(path ?? "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  if (!trimmed) {
+    return current;
+  }
+
+  for (const segment of trimmed.split("/")) {
+    current = current.getResource(segment) ?? current.addResource(segment);
+  }
+
+  return current;
+}

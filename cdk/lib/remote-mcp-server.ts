@@ -58,6 +58,20 @@ export interface AppTheoryRemoteMcpServerProps {
   readonly domain?: AppTheoryRestApiRouterDomainOptions;
 
   /**
+   * Enable per-actor MCP endpoint bundles.
+   *
+   * When enabled, the construct mounts the transport at `/mcp/{actor}` and
+   * co-registers the RFC 9728 discovery route at
+   * `/.well-known/oauth-protected-resource/mcp/{actor}`.
+   *
+   * The public `endpoint` and injected `MCP_ENDPOINT` environment variable
+   * become a template string ending in `/mcp/{actor}`.
+   *
+   * @default false
+   */
+  readonly actorPath?: boolean;
+
+  /**
    * Create a DynamoDB table for MCP session storage.
    * @default false
    */
@@ -114,7 +128,7 @@ export class AppTheoryRemoteMcpServer extends Construct {
   public readonly router: AppTheoryRestApiRouter;
 
   /**
-   * The MCP endpoint URL (`.../mcp`).
+   * The MCP endpoint URL or template (`.../mcp` or `.../mcp/{actor}`).
    */
   public readonly endpoint: string;
 
@@ -139,10 +153,20 @@ export class AppTheoryRemoteMcpServer extends Construct {
       domain: props.domain,
     });
 
+    const transportPath = props.actorPath ? "/mcp/{actor}" : "/mcp";
+
     // Streamable HTTP routes (streaming enabled for SSE delivery)
-    this.router.addLambdaIntegration("/mcp", ["POST"], props.handler, { streaming: true });
-    this.router.addLambdaIntegration("/mcp", ["GET"], props.handler, { streaming: true });
-    this.router.addLambdaIntegration("/mcp", ["DELETE"], props.handler);
+    this.router.addLambdaIntegration(transportPath, ["POST"], props.handler, { streaming: true });
+    this.router.addLambdaIntegration(transportPath, ["GET"], props.handler, { streaming: true });
+    this.router.addLambdaIntegration(transportPath, ["DELETE"], props.handler);
+
+    if (props.actorPath) {
+      this.router.addLambdaIntegration(
+        "/.well-known/oauth-protected-resource/mcp/{actor}",
+        ["GET"],
+        props.handler,
+      );
+    }
 
     // Optional session table (matches runtime/mcp/session_dynamo.go schema)
     if (props.enableSessionTable) {
@@ -188,7 +212,7 @@ export class AppTheoryRemoteMcpServer extends Construct {
     }
 
     const stageName = props.stage?.stageName ?? "prod";
-    this.endpoint = computeMcpEndpoint(this.router, stageName, props.domain);
+    this.endpoint = computeMcpEndpoint(this.router, stageName, props.domain, props.actorPath);
     this.addEnvironment(props.handler, "MCP_ENDPOINT", this.endpoint);
   }
 
@@ -207,14 +231,16 @@ function computeMcpEndpoint(
   router: AppTheoryRestApiRouter,
   stageName: string,
   domain?: AppTheoryRestApiRouterDomainOptions,
+  actorPath?: boolean,
 ): string {
+  const suffix = actorPath ? "/mcp/{actor}" : "/mcp";
   if (!domain) {
     const stack = Stack.of(router);
     const stage = String(stageName ?? "").trim() || "prod";
-    return `https://${router.api.restApiId}.execute-api.${stack.region}.${stack.urlSuffix}/${stage}/mcp`;
+    return `https://${router.api.restApiId}.execute-api.${stack.region}.${stack.urlSuffix}/${stage}${suffix}`;
   }
 
   const basePath = String(domain.basePath ?? "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
   const prefix = basePath ? `/${basePath}` : "";
-  return `https://${domain.domainName}${prefix}/mcp`.replace(/\/{2,}/g, "/").replace(/^https:\//, "https://");
+  return `https://${domain.domainName}${prefix}${suffix}`.replace(/\/{2,}/g, "/").replace(/^https:\//, "https://");
 }

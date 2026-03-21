@@ -14,6 +14,8 @@ functionality remains available for Go users** (portable subset + documented Go-
 
 ## Quick Start (Go Service)
 
+Use this sequence when you want the smallest safe migration path for a Lift-backed Go service.
+
 1. Replace `limited` imports (safe, diff-based):
    - Dry-run: `./scripts/migrate-from-lift-go.sh -root path/to/service`
    - Apply: `./scripts/migrate-from-lift-go.sh -root path/to/service -apply`
@@ -25,6 +27,9 @@ functionality remains available for Go users** (portable subset + documented Go-
 4. Run your service tests + `make rubric` in AppTheory for contract parity expectations.
 
 ## Step-By-Step Migration (Go)
+
+Use these sections when you need to reason about parity one surface at a time instead of applying the quick-start
+sequence mechanically.
 
 ### 1) Update imports and dependencies
 
