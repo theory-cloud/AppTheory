@@ -4,14 +4,14 @@ Claude Remote MCP requires an OAuth protected-resource metadata endpoint for dis
 
 This guide covers `AppTheoryMcpProtectedResource`, which adds:
 
-- `GET /.well-known/oauth-protected-resource`
+- `GET /.well-known/oauth-protected-resource/...resource path...`
 
 ## What Claude expects
 
 When calling your MCP server without a token, Claude expects:
 
 - `401 Unauthorized`
-- `WWW-Authenticate: Bearer resource_metadata="https://<host>/.well-known/oauth-protected-resource"`
+- `WWW-Authenticate: Bearer resource_metadata="https://<host>/.well-known/oauth-protected-resource/mcp"`
 
 Claude then fetches the metadata endpoint and expects JSON like:
 
@@ -57,5 +57,9 @@ new AppTheoryMcpProtectedResource(stack, "ProtectedResource", {
 - this construct only adds the metadata endpoint
 - your MCP Lambda still needs to enforce `Authorization: Bearer ...` and emit the `WWW-Authenticate` challenge on
   `401`
+- the construct derives the metadata route from `resource` per RFC9728, so a resource of
+  `https://mcp.example.com/mcp` becomes `GET /.well-known/oauth-protected-resource/mcp`
 - the `resource` value should match the actual `/mcp` URL the client uses, including any custom domain or base path
 - for API Gateway REST APIs, `/.well-known/...` sits under the same stage or base path as your `/mcp` route
+- for per-actor bundles (`/mcp/{actor}`), prefer `AppTheoryRemoteMcpServer({ actorPath: true })`, which co-registers
+  the matching discovery route automatically
