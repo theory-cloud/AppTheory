@@ -50,9 +50,10 @@ fi
 
 mode="skip"
 if [[ "${branch}" == "premain" ]]; then
-  if [[ -n "${head_ref}" ]]; then
-    # Pull requests targeting premain run on a synthetic merge ref. Validate the
-    # actual remote premain branch in that case instead of the merge ref's files.
+  if [[ "${head_ref}" == "staging" ]]; then
+    # Staging -> premain promotions should validate the current remote premain
+    # branch, not the synthetic merge ref, so staging cannot mask an out-of-sync
+    # prerelease baseline on premain itself.
     mode="promotion"
   else
     mode="premain"
