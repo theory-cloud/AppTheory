@@ -7,7 +7,7 @@ AppTheory provides two building blocks:
 - **Runtime (Go):** `github.com/theory-cloud/apptheory/runtime/mcp` — an MCP JSON-RPC handler (`initialize`, `tools/*`, plus optional `resources/*` and `prompts/*`), registries, sessions, and optional SSE progress streaming.
 - **CDK (TypeScript/Python):** `AppTheoryMcpServer` — an API Gateway v2 HTTP API with `POST /mcp` → Lambda, optional session table, optional custom domain, and optional stage logging/throttling.
 
-For the full MCP method surface (including `resources/*` and `prompts/*`), see `docs/mcp.md`.
+For the full MCP method surface (including `resources/*` and `prompts/*`), see `docs/integrations/mcp.md`.
 
 If you’re trying to answer “what do I deploy and what code do I write?”, start with **Quick Start** below.
 
@@ -26,6 +26,7 @@ Key details:
 - The MCP endpoint is **`POST /mcp`**.
 - The payload is **JSON-RPC 2.0** (`jsonrpc: "2.0"`) with an `id`, `method`, and optional `params`.
 - Session state is tracked via the **`Mcp-Session-Id`** header (issued on the `initialize` response).
+- Follow-up calls should also send **`MCP-Protocol-Version`** matching the negotiated `initialize` result.
 - MCP errors are returned as JSON-RPC errors (HTTP status is still `200`).
 
 ---
@@ -110,7 +111,7 @@ AppTheory’s MCP server implements these JSON-RPC methods:
 - `tools/list`
 - `tools/call`
 
-AgentCore typically uses only the tools surface. AppTheory also supports additional MCP methods for non-AgentCore clients (`resources/*`, `prompts/*`) — see `docs/mcp.md`.
+AgentCore typically uses only the tools surface. AppTheory also supports additional MCP methods for non-AgentCore clients (`resources/*`, `prompts/*`) — see `docs/integrations/mcp.md`.
 
 ### Example: initialize
 
@@ -118,11 +119,12 @@ AgentCore typically uses only the tools surface. AppTheory also supports additio
 curl -sS -i \
   -X POST "https://YOUR_ENDPOINT/mcp" \
   -H 'content-type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize"}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"agentcore","version":"unknown"}}}'
 ```
 
 - The response includes a `mcp-session-id` header.
 - Send that header on subsequent calls to keep a session.
+- Send `mcp-protocol-version` on subsequent calls as well.
 
 ### Example: list tools
 
@@ -131,6 +133,7 @@ curl -sS \
   -X POST "https://YOUR_ENDPOINT/mcp" \
   -H 'content-type: application/json' \
   -H "mcp-session-id: ${MCP_SESSION_ID}" \
+  -H 'mcp-protocol-version: 2025-11-25' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 ```
 
@@ -141,6 +144,7 @@ curl -sS \
   -X POST "https://YOUR_ENDPOINT/mcp" \
   -H 'content-type: application/json' \
   -H "mcp-session-id: ${MCP_SESSION_ID}" \
+  -H 'mcp-protocol-version: 2025-11-25' \
   -d '{
     "jsonrpc":"2.0",
     "id":3,
@@ -158,8 +162,10 @@ curl -sS \
 
 MCP calls are plain HTTP requests. AppTheory adds a lightweight session mechanism:
 
-- Clients send **`mcp-session-id`**.
-- If missing/unknown/expired, the server issues a new session ID and returns it in the response headers.
+- `initialize` issues **`mcp-session-id`**.
+- After initialization, clients must send **`mcp-session-id`** on follow-up requests.
+- Missing session headers fail with `400`.
+- Unknown or expired sessions fail with `404`.
 - TTL is controlled by `MCP_SESSION_TTL_MINUTES` (default: `60` minutes).
 
 ### Persistence options
@@ -205,8 +211,9 @@ Notes:
 
 If the client sets `Accept: text/event-stream` on a `tools/call`, AppTheory formats the response as SSE:
 
-- `event: progress` for intermediate events emitted by your tool
-- `event: message` for the final JSON-RPC response
+- every SSE frame is `event: message`
+- intermediate progress is emitted as JSON-RPC `notifications/progress`
+- the final frame is the JSON-RPC response to the original `tools/call`
 
 Important adapter note:
 
@@ -240,6 +247,7 @@ curl -N \
   -H 'content-type: application/json' \
   -H 'accept: text/event-stream' \
   -H "mcp-session-id: ${MCP_SESSION_ID}" \
+  -H 'mcp-protocol-version: 2025-11-25' \
   -d '{
     "jsonrpc":"2.0",
     "id":4,
@@ -294,6 +302,9 @@ func TestMcpServer(t *testing.T) {
 ---
 
 ## Troubleshooting
+
+These checks cover the most common deployment and protocol mismatches when AgentCore cannot call the AppTheory MCP
+server successfully.
 
 ### 404 / “not found”
 

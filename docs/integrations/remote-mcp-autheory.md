@@ -46,6 +46,22 @@ Use the Claude-like harness in AppTheory to pin behavior in CI:
 - `testkit/oauth` (`ClaudePublicClient`)
 - It exercises: discovery → DCR → PKCE auth code → token → refresh.
 
+Example:
+
+```go
+oauthClient := oauthtest.NewClaudePublicClient(nil)
+
+discovery, dcr, tokenResp, refreshResp, err := oauthClient.Authorize(ctx, oauthtest.AuthorizeOptions{
+  McpEndpoint: "https://api.example.com/prod/mcp",
+})
+```
+
+Defaults match Claude-first expectations:
+
+- `Origin`: `https://claude.ai`
+- `RedirectURI`: `https://claude.ai/api/mcp/auth_callback`
+- `McpEndpoint` is normalized to the canonical `/mcp` resource URL before the discovery flow begins
+
 ## Related notes
 
 Additional maintainer planning notes exist outside the canonical docs root and are intentionally omitted here.

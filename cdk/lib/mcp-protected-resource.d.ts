@@ -5,7 +5,7 @@ import { AppTheoryRestApiRouter } from "./rest-api-router";
  *
  * This construct adds the RFC9728 protected resource metadata endpoint required
  * by MCP auth (2025-06-18):
- * - GET `/.well-known/oauth-protected-resource`
+ * - GET `/.well-known/oauth-protected-resource/...resource path...`
  */
 export interface AppTheoryMcpProtectedResourceProps {
     /**
@@ -27,7 +27,7 @@ export interface AppTheoryMcpProtectedResourceProps {
     readonly authorizationServers: string[];
 }
 /**
- * Adds `/.well-known/oauth-protected-resource` metadata (RFC9728) to a REST API.
+ * Adds path-scoped `/.well-known/oauth-protected-resource/...` metadata (RFC9728) to a REST API.
  */
 export declare class AppTheoryMcpProtectedResource extends Construct {
     constructor(scope: Construct, id: string, props: AppTheoryMcpProtectedResourceProps);

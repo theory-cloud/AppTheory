@@ -12,7 +12,7 @@ It also supports:
 - Optional custom domain + Route53 CNAME
 - Optional stage options (name, access logs, throttling)
 
-If you’re looking for the Go runtime implementation (tools + handler), see `docs/agentcore-mcp.md`.
+If you’re looking for the Go runtime implementation (tools + handler), see `docs/integrations/agentcore-mcp.md`.
 
 Note on SSE progress streaming:
 
@@ -120,7 +120,7 @@ What you get:
 Important:
 
 - The **CDK construct does not automatically switch your runtime to DynamoDB-backed sessions**.
-- In Go, choose the Dynamo session store explicitly (see `docs/agentcore-mcp.md`).
+- In Go, choose the Dynamo session store explicitly (see `docs/integrations/agentcore-mcp.md`).
 
 ---
 

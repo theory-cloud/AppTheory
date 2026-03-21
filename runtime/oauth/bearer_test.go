@@ -40,7 +40,29 @@ func TestRequireBearerTokenMiddleware_401IncludesResourceMetadata(t *testing.T) 
 	})
 	require.NoError(t, err)
 	require.Equal(t, 401, resp.Status)
-	require.Equal(t, []string{`Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"`}, resp.Headers["www-authenticate"])
+	require.Equal(t, []string{`Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"`}, resp.Headers["www-authenticate"])
+}
+
+func TestRequireBearerTokenMiddleware_401ResolvesActorTemplate(t *testing.T) {
+	t.Setenv("MCP_ENDPOINT", "https://mcp.example.com/mcp/{actor}")
+
+	app := apptheory.New()
+	app.Use(RequireBearerTokenMiddleware(RequireBearerTokenOptions{}))
+	app.Get("/mcp/{actor}", func(*apptheory.Context) (*apptheory.Response, error) {
+		return &apptheory.Response{Status: 200}, nil
+	})
+
+	resp := app.Serve(context.Background(), apptheory.Request{
+		Method: "GET",
+		Path:   "/mcp/Arch",
+		Headers: map[string][]string{
+			"host":              {"mcp.example.com"},
+			"x-forwarded-proto": {"https"},
+		},
+	})
+
+	require.Equal(t, 401, resp.Status)
+	require.Equal(t, []string{`Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp/Arch"`}, resp.Headers["www-authenticate"])
 }
 
 func TestRequireBearerTokenMiddleware_ValidatorRuns(t *testing.T) {

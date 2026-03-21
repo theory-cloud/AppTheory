@@ -2186,6 +2186,8 @@ func ProtectedResourceMetadataURLForRequest(map[string][]string) (string, bool)
 
 func ProtectedResourceWWWAuthenticate(string) string
 
+func RFC9728ResourceMetadataURL(string) (string, bool)
+
 func RequireBearerTokenMiddleware(RequireBearerTokenOptions) apptheory.Middleware
 
 func ResourceMetadataURLFromMcpEndpoint(string) (string, bool)
