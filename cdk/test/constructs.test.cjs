@@ -49,6 +49,48 @@ function writeSnapshot(name, template) {
   fs.writeFileSync(filePath, JSON.stringify(stableJson(template), null, 2) + "\n");
 }
 
+function restApiResourcePaths(template) {
+  const resources = template.Resources ?? {};
+  const cache = {};
+
+  function resolve(resourceId) {
+    if (!resourceId) return null;
+    if (cache[resourceId]) return cache[resourceId];
+
+    const resource = resources[resourceId];
+    if (!resource || resource.Type !== "AWS::ApiGateway::Resource") {
+      return null;
+    }
+
+    const pathPart = resource.Properties?.PathPart;
+    const parentId = resource.Properties?.ParentId?.Ref;
+    const parentPath = resolve(parentId);
+    const fullPath = parentPath ? `${parentPath}/${pathPart}` : `/${pathPart}`;
+    cache[resourceId] = fullPath.replace(/\/{2,}/g, "/");
+    return cache[resourceId];
+  }
+
+  for (const resourceId of Object.keys(resources)) {
+    resolve(resourceId);
+  }
+
+  return cache;
+}
+
+function restApiMethodPaths(template) {
+  const resourcePaths = restApiResourcePaths(template);
+  const methods = [];
+  for (const resource of Object.values(template.Resources ?? {})) {
+    if (resource.Type !== "AWS::ApiGateway::Method") continue;
+    methods.push({
+      method: resource.Properties?.HttpMethod,
+      path: resourcePaths[resource.Properties?.ResourceId?.Ref] ?? "/",
+      integration: resource.Properties?.Integration,
+    });
+  }
+  return methods;
+}
+
 test("AppTheoryFunction synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -1843,19 +1885,15 @@ test("AppTheoryRemoteMcpServer (basic) synthesizes expected template", () => {
     Name: "apptheory-remote-mcp-test",
   });
 
+  const methodPaths = restApiMethodPaths(template);
+
   // Verify: Streaming enabled on POST/GET methods (ResponseTransferMode + URI suffix + timeout)
   let streamingMethods = 0;
-  let hasPost = false;
-  let hasGet = false;
-  let hasDelete = false;
 
   for (const [key, resource] of Object.entries(template.Resources)) {
     if (resource.Type !== "AWS::ApiGateway::Method") continue;
 
     const method = resource.Properties?.HttpMethod;
-    if (method === "POST") hasPost = true;
-    if (method === "GET") hasGet = true;
-    if (method === "DELETE") hasDelete = true;
 
     if (method !== "POST" && method !== "GET") continue;
 
@@ -1877,15 +1915,63 @@ test("AppTheoryRemoteMcpServer (basic) synthesizes expected template", () => {
     streamingMethods++;
   }
 
-  assert.ok(hasPost, "Should have POST /mcp method");
-  assert.ok(hasGet, "Should have GET /mcp method");
-  assert.ok(hasDelete, "Should have DELETE /mcp method");
+  assert.ok(methodPaths.some((m) => m.method === "POST" && m.path === "/mcp"), "Should have POST /mcp method");
+  assert.ok(methodPaths.some((m) => m.method === "GET" && m.path === "/mcp"), "Should have GET /mcp method");
+  assert.ok(methodPaths.some((m) => m.method === "DELETE" && m.path === "/mcp"), "Should have DELETE /mcp method");
   assert.ok(streamingMethods >= 2, "Should have streaming enabled on POST and GET");
 
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("remote-mcp-server-basic", template);
   } else {
     expectSnapshot("remote-mcp-server-basic", template);
+  }
+});
+
+test("AppTheoryRemoteMcpServer (actor path) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
+    handler: fn,
+    apiName: "apptheory-remote-mcp-actor-test",
+    actorPath: true,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const methodPaths = restApiMethodPaths(template);
+
+  assert.ok(
+    methodPaths.some((m) => m.method === "POST" && m.path === "/mcp/{actor}"),
+    "Should have POST /mcp/{actor} method",
+  );
+  assert.ok(
+    methodPaths.some((m) => m.method === "GET" && m.path === "/mcp/{actor}"),
+    "Should have GET /mcp/{actor} method",
+  );
+  assert.ok(
+    methodPaths.some((m) => m.method === "DELETE" && m.path === "/mcp/{actor}"),
+    "Should have DELETE /mcp/{actor} method",
+  );
+  assert.ok(
+    methodPaths.some((m) => m.method === "GET" && m.path === "/.well-known/oauth-protected-resource/mcp/{actor}"),
+    "Should have GET protected resource metadata route for /mcp/{actor}",
+  );
+
+  const functions = Object.values(template.Resources).filter((resource) => resource.Type === "AWS::Lambda::Function");
+  assert.ok(functions.length >= 1, "Should synthesize a Lambda function");
+  const mcpEndpoint = functions[0].Properties?.Environment?.Variables?.MCP_ENDPOINT;
+  assert.ok(JSON.stringify(mcpEndpoint).includes("/prod/mcp/{actor}"), "MCP_ENDPOINT should use the actor template");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("remote-mcp-server-actor-path", template);
+  } else {
+    expectSnapshot("remote-mcp-server-actor-path", template);
   }
 });
 
@@ -2012,15 +2098,20 @@ test("AppTheoryMcpProtectedResource synthesizes expected template", () => {
   });
 
   const template = assertions.Template.fromStack(stack).toJSON();
+  const methodPaths = restApiMethodPaths(template);
 
   let mockGetMethods = 0;
-  for (const [, resource] of Object.entries(template.Resources)) {
+  for (const resource of Object.values(template.Resources)) {
     if (resource.Type !== "AWS::ApiGateway::Method") continue;
     if (resource.Properties?.HttpMethod !== "GET") continue;
     if (resource.Properties?.Integration?.Type !== "MOCK") continue;
     mockGetMethods++;
   }
-  assert.equal(mockGetMethods, 1, "Should have one GET mock method for /.well-known/oauth-protected-resource");
+  assert.equal(mockGetMethods, 1, "Should have one GET mock method for the protected resource metadata route");
+  assert.ok(
+    methodPaths.some((m) => m.method === "GET" && m.path === "/.well-known/oauth-protected-resource/mcp"),
+    "Should mount the RFC 9728 path-scoped metadata route",
+  );
 
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("mcp-protected-resource", template);

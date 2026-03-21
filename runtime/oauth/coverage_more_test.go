@@ -37,7 +37,11 @@ func TestProtectedResourceMetadata_EdgeCases(t *testing.T) {
 
 	got, ok := ResourceMetadataURLFromMcpEndpoint("https://api.example.com/mcp")
 	require.True(t, ok)
-	require.Equal(t, "https://api.example.com/.well-known/oauth-protected-resource", got)
+	require.Equal(t, "https://api.example.com/.well-known/oauth-protected-resource/mcp", got)
+
+	rootURL, ok := RFC9728ResourceMetadataURL("https://api.example.com/")
+	require.True(t, ok)
+	require.Equal(t, "https://api.example.com/.well-known/oauth-protected-resource/", rootURL)
 
 	require.Equal(t, "https://x.example.com/mcp", CanonicalResourceURL(" https://x.example.com/mcp/ "))
 

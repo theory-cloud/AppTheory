@@ -59,8 +59,8 @@ Important behaviors for Claude compatibility:
 ## 2) Add OAuth protection (Remote MCP auth `2025-06-18`)
 
 Claude discovers OAuth using:
-- `401` + `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource"`
-- `GET /.well-known/oauth-protected-resource` (RFC9728)
+- `401` + `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/...resource path..."`
+- `GET /.well-known/oauth-protected-resource/...resource path...` (RFC9728)
 
 AppTheory provides helpers in `runtime/oauth`:
 - `oauth.RequireBearerTokenMiddleware(...)`
@@ -68,7 +68,8 @@ AppTheory provides helpers in `runtime/oauth`:
 
 You typically:
 1) Protect all `/mcp` routes with `RequireBearerTokenMiddleware`.
-2) Expose `/.well-known/oauth-protected-resource` (often via CDK mock integration; see below).
+2) Expose the matching path-scoped `/.well-known/oauth-protected-resource/...` route (often via CDK mock integration;
+   see below).
 3) Validate Bearer tokens against Autheory (JWT verify via JWKS or introspection).
 
 When you deploy with `AppTheoryRemoteMcpServer`, the construct injects `MCP_ENDPOINT`. If
@@ -79,7 +80,8 @@ RFC9728 protected-resource metadata challenge URL from that endpoint by default.
 
 Use these CDK constructs:
 - `AppTheoryRemoteMcpServer` — provisions REST API v1 and enables Lambda response streaming for `/mcp` (POST/GET)
-- `AppTheoryMcpProtectedResource` — adds `/.well-known/oauth-protected-resource` for discovery
+- `AppTheoryMcpProtectedResource` — adds the path-scoped `/.well-known/oauth-protected-resource/...` route for
+  discovery
 
 See:
 - `docs/cdk/mcp-server-remote-mcp.md`

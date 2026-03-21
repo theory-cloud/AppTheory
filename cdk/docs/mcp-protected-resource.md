@@ -4,14 +4,14 @@ Claude Remote MCP (MCP auth `2025-06-18`) requires an OAuth **Protected Resource
 
 This guide covers `AppTheoryMcpProtectedResource`, which adds:
 
-- `GET /.well-known/oauth-protected-resource`
+- `GET /.well-known/oauth-protected-resource/...resource path...`
 
 ## What Claude expects
 
 When calling your MCP server without a token, Claude expects:
 
 - `401 Unauthorized`
-- `WWW-Authenticate: Bearer resource_metadata="https://<host>/.well-known/oauth-protected-resource"`
+- `WWW-Authenticate: Bearer resource_metadata="https://<host>/.well-known/oauth-protected-resource/mcp"`
 
 Then Claude fetches this endpoint and expects JSON like:
 
@@ -58,6 +58,9 @@ new AppTheoryMcpProtectedResource(stack, "ProtectedResource", {
 
 - This construct only adds the **metadata endpoint**. Your MCP Lambda still needs to enforce
   `Authorization: Bearer ...` and emit the `WWW-Authenticate` challenge on 401.
+- The route is derived from `resource` per RFC9728, so a resource of
+  `https://mcp.example.com/mcp` becomes `GET /.well-known/oauth-protected-resource/mcp`.
 - For AWS API Gateway REST APIs, `/.well-known/...` will be under the same stage/base-path
   as your `/mcp` route (matching what the client can reach).
-
+- For per-actor bundles (`/mcp/{actor}`), prefer `AppTheoryRemoteMcpServer({ actorPath: true })`,
+  which co-registers the matching discovery route automatically.
