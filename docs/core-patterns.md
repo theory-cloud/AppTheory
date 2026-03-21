@@ -38,6 +38,33 @@ if event.RequestContext.HTTP.Method != "" {
 ```
 
 The dispatcher already knows how to route HTTP, queues, streams, WebSockets, and other supported AWS shapes.
+That includes standard AppSync resolver events.
+
+## Pattern: route AppSync resolvers through the normal router
+
+Problem: bespoke GraphQL field switching duplicates request adaptation and bypasses the runtime's typed AppSync
+context.
+
+CORRECT:
+
+```go
+app.Get("/getThing", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+	appsync := ctx.AsAppSync()
+	return apptheory.JSON(200, map[string]any{"field": appsync.FieldName})
+})
+```
+
+Use `ServeAppSync` / `serveAppSync` / `serve_appsync` for AppSync-only Lambdas, or keep mixed-trigger Lambdas on the
+universal dispatcher.
+
+INCORRECT:
+
+```go
+switch event.Info.FieldName {
+case "getThing":
+	// bespoke resolver handling outside the AppTheory router
+}
+```
 
 ## Pattern: header handling is case-insensitive and response keys are lowercase
 
@@ -119,6 +146,23 @@ INCORRECT:
 
 - assuming every AWS integration supports streaming the same way
 
+## Pattern: choose the MCP deployment shape by client transport needs
+
+Problem: Bedrock AgentCore and Claude Remote MCP do not share the same transport, streaming, or OAuth discovery
+requirements.
+
+CORRECT:
+
+- use `AppTheoryMcpServer` for AgentCore or other POST-only MCP clients on HTTP API v2
+- use `AppTheoryRemoteMcpServer` plus `AppTheoryMcpProtectedResource` for Claude Remote MCP when you need
+  `POST/GET/DELETE /mcp`, OAuth protected-resource discovery, and a REST API v1 streaming edge
+- provide a persistent `StreamStore` in application code if replay must survive reconnects and cold starts
+
+INCORRECT:
+
+- assuming `AppTheoryMcpServer` is a drop-in deployment for resumable Remote MCP
+- assuming `enableStreamTable` alone makes replay durable without `mcp.WithStreamStore(...)`
+
 ## Pattern: sanitize user payloads before logging
 
 Import pipelines and event-driven workloads often process PCI/PII-heavy payloads. Treat payloads as user data and
@@ -135,7 +179,7 @@ INCORRECT:
 - logging raw request bodies or third-party payloads directly
 - assuming internal batch jobs can skip sanitization
 
-Guide: [Sanitization](./sanitization.md)
+Guide: [Sanitization](./features/sanitization.md)
 
 ## Pattern: use the jobs ledger for long-running import workflows
 
@@ -149,3 +193,5 @@ INCORRECT:
 
 - relying on at-least-once delivery without idempotency state
 - storing job progress only in logs
+
+Guide: [Jobs Ledger](./features/jobs-ledger.md)

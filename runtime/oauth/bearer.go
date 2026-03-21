@@ -73,7 +73,11 @@ func BearerTokenFromHeaders(headers map[string][]string) (string, error) {
 func unauthorizedResponse(c *apptheory.Context, opts RequireBearerTokenOptions) *apptheory.Response {
 	metaURL := strings.TrimSpace(opts.ResourceMetadataURL)
 	if metaURL == "" {
-		if derived, ok := ResourceMetadataURLFromMcpEndpoint(os.Getenv("MCP_ENDPOINT")); ok {
+		mcpEndpoint := os.Getenv("MCP_ENDPOINT")
+		if resolved, ok := resolveAbsoluteURLPathTemplate(mcpEndpoint, c.Request.Path, c.Params); ok {
+			mcpEndpoint = resolved
+		}
+		if derived, ok := ResourceMetadataURLFromMcpEndpoint(mcpEndpoint); ok {
 			metaURL = derived
 		} else if derived, ok := ProtectedResourceMetadataURLForRequest(c.Request.Headers); ok {
 			metaURL = derived

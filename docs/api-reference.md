@@ -115,10 +115,32 @@ AppTheory supports the standard AWS direct Lambda resolver event shape in all th
   - Go: `AppSyncResolverEvent`, `AppSyncResolverInfo`, `AppSyncResolverRequest`
   - TypeScript: `AppSyncResolverEvent`, `AppSyncResolverInfo`, `AppSyncResolverRequest`
   - Python: `AppSyncResolverEvent`, `AppSyncResolverInfo`, `AppSyncResolverRequest`
+- Core event fields:
+  - `arguments`: top-level resolver arguments; adapted into the JSON request body
+  - `info.fieldName` + `info.parentTypeName`: determine the AppTheory route and method
+  - `info.variables`: preserved on the typed context and raw event
+  - `info.selectionSetList` + `info.selectionSetGraphQL`: preserved on the exported event types and available on the raw event for selection-set-aware handlers
+  - `request.headers`: forwarded to the synthesized request
+  - `identity`, `source`, `prev`, and `stash`: preserved on the typed context and portable metadata keys
 - Typed context:
   - Go: `ctx.AsAppSync()`
   - TypeScript: `ctx.asAppSync()`
   - Python: `ctx.as_appsync()`
+- Portable context metadata keys:
+
+| Key | Meaning |
+| --- | --- |
+| `apptheory.trigger_type` | Constant `"appsync"` |
+| `apptheory.appsync.field_name` | GraphQL field name |
+| `apptheory.appsync.parent_type_name` | GraphQL parent type |
+| `apptheory.appsync.arguments` | Top-level resolver arguments |
+| `apptheory.appsync.identity` | Resolver identity payload |
+| `apptheory.appsync.source` | Parent/source object |
+| `apptheory.appsync.variables` | GraphQL variables |
+| `apptheory.appsync.prev` | Previous resolver result |
+| `apptheory.appsync.stash` | Resolver stash map |
+| `apptheory.appsync.request_headers` | Forwarded AppSync request headers |
+| `apptheory.appsync.raw_event` | Full resolver event |
 - Request adaptation:
   - `Mutation -> POST /fieldName`
   - `Query -> GET /fieldName`
@@ -127,16 +149,24 @@ AppTheory supports the standard AWS direct Lambda resolver event shape in all th
   - `request.headers` are forwarded and `content-type: application/json` is synthesized when absent
 - Response behavior:
   - JSON bodies project back to native resolver payloads
-  - `text/*` bodies project to UTF-8 strings
   - empty bodies project to `null`
+  - any other non-empty body projects to a UTF-8 string
   - binary and streaming bodies fail closed with deterministic AppSync system errors
 - Error behavior:
   - handler failures return Lift-compatible AppSync error objects with `pay_theory_error`, `error_message`,
     `error_type`, `error_data`, and `error_info`
+  - portable AppTheory/AppError payloads include `error_data.status_code` and may include `request_id`, `trace_id`,
+    `timestamp`, plus `error_info.code`, `trigger_type`, `method`, `path`, and optional `details`
 
 Recipe:
 
 - [AppSync Lambda Resolvers](./migration/appsync-lambda-resolvers.md)
+- [CDK AppSync Lambda Resolvers](./cdk/appsync-lambda-resolvers.md)
+
+Infrastructure note:
+
+- use `aws-cdk-lib/aws-appsync` for the GraphQL API, schema, auth, and Lambda data source wiring
+- AppTheory does not currently export an AppSync-specific CDK construct
 
 ## Strict route registration
 
@@ -150,6 +180,8 @@ Use these in tests and CI:
 - Python: `app.handle_strict("GET", "/users/{id}", h)`
 
 ## Cross-language feature surfaces
+
+These feature areas extend the core runtime and have dedicated guides when you need deeper operational detail.
 
 ### Rate limiting
 
@@ -167,7 +199,7 @@ Safe logging helpers are exported in all three runtimes:
 - TypeScript: `sanitizeLogString`, `sanitizeFieldValue`, `sanitizeJSON`, `sanitizeJSONValue`, `sanitizeXML`
 - Python: `sanitize_log_string`, `sanitize_field_value`, `sanitize_json`, `sanitize_json_value`, `sanitize_xml`
 
-Guide: [Sanitization](./sanitization.md)
+Guide: [Sanitization](./features/sanitization.md)
 
 ### Jobs ledger
 
@@ -178,7 +210,7 @@ idempotency, and leases.
 - TypeScript: exports in `api-snapshots/ts.txt` including `DynamoJobLedger`, `CreateJobInput`, `JobMeta`, and related status types
 - Python: exports in `api-snapshots/py.txt` including `DynamoJobLedger`, `JobsConfig`, and related helpers
 
-Guide: [Jobs Ledger](./jobs-ledger.md)
+Guide: [Jobs Ledger](./features/jobs-ledger.md)
 Reference stack: `examples/cdk/import-pipeline/`
 
 ## Migration and configuration notes
@@ -200,17 +232,23 @@ Known configuration keys surfaced by canonical docs:
 
 AppTheory includes Go runtime support for MCP and OAuth-adjacent remote-MCP flows:
 
-- `runtime/mcp`: JSON-RPC server methods, registries, and session support
-- `testkit/mcp`: deterministic in-process MCP test helpers
+- `runtime/mcp`: Streamable HTTP `POST/GET/DELETE /mcp`, protocol negotiation, origin validation, sessions, resumable
+  SSE, and the MCP request surface (`initialize`, `ping`, `tools/*`, `resources/*`, `prompts/*`, plus accepted
+  `notifications/initialized` / `notifications/cancelled`)
+- `testkit/mcp`: deterministic in-process MCP client helpers (`NewClient`, `Initialize`, `ListTools`, `CallTool`,
+  `ListResources`, `ReadResource`, `ListPrompts`, `GetPrompt`, `RawStream`, `ResumeStream`, `Stream.Response`,
+  `Stream.Cancel`, `Stream.Next`, `Stream.ReadAll`) plus JSON-RPC request builders and assertions
 - `runtime/oauth`: protected-resource metadata, challenges, DCR, PKCE, and token-store helpers
-- `testkit/oauth`: end-to-end OAuth flow helpers for remote MCP tests
+- `testkit/oauth`: Claude-like end-to-end OAuth flow helpers for remote MCP tests (`NewClaudePublicClient`,
+  `AuthorizeOptions`, `Authorize`)
 
-Related repo guides outside the current KT ingest set:
+Related canonical integration guides:
 
-- [Bedrock AgentCore MCP](./agentcore-mcp.md)
-- [Remote MCP](./remote-mcp.md)
-- [Remote MCP + Autheory](./remote-mcp-autheory.md)
-- [MCP Method Surface](./mcp.md)
+- [Integration Guides](./integrations/README.md)
+- [Bedrock AgentCore MCP](./integrations/agentcore-mcp.md)
+- [Remote MCP](./integrations/remote-mcp.md)
+- [Remote MCP + Autheory](./integrations/remote-mcp-autheory.md)
+- [MCP Method Surface](./integrations/mcp.md)
 
 ## CDK construct overview
 
