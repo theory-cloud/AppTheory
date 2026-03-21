@@ -9,6 +9,8 @@ import (
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
+const protectedResourceMetadataPath = "/.well-known/oauth-protected-resource"
+
 // ProtectedResourceMetadata is the RFC9728 discovery document hosted by a
 // protected resource server.
 type ProtectedResourceMetadata struct {
@@ -78,33 +80,36 @@ func ProtectedResourceWWWAuthenticate(resourceMetadataURL string) string {
 	return fmt.Sprintf("Bearer resource_metadata=\"%s\"", escaped)
 }
 
-// ResourceMetadataURLFromMcpEndpoint derives the protected resource metadata URL
-// from an MCP endpoint URL (which must end with `/mcp`).
+// RFC9728ResourceMetadataURL derives the protected resource metadata URL
+// from any absolute protected resource identifier URL per RFC 9728 section 3.
 //
 // For example:
 //
-//	https://api.example.com/prod/mcp -> https://api.example.com/prod/.well-known/oauth-protected-resource
-func ResourceMetadataURLFromMcpEndpoint(mcpEndpoint string) (string, bool) {
-	u, ok := parseAbsoluteURL(mcpEndpoint)
+//	https://api.example.com/mcp      -> https://api.example.com/.well-known/oauth-protected-resource/mcp
+//	https://api.example.com/mcp/Arch -> https://api.example.com/.well-known/oauth-protected-resource/mcp/Arch
+func RFC9728ResourceMetadataURL(resourceURL string) (string, bool) {
+	u, ok := parseAbsoluteURL(resourceURL)
 	if !ok {
 		return "", false
 	}
 
-	trimmedPath := strings.TrimRight(u.Path, "/")
-	if !strings.HasSuffix(trimmedPath, "/mcp") {
-		return "", false
-	}
-
-	base := strings.TrimSuffix(trimmedPath, "/mcp")
-	if base == "" {
-		base = "/"
-	}
-
 	out := *u
-	out.Path = strings.TrimSuffix(base, "/") + "/.well-known/oauth-protected-resource"
-	out.RawQuery = ""
+	out.Path = protectedResourceMetadataPath + u.Path
+	if out.Path == protectedResourceMetadataPath {
+		out.Path = protectedResourceMetadataPath
+	}
+	out.RawPath = ""
 	out.Fragment = ""
 	return out.String(), true
+}
+
+// ResourceMetadataURLFromMcpEndpoint derives the protected resource metadata URL
+// from an MCP endpoint URL.
+//
+// This compatibility alias intentionally performs no `/mcp` suffix validation;
+// any absolute protected resource URL is accepted and transformed per RFC 9728.
+func ResourceMetadataURLFromMcpEndpoint(mcpEndpoint string) (string, bool) {
+	return RFC9728ResourceMetadataURL(mcpEndpoint)
 }
 
 // CanonicalResourceURL trims whitespace and a trailing slash.
@@ -126,10 +131,11 @@ func CanonicalizeIssuerURL(raw string) (string, bool) {
 }
 
 // ProtectedResourceMetadataURLForRequest attempts to derive an absolute
-// `/.well-known/oauth-protected-resource` URL from common proxy headers.
+// root `/.well-known/oauth-protected-resource` URL from common proxy headers.
 //
 // Prefer using ResourceMetadataURLFromMcpEndpoint with MCP_ENDPOINT for AWS
-// deployments; this helper is primarily for local/test environments.
+// deployments. This helper is intentionally root-only and does not attempt to
+// infer path-scoped protected resources from request paths.
 func ProtectedResourceMetadataURLForRequest(headers map[string][]string) (string, bool) {
 	host := firstHeader(headers, "host")
 	if host == "" {
@@ -142,9 +148,73 @@ func ProtectedResourceMetadataURLForRequest(headers map[string][]string) (string
 	u := &url.URL{
 		Scheme: proto,
 		Host:   host,
-		Path:   "/.well-known/oauth-protected-resource",
+		Path:   protectedResourceMetadataPath,
 	}
 	return u.String(), true
+}
+
+func resolveAbsoluteURLPathTemplate(resourceURL, requestPath string, params map[string]string) (string, bool) {
+	u, ok := parseAbsoluteURL(resourceURL)
+	if !ok {
+		return "", false
+	}
+
+	templateSegments := splitURLPath(u.Path)
+	if len(templateSegments) == 0 {
+		return u.String(), true
+	}
+
+	requestSegments := splitURLPath(requestPath)
+	resolved := make([]string, 0, len(templateSegments))
+	changed := false
+	for i, segment := range templateSegments {
+		name, isParam := routeTemplateParam(segment)
+		if !isParam {
+			resolved = append(resolved, segment)
+			continue
+		}
+
+		value := strings.TrimSpace(params[name])
+		if value == "" && len(requestSegments) == len(templateSegments) {
+			value = strings.TrimSpace(requestSegments[i])
+		}
+		if value == "" {
+			return "", false
+		}
+
+		resolved = append(resolved, value)
+		changed = true
+	}
+
+	if !changed {
+		return u.String(), true
+	}
+
+	out := *u
+	out.Path = "/" + strings.Join(resolved, "/")
+	out.RawPath = ""
+	return out.String(), true
+}
+
+func routeTemplateParam(segment string) (string, bool) {
+	segment = strings.TrimSpace(segment)
+	if !strings.HasPrefix(segment, "{") || !strings.HasSuffix(segment, "}") || len(segment) < 3 {
+		return "", false
+	}
+	name := strings.TrimSpace(segment[1 : len(segment)-1])
+	if name == "" {
+		return "", false
+	}
+	return name, true
+}
+
+func splitURLPath(path string) []string {
+	path = strings.TrimSpace(path)
+	path = strings.TrimPrefix(path, "/")
+	if path == "" {
+		return nil
+	}
+	return strings.Split(path, "/")
 }
 
 func firstHeader(headers map[string][]string, key string) string {

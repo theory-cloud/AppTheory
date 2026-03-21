@@ -14,17 +14,22 @@ Claude Remote MCP requires real incremental streaming for tool calls (SSE). On A
 ## What it provisions
 
 - API Gateway **REST API v1**
-- `/mcp` routes:
+- default `/mcp` routes:
   - `POST /mcp` (streaming enabled)
   - `GET /mcp` (streaming enabled; used for `Last-Event-ID` replay/resume)
   - `DELETE /mcp`
+- optional per-actor bundle when `actorPath: true`:
+  - `POST /mcp/{actor}` (streaming enabled)
+  - `GET /mcp/{actor}` (streaming enabled)
+  - `DELETE /mcp/{actor}`
+  - `GET /.well-known/oauth-protected-resource/mcp/{actor}` (co-registered RFC9728 discovery)
 - Optional DynamoDB tables:
   - session table (matches `runtime/mcp` Dynamo session store schema)
   - stream/event table (intended for durable resumable SSE)
 
-If you are using OAuth for Claude connectors, also add:
+If you are using OAuth for Claude connectors on the default `/mcp` route, also add:
 
-- `GET /.well-known/oauth-protected-resource` (RFC9728 protected resource metadata)
+- `GET /.well-known/oauth-protected-resource/mcp` (RFC9728 protected resource metadata)
 
 ## TypeScript example
 
@@ -61,6 +66,18 @@ new AppTheoryMcpProtectedResource(stack, "ProtectedResource", {
 
 // MCP endpoint URL (…/mcp)
 // mcp.endpoint
+```
+
+For per-actor bundles, enable `actorPath` and let the construct register discovery automatically:
+
+```ts
+const mcp = new AppTheoryRemoteMcpServer(stack, "RemoteMcpPerActor", {
+  handler,
+  actorPath: true,
+});
+
+// mcp.endpoint === https://.../mcp/{actor}
+// discovery route === /.well-known/oauth-protected-resource/mcp/{actor}
 ```
 
 ## Keepalive + resumability guidance

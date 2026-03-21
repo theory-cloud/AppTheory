@@ -44,6 +44,19 @@ export interface AppTheoryRemoteMcpServerProps {
      */
     readonly domain?: AppTheoryRestApiRouterDomainOptions;
     /**
+     * Enable per-actor MCP endpoint bundles.
+     *
+     * When enabled, the construct mounts the transport at `/mcp/{actor}` and
+     * co-registers the RFC 9728 discovery route at
+     * `/.well-known/oauth-protected-resource/mcp/{actor}`.
+     *
+     * The public `endpoint` and injected `MCP_ENDPOINT` environment variable
+     * become a template string ending in `/mcp/{actor}`.
+     *
+     * @default false
+     */
+    readonly actorPath?: boolean;
+    /**
      * Create a DynamoDB table for MCP session storage.
      * @default false
      */
@@ -93,7 +106,7 @@ export declare class AppTheoryRemoteMcpServer extends Construct {
      */
     readonly router: AppTheoryRestApiRouter;
     /**
-     * The MCP endpoint URL (`.../mcp`).
+     * The MCP endpoint URL or template (`.../mcp` or `.../mcp/{actor}`).
      */
     readonly endpoint: string;
     /**
