@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.18.2-rc](https://github.com/theory-cloud/AppTheory/compare/v0.18.1...v0.18.2-rc) (2026-03-21)
+
+
+### Bug Fixes
+
+* **ci:** allow premain repair PRs ([93322e0](https://github.com/theory-cloud/AppTheory/commit/93322e038a02355e0083bd7b8d7873b5a54bf7ab))
+* **mcp:** implement RFC 9728 metadata bundles ([98a556e](https://github.com/theory-cloud/AppTheory/commit/98a556e4600f880be728eff258fe7377f4bf8b12))
+* **mcp:** implement RFC 9728 metadata bundles ([6f78e49](https://github.com/theory-cloud/AppTheory/commit/6f78e49bcf5c32cd092b2be70f483bf1338bf44f))
+
 ## [0.18.0-rc.2](https://github.com/theory-cloud/AppTheory/compare/v0.18.0-rc.1...v0.18.0-rc.2) (2026-03-21)
 
 
