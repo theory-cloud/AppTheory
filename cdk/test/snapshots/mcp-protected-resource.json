@@ -95,9 +95,10 @@
       "Type": "AWS::IAM::Role",
       "UpdateReplacePolicy": "Retain"
     },
-    "RouterApiDeploymentD829DC848caca13bd6c4ccb8dd9c652b40de39c0": {
+    "RouterApiDeploymentD829DC844868119e709be47dc1f016741fee05b7": {
       "DependsOn": [
-        "RouterApiwellknownoauthprotectedresourceGET84DCD950",
+        "RouterApiwellknownoauthprotectedresourcemcpGET92989D2A",
+        "RouterApiwellknownoauthprotectedresourcemcp48D08197",
         "RouterApiwellknownoauthprotectedresource38B2869D",
         "RouterApiwellknown6B7552E1"
       ],
@@ -118,7 +119,7 @@
       ],
       "Properties": {
         "DeploymentId": {
-          "Ref": "RouterApiDeploymentD829DC848caca13bd6c4ccb8dd9c652b40de39c0"
+          "Ref": "RouterApiDeploymentD829DC844868119e709be47dc1f016741fee05b7"
         },
         "RestApiId": {
           "Ref": "RouterApi30C329D4"
@@ -154,7 +155,19 @@
       },
       "Type": "AWS::ApiGateway::Resource"
     },
-    "RouterApiwellknownoauthprotectedresourceGET84DCD950": {
+    "RouterApiwellknownoauthprotectedresourcemcp48D08197": {
+      "Properties": {
+        "ParentId": {
+          "Ref": "RouterApiwellknownoauthprotectedresource38B2869D"
+        },
+        "PathPart": "mcp",
+        "RestApiId": {
+          "Ref": "RouterApi30C329D4"
+        }
+      },
+      "Type": "AWS::ApiGateway::Resource"
+    },
+    "RouterApiwellknownoauthprotectedresourcemcpGET92989D2A": {
       "Properties": {
         "AuthorizationType": "NONE",
         "HttpMethod": "GET",
@@ -185,7 +198,7 @@
           }
         ],
         "ResourceId": {
-          "Ref": "RouterApiwellknownoauthprotectedresource38B2869D"
+          "Ref": "RouterApiwellknownoauthprotectedresourcemcp48D08197"
         },
         "RestApiId": {
           "Ref": "RouterApi30C329D4"

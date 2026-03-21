@@ -13153,7 +13153,7 @@
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
       "docs": {
-        "summary": "Adds `/.well-known/oauth-protected-resource` metadata (RFC9728) to a REST API."
+        "summary": "Adds path-scoped `/.well-known/oauth-protected-resource/...` metadata (RFC9728) to a REST API."
       },
       "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResource",
       "initializer": {
@@ -13194,7 +13194,7 @@
       "assembly": "@theory-cloud/apptheory-cdk",
       "datatype": true,
       "docs": {
-        "remarks": "This construct adds the RFC9728 protected resource metadata endpoint required\nby MCP auth (2025-06-18):\n- GET `/.well-known/oauth-protected-resource`",
+        "remarks": "This construct adds the RFC9728 protected resource metadata endpoint required\nby MCP auth (2025-06-18):\n- GET `/.well-known/oauth-protected-resource/...resource path...`",
         "summary": "Props for AppTheoryMcpProtectedResource."
       },
       "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResourceProps",
@@ -15603,7 +15603,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/remote-mcp-server.ts",
-          "line": 131
+          "line": 145
         },
         "parameters": [
           {
@@ -15629,18 +15629,18 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/remote-mcp-server.ts",
-        "line": 110
+        "line": 124
       },
       "name": "AppTheoryRemoteMcpServer",
       "properties": [
         {
           "docs": {
-            "summary": "The MCP endpoint URL (`.../mcp`)."
+            "summary": "The MCP endpoint URL or template (`.../mcp` or `.../mcp/{actor}`)."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 119
+            "line": 133
           },
           "name": "endpoint",
           "type": {
@@ -15654,7 +15654,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 114
+            "line": 128
           },
           "name": "router",
           "type": {
@@ -15668,7 +15668,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 124
+            "line": 138
           },
           "name": "sessionTable",
           "optional": true,
@@ -15683,7 +15683,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 129
+            "line": 143
           },
           "name": "streamTable",
           "optional": true,
@@ -15722,6 +15722,24 @@
           "name": "handler",
           "type": {
             "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "When enabled, the construct mounts the transport at `/mcp/{actor}` and\nco-registers the RFC 9728 discovery route at\n`/.well-known/oauth-protected-resource/mcp/{actor}`.\n\nThe public `endpoint` and injected `MCP_ENDPOINT` environment variable\nbecome a template string ending in `/mcp/{actor}`.",
+            "summary": "Enable per-actor MCP endpoint bundles."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/remote-mcp-server.ts",
+            "line": 72
+          },
+          "name": "actorPath",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
           }
         },
         {
@@ -15811,7 +15829,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 64
+            "line": 78
           },
           "name": "enableSessionTable",
           "optional": true,
@@ -15829,7 +15847,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 86
+            "line": 100
           },
           "name": "enableStreamTable",
           "optional": true,
@@ -15846,7 +15864,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 70
+            "line": 84
           },
           "name": "sessionTableName",
           "optional": true,
@@ -15863,7 +15881,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 76
+            "line": 90
           },
           "name": "sessionTtlMinutes",
           "optional": true,
@@ -15897,7 +15915,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 92
+            "line": 106
           },
           "name": "streamTableName",
           "optional": true,
@@ -15914,7 +15932,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 98
+            "line": 112
           },
           "name": "streamTtlMinutes",
           "optional": true,
@@ -18947,5 +18965,5 @@
     }
   },
   "version": "0.18.1",
-  "fingerprint": "BP5zX3lGQFVS5ArdbexZcEBAC/WM5tR9VsM2f5SlrMk="
+  "fingerprint": "2aa7x1dhAo/AwIqP54auhmDQlKpY/W789oz+Pvfd5r0="
 }

@@ -15,18 +15,23 @@ Claude Remote MCP requires real incremental streaming for tool calls. On AWS tha
 ## What it provisions
 
 - API Gateway REST API v1
-- `/mcp` routes:
+- default `/mcp` routes:
   - `POST /mcp` (streaming enabled)
   - `GET /mcp` (streaming enabled; used for `Last-Event-ID` replay and session listeners)
   - `DELETE /mcp`
-- Lambda env var `MCP_ENDPOINT` pointing at the resolved `/mcp` URL
+- optional per-actor bundle when `actorPath: true`:
+  - `POST /mcp/{actor}` (streaming enabled)
+  - `GET /mcp/{actor}` (streaming enabled)
+  - `DELETE /mcp/{actor}`
+  - `GET /.well-known/oauth-protected-resource/mcp/{actor}` (co-registered RFC9728 discovery)
+- Lambda env var `MCP_ENDPOINT` pointing at the resolved `/mcp` URL or `/mcp/{actor}` template
 - optional DynamoDB tables:
   - session table (matches `runtime/mcp/session_dynamo.go` schema)
   - stream/event table (infra only unless the app wires a concrete `StreamStore`)
 
-If you are using OAuth for Claude connectors, also add:
+If you are using OAuth for Claude connectors on the default `/mcp` route, also add:
 
-- `GET /.well-known/oauth-protected-resource`
+- `GET /.well-known/oauth-protected-resource/mcp`
 
 ## TypeScript example
 
@@ -61,6 +66,18 @@ new AppTheoryMcpProtectedResource(stack, "ProtectedResource", {
   resource: mcp.endpoint,
   authorizationServers: ["https://auth.example.com"],
 });
+```
+
+For per-actor bundles, enable `actorPath` instead of adding a separate protected-resource construct:
+
+```ts
+const mcp = new AppTheoryRemoteMcpServer(stack, "RemoteMcpPerActor", {
+  handler,
+  actorPath: true,
+});
+
+// mcp.endpoint === https://.../mcp/{actor}
+// discovery route === /.well-known/oauth-protected-resource/mcp/{actor}
 ```
 
 ## CORS option
@@ -106,11 +123,13 @@ Important caveat:
 - session table: `MCP_SESSION_TABLE`, `MCP_SESSION_TTL_MINUTES`
 - stream table: `MCP_STREAM_TABLE`, `MCP_STREAM_TTL_MINUTES`
 
-`MCP_ENDPOINT` is the canonical deployed `/mcp` URL:
+`MCP_ENDPOINT` is the canonical deployed MCP resource URL or template:
 
 - execute-api hostname: `https://{apiId}.execute-api.{region}.amazonaws.com/{stage}/mcp`
 - custom domain without base path: `https://mcp.example.com/mcp`
 - custom domain with base path: `https://api.example.com/{basePath}/mcp`
+- per-actor execute-api template: `https://{apiId}.execute-api.{region}.amazonaws.com/{stage}/mcp/{actor}`
+- per-actor custom domain template: `https://mcp.example.com/mcp/{actor}`
 
 This matters for OAuth discovery. If `oauth.RequireBearerTokenMiddleware(...)` is used without an explicit
 `ResourceMetadataURL`, the middleware derives the RFC9728 `/.well-known/oauth-protected-resource` challenge URL from
