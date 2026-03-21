@@ -34,6 +34,9 @@ The opinionated table construct is `cdk/lib/jobs-table.ts` (`AppTheoryJobsTable`
 
 ## Runtime primitives
 
+These helpers give each runtime the same conceptual job-ledger operations even though the concrete APIs follow local
+language conventions.
+
 ### Go
 
 Package: `pkg/jobs`
@@ -96,4 +99,3 @@ Job/record error context is treated as user data and must be sanitized:
 - Use `sanitize_field_value` / `sanitizeFieldValue` to redact/mask sensitive fields (PAN, SSN, tokens, etc).
 
 The job ledger helpers will sanitize envelopes passed into record/idempotency helpers before persisting.
-

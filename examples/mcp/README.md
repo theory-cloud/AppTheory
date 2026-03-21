@@ -2,5 +2,4 @@
 
 These examples focus on the Go MCP runtime (`runtime/mcp`) and Streamable HTTP behavior.
 
-For Claude Remote MCP deployment on AWS, start with `docs/remote-mcp.md`.
-
+For Claude Remote MCP deployment on AWS, start with `docs/integrations/remote-mcp.md`.

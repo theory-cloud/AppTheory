@@ -7,7 +7,7 @@ Locked decisions:
 - **AWS edge for streaming:** API Gateway **REST API v1** + Lambda **response streaming**
 - **Auth (day‑1):** OAuth + DCR (public clients) compatible with MCP auth `2025-06-18`
 
-If you’re looking for the full method surface and payload shapes, start with `docs/mcp.md`.
+If you’re looking for the full method surface and payload shapes, start with `docs/integrations/mcp.md`.
 
 ## 1) Build a Streamable HTTP MCP server (Go)
 
@@ -50,13 +50,17 @@ Important behaviors for Claude compatibility:
 - `initialize` returns `Mcp-Session-Id` and must negotiate `protocolVersion` (`2025-11-25`).
 - `notifications/initialized` must return `202 Accepted` with no body.
 - `tools/call` may stream with SSE when the client includes `Accept: text/event-stream`.
+- SSE frames stay on `event: message`; progress is emitted as JSON-RPC `notifications/progress`, not custom SSE event names.
 - Disconnections are not cancellation; resumability uses `GET /mcp` + `Last-Event-ID`.
+- `GET /mcp` without `Last-Event-ID` stays open as a keepalive listener for the current session.
+- If the request includes an `Origin` header, the default runtime allowlist is Claude-oriented (`https://claude.ai`,
+  `https://claude.com`); use `mcp.WithOriginValidator(...)` for other browser origins.
 
 ## 2) Add OAuth protection (Remote MCP auth `2025-06-18`)
 
 Claude discovers OAuth using:
-- `401` + `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource"`
-- `GET /.well-known/oauth-protected-resource` (RFC9728)
+- `401` + `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/...resource path..."`
+- `GET /.well-known/oauth-protected-resource/...resource path...` (RFC9728)
 
 AppTheory provides helpers in `runtime/oauth`:
 - `oauth.RequireBearerTokenMiddleware(...)`
@@ -64,18 +68,28 @@ AppTheory provides helpers in `runtime/oauth`:
 
 You typically:
 1) Protect all `/mcp` routes with `RequireBearerTokenMiddleware`.
-2) Expose `/.well-known/oauth-protected-resource` (often via CDK mock integration; see below).
+2) Expose the matching path-scoped `/.well-known/oauth-protected-resource/...` route (often via CDK mock integration;
+   see below).
 3) Validate Bearer tokens against Autheory (JWT verify via JWKS or introspection).
+
+When you deploy with `AppTheoryRemoteMcpServer`, the construct injects `MCP_ENDPOINT`. If
+`RequireBearerTokenMiddleware(...)` is used without an explicit `ResourceMetadataURL`, the middleware derives the
+RFC9728 protected-resource metadata challenge URL from that endpoint by default.
 
 ## 3) Deploy on AWS (REST API v1 response streaming)
 
 Use these CDK constructs:
 - `AppTheoryRemoteMcpServer` — provisions REST API v1 and enables Lambda response streaming for `/mcp` (POST/GET)
-- `AppTheoryMcpProtectedResource` — adds `/.well-known/oauth-protected-resource` for discovery
+- `AppTheoryMcpProtectedResource` — adds the path-scoped `/.well-known/oauth-protected-resource/...` route for
+  discovery
 
 See:
 - `docs/cdk/mcp-server-remote-mcp.md`
 - `docs/cdk/mcp-protected-resource.md`
+
+If you enable the optional Remote MCP stream table, treat it as infrastructure only until your app wires a concrete
+`StreamStore` with `mcp.WithStreamStore(...)`. The built-in runtime ships `MemoryStreamStore`, not a Dynamo-backed
+stream store.
 
 ## 4) Testing (no AWS required)
 
@@ -83,13 +97,30 @@ Deterministic test helpers:
 - Streamable HTTP MCP client: `testkit/mcp`
   - buffered JSON calls: `NewClient(...).Initialize/ListTools/CallTool`
   - streaming SSE: `Client.RawStream(...)` + `Client.ResumeStream(...)`
+  - disconnect/replay assertions: `Stream.Response()`, `Stream.Cancel()`, `Stream.Next()`, `Stream.ReadAll()`
 - Claude-like OAuth harness (DCR → PKCE → refresh): `testkit/oauth`
+
+Example OAuth harness usage:
+
+```go
+oauthClient := oauthtest.NewClaudePublicClient(nil)
+
+discovery, dcr, tokenResp, refreshResp, err := oauthClient.Authorize(ctx, oauthtest.AuthorizeOptions{
+  McpEndpoint: "https://api.example.com/prod/mcp",
+})
+```
+
+Notes:
+
+- `AuthorizeOptions.Origin` defaults to `https://claude.ai`
+- `AuthorizeOptions.RedirectURI` defaults to `https://claude.ai/api/mcp/auth_callback`
+- `McpEndpoint` is normalized to the canonical `/mcp` resource URL before discovery starts
 
 ## 5) Operational constraints (design for reconnect)
 
 API Gateway REST response streaming connections are time-bounded and can disconnect. For “hours-long” logical sessions:
 - keep sessions durable (`SessionStore` backed by DynamoDB)
-- keep tool output durable (event log + `Last-Event-ID` replay)
+- keep tool output durable (event log + `Last-Event-ID` replay) by providing your own persistent `StreamStore`
 - execute long work asynchronously (worker Lambdas) and append progress/results into the event log
 
 Detailed compatibility notes and HTTP transcripts are maintained in non-canonical planning docs and intentionally kept
