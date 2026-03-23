@@ -87,7 +87,7 @@ class AppTheoryRemoteMcpServer extends constructs_1.Construct {
 }
 exports.AppTheoryRemoteMcpServer = AppTheoryRemoteMcpServer;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryRemoteMcpServer[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServer", version: "0.18.2-rc" };
+AppTheoryRemoteMcpServer[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServer", version: "0.19.0-rc" };
 function computeMcpEndpoint(router, stageName, domain, actorPath) {
     const suffix = actorPath ? "/mcp/{actor}" : "/mcp";
     if (!domain) {
