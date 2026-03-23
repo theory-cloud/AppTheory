@@ -19,7 +19,10 @@ contract:
     - cdk/docs/mcp-server-remote-mcp.md
     - cdk/docs/mcp-protected-resource.md
     - cdk/docs/sqs-queue-consumer.md
+    - cdk/docs/eventbridge-bus.md
     - cdk/docs/eventbridge-rule-target.md
+    - cdk/docs/eventbus-table.md
+    - cdk/docs/http-ingestion-endpoint.md
     - cdk/docs/s3-ingest.md
     - cdk/docs/codebuild-job-runner.md
     - cdk/docs/jobs-table.md

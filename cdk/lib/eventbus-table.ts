@@ -1,5 +1,6 @@
 import { RemovalPolicy } from "aws-cdk-lib";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import type * as lambda from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
 
 export interface AppTheoryEventBusTableProps {
@@ -13,6 +14,22 @@ export interface AppTheoryEventBusTableProps {
   readonly enableEventIdIndex?: boolean;
   readonly readCapacity?: number;
   readonly writeCapacity?: number;
+}
+
+export interface AppTheoryEventBusTableBindingOptions {
+  /**
+   * Grant read-only access for replay/query consumers.
+   * When false, the handler receives read/write access for publish + replay flows.
+   * @default false
+   */
+  readonly readOnly?: boolean;
+
+  /**
+   * Environment variable name used for the table name binding.
+   * AppTheory runtime code reads `APPTHEORY_EVENTBUS_TABLE_NAME` by default.
+   * @default APPTHEORY_EVENTBUS_TABLE_NAME
+   */
+  readonly envVarName?: string;
 }
 
 export class AppTheoryEventBusTable extends Construct {
@@ -78,5 +95,32 @@ export class AppTheoryEventBusTable extends Construct {
           }
         : {}),
     });
+  }
+
+  /**
+   * Binds the table to a Lambda function for EventBus publish/query/replay flows.
+   */
+  public bind(handler: lambda.IFunction, options: AppTheoryEventBusTableBindingOptions = {}): void {
+    if (!handler) {
+      throw new Error("AppTheoryEventBusTable: handler is required");
+    }
+
+    if (options.readOnly) {
+      this.table.grantReadData(handler);
+    } else {
+      this.table.grantReadWriteData(handler);
+    }
+
+    this.addEnvironment(
+      handler,
+      options.envVarName ?? "APPTHEORY_EVENTBUS_TABLE_NAME",
+      this.table.tableName,
+    );
+  }
+
+  private addEnvironment(handler: lambda.IFunction, key: string, value: string): void {
+    if ("addEnvironment" in handler && typeof handler.addEnvironment === "function") {
+      handler.addEnvironment(key, value);
+    }
   }
 }
