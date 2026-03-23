@@ -23,5 +23,6 @@ These pages cover the canonical user-facing CDK patterns for:
 - response streaming and SSE
 - MCP and OAuth discovery endpoints
 - import-pipeline infrastructure primitives
+- EventBridge bus and rule-target transport primitives
 
 Package-local authoring docs may still exist outside `docs/cdk/`, but canonical external guidance lives here.

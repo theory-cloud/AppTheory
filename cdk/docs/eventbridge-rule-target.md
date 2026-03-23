@@ -38,21 +38,52 @@ new AppTheoryEventBridgeRuleTarget(stack, "S3ObjectCreated", {
 ## Custom event bus example
 
 ```typescript
-import { AppTheoryEventBridgeRuleTarget } from "@theory-cloud/apptheory-cdk";
-import * as events from "aws-cdk-lib/aws-events";
+import {
+  AppTheoryEventBridgeBus,
+  AppTheoryEventBridgeRuleTarget,
+} from "@theory-cloud/apptheory-cdk";
 
-const bus = new events.EventBus(stack, "Bus");
+const bus = new AppTheoryEventBridgeBus(stack, "Bus", {
+  eventBusName: "partner-relay",
+  allowedAccountIds: ["111111111111"],
+});
 
 new AppTheoryEventBridgeRuleTarget(stack, "PartnerEvents", {
   handler: partnerLambda,
-  eventBus: bus,
+  eventBus: bus.eventBus,
   eventPattern: {
     source: ["com.partner.events"],
   },
 });
 ```
 
+## Compliance relay example
+
+This is the receive-side pattern for a cross-account relay bus feeding an ingestion Lambda:
+
+```typescript
+import {
+  AppTheoryEventBridgeBus,
+  AppTheoryEventBridgeRuleTarget,
+} from "@theory-cloud/apptheory-cdk";
+
+const relayBus = new AppTheoryEventBridgeBus(stack, "RelayBus", {
+  eventBusName: "compliance-advisor-relay",
+  allowedAccountIds: ["111111111111"],
+});
+
+new AppTheoryEventBridgeRuleTarget(stack, "ComplianceIngress", {
+  handler: ingestionLambda,
+  eventBus: relayBus.eventBus,
+  ruleName: "compliance-beacon-ingress",
+  eventPattern: {
+    source: ["pay-theory.compliance-beacon"],
+    detailType: ["compliance.beacon.submitted"],
+  },
+});
+```
+
 ## Related
 
+- `AppTheoryEventBridgeBus` creates the custom bus and cross-account publish allowlist.
 - `AppTheoryEventBridgeHandler` remains available for schedule-only stacks (back-compat).
-
