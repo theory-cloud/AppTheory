@@ -27,3 +27,4 @@ func validateAppTheoryEnhancedSecurity_IsConstructParameters(x interface{}) erro
 func validateNewAppTheoryEnhancedSecurityParameters(scope constructs.Construct, id *string, props *AppTheoryEnhancedSecurityProps) error {
 	return nil
 }
+

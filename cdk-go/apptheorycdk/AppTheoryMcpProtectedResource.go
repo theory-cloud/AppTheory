@@ -8,7 +8,7 @@ import (
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
 
-// Adds `/.well-known/oauth-protected-resource` metadata (RFC9728) to a REST API.
+// Adds path-scoped `/.well-known/oauth-protected-resource/...` metadata (RFC9728) to a REST API.
 type AppTheoryMcpProtectedResource interface {
 	constructs.Construct
 	// The tree node.
@@ -40,6 +40,7 @@ func (j *jsiiProxy_AppTheoryMcpProtectedResource) Node() constructs.Node {
 	)
 	return returns
 }
+
 
 func NewAppTheoryMcpProtectedResource(scope constructs.Construct, id *string, props *AppTheoryMcpProtectedResourceProps) AppTheoryMcpProtectedResource {
 	_init_.Initialize()
@@ -133,3 +134,4 @@ func (a *jsiiProxy_AppTheoryMcpProtectedResource) With(mixins ...constructs.IMix
 
 	return returns
 }
+

@@ -96,6 +96,7 @@ func (j *jsiiProxy_AppTheoryApp) RateLimitTable() awsdynamodb.ITable {
 	return returns
 }
 
+
 func NewAppTheoryApp(scope constructs.Construct, id *string, props *AppTheoryAppProps) AppTheoryApp {
 	_init_.Initialize()
 
@@ -188,3 +189,4 @@ func (a *jsiiProxy_AppTheoryApp) With(mixins ...constructs.IMixin) constructs.IC
 
 	return returns
 }
+

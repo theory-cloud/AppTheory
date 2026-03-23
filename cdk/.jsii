@@ -8518,7 +8518,7 @@
   },
   "name": "@theory-cloud/apptheory-cdk",
   "readme": {
-    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryRestApiRouter` — REST API v1 multi-Lambda router with full streaming parity + stage controls + domain wiring.\n- `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueue` — SQS queue with optional DLQ (queue-only friendly).\n- `AppTheoryQueueConsumer` — SQS → Lambda event source mapping with full knobs.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring (convenience wrapper over `AppTheoryQueue` + `AppTheoryQueueConsumer`).\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n- `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs).\n- `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).\n- `AppTheoryLambdaRole` — Lambda execution role helper (baseline + X-Ray + KMS + escape hatches).\n- `AppTheoryPathRoutedFrontend` — CloudFront distribution for multi-SPA routing + API origin (stage domain pattern).\n- `AppTheoryMediaCdn` — CloudFront distribution for an S3-backed media CDN (optional private media via key groups).\n- `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).\n- `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + domain/cert helpers).\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
+    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryRestApiRouter` — REST API v1 multi-Lambda router with full streaming parity + stage controls + domain wiring.\n- `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueue` — SQS queue with optional DLQ (queue-only friendly).\n- `AppTheoryQueueConsumer` — SQS → Lambda event source mapping with full knobs.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring (convenience wrapper over `AppTheoryQueue` + `AppTheoryQueueConsumer`).\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryEventBridgeBus` — custom EventBridge bus with explicit cross-account publish allowlist.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n- `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs).\n- `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).\n- `AppTheoryLambdaRole` — Lambda execution role helper (baseline + X-Ray + KMS + escape hatches).\n- `AppTheoryPathRoutedFrontend` — CloudFront distribution for multi-SPA routing + API origin (stage domain pattern).\n- `AppTheoryMediaCdn` — CloudFront distribution for an S3-backed media CDN (optional private media via key groups).\n- `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).\n- `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + domain/cert helpers).\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
   },
   "repository": {
     "directory": "cdk",
@@ -10939,6 +10939,173 @@
         }
       ],
       "symbolId": "lib/enhanced-security:AppTheoryEnhancedSecurityProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBus": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "summary": "Opinionated custom EventBridge bus with explicit cross-account publish allowlist."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBus",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/eventbridge-bus.ts",
+          "line": 35
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "optional": true,
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBusProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/eventbridge-bus.ts",
+        "line": 29
+      },
+      "methods": [
+        {
+          "docs": {
+            "summary": "Adds a single account ID to the cross-account publish allowlist."
+          },
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 51
+          },
+          "name": "allowAccount",
+          "parameters": [
+            {
+              "name": "accountId",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_events.CfnEventBusPolicy"
+            }
+          }
+        }
+      ],
+      "name": "AppTheoryEventBridgeBus",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 30
+          },
+          "name": "eventBus",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_events.EventBus"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 31
+          },
+          "name": "policies",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_events.CfnEventBusPolicy"
+              },
+              "kind": "array"
+            }
+          }
+        }
+      ],
+      "symbolId": "lib/eventbridge-bus:AppTheoryEventBridgeBus"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBusProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBusProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/eventbridge-bus.ts",
+        "line": 5
+      },
+      "name": "AppTheoryEventBridgeBusProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[]",
+            "remarks": "Partners can be onboarded one account at a time by adding IDs here.",
+            "summary": "Explicit cross-account allowlist for `events:PutEvents`."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 23
+          },
+          "name": "allowedAccountIds",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- no description",
+            "summary": "Optional event bus description."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 16
+          },
+          "name": "description",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- CloudFormation-generated name",
+            "summary": "Optional custom event bus name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 10
+          },
+          "name": "eventBusName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/eventbridge-bus:AppTheoryEventBridgeBusProps"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandler": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -18965,5 +19132,5 @@
     }
   },
   "version": "0.18.1",
-  "fingerprint": "2aa7x1dhAo/AwIqP54auhmDQlKpY/W789oz+Pvfd5r0="
+  "fingerprint": "oVBJCmrY+GsxCmzlxnjtE1KTMYUG/baxHmX84QK52aY="
 }

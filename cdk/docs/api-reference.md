@@ -20,6 +20,7 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryQueueConsumer` (SQS → Lambda event source mapping with full options)
 - `AppTheoryQueueProcessor` (SQS + Lambda consumer wiring convenience wrapper)
 - `AppTheoryEventBridgeHandler` (EventBridge rule/schedule + Lambda target)
+- `AppTheoryEventBridgeBus` (custom EventBridge bus + explicit cross-account publish allowlist)
 - `AppTheoryEventBridgeRuleTarget` (EventBridge rule → Lambda target; schedule XOR eventPattern)
 - `AppTheoryS3Ingest` (secure S3 ingest bucket + optional EventBridge/SQS notifications)
 - `AppTheoryCodeBuildJobRunner` (CodeBuild project wrapper for batch steps; safe defaults + logs + state-change hook)

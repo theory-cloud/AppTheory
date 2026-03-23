@@ -53,6 +53,7 @@ func (j *jsiiProxy_AppTheoryRestApi) Node() constructs.Node {
 	return returns
 }
 
+
 func NewAppTheoryRestApi(scope constructs.Construct, id *string, props *AppTheoryRestApiProps) AppTheoryRestApi {
 	_init_.Initialize()
 
@@ -156,3 +157,4 @@ func (a *jsiiProxy_AppTheoryRestApi) With(mixins ...constructs.IMixin) construct
 
 	return returns
 }
+

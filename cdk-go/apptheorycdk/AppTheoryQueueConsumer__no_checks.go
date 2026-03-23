@@ -11,3 +11,4 @@ func validateAppTheoryQueueConsumer_IsConstructParameters(x interface{}) error {
 func validateNewAppTheoryQueueConsumerParameters(scope constructs.Construct, id *string, props *AppTheoryQueueConsumerProps) error {
 	return nil
 }
+

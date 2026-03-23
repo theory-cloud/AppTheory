@@ -177,6 +177,27 @@ func init() {
 		reflect.TypeOf((*AppTheoryEnhancedSecurityProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBus",
+		reflect.TypeOf((*AppTheoryEventBridgeBus)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberMethod{JsiiMethod: "allowAccount", GoMethod: "AllowAccount"},
+			_jsii_.MemberProperty{JsiiProperty: "eventBus", GoGetter: "EventBus"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "policies", GoGetter: "Policies"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryEventBridgeBus{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBusProps",
+		reflect.TypeOf((*AppTheoryEventBridgeBusProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandler",
 		reflect.TypeOf((*AppTheoryEventBridgeHandler)(nil)).Elem(),
 		[]_jsii_.Member{
@@ -675,7 +696,7 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheorySpaRewriteMode",
 		reflect.TypeOf((*AppTheorySpaRewriteMode)(nil)).Elem(),
 		map[string]interface{}{
-			"SPA":  AppTheorySpaRewriteMode_SPA,
+			"SPA": AppTheorySpaRewriteMode_SPA,
 			"NONE": AppTheorySpaRewriteMode_NONE,
 		},
 	)
