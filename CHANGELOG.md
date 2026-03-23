@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v0.19.0-rc...v0.19.0-rc.1) (2026-03-23)
+
+
+### Bug Fixes
+
+* resolve staging into premain merge ([9744e83](https://github.com/theory-cloud/AppTheory/commit/9744e83a87c575ad6084879b92df659a229109b7))
+* resolve staging into premain merge ([fb8b4dd](https://github.com/theory-cloud/AppTheory/commit/fb8b4dd8c2418bbb8a031c5107180c2ec40d77e1))
+
 ## [0.19.0-rc](https://github.com/theory-cloud/AppTheory/compare/v0.18.2-rc...v0.19.0-rc) (2026-03-23)
 
 
