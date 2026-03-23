@@ -21,6 +21,7 @@ contract:
     - cdk/docs/sqs-queue-consumer.md
     - cdk/docs/eventbridge-bus.md
     - cdk/docs/eventbridge-rule-target.md
+    - cdk/docs/eventbus-table.md
     - cdk/docs/s3-ingest.md
     - cdk/docs/codebuild-job-runner.md
     - cdk/docs/jobs-table.md

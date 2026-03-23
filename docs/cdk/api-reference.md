@@ -24,7 +24,7 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryFunctionAlarms`
 - `AppTheoryDynamoDBStreamMapping`
 - `AppTheoryDynamoTable`
-- `AppTheoryEventBusTable`
+- `AppTheoryEventBusTable`: durable EventBus DynamoDB table plus Lambda binding helper for publish/query/replay flows
 - `AppTheoryLambdaRole`
 - `AppTheoryPathRoutedFrontend`
 - `AppTheoryMediaCdn`
