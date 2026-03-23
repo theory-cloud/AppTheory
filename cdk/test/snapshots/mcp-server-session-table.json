@@ -98,12 +98,14 @@
                 "dynamodb:DescribeTable"
               ],
               "Effect": "Allow",
-              "Resource": {
-                "Fn::GetAtt": [
-                  "McpServerSessionTable469EA0FB",
-                  "Arn"
-                ]
-              }
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "McpServerSessionTable469EA0FB",
+                    "Arn"
+                  ]
+                }
+              ]
             },
             {
               "Action": [
@@ -111,12 +113,14 @@
                 "dynamodb:GetShardIterator"
               ],
               "Effect": "Allow",
-              "Resource": {
-                "Fn::GetAtt": [
-                  "McpServerSessionTable469EA0FB",
-                  "Arn"
-                ]
-              }
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "McpServerSessionTable469EA0FB",
+                    "Arn"
+                  ]
+                }
+              ]
             }
           ],
           "Version": "2012-10-17"

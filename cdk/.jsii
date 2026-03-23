@@ -6,8 +6,8 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.240.0",
-    "constructs": "10.5.1"
+    "aws-cdk-lib": "2.244.0",
+    "constructs": "10.6.0"
   },
   "dependencyClosure": {
     "@aws-cdk/asset-awscli-v1": {
@@ -614,6 +614,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_bedrockmantle": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.BedrockMantle"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.bedrockmantle"
+            },
+            "python": {
+              "module": "aws_cdk.aws_bedrockmantle"
+            }
+          }
+        },
         "aws-cdk-lib.aws_billingconductor": {
           "targets": {
             "dotnet": {
@@ -1018,6 +1031,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_computeoptimizer": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.ComputeOptimizer"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.computeoptimizer"
+            },
+            "python": {
+              "module": "aws_cdk.aws_computeoptimizer"
+            }
+          }
+        },
         "aws-cdk-lib.aws_config": {
           "targets": {
             "dotnet": {
@@ -1239,6 +1265,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_directconnect": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.DirectConnect"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.directconnect"
+            },
+            "python": {
+              "module": "aws_cdk.aws_directconnect"
+            }
+          }
+        },
         "aws-cdk-lib.aws_directoryservice": {
           "targets": {
             "dotnet": {
@@ -1356,6 +1395,22 @@
             }
           }
         },
+        "aws-cdk-lib.aws_ecr.mixins": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.ECR.Mixins"
+            },
+            "go": {
+              "packageName": "awsecrmixins"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.ecr.mixins"
+            },
+            "python": {
+              "module": "aws_cdk.aws_ecr.mixins"
+            }
+          }
+        },
         "aws-cdk-lib.aws_ecr_assets": {
           "targets": {
             "dotnet": {
@@ -1379,6 +1434,22 @@
             },
             "python": {
               "module": "aws_cdk.aws_ecs"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_ecs.mixins": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.ECS.Mixins"
+            },
+            "go": {
+              "packageName": "awsecsmixins"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.ecs.mixins"
+            },
+            "python": {
+              "module": "aws_cdk.aws_ecs.mixins"
             }
           }
         },
@@ -3306,6 +3377,22 @@
             }
           }
         },
+        "aws-cdk-lib.aws_s3.mixins": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.S3.Mixins"
+            },
+            "go": {
+              "packageName": "awss3mixins"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.s3.mixins"
+            },
+            "python": {
+              "module": "aws_cdk.aws_s3.mixins"
+            }
+          }
+        },
         "aws-cdk-lib.aws_s3_assets": {
           "targets": {
             "dotnet": {
@@ -4595,6 +4682,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_bedrockmantle": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.BedrockMantle"
+            },
+            "go": {
+              "packageName": "interfacesawsbedrockmantle"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.bedrockmantle"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_bedrockmantle"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_billing": {
           "targets": {
             "dotnet": {
@@ -5043,6 +5146,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_computeoptimizer": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.ComputeOptimizer"
+            },
+            "go": {
+              "packageName": "interfacesawscomputeoptimizer"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.computeoptimizer"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_computeoptimizer"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_config": {
           "targets": {
             "dotnet": {
@@ -5312,6 +5431,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_devopsguru"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_directconnect": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.DirectConnect"
+            },
+            "go": {
+              "packageName": "interfacesawsdirectconnect"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.directconnect"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_directconnect"
             }
           }
         },
@@ -8507,7 +8642,7 @@
   },
   "description": "AppTheory CDK constructs (TS-first jsii)",
   "homepage": "https://github.com/theory-cloud/AppTheory.git",
-  "jsiiVersion": "5.9.23 (build 29252a0)",
+  "jsiiVersion": "5.9.34 (build 8773a22)",
   "license": "Apache-2.0",
   "metadata": {
     "jsii": {
@@ -19707,6 +19842,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "0.18.1",
-  "fingerprint": "ZvdmkvWYR84b21hpDsUSV9dBpo1mApYHa+J9OmDUE4o="
+  "version": "0.19.0-rc",
+  "fingerprint": "KzboR6BtihTlVkbfMEoCy6lDOWqoW7QlxWAFowpul0U="
 }

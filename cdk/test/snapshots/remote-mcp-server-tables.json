@@ -136,12 +136,14 @@
                 "dynamodb:DescribeTable"
               ],
               "Effect": "Allow",
-              "Resource": {
-                "Fn::GetAtt": [
-                  "RemoteMcpSessionTable949CA67A",
-                  "Arn"
-                ]
-              }
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "RemoteMcpSessionTable949CA67A",
+                    "Arn"
+                  ]
+                }
+              ]
             },
             {
               "Action": [
@@ -149,12 +151,14 @@
                 "dynamodb:GetShardIterator"
               ],
               "Effect": "Allow",
-              "Resource": {
-                "Fn::GetAtt": [
-                  "RemoteMcpSessionTable949CA67A",
-                  "Arn"
-                ]
-              }
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "RemoteMcpSessionTable949CA67A",
+                    "Arn"
+                  ]
+                }
+              ]
             },
             {
               "Action": [
@@ -170,12 +174,14 @@
                 "dynamodb:DescribeTable"
               ],
               "Effect": "Allow",
-              "Resource": {
-                "Fn::GetAtt": [
-                  "RemoteMcpStreamTable14FCF20C",
-                  "Arn"
-                ]
-              }
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "RemoteMcpStreamTable14FCF20C",
+                    "Arn"
+                  ]
+                }
+              ]
             },
             {
               "Action": [
@@ -183,12 +189,14 @@
                 "dynamodb:GetShardIterator"
               ],
               "Effect": "Allow",
-              "Resource": {
-                "Fn::GetAtt": [
-                  "RemoteMcpStreamTable14FCF20C",
-                  "Arn"
-                ]
-              }
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "RemoteMcpStreamTable14FCF20C",
+                    "Arn"
+                  ]
+                }
+              ]
             }
           ],
           "Version": "2012-10-17"
