@@ -59,7 +59,7 @@ class AppTheoryMcpProtectedResource extends constructs_1.Construct {
 }
 exports.AppTheoryMcpProtectedResource = AppTheoryMcpProtectedResource;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryMcpProtectedResource[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResource", version: "0.18.1" };
+AppTheoryMcpProtectedResource[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResource", version: "0.18.2" };
 function metadataPathFromResourceURL(resource) {
     let parsed;
     try {
