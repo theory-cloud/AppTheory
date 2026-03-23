@@ -25,7 +25,7 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryS3Ingest` (secure S3 ingest bucket + optional EventBridge/SQS notifications)
 - `AppTheoryCodeBuildJobRunner` (CodeBuild project wrapper for batch steps; safe defaults + logs + state-change hook)
 - `AppTheoryDynamoDBStreamMapping` (Streams mapping + permissions)
-- `AppTheoryEventBusTable` (opinionated EventBus DynamoDB table + required GSIs)
+- `AppTheoryEventBusTable` (opinionated EventBus DynamoDB table + required GSIs + Lambda binding helper)
 - `AppTheoryDynamoTable` (general-purpose DynamoDB table; schema-explicit + consistent defaults)
 - `AppTheoryJobsTable` (opinionated Jobs table for import pipelines; schema + GSIs + TTL)
 - `AppTheoryLambdaRole` (Lambda execution role helper; baseline + X-Ray + KMS + escape hatches)

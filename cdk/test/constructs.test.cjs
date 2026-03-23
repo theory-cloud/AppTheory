@@ -826,6 +826,39 @@ test("AppTheoryEventBusTable synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryEventBusTable bind wires env vars and grants", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const ingestionFn = new lambda.Function(stack, "IngestionFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const replayFn = new lambda.Function(stack, "ReplayFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const table = new apptheory.AppTheoryEventBusTable(stack, "Events", {
+    tableName: "apptheory-events",
+  });
+
+  table.bind(ingestionFn);
+  table.bind(replayFn, {
+    readOnly: true,
+    envVarName: "COMPLIANCE_REPLAY_TABLE",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("eventbus-table-binding", template);
+  } else {
+    expectSnapshot("eventbus-table-binding", template);
+  }
+});
+
 test("AppTheoryDynamoTable synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");

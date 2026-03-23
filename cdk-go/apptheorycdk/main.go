@@ -239,6 +239,7 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryEventBusTable",
 		reflect.TypeOf((*AppTheoryEventBusTable)(nil)).Elem(),
 		[]_jsii_.Member{
+			_jsii_.MemberMethod{JsiiMethod: "bind", GoMethod: "Bind"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
 			_jsii_.MemberProperty{JsiiProperty: "table", GoGetter: "Table"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
@@ -249,6 +250,10 @@ func init() {
 			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
 			return &j
 		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryEventBusTableBindingOptions",
+		reflect.TypeOf((*AppTheoryEventBusTableBindingOptions)(nil)).Elem(),
 	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryEventBusTableProps",

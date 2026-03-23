@@ -5,6 +5,7 @@ import (
 	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/jsii"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
@@ -14,6 +15,8 @@ type AppTheoryEventBusTable interface {
 	// The tree node.
 	Node() constructs.Node
 	Table() awsdynamodb.Table
+	// Binds the table to a Lambda function for EventBus publish/query/replay flows.
+	Bind(handler awslambda.IFunction, options *AppTheoryEventBusTableBindingOptions)
 	// Returns a string representation of this construct.
 	ToString() *string
 	// Applies one or more mixins to this construct.
@@ -113,6 +116,17 @@ func AppTheoryEventBusTable_IsConstruct(x interface{}) *bool {
 	)
 
 	return returns
+}
+
+func (a *jsiiProxy_AppTheoryEventBusTable) Bind(handler awslambda.IFunction, options *AppTheoryEventBusTableBindingOptions) {
+	if err := a.validateBindParameters(handler, options); err != nil {
+		panic(err)
+	}
+	_jsii_.InvokeVoid(
+		a,
+		"bind",
+		[]interface{}{handler, options},
+	)
 }
 
 func (a *jsiiProxy_AppTheoryEventBusTable) ToString() *string {
