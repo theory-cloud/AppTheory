@@ -19,4 +19,3 @@ type ApiBypassConfig struct {
 	// Overrides `apiBypassResponseHeadersPolicy` and `responseHeadersPolicy` (legacy).
 	ResponseHeadersPolicy awscloudfront.IResponseHeadersPolicy `field:"optional" json:"responseHeadersPolicy" yaml:"responseHeadersPolicy"`
 }
-

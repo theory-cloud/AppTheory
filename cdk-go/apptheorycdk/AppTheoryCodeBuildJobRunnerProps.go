@@ -65,4 +65,3 @@ type AppTheoryCodeBuildJobRunnerProps struct {
 	//
 	Timeout awscdk.Duration `field:"optional" json:"timeout" yaml:"timeout"`
 }
-

@@ -36,4 +36,3 @@ func validateNewAppTheoryEventBridgeHandlerParameters(scope constructs.Construct
 
 	return nil
 }
-

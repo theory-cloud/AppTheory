@@ -57,4 +57,3 @@ type AppTheoryS3IngestProps struct {
 	// This is intentionally explicit (bucket policy), rather than implicit magic.
 	WriterPrincipals *[]awsiam.IPrincipal `field:"optional" json:"writerPrincipals" yaml:"writerPrincipals"`
 }
-

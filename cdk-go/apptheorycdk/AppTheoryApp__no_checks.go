@@ -11,4 +11,3 @@ func validateAppTheoryApp_IsConstructParameters(x interface{}) error {
 func validateNewAppTheoryAppParameters(scope constructs.Construct, id *string, props *AppTheoryAppProps) error {
 	return nil
 }
-

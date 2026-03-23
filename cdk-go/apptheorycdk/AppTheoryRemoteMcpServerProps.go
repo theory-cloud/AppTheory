@@ -74,4 +74,3 @@ type AppTheoryRemoteMcpServerProps struct {
 	//
 	StreamTtlMinutes *float64 `field:"optional" json:"streamTtlMinutes" yaml:"streamTtlMinutes"`
 }
-

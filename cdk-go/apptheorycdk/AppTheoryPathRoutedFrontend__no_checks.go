@@ -11,4 +11,3 @@ func validateAppTheoryPathRoutedFrontend_IsConstructParameters(x interface{}) er
 func validateNewAppTheoryPathRoutedFrontendParameters(scope constructs.Construct, id *string, props *AppTheoryPathRoutedFrontendProps) error {
 	return nil
 }
-

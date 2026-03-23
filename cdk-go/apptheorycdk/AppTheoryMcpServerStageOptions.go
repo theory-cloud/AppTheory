@@ -29,4 +29,3 @@ type AppTheoryMcpServerStageOptions struct {
 	//
 	ThrottlingRateLimit *float64 `field:"optional" json:"throttlingRateLimit" yaml:"throttlingRateLimit"`
 }
-
