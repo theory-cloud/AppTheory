@@ -1,0 +1,89 @@
+{
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "Bus95A03305": {
+      "Properties": {
+        "Description": "Compliance advisor relay bus",
+        "Name": "apptheory-compliance"
+      },
+      "Type": "AWS::Events::EventBus"
+    },
+    "BusAllowAccount13C41CE0A": {
+      "Properties": {
+        "EventBusName": {
+          "Ref": "Bus95A03305"
+        },
+        "Statement": {
+          "Action": "events:PutEvents",
+          "Effect": "Allow",
+          "Principal": {
+            "AWS": "111111111111"
+          },
+          "Resource": {
+            "Fn::GetAtt": [
+              "Bus95A03305",
+              "Arn"
+            ]
+          }
+        },
+        "StatementId": "AllowPutEvents1"
+      },
+      "Type": "AWS::Events::EventBusPolicy"
+    },
+    "BusAllowAccount25D6025C7": {
+      "Properties": {
+        "EventBusName": {
+          "Ref": "Bus95A03305"
+        },
+        "Statement": {
+          "Action": "events:PutEvents",
+          "Effect": "Allow",
+          "Principal": {
+            "AWS": "222222222222"
+          },
+          "Resource": {
+            "Fn::GetAtt": [
+              "Bus95A03305",
+              "Arn"
+            ]
+          }
+        },
+        "StatementId": "AllowPutEvents2"
+      },
+      "Type": "AWS::Events::EventBusPolicy"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}

@@ -4,7 +4,7 @@ package apptheorycdk
 //
 // This construct adds the RFC9728 protected resource metadata endpoint required
 // by MCP auth (2025-06-18):
-// - GET `/.well-known/oauth-protected-resource`
+// - GET `/.well-known/oauth-protected-resource/...resource path...`
 type AppTheoryMcpProtectedResourceProps struct {
 	// One or more OAuth Authorization Server issuer/base URLs.
 	//

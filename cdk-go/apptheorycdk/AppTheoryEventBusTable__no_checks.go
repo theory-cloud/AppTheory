@@ -4,6 +4,10 @@ package apptheorycdk
 
 // Building without runtime type checking enabled, so all the below just return nil
 
+func (a *jsiiProxy_AppTheoryEventBusTable) validateBindParameters(handler awslambda.IFunction, options *AppTheoryEventBusTableBindingOptions) error {
+	return nil
+}
+
 func validateAppTheoryEventBusTable_IsConstructParameters(x interface{}) error {
 	return nil
 }

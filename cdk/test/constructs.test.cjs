@@ -129,6 +129,78 @@ test("AppTheoryHttpApi synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryHttpIngestionEndpoint synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const handler = new lambda.Function(stack, "Handler", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 202, body: 'accepted' });"),
+  });
+  const authorizer = new lambda.Function(stack, "AuthorizerFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ isAuthorized: true });"),
+  });
+
+  new apptheory.AppTheoryHttpIngestionEndpoint(stack, "Endpoint", {
+    handler,
+    authorizer,
+    apiName: "apptheory-ingestion",
+    endpointPath: "/evidence",
+    stage: {
+      stageName: "prod",
+      accessLogging: true,
+      throttlingRateLimit: 50,
+      throttlingBurstLimit: 100,
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("http-ingestion-endpoint", template);
+  } else {
+    expectSnapshot("http-ingestion-endpoint", template);
+  }
+});
+
+test("AppTheoryHttpIngestionEndpoint fails closed on invalid props", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const handler = new lambda.Function(stack, "Handler", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 202, body: 'accepted' });"),
+  });
+  const authorizer = new lambda.Function(stack, "AuthorizerFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ isAuthorized: true });"),
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryHttpIngestionEndpoint(stack, "MissingPath", {
+        handler,
+        authorizer,
+        endpointPath: " ",
+      }),
+    /endpointPath is required/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryHttpIngestionEndpoint(stack, "MissingHeader", {
+        handler,
+        authorizer,
+        authorizerHeaderName: " ",
+      }),
+    /authorizerHeaderName is required/,
+  );
+});
+
 test("AppTheoryWebSocketApi synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -403,6 +475,45 @@ test("AppTheoryEventBridgeHandler synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryEventBridgeBus synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryEventBridgeBus(stack, "Bus", {
+    eventBusName: "apptheory-compliance",
+    description: "Compliance advisor relay bus",
+    allowedAccountIds: ["111111111111", "222222222222"],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("eventbridge-bus", template);
+  } else {
+    expectSnapshot("eventbridge-bus", template);
+  }
+});
+
+test("AppTheoryEventBridgeBus fails closed on invalid allowlist entries", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryEventBridgeBus(stack, "InvalidBus", {
+        allowedAccountIds: ["not-an-account"],
+      }),
+    /12-digit AWS account IDs/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryEventBridgeBus(stack, "DuplicateBus", {
+        allowedAccountIds: ["111111111111", "111111111111"],
+      }),
+    /duplicate allowed account ID/,
+  );
+});
+
 test("AppTheoryEventBridgeRuleTarget (schedule) synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -478,6 +589,40 @@ test("AppTheoryEventBridgeRuleTarget (eventBus + eventPattern) synthesizes expec
     writeSnapshot("eventbridge-rule-target-event-bus", template);
   } else {
     expectSnapshot("eventbridge-rule-target-event-bus", template);
+  }
+});
+
+test("AppTheoryEventBridgeRuleTarget (compliance beacon relay bus) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const relayBus = new apptheory.AppTheoryEventBridgeBus(stack, "RelayBus", {
+    eventBusName: "compliance-advisor-relay",
+    allowedAccountIds: ["111111111111"],
+  });
+
+  new apptheory.AppTheoryEventBridgeRuleTarget(stack, "RuleTarget", {
+    handler: fn,
+    eventBus: relayBus.eventBus,
+    ruleName: "compliance-beacon-ingress",
+    description: "Route compliance beacon relay events to ingestion",
+    eventPattern: {
+      source: ["pay-theory.compliance-beacon"],
+      detailType: ["compliance.beacon.submitted"],
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("eventbridge-rule-target-compliance-beacon", template);
+  } else {
+    expectSnapshot("eventbridge-rule-target-compliance-beacon", template);
   }
 });
 
@@ -750,6 +895,39 @@ test("AppTheoryEventBusTable synthesizes expected template", () => {
     writeSnapshot("eventbus-table", template);
   } else {
     expectSnapshot("eventbus-table", template);
+  }
+});
+
+test("AppTheoryEventBusTable bind wires env vars and grants", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const ingestionFn = new lambda.Function(stack, "IngestionFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const replayFn = new lambda.Function(stack, "ReplayFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const table = new apptheory.AppTheoryEventBusTable(stack, "Events", {
+    tableName: "apptheory-events",
+  });
+
+  table.bind(ingestionFn);
+  table.bind(replayFn, {
+    readOnly: true,
+    envVarName: "COMPLIANCE_REPLAY_TABLE",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("eventbus-table-binding", template);
+  } else {
+    expectSnapshot("eventbus-table-binding", template);
   }
 });
 
