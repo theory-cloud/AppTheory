@@ -520,6 +520,40 @@ test("AppTheoryEventBridgeRuleTarget (eventBus + eventPattern) synthesizes expec
   }
 });
 
+test("AppTheoryEventBridgeRuleTarget (compliance beacon relay bus) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const relayBus = new apptheory.AppTheoryEventBridgeBus(stack, "RelayBus", {
+    eventBusName: "compliance-advisor-relay",
+    allowedAccountIds: ["111111111111"],
+  });
+
+  new apptheory.AppTheoryEventBridgeRuleTarget(stack, "RuleTarget", {
+    handler: fn,
+    eventBus: relayBus.eventBus,
+    ruleName: "compliance-beacon-ingress",
+    description: "Route compliance beacon relay events to ingestion",
+    eventPattern: {
+      source: ["pay-theory.compliance-beacon"],
+      detailType: ["compliance.beacon.submitted"],
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("eventbridge-rule-target-compliance-beacon", template);
+  } else {
+    expectSnapshot("eventbridge-rule-target-compliance-beacon", template);
+  }
+});
+
 test("AppTheoryEventBridgeRuleTarget fails closed on invalid props", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
