@@ -14,7 +14,9 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryJobsTable`: opinionated DynamoDB jobs ledger table
 - `AppTheoryS3Ingest`: secure S3 ingest front door with optional notifications
 - `AppTheoryCodeBuildJobRunner`: batch-step runner for import pipelines
+- `AppTheoryEventBridgeBus`: custom EventBridge bus with explicit cross-account publish allowlist
 - `AppTheoryEventBridgeRuleTarget`: EventBridge rule or schedule to Lambda target
+- `AppTheoryHttpIngestionEndpoint`: authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer
 - `AppTheoryQueue`, `AppTheoryQueueConsumer`, `AppTheoryQueueProcessor`: SQS queue and consumer patterns
 
 ## Supporting constructs exported from `cdk/lib/index.ts`
@@ -23,7 +25,7 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryFunctionAlarms`
 - `AppTheoryDynamoDBStreamMapping`
 - `AppTheoryDynamoTable`
-- `AppTheoryEventBusTable`
+- `AppTheoryEventBusTable`: durable EventBus DynamoDB table plus Lambda binding helper for publish/query/replay flows
 - `AppTheoryLambdaRole`
 - `AppTheoryPathRoutedFrontend`
 - `AppTheoryMediaCdn`
