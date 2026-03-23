@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.19.0-rc](https://github.com/theory-cloud/AppTheory/compare/v0.18.2-rc...v0.19.0-rc) (2026-03-23)
+
+
+### Features
+
+* **cdk:** add authenticated http ingestion endpoint ([f0b9e70](https://github.com/theory-cloud/AppTheory/commit/f0b9e70ea90d0bbb2ba1ef9e7bffaba29990bb1f))
+* **cdk:** add compliance advisor transport primitives ([5ea52e3](https://github.com/theory-cloud/AppTheory/commit/5ea52e36e4ebc9af234b0dab424509b078936a2a))
+* **cdk:** add cross-account eventbridge bus construct ([eb92c1b](https://github.com/theory-cloud/AppTheory/commit/eb92c1b9bbd87d9ccb9d223c05141c7c64cd68c5))
+* **cdk:** add event bus table binding helper ([4ab7281](https://github.com/theory-cloud/AppTheory/commit/4ab7281feddb9764eb79aabe57f4580cb649a47f))
+
+
+### Bug Fixes
+
+* resolve staging into premain merge ([e4d3ac5](https://github.com/theory-cloud/AppTheory/commit/e4d3ac5a4d4e65133d0b272268104bf30d3f1933))
+* resolve staging into premain merge ([3cd0e4b](https://github.com/theory-cloud/AppTheory/commit/3cd0e4b0dc55cfa76d5d4d819a71c61f851b8997))
+* sync premain stable manifest with main ([99b9099](https://github.com/theory-cloud/AppTheory/commit/99b9099663833139017aeb681ffea9e4e0adae2d))
+
+## [0.18.2-rc](https://github.com/theory-cloud/AppTheory/compare/v0.18.1...v0.18.2-rc) (2026-03-21)
+
+
+### Bug Fixes
+
+* **ci:** allow premain repair PRs ([93322e0](https://github.com/theory-cloud/AppTheory/commit/93322e038a02355e0083bd7b8d7873b5a54bf7ab))
+* **mcp:** implement RFC 9728 metadata bundles ([98a556e](https://github.com/theory-cloud/AppTheory/commit/98a556e4600f880be728eff258fe7377f4bf8b12))
+* **mcp:** implement RFC 9728 metadata bundles ([6f78e49](https://github.com/theory-cloud/AppTheory/commit/6f78e49bcf5c32cd092b2be70f483bf1338bf44f))
+
+## [0.18.0-rc.2](https://github.com/theory-cloud/AppTheory/compare/v0.18.0-rc.1...v0.18.0-rc.2) (2026-03-21)
+
+
+### Bug Fixes
+
+* **mcp:** implement RFC 9728 metadata bundles ([98a556e](https://github.com/theory-cloud/AppTheory/commit/98a556e4600f880be728eff258fe7377f4bf8b12))
+* **mcp:** implement RFC 9728 metadata bundles ([6f78e49](https://github.com/theory-cloud/AppTheory/commit/6f78e49bcf5c32cd092b2be70f483bf1338bf44f))
+
 ## [0.18.1](https://github.com/theory-cloud/AppTheory/compare/v0.18.0...v0.18.1) (2026-03-12)
 
 
