@@ -23,17 +23,16 @@
     "pretest": "npm run build",
     "test": "node --test test/*.test.cjs"
   },
-  "dependencies": {},
   "peerDependencies": {
-    "aws-cdk-lib": "2.240.0",
-    "constructs": "10.5.1"
+    "aws-cdk-lib": "2.244.0",
+    "constructs": "10.6.0"
   },
   "devDependencies": {
-    "@types/node": "25.2.3",
-    "aws-cdk-lib": "file:../third_party/aws-cdk-lib-2.240.0+minimatch-10.2.4.tgz",
-    "constructs": "10.5.1",
-    "jsii": "5.9.23",
-    "jsii-pacmak": "1.125.0",
+    "@types/node": "25.5.0",
+    "aws-cdk-lib": "file:../third_party/aws-cdk-lib-2.244.0+minimatch-10.2.4.tgz",
+    "constructs": "10.6.0",
+    "jsii": "5.9.34",
+    "jsii-pacmak": "1.127.0",
     "typescript": "5.9.3"
   },
   "overrides": {
