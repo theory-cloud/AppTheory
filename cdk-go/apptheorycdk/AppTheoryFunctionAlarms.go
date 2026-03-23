@@ -63,7 +63,6 @@ func (j *jsiiProxy_AppTheoryFunctionAlarms) Throttles() awscloudwatch.Alarm {
 	return returns
 }
 
-
 func NewAppTheoryFunctionAlarms(scope constructs.Construct, id *string, props *AppTheoryFunctionAlarmsProps) AppTheoryFunctionAlarms {
 	_init_.Initialize()
 
@@ -156,4 +155,3 @@ func (a *jsiiProxy_AppTheoryFunctionAlarms) With(mixins ...constructs.IMixin) co
 
 	return returns
 }
-

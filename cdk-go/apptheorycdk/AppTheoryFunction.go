@@ -52,7 +52,6 @@ func (j *jsiiProxy_AppTheoryFunction) Node() constructs.Node {
 	return returns
 }
 
-
 func NewAppTheoryFunction(scope constructs.Construct, id *string, props *AppTheoryFunctionProps) AppTheoryFunction {
 	_init_.Initialize()
 
@@ -145,4 +144,3 @@ func (a *jsiiProxy_AppTheoryFunction) With(mixins ...constructs.IMixin) construc
 
 	return returns
 }
-

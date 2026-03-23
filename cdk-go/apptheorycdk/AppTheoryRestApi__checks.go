@@ -48,4 +48,3 @@ func validateNewAppTheoryRestApiParameters(scope constructs.Construct, id *strin
 
 	return nil
 }
-

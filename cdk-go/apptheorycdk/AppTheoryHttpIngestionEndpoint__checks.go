@@ -36,4 +36,3 @@ func validateNewAppTheoryHttpIngestionEndpointParameters(scope constructs.Constr
 
 	return nil
 }
-

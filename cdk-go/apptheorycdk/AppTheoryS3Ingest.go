@@ -81,7 +81,6 @@ func (j *jsiiProxy_AppTheoryS3Ingest) QueueConstruct() AppTheoryQueue {
 	return returns
 }
 
-
 func NewAppTheoryS3Ingest(scope constructs.Construct, id *string, props *AppTheoryS3IngestProps) AppTheoryS3Ingest {
 	_init_.Initialize()
 
@@ -174,4 +173,3 @@ func (a *jsiiProxy_AppTheoryS3Ingest) With(mixins ...constructs.IMixin) construc
 
 	return returns
 }
-

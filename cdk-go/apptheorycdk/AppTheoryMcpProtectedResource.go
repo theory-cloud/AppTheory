@@ -41,7 +41,6 @@ func (j *jsiiProxy_AppTheoryMcpProtectedResource) Node() constructs.Node {
 	return returns
 }
 
-
 func NewAppTheoryMcpProtectedResource(scope constructs.Construct, id *string, props *AppTheoryMcpProtectedResourceProps) AppTheoryMcpProtectedResource {
 	_init_.Initialize()
 
@@ -134,4 +133,3 @@ func (a *jsiiProxy_AppTheoryMcpProtectedResource) With(mixins ...constructs.IMix
 
 	return returns
 }
-

@@ -15,4 +15,3 @@ func validateAppTheoryEventBusTable_IsConstructParameters(x interface{}) error {
 func validateNewAppTheoryEventBusTableParameters(scope constructs.Construct, id *string, props *AppTheoryEventBusTableProps) error {
 	return nil
 }
-

@@ -27,4 +27,3 @@ type AppTheoryRestApiRouterCorsOptions struct {
 	//
 	MaxAge awscdk.Duration `field:"optional" json:"maxAge" yaml:"maxAge"`
 }
-

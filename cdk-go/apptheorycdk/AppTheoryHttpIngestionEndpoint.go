@@ -136,7 +136,6 @@ func (j *jsiiProxy_AppTheoryHttpIngestionEndpoint) Stage() awsapigatewayv2.IStag
 	return returns
 }
 
-
 func NewAppTheoryHttpIngestionEndpoint(scope constructs.Construct, id *string, props *AppTheoryHttpIngestionEndpointProps) AppTheoryHttpIngestionEndpoint {
 	_init_.Initialize()
 
@@ -229,4 +228,3 @@ func (a *jsiiProxy_AppTheoryHttpIngestionEndpoint) With(mixins ...constructs.IMi
 
 	return returns
 }
-
