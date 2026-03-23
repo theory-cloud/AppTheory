@@ -21,6 +21,7 @@ Status: early; start with a small “top 20%” set and grow based on real usage
 * `AppTheoryQueueConsumer` — SQS → Lambda event source mapping with full knobs.
 * `AppTheoryQueueProcessor` — SQS queue + consumer wiring (convenience wrapper over `AppTheoryQueue` + `AppTheoryQueueConsumer`).
 * `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.
+* `AppTheoryEventBridgeBus` — custom EventBridge bus with explicit cross-account publish allowlist.
 * `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.
 * `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs).
 * `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).

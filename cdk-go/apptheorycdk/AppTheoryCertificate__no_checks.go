@@ -15,3 +15,4 @@ func validateAppTheoryCertificate_IsConstructParameters(x interface{}) error {
 func validateNewAppTheoryCertificateParameters(scope constructs.Construct, id *string, props *AppTheoryCertificateProps) error {
 	return nil
 }
+

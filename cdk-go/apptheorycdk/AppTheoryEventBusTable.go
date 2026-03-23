@@ -52,6 +52,7 @@ func (j *jsiiProxy_AppTheoryEventBusTable) Table() awsdynamodb.Table {
 	return returns
 }
 
+
 func NewAppTheoryEventBusTable(scope constructs.Construct, id *string, props *AppTheoryEventBusTableProps) AppTheoryEventBusTable {
 	_init_.Initialize()
 
@@ -144,3 +145,4 @@ func (a *jsiiProxy_AppTheoryEventBusTable) With(mixins ...constructs.IMixin) con
 
 	return returns
 }
+

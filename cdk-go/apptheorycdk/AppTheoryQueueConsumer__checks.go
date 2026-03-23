@@ -36,3 +36,4 @@ func validateNewAppTheoryQueueConsumerParameters(scope constructs.Construct, id 
 
 	return nil
 }
+

@@ -12,6 +12,17 @@ import (
 type AppTheoryRemoteMcpServerProps struct {
 	// The Lambda function that handles MCP Streamable HTTP requests.
 	Handler awslambda.IFunction `field:"required" json:"handler" yaml:"handler"`
+	// Enable per-actor MCP endpoint bundles.
+	//
+	// When enabled, the construct mounts the transport at `/mcp/{actor}` and
+	// co-registers the RFC 9728 discovery route at
+	// `/.well-known/oauth-protected-resource/mcp/{actor}`.
+	//
+	// The public `endpoint` and injected `MCP_ENDPOINT` environment variable
+	// become a template string ending in `/mcp/{actor}`.
+	// Default: false.
+	//
+	ActorPath *bool `field:"optional" json:"actorPath" yaml:"actorPath"`
 	// Optional API name.
 	// Default: undefined.
 	//
@@ -63,3 +74,4 @@ type AppTheoryRemoteMcpServerProps struct {
 	//
 	StreamTtlMinutes *float64 `field:"optional" json:"streamTtlMinutes" yaml:"streamTtlMinutes"`
 }
+

@@ -403,6 +403,45 @@ test("AppTheoryEventBridgeHandler synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryEventBridgeBus synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryEventBridgeBus(stack, "Bus", {
+    eventBusName: "apptheory-compliance",
+    description: "Compliance advisor relay bus",
+    allowedAccountIds: ["111111111111", "222222222222"],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("eventbridge-bus", template);
+  } else {
+    expectSnapshot("eventbridge-bus", template);
+  }
+});
+
+test("AppTheoryEventBridgeBus fails closed on invalid allowlist entries", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryEventBridgeBus(stack, "InvalidBus", {
+        allowedAccountIds: ["not-an-account"],
+      }),
+    /12-digit AWS account IDs/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryEventBridgeBus(stack, "DuplicateBus", {
+        allowedAccountIds: ["111111111111", "111111111111"],
+      }),
+    /duplicate allowed account ID/,
+  );
+});
+
 test("AppTheoryEventBridgeRuleTarget (schedule) synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");

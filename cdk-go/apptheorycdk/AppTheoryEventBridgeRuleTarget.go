@@ -56,6 +56,7 @@ func (j *jsiiProxy_AppTheoryEventBridgeRuleTarget) Rule() awsevents.Rule {
 	return returns
 }
 
+
 func NewAppTheoryEventBridgeRuleTarget(scope constructs.Construct, id *string, props *AppTheoryEventBridgeRuleTargetProps) AppTheoryEventBridgeRuleTarget {
 	_init_.Initialize()
 
@@ -148,3 +149,4 @@ func (a *jsiiProxy_AppTheoryEventBridgeRuleTarget) With(mixins ...constructs.IMi
 
 	return returns
 }
+

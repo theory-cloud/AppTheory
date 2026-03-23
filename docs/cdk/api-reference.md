@@ -14,6 +14,7 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryJobsTable`: opinionated DynamoDB jobs ledger table
 - `AppTheoryS3Ingest`: secure S3 ingest front door with optional notifications
 - `AppTheoryCodeBuildJobRunner`: batch-step runner for import pipelines
+- `AppTheoryEventBridgeBus`: custom EventBridge bus with explicit cross-account publish allowlist
 - `AppTheoryEventBridgeRuleTarget`: EventBridge rule or schedule to Lambda target
 - `AppTheoryQueue`, `AppTheoryQueueConsumer`, `AppTheoryQueueProcessor`: SQS queue and consumer patterns
 

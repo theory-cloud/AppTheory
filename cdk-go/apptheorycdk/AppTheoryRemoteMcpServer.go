@@ -14,7 +14,7 @@ import (
 // This construct is designed for MCP Streamable HTTP (2025-06-18).
 type AppTheoryRemoteMcpServer interface {
 	constructs.Construct
-	// The MCP endpoint URL (`.../mcp`).
+	// The MCP endpoint URL or template (`.../mcp` or `.../mcp/{actor}`).
 	Endpoint() *string
 	// The tree node.
 	Node() constructs.Node
@@ -91,6 +91,7 @@ func (j *jsiiProxy_AppTheoryRemoteMcpServer) StreamTable() awsdynamodb.ITable {
 	)
 	return returns
 }
+
 
 func NewAppTheoryRemoteMcpServer(scope constructs.Construct, id *string, props *AppTheoryRemoteMcpServerProps) AppTheoryRemoteMcpServer {
 	_init_.Initialize()
@@ -184,3 +185,4 @@ func (a *jsiiProxy_AppTheoryRemoteMcpServer) With(mixins ...constructs.IMixin) c
 
 	return returns
 }
+
