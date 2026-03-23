@@ -24,6 +24,7 @@ Status: early; start with a small “top 20%” set and grow based on real usage
 * `AppTheoryEventBridgeBus` — custom EventBridge bus with explicit cross-account publish allowlist.
 * `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.
 * `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs + Lambda binding helper).
+* `AppTheoryHttpIngestionEndpoint` — authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer + throttling controls.
 * `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).
 * `AppTheoryLambdaRole` — Lambda execution role helper (baseline + X-Ray + KMS + escape hatches).
 * `AppTheoryPathRoutedFrontend` — CloudFront distribution for multi-SPA routing + API origin (stage domain pattern).

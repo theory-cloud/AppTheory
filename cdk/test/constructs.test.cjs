@@ -129,6 +129,78 @@ test("AppTheoryHttpApi synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryHttpIngestionEndpoint synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const handler = new lambda.Function(stack, "Handler", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 202, body: 'accepted' });"),
+  });
+  const authorizer = new lambda.Function(stack, "AuthorizerFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ isAuthorized: true });"),
+  });
+
+  new apptheory.AppTheoryHttpIngestionEndpoint(stack, "Endpoint", {
+    handler,
+    authorizer,
+    apiName: "apptheory-ingestion",
+    endpointPath: "/evidence",
+    stage: {
+      stageName: "prod",
+      accessLogging: true,
+      throttlingRateLimit: 50,
+      throttlingBurstLimit: 100,
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("http-ingestion-endpoint", template);
+  } else {
+    expectSnapshot("http-ingestion-endpoint", template);
+  }
+});
+
+test("AppTheoryHttpIngestionEndpoint fails closed on invalid props", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const handler = new lambda.Function(stack, "Handler", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 202, body: 'accepted' });"),
+  });
+  const authorizer = new lambda.Function(stack, "AuthorizerFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ isAuthorized: true });"),
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryHttpIngestionEndpoint(stack, "MissingPath", {
+        handler,
+        authorizer,
+        endpointPath: " ",
+      }),
+    /endpointPath is required/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryHttpIngestionEndpoint(stack, "MissingHeader", {
+        handler,
+        authorizer,
+        authorizerHeaderName: " ",
+      }),
+    /authorizerHeaderName is required/,
+  );
+});
+
 test("AppTheoryWebSocketApi synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");

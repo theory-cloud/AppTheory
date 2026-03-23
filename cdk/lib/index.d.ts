@@ -14,6 +14,7 @@ export * from "./dynamo-table";
 export * from "./eventbridge-handler";
 export * from "./eventbridge-rule-target";
 export * from "./http-api";
+export * from "./http-ingestion-endpoint";
 export * from "./jobs-table";
 export * from "./queue";
 export * from "./queue-consumer";

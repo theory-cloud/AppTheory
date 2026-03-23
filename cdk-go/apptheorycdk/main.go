@@ -343,6 +343,40 @@ func init() {
 		reflect.TypeOf((*AppTheoryHttpApiProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpoint",
+		reflect.TypeOf((*AppTheoryHttpIngestionEndpoint)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "accessLogGroup", GoGetter: "AccessLogGroup"},
+			_jsii_.MemberProperty{JsiiProperty: "api", GoGetter: "Api"},
+			_jsii_.MemberProperty{JsiiProperty: "apiMapping", GoGetter: "ApiMapping"},
+			_jsii_.MemberProperty{JsiiProperty: "cnameRecord", GoGetter: "CnameRecord"},
+			_jsii_.MemberProperty{JsiiProperty: "domainName", GoGetter: "DomainName"},
+			_jsii_.MemberProperty{JsiiProperty: "endpoint", GoGetter: "Endpoint"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "routeAuthorizer", GoGetter: "RouteAuthorizer"},
+			_jsii_.MemberProperty{JsiiProperty: "stage", GoGetter: "Stage"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryHttpIngestionEndpoint{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpointDomainOptions",
+		reflect.TypeOf((*AppTheoryHttpIngestionEndpointDomainOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpointProps",
+		reflect.TypeOf((*AppTheoryHttpIngestionEndpointProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpointStageOptions",
+		reflect.TypeOf((*AppTheoryHttpIngestionEndpointStageOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryJobsTable",
 		reflect.TypeOf((*AppTheoryJobsTable)(nil)).Elem(),
 		[]_jsii_.Member{

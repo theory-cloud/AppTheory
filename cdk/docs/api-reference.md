@@ -22,6 +22,7 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryEventBridgeHandler` (EventBridge rule/schedule + Lambda target)
 - `AppTheoryEventBridgeBus` (custom EventBridge bus + explicit cross-account publish allowlist)
 - `AppTheoryEventBridgeRuleTarget` (EventBridge rule → Lambda target; schedule XOR eventPattern)
+- `AppTheoryHttpIngestionEndpoint` (authenticated HTTP API v2 endpoint + Lambda request authorizer + stage throttling)
 - `AppTheoryS3Ingest` (secure S3 ingest bucket + optional EventBridge/SQS notifications)
 - `AppTheoryCodeBuildJobRunner` (CodeBuild project wrapper for batch steps; safe defaults + logs + state-change hook)
 - `AppTheoryDynamoDBStreamMapping` (Streams mapping + permissions)

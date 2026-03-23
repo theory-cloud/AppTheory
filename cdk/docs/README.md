@@ -28,6 +28,7 @@
 - [EventBridge Bus](./eventbridge-bus.md) — custom EventBridge bus with explicit cross-account publish allowlist.
 - [EventBridge Rule Target](./eventbridge-rule-target.md) — rule → Lambda wiring for schedules and event patterns.
 - [EventBus Table](./eventbus-table.md) — durable EventBus DynamoDB table with binding guidance for publish and replay flows.
+- [HTTP Ingestion Endpoint](./http-ingestion-endpoint.md) — authenticated server-to-server ingestion endpoint with Lambda request authorizer.
 - [S3 Ingest Front Door](./s3-ingest.md) — secure bucket + optional EventBridge/SQS notifications for import workloads.
 - [CodeBuild Job Runner (Import Pipeline)](./codebuild-job-runner.md) — batch job runner for transforms/decrypt/backfills.
 - [Jobs Table (Import Pipeline)](./jobs-table.md) — opinionated DynamoDB table for job ledgers (schema + GSIs + TTL).
