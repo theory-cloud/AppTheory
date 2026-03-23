@@ -16,6 +16,7 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryCodeBuildJobRunner`: batch-step runner for import pipelines
 - `AppTheoryEventBridgeBus`: custom EventBridge bus with explicit cross-account publish allowlist
 - `AppTheoryEventBridgeRuleTarget`: EventBridge rule or schedule to Lambda target
+- `AppTheoryHttpIngestionEndpoint`: authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer
 - `AppTheoryQueue`, `AppTheoryQueueConsumer`, `AppTheoryQueueProcessor`: SQS queue and consumer patterns
 
 ## Supporting constructs exported from `cdk/lib/index.ts`
