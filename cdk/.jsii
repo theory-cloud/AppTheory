@@ -8518,7 +8518,7 @@
   },
   "name": "@theory-cloud/apptheory-cdk",
   "readme": {
-    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryRestApiRouter` — REST API v1 multi-Lambda router with full streaming parity + stage controls + domain wiring.\n- `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueue` — SQS queue with optional DLQ (queue-only friendly).\n- `AppTheoryQueueConsumer` — SQS → Lambda event source mapping with full knobs.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring (convenience wrapper over `AppTheoryQueue` + `AppTheoryQueueConsumer`).\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n- `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs).\n- `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).\n- `AppTheoryLambdaRole` — Lambda execution role helper (baseline + X-Ray + KMS + escape hatches).\n- `AppTheoryPathRoutedFrontend` — CloudFront distribution for multi-SPA routing + API origin (stage domain pattern).\n- `AppTheoryMediaCdn` — CloudFront distribution for an S3-backed media CDN (optional private media via key groups).\n- `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).\n- `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + domain/cert helpers).\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
+    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryRestApiRouter` — REST API v1 multi-Lambda router with full streaming parity + stage controls + domain wiring.\n- `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueue` — SQS queue with optional DLQ (queue-only friendly).\n- `AppTheoryQueueConsumer` — SQS → Lambda event source mapping with full knobs.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring (convenience wrapper over `AppTheoryQueue` + `AppTheoryQueueConsumer`).\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryEventBridgeBus` — custom EventBridge bus with explicit cross-account publish allowlist.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n- `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs + Lambda binding helper).\n- `AppTheoryHttpIngestionEndpoint` — authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer + throttling controls.\n- `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).\n- `AppTheoryLambdaRole` — Lambda execution role helper (baseline + X-Ray + KMS + escape hatches).\n- `AppTheoryPathRoutedFrontend` — CloudFront distribution for multi-SPA routing + API origin (stage domain pattern).\n- `AppTheoryMediaCdn` — CloudFront distribution for an S3-backed media CDN (optional private media via key groups).\n- `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).\n- `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + domain/cert helpers).\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
   },
   "repository": {
     "directory": "cdk",
@@ -10940,6 +10940,173 @@
       ],
       "symbolId": "lib/enhanced-security:AppTheoryEnhancedSecurityProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBus": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "summary": "Opinionated custom EventBridge bus with explicit cross-account publish allowlist."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBus",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/eventbridge-bus.ts",
+          "line": 35
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "optional": true,
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBusProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/eventbridge-bus.ts",
+        "line": 29
+      },
+      "methods": [
+        {
+          "docs": {
+            "summary": "Adds a single account ID to the cross-account publish allowlist."
+          },
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 51
+          },
+          "name": "allowAccount",
+          "parameters": [
+            {
+              "name": "accountId",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_events.CfnEventBusPolicy"
+            }
+          }
+        }
+      ],
+      "name": "AppTheoryEventBridgeBus",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 30
+          },
+          "name": "eventBus",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_events.EventBus"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 31
+          },
+          "name": "policies",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_events.CfnEventBusPolicy"
+              },
+              "kind": "array"
+            }
+          }
+        }
+      ],
+      "symbolId": "lib/eventbridge-bus:AppTheoryEventBridgeBus"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBusProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBusProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/eventbridge-bus.ts",
+        "line": 5
+      },
+      "name": "AppTheoryEventBridgeBusProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[]",
+            "remarks": "Partners can be onboarded one account at a time by adding IDs here.",
+            "summary": "Explicit cross-account allowlist for `events:PutEvents`."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 23
+          },
+          "name": "allowedAccountIds",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- no description",
+            "summary": "Optional event bus description."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 16
+          },
+          "name": "description",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- CloudFormation-generated name",
+            "summary": "Optional custom event bus name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbridge-bus.ts",
+            "line": 10
+          },
+          "name": "eventBusName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/eventbridge-bus:AppTheoryEventBridgeBusProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandler": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -11294,7 +11461,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/eventbus-table.ts",
-          "line": 21
+          "line": 38
         },
         "parameters": [
           {
@@ -11321,15 +11488,42 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/eventbus-table.ts",
-        "line": 18
+        "line": 35
       },
+      "methods": [
+        {
+          "docs": {
+            "summary": "Binds the table to a Lambda function for EventBus publish/query/replay flows."
+          },
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 103
+          },
+          "name": "bind",
+          "parameters": [
+            {
+              "name": "handler",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+              }
+            },
+            {
+              "name": "options",
+              "optional": true,
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBusTableBindingOptions"
+              }
+            }
+          ]
+        }
+      ],
       "name": "AppTheoryEventBusTable",
       "properties": [
         {
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 19
+            "line": 36
           },
           "name": "table",
           "type": {
@@ -11339,6 +11533,56 @@
       ],
       "symbolId": "lib/eventbus-table:AppTheoryEventBusTable"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryEventBusTableBindingOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryEventBusTableBindingOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/eventbus-table.ts",
+        "line": 19
+      },
+      "name": "AppTheoryEventBusTableBindingOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "APPTHEORY_EVENTBUS_TABLE_NAME",
+            "remarks": "AppTheory runtime code reads `APPTHEORY_EVENTBUS_TABLE_NAME` by default.",
+            "summary": "Environment variable name used for the table name binding."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 32
+          },
+          "name": "envVarName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "When false, the handler receives read/write access for publish + replay flows.",
+            "summary": "Grant read-only access for replay/query consumers."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/eventbus-table.ts",
+            "line": 25
+          },
+          "name": "readOnly",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        }
+      ],
+      "symbolId": "lib/eventbus-table:AppTheoryEventBusTableBindingOptions"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryEventBusTableProps": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "datatype": true,
@@ -11346,7 +11590,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/eventbus-table.ts",
-        "line": 5
+        "line": 6
       },
       "name": "AppTheoryEventBusTableProps",
       "properties": [
@@ -11355,7 +11599,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 7
+            "line": 8
           },
           "name": "billingMode",
           "optional": true,
@@ -11368,7 +11612,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 13
+            "line": 14
           },
           "name": "enableEventIdIndex",
           "optional": true,
@@ -11381,7 +11625,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 10
+            "line": 11
           },
           "name": "enablePointInTimeRecovery",
           "optional": true,
@@ -11394,7 +11638,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 11
+            "line": 12
           },
           "name": "enableStream",
           "optional": true,
@@ -11407,7 +11651,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 14
+            "line": 15
           },
           "name": "readCapacity",
           "optional": true,
@@ -11420,7 +11664,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 8
+            "line": 9
           },
           "name": "removalPolicy",
           "optional": true,
@@ -11433,7 +11677,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 12
+            "line": 13
           },
           "name": "streamViewType",
           "optional": true,
@@ -11446,7 +11690,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 6
+            "line": 7
           },
           "name": "tableName",
           "optional": true,
@@ -11459,7 +11703,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 9
+            "line": 10
           },
           "name": "timeToLiveAttribute",
           "optional": true,
@@ -11472,7 +11716,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 15
+            "line": 16
           },
           "name": "writeCapacity",
           "optional": true,
@@ -12073,6 +12317,505 @@
         }
       ],
       "symbolId": "lib/http-api:AppTheoryHttpApiProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpoint": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "This construct is intended for server-to-server submission paths where callers\nauthenticate with a shared secret key via a Lambda request authorizer.",
+        "summary": "Authenticated HTTPS ingestion endpoint backed by Lambda."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpoint",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/http-ingestion-endpoint.ts",
+          "line": 148
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpointProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/http-ingestion-endpoint.ts",
+        "line": 138
+      },
+      "name": "AppTheoryHttpIngestionEndpoint",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 139
+          },
+          "name": "api",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.HttpApi"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 141
+          },
+          "name": "endpoint",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 140
+          },
+          "name": "routeAuthorizer",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2_authorizers.HttpLambdaAuthorizer"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 142
+          },
+          "name": "stage",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.IStage"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 143
+          },
+          "name": "accessLogGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.ILogGroup"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 145
+          },
+          "name": "apiMapping",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.ApiMapping"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 146
+          },
+          "name": "cnameRecord",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.CnameRecord"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 144
+          },
+          "name": "domainName",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.DomainName"
+          }
+        }
+      ],
+      "symbolId": "lib/http-ingestion-endpoint:AppTheoryHttpIngestionEndpoint"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpointDomainOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpointDomainOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/http-ingestion-endpoint.ts",
+        "line": 11
+      },
+      "name": "AppTheoryHttpIngestionEndpointDomainOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The custom domain name (for example `ingest.example.com`)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 15
+          },
+          "name": "domainName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Optional API mapping key under the custom domain."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 40
+          },
+          "name": "basePath",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Provide either `certificate` or `certificateArn`.",
+            "summary": "ACM certificate for the domain."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 21
+          },
+          "name": "certificate",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_certificatemanager.ICertificate"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Provide either `certificate` or `certificateArn`.",
+            "summary": "ACM certificate ARN."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 27
+          },
+          "name": "certificateArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "If provided, a CNAME record will be created pointing to the API Gateway domain.",
+            "summary": "Route53 hosted zone for automatic DNS record creation."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 34
+          },
+          "name": "hostedZone",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.IHostedZone"
+          }
+        }
+      ],
+      "symbolId": "lib/http-ingestion-endpoint:AppTheoryHttpIngestionEndpointDomainOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpointProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpointProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/http-ingestion-endpoint.ts",
+        "line": 76
+      },
+      "name": "AppTheoryHttpIngestionEndpointProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Lambda request authorizer used for secret-key validation."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 85
+          },
+          "name": "authorizer",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Lambda function that handles the ingestion request."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 80
+          },
+          "name": "handler",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Optional API name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 91
+          },
+          "name": "apiName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "Duration.seconds(0)",
+            "remarks": "Defaults to disabled to match the upstream backoffice-api-authorizer behavior.",
+            "summary": "Lambda authorizer result cache TTL."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 117
+          },
+          "name": "authorizerCacheTtl",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"Authorization\"",
+            "remarks": "This defaults to `Authorization` to mirror the backoffice-api-authorizer pattern.",
+            "summary": "Header used as the identity source for secret-key authorization."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 104
+          },
+          "name": "authorizerHeaderName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Friendly authorizer name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 110
+          },
+          "name": "authorizerName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Optional custom domain configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 123
+          },
+          "name": "domain",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpointDomainOptions"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"/ingest\"",
+            "summary": "HTTPS path exposed by the endpoint."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 97
+          },
+          "name": "endpointPath",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Optional stage configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 129
+          },
+          "name": "stage",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpointStageOptions"
+          }
+        }
+      ],
+      "symbolId": "lib/http-ingestion-endpoint:AppTheoryHttpIngestionEndpointProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpointStageOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpointStageOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/http-ingestion-endpoint.ts",
+        "line": 43
+      },
+      "name": "AppTheoryHttpIngestionEndpointStageOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Enable CloudWatch access logging for the stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 54
+          },
+          "name": "accessLogging",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "logs.RetentionDays.ONE_MONTH",
+            "remarks": "Only applies when accessLogging is true.",
+            "summary": "Retention period for auto-created access log group."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 61
+          },
+          "name": "accessLogRetention",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.RetentionDays"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"$default\"",
+            "summary": "Stage name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 48
+          },
+          "name": "stageName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Throttling burst limit for the stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 73
+          },
+          "name": "throttlingBurstLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Throttling rate limit (requests per second) for the stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-ingestion-endpoint.ts",
+            "line": 67
+          },
+          "name": "throttlingRateLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/http-ingestion-endpoint:AppTheoryHttpIngestionEndpointStageOptions"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryJobsTable": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -18965,5 +19708,5 @@
     }
   },
   "version": "0.18.2",
-  "fingerprint": "2aa7x1dhAo/AwIqP54auhmDQlKpY/W789oz+Pvfd5r0="
+  "fingerprint": "3Am5Wa8+XGwb3t73bYtOqGLdFlSeXYbuHt1e2Oo4Anw="
 }

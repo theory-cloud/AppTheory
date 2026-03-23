@@ -8,7 +8,7 @@ import (
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
 
-// Adds `/.well-known/oauth-protected-resource` metadata (RFC9728) to a REST API.
+// Adds path-scoped `/.well-known/oauth-protected-resource/...` metadata (RFC9728) to a REST API.
 type AppTheoryMcpProtectedResource interface {
 	constructs.Construct
 	// The tree node.
