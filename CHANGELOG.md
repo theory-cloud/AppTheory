@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.19.0](https://github.com/theory-cloud/AppTheory/compare/v0.18.2...v0.19.0) (2026-03-23)
+
+
+### Features
+
+* **cdk:** add authenticated http ingestion endpoint ([f0b9e70](https://github.com/theory-cloud/AppTheory/commit/f0b9e70ea90d0bbb2ba1ef9e7bffaba29990bb1f))
+* **cdk:** add compliance advisor transport primitives ([5ea52e3](https://github.com/theory-cloud/AppTheory/commit/5ea52e36e4ebc9af234b0dab424509b078936a2a))
+* **cdk:** add cross-account eventbridge bus construct ([eb92c1b](https://github.com/theory-cloud/AppTheory/commit/eb92c1b9bbd87d9ccb9d223c05141c7c64cd68c5))
+* **cdk:** add event bus table binding helper ([4ab7281](https://github.com/theory-cloud/AppTheory/commit/4ab7281feddb9764eb79aabe57f4580cb649a47f))
+
+
+### Bug Fixes
+
+* resolve premain into main merge ([48992a1](https://github.com/theory-cloud/AppTheory/commit/48992a1497fce8e44327ad4477d98fdf264b7784))
+* resolve premain into main merge ([d24392f](https://github.com/theory-cloud/AppTheory/commit/d24392fce463f9879cfe5b8ef7420b468c010d75))
+* resolve staging into premain merge ([fb8b4dd](https://github.com/theory-cloud/AppTheory/commit/fb8b4dd8c2418bbb8a031c5107180c2ec40d77e1))
+* resolve staging into premain merge ([e4d3ac5](https://github.com/theory-cloud/AppTheory/commit/e4d3ac5a4d4e65133d0b272268104bf30d3f1933))
+* resolve staging into premain merge ([3cd0e4b](https://github.com/theory-cloud/AppTheory/commit/3cd0e4b0dc55cfa76d5d4d819a71c61f851b8997))
+* sync premain stable manifest with main ([99b9099](https://github.com/theory-cloud/AppTheory/commit/99b9099663833139017aeb681ffea9e4e0adae2d))
+
 ## [0.18.2](https://github.com/theory-cloud/AppTheory/compare/v0.18.1...v0.18.2) (2026-03-21)
 
 
