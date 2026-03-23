@@ -177,6 +177,27 @@ func init() {
 		reflect.TypeOf((*AppTheoryEnhancedSecurityProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBus",
+		reflect.TypeOf((*AppTheoryEventBridgeBus)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberMethod{JsiiMethod: "allowAccount", GoMethod: "AllowAccount"},
+			_jsii_.MemberProperty{JsiiProperty: "eventBus", GoGetter: "EventBus"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "policies", GoGetter: "Policies"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryEventBridgeBus{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBusProps",
+		reflect.TypeOf((*AppTheoryEventBridgeBusProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryEventBridgeHandler",
 		reflect.TypeOf((*AppTheoryEventBridgeHandler)(nil)).Elem(),
 		[]_jsii_.Member{
@@ -218,6 +239,7 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryEventBusTable",
 		reflect.TypeOf((*AppTheoryEventBusTable)(nil)).Elem(),
 		[]_jsii_.Member{
+			_jsii_.MemberMethod{JsiiMethod: "bind", GoMethod: "Bind"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
 			_jsii_.MemberProperty{JsiiProperty: "table", GoGetter: "Table"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
@@ -228,6 +250,10 @@ func init() {
 			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
 			return &j
 		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryEventBusTableBindingOptions",
+		reflect.TypeOf((*AppTheoryEventBusTableBindingOptions)(nil)).Elem(),
 	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryEventBusTableProps",
@@ -315,6 +341,40 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryHttpApiProps",
 		reflect.TypeOf((*AppTheoryHttpApiProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpoint",
+		reflect.TypeOf((*AppTheoryHttpIngestionEndpoint)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "accessLogGroup", GoGetter: "AccessLogGroup"},
+			_jsii_.MemberProperty{JsiiProperty: "api", GoGetter: "Api"},
+			_jsii_.MemberProperty{JsiiProperty: "apiMapping", GoGetter: "ApiMapping"},
+			_jsii_.MemberProperty{JsiiProperty: "cnameRecord", GoGetter: "CnameRecord"},
+			_jsii_.MemberProperty{JsiiProperty: "domainName", GoGetter: "DomainName"},
+			_jsii_.MemberProperty{JsiiProperty: "endpoint", GoGetter: "Endpoint"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "routeAuthorizer", GoGetter: "RouteAuthorizer"},
+			_jsii_.MemberProperty{JsiiProperty: "stage", GoGetter: "Stage"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryHttpIngestionEndpoint{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpointDomainOptions",
+		reflect.TypeOf((*AppTheoryHttpIngestionEndpointDomainOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpointProps",
+		reflect.TypeOf((*AppTheoryHttpIngestionEndpointProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpointStageOptions",
+		reflect.TypeOf((*AppTheoryHttpIngestionEndpointStageOptions)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryJobsTable",

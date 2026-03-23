@@ -76,12 +76,14 @@
                 "dynamodb:DescribeTable"
               ],
               "Effect": "Allow",
-              "Resource": {
-                "Fn::GetAtt": [
-                  "WebSocketApiConnectionTable25CA1A9B",
-                  "Arn"
-                ]
-              }
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "WebSocketApiConnectionTable25CA1A9B",
+                    "Arn"
+                  ]
+                }
+              ]
             },
             {
               "Action": [
@@ -89,12 +91,14 @@
                 "dynamodb:GetShardIterator"
               ],
               "Effect": "Allow",
-              "Resource": {
-                "Fn::GetAtt": [
-                  "WebSocketApiConnectionTable25CA1A9B",
-                  "Arn"
-                ]
-              }
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "WebSocketApiConnectionTable25CA1A9B",
+                    "Arn"
+                  ]
+                }
+              ]
             },
             {
               "Action": "execute-api:ManageConnections",
