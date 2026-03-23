@@ -14,7 +14,7 @@ import (
 // This construct is designed for MCP Streamable HTTP (2025-06-18).
 type AppTheoryRemoteMcpServer interface {
 	constructs.Construct
-	// The MCP endpoint URL (`.../mcp`).
+	// The MCP endpoint URL or template (`.../mcp` or `.../mcp/{actor}`).
 	Endpoint() *string
 	// The tree node.
 	Node() constructs.Node
