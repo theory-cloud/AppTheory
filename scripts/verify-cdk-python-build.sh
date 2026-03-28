@@ -24,6 +24,15 @@ fi
 
 export SOURCE_DATE_EPOCH="${epoch}"
 
+build_requirement="$(awk -F'==' '$1=="build" {print $2}' cdk/requirements-build.txt)"
+setuptools_requirement="$(awk -F'==' '$1=="setuptools" {print $2}' cdk/requirements-build.txt)"
+wheel_requirement="$(awk -F'==' '$1=="wheel" {print $2}' cdk/requirements-build.txt)"
+
+if [[ -z "${build_requirement}" || -z "${setuptools_requirement}" || -z "${wheel_requirement}" ]]; then
+  echo "cdk-python-build: FAIL (cdk/requirements-build.txt must pin build, setuptools, and wheel)" >&2
+  exit 1
+fi
+
 mkdir -p dist
 
 if [[ ! -d "cdk/.venv" ]]; then
@@ -117,6 +126,28 @@ PY
 (cd "${tmp_dir}/cdk" && npx jsii-pacmak -t python --code-only -o "${tmp_dir}/python" --force-subdirectory false --force >/dev/null)
 
 cp LICENSE "${tmp_dir}/python/LICENSE"
+
+TMP_PY_DIR="${tmp_dir}/python" \
+BUILD_REQUIREMENT="${build_requirement}" \
+SETUPTOOLS_REQUIREMENT="${setuptools_requirement}" \
+WHEEL_REQUIREMENT="${wheel_requirement}" \
+python3 - <<'PY'
+import os
+import re
+from pathlib import Path
+
+pyproject = Path(os.environ["TMP_PY_DIR"]) / "pyproject.toml"
+text = pyproject.read_text(encoding="utf-8")
+expected = (
+    f'requires = ["setuptools=={os.environ["SETUPTOOLS_REQUIREMENT"]}", '
+    f'"wheel=={os.environ["WHEEL_REQUIREMENT"]}", '
+    f'"build=={os.environ["BUILD_REQUIREMENT"]}"]'
+)
+updated = re.sub(r'^requires = \[.*\]$', expected, text, count=1, flags=re.MULTILINE)
+if updated == text:
+    raise SystemExit("cdk-python-build: FAIL (unable to rewrite generated python build requirements)")
+pyproject.write_text(updated, encoding="utf-8")
+PY
 
 TMP_PY_DIR="${tmp_dir}/python" python3 - <<'PY'
 import os
