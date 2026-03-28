@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.19.1](https://github.com/theory-cloud/AppTheory/compare/v0.19.0...v0.19.1) (2026-03-28)
+
+
+### Bug Fixes
+
+* **build:** align cdk python build requirements ([1b42766](https://github.com/theory-cloud/AppTheory/commit/1b42766335b52c171e9688787ae9134b4a88ee2c))
+* **deps:** bump TableTheory to v1.5.1 ([c626fca](https://github.com/theory-cloud/AppTheory/commit/c626fcaca6c62a46f3415132354e54c1cce54422))
+* **deps:** resolve open dependabot alerts ([9359931](https://github.com/theory-cloud/AppTheory/commit/9359931ab7ff0b380c3f95ce9ae75314b62fa275))
+
 ## [0.19.0](https://github.com/theory-cloud/AppTheory/compare/v0.18.2...v0.19.0) (2026-03-23)
 
 
