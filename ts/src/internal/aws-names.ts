@@ -1,3 +1,19 @@
+import {
+  trimRepeatedChar,
+  trimRepeatedCharEnd,
+  trimRepeatedCharStart,
+} from "./string-utils.js";
+
+function stripHttpSchemePrefix(value: string): string {
+  if (value.startsWith("https://")) {
+    return value.slice("https://".length);
+  }
+  if (value.startsWith("http://")) {
+    return value.slice("http://".length);
+  }
+  return value;
+}
+
 export function sqsQueueNameFromArn(arn: string): string {
   const value = String(arn ?? "").trim();
   if (!value) return "";
@@ -36,7 +52,7 @@ export function eventBridgeRuleNameFromArn(arn: string): string {
     }
   }
   if (start < 0) return "";
-  const after = value.slice(start).replace(/^\/+/, "");
+  const after = trimRepeatedCharStart(value.slice(start), "/");
   if (!after) return "";
   const slash = after.indexOf("/");
   return slash >= 0 ? after.slice(0, slash) : after;
@@ -62,23 +78,17 @@ export function webSocketManagementEndpoint(
   const dnRaw = String(domainName ?? "").trim();
   if (!dnRaw) return "";
 
-  const host = dnRaw.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  const host = trimRepeatedCharEnd(stripHttpSchemePrefix(dnRaw), "/");
   if (!host) return "";
 
   const isExecuteApi = host.toLowerCase().includes(".execute-api.");
   if (isExecuteApi) {
-    const st = String(stage ?? "")
-      .trim()
-      .replace(/^\/+/, "")
-      .replace(/\/+$/, "");
+    const st = trimRepeatedChar(String(stage ?? "").trim(), "/");
     if (!st) return "";
     return `https://${host}/${st}`;
   }
 
-  const basePath = String(path ?? "")
-    .trim()
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "");
+  const basePath = trimRepeatedChar(String(path ?? "").trim(), "/");
   if (!basePath) return `https://${host}`;
   return `https://${host}/${basePath}`;
 }

@@ -8,6 +8,8 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
 
+import { collapseRepeatedChar, trimRepeatedChar, trimRepeatedCharEnd } from "./private/string-utils";
+
 export interface AppTheoryHttpIngestionEndpointDomainOptions {
   /**
    * The custom domain name (for example `ingest.example.com`).
@@ -279,7 +281,8 @@ function normalizeEndpointPath(path: string): string {
   if (!trimmed) {
     throw new Error("AppTheoryHttpIngestionEndpoint: endpointPath is required");
   }
-  return `/${trimmed.replace(/^\/+/, "").replace(/\/+$/, "")}`.replace(/\/{2,}/g, "/");
+  const normalized = collapseRepeatedChar(trimRepeatedChar(trimmed, "/"), "/");
+  return normalized ? `/${normalized}` : "/";
 }
 
 function normalizeHeaderName(headerName: string): string {
@@ -291,14 +294,14 @@ function normalizeHeaderName(headerName: string): string {
 }
 
 function normalizeBasePath(basePath?: string): string | undefined {
-  const trimmed = String(basePath ?? "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  const trimmed = trimRepeatedChar(String(basePath ?? "").trim(), "/");
   return trimmed || undefined;
 }
 
 function joinUrlParts(baseUrl: string, ...parts: Array<string | undefined>): string {
-  let out = String(baseUrl ?? "").replace(/\/+$/, "");
+  let out = trimRepeatedCharEnd(String(baseUrl ?? ""), "/");
   for (const part of parts) {
-    const normalized = String(part ?? "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+    const normalized = trimRepeatedChar(String(part ?? "").trim(), "/");
     if (!normalized) continue;
     out = `${out}/${normalized}`;
   }

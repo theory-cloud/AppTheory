@@ -9,6 +9,7 @@ import {
   type AppTheoryRestApiRouterDomainOptions,
   type AppTheoryRestApiRouterStageOptions,
 } from "./rest-api-router";
+import { trimRepeatedChar } from "./private/string-utils";
 
 /**
  * Props for the AppTheoryRemoteMcpServer construct.
@@ -240,7 +241,7 @@ function computeMcpEndpoint(
     return `https://${router.api.restApiId}.execute-api.${stack.region}.${stack.urlSuffix}/${stage}${suffix}`;
   }
 
-  const basePath = String(domain.basePath ?? "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  const basePath = trimRepeatedChar(String(domain.basePath ?? "").trim(), "/");
   const prefix = basePath ? `/${basePath}` : "";
-  return `https://${domain.domainName}${prefix}${suffix}`.replace(/\/{2,}/g, "/").replace(/^https:\//, "https://");
+  return `https://${domain.domainName}${prefix}${suffix}`;
 }
