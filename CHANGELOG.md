@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.2](https://github.com/theory-cloud/AppTheory/compare/v0.19.1...v0.19.2) (2026-04-05)
+
+
+### Bug Fixes
+
+* **security:** address code scanning and dependabot alerts ([e253a3e](https://github.com/theory-cloud/AppTheory/commit/e253a3ee6515a21add094a0139416fb9f3953bb8))
+
 ## [0.19.1](https://github.com/theory-cloud/AppTheory/compare/v0.19.0...v0.19.1) (2026-03-28)
 
 
