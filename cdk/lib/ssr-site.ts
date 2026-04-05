@@ -9,6 +9,8 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import { Construct } from "constructs";
 
+import { trimRepeatedChar, trimRepeatedCharStart } from "./private/string-utils";
+
 export interface AppTheorySsrSiteProps {
   readonly ssrFunction: lambda.IFunction;
 
@@ -89,14 +91,12 @@ export class AppTheorySsrSite extends Construct {
         });
     }
 
-    const assetsPrefixRaw = String(props.assetsKeyPrefix ?? "assets").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+    const assetsPrefixRaw = trimRepeatedChar(String(props.assetsKeyPrefix ?? "assets").trim(), "/");
     const assetsKeyPrefix = assetsPrefixRaw || "assets";
 
-    const manifestRaw = String(props.assetsManifestKey ?? `${assetsKeyPrefix}/manifest.json`)
-      .trim()
-      .replace(/^\/+/, "")
-      .replace(/\/+$/, "");
-    const assetsManifestKey = manifestRaw || `${assetsKeyPrefix}/manifest.json`;
+    const manifestRaw = String(props.assetsManifestKey ?? `${assetsKeyPrefix}/manifest.json`).trim();
+    const manifestKey = trimRepeatedChar(manifestRaw, "/");
+    const assetsManifestKey = manifestKey || `${assetsKeyPrefix}/manifest.json`;
 
     this.assetsKeyPrefix = assetsKeyPrefix;
     this.assetsManifestKey = assetsManifestKey;
@@ -185,7 +185,7 @@ export class AppTheorySsrSite extends Construct {
       new Set(
         Array.isArray(props.staticPathPatterns)
           ? props.staticPathPatterns
-              .map((pattern) => String(pattern).trim().replace(/^\/+/, ""))
+              .map((pattern) => trimRepeatedCharStart(String(pattern).trim(), "/"))
               .filter((pattern) => pattern.length > 0)
           : [],
       ),

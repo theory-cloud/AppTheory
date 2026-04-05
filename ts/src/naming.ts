@@ -1,3 +1,5 @@
+import { trimRepeatedChar } from "./internal/string-utils.js";
+
 function sanitizeNamePart(value: unknown): string {
   let out = String(value ?? "")
     .trim()
@@ -6,7 +8,7 @@ function sanitizeNamePart(value: unknown): string {
   out = out.replace(/[_ ]+/g, "-");
   out = out.replace(/[^a-z0-9-]+/g, "-");
   out = out.replace(/-+/g, "-");
-  out = out.replace(/^-+/, "").replace(/-+$/, "");
+  out = trimRepeatedChar(out, "-");
   return out;
 }
 

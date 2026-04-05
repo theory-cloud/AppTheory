@@ -38,6 +38,7 @@
   "overrides": {
     "ajv": "8.18.0",
     "flatted": "3.4.2",
+    "@xmldom/xmldom": "0.9.9",
     "picomatch": "2.3.2",
     "aws-cdk-lib": {
       "minimatch": "10.2.4"
