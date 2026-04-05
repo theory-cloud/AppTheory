@@ -1,3 +1,4 @@
+import { trimRepeatedChar } from "./internal/string-utils.js";
 function sanitizeNamePart(value) {
     let out = String(value ?? "")
         .trim()
@@ -7,7 +8,7 @@ function sanitizeNamePart(value) {
     out = out.replace(/[_ ]+/g, "-");
     out = out.replace(/[^a-z0-9-]+/g, "-");
     out = out.replace(/-+/g, "-");
-    out = out.replace(/^-+/, "").replace(/-+$/, "");
+    out = trimRepeatedChar(out, "-");
     return out;
 }
 export function normalizeStage(stage) {
