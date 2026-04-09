@@ -48,7 +48,7 @@ Tier ownership rules:
 
 Monorepo layout (TableTheory pattern):
 
-- `/` — Go SDK + runtime (root module; Go toolchain `1.26.0`)
+- `/` — Go SDK + runtime (root module; Go toolchain `1.26.2`)
 - `ts/` — TypeScript SDK + runtime (Node.js `24`)
 - `py/` — Python SDK + runtime (Python `3.14`)
 - `contract-tests/` — fixtures + runners (Go/TS/Py)
@@ -108,7 +108,7 @@ Deep workstreams are tracked in dedicated sub-roadmaps:
 - Go module path: `github.com/theory-cloud/apptheory`
 - npm package: `@theory-cloud/apptheory`
 - Python distribution/import: `apptheory` / `apptheory`
-- Pinned runtimes: Go `1.26.0`, Node.js `24`, Python `3.14`
+- Pinned runtimes: Go `1.26.2`, Node.js `24`, Python `3.14`
 
 ---
 
