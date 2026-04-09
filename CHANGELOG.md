@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.3](https://github.com/theory-cloud/AppTheory/compare/v0.19.2...v0.19.3) (2026-04-09)
+
+
+### Bug Fixes
+
+* **ci:** read Go version from go.mod ([8176415](https://github.com/theory-cloud/AppTheory/commit/8176415bb60f5962b6f511a46d295f05e7044c06))
+
 ## [0.19.2](https://github.com/theory-cloud/AppTheory/compare/v0.19.1...v0.19.2) (2026-04-05)
 
 
