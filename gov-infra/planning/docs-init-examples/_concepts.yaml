@@ -9,7 +9,7 @@ concepts:
       - "Universal Lambda dispatch entrypoints for HTTP, queues, streams, and WebSockets"
       - "Deterministic local test environments: testkit.New(), createTestEnv(), create_test_env()"
     requires:
-      - "Go 1.26.x (toolchain go1.26.1 from go.mod)"
+      - "Go 1.26.2 (from go.mod)"
       - "Node.js >=24 for ts/ and cdk/ package workflows"
       - "Python >=3.14 for py/ package workflows"
     use_when:

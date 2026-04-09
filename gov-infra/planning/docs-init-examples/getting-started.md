@@ -4,7 +4,7 @@ This is an example target for `docs/getting-started.md`.
 
 ## Prerequisites
 
-- Go `1.26.x` (`go.mod` + `toolchain go1.26.1`)
+- Go `1.26.2` (`go.mod`)
 - Node.js `>=24` for TypeScript and CDK workflows
 - Python `>=3.14` for Python workflows
 - `make`, `git`, and a Unix-like shell
