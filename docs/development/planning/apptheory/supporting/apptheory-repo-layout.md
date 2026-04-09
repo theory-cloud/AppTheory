@@ -14,7 +14,7 @@ Status: frozen for milestone `M0`.
   examples/                # deployable demos (CDK, templates)
   scripts/                 # repo verifiers (build/lint/test/release checks)
 
-  runtime/                 # Go SDK/runtime package (Go toolchain 1.26.0)
+  runtime/                 # Go SDK/runtime package (Go toolchain 1.26.2)
   testkit/                 # Go test helpers for the runtime contract
   ts/                      # TypeScript SDK/runtime (Node.js 24)
   py/                      # Python SDK/runtime (Python 3.14)

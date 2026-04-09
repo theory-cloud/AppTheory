@@ -5,7 +5,7 @@ points you at the canonical API and deployment docs.
 
 ## Prerequisites
 
-- Go `1.26.x` (`go.mod` / `toolchain go1.26.1`)
+- Go `1.26.2` (`go.mod`)
 - Node.js `>=24` (`ts/package.json` and `cdk/package.json`)
 - Python `>=3.14` (`py/pyproject.toml`)
 - `make` and `git`
