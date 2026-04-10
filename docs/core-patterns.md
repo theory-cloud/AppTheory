@@ -156,7 +156,8 @@ CORRECT:
 - use `AppTheoryMcpServer` for AgentCore or other POST-only MCP clients on HTTP API v2
 - use `AppTheoryRemoteMcpServer` plus `AppTheoryMcpProtectedResource` for Claude Remote MCP when you need
   `POST/GET/DELETE /mcp`, OAuth protected-resource discovery, and a REST API v1 streaming edge
-- provide a persistent `StreamStore` in application code if replay must survive reconnects and cold starts
+- wire `mcp.NewDynamoStreamStore(db)` or another persistent `StreamStore` in application code if replay must survive
+  reconnects and cold starts
 
 INCORRECT:
 

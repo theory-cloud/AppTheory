@@ -1750,6 +1750,14 @@ type DynamoSessionStore struct {
 	db tablecore.DB
 }
 
+type DynamoStreamStore struct {
+	db           tablecore.DB
+	idGen        apptheory.IDGenerator
+	now          func() time.Time
+	pollInterval time.Duration
+	batchSize    int
+}
+
 type Icon struct {
 	Src      string   `json:"src"`
 	MimeType string   `json:"mimeType,omitempty"`
@@ -1946,6 +1954,8 @@ func MarshalResponse(*Response) ([]byte, error)
 
 func NewDynamoSessionStore(tablecore.DB) SessionStore
 
+func NewDynamoStreamStore(tablecore.DB) StreamStore
+
 func NewErrorResponse(any, int, string) *Response
 
 func NewMemorySessionStore(...MemorySessionStoreOption) *MemorySessionStore
@@ -1987,6 +1997,18 @@ func (*DynamoSessionStore) Delete(context.Context, string) error
 func (*DynamoSessionStore) Get(context.Context, string) (*Session, error)
 
 func (*DynamoSessionStore) Put(context.Context, *Session) error
+
+func (*DynamoStreamStore) Append(context.Context, string, string, json.RawMessage) (string, error)
+
+func (*DynamoStreamStore) Close(context.Context, string, string) error
+
+func (*DynamoStreamStore) Create(context.Context, string) (string, error)
+
+func (*DynamoStreamStore) DeleteSession(context.Context, string) error
+
+func (*DynamoStreamStore) StreamForEvent(context.Context, string, string) (string, error)
+
+func (*DynamoStreamStore) Subscribe(context.Context, string, string, string) (<-chan StreamEvent, error)
 
 func (*MemorySessionStore) Delete(context.Context, string) error
 
@@ -2039,6 +2061,8 @@ func (*ToolRegistry) List() []ToolDef
 func (*ToolRegistry) RegisterStreamingTool(ToolDef, StreamingToolHandler) error
 
 func (*ToolRegistry) RegisterTool(ToolDef, ToolHandler) error
+
+func (dynamoStreamRecord) TableName() string
 
 func (sessionRecord) TableName() string
 
