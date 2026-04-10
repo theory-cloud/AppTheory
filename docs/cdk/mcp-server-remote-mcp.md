@@ -27,7 +27,7 @@ Claude Remote MCP requires real incremental streaming for tool calls. On AWS tha
 - Lambda env var `MCP_ENDPOINT` pointing at the resolved `/mcp` URL or `/mcp/{actor}` template
 - optional DynamoDB tables:
   - session table (matches `runtime/mcp/session_dynamo.go` schema)
-  - stream/event table (infra only unless the app wires a concrete `StreamStore`)
+  - stream/event table (used by durable replay once the app wires a concrete `StreamStore`)
 
 If you are using OAuth for Claude connectors on the default `/mcp` route, also add:
 
@@ -111,9 +111,10 @@ Stream table behavior:
 
 Important caveat:
 
-- the built-in runtime currently ships `MemoryStreamStore`
 - `enableStreamTable` only provisions storage and injects env vars
-- durable replay requires application code to provide a matching persistent `StreamStore` via `mcp.WithStreamStore(...)`
+- durable replay requires application code to wire a persistent `StreamStore` via `mcp.WithStreamStore(...)`
+- the Go runtime ships `mcp.NewDynamoStreamStore(db)` for the canonical `sessionId` / `eventId` / `expiresAt` table
+  shape provisioned by this construct
 
 ## Injected environment variables
 

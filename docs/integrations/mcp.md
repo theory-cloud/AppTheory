@@ -302,9 +302,14 @@ Persistence options:
 
 Stream persistence note:
 
-- the built-in runtime ships `MemoryStreamStore`
-- durable replay across cold starts requires your own `StreamStore` wired with `mcp.WithStreamStore(...)`
-- the CDK Remote MCP stream table is infrastructure only until the application provides a matching `StreamStore`
+- default stream store: in-memory
+- persistent stream replay: `mcp.WithStreamStore(mcp.NewDynamoStreamStore(db))`
+- default Dynamo table name: `MCP_STREAM_TABLE` when set, otherwise `mcp-streams`
+- stream/event retention is controlled by `MCP_STREAM_TTL_MINUTES` (default `60`); event records get per-append TTLs
+  and stream metadata is refreshed on create, append, and close so replay state survives reconnects within the
+  configured retention window
+- the CDK Remote MCP stream table only provisions storage and env vars; the application still must wire
+  `mcp.WithStreamStore(...)`
 
 ---
 
