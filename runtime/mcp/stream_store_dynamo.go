@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/oklog/ulid/v2"
 	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
 	tableerrors "github.com/theory-cloud/tabletheory/pkg/errors"
 
@@ -21,8 +21,12 @@ const (
 	defaultDynamoStreamPollInterval = 100 * time.Millisecond
 	defaultDynamoStreamBatchSize    = 128
 	defaultDynamoStreamTableName    = "mcp-streams"
+	dynamoStreamDeleteQuietPasses   = 2
+	dynamoStreamEventIDWidth        = 20
 	dynamoStreamFirstEventID        = "0"
 	dynamoStreamMetadataEventPrefix = "!stream#"
+	dynamoStreamSessionStateEventID = "!session"
+	dynamoStreamRecordKindSession   = "session"
 	dynamoStreamRecordKindStream    = "stream"
 	dynamoStreamRecordKindEvent     = "event"
 	envStreamTTLMinutes             = "MCP_STREAM_TTL_MINUTES"
@@ -36,7 +40,9 @@ type dynamoStreamRecord struct {
 	Kind      string          `theorydb:"attr:kind" json:"kind"`
 	CreatedAt time.Time       `theorydb:"attr:createdAt" json:"createdAt"`
 	ExpiresAt int64           `theorydb:"ttl,attr:expiresAt" json:"expiresAt"`
+	NextSeq   int64           `theorydb:"attr:nextSeq,omitempty" json:"nextSeq,omitempty"`
 	Closed    bool            `theorydb:"attr:closed,omitempty" json:"closed,omitempty"`
+	Deleted   bool            `theorydb:"attr:deleted,omitempty" json:"deleted,omitempty"`
 	Data      json.RawMessage `theorydb:"attr:data,omitempty" json:"data,omitempty"`
 }
 
@@ -61,6 +67,8 @@ type DynamoStreamStore struct {
 
 var _ StreamStore = (*DynamoStreamStore)(nil)
 
+var errDynamoStreamSessionDeleted = errors.New("stream session deleted")
+
 // NewDynamoStreamStore creates a DynamoDB-backed StreamStore.
 func NewDynamoStreamStore(db tablecore.DB) StreamStore {
 	return &DynamoStreamStore{
@@ -77,6 +85,13 @@ func (d *DynamoStreamStore) Create(ctx context.Context, sessionID string) (strin
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return "", errors.New("missing session id")
+	}
+
+	if err := d.touchSessionState(ctx, sessionID); err != nil {
+		if errors.Is(err, errDynamoStreamSessionDeleted) {
+			return "", ErrStreamNotFound
+		}
+		return "", err
 	}
 
 	streamID := strings.TrimSpace(d.idGen.NewID())
@@ -113,19 +128,36 @@ func (d *DynamoStreamStore) Append(ctx context.Context, sessionID, streamID stri
 
 	meta, err := d.getStreamMetadata(ctx, sessionID, streamID)
 	if err != nil {
+		if errors.Is(err, errDynamoStreamSessionDeleted) {
+			return "", ErrStreamNotFound
+		}
 		return "", err
 	}
 
 	now := d.now().UTC()
-	meta.ExpiresAt = d.expiresAtUnix(now)
-	if err := d.db.Model(meta).WithContext(ctx).CreateOrUpdate(); err != nil {
+	eventID, err := d.nextSessionEventID(ctx, sessionID, now)
+	if err != nil {
+		if errors.Is(err, errDynamoStreamSessionDeleted) {
+			return "", ErrStreamNotFound
+		}
 		return "", err
 	}
 
 	payload := make([]byte, len(data))
 	copy(payload, data)
 
-	eventID := ulid.Make().String()
+	if err := d.assertSessionActive(ctx, sessionID); err != nil {
+		if errors.Is(err, errDynamoStreamSessionDeleted) {
+			return "", ErrStreamNotFound
+		}
+		return "", err
+	}
+
+	meta.ExpiresAt = d.expiresAtUnix(now)
+	if err := d.db.Model(meta).WithContext(ctx).CreateOrUpdate(); err != nil {
+		return "", err
+	}
+
 	record := &dynamoStreamRecord{
 		SessionID: sessionID,
 		EventID:   eventID,
@@ -155,6 +187,16 @@ func (d *DynamoStreamStore) Close(ctx context.Context, sessionID, streamID strin
 
 	meta, err := d.getStreamMetadata(ctx, sessionID, streamID)
 	if err != nil {
+		if errors.Is(err, errDynamoStreamSessionDeleted) {
+			return nil
+		}
+		return err
+	}
+
+	if err := d.assertSessionActive(ctx, sessionID); err != nil {
+		if errors.Is(err, errDynamoStreamSessionDeleted) {
+			return nil
+		}
 		return err
 	}
 
@@ -177,6 +219,9 @@ func (d *DynamoStreamStore) Subscribe(ctx context.Context, sessionID, streamID, 
 	afterEventID = strings.TrimSpace(afterEventID)
 
 	if _, err := d.getStreamMetadata(ctx, sessionID, streamID); err != nil {
+		if errors.Is(err, errDynamoStreamSessionDeleted) {
+			return nil, ErrStreamNotFound
+		}
 		return nil, err
 	}
 
@@ -194,6 +239,13 @@ func (d *DynamoStreamStore) StreamForEvent(ctx context.Context, sessionID, event
 	eventID = strings.TrimSpace(eventID)
 	if eventID == "" {
 		return "", errors.New("missing event id")
+	}
+
+	if err := d.assertSessionActive(ctx, sessionID); err != nil {
+		if errors.Is(err, errDynamoStreamSessionDeleted) {
+			return "", ErrEventNotFound
+		}
+		return "", err
 	}
 
 	var record dynamoStreamRecord
@@ -222,30 +274,46 @@ func (d *DynamoStreamStore) DeleteSession(ctx context.Context, sessionID string)
 		return errors.New("missing session id")
 	}
 
-	var records []dynamoStreamRecord
-	err := d.db.Model(&dynamoStreamRecord{}).
-		WithContext(ctx).
-		ConsistentRead().
-		Where("SessionID", "=", sessionID).
-		All(&records)
-	if err != nil {
-		if tableerrors.IsNotFound(err) {
-			return nil
-		}
+	if err := d.markSessionDeleted(ctx, sessionID); err != nil {
 		return err
 	}
 
-	for _, record := range records {
-		if err := d.db.Model(&dynamoStreamRecord{}).
-			WithContext(ctx).
-			Where("SessionID", "=", sessionID).
-			Where("EventID", "=", record.EventID).
-			Delete(); err != nil {
+	quietPasses := 0
+	for {
+		records, err := d.listSessionRecords(ctx, sessionID)
+		if err != nil {
+			if tableerrors.IsNotFound(err) {
+				records = nil
+			} else {
+				return err
+			}
+		}
+
+		deletedAny := false
+		for _, record := range records {
+			if record.EventID == dynamoStreamSessionStateEventID {
+				continue
+			}
+			if err := d.deleteRecord(ctx, sessionID, record.EventID); err != nil {
+				return err
+			}
+			deletedAny = true
+		}
+
+		if deletedAny {
+			quietPasses = 0
+			continue
+		}
+
+		quietPasses++
+		if quietPasses >= dynamoStreamDeleteQuietPasses {
+			return nil
+		}
+
+		if err := d.waitForPoll(ctx); err != nil {
 			return err
 		}
 	}
-
-	return nil
 }
 
 func (d *DynamoStreamStore) pumpSubscription(ctx context.Context, sessionID, streamID, afterEventID string, out chan<- StreamEvent) {
@@ -329,6 +397,10 @@ func (d *DynamoStreamStore) loadEventsAfter(ctx context.Context, sessionID, afte
 }
 
 func (d *DynamoStreamStore) getStreamMetadata(ctx context.Context, sessionID, streamID string) (*dynamoStreamRecord, error) {
+	if err := d.assertSessionActive(ctx, sessionID); err != nil {
+		return nil, err
+	}
+
 	var record dynamoStreamRecord
 	err := d.db.Model(&dynamoStreamRecord{}).
 		WithContext(ctx).
@@ -356,6 +428,117 @@ func (d *DynamoStreamStore) isStreamClosed(ctx context.Context, sessionID, strea
 	return record.Closed, nil
 }
 
+func (d *DynamoStreamStore) touchSessionState(ctx context.Context, sessionID string) error {
+	now := d.now().UTC()
+	_, err := d.updateSessionState(ctx, sessionID, now, false)
+	return err
+}
+
+func (d *DynamoStreamStore) nextSessionEventID(ctx context.Context, sessionID string, now time.Time) (string, error) {
+	state, err := d.updateSessionState(ctx, sessionID, now, true)
+	if err != nil {
+		return "", err
+	}
+	return dynamoStreamEventIDForSeq(state.NextSeq), nil
+}
+
+func (d *DynamoStreamStore) updateSessionState(ctx context.Context, sessionID string, now time.Time, increment bool) (*dynamoStreamRecord, error) {
+	query := d.db.Model(&dynamoStreamRecord{}).
+		WithContext(ctx).
+		Where("SessionID", "=", sessionID).
+		Where("EventID", "=", dynamoStreamSessionStateEventID)
+
+	ub := query.UpdateBuilder().
+		SetIfNotExists("Kind", nil, dynamoStreamRecordKindSession).
+		SetIfNotExists("CreatedAt", nil, now).
+		SetIfNotExists("Deleted", nil, false).
+		Set("ExpiresAt", d.expiresAtUnix(now))
+
+	if increment {
+		ub = ub.Add("NextSeq", int64(1))
+	}
+
+	ub.ConditionNotExists("Deleted")
+	ub.OrCondition("Deleted", "=", false)
+
+	var state dynamoStreamRecord
+	if err := ub.ExecuteWithResult(&state); err != nil {
+		if tableerrors.IsConditionFailed(err) {
+			return nil, errDynamoStreamSessionDeleted
+		}
+		return nil, err
+	}
+	return &state, nil
+}
+
+func (d *DynamoStreamStore) assertSessionActive(ctx context.Context, sessionID string) error {
+	state, err := d.getSessionState(ctx, sessionID)
+	if err != nil {
+		if tableerrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	if state != nil && state.Deleted {
+		return errDynamoStreamSessionDeleted
+	}
+	return nil
+}
+
+func (d *DynamoStreamStore) getSessionState(ctx context.Context, sessionID string) (*dynamoStreamRecord, error) {
+	var record dynamoStreamRecord
+	err := d.db.Model(&dynamoStreamRecord{}).
+		WithContext(ctx).
+		ConsistentRead().
+		Where("SessionID", "=", sessionID).
+		Where("EventID", "=", dynamoStreamSessionStateEventID).
+		First(&record)
+	if err != nil {
+		return nil, err
+	}
+	if record.Kind != dynamoStreamRecordKindSession {
+		return nil, tableerrors.ErrItemNotFound
+	}
+	return &record, nil
+}
+
+func (d *DynamoStreamStore) markSessionDeleted(ctx context.Context, sessionID string) error {
+	now := d.now().UTC()
+	query := d.db.Model(&dynamoStreamRecord{}).
+		WithContext(ctx).
+		Where("SessionID", "=", sessionID).
+		Where("EventID", "=", dynamoStreamSessionStateEventID)
+
+	return query.UpdateBuilder().
+		SetIfNotExists("Kind", nil, dynamoStreamRecordKindSession).
+		SetIfNotExists("CreatedAt", nil, now).
+		SetIfNotExists("NextSeq", nil, int64(0)).
+		Set("Deleted", true).
+		Set("ExpiresAt", d.expiresAtUnix(now)).
+		Execute()
+}
+
+func (d *DynamoStreamStore) listSessionRecords(ctx context.Context, sessionID string) ([]dynamoStreamRecord, error) {
+	var records []dynamoStreamRecord
+	err := d.db.Model(&dynamoStreamRecord{}).
+		WithContext(ctx).
+		ConsistentRead().
+		Where("SessionID", "=", sessionID).
+		All(&records)
+	if err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
+func (d *DynamoStreamStore) deleteRecord(ctx context.Context, sessionID, eventID string) error {
+	return d.db.Model(&dynamoStreamRecord{}).
+		WithContext(ctx).
+		Where("SessionID", "=", sessionID).
+		Where("EventID", "=", eventID).
+		Delete()
+}
+
 func (d *DynamoStreamStore) expiresAtUnix(now time.Time) int64 {
 	return now.Add(streamTTL()).Unix()
 }
@@ -365,6 +548,29 @@ func (d *DynamoStreamStore) queryBatchSize() int {
 		return defaultDynamoStreamBatchSize
 	}
 	return d.batchSize
+}
+
+func (d *DynamoStreamStore) waitForPoll(ctx context.Context) error {
+	timer := time.NewTimer(d.effectivePollInterval())
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (d *DynamoStreamStore) effectivePollInterval() time.Duration {
+	if d.pollInterval <= 0 {
+		return defaultDynamoStreamPollInterval
+	}
+	return d.pollInterval
+}
+
+func dynamoStreamEventIDForSeq(seq int64) string {
+	return fmt.Sprintf("%0*d", dynamoStreamEventIDWidth, seq)
 }
 
 func dynamoStreamMetadataEventID(streamID string) string {
