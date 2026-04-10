@@ -47,6 +47,7 @@ func TestDynamoStreamStore_CreateSubscribeReplayAndDeleteSession(t *testing.T) {
 
 	eventID1, err := store1.Append(context.Background(), "sess-1", streamID, json.RawMessage(`{"seq":1}`))
 	require.NoError(t, err)
+	require.Equal(t, dynamoStreamEventIDForSeq(1), eventID1)
 
 	event1, ok := db.getStreamRecord("sess-1", eventID1)
 	require.True(t, ok)
@@ -64,6 +65,7 @@ func TestDynamoStreamStore_CreateSubscribeReplayAndDeleteSession(t *testing.T) {
 	now = now.Add(2 * time.Minute)
 	eventID2, err := store1.Append(context.Background(), "sess-1", streamID, json.RawMessage(`{"seq":2}`))
 	require.NoError(t, err)
+	require.Equal(t, dynamoStreamEventIDForSeq(2), eventID2)
 
 	got2 := requireStreamEvent(t, ch)
 	require.Equal(t, eventID2, got2.ID)
@@ -88,11 +90,140 @@ func TestDynamoStreamStore_CreateSubscribeReplayAndDeleteSession(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, streamID, gotStreamID)
 
+	state, ok := db.getStreamRecord("sess-1", dynamoStreamSessionStateEventID)
+	require.True(t, ok)
+	require.Equal(t, dynamoStreamRecordKindSession, state.Kind)
+	require.Equal(t, int64(2), state.NextSeq)
+
 	require.NoError(t, store1.DeleteSession(context.Background(), "sess-1"))
 	_, err = store2.StreamForEvent(context.Background(), "sess-1", eventID1)
 	require.ErrorIs(t, err, ErrEventNotFound)
 	_, err = store2.Subscribe(context.Background(), "sess-1", streamID, "")
 	require.ErrorIs(t, err, ErrStreamNotFound)
+
+	records := db.sessionStreamRecords("sess-1")
+	require.Len(t, records, 1)
+	require.Equal(t, dynamoStreamSessionStateEventID, records[0].EventID)
+	require.True(t, records[0].Deleted)
+}
+
+func TestDynamoStreamStore_ReplayPreservesSessionSequenceAcrossStreams(t *testing.T) {
+	db := newFakeMCPTableDB()
+	store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	require.True(t, ok)
+
+	store.batchSize = 1
+	store.pollInterval = time.Millisecond
+
+	streamA, err := store.Create(context.Background(), "sess-1")
+	require.NoError(t, err)
+	streamB, err := store.Create(context.Background(), "sess-1")
+	require.NoError(t, err)
+
+	eventA1, err := store.Append(context.Background(), "sess-1", streamA, json.RawMessage(`{"stream":"A","seq":1}`))
+	require.NoError(t, err)
+	eventB1, err := store.Append(context.Background(), "sess-1", streamB, json.RawMessage(`{"stream":"B","seq":1}`))
+	require.NoError(t, err)
+	eventA2, err := store.Append(context.Background(), "sess-1", streamA, json.RawMessage(`{"stream":"A","seq":2}`))
+	require.NoError(t, err)
+
+	require.Equal(t, dynamoStreamEventIDForSeq(1), eventA1)
+	require.Equal(t, dynamoStreamEventIDForSeq(2), eventB1)
+	require.Equal(t, dynamoStreamEventIDForSeq(3), eventA2)
+
+	state, ok := db.getStreamRecord("sess-1", dynamoStreamSessionStateEventID)
+	require.True(t, ok)
+	require.Equal(t, int64(3), state.NextSeq)
+
+	require.NoError(t, store.Close(context.Background(), "sess-1", streamA))
+
+	replay, err := store.Subscribe(context.Background(), "sess-1", streamA, eventA1)
+	require.NoError(t, err)
+
+	replayed := requireStreamEvent(t, replay)
+	require.Equal(t, eventA2, replayed.ID)
+	require.JSONEq(t, `{"stream":"A","seq":2}`, string(replayed.Data))
+	requireStreamClosed(t, replay)
+}
+
+func TestDynamoStreamStore_DeleteSessionDrainsLateAppend(t *testing.T) {
+	db := newFakeMCPTableDB()
+	store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	require.True(t, ok)
+
+	store.pollInterval = 10 * time.Millisecond
+
+	streamID, err := store.Create(context.Background(), "sess-1")
+	require.NoError(t, err)
+
+	appendEntered := make(chan struct{})
+	releaseAppend := make(chan struct{})
+	db.beforeCreateStreamEvent = func(record dynamoStreamRecord) {
+		if record.SessionID != "sess-1" || record.StreamID != streamID {
+			return
+		}
+		select {
+		case <-appendEntered:
+		default:
+			close(appendEntered)
+		}
+		<-releaseAppend
+	}
+
+	appendDone := make(chan struct{})
+	var (
+		eventID   string
+		appendErr error
+	)
+	go func() {
+		defer close(appendDone)
+		eventID, appendErr = store.Append(context.Background(), "sess-1", streamID, json.RawMessage(`{"seq":1}`))
+	}()
+
+	select {
+	case <-appendEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for append to reach event create")
+	}
+
+	deleteDone := make(chan error, 1)
+	go func() {
+		deleteDone <- store.DeleteSession(context.Background(), "sess-1")
+	}()
+
+	require.Eventually(t, func() bool {
+		_, ok := db.getStreamRecord("sess-1", dynamoStreamMetadataEventID(streamID))
+		return !ok
+	}, time.Second, time.Millisecond)
+
+	close(releaseAppend)
+
+	select {
+	case <-appendDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for append to finish")
+	}
+	require.NoError(t, appendErr)
+	require.Equal(t, dynamoStreamEventIDForSeq(1), eventID)
+
+	select {
+	case deleteErr := <-deleteDone:
+		require.NoError(t, deleteErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for DeleteSession")
+	}
+
+	require.Eventually(t, func() bool {
+		return db.countNonSessionStreamRecords("sess-1") == 0
+	}, time.Second, time.Millisecond)
+
+	records := db.sessionStreamRecords("sess-1")
+	require.Len(t, records, 1)
+	require.Equal(t, dynamoStreamSessionStateEventID, records[0].EventID)
+	require.True(t, records[0].Deleted)
+
+	_, err = store.StreamForEvent(context.Background(), "sess-1", eventID)
+	require.ErrorIs(t, err, ErrEventNotFound)
 }
 
 func TestDynamoStreamStore_ServerReplayFromSecondInstance(t *testing.T) {
@@ -328,9 +459,10 @@ func requireStreamClosed(t *testing.T, ch <-chan StreamEvent) {
 }
 
 type fakeMCPTableDB struct {
-	mu      sync.Mutex
-	session map[string]sessionRecord
-	streams map[string]map[string]dynamoStreamRecord
+	mu                      sync.Mutex
+	session                 map[string]sessionRecord
+	streams                 map[string]map[string]dynamoStreamRecord
+	beforeCreateStreamEvent func(dynamoStreamRecord)
 }
 
 func newFakeMCPTableDB() *fakeMCPTableDB {
@@ -375,6 +507,38 @@ func (db *fakeMCPTableDB) getStreamRecord(sessionID, eventID string) (dynamoStre
 	return record, ok
 }
 
+func (db *fakeMCPTableDB) sessionStreamRecords(sessionID string) []dynamoStreamRecord {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	session := db.streams[sessionID]
+	if session == nil {
+		return nil
+	}
+
+	out := make([]dynamoStreamRecord, 0, len(session))
+	for _, record := range session {
+		out = append(out, record)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].EventID < out[j].EventID
+	})
+	return out
+}
+
+func (db *fakeMCPTableDB) countNonSessionStreamRecords(sessionID string) int {
+	records := db.sessionStreamRecords(sessionID)
+	count := 0
+	for _, record := range records {
+		if record.EventID == dynamoStreamSessionStateEventID {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
 type fakeMCPTableQuery struct {
 	db         *fakeMCPTableDB
 	model      any
@@ -388,6 +552,26 @@ type fakeWhereClause struct {
 	field string
 	op    string
 	value any
+}
+
+type fakeMCPUpdateBuilder struct {
+	query       *fakeMCPTableQuery
+	sets        []fakeMCPUpdateOp
+	setDefaults []fakeMCPUpdateOp
+	adds        []fakeMCPUpdateOp
+	conditions  []fakeMCPUpdateCondition
+}
+
+type fakeMCPUpdateOp struct {
+	field string
+	value any
+}
+
+type fakeMCPUpdateCondition struct {
+	field    string
+	operator string
+	value    any
+	logic    string
 }
 
 func (q *fakeMCPTableQuery) Where(field string, op string, value any) tablecore.Query {
@@ -446,6 +630,177 @@ func (q *fakeMCPTableQuery) ConsistentRead() tablecore.Query { return q }
 
 func (q *fakeMCPTableQuery) WithRetry(maxRetries int, initialDelay time.Duration) tablecore.Query {
 	return q
+}
+
+func (b *fakeMCPUpdateBuilder) Set(field string, value any) tablecore.UpdateBuilder {
+	b.sets = append(b.sets, fakeMCPUpdateOp{field: field, value: value})
+	return b
+}
+
+func (b *fakeMCPUpdateBuilder) SetIfNotExists(field string, value any, defaultValue any) tablecore.UpdateBuilder {
+	b.setDefaults = append(b.setDefaults, fakeMCPUpdateOp{field: field, value: defaultValue})
+	return b
+}
+
+func (b *fakeMCPUpdateBuilder) Add(field string, value any) tablecore.UpdateBuilder {
+	b.adds = append(b.adds, fakeMCPUpdateOp{field: field, value: value})
+	return b
+}
+
+func (b *fakeMCPUpdateBuilder) Increment(field string) tablecore.UpdateBuilder {
+	return b.Add(field, int64(1))
+}
+
+func (b *fakeMCPUpdateBuilder) Decrement(field string) tablecore.UpdateBuilder {
+	return b.Add(field, int64(-1))
+}
+
+func (b *fakeMCPUpdateBuilder) Remove(field string) tablecore.UpdateBuilder { return b }
+
+func (b *fakeMCPUpdateBuilder) Delete(field string, value any) tablecore.UpdateBuilder { return b }
+
+func (b *fakeMCPUpdateBuilder) AppendToList(field string, values any) tablecore.UpdateBuilder {
+	return b
+}
+
+func (b *fakeMCPUpdateBuilder) PrependToList(field string, values any) tablecore.UpdateBuilder {
+	return b
+}
+
+func (b *fakeMCPUpdateBuilder) RemoveFromListAt(field string, index int) tablecore.UpdateBuilder {
+	return b
+}
+
+func (b *fakeMCPUpdateBuilder) SetListElement(field string, index int, value any) tablecore.UpdateBuilder {
+	return b
+}
+
+func (b *fakeMCPUpdateBuilder) Condition(field string, operator string, value any) tablecore.UpdateBuilder {
+	b.conditions = append(b.conditions, fakeMCPUpdateCondition{
+		field:    field,
+		operator: operator,
+		value:    value,
+		logic:    "AND",
+	})
+	return b
+}
+
+func (b *fakeMCPUpdateBuilder) OrCondition(field string, operator string, value any) tablecore.UpdateBuilder {
+	b.conditions = append(b.conditions, fakeMCPUpdateCondition{
+		field:    field,
+		operator: operator,
+		value:    value,
+		logic:    "OR",
+	})
+	return b
+}
+
+func (b *fakeMCPUpdateBuilder) ConditionExists(field string) tablecore.UpdateBuilder {
+	return b.Condition(field, "attribute_exists", nil)
+}
+
+func (b *fakeMCPUpdateBuilder) ConditionNotExists(field string) tablecore.UpdateBuilder {
+	return b.Condition(field, "attribute_not_exists", nil)
+}
+
+func (b *fakeMCPUpdateBuilder) ConditionVersion(currentVersion int64) tablecore.UpdateBuilder {
+	return b.Condition("Version", "=", currentVersion)
+}
+
+func (b *fakeMCPUpdateBuilder) ReturnValues(option string) tablecore.UpdateBuilder { return b }
+
+func (b *fakeMCPUpdateBuilder) Execute() error {
+	return b.execute(nil)
+}
+
+func (b *fakeMCPUpdateBuilder) ExecuteWithResult(result any) error {
+	return b.execute(result)
+}
+
+func (b *fakeMCPUpdateBuilder) execute(result any) error {
+	if classifyMCPModel(b.query.model) != fakeMCPModelStream {
+		return errors.New("unsupported model")
+	}
+
+	sessionID, ok := b.query.whereString("SessionID", "=")
+	if !ok {
+		return errors.New("missing session id")
+	}
+	eventID, ok := b.query.whereString("EventID", "=")
+	if !ok {
+		return errors.New("missing event id")
+	}
+
+	b.query.db.mu.Lock()
+	defer b.query.db.mu.Unlock()
+
+	session := b.query.db.streams[sessionID]
+	existing, exists := dynamoStreamRecord{}, false
+	if session != nil {
+		existing, exists = session[eventID]
+	}
+
+	if !b.conditionsMet(existing, exists) {
+		return tableerrors.ErrConditionFailed
+	}
+
+	updated := existing
+	if !exists {
+		updated.SessionID = sessionID
+		updated.EventID = eventID
+	}
+
+	for _, op := range b.setDefaults {
+		if fakeMCPStreamFieldExists(existing, exists, op.field) {
+			continue
+		}
+		if err := fakeMCPSetStreamField(&updated, op.field, op.value); err != nil {
+			return err
+		}
+	}
+
+	for _, op := range b.adds {
+		if err := fakeMCPAddStreamField(&updated, op.field, op.value); err != nil {
+			return err
+		}
+	}
+
+	for _, op := range b.sets {
+		if err := fakeMCPSetStreamField(&updated, op.field, op.value); err != nil {
+			return err
+		}
+	}
+
+	if b.query.db.streams[sessionID] == nil {
+		b.query.db.streams[sessionID] = make(map[string]dynamoStreamRecord)
+	}
+	b.query.db.streams[sessionID][eventID] = updated
+
+	if result != nil {
+		return assignStreamRecord(result, updated)
+	}
+	return nil
+}
+
+func (b *fakeMCPUpdateBuilder) conditionsMet(record dynamoStreamRecord, exists bool) bool {
+	if len(b.conditions) == 0 {
+		return true
+	}
+
+	result := false
+	for i, condition := range b.conditions {
+		matched := fakeMCPMatchStreamCondition(record, exists, condition)
+		if i == 0 {
+			result = matched
+			continue
+		}
+		if condition.logic == "OR" {
+			result = result || matched
+			continue
+		}
+		result = result && matched
+	}
+	return result
 }
 
 func (q *fakeMCPTableQuery) First(dest any) error {
@@ -516,6 +871,9 @@ func (q *fakeMCPTableQuery) Create() error {
 		if !ok {
 			return errors.New("invalid stream record")
 		}
+		if record.Kind == dynamoStreamRecordKindEvent && q.db.beforeCreateStreamEvent != nil {
+			q.db.beforeCreateStreamEvent(record)
+		}
 		q.db.mu.Lock()
 		if q.db.streams[record.SessionID] == nil {
 			q.db.streams[record.SessionID] = make(map[string]dynamoStreamRecord)
@@ -536,7 +894,9 @@ func (q *fakeMCPTableQuery) Update(fields ...string) error {
 	return errors.New("not implemented")
 }
 
-func (q *fakeMCPTableQuery) UpdateBuilder() tablecore.UpdateBuilder { return nil }
+func (q *fakeMCPTableQuery) UpdateBuilder() tablecore.UpdateBuilder {
+	return &fakeMCPUpdateBuilder{query: q}
+}
 
 func (q *fakeMCPTableQuery) Delete() error {
 	switch classifyMCPModel(q.model) {
@@ -693,6 +1053,187 @@ func (q *fakeMCPTableQuery) whereString(field, op string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func fakeMCPMatchStreamCondition(record dynamoStreamRecord, exists bool, condition fakeMCPUpdateCondition) bool {
+	switch condition.operator {
+	case "attribute_exists":
+		return fakeMCPStreamFieldExists(record, exists, condition.field)
+	case "attribute_not_exists":
+		return !fakeMCPStreamFieldExists(record, exists, condition.field)
+	case "=":
+		value, ok := fakeMCPStreamFieldValue(record, exists, condition.field)
+		if !ok {
+			return false
+		}
+		return reflect.DeepEqual(value, condition.value)
+	default:
+		return false
+	}
+}
+
+func fakeMCPStreamFieldExists(record dynamoStreamRecord, exists bool, field string) bool {
+	if !exists {
+		return false
+	}
+
+	switch field {
+	case "SessionID", "EventID":
+		return true
+	case "StreamID":
+		return record.StreamID != ""
+	case "Kind":
+		return record.Kind != ""
+	case "CreatedAt":
+		return !record.CreatedAt.IsZero()
+	case "ExpiresAt":
+		return record.ExpiresAt != 0
+	case "NextSeq":
+		return record.Kind == dynamoStreamRecordKindSession
+	case "Closed":
+		return record.Kind == dynamoStreamRecordKindStream
+	case "Deleted":
+		return record.Kind == dynamoStreamRecordKindSession
+	case "Data":
+		return len(record.Data) > 0
+	default:
+		return false
+	}
+}
+
+func fakeMCPStreamFieldValue(record dynamoStreamRecord, exists bool, field string) (any, bool) {
+	if !fakeMCPStreamFieldExists(record, exists, field) {
+		return nil, false
+	}
+
+	switch field {
+	case "SessionID":
+		return record.SessionID, true
+	case "EventID":
+		return record.EventID, true
+	case "StreamID":
+		return record.StreamID, true
+	case "Kind":
+		return record.Kind, true
+	case "CreatedAt":
+		return record.CreatedAt, true
+	case "ExpiresAt":
+		return record.ExpiresAt, true
+	case "NextSeq":
+		return record.NextSeq, true
+	case "Closed":
+		return record.Closed, true
+	case "Deleted":
+		return record.Deleted, true
+	case "Data":
+		return record.Data, true
+	default:
+		return nil, false
+	}
+}
+
+func fakeMCPSetStreamField(record *dynamoStreamRecord, field string, value any) error {
+	if record == nil {
+		return errors.New("missing record")
+	}
+
+	switch field {
+	case "SessionID":
+		v, ok := value.(string)
+		if !ok {
+			return errors.New("expected SessionID to be a string")
+		}
+		record.SessionID = v
+	case "EventID":
+		v, ok := value.(string)
+		if !ok {
+			return errors.New("expected EventID to be a string")
+		}
+		record.EventID = v
+	case "StreamID":
+		v, ok := value.(string)
+		if !ok {
+			return errors.New("expected StreamID to be a string")
+		}
+		record.StreamID = v
+	case "Kind":
+		v, ok := value.(string)
+		if !ok {
+			return errors.New("expected Kind to be a string")
+		}
+		record.Kind = v
+	case "CreatedAt":
+		v, ok := value.(time.Time)
+		if !ok {
+			return errors.New("expected CreatedAt to be a time")
+		}
+		record.CreatedAt = v
+	case "ExpiresAt":
+		v, ok := fakeMCPInt64(value)
+		if !ok {
+			return errors.New("expected ExpiresAt to be numeric")
+		}
+		record.ExpiresAt = v
+	case "NextSeq":
+		v, ok := fakeMCPInt64(value)
+		if !ok {
+			return errors.New("expected NextSeq to be numeric")
+		}
+		record.NextSeq = v
+	case "Closed":
+		v, ok := value.(bool)
+		if !ok {
+			return errors.New("expected Closed to be a bool")
+		}
+		record.Closed = v
+	case "Deleted":
+		v, ok := value.(bool)
+		if !ok {
+			return errors.New("expected Deleted to be a bool")
+		}
+		record.Deleted = v
+	case "Data":
+		v, ok := value.(json.RawMessage)
+		if !ok {
+			return errors.New("expected Data to be json.RawMessage")
+		}
+		record.Data = append(record.Data[:0], v...)
+	default:
+		return errors.New("unsupported stream field")
+	}
+	return nil
+}
+
+func fakeMCPAddStreamField(record *dynamoStreamRecord, field string, value any) error {
+	delta, ok := fakeMCPInt64(value)
+	if !ok {
+		return errors.New("expected numeric delta")
+	}
+
+	switch field {
+	case "NextSeq":
+		record.NextSeq += delta
+	default:
+		return errors.New("unsupported add field")
+	}
+	return nil
+}
+
+func fakeMCPInt64(value any) (int64, bool) {
+	switch v := value.(type) {
+	case int:
+		return int64(v), true
+	case int8:
+		return int64(v), true
+	case int16:
+		return int64(v), true
+	case int32:
+		return int64(v), true
+	case int64:
+		return v, true
+	default:
+		return 0, false
+	}
 }
 
 func compareString(got, op, want string) bool {
