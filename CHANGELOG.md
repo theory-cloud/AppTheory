@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.20.0](https://github.com/theory-cloud/AppTheory/compare/v0.19.3...v0.20.0) (2026-04-10)
+
+
+### Features
+
+* **mcp:** add durable dynamo stream store ([d066816](https://github.com/theory-cloud/AppTheory/commit/d0668165785646bf97e9895a188452ea152ca8a6))
+
+
+### Bug Fixes
+
+* **mcp:** preserve durable stream replay ordering ([1e6b4f0](https://github.com/theory-cloud/AppTheory/commit/1e6b4f0998397fef6880e04f4f4e4f2d4bdfbfd4))
+
 ## [0.19.3](https://github.com/theory-cloud/AppTheory/compare/v0.19.2...v0.19.3) (2026-04-09)
 
 
