@@ -87,9 +87,9 @@ See:
 - `docs/cdk/mcp-server-remote-mcp.md`
 - `docs/cdk/mcp-protected-resource.md`
 
-If you enable the optional Remote MCP stream table, treat it as infrastructure only until your app wires a concrete
-`StreamStore` with `mcp.WithStreamStore(...)`. The built-in runtime ships `MemoryStreamStore`, not a Dynamo-backed
-stream store.
+If you enable the optional Remote MCP stream table, wire a concrete persistent `StreamStore` such as
+`mcp.NewDynamoStreamStore(db)` with `mcp.WithStreamStore(...)`. `enableStreamTable` alone still only provisions the
+storage and env vars.
 
 ## 4) Testing (no AWS required)
 
@@ -120,7 +120,8 @@ Notes:
 
 API Gateway REST response streaming connections are time-bounded and can disconnect. For “hours-long” logical sessions:
 - keep sessions durable (`SessionStore` backed by DynamoDB)
-- keep tool output durable (event log + `Last-Event-ID` replay) by providing your own persistent `StreamStore`
+- keep tool output durable (event log + `Last-Event-ID` replay) by wiring `mcp.NewDynamoStreamStore(db)` or another
+  persistent `StreamStore`
 - execute long work asynchronously (worker Lambdas) and append progress/results into the event log
 
 Detailed compatibility notes and HTTP transcripts are maintained in non-canonical planning docs and intentionally kept
