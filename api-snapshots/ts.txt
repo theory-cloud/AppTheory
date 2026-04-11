@@ -13,6 +13,7 @@ APIGatewayV2HTTPRequest	interface
 APIGatewayV2HTTPResponse	interface
 APIGatewayWebSocketProxyRequest	interface
 AcquireLeaseInput	type
+AcquireSemaphoreSlotInput	type
 App	class
 AppError	class
 AppSyncContext	class
@@ -57,6 +58,7 @@ IDGenerator	type
 IdGenerator	interface
 IdempotencyCreateOutcome	type
 IdempotencyStatus	type
+InspectSemaphoreInput	type
 JobLedgerError	class
 JobLedgerErrorType	type
 JobLock	type
@@ -98,7 +100,9 @@ RateLimiterError	class
 RealClock	class
 RecordStatus	type
 RefreshLeaseInput	type
+RefreshSemaphoreSlotInput	type
 ReleaseLeaseInput	type
+ReleaseSemaphoreSlotInput	type
 Request	interface
 Response	interface
 RouteOptions	interface
@@ -112,6 +116,8 @@ SQSEventResponse	interface
 SQSHandler	type
 SQSMessage	interface
 SSEEvent	interface
+SemaphoreInspection	type
+SemaphoreLease	type
 SlidingWindowStrategy	class
 SpanRecord	interface
 StructuredLogger	interface
@@ -199,6 +205,8 @@ sanitizeLogString	function
 sanitizeLogString	re-export
 sanitizeXML	function
 sanitizeXML	re-export
+semaphorePartitionKey	function
+semaphoreSlotSortKey	function
 setKeys	function
 setLogger	function
 sse	function
