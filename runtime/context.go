@@ -18,6 +18,7 @@ type Context struct {
 	RequestID       string
 	TenantID        string
 	AuthIdentity    string
+	AuthPrincipal   *AuthPrincipal
 	RemainingMS     int
 	MiddlewareTrace []string
 
