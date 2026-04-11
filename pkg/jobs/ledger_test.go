@@ -418,6 +418,243 @@ func TestDynamoJobLedger_ReleaseLease_OwnerMismatch(t *testing.T) {
 	require.Equal(t, ErrorTypeConflict, typed.Type)
 }
 
+func TestDynamoJobLedger_AcquireSemaphoreSlot_SuccessAfterScanningSlots(t *testing.T) {
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+
+	db := new(tablemocks.MockDB)
+	q0 := new(tablemocks.MockQuery)
+	q1 := new(tablemocks.MockQuery)
+	ub0 := new(tablemocks.MockUpdateBuilder)
+	ub1 := new(tablemocks.MockUpdateBuilder)
+
+	db.On("Model", mock.Anything).Return(q0).Once()
+	db.On("Model", mock.Anything).Return(q1).Once()
+
+	pk := SemaphorePartitionKey("email", "customer_1")
+	expiresAt := now.Add(2 * time.Minute).Unix()
+
+	q0.On("WithContext", mock.Anything).Return(q0)
+	q0.On("Where", "PK", "=", pk).Return(q0).Once()
+	q0.On("Where", "SK", "=", SemaphoreSlotSortKey(0)).Return(q0).Once()
+	q0.On("UpdateBuilder").Return(ub0)
+
+	ub0.On("SetIfNotExists", "Scope", nil, "email").Return(ub0)
+	ub0.On("SetIfNotExists", "Subject", nil, "customer_1").Return(ub0)
+	ub0.On("SetIfNotExists", "Slot", nil, 0).Return(ub0)
+	ub0.On("Set", "LeaseOwner", "worker_a").Return(ub0)
+	ub0.On("Set", "LeaseExpiresAt", expiresAt).Return(ub0)
+	ub0.On("SetIfNotExists", "CreatedAt", nil, now).Return(ub0)
+	ub0.On("Set", "UpdatedAt", now).Return(ub0)
+	ub0.On("ConditionNotExists", "LeaseExpiresAt").Return(ub0)
+	ub0.On("OrCondition", "LeaseExpiresAt", "<", now.Unix()).Return(ub0)
+	ub0.On("OrCondition", "LeaseOwner", "=", "worker_a").Return(ub0)
+	ub0.On("ExecuteWithResult", mock.Anything).Return(tableerrors.ErrConditionFailed)
+
+	q1.On("WithContext", mock.Anything).Return(q1)
+	q1.On("Where", "PK", "=", pk).Return(q1).Once()
+	q1.On("Where", "SK", "=", SemaphoreSlotSortKey(1)).Return(q1).Once()
+	q1.On("UpdateBuilder").Return(ub1)
+
+	ub1.On("SetIfNotExists", "Scope", nil, "email").Return(ub1)
+	ub1.On("SetIfNotExists", "Subject", nil, "customer_1").Return(ub1)
+	ub1.On("SetIfNotExists", "Slot", nil, 1).Return(ub1)
+	ub1.On("Set", "LeaseOwner", "worker_a").Return(ub1)
+	ub1.On("Set", "LeaseExpiresAt", expiresAt).Return(ub1)
+	ub1.On("SetIfNotExists", "CreatedAt", nil, now).Return(ub1)
+	ub1.On("Set", "UpdatedAt", now).Return(ub1)
+	ub1.On("ConditionNotExists", "LeaseExpiresAt").Return(ub1)
+	ub1.On("OrCondition", "LeaseExpiresAt", "<", now.Unix()).Return(ub1)
+	ub1.On("OrCondition", "LeaseOwner", "=", "worker_a").Return(ub1)
+	ub1.On("ExecuteWithResult", mock.Anything).Run(func(args mock.Arguments) {
+		out, ok := args.Get(0).(*SemaphoreLease)
+		require.True(t, ok)
+		out.Scope = "email"
+		out.Subject = "customer_1"
+		out.Slot = 1
+		out.LeaseOwner = "worker_a"
+		out.LeaseExpiresAt = expiresAt
+	}).Return(nil)
+
+	ledger := NewDynamoJobLedger(db, DefaultConfig())
+	ledger.SetClock(fixedClock{now: now})
+
+	lease, err := ledger.AcquireSemaphoreSlot(context.Background(), AcquireSemaphoreSlotInput{
+		Scope:         "email",
+		Subject:       "customer_1",
+		Limit:         2,
+		Owner:         "worker_a",
+		LeaseDuration: 2 * time.Minute,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, lease.Slot)
+	require.Equal(t, "worker_a", lease.LeaseOwner)
+}
+
+func TestDynamoJobLedger_AcquireSemaphoreSlot_Full(t *testing.T) {
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+
+	db := new(tablemocks.MockDB)
+	q := new(tablemocks.MockQuery)
+	ub := new(tablemocks.MockUpdateBuilder)
+
+	db.On("Model", mock.Anything).Return(q)
+	q.On("WithContext", mock.Anything).Return(q)
+	q.On("Where", "PK", "=", SemaphorePartitionKey("email", "customer_1")).Return(q).Once()
+	q.On("Where", "SK", "=", SemaphoreSlotSortKey(0)).Return(q).Once()
+	q.On("UpdateBuilder").Return(ub)
+
+	expiresAt := now.Add(2 * time.Minute).Unix()
+	ub.On("SetIfNotExists", "Scope", nil, "email").Return(ub)
+	ub.On("SetIfNotExists", "Subject", nil, "customer_1").Return(ub)
+	ub.On("SetIfNotExists", "Slot", nil, 0).Return(ub)
+	ub.On("Set", "LeaseOwner", "worker_a").Return(ub)
+	ub.On("Set", "LeaseExpiresAt", expiresAt).Return(ub)
+	ub.On("SetIfNotExists", "CreatedAt", nil, now).Return(ub)
+	ub.On("Set", "UpdatedAt", now).Return(ub)
+	ub.On("ConditionNotExists", "LeaseExpiresAt").Return(ub)
+	ub.On("OrCondition", "LeaseExpiresAt", "<", now.Unix()).Return(ub)
+	ub.On("OrCondition", "LeaseOwner", "=", "worker_a").Return(ub)
+	ub.On("ExecuteWithResult", mock.Anything).Return(tableerrors.ErrConditionFailed)
+
+	ledger := NewDynamoJobLedger(db, DefaultConfig())
+	ledger.SetClock(fixedClock{now: now})
+
+	lease, err := ledger.AcquireSemaphoreSlot(context.Background(), AcquireSemaphoreSlotInput{
+		Scope:         "email",
+		Subject:       "customer_1",
+		Limit:         1,
+		Owner:         "worker_a",
+		LeaseDuration: 2 * time.Minute,
+	})
+	require.Nil(t, lease)
+	require.Error(t, err)
+
+	var typed *Error
+	require.ErrorAs(t, err, &typed)
+	require.Equal(t, ErrorTypeConflict, typed.Type)
+}
+
+func TestDynamoJobLedger_RefreshSemaphoreSlot_Success(t *testing.T) {
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+
+	db := new(tablemocks.MockDB)
+	q := new(tablemocks.MockQuery)
+	ub := new(tablemocks.MockUpdateBuilder)
+
+	db.On("Model", mock.Anything).Return(q)
+	q.On("WithContext", mock.Anything).Return(q)
+	q.On("Where", "PK", "=", SemaphorePartitionKey("email", "customer_1")).Return(q).Once()
+	q.On("Where", "SK", "=", SemaphoreSlotSortKey(2)).Return(q).Once()
+	q.On("IfExists").Return(q)
+	q.On("UpdateBuilder").Return(ub)
+
+	expiresAt := now.Add(2 * time.Minute).Unix()
+	ub.On("Set", "LeaseExpiresAt", expiresAt).Return(ub)
+	ub.On("Set", "UpdatedAt", now).Return(ub)
+	ub.On("Condition", "LeaseOwner", "=", "worker_a").Return()
+	ub.On("Condition", "LeaseExpiresAt", ">", now.Unix()).Return()
+	ub.On("ExecuteWithResult", mock.Anything).Run(func(args mock.Arguments) {
+		out, ok := args.Get(0).(*SemaphoreLease)
+		require.True(t, ok)
+		out.Scope = "email"
+		out.Subject = "customer_1"
+		out.Slot = 2
+		out.LeaseOwner = "worker_a"
+		out.LeaseExpiresAt = expiresAt
+	}).Return(nil)
+
+	ledger := NewDynamoJobLedger(db, DefaultConfig())
+	ledger.SetClock(fixedClock{now: now})
+
+	lease, err := ledger.RefreshSemaphoreSlot(context.Background(), RefreshSemaphoreSlotInput{
+		Scope:         "email",
+		Subject:       "customer_1",
+		Slot:          2,
+		Owner:         "worker_a",
+		LeaseDuration: 2 * time.Minute,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+	require.Equal(t, 2, lease.Slot)
+}
+
+func TestDynamoJobLedger_ReleaseSemaphoreSlot_OwnerMismatch(t *testing.T) {
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+
+	db := new(tablemocks.MockDB)
+	qDelete := new(tablemocks.MockQuery)
+	qGet := new(tablemocks.MockQuery)
+
+	db.On("Model", mock.Anything).Return(qDelete).Once()
+	db.On("Model", mock.Anything).Return(qGet).Once()
+
+	pk := SemaphorePartitionKey("email", "customer_1")
+	sk := SemaphoreSlotSortKey(1)
+
+	qDelete.On("WithContext", mock.Anything).Return(qDelete)
+	qDelete.On("Where", "PK", "=", pk).Return(qDelete).Once()
+	qDelete.On("Where", "SK", "=", sk).Return(qDelete).Once()
+	qDelete.On("WithCondition", "LeaseOwner", "=", "worker_a").Return(qDelete)
+	qDelete.On("Delete").Return(tableerrors.ErrConditionFailed)
+
+	qGet.On("WithContext", mock.Anything).Return(qGet)
+	qGet.On("Where", "PK", "=", pk).Return(qGet).Once()
+	qGet.On("Where", "SK", "=", sk).Return(qGet).Once()
+	qGet.On("First", mock.Anything).Run(func(args mock.Arguments) {
+		out, ok := args.Get(0).(*SemaphoreLease)
+		require.True(t, ok)
+		out.LeaseOwner = "worker_b"
+	}).Return(nil)
+
+	ledger := NewDynamoJobLedger(db, DefaultConfig())
+	ledger.SetClock(fixedClock{now: now})
+
+	err := ledger.ReleaseSemaphoreSlot(context.Background(), ReleaseSemaphoreSlotInput{
+		Scope:   "email",
+		Subject: "customer_1",
+		Slot:    1,
+		Owner:   "worker_a",
+	})
+	require.Error(t, err)
+
+	var typed *Error
+	require.ErrorAs(t, err, &typed)
+	require.Equal(t, ErrorTypeConflict, typed.Type)
+}
+
+func TestDynamoJobLedger_InspectSemaphore_ReturnsActiveLeasesSorted(t *testing.T) {
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+
+	db := new(tablemocks.MockDB)
+	q := new(tablemocks.MockQuery)
+
+	db.On("Model", mock.Anything).Return(q)
+	q.On("WithContext", mock.Anything).Return(q)
+	q.On("Where", "PK", "=", SemaphorePartitionKey("email", "customer_1")).Return(q).Once()
+	q.On("All", mock.Anything).Run(func(args mock.Arguments) {
+		out, ok := args.Get(0).(*[]SemaphoreLease)
+		require.True(t, ok)
+		*out = []SemaphoreLease{
+			{Scope: "email", Subject: "customer_1", Slot: 3, LeaseOwner: "worker_c", LeaseExpiresAt: now.Add(2 * time.Minute).Unix()},
+			{Scope: "email", Subject: "customer_1", Slot: 1, LeaseOwner: "worker_a", LeaseExpiresAt: now.Add(2 * time.Minute).Unix()},
+			{Scope: "email", Subject: "customer_1", Slot: 2, LeaseOwner: "worker_b", LeaseExpiresAt: now.Add(-time.Minute).Unix()},
+		}
+	}).Return(nil)
+
+	ledger := NewDynamoJobLedger(db, DefaultConfig())
+	ledger.SetClock(fixedClock{now: now})
+
+	inspection, err := ledger.InspectSemaphore(context.Background(), InspectSemaphoreInput{
+		Scope:   "email",
+		Subject: "customer_1",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, inspection.Occupancy)
+	require.Len(t, inspection.ActiveLeases, 2)
+	require.Equal(t, 1, inspection.ActiveLeases[0].Slot)
+	require.Equal(t, 3, inspection.ActiveLeases[1].Slot)
+}
+
 func TestDynamoJobLedger_CreateIdempotencyRecord_ExistingCompleted(t *testing.T) {
 	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
 
