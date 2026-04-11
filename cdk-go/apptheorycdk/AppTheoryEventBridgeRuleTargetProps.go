@@ -36,3 +36,4 @@ type AppTheoryEventBridgeRuleTargetProps struct {
 	// Passed through to `aws-events-targets.LambdaFunction`.
 	TargetProps *awseventstargets.LambdaFunctionProps `field:"optional" json:"targetProps" yaml:"targetProps"`
 }
+

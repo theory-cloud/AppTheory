@@ -30,3 +30,4 @@ type AppTheoryRestApiRouterIntegrationOptions struct {
 	// For non-streaming routes, defaults to 29 seconds.
 	Timeout awscdk.Duration `field:"optional" json:"timeout" yaml:"timeout"`
 }
+

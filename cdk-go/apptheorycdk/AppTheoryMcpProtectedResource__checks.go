@@ -36,3 +36,4 @@ func validateNewAppTheoryMcpProtectedResourceParameters(scope constructs.Constru
 
 	return nil
 }
+

@@ -15,17 +15,17 @@ import (
 // into a single, easy-to-use pattern. For more control, use the individual constructs.
 //
 // Example:
+//   // Processor with full options
+//   new AppTheoryQueueProcessor(stack, 'Processor', {
+//     consumer: myFunction,
+//     queueName: 'my-queue',
+//     enableDlq: true,
+//     batchSize: 100,
+//     maxBatchingWindow: Duration.seconds(10),
+//     reportBatchItemFailures: true,
+//     maxConcurrency: 50,
+//   });
 //
-//	// Processor with full options
-//	new AppTheoryQueueProcessor(stack, 'Processor', {
-//	  consumer: myFunction,
-//	  queueName: 'my-queue',
-//	  enableDlq: true,
-//	  batchSize: 100,
-//	  maxBatchingWindow: Duration.seconds(10),
-//	  reportBatchItemFailures: true,
-//	  maxConcurrency: 50,
-//	});
 type AppTheoryQueueProcessor interface {
 	constructs.Construct
 	// The underlying AppTheoryQueueConsumer construct.
@@ -105,6 +105,7 @@ func (j *jsiiProxy_AppTheoryQueueProcessor) QueueConstruct() AppTheoryQueue {
 	)
 	return returns
 }
+
 
 func NewAppTheoryQueueProcessor(scope constructs.Construct, id *string, props *AppTheoryQueueProcessorProps) AppTheoryQueueProcessor {
 	_init_.Initialize()
@@ -198,3 +199,4 @@ func (a *jsiiProxy_AppTheoryQueueProcessor) With(mixins ...constructs.IMixin) co
 
 	return returns
 }
+

@@ -27,3 +27,4 @@ func validateAppTheoryLambdaRole_IsConstructParameters(x interface{}) error {
 func validateNewAppTheoryLambdaRoleParameters(scope constructs.Construct, id *string, props *AppTheoryLambdaRoleProps) error {
 	return nil
 }
+

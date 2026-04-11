@@ -41,3 +41,4 @@ func validateNewAppTheoryEventBridgeBusParameters(scope constructs.Construct, id
 
 	return nil
 }
+

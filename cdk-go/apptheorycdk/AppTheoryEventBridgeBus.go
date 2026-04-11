@@ -66,6 +66,7 @@ func (j *jsiiProxy_AppTheoryEventBridgeBus) Policies() *[]awsevents.CfnEventBusP
 	return returns
 }
 
+
 func NewAppTheoryEventBridgeBus(scope constructs.Construct, id *string, props *AppTheoryEventBridgeBusProps) AppTheoryEventBridgeBus {
 	_init_.Initialize()
 
@@ -174,3 +175,4 @@ func (a *jsiiProxy_AppTheoryEventBridgeBus) With(mixins ...constructs.IMixin) co
 
 	return returns
 }
+

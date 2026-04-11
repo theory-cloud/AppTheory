@@ -17,13 +17,13 @@ import (
 // with AppTheoryQueueConsumer for Lambda integration.
 //
 // Example:
+//   // Queue with custom DLQ configuration
+//   const queue = new AppTheoryQueue(stack, 'Queue', {
+//     queueName: 'my-queue',
+//     maxReceiveCount: 5,
+//     dlqRetentionPeriod: Duration.days(14),
+//   });
 //
-//	// Queue with custom DLQ configuration
-//	const queue = new AppTheoryQueue(stack, 'Queue', {
-//	  queueName: 'my-queue',
-//	  maxReceiveCount: 5,
-//	  dlqRetentionPeriod: Duration.days(14),
-//	});
 type AppTheoryQueue interface {
 	constructs.Construct
 	// The Dead Letter Queue, if enabled.
@@ -121,6 +121,7 @@ func (j *jsiiProxy_AppTheoryQueue) QueueUrl() *string {
 	)
 	return returns
 }
+
 
 func NewAppTheoryQueue(scope constructs.Construct, id *string, props *AppTheoryQueueProps) AppTheoryQueue {
 	_init_.Initialize()
@@ -247,3 +248,4 @@ func (a *jsiiProxy_AppTheoryQueue) With(mixins ...constructs.IMixin) constructs.
 
 	return returns
 }
+

@@ -32,3 +32,4 @@ type AppTheoryLambdaRoleProps struct {
 	// Tags to apply to the IAM role.
 	Tags *map[string]*string `field:"optional" json:"tags" yaml:"tags"`
 }
+

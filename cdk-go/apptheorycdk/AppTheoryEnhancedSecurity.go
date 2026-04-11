@@ -117,6 +117,7 @@ func (j *jsiiProxy_AppTheoryEnhancedSecurity) Waf() awswafv2.CfnWebACL {
 	return returns
 }
 
+
 func NewAppTheoryEnhancedSecurity(scope constructs.Construct, id *string, props *AppTheoryEnhancedSecurityProps) AppTheoryEnhancedSecurity {
 	_init_.Initialize()
 
@@ -294,3 +295,4 @@ func (a *jsiiProxy_AppTheoryEnhancedSecurity) With(mixins ...constructs.IMixin) 
 
 	return returns
 }
+
