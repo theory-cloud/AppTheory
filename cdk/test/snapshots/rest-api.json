@@ -291,7 +291,10 @@
         "RestApiId": {
           "Ref": "RestApi135E9C73"
         },
-        "StageName": "prod"
+        "StageName": "prod",
+        "Variables": {
+          "APPTHEORYSTREAMINGV152adc91cabad994d022944529aaa7694": "1"
+        }
       },
       "Type": "AWS::ApiGateway::Stage"
     },

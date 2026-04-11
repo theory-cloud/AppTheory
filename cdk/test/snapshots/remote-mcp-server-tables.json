@@ -299,7 +299,11 @@
         "RestApiId": {
           "Ref": "RemoteMcpApi6A28A6F0"
         },
-        "StageName": "prod"
+        "StageName": "prod",
+        "Variables": {
+          "APPTHEORYSTREAMINGV12e315fa5c67a10e0559d6e70b4bfba00": "1",
+          "APPTHEORYSTREAMINGV18792f92bbc3e937d5e5df2999ed6fed5": "1"
+        }
       },
       "Type": "AWS::ApiGateway::Stage"
     },
