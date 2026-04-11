@@ -7,6 +7,7 @@ import * as route53 from "aws-cdk-lib/aws-route53";
 import * as route53targets from "aws-cdk-lib/aws-route53-targets";
 import { Construct } from "constructs";
 
+import { markRestApiStageRouteAsStreaming } from "./private/rest-api-streaming";
 import { trimRepeatedChar } from "./private/string-utils";
 
 /**
@@ -379,6 +380,7 @@ export class AppTheoryRestApiRouter extends Construct {
             // For streaming routes, apply L1 overrides to ensure full compatibility
             if (options.streaming) {
                 this.applyStreamingOverrides(createdMethod, handler, options);
+                markRestApiStageRouteAsStreaming(this.stage, method, path);
             }
         }
 

@@ -2,6 +2,7 @@ import * as apigw from "aws-cdk-lib/aws-apigateway";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
 
+import { markRestApiStageRouteAsStreaming } from "./private/rest-api-streaming";
 import { trimRepeatedChar } from "./private/string-utils";
 
 export interface AppTheoryRestApiProps {
@@ -40,6 +41,9 @@ export class AppTheoryRestApi extends Construct {
       const httpMethod = String(method ?? "").trim().toUpperCase();
       if (!httpMethod) continue;
       resource.addMethod(httpMethod, integration);
+      if (options.streaming) {
+        markRestApiStageRouteAsStreaming(this.api.deploymentStage, httpMethod, path);
+      }
     }
   }
 }

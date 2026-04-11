@@ -282,7 +282,10 @@
         "RestApiId": {
           "Ref": "RouterApi30C329D4"
         },
-        "StageName": "prod"
+        "StageName": "prod",
+        "Variables": {
+          "APPTHEORYSTREAMINGV152adc91cabad994d022944529aaa7694": "1"
+        }
       },
       "Type": "AWS::ApiGateway::Stage"
     },

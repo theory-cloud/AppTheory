@@ -16,6 +16,7 @@ const logs = require("aws-cdk-lib/aws-logs");
 const route53 = require("aws-cdk-lib/aws-route53");
 
 const apptheory = require("../lib");
+const { restApiStreamingRouteStageVariableName } = require("../lib/private/rest-api-streaming");
 
 function stableJson(value) {
   if (Array.isArray(value)) return value.map(stableJson);
@@ -89,6 +90,21 @@ function restApiMethodPaths(template) {
     });
   }
   return methods;
+}
+
+function restApiStageVariables(template) {
+  for (const resource of Object.values(template.Resources ?? {})) {
+    if (resource.Type === "AWS::ApiGateway::Stage") {
+      return resource.Properties?.Variables ?? {};
+    }
+  }
+  return {};
+}
+
+function assertStreamingRouteStageVariable(template, method, path) {
+  const variables = restApiStageVariables(template);
+  const key = restApiStreamingRouteStageVariableName(method, path);
+  assert.equal(variables[key], "1", `Stage should mark ${method} ${path} as streaming`);
 }
 
 test("AppTheoryFunction synthesizes expected template", () => {
@@ -444,6 +460,7 @@ test("AppTheoryRestApi synthesizes expected template", () => {
   api.addRoute("/sse", ["GET"], { streaming: true });
 
   const template = assertions.Template.fromStack(stack).toJSON();
+  assertStreamingRouteStageVariable(template, "GET", "/sse");
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("rest-api", template);
   } else {
@@ -1255,6 +1272,7 @@ test("AppTheoryRestApiRouter (multi-Lambda) synthesizes expected template", () =
   router.addLambdaIntegration("/inventory/{id}", ["GET", "PUT", "DELETE"], inventoryFn);
 
   const template = assertions.Template.fromStack(stack).toJSON();
+  assertStreamingRouteStageVariable(template, "GET", "/sse");
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("rest-api-router-multi-lambda", template);
   } else {
@@ -1310,6 +1328,9 @@ test("AppTheoryRestApiRouter (streaming parity) synthesizes expected template", 
   }
 
   assert.ok(streamingMethodCount >= 2, "Should have at least 2 streaming methods");
+  assertStreamingRouteStageVariable(template, "GET", "/sse");
+  assertStreamingRouteStageVariable(template, "GET", "/events");
+  assert.equal(restApiStageVariables(template)[restApiStreamingRouteStageVariableName("GET", "/api")], undefined);
 
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("rest-api-router-streaming", template);
@@ -2097,6 +2118,9 @@ test("AppTheoryRemoteMcpServer (basic) synthesizes expected template", () => {
   assert.ok(methodPaths.some((m) => m.method === "GET" && m.path === "/mcp"), "Should have GET /mcp method");
   assert.ok(methodPaths.some((m) => m.method === "DELETE" && m.path === "/mcp"), "Should have DELETE /mcp method");
   assert.ok(streamingMethods >= 2, "Should have streaming enabled on POST and GET");
+  assertStreamingRouteStageVariable(template, "GET", "/mcp");
+  assertStreamingRouteStageVariable(template, "POST", "/mcp");
+  assert.equal(restApiStageVariables(template)[restApiStreamingRouteStageVariableName("DELETE", "/mcp")], undefined);
 
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("remote-mcp-server-basic", template);
