@@ -73,6 +73,17 @@ export interface AppTheoryRemoteMcpServerProps {
   readonly actorPath?: boolean;
 
   /**
+   * Register `GET /.well-known/mcp.json` and route it to the handler.
+   *
+   * This lets the construct own the final MCP discovery route alongside the
+   * transport and protected-resource metadata routes. The handler remains
+   * responsible for serving the discovery document content.
+   *
+   * @default false
+   */
+  readonly enableWellKnownMcpDiscovery?: boolean;
+
+  /**
    * Create a DynamoDB table for MCP session storage.
    * @default false
    */
@@ -167,6 +178,9 @@ export class AppTheoryRemoteMcpServer extends Construct {
         ["GET"],
         props.handler,
       );
+    }
+    if (props.enableWellKnownMcpDiscovery) {
+      this.router.addLambdaIntegration("/.well-known/mcp.json", ["GET"], props.handler);
     }
 
     // Optional session table (matches runtime/mcp/session_dynamo.go schema)
