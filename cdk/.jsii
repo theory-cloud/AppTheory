@@ -16846,7 +16846,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/rest-api.ts",
-          "line": 20
+          "line": 21
         },
         "parameters": [
           {
@@ -16872,13 +16872,13 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/rest-api.ts",
-        "line": 16
+        "line": 17
       },
       "methods": [
         {
           "locationInModule": {
             "filename": "lib/rest-api.ts",
-            "line": 33
+            "line": 34
           },
           "name": "addRoute",
           "parameters": [
@@ -16916,7 +16916,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api.ts",
-            "line": 17
+            "line": 18
           },
           "name": "api",
           "type": {
@@ -16933,7 +16933,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/rest-api.ts",
-        "line": 7
+        "line": 8
       },
       "name": "AppTheoryRestApiProps",
       "properties": [
@@ -16942,7 +16942,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api.ts",
-            "line": 8
+            "line": 9
           },
           "name": "handler",
           "type": {
@@ -16954,7 +16954,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api.ts",
-            "line": 9
+            "line": 10
           },
           "name": "apiName",
           "optional": true,
@@ -16972,7 +16972,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/rest-api.ts",
-        "line": 12
+        "line": 13
       },
       "name": "AppTheoryRestApiRouteOptions",
       "properties": [
@@ -16981,7 +16981,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api.ts",
-            "line": 13
+            "line": 14
           },
           "name": "streaming",
           "optional": true,
@@ -17004,7 +17004,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/rest-api-router.ts",
-          "line": 313
+          "line": 314
         },
         "parameters": [
           {
@@ -17031,7 +17031,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/rest-api-router.ts",
-        "line": 274
+        "line": 275
       },
       "methods": [
         {
@@ -17040,7 +17040,7 @@
           },
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 359
+            "line": 360
           },
           "name": "addLambdaIntegration",
           "parameters": [
@@ -17098,7 +17098,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 278
+            "line": 279
           },
           "name": "api",
           "type": {
@@ -17112,7 +17112,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 283
+            "line": 284
           },
           "name": "stage",
           "type": {
@@ -17126,7 +17126,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 303
+            "line": 304
           },
           "name": "aaaaRecord",
           "optional": true,
@@ -17141,7 +17141,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 308
+            "line": 309
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -17156,7 +17156,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 298
+            "line": 299
           },
           "name": "aRecord",
           "optional": true,
@@ -17171,7 +17171,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 293
+            "line": 294
           },
           "name": "basePathMapping",
           "optional": true,
@@ -17186,7 +17186,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 288
+            "line": 289
           },
           "name": "domainName",
           "optional": true,
@@ -17207,7 +17207,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/rest-api-router.ts",
-        "line": 15
+        "line": 16
       },
       "name": "AppTheoryRestApiRouterCorsOptions",
       "properties": [
@@ -17220,7 +17220,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 38
+            "line": 39
           },
           "name": "allowCredentials",
           "optional": true,
@@ -17237,7 +17237,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 32
+            "line": 33
           },
           "name": "allowHeaders",
           "optional": true,
@@ -17259,7 +17259,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 26
+            "line": 27
           },
           "name": "allowMethods",
           "optional": true,
@@ -17281,7 +17281,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 20
+            "line": 21
           },
           "name": "allowOrigins",
           "optional": true,
@@ -17303,7 +17303,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 44
+            "line": 45
           },
           "name": "maxAge",
           "optional": true,
@@ -17324,7 +17324,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/rest-api-router.ts",
-        "line": 100
+        "line": 101
       },
       "name": "AppTheoryRestApiRouterDomainOptions",
       "properties": [
@@ -17336,7 +17336,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 104
+            "line": 105
           },
           "name": "domainName",
           "type": {
@@ -17352,7 +17352,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 135
+            "line": 136
           },
           "name": "basePath",
           "optional": true,
@@ -17369,7 +17369,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 110
+            "line": 111
           },
           "name": "certificate",
           "optional": true,
@@ -17386,7 +17386,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 115
+            "line": 116
           },
           "name": "certificateArn",
           "optional": true,
@@ -17404,7 +17404,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 129
+            "line": 130
           },
           "name": "createAAAARecord",
           "optional": true,
@@ -17421,7 +17421,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 141
+            "line": 142
           },
           "name": "endpointType",
           "optional": true,
@@ -17439,7 +17439,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 122
+            "line": 123
           },
           "name": "hostedZone",
           "optional": true,
@@ -17456,7 +17456,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 147
+            "line": 148
           },
           "name": "securityPolicy",
           "optional": true,
@@ -17477,7 +17477,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/rest-api-router.ts",
-        "line": 153
+        "line": 154
       },
       "name": "AppTheoryRestApiRouterIntegrationOptions",
       "properties": [
@@ -17490,7 +17490,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 181
+            "line": 182
           },
           "name": "passthroughBehavior",
           "optional": true,
@@ -17507,7 +17507,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 175
+            "line": 176
           },
           "name": "requestTemplates",
           "optional": true,
@@ -17530,7 +17530,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 162
+            "line": 163
           },
           "name": "streaming",
           "optional": true,
@@ -17547,7 +17547,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 169
+            "line": 170
           },
           "name": "timeout",
           "optional": true,
@@ -17568,7 +17568,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/rest-api-router.ts",
-        "line": 187
+        "line": 188
       },
       "name": "AppTheoryRestApiRouterProps",
       "properties": [
@@ -17581,7 +17581,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 251
+            "line": 252
           },
           "name": "apiKeySourceType",
           "optional": true,
@@ -17597,7 +17597,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 191
+            "line": 192
           },
           "name": "apiName",
           "optional": true,
@@ -17615,7 +17615,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 227
+            "line": 228
           },
           "name": "binaryMediaTypes",
           "optional": true,
@@ -17638,7 +17638,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 208
+            "line": 209
           },
           "name": "cors",
           "optional": true,
@@ -17664,7 +17664,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 239
+            "line": 240
           },
           "name": "deploy",
           "optional": true,
@@ -17680,7 +17680,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 196
+            "line": 197
           },
           "name": "description",
           "optional": true,
@@ -17697,7 +17697,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 214
+            "line": 215
           },
           "name": "domain",
           "optional": true,
@@ -17714,7 +17714,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 220
+            "line": 221
           },
           "name": "endpointTypes",
           "optional": true,
@@ -17736,7 +17736,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 233
+            "line": 234
           },
           "name": "minimumCompressionSize",
           "optional": true,
@@ -17753,7 +17753,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 245
+            "line": 246
           },
           "name": "retainDeployments",
           "optional": true,
@@ -17769,7 +17769,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 201
+            "line": 202
           },
           "name": "stage",
           "optional": true,
@@ -17790,7 +17790,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/rest-api-router.ts",
-        "line": 50
+        "line": 51
       },
       "name": "AppTheoryRestApiRouterStageOptions",
       "properties": [
@@ -17803,7 +17803,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 76
+            "line": 77
           },
           "name": "accessLogFormat",
           "optional": true,
@@ -17821,7 +17821,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 63
+            "line": 64
           },
           "name": "accessLogging",
           "optional": true,
@@ -17848,7 +17848,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 70
+            "line": 71
           },
           "name": "accessLogRetention",
           "optional": true,
@@ -17865,7 +17865,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 82
+            "line": 83
           },
           "name": "detailedMetrics",
           "optional": true,
@@ -17882,7 +17882,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 55
+            "line": 56
           },
           "name": "stageName",
           "optional": true,
@@ -17899,7 +17899,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 94
+            "line": 95
           },
           "name": "throttlingBurstLimit",
           "optional": true,
@@ -17916,7 +17916,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 88
+            "line": 89
           },
           "name": "throttlingRateLimit",
           "optional": true,
@@ -19860,6 +19860,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "0.21.0",
-  "fingerprint": "CfzSFThPhdkcW8KzaZBcHYHZs2tBZsNz/clkb2KHiec="
+  "version": "0.22.0",
+  "fingerprint": "KJcEZevwvmXa/391dK/BN3K6GjCdVzWimijX0TMwY24="
 }
