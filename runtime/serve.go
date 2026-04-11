@@ -440,15 +440,34 @@ func (a *App) applyPolicy(
 	return a.httpErrorResponseWithRequestID(code, message, decision.Headers, requestID), code, true
 }
 
+func routeRequiresAuth(route route) bool {
+	return route.AuthRequired || len(route.RequiredScopes) > 0 || len(route.RequiredAnyScope) > 0
+}
+
+func routeShouldResolvePrincipal(route route) bool {
+	return route.OptionalAuth || routeRequiresAuth(route)
+}
+
+func (a *App) authorizeDenied(
+	code string,
+	message string,
+	request Request,
+	requestID string,
+	errorResponder requestErrorResponder,
+) (Response, string, bool) {
+	if errorResponder != nil {
+		return errorResponder(&AppError{Code: code, Message: message}, request, requestID), code, true
+	}
+	return a.httpErrorResponseWithRequestID(code, message, nil, requestID), code, true
+}
+
 func (a *App) authorize(
 	route route,
 	requestCtx *Context,
 	requestID string,
 	errorResponder requestErrorResponder,
 ) (Response, string, bool) {
-	requiresAuth := route.AuthRequired || len(route.RequiredScopes) > 0 || len(route.RequiredAnyScope) > 0
-	shouldResolvePrincipal := requiresAuth || route.OptionalAuth
-	if !shouldResolvePrincipal {
+	if !routeShouldResolvePrincipal(route) {
 		return Response{}, "", false
 	}
 
@@ -463,30 +482,21 @@ func (a *App) authorize(
 	}
 
 	if principal == nil {
-		if !requiresAuth {
+		if !routeRequiresAuth(route) {
 			return Response{}, "", false
 		}
-		if errorResponder != nil {
-			return errorResponder(&AppError{Code: errorCodeUnauthorized, Message: errorMessageUnauthorized}, requestCtx.Request, requestID), errorCodeUnauthorized, true
-		}
-		return a.httpErrorResponseWithRequestID(errorCodeUnauthorized, errorMessageUnauthorized, nil, requestID), errorCodeUnauthorized, true
+		return a.authorizeDenied(errorCodeUnauthorized, errorMessageUnauthorized, requestCtx.Request, requestID, errorResponder)
 	}
 
 	requestCtx.AuthIdentity = principal.Identity
 	requestCtx.AuthPrincipal = principal
 
 	if len(route.RequiredScopes) > 0 && !principalHasAllScopes(principal, route.RequiredScopes) {
-		if errorResponder != nil {
-			return errorResponder(&AppError{Code: errorCodeForbidden, Message: errorMessageForbidden}, requestCtx.Request, requestID), errorCodeForbidden, true
-		}
-		return a.httpErrorResponseWithRequestID(errorCodeForbidden, errorMessageForbidden, nil, requestID), errorCodeForbidden, true
+		return a.authorizeDenied(errorCodeForbidden, errorMessageForbidden, requestCtx.Request, requestID, errorResponder)
 	}
 
 	if len(route.RequiredAnyScope) > 0 && !principalHasAnyScope(principal, route.RequiredAnyScope) {
-		if errorResponder != nil {
-			return errorResponder(&AppError{Code: errorCodeForbidden, Message: errorMessageForbidden}, requestCtx.Request, requestID), errorCodeForbidden, true
-		}
-		return a.httpErrorResponseWithRequestID(errorCodeForbidden, errorMessageForbidden, nil, requestID), errorCodeForbidden, true
+		return a.authorizeDenied(errorCodeForbidden, errorMessageForbidden, requestCtx.Request, requestID, errorResponder)
 	}
 
 	return Response{}, "", false
