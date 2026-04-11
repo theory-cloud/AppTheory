@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.21.1](https://github.com/theory-cloud/AppTheory/compare/v0.21.0...v0.21.1) (2026-04-11)
+
+
+### Bug Fixes
+
+* **cdk-go:** sync jsii bindings for remote mcp discovery ([b3cc13a](https://github.com/theory-cloud/AppTheory/commit/b3cc13a2eaebbbc30a839008b9bf0a4ad6362bf3))
+* **cdk-go:** sync jsii bindings for remote mcp discovery ([0378a42](https://github.com/theory-cloud/AppTheory/commit/0378a4247fd1b78ebce2daa73fb6d89baea37739))
+* **cdk:** sync generated artifacts ([c8e41cd](https://github.com/theory-cloud/AppTheory/commit/c8e41cdda905c1b932febdfd6db14459f874f108))
+
 ## [0.21.0](https://github.com/theory-cloud/AppTheory/compare/v0.20.0...v0.21.0) (2026-04-11)
 
 
