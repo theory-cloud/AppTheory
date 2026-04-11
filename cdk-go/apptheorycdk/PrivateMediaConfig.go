@@ -25,4 +25,3 @@ type PrivateMediaConfig struct {
 	// Only used if keyGroup is not provided.
 	PublicKeyPem *string `field:"optional" json:"publicKeyPem" yaml:"publicKeyPem"`
 }
-

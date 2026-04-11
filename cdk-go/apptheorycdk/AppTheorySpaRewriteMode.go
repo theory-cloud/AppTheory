@@ -1,6 +1,5 @@
 package apptheorycdk
 
-
 type AppTheorySpaRewriteMode string
 
 const (
@@ -11,4 +10,3 @@ const (
 	// Useful for multi-page/static sites.
 	AppTheorySpaRewriteMode_NONE AppTheorySpaRewriteMode = "NONE"
 )
-

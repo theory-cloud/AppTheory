@@ -53,4 +53,3 @@ type AppTheoryJobsTableProps struct {
 	//
 	WriteCapacity *float64 `field:"optional" json:"writeCapacity" yaml:"writeCapacity"`
 }
-

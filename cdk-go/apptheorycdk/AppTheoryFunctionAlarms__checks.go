@@ -36,4 +36,3 @@ func validateNewAppTheoryFunctionAlarmsParameters(scope constructs.Construct, id
 
 	return nil
 }
-

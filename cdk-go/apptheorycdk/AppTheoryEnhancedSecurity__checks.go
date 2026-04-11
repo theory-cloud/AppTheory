@@ -75,4 +75,3 @@ func validateNewAppTheoryEnhancedSecurityParameters(scope constructs.Construct, 
 
 	return nil
 }
-

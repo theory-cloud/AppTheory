@@ -33,4 +33,3 @@ func validateNewAppTheoryS3IngestParameters(scope constructs.Construct, id *stri
 
 	return nil
 }
-
