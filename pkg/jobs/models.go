@@ -14,8 +14,10 @@ const (
 	jobMetaSortKey = "META"
 	jobLockSortKey = "LOCK"
 
-	jobRecordSortKeyPrefix  = "REC#"
-	jobRequestSortKeyPrefix = "REQ#"
+	jobRecordSortKeyPrefix      = "REC#"
+	jobRequestSortKeyPrefix     = "REQ#"
+	semaphorePartitionKeyPrefix = "SEM#"
+	semaphoreSlotSortKeyPrefix  = "SLOT#"
 )
 
 type jobsTableModel struct{}
@@ -45,6 +47,14 @@ func JobRecordSortKey(recordID string) string {
 
 func JobRequestSortKey(idempotencyKey string) string {
 	return jobRequestSortKeyPrefix + idempotencyKey
+}
+
+func SemaphorePartitionKey(scope, subject string) string {
+	return semaphorePartitionKeyPrefix + scope + "#" + subject
+}
+
+func SemaphoreSlotSortKey(slot int) string {
+	return fmt.Sprintf("%s%09d", semaphoreSlotSortKeyPrefix, slot)
 }
 
 type JobMeta struct {
@@ -173,4 +183,39 @@ func (r *JobRequest) String() string {
 		return "jobs.JobRequest<nil>"
 	}
 	return fmt.Sprintf("jobs.JobRequest{job_id:%q,key:%q,status:%q}", r.JobID, r.IdempotencyKey, r.Status)
+}
+
+type SemaphoreLease struct {
+	jobsTableModel
+	_ struct{} `theorydb:"naming:snake_case"`
+
+	PK string `theorydb:"pk" json:"pk"`
+	SK string `theorydb:"sk" json:"sk"`
+
+	Scope   string `json:"scope"`
+	Subject string `json:"subject"`
+	Slot    int    `json:"slot"`
+
+	LeaseOwner     string `json:"lease_owner"`
+	LeaseExpiresAt int64  `json:"lease_expires_at"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+
+	TTL int64 `json:"ttl,omitempty" theorydb:"ttl,omitempty"`
+}
+
+func NewSemaphoreLease(scope, subject string, slot int) SemaphoreLease {
+	lease := SemaphoreLease{
+		Scope:   scope,
+		Subject: subject,
+		Slot:    slot,
+	}
+	lease.SetKeys()
+	return lease
+}
+
+func (l *SemaphoreLease) SetKeys() {
+	l.PK = SemaphorePartitionKey(l.Scope, l.Subject)
+	l.SK = SemaphoreSlotSortKey(l.Slot)
 }

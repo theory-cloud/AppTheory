@@ -20,6 +20,8 @@ export declare function jobMetaSortKey(): string;
 export declare function jobRecordSortKey(recordId: string): string;
 export declare function jobLockSortKey(): string;
 export declare function jobRequestSortKey(idempotencyKey: string): string;
+export declare function semaphorePartitionKey(scope: string, subject: string): string;
+export declare function semaphoreSlotSortKey(slot: number): string;
 export type ErrorEnvelope = {
     type?: string;
     code?: string;
@@ -83,6 +85,24 @@ export type JobRequest = {
     completedAt?: string;
     ttl?: number;
 };
+export type SemaphoreLease = {
+    pk: string;
+    sk: string;
+    scope: string;
+    subject: string;
+    slot: number;
+    leaseOwner: string;
+    leaseExpiresAt: number;
+    createdAt: string;
+    updatedAt: string;
+    ttl?: number;
+};
+export type SemaphoreInspection = {
+    scope: string;
+    subject: string;
+    occupancy: number;
+    activeLeases: SemaphoreLease[];
+};
 export type CreateJobInput = {
     jobId: string;
     tenantId: string;
@@ -118,6 +138,32 @@ export type ReleaseLeaseInput = {
     jobId: string;
     owner: string;
 };
+export type AcquireSemaphoreSlotInput = {
+    scope: string;
+    subject: string;
+    limit: number;
+    owner: string;
+    leaseDurationMs?: number;
+    ttlSeconds?: number;
+};
+export type RefreshSemaphoreSlotInput = {
+    scope: string;
+    subject: string;
+    slot: number;
+    owner: string;
+    leaseDurationMs?: number;
+    ttlSeconds?: number;
+};
+export type ReleaseSemaphoreSlotInput = {
+    scope: string;
+    subject: string;
+    slot: number;
+    owner: string;
+};
+export type InspectSemaphoreInput = {
+    scope: string;
+    subject: string;
+};
 export type CreateIdempotencyRecordInput = {
     jobId: string;
     idempotencyKey: string;
@@ -146,6 +192,10 @@ export declare class DynamoJobLedger {
     acquireLease(input: AcquireLeaseInput): Promise<JobLock>;
     refreshLease(input: RefreshLeaseInput): Promise<JobLock>;
     releaseLease(input: ReleaseLeaseInput): Promise<void>;
+    acquireSemaphoreSlot(input: AcquireSemaphoreSlotInput): Promise<SemaphoreLease>;
+    refreshSemaphoreSlot(input: RefreshSemaphoreSlotInput): Promise<SemaphoreLease>;
+    releaseSemaphoreSlot(input: ReleaseSemaphoreSlotInput): Promise<void>;
+    inspectSemaphore(input: InspectSemaphoreInput): Promise<SemaphoreInspection>;
     createIdempotencyRecord(input: CreateIdempotencyRecordInput): Promise<{
         request: JobRequest;
         outcome: IdempotencyCreateOutcome;
