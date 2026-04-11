@@ -328,26 +328,17 @@ func (d *DynamoStreamStore) pumpSubscription(ctx context.Context, sessionID, str
 	defer ticker.Stop()
 
 	cursor := afterEventID
+	drainAfterClose := false
 	for {
 		records, err := d.loadEventsAfter(ctx, sessionID, cursor)
 		if err != nil {
 			return
 		}
 
-		for _, record := range records {
-			cursor = record.EventID
-			if record.StreamID != streamID {
-				continue
-			}
-
-			payload := make([]byte, len(record.Data))
-			copy(payload, record.Data)
-
-			select {
-			case <-ctx.Done():
-				return
-			case out <- StreamEvent{ID: record.EventID, Data: payload}:
-			}
+		var ok bool
+		cursor, ok = forwardDynamoSubscriptionEvents(ctx, streamID, cursor, records, out)
+		if !ok {
+			return
 		}
 
 		if len(records) >= d.queryBatchSize() {
@@ -362,6 +353,16 @@ func (d *DynamoStreamStore) pumpSubscription(ctx context.Context, sessionID, str
 			return
 		}
 		if closed {
+			if drainAfterClose {
+				return
+			}
+			// The stream may have closed after the previous query but before we
+			// observed the metadata update. Drain one immediate post-close pass so
+			// we do not drop the final result event.
+			drainAfterClose = true
+			continue
+		}
+		if drainAfterClose {
 			return
 		}
 
@@ -371,6 +372,33 @@ func (d *DynamoStreamStore) pumpSubscription(ctx context.Context, sessionID, str
 		case <-ticker.C:
 		}
 	}
+}
+
+func forwardDynamoSubscriptionEvents(
+	ctx context.Context,
+	streamID string,
+	startCursor string,
+	records []dynamoStreamRecord,
+	out chan<- StreamEvent,
+) (string, bool) {
+	cursor := startCursor
+	for _, record := range records {
+		cursor = record.EventID
+		if record.StreamID != streamID {
+			continue
+		}
+
+		payload := make([]byte, len(record.Data))
+		copy(payload, record.Data)
+
+		select {
+		case <-ctx.Done():
+			return cursor, false
+		case out <- StreamEvent{ID: record.EventID, Data: payload}:
+		}
+	}
+
+	return cursor, true
 }
 
 func (d *DynamoStreamStore) loadEventsAfter(ctx context.Context, sessionID, afterEventID string) ([]dynamoStreamRecord, error) {

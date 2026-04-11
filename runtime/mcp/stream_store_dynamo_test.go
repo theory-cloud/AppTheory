@@ -332,6 +332,61 @@ func TestDynamoStreamStore_ServerReplayFromSecondInstance(t *testing.T) {
 	require.NotContains(t, all, `"progress":1`)
 }
 
+func TestDynamoStreamStore_SubscribeDrainsTailEventsAfterClose(t *testing.T) {
+	db := newFakeMCPTableDB()
+	store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	require.True(t, ok)
+
+	streamID, err := store.Create(context.Background(), "sess-1")
+	require.NoError(t, err)
+
+	eventID1, err := store.Append(context.Background(), "sess-1", streamID, json.RawMessage(`{"kind":"progress","seq":1}`))
+	require.NoError(t, err)
+	eventID2, err := store.Append(context.Background(), "sess-1", streamID, json.RawMessage(`{"kind":"progress","seq":2}`))
+	require.NoError(t, err)
+
+	finalData := json.RawMessage(`{"jsonrpc":"2.0","result":{"ok":true}}`)
+	hookErrCh := make(chan error, 1)
+	var injected sync.Once
+
+	db.afterMatchStreamRecords = func(q *fakeMCPTableQuery, records []dynamoStreamRecord) {
+		afterEventID, ok := q.whereString("EventID", ">")
+		if !ok || afterEventID != eventID1 {
+			return
+		}
+		if len(records) != 1 || records[0].EventID != eventID2 {
+			return
+		}
+
+		injected.Do(func() {
+			if _, appendErr := store.Append(context.Background(), "sess-1", streamID, finalData); appendErr != nil {
+				hookErrCh <- appendErr
+				return
+			}
+			if closeErr := store.Close(context.Background(), "sess-1", streamID); closeErr != nil {
+				hookErrCh <- closeErr
+			}
+		})
+	}
+
+	ch, err := store.Subscribe(context.Background(), "sess-1", streamID, eventID1)
+	require.NoError(t, err)
+
+	ev := requireStreamEvent(t, ch)
+	require.Equal(t, eventID2, ev.ID)
+	require.JSONEq(t, string(json.RawMessage(`{"kind":"progress","seq":2}`)), string(ev.Data))
+
+	ev = requireStreamEvent(t, ch)
+	require.JSONEq(t, string(finalData), string(ev.Data))
+	requireStreamClosed(t, ch)
+
+	select {
+	case hookErr := <-hookErrCh:
+		require.NoError(t, hookErr)
+	default:
+	}
+}
+
 func TestDELETE_WithDynamoStreamStore_RemovesStreamState(t *testing.T) {
 	db := newFakeMCPTableDB()
 	sessionStore := NewDynamoSessionStore(db)
@@ -463,6 +518,7 @@ type fakeMCPTableDB struct {
 	session                 map[string]sessionRecord
 	streams                 map[string]map[string]dynamoStreamRecord
 	beforeCreateStreamEvent func(dynamoStreamRecord)
+	afterMatchStreamRecords func(*fakeMCPTableQuery, []dynamoStreamRecord)
 }
 
 func newFakeMCPTableDB() *fakeMCPTableDB {
@@ -990,10 +1046,9 @@ func (q *fakeMCPTableQuery) matchStreamRecords() []dynamoStreamRecord {
 	}
 
 	q.db.mu.Lock()
-	defer q.db.mu.Unlock()
-
 	session := q.db.streams[sessionID]
 	if session == nil {
+		q.db.mu.Unlock()
 		return nil
 	}
 
@@ -1003,6 +1058,7 @@ func (q *fakeMCPTableQuery) matchStreamRecords() []dynamoStreamRecord {
 			out = append(out, record)
 		}
 	}
+	q.db.mu.Unlock()
 
 	sort.Slice(out, func(i, j int) bool {
 		if q.orderField != "EventID" {
@@ -1016,6 +1072,11 @@ func (q *fakeMCPTableQuery) matchStreamRecords() []dynamoStreamRecord {
 
 	if q.limit > 0 && len(out) > q.limit {
 		out = out[:q.limit]
+	}
+
+	if hook := q.db.afterMatchStreamRecords; hook != nil {
+		records := append([]dynamoStreamRecord(nil), out...)
+		hook(q, records)
 	}
 
 	return out
