@@ -291,13 +291,12 @@ func parseBoundValue(field reflect.Value, raw string) error {
 }
 
 func bindBadRequest(message string, cause error) *AppTheoryError {
-	err := NewAppTheoryError(errorCodeBadRequest, strings.TrimSpace(message))
+	err := NewAppTheoryError(errorCodeBadRequest, strings.TrimSpace(message)).WithStatusCode(400)
 	if err.Message == "" {
 		err.Message = bindErrorMessageInvalidBinding
 	}
-	err.WithStatusCode(400)
 	if cause != nil {
-		err.WithCause(cause)
+		err = err.WithCause(cause)
 	}
 	return err
 }
@@ -318,8 +317,8 @@ func normalizeValidationError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if _, ok := AsAppTheoryError(err); ok {
-		return err
+	if appErr, ok := AsAppTheoryError(err); ok {
+		return appErr
 	}
 	var appErr *AppError
 	if errors.As(err, &appErr) {

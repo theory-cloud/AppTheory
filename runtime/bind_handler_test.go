@@ -100,7 +100,10 @@ func TestBindHandlerContext_UsesStdContextAndCustomStatus(t *testing.T) {
 		Body:          true,
 		SuccessStatus: 201,
 	}, func(ctx context.Context, req requestModel) (responseModel, error) {
-		value, _ := ctx.Value(key).(string)
+		value, ok := ctx.Value(key).(string)
+		if !ok {
+			return responseModel{}, errors.New("missing bound context value")
+		}
 		return responseModel{Value: value + ":" + req.Name}, nil
 	})
 
