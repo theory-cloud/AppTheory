@@ -18,6 +18,7 @@ type Context struct {
 	RequestID       string
 	TenantID        string
 	AuthIdentity    string
+	AuthPrincipal   *AuthPrincipal
 	RemainingMS     int
 	MiddlewareTrace []string
 
@@ -67,6 +68,36 @@ func (c *Context) Param(name string) string {
 		return ""
 	}
 	return c.Params[name]
+}
+
+func (c *Context) Header(name string) string {
+	if c == nil {
+		return ""
+	}
+	return firstHeaderValue(c.Request.Headers, name)
+}
+
+func (c *Context) Query(name string) string {
+	values := c.QueryAll(name)
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func (c *Context) QueryAll(name string) []string {
+	if c == nil || c.Request.Query == nil {
+		return nil
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	values := c.Request.Query[name]
+	if len(values) == 0 {
+		return nil
+	}
+	return append([]string(nil), values...)
 }
 
 func (c *Context) JSONValue() (any, error) {

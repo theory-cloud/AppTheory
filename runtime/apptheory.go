@@ -13,6 +13,7 @@ type App struct {
 	limits           Limits
 	cors             CORSConfig
 	auth             AuthHook
+	principalAuth    PrincipalAuthHook
 	obs              ObservabilityHooks
 	policy           PolicyHook
 	middlewares      []Middleware
@@ -119,6 +120,7 @@ func WithLimits(limits Limits) Option {
 func WithAuthHook(hook AuthHook) Option {
 	return func(app *App) {
 		app.auth = hook
+		app.principalAuth = nil
 	}
 }
 
