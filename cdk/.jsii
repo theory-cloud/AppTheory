@@ -16481,7 +16481,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/remote-mcp-server.ts",
-          "line": 146
+          "line": 157
         },
         "parameters": [
           {
@@ -16507,7 +16507,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/remote-mcp-server.ts",
-        "line": 125
+        "line": 136
       },
       "name": "AppTheoryRemoteMcpServer",
       "properties": [
@@ -16518,7 +16518,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 134
+            "line": 145
           },
           "name": "endpoint",
           "type": {
@@ -16532,7 +16532,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 129
+            "line": 140
           },
           "name": "router",
           "type": {
@@ -16546,7 +16546,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 139
+            "line": 150
           },
           "name": "sessionTable",
           "optional": true,
@@ -16561,7 +16561,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 144
+            "line": 155
           },
           "name": "streamTable",
           "optional": true,
@@ -16707,7 +16707,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 79
+            "line": 90
           },
           "name": "enableSessionTable",
           "optional": true,
@@ -16725,9 +16725,27 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 101
+            "line": 112
           },
           "name": "enableStreamTable",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "remarks": "This lets the construct own the final MCP discovery route alongside the\ntransport and protected-resource metadata routes. The handler remains\nresponsible for serving the discovery document content.",
+            "summary": "Register `GET /.well-known/mcp.json` and route it to the handler."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/remote-mcp-server.ts",
+            "line": 84
+          },
+          "name": "enableWellKnownMcpDiscovery",
           "optional": true,
           "type": {
             "primitive": "boolean"
@@ -16742,7 +16760,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 85
+            "line": 96
           },
           "name": "sessionTableName",
           "optional": true,
@@ -16759,7 +16777,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 91
+            "line": 102
           },
           "name": "sessionTtlMinutes",
           "optional": true,
@@ -16793,7 +16811,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 107
+            "line": 118
           },
           "name": "streamTableName",
           "optional": true,
@@ -16810,7 +16828,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 113
+            "line": 124
           },
           "name": "streamTtlMinutes",
           "optional": true,
@@ -19843,5 +19861,5 @@
     }
   },
   "version": "0.20.0",
-  "fingerprint": "GHr+UUMtf3qQ4dxs13bDT6xDtngfeRV5WK+9+mg6qRk="
+  "fingerprint": "iXJL+nThKOCPU0R8XVrIcWVjgdjN0yB/8iSSvBbIToA="
 }
