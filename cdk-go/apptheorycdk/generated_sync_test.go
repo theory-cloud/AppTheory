@@ -42,6 +42,36 @@ func TestGeneratedJsiiVersionMatchesRepoVersion(t *testing.T) {
 	}
 }
 
+func TestGeneratedCdkRuntimeMetadataMatchesRepoVersion(t *testing.T) {
+	dir := packageDir(t)
+	wantVersion := repoVersion(t, dir)
+
+	_jsiiAssembly := readText(t, filepath.Join(dir, "..", "..", "cdk", ".jsii"))
+	if !strings.Contains(_jsiiAssembly, fmt.Sprintf(`"version": "%s"`, wantVersion)) {
+		t.Fatalf("expected cdk/.jsii to reference version %q", wantVersion)
+	}
+
+	libFiles, err := filepath.Glob(filepath.Join(dir, "..", "..", "cdk", "lib", "*.js"))
+	if err != nil {
+		t.Fatalf("failed to glob cdk/lib/*.js: %v", err)
+	}
+	if len(libFiles) == 0 {
+		t.Fatal("expected generated files in cdk/lib")
+	}
+
+	wantMarker := fmt.Sprintf(`version: "%s"`, wantVersion)
+	staleFiles := make([]string, 0)
+	for _, path := range libFiles {
+		text := readText(t, path)
+		if strings.Contains(text, `version: "`) && !strings.Contains(text, wantMarker) {
+			staleFiles = append(staleFiles, filepath.Base(path))
+		}
+	}
+	if len(staleFiles) != 0 {
+		t.Fatalf("expected cdk/lib runtime metadata to reference %q, stale files: %s", wantVersion, strings.Join(staleFiles, ", "))
+	}
+}
+
 func packageDir(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
