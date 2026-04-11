@@ -57,6 +57,16 @@ export interface AppTheoryRemoteMcpServerProps {
      */
     readonly actorPath?: boolean;
     /**
+     * Register `GET /.well-known/mcp.json` and route it to the handler.
+     *
+     * This lets the construct own the final MCP discovery route alongside the
+     * transport and protected-resource metadata routes. The handler remains
+     * responsible for serving the discovery document content.
+     *
+     * @default false
+     */
+    readonly enableWellKnownMcpDiscovery?: boolean;
+    /**
      * Create a DynamoDB table for MCP session storage.
      * @default false
      */

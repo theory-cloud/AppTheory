@@ -65,6 +65,14 @@ def job_request_sort_key(idempotency_key: str) -> str:
     return f"REQ#{idempotency_key}"
 
 
+def semaphore_partition_key(scope: str, subject: str) -> str:
+    return f"SEM#{scope}#{subject}"
+
+
+def semaphore_slot_sort_key(slot: int) -> str:
+    return f"SLOT#{max(0, int(slot)):09d}"
+
+
 def unix_seconds(value: dt.datetime) -> int:
     return int(value.timestamp())
 
@@ -207,10 +215,29 @@ class JobRequest:
     ttl: int = _n("ttl", roles=["ttl"], omitempty=True)
 
 
+@dataclass(slots=True)
+class SemaphoreLease:
+    pk: str = _s("pk", roles=["pk"])
+    sk: str = _s("sk", roles=["sk"])
+
+    scope: str = _s("scope")
+    subject: str = _s("subject")
+    slot: int = _n("slot")
+
+    lease_owner: str = _s("lease_owner")
+    lease_expires_at: int = _n("lease_expires_at")
+
+    created_at: str = _s("created_at")
+    updated_at: str = _s("updated_at")
+
+    ttl: int = _n("ttl", roles=["ttl"], omitempty=True)
+
+
 _JOB_META_MODEL = ModelDefinition.from_dataclass(JobMeta, table_name=None)
 _JOB_RECORD_MODEL = ModelDefinition.from_dataclass(JobRecord, table_name=None)
 _JOB_LOCK_MODEL = ModelDefinition.from_dataclass(JobLock, table_name=None)
 _JOB_REQUEST_MODEL = ModelDefinition.from_dataclass(JobRequest, table_name=None)
+_SEMAPHORE_LEASE_MODEL = ModelDefinition.from_dataclass(SemaphoreLease, table_name=None)
 
 
 @dataclass(slots=True)
@@ -244,6 +271,7 @@ class DynamoJobLedger:
     meta_table: Any
     record_table: Any
     lock_table: Any
+    semaphore_table: Any
     request_table: Any
     config: JobsConfig
     clock: Clock
@@ -254,6 +282,7 @@ class DynamoJobLedger:
         meta_table: Any | None = None,
         record_table: Any | None = None,
         lock_table: Any | None = None,
+        semaphore_table: Any | None = None,
         request_table: Any | None = None,
         config: JobsConfig | None = None,
         clock: Clock | None = None,
@@ -264,6 +293,7 @@ class DynamoJobLedger:
         self.meta_table = meta_table or Table(_JOB_META_MODEL, table_name=table_name)
         self.record_table = record_table or Table(_JOB_RECORD_MODEL, table_name=table_name)
         self.lock_table = lock_table or Table(_JOB_LOCK_MODEL, table_name=table_name)
+        self.semaphore_table = semaphore_table or Table(_SEMAPHORE_LEASE_MODEL, table_name=table_name)
         self.request_table = request_table or Table(_JOB_REQUEST_MODEL, table_name=table_name)
 
         self.clock = clock or RealClock()
@@ -538,6 +568,190 @@ class DynamoJobLedger:
             return
         if str(getattr(current, "lease_owner", "") or "") != owner:
             raise new_error("conflict", "lease not owned")
+
+    def acquire_semaphore_slot(
+        self,
+        *,
+        scope: str,
+        subject: str,
+        limit: int,
+        owner: str,
+        lease_duration: dt.timedelta | None = None,
+        ttl: dt.timedelta | None = None,
+    ) -> SemaphoreLease:
+        scope = str(scope or "").strip()
+        subject = str(subject or "").strip()
+        owner = str(owner or "").strip()
+        if not scope:
+            raise new_error("invalid_input", "scope is required")
+        if not subject:
+            raise new_error("invalid_input", "subject is required")
+        if int(limit) <= 0:
+            raise new_error("invalid_input", "limit must be > 0")
+        if not owner:
+            raise new_error("invalid_input", "owner is required")
+
+        duration = lease_duration if lease_duration is not None else self.config.default_lease_duration
+        if not duration or duration <= dt.timedelta(0):
+            raise new_error("invalid_input", "lease_duration must be > 0")
+
+        now = self.clock.now()
+        now_str = format_rfc3339_nano(now)
+        now_unix = unix_seconds(now)
+        expires_at = unix_seconds(now + duration)
+        ttl_unix = _normalize_ttl_unix_seconds(now, ttl, dt.timedelta(0))
+        pk = semaphore_partition_key(scope, subject)
+
+        for slot in range(int(limit)):
+            sk = semaphore_slot_sort_key(slot)
+            try:
+                return self.semaphore_table.update(
+                    pk,
+                    sk,
+                    {
+                        "scope": UpdateSetIfNotExists(scope),
+                        "subject": UpdateSetIfNotExists(subject),
+                        "slot": UpdateSetIfNotExists(slot),
+                        "lease_owner": owner,
+                        "lease_expires_at": expires_at,
+                        "created_at": UpdateSetIfNotExists(now_str),
+                        "updated_at": now_str,
+                        **({"ttl": ttl_unix} if ttl_unix > 0 else {}),
+                    },
+                    condition_expression=(
+                        "attribute_not_exists(#lease_expires_at) OR #lease_expires_at < :now OR #lease_owner = :owner"
+                    ),
+                    expression_attribute_names={"#lease_expires_at": "lease_expires_at", "#lease_owner": "lease_owner"},
+                    expression_attribute_values={":now": now_unix, ":owner": owner},
+                )
+            except Exception as exc:
+                if isinstance(exc, ConditionFailedError):
+                    continue
+                raise wrap_error(exc, "internal_error", "failed to acquire semaphore slot") from exc
+
+        raise new_error("conflict", "semaphore full")
+
+    def refresh_semaphore_slot(
+        self,
+        *,
+        scope: str,
+        subject: str,
+        slot: int,
+        owner: str,
+        lease_duration: dt.timedelta | None = None,
+        ttl: dt.timedelta | None = None,
+    ) -> SemaphoreLease:
+        scope = str(scope or "").strip()
+        subject = str(subject or "").strip()
+        owner = str(owner or "").strip()
+        if not scope:
+            raise new_error("invalid_input", "scope is required")
+        if not subject:
+            raise new_error("invalid_input", "subject is required")
+        if int(slot) < 0:
+            raise new_error("invalid_input", "slot must be >= 0")
+        if not owner:
+            raise new_error("invalid_input", "owner is required")
+
+        duration = lease_duration if lease_duration is not None else self.config.default_lease_duration
+        if not duration or duration <= dt.timedelta(0):
+            raise new_error("invalid_input", "lease_duration must be > 0")
+
+        now = self.clock.now()
+        now_str = format_rfc3339_nano(now)
+        now_unix = unix_seconds(now)
+        expires_at = unix_seconds(now + duration)
+        ttl_unix = _normalize_ttl_unix_seconds(now, ttl, dt.timedelta(0))
+        pk = semaphore_partition_key(scope, subject)
+        sk = semaphore_slot_sort_key(int(slot))
+
+        try:
+            return self.semaphore_table.update(
+                pk,
+                sk,
+                {
+                    "lease_expires_at": expires_at,
+                    "updated_at": now_str,
+                    **({"ttl": ttl_unix} if ttl_unix > 0 else {}),
+                },
+                condition_expression="#lease_owner = :owner AND #lease_expires_at > :now",
+                expression_attribute_names={"#lease_owner": "lease_owner", "#lease_expires_at": "lease_expires_at"},
+                expression_attribute_values={":owner": owner, ":now": now_unix},
+            )
+        except Exception as exc:
+            if isinstance(exc, ConditionFailedError):
+                raise new_error("conflict", "semaphore slot refresh conflict") from exc
+            raise wrap_error(exc, "internal_error", "failed to refresh semaphore slot") from exc
+
+    def release_semaphore_slot(self, *, scope: str, subject: str, slot: int, owner: str) -> None:
+        scope = str(scope or "").strip()
+        subject = str(subject or "").strip()
+        owner = str(owner or "").strip()
+        if not scope:
+            raise new_error("invalid_input", "scope is required")
+        if not subject:
+            raise new_error("invalid_input", "subject is required")
+        if int(slot) < 0:
+            raise new_error("invalid_input", "slot must be >= 0")
+        if not owner:
+            raise new_error("invalid_input", "owner is required")
+
+        pk = semaphore_partition_key(scope, subject)
+        sk = semaphore_slot_sort_key(int(slot))
+        now_str = format_rfc3339_nano(self.clock.now())
+
+        try:
+            self.semaphore_table.update(
+                pk,
+                sk,
+                {
+                    "lease_owner": "",
+                    "lease_expires_at": 0,
+                    "updated_at": now_str,
+                },
+                condition_expression="#lease_owner = :owner",
+                expression_attribute_names={"#lease_owner": "lease_owner"},
+                expression_attribute_values={":owner": owner},
+            )
+            return
+        except Exception as exc:
+            if not isinstance(exc, ConditionFailedError):
+                raise wrap_error(exc, "internal_error", "failed to release semaphore slot") from exc
+
+        try:
+            current = self.semaphore_table.get(pk, sk)
+        except NotFoundError:
+            return
+        except Exception as exc:
+            raise wrap_error(exc, "internal_error", "failed to load semaphore slot after release conflict") from exc
+
+        if not getattr(current, "lease_owner", ""):
+            return
+        if str(getattr(current, "lease_owner", "") or "") != owner:
+            raise new_error("conflict", "semaphore slot not owned")
+
+    def inspect_semaphore(self, *, scope: str, subject: str) -> dict[str, Any]:
+        scope = str(scope or "").strip()
+        subject = str(subject or "").strip()
+        if not scope:
+            raise new_error("invalid_input", "scope is required")
+        if not subject:
+            raise new_error("invalid_input", "subject is required")
+
+        now_unix = unix_seconds(self.clock.now())
+        try:
+            leases = list(self.semaphore_table.query_all(semaphore_partition_key(scope, subject)))
+        except Exception as exc:
+            raise wrap_error(exc, "internal_error", "failed to inspect semaphore") from exc
+
+        active = [lease for lease in leases if int(getattr(lease, "lease_expires_at", 0) or 0) > now_unix]
+        active.sort(key=lambda lease: int(getattr(lease, "slot", 0) or 0))
+        return {
+            "scope": scope,
+            "subject": subject,
+            "occupancy": len(active),
+            "active_leases": active,
+        }
 
     def create_idempotency_record(
         self,

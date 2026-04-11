@@ -2153,6 +2153,38 @@ test("AppTheoryRemoteMcpServer (actor path) synthesizes expected template", () =
   }
 });
 
+test("AppTheoryRemoteMcpServer can register /.well-known/mcp.json", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
+    handler: fn,
+    apiName: "apptheory-remote-mcp-discovery-test",
+    actorPath: true,
+    enableWellKnownMcpDiscovery: true,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const methodPaths = restApiMethodPaths(template);
+
+  assert.ok(
+    methodPaths.some((m) => m.method === "GET" && m.path === "/.well-known/mcp.json"),
+    "Should have GET /.well-known/mcp.json method",
+  );
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("remote-mcp-server-discovery", template);
+  } else {
+    expectSnapshot("remote-mcp-server-discovery", template);
+  }
+});
+
 test("AppTheoryRemoteMcpServer (with tables) synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");

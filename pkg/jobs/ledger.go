@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"time"
 
@@ -306,6 +307,208 @@ func (l *DynamoJobLedger) ReleaseLease(ctx context.Context, in ReleaseLeaseInput
 	return WrapError(getErr, ErrorTypeInternal, "failed to load lease after release conflict")
 }
 
+func (l *DynamoJobLedger) AcquireSemaphoreSlot(ctx context.Context, in AcquireSemaphoreSlotInput) (*SemaphoreLease, error) {
+	ctx = normalizeContext(ctx)
+	if err := validateSemaphoreKey(in.Scope, in.Subject); err != nil {
+		return nil, err
+	}
+	if in.Limit <= 0 {
+		return nil, NewError(ErrorTypeInvalidInput, "limit must be > 0")
+	}
+	if strings.TrimSpace(in.Owner) == "" {
+		return nil, NewError(ErrorTypeInvalidInput, "owner is required")
+	}
+
+	leaseDuration := in.LeaseDuration
+	if leaseDuration <= 0 {
+		leaseDuration = l.config.DefaultLeaseDuration
+	}
+	if leaseDuration <= 0 {
+		return nil, NewError(ErrorTypeInvalidInput, "lease_duration must be > 0")
+	}
+
+	now := l.clock.Now().UTC()
+	expiresAt := now.Add(leaseDuration).Unix()
+	pk := SemaphorePartitionKey(in.Scope, in.Subject)
+
+	for slot := 0; slot < in.Limit; slot++ {
+		sk := SemaphoreSlotSortKey(slot)
+		ub := l.db.Model(&SemaphoreLease{}).
+			WithContext(ctx).
+			Where("PK", "=", pk).
+			Where("SK", "=", sk).
+			UpdateBuilder().
+			SetIfNotExists("Scope", nil, in.Scope).
+			SetIfNotExists("Subject", nil, in.Subject).
+			SetIfNotExists("Slot", nil, slot).
+			Set("LeaseOwner", in.Owner).
+			Set("LeaseExpiresAt", expiresAt).
+			SetIfNotExists("CreatedAt", nil, now).
+			Set("UpdatedAt", now)
+
+		if ttl := normalizeTTLUnixSeconds(now, in.TTL, 0); ttl > 0 {
+			ub = ub.Set("TTL", ttl)
+		}
+
+		ub.ConditionNotExists("LeaseExpiresAt")
+		ub.OrCondition("LeaseExpiresAt", "<", now.Unix())
+		ub.OrCondition("LeaseOwner", "=", in.Owner)
+
+		var out SemaphoreLease
+		if err := ub.ExecuteWithResult(&out); err != nil {
+			if tableerrors.IsConditionFailed(err) {
+				continue
+			}
+			return nil, WrapError(err, ErrorTypeInternal, "failed to acquire semaphore slot")
+		}
+
+		return &out, nil
+	}
+
+	return nil, NewError(ErrorTypeConflict, "semaphore full")
+}
+
+func (l *DynamoJobLedger) RefreshSemaphoreSlot(ctx context.Context, in RefreshSemaphoreSlotInput) (*SemaphoreLease, error) {
+	ctx = normalizeContext(ctx)
+	if err := validateSemaphoreKey(in.Scope, in.Subject); err != nil {
+		return nil, err
+	}
+	if err := validateSemaphoreSlot(in.Slot); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(in.Owner) == "" {
+		return nil, NewError(ErrorTypeInvalidInput, "owner is required")
+	}
+
+	leaseDuration := in.LeaseDuration
+	if leaseDuration <= 0 {
+		leaseDuration = l.config.DefaultLeaseDuration
+	}
+	if leaseDuration <= 0 {
+		return nil, NewError(ErrorTypeInvalidInput, "lease_duration must be > 0")
+	}
+
+	now := l.clock.Now().UTC()
+	expiresAt := now.Add(leaseDuration).Unix()
+	pk := SemaphorePartitionKey(in.Scope, in.Subject)
+	sk := SemaphoreSlotSortKey(in.Slot)
+
+	q := l.db.Model(&SemaphoreLease{}).
+		WithContext(ctx).
+		Where("PK", "=", pk).
+		Where("SK", "=", sk).
+		IfExists()
+
+	ub := q.UpdateBuilder().
+		Set("LeaseExpiresAt", expiresAt).
+		Set("UpdatedAt", now).
+		Condition("LeaseOwner", "=", in.Owner).
+		Condition("LeaseExpiresAt", ">", now.Unix())
+
+	if ttl := normalizeTTLUnixSeconds(now, in.TTL, 0); ttl > 0 {
+		ub = ub.Set("TTL", ttl)
+	}
+
+	var out SemaphoreLease
+	if err := ub.ExecuteWithResult(&out); err != nil {
+		if tableerrors.IsConditionFailed(err) {
+			return nil, NewError(ErrorTypeConflict, "semaphore slot refresh conflict")
+		}
+		return nil, WrapError(err, ErrorTypeInternal, "failed to refresh semaphore slot")
+	}
+
+	return &out, nil
+}
+
+func (l *DynamoJobLedger) ReleaseSemaphoreSlot(ctx context.Context, in ReleaseSemaphoreSlotInput) error {
+	ctx = normalizeContext(ctx)
+	if err := validateSemaphoreKey(in.Scope, in.Subject); err != nil {
+		return err
+	}
+	if err := validateSemaphoreSlot(in.Slot); err != nil {
+		return err
+	}
+	if strings.TrimSpace(in.Owner) == "" {
+		return NewError(ErrorTypeInvalidInput, "owner is required")
+	}
+
+	pk := SemaphorePartitionKey(in.Scope, in.Subject)
+	sk := SemaphoreSlotSortKey(in.Slot)
+
+	err := l.db.Model(&SemaphoreLease{}).
+		WithContext(ctx).
+		Where("PK", "=", pk).
+		Where("SK", "=", sk).
+		WithCondition("LeaseOwner", "=", in.Owner).
+		Delete()
+	if err == nil {
+		return nil
+	}
+	if !tableerrors.IsConditionFailed(err) {
+		return WrapError(err, ErrorTypeInternal, "failed to release semaphore slot")
+	}
+
+	var current SemaphoreLease
+	getErr := l.db.Model(&SemaphoreLease{}).
+		WithContext(ctx).
+		Where("PK", "=", pk).
+		Where("SK", "=", sk).
+		First(&current)
+	if getErr == nil {
+		if current.LeaseOwner != in.Owner {
+			return NewError(ErrorTypeConflict, "semaphore slot not owned")
+		}
+		return nil
+	}
+	if tableerrors.IsNotFound(getErr) {
+		return nil
+	}
+	return WrapError(getErr, ErrorTypeInternal, "failed to load semaphore slot after release conflict")
+}
+
+func (l *DynamoJobLedger) InspectSemaphore(ctx context.Context, in InspectSemaphoreInput) (*SemaphoreInspection, error) {
+	ctx = normalizeContext(ctx)
+	if err := validateSemaphoreKey(in.Scope, in.Subject); err != nil {
+		return nil, err
+	}
+
+	pk := SemaphorePartitionKey(in.Scope, in.Subject)
+
+	var leases []SemaphoreLease
+	err := l.db.Model(&SemaphoreLease{}).
+		WithContext(ctx).
+		Where("PK", "=", pk).
+		All(&leases)
+	if err != nil {
+		if tableerrors.IsNotFound(err) {
+			return &SemaphoreInspection{
+				Scope:   in.Scope,
+				Subject: in.Subject,
+			}, nil
+		}
+		return nil, WrapError(err, ErrorTypeInternal, "failed to inspect semaphore")
+	}
+
+	nowUnix := l.clock.Now().UTC().Unix()
+	active := make([]SemaphoreLease, 0, len(leases))
+	for _, lease := range leases {
+		if lease.LeaseExpiresAt > nowUnix {
+			active = append(active, lease)
+		}
+	}
+
+	sort.Slice(active, func(i, j int) bool {
+		return active[i].Slot < active[j].Slot
+	})
+
+	return &SemaphoreInspection{
+		Scope:        in.Scope,
+		Subject:      in.Subject,
+		Occupancy:    len(active),
+		ActiveLeases: active,
+	}, nil
+}
+
 func (l *DynamoJobLedger) CreateIdempotencyRecord(ctx context.Context, in CreateIdempotencyRecordInput) (*JobRequest, IdempotencyCreateOutcome, error) {
 	ctx = normalizeContext(ctx)
 	if err := validateJobID(in.JobID); err != nil {
@@ -406,6 +609,23 @@ func normalizeContext(ctx context.Context) context.Context {
 func validateJobID(jobID string) error {
 	if strings.TrimSpace(jobID) == "" {
 		return NewError(ErrorTypeInvalidInput, "job_id is required")
+	}
+	return nil
+}
+
+func validateSemaphoreKey(scope, subject string) error {
+	if strings.TrimSpace(scope) == "" {
+		return NewError(ErrorTypeInvalidInput, "scope is required")
+	}
+	if strings.TrimSpace(subject) == "" {
+		return NewError(ErrorTypeInvalidInput, "subject is required")
+	}
+	return nil
+}
+
+func validateSemaphoreSlot(slot int) error {
+	if slot < 0 {
+		return NewError(ErrorTypeInvalidInput, "slot must be >= 0")
 	}
 	return nil
 }
