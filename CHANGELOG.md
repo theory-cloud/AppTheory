@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.21.0](https://github.com/theory-cloud/AppTheory/compare/v0.20.0...v0.21.0) (2026-04-11)
+
+
+### Features
+
+* **cdk:** add well-known mcp discovery route ([a0b5ea5](https://github.com/theory-cloud/AppTheory/commit/a0b5ea5edb918aa6507424adcd402694fa999f0e))
+* **jobs:** add leased semaphore primitive ([5a8cf59](https://github.com/theory-cloud/AppTheory/commit/5a8cf59ba4367b5b6d72164250335bb4759f8274))
+* resolve issues 307-311 ([e9bd5f7](https://github.com/theory-cloud/AppTheory/commit/e9bd5f74a061ea60190a9448a9e267f41d5cfe4a))
+* **runtime:** add handler convenience helpers ([b8b9157](https://github.com/theory-cloud/AppTheory/commit/b8b9157bdd22cdf61b8c10ec7a0ad813a8247221))
+* **runtime:** add scope-aware auth options ([21dcc61](https://github.com/theory-cloud/AppTheory/commit/21dcc61b27b95f588dd0d02d9fa2fa59128a5e3d))
+* **runtime:** add typed request binding ([a766627](https://github.com/theory-cloud/AppTheory/commit/a766627132587f7a1200bfc9740ab59b0aff599f))
+
+
+### Bug Fixes
+
+* **runtime:** satisfy rubric checks ([8b15b3f](https://github.com/theory-cloud/AppTheory/commit/8b15b3f0b5b6cf5dedd2304cde5d8ea6d76e7d6b))
+
 ## [0.20.0](https://github.com/theory-cloud/AppTheory/compare/v0.19.3...v0.20.0) (2026-04-10)
 
 
