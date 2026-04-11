@@ -52,6 +52,12 @@ export function jobLockSortKey() {
 export function jobRequestSortKey(idempotencyKey) {
     return `REQ#${idempotencyKey}`;
 }
+export function semaphorePartitionKey(scope, subject) {
+    return `SEM#${scope}#${subject}`;
+}
+export function semaphoreSlotSortKey(slot) {
+    return `SLOT#${String(Math.max(0, Math.floor(slot))).padStart(9, "0")}`;
+}
 function unixSeconds(date) {
     return Math.floor(date.valueOf() / 1000);
 }
@@ -126,6 +132,9 @@ function jobLedgerModel(tableName) {
             { attribute: "tenant_id", type: "S", optional: true },
             { attribute: "record_id", type: "S", optional: true },
             { attribute: "idempotency_key", type: "S", optional: true },
+            { attribute: "scope", type: "S", optional: true },
+            { attribute: "subject", type: "S", optional: true },
+            { attribute: "slot", type: "N", optional: true },
             { attribute: "status", type: "S" },
             { attribute: "created_at", type: "S", optional: true },
             { attribute: "updated_at", type: "S", optional: true },
@@ -214,11 +223,40 @@ function toJobRequest(item) {
             : {}),
     };
 }
+function toSemaphoreLease(item) {
+    return {
+        pk: requireStr(item["pk"], "pk"),
+        sk: requireStr(item["sk"], "sk"),
+        scope: requireStr(item["scope"], "scope"),
+        subject: requireStr(item["subject"], "subject"),
+        slot: Math.floor(getNum(item["slot"])),
+        leaseOwner: requireStr(item["lease_owner"], "lease_owner"),
+        leaseExpiresAt: Math.floor(getNum(item["lease_expires_at"])),
+        createdAt: requireStr(item["created_at"], "created_at"),
+        updatedAt: requireStr(item["updated_at"], "updated_at"),
+        ...(Number.isFinite(Number(item["ttl"]))
+            ? { ttl: Math.floor(getNum(item["ttl"])) }
+            : {}),
+    };
+}
 function requireNonEmpty(value, field) {
     const v = String(value ?? "").trim();
     if (!v)
         throw newJobLedgerError("invalid_input", `${field} is required`);
     return v;
+}
+function requirePositiveInt(value, field) {
+    const n = Math.floor(Number(value) || 0);
+    if (n <= 0)
+        throw newJobLedgerError("invalid_input", `${field} must be > 0`);
+    return n;
+}
+function requireNonNegativeInt(value, field) {
+    const n = Math.floor(Number(value));
+    if (!Number.isFinite(n) || n < 0) {
+        throw newJobLedgerError("invalid_input", `${field} must be >= 0`);
+    }
+    return n;
 }
 export class DynamoJobLedger {
     _theorydb;
@@ -462,6 +500,176 @@ export class DynamoJobLedger {
             if (isItemNotFound(err))
                 return;
             throw wrapJobLedgerError(err, "internal_error", "failed to load lease after release conflict");
+        }
+    }
+    async acquireSemaphoreSlot(input) {
+        const scope = requireNonEmpty(input?.scope, "scope");
+        const subject = requireNonEmpty(input?.subject, "subject");
+        const limit = requirePositiveInt(input?.limit, "limit");
+        const owner = requireNonEmpty(input?.owner, "owner");
+        const leaseDurationMs = Math.floor(Number(input?.leaseDurationMs ?? this._config.defaultLeaseDurationMs) ||
+            0);
+        if (leaseDurationMs <= 0) {
+            throw newJobLedgerError("invalid_input", "leaseDurationMs must be > 0");
+        }
+        const now = this._clock.now();
+        const nowIso = now.toISOString();
+        const expiresAt = Math.floor((now.valueOf() + leaseDurationMs) / 1000);
+        const ttl = normalizeTtlUnixSeconds(now, input?.ttlSeconds, 0);
+        const pk = semaphorePartitionKey(scope, subject);
+        for (let slot = 0; slot < limit; slot += 1) {
+            const sk = semaphoreSlotSortKey(slot);
+            try {
+                const builder = this._theorydb.updateBuilder(jobLedgerModelName, {
+                    pk,
+                    sk,
+                });
+                builder.setIfNotExists("scope", null, scope);
+                builder.setIfNotExists("subject", null, subject);
+                builder.setIfNotExists("slot", null, slot);
+                builder.set("lease_owner", owner);
+                builder.set("lease_expires_at", expiresAt);
+                builder.setIfNotExists("created_at", null, nowIso);
+                builder.set("updated_at", nowIso);
+                if (ttl)
+                    builder.set("ttl", ttl);
+                builder.conditionNotExists("lease_expires_at");
+                builder.orCondition("lease_expires_at", "<", unixSeconds(now));
+                builder.orCondition("lease_owner", "=", owner);
+                builder.returnValues("ALL_NEW");
+                const out = await builder.execute();
+                if (!out) {
+                    throw newJobLedgerError("internal_error", "missing update result");
+                }
+                return toSemaphoreLease(out);
+            }
+            catch (err) {
+                if (isConditionalCheckFailed(err)) {
+                    continue;
+                }
+                if (err instanceof JobLedgerError &&
+                    err.type === "internal_error" &&
+                    err.message === "missing update result") {
+                    throw err;
+                }
+                throw wrapJobLedgerError(err, "internal_error", "failed to acquire semaphore slot");
+            }
+        }
+        throw newJobLedgerError("conflict", "semaphore full");
+    }
+    async refreshSemaphoreSlot(input) {
+        const scope = requireNonEmpty(input?.scope, "scope");
+        const subject = requireNonEmpty(input?.subject, "subject");
+        const slot = requireNonNegativeInt(input?.slot, "slot");
+        const owner = requireNonEmpty(input?.owner, "owner");
+        const leaseDurationMs = Math.floor(Number(input?.leaseDurationMs ?? this._config.defaultLeaseDurationMs) ||
+            0);
+        if (leaseDurationMs <= 0) {
+            throw newJobLedgerError("invalid_input", "leaseDurationMs must be > 0");
+        }
+        const now = this._clock.now();
+        const nowIso = now.toISOString();
+        const expiresAt = Math.floor((now.valueOf() + leaseDurationMs) / 1000);
+        const ttl = normalizeTtlUnixSeconds(now, input?.ttlSeconds, 0);
+        const pk = semaphorePartitionKey(scope, subject);
+        const sk = semaphoreSlotSortKey(slot);
+        try {
+            const builder = this._theorydb.updateBuilder(jobLedgerModelName, {
+                pk,
+                sk,
+            });
+            builder.set("lease_expires_at", expiresAt);
+            builder.set("updated_at", nowIso);
+            if (ttl)
+                builder.set("ttl", ttl);
+            builder.condition("lease_owner", "=", owner);
+            builder.condition("lease_expires_at", ">", unixSeconds(now));
+            builder.returnValues("ALL_NEW");
+            const out = await builder.execute();
+            if (!out) {
+                throw newJobLedgerError("internal_error", "missing update result");
+            }
+            return toSemaphoreLease(out);
+        }
+        catch (err) {
+            if (isConditionalCheckFailed(err)) {
+                throw newJobLedgerError("conflict", "semaphore slot refresh conflict");
+            }
+            if (err instanceof JobLedgerError &&
+                err.type === "internal_error" &&
+                err.message === "missing update result") {
+                throw err;
+            }
+            throw wrapJobLedgerError(err, "internal_error", "failed to refresh semaphore slot");
+        }
+    }
+    async releaseSemaphoreSlot(input) {
+        const scope = requireNonEmpty(input?.scope, "scope");
+        const subject = requireNonEmpty(input?.subject, "subject");
+        const slot = requireNonNegativeInt(input?.slot, "slot");
+        const owner = requireNonEmpty(input?.owner, "owner");
+        const pk = semaphorePartitionKey(scope, subject);
+        const sk = semaphoreSlotSortKey(slot);
+        const nowIso = this._clock.now().toISOString();
+        try {
+            const builder = this._theorydb.updateBuilder(jobLedgerModelName, {
+                pk,
+                sk,
+            });
+            builder.set("lease_expires_at", 0);
+            builder.remove("lease_owner");
+            builder.set("updated_at", nowIso);
+            builder.condition("lease_owner", "=", owner);
+            await builder.execute();
+            try {
+                await this._theorydb.delete(jobLedgerModelName, { pk, sk });
+            }
+            catch (delErr) {
+                if (!isItemNotFound(delErr)) {
+                    throw delErr;
+                }
+            }
+            return;
+        }
+        catch (err) {
+            if (!isConditionalCheckFailed(err)) {
+                throw wrapJobLedgerError(err, "internal_error", "failed to release semaphore slot");
+            }
+        }
+        try {
+            const existing = await this._theorydb.get(jobLedgerModelName, { pk, sk });
+            if (String(existing["lease_owner"] ?? "") !== owner) {
+                throw newJobLedgerError("conflict", "semaphore slot not owned");
+            }
+        }
+        catch (err) {
+            if (isItemNotFound(err))
+                return;
+            throw wrapJobLedgerError(err, "internal_error", "failed to load semaphore slot after release conflict");
+        }
+    }
+    async inspectSemaphore(input) {
+        const scope = requireNonEmpty(input?.scope, "scope");
+        const subject = requireNonEmpty(input?.subject, "subject");
+        const pk = semaphorePartitionKey(scope, subject);
+        try {
+            const rows = await this._theorydb
+                .query(jobLedgerModelName)
+                .partitionKey(pk)
+                .all();
+            const activeLeases = rows
+                .map((row) => toSemaphoreLease(row))
+                .filter((lease) => lease.leaseExpiresAt > unixSeconds(this._clock.now()))
+                .sort((left, right) => left.slot - right.slot);
+            return {
+                scope,
+                subject,
+                occupancy: activeLeases.length,
+                activeLeases,
+            };
+        }
+        catch (err) {
+            throw wrapJobLedgerError(err, "internal_error", "failed to inspect semaphore");
         }
     }
     async createIdempotencyRecord(input) {

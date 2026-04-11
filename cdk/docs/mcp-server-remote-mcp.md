@@ -23,6 +23,8 @@ Claude Remote MCP requires real incremental streaming for tool calls (SSE). On A
   - `GET /mcp/{actor}` (streaming enabled)
   - `DELETE /mcp/{actor}`
   - `GET /.well-known/oauth-protected-resource/mcp/{actor}` (co-registered RFC9728 discovery)
+- optional root discovery route when `enableWellKnownMcpDiscovery: true`:
+  - `GET /.well-known/mcp.json`
 - Optional DynamoDB tables:
   - session table (matches `runtime/mcp` Dynamo session store schema)
   - stream/event table (used by durable resumable SSE once the app wires a persistent `StreamStore`)
@@ -74,10 +76,12 @@ For per-actor bundles, enable `actorPath` and let the construct register discove
 const mcp = new AppTheoryRemoteMcpServer(stack, "RemoteMcpPerActor", {
   handler,
   actorPath: true,
+  enableWellKnownMcpDiscovery: true,
 });
 
 // mcp.endpoint === https://.../mcp/{actor}
 // discovery route === /.well-known/oauth-protected-resource/mcp/{actor}
+// well-known discovery route === /.well-known/mcp.json
 ```
 
 ## Keepalive + resumability guidance

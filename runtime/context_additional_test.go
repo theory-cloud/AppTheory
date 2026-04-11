@@ -21,6 +21,15 @@ func TestContext_Basics_SetGetParamAndJSONValue(t *testing.T) {
 	if got := (*Context)(nil).Param("x"); got != "" {
 		t.Fatalf("expected nil Context().Param() to return empty string, got %q", got)
 	}
+	if got := (*Context)(nil).Header("x-test"); got != "" {
+		t.Fatalf("expected nil Context().Header() to return empty string, got %q", got)
+	}
+	if got := (*Context)(nil).Query("q"); got != "" {
+		t.Fatalf("expected nil Context().Query() to return empty string, got %q", got)
+	}
+	if got := (*Context)(nil).QueryAll("q"); got != nil {
+		t.Fatalf("expected nil Context().QueryAll() to return nil, got %#v", got)
+	}
 	if got := (*Context)(nil).AsWebSocket(); got != nil {
 		t.Fatalf("expected nil Context().AsWebSocket() to return nil, got %#v", got)
 	}
@@ -36,6 +45,14 @@ func TestContext_Basics_SetGetParamAndJSONValue(t *testing.T) {
 		Params: map[string]string{
 			"p": "v",
 		},
+		Request: Request{
+			Query: map[string][]string{
+				"q": {"v1", "v2"},
+			},
+			Headers: map[string][]string{
+				"x-test": {"header"},
+			},
+		},
 		ws:      &WebSocketContext{},
 		appsync: &AppSyncContext{FieldName: "field"},
 	}
@@ -48,6 +65,15 @@ func TestContext_Basics_SetGetParamAndJSONValue(t *testing.T) {
 	}
 	if got := c.Param("p"); got != "v" {
 		t.Fatalf("expected Param(p)=v, got %q", got)
+	}
+	if got := c.Header("X-Test"); got != "header" {
+		t.Fatalf("expected Header(X-Test)=header, got %q", got)
+	}
+	if got := c.Query("q"); got != "v1" {
+		t.Fatalf("expected Query(q)=v1, got %q", got)
+	}
+	if got := c.QueryAll("q"); len(got) != 2 || got[0] != "v1" || got[1] != "v2" {
+		t.Fatalf("expected QueryAll(q)=[v1 v2], got %#v", got)
 	}
 	if got := c.AsWebSocket(); got == nil {
 		t.Fatal("expected AsWebSocket() to return websocket context")

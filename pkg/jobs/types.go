@@ -150,6 +150,43 @@ type ReleaseLeaseInput struct {
 	Owner string
 }
 
+type AcquireSemaphoreSlotInput struct {
+	Scope         string
+	Subject       string
+	Limit         int
+	Owner         string
+	LeaseDuration time.Duration
+	TTL           time.Duration
+}
+
+type RefreshSemaphoreSlotInput struct {
+	Scope         string
+	Subject       string
+	Slot          int
+	Owner         string
+	LeaseDuration time.Duration
+	TTL           time.Duration
+}
+
+type ReleaseSemaphoreSlotInput struct {
+	Scope   string
+	Subject string
+	Slot    int
+	Owner   string
+}
+
+type InspectSemaphoreInput struct {
+	Scope   string
+	Subject string
+}
+
+type SemaphoreInspection struct {
+	Scope        string           `json:"scope"`
+	Subject      string           `json:"subject"`
+	Occupancy    int              `json:"occupancy"`
+	ActiveLeases []SemaphoreLease `json:"active_leases"`
+}
+
 type CreateIdempotencyRecordInput struct {
 	JobID          string
 	IdempotencyKey string
@@ -175,6 +212,11 @@ type JobLedger interface {
 	AcquireLease(ctx context.Context, in AcquireLeaseInput) (*JobLock, error)
 	RefreshLease(ctx context.Context, in RefreshLeaseInput) (*JobLock, error)
 	ReleaseLease(ctx context.Context, in ReleaseLeaseInput) error
+
+	AcquireSemaphoreSlot(ctx context.Context, in AcquireSemaphoreSlotInput) (*SemaphoreLease, error)
+	RefreshSemaphoreSlot(ctx context.Context, in RefreshSemaphoreSlotInput) (*SemaphoreLease, error)
+	ReleaseSemaphoreSlot(ctx context.Context, in ReleaseSemaphoreSlotInput) error
+	InspectSemaphore(ctx context.Context, in InspectSemaphoreInput) (*SemaphoreInspection, error)
 
 	CreateIdempotencyRecord(ctx context.Context, in CreateIdempotencyRecordInput) (*JobRequest, IdempotencyCreateOutcome, error)
 	CompleteIdempotencyRecord(ctx context.Context, in CompleteIdempotencyRecordInput) (*JobRequest, error)
