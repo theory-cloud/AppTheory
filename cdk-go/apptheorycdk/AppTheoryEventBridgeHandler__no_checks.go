@@ -11,3 +11,4 @@ func validateAppTheoryEventBridgeHandler_IsConstructParameters(x interface{}) er
 func validateNewAppTheoryEventBridgeHandlerParameters(scope constructs.Construct, id *string, props *AppTheoryEventBridgeHandlerProps) error {
 	return nil
 }
+

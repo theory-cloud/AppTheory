@@ -1,5 +1,6 @@
 package apptheorycdk
 
+
 type AppTheoryEventBridgeBusProps struct {
 	// Explicit cross-account allowlist for `events:PutEvents`.
 	//
@@ -16,3 +17,4 @@ type AppTheoryEventBridgeBusProps struct {
 	//
 	EventBusName *string `field:"optional" json:"eventBusName" yaml:"eventBusName"`
 }
+

@@ -11,3 +11,4 @@ func validateAppTheoryHttpIngestionEndpoint_IsConstructParameters(x interface{})
 func validateNewAppTheoryHttpIngestionEndpointParameters(scope constructs.Construct, id *string, props *AppTheoryHttpIngestionEndpointProps) error {
 	return nil
 }
+

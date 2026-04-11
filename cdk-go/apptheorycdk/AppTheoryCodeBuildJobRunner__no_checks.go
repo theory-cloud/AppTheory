@@ -35,3 +35,4 @@ func validateAppTheoryCodeBuildJobRunner_IsConstructParameters(x interface{}) er
 func validateNewAppTheoryCodeBuildJobRunnerParameters(scope constructs.Construct, id *string, props *AppTheoryCodeBuildJobRunnerProps) error {
 	return nil
 }
+

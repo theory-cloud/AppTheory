@@ -53,6 +53,14 @@ type AppTheoryRemoteMcpServerProps struct {
 	// Default: false.
 	//
 	EnableStreamTable *bool `field:"optional" json:"enableStreamTable" yaml:"enableStreamTable"`
+	// Register `GET /.well-known/mcp.json` and route it to the handler.
+	//
+	// This lets the construct own the final MCP discovery route alongside the
+	// transport and protected-resource metadata routes. The handler remains
+	// responsible for serving the discovery document content.
+	// Default: false.
+	//
+	EnableWellKnownMcpDiscovery *bool `field:"optional" json:"enableWellKnownMcpDiscovery" yaml:"enableWellKnownMcpDiscovery"`
 	// Session DynamoDB table name (only used when enableSessionTable is true).
 	// Default: undefined (auto-generated).
 	//
@@ -74,3 +82,4 @@ type AppTheoryRemoteMcpServerProps struct {
 	//
 	StreamTtlMinutes *float64 `field:"optional" json:"streamTtlMinutes" yaml:"streamTtlMinutes"`
 }
+

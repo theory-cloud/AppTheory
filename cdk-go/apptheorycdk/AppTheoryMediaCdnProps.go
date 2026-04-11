@@ -62,3 +62,4 @@ type AppTheoryMediaCdnProps struct {
 	// Optional web ACL ID for AWS WAF integration.
 	WebAclId *string `field:"optional" json:"webAclId" yaml:"webAclId"`
 }
+

@@ -67,3 +67,4 @@ type AppTheoryQueueProps struct {
 	//
 	VisibilityTimeout awscdk.Duration `field:"optional" json:"visibilityTimeout" yaml:"visibilityTimeout"`
 }
+

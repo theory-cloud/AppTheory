@@ -15,3 +15,4 @@ func validateAppTheoryEventBridgeBus_IsConstructParameters(x interface{}) error 
 func validateNewAppTheoryEventBridgeBusParameters(scope constructs.Construct, id *string, props *AppTheoryEventBridgeBusProps) error {
 	return nil
 }
+
