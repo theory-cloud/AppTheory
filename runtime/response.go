@@ -3,6 +3,7 @@ package apptheory
 import (
 	"encoding/json"
 	"io"
+	"strings"
 )
 
 // Response is the canonical HTTP response model returned by AppTheory handlers.
@@ -48,6 +49,11 @@ func JSON(status int, value any) (*Response, error) {
 	}, nil
 }
 
+// CreatedJSON builds a 201 application/json response (utf-8).
+func CreatedJSON(value any) (*Response, error) {
+	return JSON(201, value)
+}
+
 // MustJSON builds an application/json response (utf-8) and panics on marshal failure.
 func MustJSON(status int, value any) *Response {
 	resp, err := JSON(status, value)
@@ -69,6 +75,27 @@ func Binary(status int, body []byte, contentType string) *Response {
 		Body:     append([]byte(nil), body...),
 		IsBase64: true,
 	}
+}
+
+// NoContent builds an empty 204 response.
+func NoContent() *Response {
+	return &Response{Status: 204}
+}
+
+// SetHeader sets a single response header value and returns the response.
+func (r *Response) SetHeader(name string, value string) *Response {
+	if r == nil {
+		return nil
+	}
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return r
+	}
+	if r.Headers == nil {
+		r.Headers = map[string][]string{}
+	}
+	r.Headers[name] = []string{value}
+	return r
 }
 
 func normalizeResponse(in *Response) Response {

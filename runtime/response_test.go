@@ -46,6 +46,29 @@ func TestJSONAndMustJSON(t *testing.T) {
 	_ = MustJSON(200, func() {})
 }
 
+func TestCreatedJSONNoContentAndSetHeader(t *testing.T) {
+	resp, err := CreatedJSON(map[string]any{"created": true})
+	if err != nil {
+		t.Fatalf("CreatedJSON returned error: %v", err)
+	}
+	if resp.Status != 201 {
+		t.Fatalf("expected status 201, got %d", resp.Status)
+	}
+
+	noContent := NoContent().SetHeader("X-Test", "ok")
+	if noContent.Status != 204 {
+		t.Fatalf("expected status 204, got %d", noContent.Status)
+	}
+	if got := noContent.Headers["x-test"]; len(got) != 1 || got[0] != "ok" {
+		t.Fatalf("unexpected x-test header: %v", got)
+	}
+
+	var nilResp *Response
+	if got := nilResp.SetHeader("x-test", "ignored"); got != nil {
+		t.Fatalf("expected nil SetHeader receiver to stay nil, got %#v", got)
+	}
+}
+
 func TestBinaryCopiesBody(t *testing.T) {
 	body := []byte{0x01, 0x02, 0x03}
 	resp := Binary(200, body, "application/octet-stream")
