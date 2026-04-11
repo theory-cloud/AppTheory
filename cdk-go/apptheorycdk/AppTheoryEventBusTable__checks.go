@@ -46,4 +46,3 @@ func validateNewAppTheoryEventBusTableParameters(scope constructs.Construct, id 
 
 	return nil
 }
-

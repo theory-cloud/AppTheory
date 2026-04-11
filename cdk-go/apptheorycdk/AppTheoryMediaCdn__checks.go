@@ -36,4 +36,3 @@ func validateNewAppTheoryMediaCdnParameters(scope constructs.Construct, id *stri
 
 	return nil
 }
-

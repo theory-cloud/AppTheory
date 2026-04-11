@@ -1,6 +1,5 @@
 package apptheorycdk
 
-
 // Props for AppTheoryMcpProtectedResource.
 //
 // This construct adds the RFC9728 protected resource metadata endpoint required
@@ -19,4 +18,3 @@ type AppTheoryMcpProtectedResourceProps struct {
 	// The REST API router to attach the well-known endpoint to.
 	Router AppTheoryRestApiRouter `field:"required" json:"router" yaml:"router"`
 }
-

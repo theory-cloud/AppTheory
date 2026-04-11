@@ -74,7 +74,6 @@ func (j *jsiiProxy_AppTheoryJobsTable) Table() awsdynamodb.Table {
 	return returns
 }
 
-
 func NewAppTheoryJobsTable(scope constructs.Construct, id *string, props *AppTheoryJobsTableProps) AppTheoryJobsTable {
 	_init_.Initialize()
 
@@ -211,4 +210,3 @@ func (a *jsiiProxy_AppTheoryJobsTable) With(mixins ...constructs.IMixin) constru
 
 	return returns
 }
-

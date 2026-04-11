@@ -36,4 +36,3 @@ func validateNewAppTheoryWebSocketApiParameters(scope constructs.Construct, id *
 
 	return nil
 }
-

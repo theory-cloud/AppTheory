@@ -40,7 +40,6 @@ func (j *jsiiProxy_AppTheoryDynamoDBStreamMapping) Node() constructs.Node {
 	return returns
 }
 
-
 func NewAppTheoryDynamoDBStreamMapping(scope constructs.Construct, id *string, props *AppTheoryDynamoDBStreamMappingProps) AppTheoryDynamoDBStreamMapping {
 	_init_.Initialize()
 
@@ -133,4 +132,3 @@ func (a *jsiiProxy_AppTheoryDynamoDBStreamMapping) With(mixins ...constructs.IMi
 
 	return returns
 }
-

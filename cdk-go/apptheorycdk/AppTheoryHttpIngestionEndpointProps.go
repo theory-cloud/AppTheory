@@ -43,4 +43,3 @@ type AppTheoryHttpIngestionEndpointProps struct {
 	//
 	Stage *AppTheoryHttpIngestionEndpointStageOptions `field:"optional" json:"stage" yaml:"stage"`
 }
-

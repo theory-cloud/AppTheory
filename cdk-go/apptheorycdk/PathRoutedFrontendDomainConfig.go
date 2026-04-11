@@ -24,4 +24,3 @@ type PathRoutedFrontendDomainConfig struct {
 	// When provided, an A record alias will be created for the domain.
 	HostedZone awsroute53.IHostedZone `field:"optional" json:"hostedZone" yaml:"hostedZone"`
 }
-

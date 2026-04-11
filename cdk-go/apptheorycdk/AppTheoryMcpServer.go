@@ -15,12 +15,12 @@ import (
 // An MCP (Model Context Protocol) server construct that provisions an HTTP API Gateway v2 with a Lambda integration on POST /mcp, optional DynamoDB session table, and optional custom domain with Route53.
 //
 // Example:
-//   const server = new AppTheoryMcpServer(this, 'McpServer', {
-//     handler: mcpFn,
-//     enableSessionTable: true,
-//     sessionTtlMinutes: 120,
-//   });
 //
+//	const server = new AppTheoryMcpServer(this, 'McpServer', {
+//	  handler: mcpFn,
+//	  enableSessionTable: true,
+//	  sessionTtlMinutes: 120,
+//	});
 type AppTheoryMcpServer interface {
 	constructs.Construct
 	// The access log group (if access logging is enabled).
@@ -137,7 +137,6 @@ func (j *jsiiProxy_AppTheoryMcpServer) SessionTable() awsdynamodb.ITable {
 	return returns
 }
 
-
 func NewAppTheoryMcpServer(scope constructs.Construct, id *string, props *AppTheoryMcpServerProps) AppTheoryMcpServer {
 	_init_.Initialize()
 
@@ -230,4 +229,3 @@ func (a *jsiiProxy_AppTheoryMcpServer) With(mixins ...constructs.IMixin) constru
 
 	return returns
 }
-

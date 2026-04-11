@@ -1,6 +1,5 @@
 package apptheorycdk
 
-
 type AppTheoryEventBusTableBindingOptions struct {
 	// Environment variable name used for the table name binding.
 	//
@@ -15,4 +14,3 @@ type AppTheoryEventBusTableBindingOptions struct {
 	//
 	ReadOnly *bool `field:"optional" json:"readOnly" yaml:"readOnly"`
 }
-
