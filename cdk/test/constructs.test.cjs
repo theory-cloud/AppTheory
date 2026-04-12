@@ -1223,7 +1223,40 @@ test("AppTheorySsrSite (FaceTheory) synthesizes expected template", () => {
   }
 });
 
-test("AppTheorySsrSite omits disallowed SSR origin request headers", () => {
+test("AppTheorySsrSite signs the default Function URL origin", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", { ssrFunction: fn });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const functionUrls = resources.filter((resource) => resource.Type === "AWS::Lambda::Url");
+  const lambdaOriginAccessControls = resources.filter(
+    (resource) =>
+      resource.Type === "AWS::CloudFront::OriginAccessControl" &&
+      resource.Properties?.OriginAccessControlConfig?.OriginAccessControlOriginType === "lambda",
+  );
+  const cloudfrontInvokePermissions = resources.filter(
+    (resource) =>
+      resource.Type === "AWS::Lambda::Permission" &&
+      resource.Properties?.Principal === "cloudfront.amazonaws.com" &&
+      resource.Properties?.Action === "lambda:InvokeFunctionUrl",
+  );
+
+  assert.equal(functionUrls.length, 1);
+  assert.equal(functionUrls[0].Properties?.AuthType, "AWS_IAM");
+  assert.equal(lambdaOriginAccessControls.length, 1);
+  assert.equal(cloudfrontInvokePermissions.length, 1);
+});
+
+test("AppTheorySsrSite allows explicit public Function URL compatibility mode", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -1235,7 +1268,43 @@ test("AppTheorySsrSite omits disallowed SSR origin request headers", () => {
 
   new apptheory.AppTheorySsrSite(stack, "Site", {
     ssrFunction: fn,
-    ssrForwardHeaders: [" X-Forwarded-Proto ", "x-facetheory-tenant"],
+    ssrUrlAuthType: lambda.FunctionUrlAuthType.NONE,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const functionUrls = resources.filter((resource) => resource.Type === "AWS::Lambda::Url");
+  const lambdaOriginAccessControls = resources.filter(
+    (resource) =>
+      resource.Type === "AWS::CloudFront::OriginAccessControl" &&
+      resource.Properties?.OriginAccessControlConfig?.OriginAccessControlOriginType === "lambda",
+  );
+  const publicUrlPermissions = resources.filter(
+    (resource) =>
+      resource.Type === "AWS::Lambda::Permission" &&
+      resource.Properties?.Principal === "*" &&
+      resource.Properties?.Action === "lambda:InvokeFunctionUrl",
+  );
+
+  assert.equal(functionUrls.length, 1);
+  assert.equal(functionUrls[0].Properties?.AuthType, "NONE");
+  assert.equal(lambdaOriginAccessControls.length, 0);
+  assert.equal(publicUrlPermissions.length, 1);
+});
+
+test("AppTheorySsrSite defaults to FaceTheory-safe SSR origin request headers", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    ssrForwardHeaders: [" X-FaceTheory-Tenant ", "x-facetheory-tenant"],
   });
 
   const template = assertions.Template.fromStack(stack).toJSON();
@@ -1246,12 +1315,35 @@ test("AppTheorySsrSite omits disallowed SSR origin request headers", () => {
   assert.equal(originRequestPolicies.length, 1);
 
   const [policy] = originRequestPolicies;
-  const headers = policy.Properties?.OriginRequestPolicyConfig?.HeadersConfig?.Headers ?? [];
+  const headers = [...(policy.Properties?.OriginRequestPolicyConfig?.HeadersConfig?.Headers ?? [])].sort();
 
-  assert.equal(Array.isArray(headers), true);
-  assert.equal(headers.includes("x-forwarded-proto"), false);
-  assert.equal(headers.includes("cloudfront-forwarded-proto"), true);
-  assert.equal(headers.includes("x-facetheory-tenant"), true);
+  assert.deepEqual(headers, [
+    "cloudfront-forwarded-proto",
+    "cloudfront-viewer-address",
+    "x-facetheory-tenant",
+    "x-request-id",
+    "x-tenant-id",
+  ]);
+});
+
+test("AppTheorySsrSite rejects disallowed SSR origin request headers", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: fn,
+        ssrForwardHeaders: ["host", " x-forwarded-proto "],
+      }),
+    /AppTheorySsrSite disallows ssrForwardHeaders: host, x-forwarded-proto/,
+  );
 });
 
 // ============================================================================
