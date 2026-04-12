@@ -25,6 +25,7 @@ permissions:
 
 jobs:
   release-please:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, 'release-please--branches--premain')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
