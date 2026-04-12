@@ -8653,7 +8653,7 @@
   },
   "name": "@theory-cloud/apptheory-cdk",
   "readme": {
-    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryRestApiRouter` — REST API v1 multi-Lambda router with full streaming parity + stage controls + domain wiring.\n- `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueue` — SQS queue with optional DLQ (queue-only friendly).\n- `AppTheoryQueueConsumer` — SQS → Lambda event source mapping with full knobs.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring (convenience wrapper over `AppTheoryQueue` + `AppTheoryQueueConsumer`).\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryEventBridgeBus` — custom EventBridge bus with explicit cross-account publish allowlist.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n- `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs + Lambda binding helper).\n- `AppTheoryHttpIngestionEndpoint` — authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer + throttling controls.\n- `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).\n- `AppTheoryLambdaRole` — Lambda execution role helper (baseline + X-Ray + KMS + escape hatches).\n- `AppTheoryPathRoutedFrontend` — CloudFront distribution for multi-SPA routing + API origin (stage domain pattern).\n- `AppTheoryMediaCdn` — CloudFront distribution for an S3-backed media CDN (optional private media via key groups).\n- `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).\n- `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + signed Function URL origin by default + domain/cert helpers).\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
+    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryRestApiRouter` — REST API v1 multi-Lambda router with full streaming parity + stage controls + domain wiring.\n- `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueue` — SQS queue with optional DLQ (queue-only friendly).\n- `AppTheoryQueueConsumer` — SQS → Lambda event source mapping with full knobs.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring (convenience wrapper over `AppTheoryQueue` + `AppTheoryQueueConsumer`).\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryEventBridgeBus` — custom EventBridge bus with explicit cross-account publish allowlist.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n- `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs + Lambda binding helper).\n- `AppTheoryHttpIngestionEndpoint` — authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer + throttling controls.\n- `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).\n- `AppTheoryLambdaRole` — Lambda execution role helper (baseline + X-Ray + KMS + escape hatches).\n- `AppTheoryPathRoutedFrontend` — CloudFront distribution for multi-SPA routing + API origin (stage domain pattern).\n- `AppTheoryMediaCdn` — CloudFront distribution for an S3-backed media CDN (optional private media via key groups).\n- `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).\n- `AppTheorySsrSite` — SSR site pattern with explicit `ssr-only` / `ssg-isr` modes, shared FaceTheory edge functions, and a signed Function URL fallback path.\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
   },
   "repository": {
     "directory": "cdk",
@@ -18503,7 +18503,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/ssr-site.ts",
-          "line": 86
+          "line": 194
         },
         "parameters": [
           {
@@ -18529,7 +18529,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 77
+        "line": 185
       },
       "name": "AppTheorySsrSite",
       "properties": [
@@ -18537,7 +18537,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 78
+            "line": 186
           },
           "name": "assetsBucket",
           "type": {
@@ -18548,7 +18548,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 79
+            "line": 187
           },
           "name": "assetsKeyPrefix",
           "type": {
@@ -18559,7 +18559,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 80
+            "line": 188
           },
           "name": "assetsManifestKey",
           "type": {
@@ -18570,7 +18570,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 83
+            "line": 191
           },
           "name": "distribution",
           "type": {
@@ -18581,7 +18581,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 82
+            "line": 190
           },
           "name": "ssrUrl",
           "type": {
@@ -18592,7 +18592,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 84
+            "line": 192
           },
           "name": "certificate",
           "optional": true,
@@ -18604,7 +18604,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 81
+            "line": 189
           },
           "name": "logsBucket",
           "optional": true,
@@ -18615,6 +18615,33 @@
       ],
       "symbolId": "lib/ssr-site:AppTheorySsrSite"
     },
+    "@theory-cloud/apptheory-cdk.AppTheorySsrSiteMode": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheorySsrSiteMode",
+      "kind": "enum",
+      "locationInModule": {
+        "filename": "lib/ssr-site.ts",
+        "line": 18
+      },
+      "members": [
+        {
+          "docs": {
+            "remarks": "Direct S3 behaviors are used only for\nimmutable assets and any explicitly configured static path patterns.",
+            "summary": "Lambda Function URL is the default origin."
+          },
+          "name": "SSR_ONLY"
+        },
+        {
+          "docs": {
+            "remarks": "FaceTheory hydration\ndata routes are kept on S3 and the edge rewrites extensionless paths to `/index.html`.",
+            "summary": "S3 is the primary HTML origin and Lambda SSR/ISR is the fallback."
+          },
+          "name": "SSG_ISR"
+        }
+      ],
+      "name": "AppTheorySsrSiteMode",
+      "symbolId": "lib/ssr-site:AppTheorySsrSiteMode"
+    },
     "@theory-cloud/apptheory-cdk.AppTheorySsrSiteProps": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "datatype": true,
@@ -18622,7 +18649,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 14
+        "line": 105
       },
       "name": "AppTheorySsrSiteProps",
       "properties": [
@@ -18631,7 +18658,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 15
+            "line": 106
           },
           "name": "ssrFunction",
           "type": {
@@ -18643,7 +18670,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 33
+            "line": 135
           },
           "name": "assetsBucket",
           "optional": true,
@@ -18656,7 +18683,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 35
+            "line": 137
           },
           "name": "assetsKeyPrefix",
           "optional": true,
@@ -18669,7 +18696,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 36
+            "line": 138
           },
           "name": "assetsManifestKey",
           "optional": true,
@@ -18682,7 +18709,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 34
+            "line": 136
           },
           "name": "assetsPath",
           "optional": true,
@@ -18695,7 +18722,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 68
+            "line": 176
           },
           "name": "autoDeleteObjects",
           "optional": true,
@@ -18708,7 +18735,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 44
+            "line": 150
           },
           "name": "cacheTableName",
           "optional": true,
@@ -18721,7 +18748,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 72
+            "line": 180
           },
           "name": "certificateArn",
           "optional": true,
@@ -18734,7 +18761,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 70
+            "line": 178
           },
           "name": "domainName",
           "optional": true,
@@ -18747,7 +18774,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 64
+            "line": 172
           },
           "name": "enableLogging",
           "optional": true,
@@ -18760,7 +18787,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 71
+            "line": 179
           },
           "name": "hostedZone",
           "optional": true,
@@ -18777,7 +18804,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 21
+            "line": 123
           },
           "name": "invokeMode",
           "optional": true,
@@ -18790,7 +18817,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 65
+            "line": 173
           },
           "name": "logsBucket",
           "optional": true,
@@ -18800,10 +18827,28 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "AppTheorySsrSiteMode.SSR_ONLY",
+            "remarks": "- `ssr-only`: Lambda Function URL is the default origin\n- `ssg-isr`: S3 is the primary HTML origin and Lambda is the fallback\n\nExisting implicit behavior maps to `ssr-only`.",
+            "summary": "Explicit deployment mode for the site topology."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 67
+            "line": 117
+          },
+          "name": "mode",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheorySsrSiteMode"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 175
           },
           "name": "removalPolicy",
           "optional": true,
@@ -18814,13 +18859,13 @@
         {
           "abstract": true,
           "docs": {
-            "remarks": "The default AppTheory/FaceTheory-safe edge contract forwards only:\n- `cloudfront-forwarded-proto`\n- `cloudfront-viewer-address`\n- `x-request-id`\n- `x-tenant-id`\n\nUse this to opt in to additional app-specific headers such as\n`x-facetheory-tenant`. `host` and `x-forwarded-proto` are rejected because\nthey break or bypass the supported origin model.",
+            "remarks": "The default AppTheory/FaceTheory-safe edge contract forwards only:\n- `cloudfront-forwarded-proto`\n- `cloudfront-viewer-address`\n- `x-apptheory-original-host`\n- `x-apptheory-original-uri`\n- `x-request-id`\n- `x-tenant-id`\n\nUse this to opt in to additional app-specific headers such as\n`x-facetheory-tenant`. `host` and `x-forwarded-proto` are rejected because\nthey break or bypass the supported origin model.",
             "summary": "Additional headers to forward to the SSR origin (Lambda Function URL) via the origin request policy."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 62
+            "line": 170
           },
           "name": "ssrForwardHeaders",
           "optional": true,
@@ -18843,7 +18888,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 31
+            "line": 133
           },
           "name": "ssrUrlAuthType",
           "optional": true,
@@ -18853,10 +18898,14 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "remarks": "In `ssg-isr` mode, `/_facetheory/data/*` is added automatically.\nExample custom direct-S3 path: \"/marketing/*\"",
+            "summary": "Additional CloudFront path patterns to route directly to the S3 origin."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 40
+            "line": 146
           },
           "name": "staticPathPatterns",
           "optional": true,
@@ -18874,7 +18923,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 74
+            "line": 182
           },
           "name": "webAclId",
           "optional": true,
@@ -18887,7 +18936,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 47
+            "line": 153
           },
           "name": "wireRuntimeEnv",
           "optional": true,
@@ -19887,5 +19936,5 @@
     }
   },
   "version": "0.22.2",
-  "fingerprint": "E+56z8Z5sd3UQB4F6J5XW0lfcqZoKGLQdUdynpgNFkA="
+  "fingerprint": "WzM7rekddfGPYTkOo3vWsZP8jH4fvRNMhKrZRWkifXg="
 }

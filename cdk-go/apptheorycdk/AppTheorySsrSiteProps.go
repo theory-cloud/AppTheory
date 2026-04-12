@@ -22,14 +22,25 @@ type AppTheorySsrSiteProps struct {
 	// Lambda Function URL invoke mode for the SSR origin.
 	// Default: lambda.InvokeMode.RESPONSE_STREAM
 	//
-	InvokeMode    awslambda.InvokeMode `field:"optional" json:"invokeMode" yaml:"invokeMode"`
-	LogsBucket    awss3.IBucket        `field:"optional" json:"logsBucket" yaml:"logsBucket"`
+	InvokeMode awslambda.InvokeMode `field:"optional" json:"invokeMode" yaml:"invokeMode"`
+	LogsBucket awss3.IBucket        `field:"optional" json:"logsBucket" yaml:"logsBucket"`
+	// Explicit deployment mode for the site topology.
+	//
+	// - `ssr-only`: Lambda Function URL is the default origin
+	// - `ssg-isr`: S3 is the primary HTML origin and Lambda is the fallback
+	//
+	// Existing implicit behavior maps to `ssr-only`.
+	// Default: AppTheorySsrSiteMode.SSR_ONLY
+	//
+	Mode          AppTheorySsrSiteMode `field:"optional" json:"mode" yaml:"mode"`
 	RemovalPolicy awscdk.RemovalPolicy `field:"optional" json:"removalPolicy" yaml:"removalPolicy"`
 	// Additional headers to forward to the SSR origin (Lambda Function URL) via the origin request policy.
 	//
 	// The default AppTheory/FaceTheory-safe edge contract forwards only:
 	// - `cloudfront-forwarded-proto`
 	// - `cloudfront-viewer-address`
+	// - `x-apptheory-original-host`
+	// - `x-apptheory-original-uri`
 	// - `x-request-id`
 	// - `x-tenant-id`
 	//
@@ -44,8 +55,12 @@ type AppTheorySsrSiteProps struct {
 	// compatibility override for legacy public Function URL deployments.
 	// Default: lambda.FunctionUrlAuthType.AWS_IAM
 	//
-	SsrUrlAuthType     awslambda.FunctionUrlAuthType `field:"optional" json:"ssrUrlAuthType" yaml:"ssrUrlAuthType"`
-	StaticPathPatterns *[]*string                    `field:"optional" json:"staticPathPatterns" yaml:"staticPathPatterns"`
-	WebAclId           *string                       `field:"optional" json:"webAclId" yaml:"webAclId"`
-	WireRuntimeEnv     *bool                         `field:"optional" json:"wireRuntimeEnv" yaml:"wireRuntimeEnv"`
+	SsrUrlAuthType awslambda.FunctionUrlAuthType `field:"optional" json:"ssrUrlAuthType" yaml:"ssrUrlAuthType"`
+	// Additional CloudFront path patterns to route directly to the S3 origin.
+	//
+	// In `ssg-isr` mode, `/_facetheory/data/*` is added automatically.
+	// Example custom direct-S3 path: "/marketing/*".
+	StaticPathPatterns *[]*string `field:"optional" json:"staticPathPatterns" yaml:"staticPathPatterns"`
+	WebAclId           *string    `field:"optional" json:"webAclId" yaml:"webAclId"`
+	WireRuntimeEnv     *bool      `field:"optional" json:"wireRuntimeEnv" yaml:"wireRuntimeEnv"`
 }
