@@ -23,9 +23,11 @@ Claude Remote MCP requires real incremental streaming for tool calls (SSE). On A
   - `GET /mcp/{actor}` (streaming enabled)
   - `DELETE /mcp/{actor}`
   - `GET /.well-known/oauth-protected-resource/mcp/{actor}` (co-registered RFC9728 discovery)
+- optional root discovery route when `enableWellKnownMcpDiscovery: true`:
+  - `GET /.well-known/mcp.json`
 - Optional DynamoDB tables:
   - session table (matches `runtime/mcp` Dynamo session store schema)
-  - stream/event table (intended for durable resumable SSE)
+  - stream/event table (used by durable resumable SSE once the app wires a persistent `StreamStore`)
 
 If you are using OAuth for Claude connectors on the default `/mcp` route, also add:
 
@@ -54,7 +56,7 @@ const mcp = new AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
   apiName: "remote-mcp",
   enableSessionTable: true,
   sessionTtlMinutes: 120,
-  // enableStreamTable: true, // optional; depends on your StreamStore implementation
+  // enableStreamTable: true, // optional; pair with mcp.NewDynamoStreamStore(db)
 });
 
 // Required for MCP auth `2025-06-18` discovery (Claude Remote MCP)
@@ -74,10 +76,12 @@ For per-actor bundles, enable `actorPath` and let the construct register discove
 const mcp = new AppTheoryRemoteMcpServer(stack, "RemoteMcpPerActor", {
   handler,
   actorPath: true,
+  enableWellKnownMcpDiscovery: true,
 });
 
 // mcp.endpoint === https://.../mcp/{actor}
 // discovery route === /.well-known/oauth-protected-resource/mcp/{actor}
+// well-known discovery route === /.well-known/mcp.json
 ```
 
 ## Keepalive + resumability guidance
@@ -86,6 +90,9 @@ For SSE connections, expect disconnects (idle timeouts, client refresh, Lambda m
 
 - **resumable streams** (`Last-Event-ID`) + replay from an event log
 - emitting periodic progress updates during long-running work
+
+When you provision the optional stream table, wire the Go runtime with `mcp.WithStreamStore(mcp.NewDynamoStreamStore(db))`
+to use the canonical `sessionId` / `eventId` / `expiresAt` schema this construct creates.
 
 ## Related docs
 

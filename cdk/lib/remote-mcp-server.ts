@@ -9,6 +9,7 @@ import {
   type AppTheoryRestApiRouterDomainOptions,
   type AppTheoryRestApiRouterStageOptions,
 } from "./rest-api-router";
+import { trimRepeatedChar } from "./private/string-utils";
 
 /**
  * Props for the AppTheoryRemoteMcpServer construct.
@@ -70,6 +71,17 @@ export interface AppTheoryRemoteMcpServerProps {
    * @default false
    */
   readonly actorPath?: boolean;
+
+  /**
+   * Register `GET /.well-known/mcp.json` and route it to the handler.
+   *
+   * This lets the construct own the final MCP discovery route alongside the
+   * transport and protected-resource metadata routes. The handler remains
+   * responsible for serving the discovery document content.
+   *
+   * @default false
+   */
+  readonly enableWellKnownMcpDiscovery?: boolean;
 
   /**
    * Create a DynamoDB table for MCP session storage.
@@ -167,6 +179,9 @@ export class AppTheoryRemoteMcpServer extends Construct {
         props.handler,
       );
     }
+    if (props.enableWellKnownMcpDiscovery) {
+      this.router.addLambdaIntegration("/.well-known/mcp.json", ["GET"], props.handler);
+    }
 
     // Optional session table (matches runtime/mcp/session_dynamo.go schema)
     if (props.enableSessionTable) {
@@ -240,7 +255,7 @@ function computeMcpEndpoint(
     return `https://${router.api.restApiId}.execute-api.${stack.region}.${stack.urlSuffix}/${stage}${suffix}`;
   }
 
-  const basePath = String(domain.basePath ?? "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  const basePath = trimRepeatedChar(String(domain.basePath ?? "").trim(), "/");
   const prefix = basePath ? `/${basePath}` : "";
-  return `https://${domain.domainName}${prefix}${suffix}`.replace(/\/{2,}/g, "/").replace(/^https:\//, "https://");
+  return `https://${domain.domainName}${prefix}${suffix}`;
 }

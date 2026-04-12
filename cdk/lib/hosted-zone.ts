@@ -3,6 +3,8 @@ import * as route53 from "aws-cdk-lib/aws-route53";
 import * as ssm from "aws-cdk-lib/aws-ssm";
 import { Construct } from "constructs";
 
+import { trimRepeatedChar } from "./private/string-utils";
+
 export interface AppTheoryHostedZoneProps {
   readonly zoneName: string;
   readonly comment?: string;
@@ -128,13 +130,13 @@ function sanitizeCloudFormationExportName(name: string): string {
     }
   }
 
-  out = out.replace(/^-+/, "").replace(/-+$/, "");
+  out = trimRepeatedChar(out, "-");
   return out ? out : "export";
 }
 
 function sanitizeConstructIdSuffix(input: string): string {
   const raw = String(input ?? "").trim();
   if (!raw) return "record";
-  const out = raw.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+/, "").replace(/-+$/, "");
+  const out = trimRepeatedChar(raw.replace(/[^a-zA-Z0-9]+/g, "-"), "-");
   return out ? out : "record";
 }

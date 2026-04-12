@@ -11,7 +11,7 @@ AppTheory is a multi-language monorepo (Go/TypeScript/Python) with a shared runt
 - Release artifacts are generated into `dist/` (not committed).
 
 ## Build, Test, and Development Commands
-Toolchains: Go `1.26.0` (see `go.mod`), Node `>=24`, Python `>=3.14`.
+Toolchains: Go `1.26.2` (see `go.mod`), Node `>=24`, Python `>=3.14`.
 
 - `make fmt`: format Go code (`gofmt`).
 - `make lint`: run Go/TS/Python linters.

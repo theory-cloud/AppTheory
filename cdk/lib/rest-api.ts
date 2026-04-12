@@ -2,6 +2,9 @@ import * as apigw from "aws-cdk-lib/aws-apigateway";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
 
+import { markRestApiStageRouteAsStreaming } from "./private/rest-api-streaming";
+import { trimRepeatedChar } from "./private/string-utils";
+
 export interface AppTheoryRestApiProps {
   readonly handler: lambda.IFunction;
   readonly apiName?: string;
@@ -38,16 +41,16 @@ export class AppTheoryRestApi extends Construct {
       const httpMethod = String(method ?? "").trim().toUpperCase();
       if (!httpMethod) continue;
       resource.addMethod(httpMethod, integration);
+      if (options.streaming) {
+        markRestApiStageRouteAsStreaming(this.api.deploymentStage, httpMethod, path);
+      }
     }
   }
 }
 
 function resourceForPath(api: apigw.RestApi, inputPath: string): apigw.IResource {
   let current: apigw.IResource = api.root;
-  const trimmed = String(inputPath ?? "")
-    .trim()
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "");
+  const trimmed = trimRepeatedChar(String(inputPath ?? "").trim(), "/");
   if (!trimmed) return current;
 
   for (const segment of trimmed.split("/")) {
