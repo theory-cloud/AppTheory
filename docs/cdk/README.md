@@ -7,6 +7,7 @@ patterns and treat `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts` as the 
 
 - [Getting Started](./getting-started.md)
 - [API Reference](./api-reference.md)
+- [FaceTheory-First SSR Site](./ssr-site.md)
 - [AppSync Lambda Resolvers](./appsync-lambda-resolvers.md)
 - [REST API Router + Streaming](./rest-api-router-streaming.md)
 - [MCP Server for Bedrock AgentCore](./mcp-server-agentcore.md)
@@ -19,6 +20,7 @@ patterns and treat `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts` as the 
 These pages cover the canonical user-facing CDK patterns for:
 
 - AppSync Lambda resolver wiring with standard `aws-cdk-lib/aws-appsync` constructs
+- CloudFront + S3 + Lambda URL SSR/SSG/ISR deployment for FaceTheory-style apps
 - HTTP and REST API routing
 - response streaming and SSE
 - MCP and OAuth discovery endpoints

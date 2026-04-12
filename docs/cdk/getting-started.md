@@ -42,6 +42,7 @@ make rubric
 ## Next reads
 
 - [CDK API Reference](./api-reference.md)
+- [FaceTheory-First SSR Site](./ssr-site.md)
 - [AppSync Lambda Resolvers](./appsync-lambda-resolvers.md)
 - [REST API Router + Streaming](./rest-api-router-streaming.md)
 - [MCP Server for Bedrock AgentCore](./mcp-server-agentcore.md)
