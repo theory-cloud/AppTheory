@@ -6,5 +6,6 @@ import { SsrSiteStack } from "../lib/ssr-site-stack";
 
 const app = new cdk.App();
 
-new SsrSiteStack(app, "AppTheorySsrSiteDemo");
+const stackName = String(process.env.APPTHEORY_SSR_SITE_STACK_NAME ?? "").trim() || "AppTheorySsrSiteDemo";
 
+new SsrSiteStack(app, stackName);
