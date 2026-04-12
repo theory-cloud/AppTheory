@@ -3,6 +3,7 @@ import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as targets from "aws-cdk-lib/aws-route53-targets";
@@ -535,6 +536,10 @@ export class AppTheorySsrSite extends Construct {
             fallbackStatusCodes: [403, 404],
           })
         : ssrOrigin;
+    const defaultAllowedMethods =
+      siteMode === AppTheorySsrSiteMode.SSG_ISR
+        ? cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS
+        : cloudfront.AllowedMethods.ALLOW_ALL;
 
     this.distribution = new cloudfront.Distribution(this, "Distribution", {
       ...(enableLogging && this.logsBucket
@@ -546,7 +551,7 @@ export class AppTheorySsrSite extends Construct {
       defaultBehavior: {
         origin: defaultOrigin,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        allowedMethods: defaultAllowedMethods,
         cachePolicy: cloudfront.CachePolicy.USE_ORIGIN_CACHE_CONTROL_HEADERS,
         originRequestPolicy: ssrOriginRequestPolicy,
         responseHeadersPolicy: this.responseHeadersPolicy,
@@ -555,6 +560,15 @@ export class AppTheorySsrSite extends Construct {
       additionalBehaviors,
       ...(props.webAclId ? { webAclId: props.webAclId } : {}),
     });
+
+    if (ssrUrlAuthType === lambda.FunctionUrlAuthType.AWS_IAM) {
+      props.ssrFunction.addPermission("AllowCloudFrontInvokeFunctionViaUrl", {
+        action: "lambda:InvokeFunction",
+        principal: new iam.ServicePrincipal("cloudfront.amazonaws.com"),
+        sourceArn: this.distribution.distributionArn,
+        invokedViaFunctionUrl: true,
+      });
+    }
 
     if (this.htmlStoreBucket) {
       this.htmlStoreBucket.grantReadWrite(props.ssrFunction);
