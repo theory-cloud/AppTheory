@@ -299,6 +299,50 @@
                   ]
                 }
               ]
+            },
+            {
+              "Action": "s3:GetObject",
+              "Condition": {
+                "StringEquals": {
+                  "AWS:SourceArn": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:",
+                        {
+                          "Ref": "AWS::Partition"
+                        },
+                        ":cloudfront::",
+                        {
+                          "Ref": "AWS::AccountId"
+                        },
+                        ":distribution/",
+                        {
+                          "Ref": "SiteDistribution390DED28"
+                        }
+                      ]
+                    ]
+                  }
+                }
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudfront.amazonaws.com"
+              },
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    {
+                      "Fn::GetAtt": [
+                        "HtmlStoreBucket27756EC3",
+                        "Arn"
+                      ]
+                    },
+                    "/*"
+                  ]
+                ]
+              }
             }
           ],
           "Version": "2012-10-17"
@@ -594,6 +638,41 @@
                   }
                 }
               ],
+              "PathPattern": "assets",
+              "ResponseHeadersPolicyId": {
+                "Ref": "SiteResponseHeadersPolicy5F343E8C"
+              },
+              "TargetOriginId": "TestStackSiteDistributionOrigin3674F8AE3",
+              "ViewerProtocolPolicy": "redirect-to-https"
+            },
+            {
+              "AllowedMethods": [
+                "GET",
+                "HEAD",
+                "OPTIONS"
+              ],
+              "CachePolicyId": "83da9c7e-98b4-4e11-a168-04f0df8e2c65",
+              "Compress": true,
+              "FunctionAssociations": [
+                {
+                  "EventType": "viewer-request",
+                  "FunctionARN": {
+                    "Fn::GetAtt": [
+                      "SiteSsrViewerRequestFunction103872E5",
+                      "FunctionARN"
+                    ]
+                  }
+                },
+                {
+                  "EventType": "viewer-response",
+                  "FunctionARN": {
+                    "Fn::GetAtt": [
+                      "SiteSsrViewerResponseFunction3CF15787",
+                      "FunctionARN"
+                    ]
+                  }
+                }
+              ],
               "PathPattern": "_facetheory/data/*",
               "ResponseHeadersPolicyId": {
                 "Ref": "SiteResponseHeadersPolicy5F343E8C"
@@ -629,11 +708,91 @@
                   }
                 }
               ],
-              "PathPattern": "marketing/*",
+              "PathPattern": "_facetheory/data",
               "ResponseHeadersPolicyId": {
                 "Ref": "SiteResponseHeadersPolicy5F343E8C"
               },
               "TargetOriginId": "TestStackSiteDistributionOrigin3674F8AE3",
+              "ViewerProtocolPolicy": "redirect-to-https"
+            },
+            {
+              "AllowedMethods": [
+                "GET",
+                "HEAD",
+                "OPTIONS"
+              ],
+              "CachePolicyId": {
+                "Ref": "SiteHtmlCachePolicy2B4843D5"
+              },
+              "Compress": true,
+              "FunctionAssociations": [
+                {
+                  "EventType": "viewer-request",
+                  "FunctionARN": {
+                    "Fn::GetAtt": [
+                      "SiteSsrViewerRequestFunction103872E5",
+                      "FunctionARN"
+                    ]
+                  }
+                },
+                {
+                  "EventType": "viewer-response",
+                  "FunctionARN": {
+                    "Fn::GetAtt": [
+                      "SiteSsrViewerResponseFunction3CF15787",
+                      "FunctionARN"
+                    ]
+                  }
+                }
+              ],
+              "OriginRequestPolicyId": {
+                "Ref": "SiteHtmlOriginRequestPolicy308D38C5"
+              },
+              "PathPattern": "marketing/*",
+              "ResponseHeadersPolicyId": {
+                "Ref": "SiteResponseHeadersPolicy5F343E8C"
+              },
+              "TargetOriginId": "TestStackSiteDistributionOrigin4531B04B5",
+              "ViewerProtocolPolicy": "redirect-to-https"
+            },
+            {
+              "AllowedMethods": [
+                "GET",
+                "HEAD",
+                "OPTIONS"
+              ],
+              "CachePolicyId": {
+                "Ref": "SiteHtmlCachePolicy2B4843D5"
+              },
+              "Compress": true,
+              "FunctionAssociations": [
+                {
+                  "EventType": "viewer-request",
+                  "FunctionARN": {
+                    "Fn::GetAtt": [
+                      "SiteSsrViewerRequestFunction103872E5",
+                      "FunctionARN"
+                    ]
+                  }
+                },
+                {
+                  "EventType": "viewer-response",
+                  "FunctionARN": {
+                    "Fn::GetAtt": [
+                      "SiteSsrViewerResponseFunction3CF15787",
+                      "FunctionARN"
+                    ]
+                  }
+                }
+              ],
+              "OriginRequestPolicyId": {
+                "Ref": "SiteHtmlOriginRequestPolicy308D38C5"
+              },
+              "PathPattern": "marketing",
+              "ResponseHeadersPolicyId": {
+                "Ref": "SiteResponseHeadersPolicy5F343E8C"
+              },
+              "TargetOriginId": "TestStackSiteDistributionOrigin4531B04B5",
               "ViewerProtocolPolicy": "redirect-to-https"
             }
           ],
@@ -643,7 +802,9 @@
               "HEAD",
               "OPTIONS"
             ],
-            "CachePolicyId": "83da9c7e-98b4-4e11-a168-04f0df8e2c65",
+            "CachePolicyId": {
+              "Ref": "SiteHtmlCachePolicy2B4843D5"
+            },
             "Compress": true,
             "FunctionAssociations": [
               {
@@ -666,7 +827,7 @@
               }
             ],
             "OriginRequestPolicyId": {
-              "Ref": "SiteSsrOriginRequestPolicyF6A13560"
+              "Ref": "SiteHtmlOriginRequestPolicy308D38C5"
             },
             "ResponseHeadersPolicyId": {
               "Ref": "SiteResponseHeadersPolicy5F343E8C"
@@ -718,7 +879,7 @@
             {
               "DomainName": {
                 "Fn::GetAtt": [
-                  "SiteAssetsBucket08A02D08",
+                  "HtmlStoreBucket27756EC3",
                   "RegionalDomainName"
                 ]
               },
@@ -729,6 +890,7 @@
                   "Id"
                 ]
               },
+              "OriginPath": "/isr-pages",
               "S3OriginConfig": {
                 "OriginAccessIdentity": ""
               }
@@ -774,10 +936,29 @@
               "Id": "TestStackSiteDistributionOrigin3674F8AE3",
               "OriginAccessControlId": {
                 "Fn::GetAtt": [
+                  "SiteDistributionOrigin3S3OriginAccessControlF0F5F99A",
+                  "Id"
+                ]
+              },
+              "S3OriginConfig": {
+                "OriginAccessIdentity": ""
+              }
+            },
+            {
+              "DomainName": {
+                "Fn::GetAtt": [
+                  "HtmlStoreBucket27756EC3",
+                  "RegionalDomainName"
+                ]
+              },
+              "Id": "TestStackSiteDistributionOrigin4531B04B5",
+              "OriginAccessControlId": {
+                "Fn::GetAtt": [
                   "SiteDistributionOrigin1S3OriginAccessControl4F95283E",
                   "Id"
                 ]
               },
+              "OriginPath": "/isr-pages",
               "S3OriginConfig": {
                 "OriginAccessIdentity": ""
               }
@@ -840,6 +1021,86 @@
         }
       },
       "Type": "AWS::Lambda::Permission"
+    },
+    "SiteDistributionOrigin3S3OriginAccessControlF0F5F99A": {
+      "Properties": {
+        "OriginAccessControlConfig": {
+          "Name": "TestStackSiteDistributionOrigin3S3OriginAccessControlFA87253C",
+          "OriginAccessControlOriginType": "s3",
+          "SigningBehavior": "always",
+          "SigningProtocol": "sigv4"
+        }
+      },
+      "Type": "AWS::CloudFront::OriginAccessControl"
+    },
+    "SiteHtmlCachePolicy2B4843D5": {
+      "Properties": {
+        "CachePolicyConfig": {
+          "Comment": "FaceTheory HTML cache policy keyed by query strings and stable public variant headers",
+          "DefaultTTL": 0,
+          "MaxTTL": 31536000,
+          "MinTTL": 0,
+          "Name": {
+            "Fn::Join": [
+              "",
+              [
+                "TestStackSiteHtmlCachePolicy2F65894E-",
+                {
+                  "Ref": "AWS::Region"
+                }
+              ]
+            ]
+          },
+          "ParametersInCacheKeyAndForwardedToOrigin": {
+            "CookiesConfig": {
+              "CookieBehavior": "none"
+            },
+            "EnableAcceptEncodingBrotli": true,
+            "EnableAcceptEncodingGzip": true,
+            "HeadersConfig": {
+              "HeaderBehavior": "whitelist",
+              "Headers": [
+                "x-apptheory-original-host",
+                "x-facetheory-original-host",
+                "x-tenant-id",
+                "x-facetheory-tenant"
+              ]
+            },
+            "QueryStringsConfig": {
+              "QueryStringBehavior": "all"
+            }
+          }
+        }
+      },
+      "Type": "AWS::CloudFront::CachePolicy"
+    },
+    "SiteHtmlOriginRequestPolicy308D38C5": {
+      "Properties": {
+        "OriginRequestPolicyConfig": {
+          "CookiesConfig": {
+            "CookieBehavior": "none"
+          },
+          "HeadersConfig": {
+            "HeaderBehavior": "whitelist",
+            "Headers": [
+              "cloudfront-forwarded-proto",
+              "cloudfront-viewer-address",
+              "x-apptheory-original-host",
+              "x-facetheory-original-host",
+              "x-apptheory-original-uri",
+              "x-facetheory-original-uri",
+              "x-request-id",
+              "x-tenant-id",
+              "x-facetheory-tenant"
+            ]
+          },
+          "Name": "TestStackSiteHtmlOriginRequestPolicy00AFE701",
+          "QueryStringsConfig": {
+            "QueryStringBehavior": "all"
+          }
+        }
+      },
+      "Type": "AWS::CloudFront::OriginRequestPolicy"
     },
     "SiteResponseHeadersPolicy5F343E8C": {
       "Properties": {
@@ -927,7 +1188,7 @@
     "SiteSsrViewerRequestFunction103872E5": {
       "Properties": {
         "AutoPublish": true,
-        "FunctionCode": "function handler(event) {\n\t  var request = event.request;\n\t  var headers = request.headers;\n\t  var uri = request.uri || '/';\n\t  var requestIdHeader = headers['x-request-id'];\n\t  var requestId = requestIdHeader && requestIdHeader.value ? requestIdHeader.value.trim() : '';\n\n\t  if (!requestId) {\n\t    requestId = event.context && event.context.requestId ? String(event.context.requestId).trim() : '';\n\t  }\n\n\t  if (!requestId) {\n\t    requestId = 'req_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);\n\t  }\n\n\t  headers['x-request-id'] = { value: requestId };\n\t  headers['x-apptheory-original-uri'] = { value: uri };\n\t  headers['x-facetheory-original-uri'] = { value: uri };\n\n\t  if (headers.host && headers.host.value) {\n\t    headers['x-apptheory-original-host'] = { value: headers.host.value };\n\t    headers['x-facetheory-original-host'] = { value: headers.host.value };\n\t  }\n\n\t  if ('ssg-isr' === 'ssg-isr') {\n\t    var directS3Prefixes = [\n\t      '/_facetheory/data',\n      '/marketing',\n      '/assets'\n\t    ];\n\t    var isDirectS3Path = false;\n\n\t    for (var i = 0; i < directS3Prefixes.length; i++) {\n\t      var prefix = directS3Prefixes[i];\n\t      if (uri === prefix || uri.startsWith(prefix + '/')) {\n\t        isDirectS3Path = true;\n\t        break;\n\t      }\n\t    }\n\n\t    if (!isDirectS3Path) {\n\t      var lastSlash = uri.lastIndexOf('/');\n\t      var lastSegment = lastSlash >= 0 ? uri.substring(lastSlash + 1) : uri;\n\n\t      if (lastSegment.indexOf('.') === -1) {\n\t        request.uri = uri.endsWith('/') ? uri + 'index.html' : uri + '/index.html';\n\t      }\n\t    }\n\t  }\n\n\t  return request;\n\t}",
+        "FunctionCode": "function handler(event) {\n\t  var request = event.request;\n\t  var headers = request.headers;\n\t  var uri = request.uri || '/';\n\t  var requestIdHeader = headers['x-request-id'];\n\t  var requestId = requestIdHeader && requestIdHeader.value ? requestIdHeader.value.trim() : '';\n\n\t  if (!requestId) {\n\t    requestId = event.context && event.context.requestId ? String(event.context.requestId).trim() : '';\n\t  }\n\n\t  if (!requestId) {\n\t    requestId = 'req_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);\n\t  }\n\n\t  headers['x-request-id'] = { value: requestId };\n\t  headers['x-apptheory-original-uri'] = { value: uri };\n\t  headers['x-facetheory-original-uri'] = { value: uri };\n\n\t  if (headers.host && headers.host.value) {\n\t    headers['x-apptheory-original-host'] = { value: headers.host.value };\n\t    headers['x-facetheory-original-host'] = { value: headers.host.value };\n\t  }\n\n\t  if ('ssg-isr' === 'ssg-isr') {\n\t    var rawS3Prefixes = [\n\t      '/_facetheory/data',\n      '/assets'\n\t    ];\n\t    var lambdaPassthroughPrefixes = [\n\t      \n\t    ];\n\t    var isLambdaPassthroughPath = false;\n\n\t    for (var i = 0; i < lambdaPassthroughPrefixes.length; i++) {\n\t      var prefix = lambdaPassthroughPrefixes[i];\n\t      if (uri === prefix || uri.startsWith(prefix + '/')) {\n\t        isLambdaPassthroughPath = true;\n\t        break;\n\t      }\n\t    }\n\n\t    if (!isLambdaPassthroughPath) {\n\t      var isRawS3Path = false;\n\n\t      for (var j = 0; j < rawS3Prefixes.length; j++) {\n\t        var rawPrefix = rawS3Prefixes[j];\n\t        if (uri === rawPrefix || uri.startsWith(rawPrefix + '/')) {\n\t          isRawS3Path = true;\n\t          break;\n\t        }\n\t      }\n\n\t      var lastSlash = uri.lastIndexOf('/');\n\t      var lastSegment = lastSlash >= 0 ? uri.substring(lastSlash + 1) : uri;\n\n\t      if (!isRawS3Path && lastSegment.indexOf('.') === -1) {\n\t        request.uri = uri.endsWith('/') ? uri + 'index.html' : uri + '/index.html';\n\t      }\n\t    }\n\t  }\n\n\t  return request;\n\t}",
         "FunctionConfig": {
           "Comment": "FaceTheory viewer-request edge context and HTML rewrite for SSR site",
           "Runtime": "cloudfront-js-2.0"

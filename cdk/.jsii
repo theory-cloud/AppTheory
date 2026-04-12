@@ -18503,7 +18503,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/ssr-site.ts",
-          "line": 262
+          "line": 364
         },
         "parameters": [
           {
@@ -18529,7 +18529,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 249
+        "line": 351
       },
       "name": "AppTheorySsrSite",
       "properties": [
@@ -18537,7 +18537,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 250
+            "line": 352
           },
           "name": "assetsBucket",
           "type": {
@@ -18548,7 +18548,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 251
+            "line": 353
           },
           "name": "assetsKeyPrefix",
           "type": {
@@ -18559,7 +18559,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 252
+            "line": 354
           },
           "name": "assetsManifestKey",
           "type": {
@@ -18570,7 +18570,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 258
+            "line": 360
           },
           "name": "distribution",
           "type": {
@@ -18581,7 +18581,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 260
+            "line": 362
           },
           "name": "responseHeadersPolicy",
           "type": {
@@ -18592,7 +18592,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 257
+            "line": 359
           },
           "name": "ssrUrl",
           "type": {
@@ -18603,7 +18603,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 259
+            "line": 361
           },
           "name": "certificate",
           "optional": true,
@@ -18615,7 +18615,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 253
+            "line": 355
           },
           "name": "htmlStoreBucket",
           "optional": true,
@@ -18627,7 +18627,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 254
+            "line": 356
           },
           "name": "htmlStoreKeyPrefix",
           "optional": true,
@@ -18639,7 +18639,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 255
+            "line": 357
           },
           "name": "isrMetadataTable",
           "optional": true,
@@ -18651,7 +18651,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 256
+            "line": 358
           },
           "name": "logsBucket",
           "optional": true,
@@ -18668,7 +18668,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 25
+        "line": 26
       },
       "members": [
         {
@@ -18696,7 +18696,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 126
+        "line": 191
       },
       "name": "AppTheorySsrSiteProps",
       "properties": [
@@ -18705,7 +18705,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 127
+            "line": 192
           },
           "name": "ssrFunction",
           "type": {
@@ -18717,7 +18717,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 156
+            "line": 221
           },
           "name": "assetsBucket",
           "optional": true,
@@ -18730,7 +18730,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 158
+            "line": 223
           },
           "name": "assetsKeyPrefix",
           "optional": true,
@@ -18743,7 +18743,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 159
+            "line": 224
           },
           "name": "assetsManifestKey",
           "optional": true,
@@ -18756,7 +18756,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 157
+            "line": 222
           },
           "name": "assetsPath",
           "optional": true,
@@ -18769,7 +18769,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 240
+            "line": 342
           },
           "name": "autoDeleteObjects",
           "optional": true,
@@ -18787,7 +18787,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 203
+            "line": 287
           },
           "name": "cacheTableName",
           "optional": true,
@@ -18800,7 +18800,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 244
+            "line": 346
           },
           "name": "certificateArn",
           "optional": true,
@@ -18810,10 +18810,32 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "remarks": "In `ssg-isr` mode, `/_facetheory/data/*` is added automatically.\nExample direct-S3 object path: \"/feeds/*\"",
+            "summary": "Additional raw S3 object/data path patterns that should bypass extensionless HTML rewrites."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 242
+            "line": 257
+          },
+          "name": "directS3PathPatterns",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 344
           },
           "name": "domainName",
           "optional": true,
@@ -18826,7 +18848,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 227
+            "line": 311
           },
           "name": "enableLogging",
           "optional": true,
@@ -18839,12 +18861,29 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 243
+            "line": 345
           },
           "name": "hostedZone",
           "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.aws_route53.IHostedZone"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "The default AppTheory policy keys on query strings plus the stable public HTML\nvariant headers (`x-*-original-host`, `x-tenant-id`, and any extra forwarded\nheaders you opt into) while leaving cookies out of the cache key.",
+            "summary": "Cache policy applied to the cacheable HTML behavior in `ssg-isr` mode."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 339
+          },
+          "name": "htmlCachePolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.ICachePolicy"
           }
         },
         {
@@ -18856,7 +18895,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 168
+            "line": 233
           },
           "name": "htmlStoreBucket",
           "optional": true,
@@ -18873,7 +18912,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 174
+            "line": 239
           },
           "name": "htmlStoreKeyPrefix",
           "optional": true,
@@ -18890,7 +18929,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 144
+            "line": 209
           },
           "name": "invokeMode",
           "optional": true,
@@ -18907,7 +18946,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 190
+            "line": 274
           },
           "name": "isrMetadataTable",
           "optional": true,
@@ -18924,7 +18963,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 197
+            "line": 281
           },
           "name": "isrMetadataTableName",
           "optional": true,
@@ -18937,7 +18976,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 228
+            "line": 312
           },
           "name": "logsBucket",
           "optional": true,
@@ -18955,7 +18994,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 138
+            "line": 203
           },
           "name": "mode",
           "optional": true,
@@ -18968,7 +19007,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 239
+            "line": 341
           },
           "name": "removalPolicy",
           "optional": true,
@@ -18985,12 +19024,30 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 237
+            "line": 321
           },
           "name": "responseHeadersPolicy",
           "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "cloudfront.CachePolicy.CACHING_DISABLED",
+            "remarks": "The default is `CACHING_DISABLED` so dynamic Lambda routes stay safe unless you\nintentionally opt into a cache policy that matches your app's variance model.",
+            "summary": "Cache policy applied to direct Lambda-backed SSR behaviors."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 330
+          },
+          "name": "ssrCachePolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.ICachePolicy"
           }
         },
         {
@@ -19002,9 +19059,31 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 225
+            "line": 309
           },
           "name": "ssrForwardHeaders",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Use this for same-origin dynamic paths such as auth callbacks, actions, or form posts.\nExample direct-SSR path: \"/actions/*\"",
+            "summary": "Additional path patterns that should bypass the `ssg-isr` origin group and route directly to the Lambda Function URL with full method support."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 266
+          },
+          "name": "ssrPathPatterns",
           "optional": true,
           "type": {
             "collection": {
@@ -19025,7 +19104,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 154
+            "line": 219
           },
           "name": "ssrUrlAuthType",
           "optional": true,
@@ -19036,13 +19115,13 @@
         {
           "abstract": true,
           "docs": {
-            "remarks": "In `ssg-isr` mode, `/_facetheory/data/*` is added automatically.\nExample custom direct-S3 path: \"/marketing/*\"",
-            "summary": "Additional CloudFront path patterns to route directly to the S3 origin."
+            "remarks": "Requests like `/marketing` and `/marketing/...` are rewritten to `/index.html`\nwithin the section and stay on S3 instead of falling back to Lambda.\n\nExample direct-S3 HTML section path: \"/marketing/*\"",
+            "summary": "Additional extensionless HTML section path patterns to route directly to the primary HTML S3 origin."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 182
+            "line": 249
           },
           "name": "staticPathPatterns",
           "optional": true,
@@ -19060,7 +19139,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 246
+            "line": 348
           },
           "name": "webAclId",
           "optional": true,
@@ -19073,7 +19152,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 206
+            "line": 290
           },
           "name": "wireRuntimeEnv",
           "optional": true,
@@ -20073,5 +20152,5 @@
     }
   },
   "version": "0.24.0",
-  "fingerprint": "9G6J+J+V6ql04FBc4ejf6GYbhl80WKiRc+RxlsdPnGk="
+  "fingerprint": "vJ9L4inY5Ol4MIX8UEdxyvB0rycwDZq56xQnbrmdtgo="
 }

@@ -1355,6 +1355,10 @@ test("AppTheorySsrSite defaults to ssr-only mode with edge functions", () => {
   assert.equal(functions.length, 2);
   assert.equal(distribution.Properties?.DistributionConfig?.OriginGroups?.Quantity ?? 0, 0);
   assert.equal(distribution.Properties?.DistributionConfig?.DefaultCacheBehavior?.FunctionAssociations?.length, 2);
+  assert.equal(
+    distribution.Properties?.DistributionConfig?.DefaultCacheBehavior?.CachePolicyId,
+    "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+  );
 });
 
 test("AppTheorySsrSite allows explicit public Function URL compatibility mode", () => {
@@ -1412,11 +1416,19 @@ test("AppTheorySsrSite defaults to FaceTheory-safe SSR origin request headers", 
   const originRequestPolicies = Object.values(template.Resources ?? {}).filter(
     (resource) => resource.Type === "AWS::CloudFront::OriginRequestPolicy",
   );
+  const ssrPolicy = originRequestPolicies.find(
+    (resource) => resource.Properties?.OriginRequestPolicyConfig?.CookiesConfig?.CookieBehavior === "all",
+  );
+  const htmlPolicy = originRequestPolicies.find(
+    (resource) => resource.Properties?.OriginRequestPolicyConfig?.CookiesConfig?.CookieBehavior === "none",
+  );
 
-  assert.equal(originRequestPolicies.length, 1);
+  assert.equal(originRequestPolicies.length, 2);
+  assert.ok(ssrPolicy, "Should keep an SSR origin request policy that forwards cookies");
+  assert.ok(htmlPolicy, "Should synthesize a public HTML origin request policy without cookies");
 
-  const [policy] = originRequestPolicies;
-  const headers = [...(policy.Properties?.OriginRequestPolicyConfig?.HeadersConfig?.Headers ?? [])].sort();
+  const headers = [...(ssrPolicy.Properties?.OriginRequestPolicyConfig?.HeadersConfig?.Headers ?? [])].sort();
+  const htmlHeaders = [...(htmlPolicy.Properties?.OriginRequestPolicyConfig?.HeadersConfig?.Headers ?? [])].sort();
 
   assert.deepEqual(headers, [
     "cloudfront-forwarded-proto",
@@ -1429,6 +1441,7 @@ test("AppTheorySsrSite defaults to FaceTheory-safe SSR origin request headers", 
     "x-request-id",
     "x-tenant-id",
   ]);
+  assert.deepEqual(htmlHeaders, headers, "HTML and SSR policies should share the safe edge header contract");
   assert.ok(!headers.includes("host"), "Should not forward raw host to Function URL origin");
   assert.ok(!headers.includes("x-forwarded-proto"), "Should not forward x-forwarded-proto to Function URL origin");
 });
@@ -1487,6 +1500,86 @@ test("AppTheorySsrSite wires first-class ISR HTML store and metadata resources",
   assert.match(policyJson, /dynamodb:PutItem/);
 });
 
+test("AppTheorySsrSite ssg-isr mode uses the html store as the primary HTML origin", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const htmlStoreBucket = new s3.Bucket(stack, "HtmlStoreBucket", {
+    blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+    encryption: s3.BucketEncryption.S3_MANAGED,
+    enforceSSL: true,
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+    htmlStoreBucket,
+    htmlStoreKeyPrefix: "isr-pages",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = template.Resources ?? {};
+  const distribution = Object.values(resources).find((resource) => resource.Type === "AWS::CloudFront::Distribution");
+
+  assert.ok(distribution, "Should have CloudFront distribution");
+
+  const origins = distribution.Properties?.DistributionConfig?.Origins ?? [];
+  const htmlOrigin = origins.find((origin) => origin.OriginPath === "/isr-pages");
+  const originGroupMembers =
+    distribution.Properties?.DistributionConfig?.OriginGroups?.Items?.[0]?.Members?.Items ?? [];
+
+  assert.ok(htmlOrigin, "Should synthesize an HTML S3 origin with the html store origin path");
+  assert.equal(originGroupMembers[0]?.OriginId, htmlOrigin?.Id);
+});
+
+test("AppTheorySsrSite ssg-isr mode creates a stable public HTML cache key", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+    ssrForwardHeaders: ["x-facetheory-tenant"],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = template.Resources ?? {};
+  const distribution = Object.values(resources).find((resource) => resource.Type === "AWS::CloudFront::Distribution");
+  const cachePolicyEntry = Object.entries(resources).find(([, resource]) => resource.Type === "AWS::CloudFront::CachePolicy");
+
+  assert.ok(distribution, "Should have CloudFront distribution");
+  assert.ok(cachePolicyEntry, "Should synthesize a custom HTML cache policy");
+
+  const [cachePolicyLogicalId, cachePolicy] = cachePolicyEntry;
+  const headers = [
+    ...(cachePolicy.Properties?.CachePolicyConfig?.ParametersInCacheKeyAndForwardedToOrigin?.HeadersConfig?.Headers ?? []),
+  ].sort();
+
+  assert.equal(cachePolicy.Properties?.CachePolicyConfig?.ParametersInCacheKeyAndForwardedToOrigin?.CookiesConfig?.CookieBehavior, "none");
+  assert.equal(cachePolicy.Properties?.CachePolicyConfig?.ParametersInCacheKeyAndForwardedToOrigin?.QueryStringsConfig?.QueryStringBehavior, "all");
+  assert.deepEqual(headers, [
+    "x-apptheory-original-host",
+    "x-facetheory-original-host",
+    "x-facetheory-tenant",
+    "x-tenant-id",
+  ]);
+  assert.deepEqual(distribution.Properties?.DistributionConfig?.DefaultCacheBehavior?.CachePolicyId, {
+    Ref: cachePolicyLogicalId,
+  });
+});
+
 test("AppTheorySsrSite ssg-isr mode synthesizes origin-group fallback and edge rewrite", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -1504,14 +1597,23 @@ test("AppTheorySsrSite ssg-isr mode synthesizes origin-group fallback and edge r
 
   const template = assertions.Template.fromStack(stack).toJSON();
   const resources = Object.values(template.Resources ?? {});
+  const resourceEntries = Object.entries(template.Resources ?? {});
   const distribution = resources.find((resource) => resource.Type === "AWS::CloudFront::Distribution");
   const functions = resources.filter((resource) => resource.Type === "AWS::CloudFront::Function");
   const requestFunction = functions.find((resource) =>
     String(resource.Properties?.FunctionConfig?.Comment ?? "").includes("viewer-request"),
   );
+  const cachePolicyEntry = resourceEntries.find(([, resource]) => resource.Type === "AWS::CloudFront::CachePolicy");
+  const htmlOriginRequestPolicyEntry = resourceEntries.find(
+    ([, resource]) =>
+      resource.Type === "AWS::CloudFront::OriginRequestPolicy" &&
+      resource.Properties?.OriginRequestPolicyConfig?.CookiesConfig?.CookieBehavior === "none",
+  );
 
   assert.ok(distribution, "Should have CloudFront distribution");
   assert.ok(requestFunction, "Should have SSR viewer-request function");
+  assert.ok(cachePolicyEntry, "Should synthesize the shared HTML cache policy");
+  assert.ok(htmlOriginRequestPolicyEntry, "Should synthesize the shared HTML origin request policy");
   assert.equal(distribution.Properties?.DistributionConfig?.OriginGroups?.Quantity, 1);
   assert.equal(distribution.Properties?.DistributionConfig?.DefaultCacheBehavior?.FunctionAssociations?.length, 2);
   assert.deepEqual(distribution.Properties?.DistributionConfig?.DefaultCacheBehavior?.AllowedMethods, [
@@ -1538,6 +1640,67 @@ test("AppTheorySsrSite ssg-isr mode synthesizes origin-group fallback and edge r
   assert.match(functionCode, /x-facetheory-original-uri/);
   assert.match(functionCode, /event\.context\.requestId/);
   assert.match(functionCode, /index\.html/);
+});
+
+test("AppTheorySsrSite expands static HTML and direct SSR path patterns for root plus nested routes", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+    staticPathPatterns: ["/marketing/*"],
+    ssrPathPatterns: ["/actions/*"],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const resourceEntries = Object.entries(template.Resources ?? {});
+  const distribution = resources.find((resource) => resource.Type === "AWS::CloudFront::Distribution");
+  const functions = resources.filter((resource) => resource.Type === "AWS::CloudFront::Function");
+  const requestFunction = functions.find((resource) =>
+    String(resource.Properties?.FunctionConfig?.Comment ?? "").includes("viewer-request"),
+  );
+  const cachePolicyEntry = resourceEntries.find(([, resource]) => resource.Type === "AWS::CloudFront::CachePolicy");
+  const htmlOriginRequestPolicyEntry = resourceEntries.find(
+    ([, resource]) =>
+      resource.Type === "AWS::CloudFront::OriginRequestPolicy" &&
+      resource.Properties?.OriginRequestPolicyConfig?.CookiesConfig?.CookieBehavior === "none",
+  );
+
+  assert.ok(distribution, "Should have CloudFront distribution");
+  assert.ok(requestFunction, "Should have SSR viewer-request function");
+  assert.ok(cachePolicyEntry, "Should synthesize the shared HTML cache policy");
+  assert.ok(htmlOriginRequestPolicyEntry, "Should synthesize the shared HTML origin request policy");
+
+  const cacheBehaviors = distribution.Properties?.DistributionConfig?.CacheBehaviors ?? [];
+  const marketingRootBehavior = cacheBehaviors.find((behavior) => behavior.PathPattern === "marketing");
+  const marketingWildcardBehavior = cacheBehaviors.find((behavior) => behavior.PathPattern === "marketing/*");
+  const actionsRootBehavior = cacheBehaviors.find((behavior) => behavior.PathPattern === "actions");
+  const actionsWildcardBehavior = cacheBehaviors.find((behavior) => behavior.PathPattern === "actions/*");
+
+  assert.ok(marketingRootBehavior, "Should synthesize exact-root S3 behavior for static HTML sections");
+  assert.ok(marketingWildcardBehavior, "Should synthesize wildcard S3 behavior for static HTML sections");
+  assert.ok(actionsRootBehavior, "Should synthesize exact-root Lambda behavior for direct SSR paths");
+  assert.ok(actionsWildcardBehavior, "Should synthesize wildcard Lambda behavior for direct SSR paths");
+  assert.deepEqual(marketingRootBehavior.AllowedMethods, ["GET", "HEAD", "OPTIONS"]);
+  assert.deepEqual(marketingRootBehavior.CachePolicyId, { Ref: cachePolicyEntry[0] });
+  assert.deepEqual(marketingWildcardBehavior.CachePolicyId, { Ref: cachePolicyEntry[0] });
+  assert.deepEqual(marketingRootBehavior.OriginRequestPolicyId, { Ref: htmlOriginRequestPolicyEntry[0] });
+  assert.deepEqual(marketingWildcardBehavior.OriginRequestPolicyId, { Ref: htmlOriginRequestPolicyEntry[0] });
+  assert.deepEqual(actionsWildcardBehavior.AllowedMethods, ["GET", "HEAD", "OPTIONS", "PUT", "PATCH", "POST", "DELETE"]);
+  assert.ok(actionsWildcardBehavior.OriginRequestPolicyId, "Direct SSR paths should keep the Lambda origin contract");
+
+  const functionCode = String(requestFunction.Properties?.FunctionCode ?? "");
+  assert.match(functionCode, /lambdaPassthroughPrefixes/);
+  assert.match(functionCode, /\/actions/);
+  assert.doesNotMatch(functionCode, /\/marketing'/);
 });
 
 test("AppTheorySsrSite defaults to FaceTheory CDN response headers and origin cache-control policies", () => {
@@ -1584,8 +1747,12 @@ test("AppTheorySsrSite defaults to FaceTheory CDN response headers and origin ca
 
   const defaultBehavior = distribution.Properties?.DistributionConfig?.DefaultCacheBehavior ?? {};
   const staticBehaviors = distribution.Properties?.DistributionConfig?.CacheBehaviors ?? [];
+  const cachePolicyEntry = Object.entries(template.Resources ?? {}).find(
+    ([, resource]) => resource.Type === "AWS::CloudFront::CachePolicy",
+  );
 
-  assert.equal(defaultBehavior.CachePolicyId, cloudfront.CachePolicy.USE_ORIGIN_CACHE_CONTROL_HEADERS.cachePolicyId);
+  assert.ok(cachePolicyEntry, "Should synthesize a dedicated HTML cache policy for the default HTML behavior");
+  assert.deepEqual(defaultBehavior.CachePolicyId, { Ref: cachePolicyEntry[0] });
   assert.ok(defaultBehavior.ResponseHeadersPolicyId, "Default behavior should use response headers policy");
 
   for (const behavior of staticBehaviors) {
