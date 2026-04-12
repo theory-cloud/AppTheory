@@ -760,6 +760,14 @@ func init() {
 			return &j
 		},
 	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheorySsrSiteMode",
+		reflect.TypeOf((*AppTheorySsrSiteMode)(nil)).Elem(),
+		map[string]interface{}{
+			"SSR_ONLY": AppTheorySsrSiteMode_SSR_ONLY,
+			"SSG_ISR":  AppTheorySsrSiteMode_SSG_ISR,
+		},
+	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheorySsrSiteProps",
 		reflect.TypeOf((*AppTheorySsrSiteProps)(nil)).Elem(),

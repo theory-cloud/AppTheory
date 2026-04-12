@@ -4,7 +4,7 @@ import { CfnOutput, Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
 
-import { AppTheorySsrSite } from "@theory-cloud/apptheory-cdk";
+import { AppTheorySsrSite, AppTheorySsrSiteMode } from "@theory-cloud/apptheory-cdk";
 
 export class SsrSiteStack extends Stack {
   constructor(scope: Construct, id: string) {
@@ -32,6 +32,7 @@ export class SsrSiteStack extends Stack {
 
     const site = new AppTheorySsrSite(this, "Site", {
       ssrFunction: ssrFn,
+      mode: AppTheorySsrSiteMode.SSG_ISR,
       assetsPath: path.join(__dirname, "..", "assets"),
       removalPolicy: RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
