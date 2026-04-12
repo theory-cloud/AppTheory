@@ -8653,7 +8653,7 @@
   },
   "name": "@theory-cloud/apptheory-cdk",
   "readme": {
-    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryRestApiRouter` — REST API v1 multi-Lambda router with full streaming parity + stage controls + domain wiring.\n- `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueue` — SQS queue with optional DLQ (queue-only friendly).\n- `AppTheoryQueueConsumer` — SQS → Lambda event source mapping with full knobs.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring (convenience wrapper over `AppTheoryQueue` + `AppTheoryQueueConsumer`).\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryEventBridgeBus` — custom EventBridge bus with explicit cross-account publish allowlist.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n- `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs + Lambda binding helper).\n- `AppTheoryHttpIngestionEndpoint` — authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer + throttling controls.\n- `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).\n- `AppTheoryLambdaRole` — Lambda execution role helper (baseline + X-Ray + KMS + escape hatches).\n- `AppTheoryPathRoutedFrontend` — CloudFront distribution for multi-SPA routing + API origin (stage domain pattern).\n- `AppTheoryMediaCdn` — CloudFront distribution for an S3-backed media CDN (optional private media via key groups).\n- `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).\n- `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + domain/cert helpers).\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
+    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryRestApiRouter` — REST API v1 multi-Lambda router with full streaming parity + stage controls + domain wiring.\n- `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueue` — SQS queue with optional DLQ (queue-only friendly).\n- `AppTheoryQueueConsumer` — SQS → Lambda event source mapping with full knobs.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring (convenience wrapper over `AppTheoryQueue` + `AppTheoryQueueConsumer`).\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryEventBridgeBus` — custom EventBridge bus with explicit cross-account publish allowlist.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n- `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs + Lambda binding helper).\n- `AppTheoryHttpIngestionEndpoint` — authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer + throttling controls.\n- `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).\n- `AppTheoryLambdaRole` — Lambda execution role helper (baseline + X-Ray + KMS + escape hatches).\n- `AppTheoryPathRoutedFrontend` — CloudFront distribution for multi-SPA routing + API origin (stage domain pattern).\n- `AppTheoryMediaCdn` — CloudFront distribution for an S3-backed media CDN (optional private media via key groups).\n- `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).\n- `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + signed Function URL origin by default + domain/cert helpers).\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
   },
   "repository": {
     "directory": "cdk",
@@ -18503,7 +18503,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/ssr-site.ts",
-          "line": 61
+          "line": 86
         },
         "parameters": [
           {
@@ -18529,7 +18529,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 52
+        "line": 77
       },
       "name": "AppTheorySsrSite",
       "properties": [
@@ -18537,7 +18537,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 53
+            "line": 78
           },
           "name": "assetsBucket",
           "type": {
@@ -18548,7 +18548,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 54
+            "line": 79
           },
           "name": "assetsKeyPrefix",
           "type": {
@@ -18559,7 +18559,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 55
+            "line": 80
           },
           "name": "assetsManifestKey",
           "type": {
@@ -18570,7 +18570,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 58
+            "line": 83
           },
           "name": "distribution",
           "type": {
@@ -18581,7 +18581,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 57
+            "line": 82
           },
           "name": "ssrUrl",
           "type": {
@@ -18592,7 +18592,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 59
+            "line": 84
           },
           "name": "certificate",
           "optional": true,
@@ -18604,7 +18604,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 56
+            "line": 81
           },
           "name": "logsBucket",
           "optional": true,
@@ -18643,7 +18643,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 19
+            "line": 33
           },
           "name": "assetsBucket",
           "optional": true,
@@ -18656,7 +18656,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 21
+            "line": 35
           },
           "name": "assetsKeyPrefix",
           "optional": true,
@@ -18669,7 +18669,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 22
+            "line": 36
           },
           "name": "assetsManifestKey",
           "optional": true,
@@ -18682,7 +18682,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 20
+            "line": 34
           },
           "name": "assetsPath",
           "optional": true,
@@ -18695,7 +18695,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 43
+            "line": 68
           },
           "name": "autoDeleteObjects",
           "optional": true,
@@ -18708,7 +18708,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 30
+            "line": 44
           },
           "name": "cacheTableName",
           "optional": true,
@@ -18721,7 +18721,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 47
+            "line": 72
           },
           "name": "certificateArn",
           "optional": true,
@@ -18734,7 +18734,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 45
+            "line": 70
           },
           "name": "domainName",
           "optional": true,
@@ -18747,7 +18747,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 39
+            "line": 64
           },
           "name": "enableLogging",
           "optional": true,
@@ -18760,7 +18760,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 46
+            "line": 71
           },
           "name": "hostedZone",
           "optional": true,
@@ -18770,10 +18770,14 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "lambda.InvokeMode.RESPONSE_STREAM",
+            "summary": "Lambda Function URL invoke mode for the SSR origin."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 17
+            "line": 21
           },
           "name": "invokeMode",
           "optional": true,
@@ -18786,7 +18790,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 40
+            "line": 65
           },
           "name": "logsBucket",
           "optional": true,
@@ -18799,7 +18803,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 42
+            "line": 67
           },
           "name": "removalPolicy",
           "optional": true,
@@ -18809,10 +18813,14 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "remarks": "The default AppTheory/FaceTheory-safe edge contract forwards only:\n- `cloudfront-forwarded-proto`\n- `cloudfront-viewer-address`\n- `x-request-id`\n- `x-tenant-id`\n\nUse this to opt in to additional app-specific headers such as\n`x-facetheory-tenant`. `host` and `x-forwarded-proto` are rejected because\nthey break or bypass the supported origin model.",
+            "summary": "Additional headers to forward to the SSR origin (Lambda Function URL) via the origin request policy."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 37
+            "line": 62
           },
           "name": "ssrForwardHeaders",
           "optional": true,
@@ -18827,10 +18835,28 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "lambda.FunctionUrlAuthType.AWS_IAM",
+            "remarks": "AppTheory defaults this to `AWS_IAM` so CloudFront reaches the SSR origin\nthrough a signed Origin Access Control path. Set `NONE` only as an explicit\ncompatibility override for legacy public Function URL deployments.",
+            "summary": "Function URL auth type for the SSR origin."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 26
+            "line": 31
+          },
+          "name": "ssrUrlAuthType",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.FunctionUrlAuthType"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 40
           },
           "name": "staticPathPatterns",
           "optional": true,
@@ -18848,7 +18874,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 49
+            "line": 74
           },
           "name": "webAclId",
           "optional": true,
@@ -18861,7 +18887,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 33
+            "line": 47
           },
           "name": "wireRuntimeEnv",
           "optional": true,
@@ -19861,5 +19887,5 @@
     }
   },
   "version": "0.22.2",
-  "fingerprint": "VI9FGiBTa0f3B/Ck3+kBUd4FQtw/eKBgI1EtFcAaGJk="
+  "fingerprint": "E+56z8Z5sd3UQB4F6J5XW0lfcqZoKGLQdUdynpgNFkA="
 }

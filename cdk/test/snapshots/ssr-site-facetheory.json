@@ -117,34 +117,6 @@
       },
       "Type": "AWS::IAM::Policy"
     },
-    "Fninvokefunction5F592A77": {
-      "Properties": {
-        "Action": "lambda:InvokeFunction",
-        "FunctionName": {
-          "Fn::GetAtt": [
-            "Fn9270CBC0",
-            "Arn"
-          ]
-        },
-        "InvokedViaFunctionUrl": true,
-        "Principal": "*"
-      },
-      "Type": "AWS::Lambda::Permission"
-    },
-    "Fninvokefunctionurl993E5E7C": {
-      "Properties": {
-        "Action": "lambda:InvokeFunctionUrl",
-        "FunctionName": {
-          "Fn::GetAtt": [
-            "Fn9270CBC0",
-            "Arn"
-          ]
-        },
-        "FunctionUrlAuthType": "NONE",
-        "Principal": "*"
-      },
-      "Type": "AWS::Lambda::Permission"
-    },
     "SiteAssetsBucket08A02D08": {
       "DeletionPolicy": "Retain",
       "Properties": {
@@ -410,7 +382,13 @@
                   }
                 ]
               },
-              "Id": "TestStackSiteDistributionOrigin169649692"
+              "Id": "TestStackSiteDistributionOrigin169649692",
+              "OriginAccessControlId": {
+                "Fn::GetAtt": [
+                  "SiteDistributionOrigin1FunctionUrlOriginAccessControlFF5C1633",
+                  "Id"
+                ]
+              }
             },
             {
               "DomainName": {
@@ -435,6 +413,49 @@
       },
       "Type": "AWS::CloudFront::Distribution"
     },
+    "SiteDistributionOrigin1FunctionUrlOriginAccessControlFF5C1633": {
+      "Properties": {
+        "OriginAccessControlConfig": {
+          "Name": "TestStackSiteDistributionOrinctionUrlOriginAccessControl6B81100A",
+          "OriginAccessControlOriginType": "lambda",
+          "SigningBehavior": "always",
+          "SigningProtocol": "sigv4"
+        }
+      },
+      "Type": "AWS::CloudFront::OriginAccessControl"
+    },
+    "SiteDistributionOrigin1InvokeFromApiForTestStackSiteDistributionOrigin169649692629265E1": {
+      "Properties": {
+        "Action": "lambda:InvokeFunctionUrl",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "SiteSsrUrl2D74149D",
+            "FunctionArn"
+          ]
+        },
+        "Principal": "cloudfront.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":cloudfront::",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":distribution/",
+              {
+                "Ref": "SiteDistribution390DED28"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
     "SiteDistributionOrigin2S3OriginAccessControlD62333BA": {
       "Properties": {
         "OriginAccessControlConfig": {
@@ -455,15 +476,10 @@
           "HeadersConfig": {
             "HeaderBehavior": "whitelist",
             "Headers": [
-              "accept",
-              "accept-language",
-              "cache-control",
-              "host",
-              "if-none-match",
-              "user-agent",
-              "x-forwarded-for",
               "cloudfront-forwarded-proto",
               "cloudfront-viewer-address",
+              "x-request-id",
+              "x-tenant-id",
               "x-facetheory-tenant"
             ]
           },
@@ -477,7 +493,7 @@
     },
     "SiteSsrUrl2D74149D": {
       "Properties": {
-        "AuthType": "NONE",
+        "AuthType": "AWS_IAM",
         "InvokeMode": "RESPONSE_STREAM",
         "TargetFunctionArn": {
           "Fn::GetAtt": [

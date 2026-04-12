@@ -3,7 +3,7 @@
 This example synthesizes an opinionated **SSR site** deployment pattern:
 
 - S3 bucket for immutable assets under `/assets/*`
-- Lambda Function URL origin (response streaming enabled)
+- Lambda Function URL origin (response streaming enabled, signed through CloudFront by default)
 - CloudFront distribution with two origins + path routing
 
 The construct (`AppTheorySsrSite`) also wires recommended runtime environment variables onto the SSR function:
@@ -37,6 +37,13 @@ new AppTheorySsrSite(this, "Site", {
   cacheTableName: "facetheory-isr-metadata",
 });
 ```
+
+Default SSR origin contract:
+
+- `AppTheorySsrSite` creates the SSR Function URL with `AWS_IAM` auth and uses CloudFront Function URL OAC by default.
+- Set `ssrUrlAuthType: lambda.FunctionUrlAuthType.NONE` only as an explicit compatibility override for legacy public Function URL flows.
+- Default forwarded headers are limited to safe edge context: `cloudfront-forwarded-proto`, `cloudfront-viewer-address`, `x-request-id`, and `x-tenant-id`.
+- Additional app-specific headers remain opt-in via `ssrForwardHeaders`; `host` and `x-forwarded-proto` are intentionally rejected.
 
 Notes for ISR permissions (app-defined):
 
