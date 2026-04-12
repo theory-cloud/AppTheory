@@ -1,6 +1,7 @@
 import { RemovalPolicy } from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as s3 from "aws-cdk-lib/aws-s3";
@@ -48,12 +49,42 @@ export interface AppTheorySsrSiteProps {
     readonly assetsKeyPrefix?: string;
     readonly assetsManifestKey?: string;
     /**
+     * Optional S3 bucket used by FaceTheory ISR HTML storage (`S3HtmlStore`).
+     *
+     * When provided, AppTheory grants the SSR function read/write access and wires:
+     * - `FACETHEORY_ISR_BUCKET`
+     * - `FACETHEORY_ISR_PREFIX`
+     */
+    readonly htmlStoreBucket?: s3.IBucket;
+    /**
+     * S3 key prefix used by FaceTheory ISR HTML storage.
+     * @default isr
+     */
+    readonly htmlStoreKeyPrefix?: string;
+    /**
      * Additional CloudFront path patterns to route directly to the S3 origin.
      *
      * In `ssg-isr` mode, `/_facetheory/data/*` is added automatically.
      * Example custom direct-S3 path: "/marketing/*"
      */
     readonly staticPathPatterns?: string[];
+    /**
+     * Optional TableTheory/DynamoDB table used for FaceTheory ISR metadata and lease coordination.
+     *
+     * When provided, AppTheory grants the SSR function read/write access and wires the
+     * metadata table aliases expected by the documented FaceTheory deployment shape.
+     */
+    readonly isrMetadataTable?: dynamodb.ITable;
+    /**
+     * Optional ISR/cache metadata table name to wire when you are not passing `isrMetadataTable`.
+     *
+     * Prefer `isrMetadataTable` when AppTheory should also grant access to the SSR Lambda.
+     */
+    readonly isrMetadataTableName?: string;
+    /**
+     * Legacy alias for `isrMetadataTableName`.
+     * @deprecated prefer `isrMetadataTable` or `isrMetadataTableName`
+     */
     readonly cacheTableName?: string;
     readonly wireRuntimeEnv?: boolean;
     /**
@@ -64,6 +95,8 @@ export interface AppTheorySsrSiteProps {
      * - `cloudfront-viewer-address`
      * - `x-apptheory-original-host`
      * - `x-apptheory-original-uri`
+     * - `x-facetheory-original-host`
+     * - `x-facetheory-original-uri`
      * - `x-request-id`
      * - `x-tenant-id`
      *
@@ -74,6 +107,14 @@ export interface AppTheorySsrSiteProps {
     readonly ssrForwardHeaders?: string[];
     readonly enableLogging?: boolean;
     readonly logsBucket?: s3.IBucket;
+    /**
+     * CloudFront response headers policy applied to SSR and direct-S3 behaviors.
+     *
+     * If omitted, AppTheory provisions a FaceTheory-aligned baseline policy at the CDN
+     * layer: HSTS, nosniff, frame-options, referrer-policy, XSS protection, and a
+     * restrictive permissions-policy. Content-Security-Policy remains origin-defined.
+     */
+    readonly responseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
     readonly removalPolicy?: RemovalPolicy;
     readonly autoDeleteObjects?: boolean;
     readonly domainName?: string;
@@ -85,9 +126,13 @@ export declare class AppTheorySsrSite extends Construct {
     readonly assetsBucket: s3.IBucket;
     readonly assetsKeyPrefix: string;
     readonly assetsManifestKey: string;
+    readonly htmlStoreBucket?: s3.IBucket;
+    readonly htmlStoreKeyPrefix?: string;
+    readonly isrMetadataTable?: dynamodb.ITable;
     readonly logsBucket?: s3.IBucket;
     readonly ssrUrl: lambda.FunctionUrl;
     readonly distribution: cloudfront.Distribution;
     readonly certificate?: acm.ICertificate;
+    readonly responseHeadersPolicy: cloudfront.IResponseHeadersPolicy;
     constructor(scope: Construct, id: string, props: AppTheorySsrSiteProps);
 }
