@@ -1,4 +1,6 @@
-# AppTheory SSR Site (Lambda URL + CloudFront) — CDK Example
+# AppTheory SSR Site (Lambda URL + CloudFront) - CDK Example
+
+Canonical operator guide: `docs/cdk/ssr-site.md`
 
 This example synthesizes an opinionated **SSR site** deployment pattern:
 
@@ -16,11 +18,11 @@ The construct (`AppTheorySsrSite`) also wires recommended runtime environment va
 
 ## FaceTheory-first deployment guide
 
-FaceTheory’s recommended topology splits CloudFront behaviors so static paths don’t traverse the SSR Lambda:
+FaceTheory's recommended topology splits CloudFront behaviors so static paths don't traverse the SSR Lambda:
 
-- `assets/*` → S3 (assets)
-- `/_facetheory/data/*` → S3 (SSG hydration JSON)
-- default `*` → S3 primary HTML origin with Lambda Function URL fallback
+- `assets/*` -> S3 (assets)
+- `/_facetheory/data/*` -> S3 (SSG hydration JSON)
+- default `*` -> S3 primary HTML origin with Lambda Function URL fallback
 
 Example configuration:
 
@@ -36,7 +38,7 @@ new AppTheorySsrSite(this, "Site", {
   // FaceTheory ISR metadata + lease coordination (TableTheory schema).
   isrMetadataTable,
 
-  // Forward FaceTheory’s tenant header to SSR when needed (normalized + de-duped).
+  // Forward FaceTheory's tenant header to SSR when needed (normalized + de-duped).
   ssrForwardHeaders: ["x-facetheory-tenant"],
 });
 ```
@@ -71,6 +73,22 @@ cd examples/cdk/ssr-site
 npm ci
 npx cdk synth
 ```
+
+## Deploy-grade smoke verification
+
+The deterministic synth hash is only the local gate for this example. The release path also runs a live AWS smoke
+check through `scripts/verify-ssr-site-smoke.sh`.
+
+Manual run from the repo root:
+
+```bash
+./scripts/verify-ssr-site-smoke.sh
+```
+
+Optional environment:
+
+- `APPTHEORY_SSR_SITE_STACK_NAME` to override the temporary stack name
+- `APPTHEORY_SSR_SMOKE_KEEP_STACK=1` to keep the deployed stack for debugging
 
 ## Build/deploy helpers (optional)
 

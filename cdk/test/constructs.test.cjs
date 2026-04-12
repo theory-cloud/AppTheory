@@ -1265,11 +1265,65 @@ test("AppTheorySsrSite signs the default Function URL origin", () => {
       resource.Properties?.Principal === "cloudfront.amazonaws.com" &&
       resource.Properties?.Action === "lambda:InvokeFunctionUrl",
   );
+  const publicUrlPermissions = resources.filter(
+    (resource) =>
+      resource.Type === "AWS::Lambda::Permission" &&
+      resource.Properties?.Principal === "*" &&
+      resource.Properties?.Action === "lambda:InvokeFunctionUrl",
+  );
 
   assert.equal(functionUrls.length, 1);
   assert.equal(functionUrls[0].Properties?.AuthType, "AWS_IAM");
   assert.equal(lambdaOriginAccessControls.length, 1);
   assert.equal(cloudfrontInvokePermissions.length, 1);
+  assert.equal(publicUrlPermissions.length, 0);
+});
+
+test("AppTheorySsrSite keeps the SSR origin on Function URL plus lambda OAC", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", { ssrFunction: fn });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = template.Resources ?? {};
+  const lambdaUrlEntry = Object.entries(resources).find(([, resource]) => resource.Type === "AWS::Lambda::Url");
+  const distribution = Object.values(resources).find((resource) => resource.Type === "AWS::CloudFront::Distribution");
+  const lambdaOriginAccessControl = Object.values(resources).find(
+    (resource) =>
+      resource.Type === "AWS::CloudFront::OriginAccessControl" &&
+      resource.Properties?.OriginAccessControlConfig?.OriginAccessControlOriginType === "lambda",
+  );
+
+  assert.ok(lambdaUrlEntry, "Should synthesize a Lambda Function URL");
+  assert.ok(distribution, "Should synthesize a CloudFront distribution");
+  assert.ok(lambdaOriginAccessControl, "Should synthesize lambda origin access control");
+
+  const [lambdaUrlLogicalId] = lambdaUrlEntry;
+  const origins = distribution.Properties?.DistributionConfig?.Origins ?? [];
+  const lambdaOrigin = origins.find((origin) => origin.CustomOriginConfig?.OriginProtocolPolicy === "https-only");
+
+  assert.ok(lambdaOrigin, "Should keep a dedicated HTTPS Lambda URL origin");
+  assert.deepEqual(lambdaOrigin.DomainName, {
+    "Fn::Select": [
+      2,
+      {
+        "Fn::Split": [
+          "/",
+          {
+            "Fn::GetAtt": [lambdaUrlLogicalId, "FunctionUrl"],
+          },
+        ],
+      },
+    ],
+  });
+  assert.ok(lambdaOrigin.OriginAccessControlId, "Lambda origin should be signed via CloudFront OAC");
 });
 
 test("AppTheorySsrSite defaults to ssr-only mode with edge functions", () => {
@@ -1367,6 +1421,8 @@ test("AppTheorySsrSite defaults to FaceTheory-safe SSR origin request headers", 
     "x-request-id",
     "x-tenant-id",
   ]);
+  assert.ok(!headers.includes("host"), "Should not forward raw host to Function URL origin");
+  assert.ok(!headers.includes("x-forwarded-proto"), "Should not forward x-forwarded-proto to Function URL origin");
 });
 
 test("AppTheorySsrSite wires first-class ISR HTML store and metadata resources", () => {
