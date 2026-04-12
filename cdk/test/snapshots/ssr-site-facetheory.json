@@ -52,6 +52,39 @@
       },
       "Type": "AWS::Lambda::Function"
     },
+    "FnAllowCloudFrontInvokeFunctionViaUrlA2377146": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "InvokedViaFunctionUrl": true,
+        "Principal": "cloudfront.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":cloudfront::",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":distribution/",
+              {
+                "Ref": "SiteDistribution390DED28"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
     "FnServiceRoleB9001A96": {
       "Properties": {
         "AssumeRolePolicyDocument": {
@@ -608,11 +641,7 @@
             "AllowedMethods": [
               "GET",
               "HEAD",
-              "OPTIONS",
-              "PUT",
-              "PATCH",
-              "POST",
-              "DELETE"
+              "OPTIONS"
             ],
             "CachePolicyId": "83da9c7e-98b4-4e11-a168-04f0df8e2c65",
             "Compress": true,

@@ -1265,6 +1265,13 @@ test("AppTheorySsrSite signs the default Function URL origin", () => {
       resource.Properties?.Principal === "cloudfront.amazonaws.com" &&
       resource.Properties?.Action === "lambda:InvokeFunctionUrl",
   );
+  const cloudfrontInvokeViaUrlPermissions = resources.filter(
+    (resource) =>
+      resource.Type === "AWS::Lambda::Permission" &&
+      resource.Properties?.Principal === "cloudfront.amazonaws.com" &&
+      resource.Properties?.Action === "lambda:InvokeFunction" &&
+      resource.Properties?.InvokedViaFunctionUrl === true,
+  );
   const publicUrlPermissions = resources.filter(
     (resource) =>
       resource.Type === "AWS::Lambda::Permission" &&
@@ -1276,6 +1283,7 @@ test("AppTheorySsrSite signs the default Function URL origin", () => {
   assert.equal(functionUrls[0].Properties?.AuthType, "AWS_IAM");
   assert.equal(lambdaOriginAccessControls.length, 1);
   assert.equal(cloudfrontInvokePermissions.length, 1);
+  assert.equal(cloudfrontInvokeViaUrlPermissions.length, 1);
   assert.equal(publicUrlPermissions.length, 0);
 });
 
@@ -1506,6 +1514,11 @@ test("AppTheorySsrSite ssg-isr mode synthesizes origin-group fallback and edge r
   assert.ok(requestFunction, "Should have SSR viewer-request function");
   assert.equal(distribution.Properties?.DistributionConfig?.OriginGroups?.Quantity, 1);
   assert.equal(distribution.Properties?.DistributionConfig?.DefaultCacheBehavior?.FunctionAssociations?.length, 2);
+  assert.deepEqual(distribution.Properties?.DistributionConfig?.DefaultCacheBehavior?.AllowedMethods, [
+    "GET",
+    "HEAD",
+    "OPTIONS",
+  ]);
 
   const originGroupMembers =
     distribution.Properties?.DistributionConfig?.OriginGroups?.Items?.[0]?.Members?.Items ?? [];
