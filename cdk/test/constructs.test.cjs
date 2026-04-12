@@ -1223,6 +1223,37 @@ test("AppTheorySsrSite (FaceTheory) synthesizes expected template", () => {
   }
 });
 
+test("AppTheorySsrSite omits disallowed SSR origin request headers", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    ssrForwardHeaders: [" X-Forwarded-Proto ", "x-facetheory-tenant"],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const originRequestPolicies = Object.values(template.Resources ?? {}).filter(
+    (resource) => resource.Type === "AWS::CloudFront::OriginRequestPolicy",
+  );
+
+  assert.equal(originRequestPolicies.length, 1);
+
+  const [policy] = originRequestPolicies;
+  const headers = policy.Properties?.OriginRequestPolicyConfig?.HeadersConfig?.Headers ?? [];
+
+  assert.equal(Array.isArray(headers), true);
+  assert.equal(headers.includes("x-forwarded-proto"), false);
+  assert.equal(headers.includes("cloudfront-forwarded-proto"), true);
+  assert.equal(headers.includes("x-facetheory-tenant"), true);
+});
+
 // ============================================================================
 // AppTheoryRestApiRouter tests
 // ============================================================================
