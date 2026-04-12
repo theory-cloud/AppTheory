@@ -105,16 +105,8 @@ Optional environment:
 - `APPTHEORY_SSR_SITE_STACK_NAME` to override the temporary stack name
 - `APPTHEORY_SSR_SMOKE_KEEP_STACK=1` to skip automatic destroy for debugging
 
-## Release workflow requirements
-
-The release and prerelease GitHub workflows now treat the live smoke verifier as a required gate. Configure these repo
-variables before relying on that path:
-
-- `APPTHEORY_SSR_SMOKE_ROLE_ARN`
-- `APPTHEORY_SSR_SMOKE_AWS_REGION`
-
-Those workflows assume OIDC-based AWS access through `aws-actions/configure-aws-credentials`, then run
-`./scripts/verify-ssr-site-smoke.sh` after `make rubric`.
+The live smoke verifier is intentionally separate from release automation so the normal release path stays zero-config.
+Use it as a manual deploy-grade check when you explicitly want a real AWS verification pass.
 
 ## Example
 
