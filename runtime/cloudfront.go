@@ -5,21 +5,14 @@ import (
 	"unicode"
 )
 
-// OriginURL reconstructs the canonical origin URL (scheme + host) from forwarded headers.
+// OriginURL reconstructs the canonical origin URL (scheme + host) from edge-copied original-host
+// headers first, then falls back to generic forwarded headers when needed.
 func OriginURL(headers map[string][]string) string {
 	headers = canonicalizeHeaders(headers)
 
-	forwardedProto, forwardedHost := parseForwardedHeader(firstHeaderValue(headers, "forwarded"))
+	forwardedProto, _ := parseForwardedHeader(firstHeaderValue(headers, "forwarded"))
 
-	host := firstHeaderValue(headers, "x-forwarded-host")
-	if host == "" {
-		host = forwardedHost
-	}
-	if host == "" {
-		host = firstHeaderValue(headers, "host")
-	}
-	host = firstCommaToken(host)
-	host = strings.TrimSpace(host)
+	host := originalHostFromCanonicalizedHeaders(headers)
 	if host == "" {
 		return ""
 	}
@@ -37,6 +30,16 @@ func OriginURL(headers map[string][]string) string {
 	}
 
 	return proto + "://" + host
+}
+
+// OriginalHost extracts the best available viewer-facing host without depending on raw Host forwarding.
+func OriginalHost(headers map[string][]string) string {
+	return originalHostFromCanonicalizedHeaders(canonicalizeHeaders(headers))
+}
+
+// OriginalURI returns the viewer URI captured by the edge contract when available.
+func OriginalURI(headers map[string][]string) string {
+	return originalURIFromCanonicalizedHeaders(canonicalizeHeaders(headers))
 }
 
 // ClientIP extracts a stable client IP address from CloudFront and generic forwarded headers.
@@ -64,6 +67,34 @@ func firstCommaToken(value string) string {
 		return value[:idx]
 	}
 	return value
+}
+
+func originalHostFromCanonicalizedHeaders(headers map[string][]string) string {
+	_, forwardedHost := parseForwardedHeader(firstHeaderValue(headers, "forwarded"))
+
+	host := firstHeaderValue(headers, "x-apptheory-original-host")
+	if host == "" {
+		host = firstHeaderValue(headers, "x-facetheory-original-host")
+	}
+	if host == "" {
+		host = firstHeaderValue(headers, "x-forwarded-host")
+	}
+	if host == "" {
+		host = forwardedHost
+	}
+	if host == "" {
+		host = firstHeaderValue(headers, "host")
+	}
+	host = firstCommaToken(host)
+	return strings.TrimSpace(host)
+}
+
+func originalURIFromCanonicalizedHeaders(headers map[string][]string) string {
+	value := firstHeaderValue(headers, "x-apptheory-original-uri")
+	if value == "" {
+		value = firstHeaderValue(headers, "x-facetheory-original-uri")
+	}
+	return strings.TrimSpace(value)
 }
 
 func parseForwardedHeader(value string) (proto string, host string) {

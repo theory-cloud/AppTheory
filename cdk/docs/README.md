@@ -8,6 +8,7 @@
 ### 🚀 Getting started
 - [Getting Started](./getting-started.md) — deploy a minimal API backed by an AppTheory Lambda.
 - [Canonical CDK Getting Started](../../docs/cdk/getting-started.md) — canonical operator guide under `docs/cdk/`.
+- [Canonical SSR Site Guide](../../docs/cdk/ssr-site.md) — FaceTheory-first CloudFront + S3 + Lambda URL deployment.
 
 ### 📚 Core documentation
 - [Docs Contract](./_contract.yaml) — canonical CDK package knowledgebase scope: fixed ingestible, optional ingestible, and contract-only docs.
@@ -35,6 +36,7 @@
 - [Lambda Role Helper](./lambda-role.md) — Lambda execution roles (baseline + X-Ray + KMS + custom statements).
 - [CloudFront Path-Routed Frontend Distribution](./path-routed-frontend.md) — multi-SPA routing behind one stage domain.
 - [Media CDN Pattern](./media-cdn.md) — S3 + CloudFront distribution for media subdomains (optional private media).
+- [Canonical FaceTheory-First SSR Site](../../docs/cdk/ssr-site.md) — operator guide for `AppTheorySsrSite`.
 
 ### 🤖 AI knowledge base (YAML triad)
 - Docs Contract: `cdk/docs/_contract.yaml`

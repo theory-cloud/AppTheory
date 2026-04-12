@@ -8,6 +8,22 @@ func TestOriginURL(t *testing.T) {
 	}
 
 	got := OriginURL(map[string][]string{
+		"X-AppTheory-Original-Host":  {"edge.example.com"},
+		"CloudFront-Forwarded-Proto": {"https"},
+	})
+	if got != "https://edge.example.com" {
+		t.Fatalf("unexpected origin url from AppTheory edge host: %q", got)
+	}
+
+	got = OriginURL(map[string][]string{
+		"X-FaceTheory-Original-Host": {"tenant.example.com"},
+		"CloudFront-Forwarded-Proto": {"https"},
+	})
+	if got != "https://tenant.example.com" {
+		t.Fatalf("unexpected origin url from FaceTheory edge host: %q", got)
+	}
+
+	got = OriginURL(map[string][]string{
 		"Host":            {"example.com"},
 		"X-Forwarded-For": {"1.2.3.4"},
 	})
@@ -28,6 +44,32 @@ func TestOriginURL(t *testing.T) {
 	})
 	if got != "https://f.example" {
 		t.Fatalf("unexpected origin url from forwarded: %q", got)
+	}
+}
+
+func TestOriginalHostAndURI(t *testing.T) {
+	headers := map[string][]string{
+		"X-AppTheory-Original-Host": {"app.example.com"},
+		"X-AppTheory-Original-Uri":  {"/from-app"},
+	}
+
+	if got := OriginalHost(headers); got != "app.example.com" {
+		t.Fatalf("unexpected original host: %q", got)
+	}
+	if got := OriginalURI(headers); got != "/from-app" {
+		t.Fatalf("unexpected original uri: %q", got)
+	}
+
+	headers = map[string][]string{
+		"X-FaceTheory-Original-Host": {"face.example.com"},
+		"X-FaceTheory-Original-Uri":  {"/from-face"},
+	}
+
+	if got := OriginalHost(headers); got != "face.example.com" {
+		t.Fatalf("unexpected FaceTheory original host: %q", got)
+	}
+	if got := OriginalURI(headers); got != "/from-face" {
+		t.Fatalf("unexpected FaceTheory original uri: %q", got)
 	}
 }
 

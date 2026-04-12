@@ -9,8 +9,7 @@ def origin_url(headers: dict[str, Any] | None) -> str:
     h = canonicalize_headers(headers)
     forwarded = _parse_forwarded(_first_header_value(h, "forwarded"))
 
-    host = _first_header_value(h, "x-forwarded-host") or forwarded.get("host") or _first_header_value(h, "host")
-    host = _first_comma_token(host).strip()
+    host = _original_host_from_headers(h)
     if not host:
         return ""
 
@@ -24,6 +23,14 @@ def origin_url(headers: dict[str, Any] | None) -> str:
         proto = "https"
 
     return f"{proto}://{host}"
+
+
+def original_host(headers: dict[str, Any] | None) -> str:
+    return _original_host_from_headers(canonicalize_headers(headers))
+
+
+def original_uri(headers: dict[str, Any] | None) -> str:
+    return _original_uri_from_headers(canonicalize_headers(headers))
 
 
 def client_ip(headers: dict[str, Any] | None) -> str:
@@ -51,6 +58,25 @@ def _first_header_value(headers: dict[str, list[str]], key: str) -> str:
 
 def _first_comma_token(value: Any) -> str:
     return str(value or "").split(",", 1)[0]
+
+
+def _original_host_from_headers(headers: dict[str, list[str]]) -> str:
+    forwarded = _parse_forwarded(_first_header_value(headers, "forwarded"))
+    host = (
+        _first_header_value(headers, "x-apptheory-original-host")
+        or _first_header_value(headers, "x-facetheory-original-host")
+        or _first_header_value(headers, "x-forwarded-host")
+        or forwarded.get("host", "")
+        or _first_header_value(headers, "host")
+    )
+    return _first_comma_token(host).strip()
+
+
+def _original_uri_from_headers(headers: dict[str, list[str]]) -> str:
+    return (
+        _first_header_value(headers, "x-apptheory-original-uri")
+        or _first_header_value(headers, "x-facetheory-original-uri")
+    ).strip()
 
 
 def _parse_forwarded(value: Any) -> dict[str, str]:

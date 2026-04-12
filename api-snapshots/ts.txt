@@ -186,6 +186,8 @@ newJobLedgerError	function
 normalizeHTTPErrorFormat	function
 normalizeStage	function
 originURL	function
+originalHost	function
+originalURI	function
 paymentXMLPatterns	const
 paymentXMLPatterns	re-export
 rapidConnectXMLPatterns	const

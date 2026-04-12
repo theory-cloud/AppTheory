@@ -748,8 +748,12 @@ func init() {
 			_jsii_.MemberProperty{JsiiProperty: "assetsManifestKey", GoGetter: "AssetsManifestKey"},
 			_jsii_.MemberProperty{JsiiProperty: "certificate", GoGetter: "Certificate"},
 			_jsii_.MemberProperty{JsiiProperty: "distribution", GoGetter: "Distribution"},
+			_jsii_.MemberProperty{JsiiProperty: "htmlStoreBucket", GoGetter: "HtmlStoreBucket"},
+			_jsii_.MemberProperty{JsiiProperty: "htmlStoreKeyPrefix", GoGetter: "HtmlStoreKeyPrefix"},
+			_jsii_.MemberProperty{JsiiProperty: "isrMetadataTable", GoGetter: "IsrMetadataTable"},
 			_jsii_.MemberProperty{JsiiProperty: "logsBucket", GoGetter: "LogsBucket"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "responseHeadersPolicy", GoGetter: "ResponseHeadersPolicy"},
 			_jsii_.MemberProperty{JsiiProperty: "ssrUrl", GoGetter: "SsrUrl"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
 			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
@@ -758,6 +762,14 @@ func init() {
 			j := jsiiProxy_AppTheorySsrSite{}
 			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
 			return &j
+		},
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheorySsrSiteMode",
+		reflect.TypeOf((*AppTheorySsrSiteMode)(nil)).Elem(),
+		map[string]interface{}{
+			"SSR_ONLY": AppTheorySsrSiteMode_SSR_ONLY,
+			"SSG_ISR":  AppTheorySsrSiteMode_SSG_ISR,
 		},
 	)
 	_jsii_.RegisterStruct(
