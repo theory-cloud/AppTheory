@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.23.0](https://github.com/theory-cloud/AppTheory/compare/v0.22.2...v0.23.0) (2026-04-12)
+
+
+### Features
+
+* **cdk:** add deploy-grade ssr verification docs ([a6bb914](https://github.com/theory-cloud/AppTheory/commit/a6bb914130588d0d3ed5b41201dc87b1cd56c576))
+* **cdk:** add FaceTheory edge modes to AppTheorySsrSite ([b72ad44](https://github.com/theory-cloud/AppTheory/commit/b72ad444413237789d53d1dcc3f3d63989703b5d))
+* complete FaceTheory SSR runtime and ISR wiring ([2157411](https://github.com/theory-cloud/AppTheory/commit/21574111a8669e42d43d879e8d8fa5cbaf5c83be))
+
+
+### Bug Fixes
+
+* **cdk:** harden AppTheorySsrSite function URL origins ([dd46d56](https://github.com/theory-cloud/AppTheory/commit/dd46d5694b3fe4f01f765f2c4a531e39d737b106))
+
 ## [0.22.2](https://github.com/theory-cloud/AppTheory/compare/v0.22.1...v0.22.2) (2026-04-12)
 
 
