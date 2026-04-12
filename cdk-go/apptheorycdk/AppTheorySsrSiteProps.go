@@ -18,11 +18,22 @@ type AppTheorySsrSiteProps struct {
 	AutoDeleteObjects *bool               `field:"optional" json:"autoDeleteObjects" yaml:"autoDeleteObjects"`
 	// Legacy alias for `isrMetadataTableName`.
 	// Deprecated: prefer `isrMetadataTable` or `isrMetadataTableName`.
-	CacheTableName *string                `field:"optional" json:"cacheTableName" yaml:"cacheTableName"`
-	CertificateArn *string                `field:"optional" json:"certificateArn" yaml:"certificateArn"`
-	DomainName     *string                `field:"optional" json:"domainName" yaml:"domainName"`
-	EnableLogging  *bool                  `field:"optional" json:"enableLogging" yaml:"enableLogging"`
-	HostedZone     awsroute53.IHostedZone `field:"optional" json:"hostedZone" yaml:"hostedZone"`
+	CacheTableName *string `field:"optional" json:"cacheTableName" yaml:"cacheTableName"`
+	CertificateArn *string `field:"optional" json:"certificateArn" yaml:"certificateArn"`
+	// Additional raw S3 object/data path patterns that should bypass extensionless HTML rewrites.
+	//
+	// In `ssg-isr` mode, `/_facetheory/data/*` is added automatically.
+	// Example direct-S3 object path: "/feeds/*".
+	DirectS3PathPatterns *[]*string             `field:"optional" json:"directS3PathPatterns" yaml:"directS3PathPatterns"`
+	DomainName           *string                `field:"optional" json:"domainName" yaml:"domainName"`
+	EnableLogging        *bool                  `field:"optional" json:"enableLogging" yaml:"enableLogging"`
+	HostedZone           awsroute53.IHostedZone `field:"optional" json:"hostedZone" yaml:"hostedZone"`
+	// Cache policy applied to the cacheable HTML behavior in `ssg-isr` mode.
+	//
+	// The default AppTheory policy keys on query strings plus the stable public HTML
+	// variant headers (`x-*-original-host`, `x-tenant-id`, and any extra forwarded
+	// headers you opt into) while leaving cookies out of the cache key.
+	HtmlCachePolicy awscloudfront.ICachePolicy `field:"optional" json:"htmlCachePolicy" yaml:"htmlCachePolicy"`
 	// Optional S3 bucket used by FaceTheory ISR HTML storage (`S3HtmlStore`).
 	//
 	// When provided, AppTheory grants the SSR function read/write access and wires:
@@ -63,6 +74,13 @@ type AppTheorySsrSiteProps struct {
 	// layer: HSTS, nosniff, frame-options, referrer-policy, XSS protection, and a
 	// restrictive permissions-policy. Content-Security-Policy remains origin-defined.
 	ResponseHeadersPolicy awscloudfront.IResponseHeadersPolicy `field:"optional" json:"responseHeadersPolicy" yaml:"responseHeadersPolicy"`
+	// Cache policy applied to direct Lambda-backed SSR behaviors.
+	//
+	// The default is `CACHING_DISABLED` so dynamic Lambda routes stay safe unless you
+	// intentionally opt into a cache policy that matches your app's variance model.
+	// Default: cloudfront.CachePolicy.CACHING_DISABLED
+	//
+	SsrCachePolicy awscloudfront.ICachePolicy `field:"optional" json:"ssrCachePolicy" yaml:"ssrCachePolicy"`
 	// Additional headers to forward to the SSR origin (Lambda Function URL) via the origin request policy.
 	//
 	// The default AppTheory/FaceTheory-safe edge contract forwards only:
@@ -79,6 +97,11 @@ type AppTheorySsrSiteProps struct {
 	// `x-facetheory-tenant`. `host` and `x-forwarded-proto` are rejected because
 	// they break or bypass the supported origin model.
 	SsrForwardHeaders *[]*string `field:"optional" json:"ssrForwardHeaders" yaml:"ssrForwardHeaders"`
+	// Additional path patterns that should bypass the `ssg-isr` origin group and route directly to the Lambda Function URL with full method support.
+	//
+	// Use this for same-origin dynamic paths such as auth callbacks, actions, or form posts.
+	// Example direct-SSR path: "/actions/*".
+	SsrPathPatterns *[]*string `field:"optional" json:"ssrPathPatterns" yaml:"ssrPathPatterns"`
 	// Function URL auth type for the SSR origin.
 	//
 	// AppTheory defaults this to `AWS_IAM` so CloudFront reaches the SSR origin
@@ -87,10 +110,12 @@ type AppTheorySsrSiteProps struct {
 	// Default: lambda.FunctionUrlAuthType.AWS_IAM
 	//
 	SsrUrlAuthType awslambda.FunctionUrlAuthType `field:"optional" json:"ssrUrlAuthType" yaml:"ssrUrlAuthType"`
-	// Additional CloudFront path patterns to route directly to the S3 origin.
+	// Additional extensionless HTML section path patterns to route directly to the primary HTML S3 origin.
 	//
-	// In `ssg-isr` mode, `/_facetheory/data/*` is added automatically.
-	// Example custom direct-S3 path: "/marketing/*".
+	// Requests like `/marketing` and `/marketing/...` are rewritten to `/index.html`
+	// within the section and stay on S3 instead of falling back to Lambda.
+	//
+	// Example direct-S3 HTML section path: "/marketing/*".
 	StaticPathPatterns *[]*string `field:"optional" json:"staticPathPatterns" yaml:"staticPathPatterns"`
 	WebAclId           *string    `field:"optional" json:"webAclId" yaml:"webAclId"`
 	WireRuntimeEnv     *bool      `field:"optional" json:"wireRuntimeEnv" yaml:"wireRuntimeEnv"`

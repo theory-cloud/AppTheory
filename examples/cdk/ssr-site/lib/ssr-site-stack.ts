@@ -4,6 +4,7 @@ import { CfnOutput, Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import { Construct } from "constructs";
 
 import { AppTheorySsrSite, AppTheorySsrSiteMode } from "@theory-cloud/apptheory-cdk";
@@ -19,14 +20,22 @@ export class SsrSiteStack extends Stack {
       memorySize: 512,
       code: lambda.Code.fromInline(
         [
-          "exports.handler = awslambda.streamifyResponse(async (_event, responseStream) => {",
+          "exports.handler = awslambda.streamifyResponse(async (event, responseStream) => {",
+          "  const path = event.rawPath || '/';",
+          "  const method = event.requestContext && event.requestContext.http ? event.requestContext.http.method : 'GET';",
+          "  const isAction = path.startsWith('/actions/');",
+          "  const body = isAction",
+          "    ? JSON.stringify({ method, path })",
+          "    : '<h1>Hello from AppTheory SSR Site</h1>';",
           "  const stream = awslambda.HttpResponseStream.from(responseStream, {",
           "    statusCode: 200,",
-          '    headers: { "content-type": "text/html; charset=utf-8" },',
+          "    headers: isAction",
+          '      ? { "content-type": "application/json; charset=utf-8", "cache-control": "private, no-store" }',
+          '      : { "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store" },',
           "  });",
-          "  stream.write('<h1>Hello from AppTheory SSR Site</h1>');",
+          "  stream.write(body);",
           "  stream.end();",
-          "});",
+        "});",
           "",
         ].join("\n"),
       ),
@@ -55,8 +64,27 @@ export class SsrSiteStack extends Stack {
       htmlStoreBucket: isrBucket,
       htmlStoreKeyPrefix: "isr",
       isrMetadataTable,
+      staticPathPatterns: ["/marketing/*"],
+      ssrPathPatterns: ["/actions/*"],
       removalPolicy: RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
+    });
+
+    new s3deploy.BucketDeployment(this, "HtmlStoreDeployment", {
+      sources: [
+        s3deploy.Source.data("marketing/index.html", "<h1>Marketing from AppTheory S3</h1>\n"),
+        s3deploy.Source.data("marketing/about/index.html", "<h1>Marketing About from AppTheory S3</h1>\n"),
+      ],
+      destinationBucket: isrBucket,
+      destinationKeyPrefix: "isr",
+      prune: false,
+    });
+
+    new s3deploy.BucketDeployment(this, "HydrationDeployment", {
+      sources: [s3deploy.Source.data("home.json", '{"route":"home"}\n')],
+      destinationBucket: site.assetsBucket,
+      destinationKeyPrefix: "_facetheory/data",
+      prune: false,
     });
 
     new CfnOutput(this, "CloudFrontUrl", { value: `https://${site.distribution.domainName}` });

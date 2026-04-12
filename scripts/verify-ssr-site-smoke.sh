@@ -140,6 +140,46 @@ probe_exact_trimmed() {
   exit 1
 }
 
+probe_request_exact_trimmed() {
+  local method="$1"
+  local url="$2"
+  local expected_status="$3"
+  local expected_body="$4"
+  local expect_request_id="$5"
+  local request_body="$6"
+  local attempts="${7:-20}"
+  local sleep_seconds="${8:-10}"
+
+  local attempt=1
+  while [[ "${attempt}" -le "${attempts}" ]]; do
+    local status
+    status="$(
+      curl -sS -X "${method}" -H 'content-type: application/json' -D "${headers_file}" -o "${body_file}" \
+        --data "${request_body}" --max-time 30 "${url}" -w '%{http_code}' || true
+    )"
+    local trimmed_body
+    trimmed_body="$(tr -d '\r\n' < "${body_file}")"
+
+    if [[ "${status}" == "${expected_status}" && "${trimmed_body}" == "${expected_body}" ]]; then
+      if [[ "${expect_request_id}" != "1" || "$(grep -ic '^x-request-id:' "${headers_file}")" -ge 1 ]]; then
+        return 0
+      fi
+    fi
+
+    if [[ "${attempt}" -lt "${attempts}" ]]; then
+      sleep "${sleep_seconds}"
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  echo "ssr-site-smoke: FAIL (method=${method} url=${url} status=${status:-curl-error})" >&2
+  echo "ssr-site-smoke: headers" >&2
+  cat "${headers_file}" >&2 || true
+  echo "ssr-site-smoke: body" >&2
+  cat "${body_file}" >&2 || true
+  exit 1
+}
+
 probe_status() {
   local url="$1"
   local expected_status="$2"
@@ -189,6 +229,18 @@ fi
 
 probe_contains "${cloudfront_url}" "200" "Hello from AppTheory SSR Site" "1" 40 15
 probe_exact_trimmed "${cloudfront_url%/}/assets/hello.txt" "200" "hello" "1" 20 10
+probe_contains "${cloudfront_url%/}/marketing" "200" "Marketing from AppTheory S3" "1" 20 10
+probe_contains "${cloudfront_url%/}/marketing/about" "200" "Marketing About from AppTheory S3" "1" 20 10
+probe_exact_trimmed "${cloudfront_url%/}/_facetheory/data/home.json" "200" '{"route":"home"}' "1" 20 10
+probe_request_exact_trimmed \
+  "POST" \
+  "${cloudfront_url%/}/actions/ping" \
+  "200" \
+  '{"method":"POST","path":"/actions/ping"}' \
+  "1" \
+  '{}' \
+  20 \
+  10
 probe_status "${ssr_function_url}" "403" 10 5
 
 echo "ssr-site-smoke: PASS (stack=${stack_name} distribution=${distribution_id})"

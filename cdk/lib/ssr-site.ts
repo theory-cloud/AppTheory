@@ -3,6 +3,7 @@ import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as targets from "aws-cdk-lib/aws-route53-targets";
@@ -20,6 +21,7 @@ const ssrOriginalUriHeaders = [apptheoryOriginalUriHeader, facetheoryOriginalUri
 const ssrOriginalHostHeaders = [apptheoryOriginalHostHeader, facetheoryOriginalHostHeader] as const;
 const ssgIsrHydrationPathPattern = "/_facetheory/data/*";
 const defaultIsrHtmlStoreKeyPrefix = "isr";
+const maxDefaultCacheKeyHeaders = 10;
 
 export enum AppTheorySsrSiteMode {
   /**
@@ -40,9 +42,60 @@ function pathPatternToUriPrefix(pattern: string): string {
   return normalized ? `/${normalized}` : "/";
 }
 
-function generateSsrViewerRequestFunctionCode(mode: AppTheorySsrSiteMode, directS3PathPatterns: string[]): string {
-  const directS3Prefixes = directS3PathPatterns.map(pathPatternToUriPrefix).sort((a, b) => b.length - a.length);
-  const prefixList = directS3Prefixes.map((prefix) => `'${prefix}'`).join(",\n      ");
+function normalizePathPatterns(patterns: string[] | undefined): string[] {
+  return Array.from(
+    new Set(
+      (Array.isArray(patterns) ? patterns : [])
+        .map((pattern) => trimRepeatedCharStart(String(pattern).trim(), "/"))
+        .filter((pattern) => pattern.length > 0),
+    ),
+  );
+}
+
+function expandBehaviorPathPatterns(patterns: string[]): string[] {
+  const expanded = new Set<string>();
+
+  for (const pattern of patterns) {
+    const normalized = trimRepeatedCharStart(String(pattern).trim(), "/");
+    if (!normalized) continue;
+
+    expanded.add(normalized);
+    if (normalized.endsWith("/*")) {
+      const rootPattern = normalized.slice(0, -2);
+      if (rootPattern) {
+        expanded.add(rootPattern);
+      }
+    }
+  }
+
+  return Array.from(expanded);
+}
+
+function assertNoConflictingBehaviorPatterns(
+  label: string,
+  patterns: string[],
+  seenOwners: Map<string, string>,
+): void {
+  for (const pattern of expandBehaviorPathPatterns(patterns)) {
+    const owner = seenOwners.get(pattern);
+    if (owner && owner !== label) {
+      throw new Error(`AppTheorySsrSite received overlapping path pattern "${pattern}" for ${owner} and ${label}`);
+    }
+    seenOwners.set(pattern, label);
+  }
+}
+
+function generateSsrViewerRequestFunctionCode(
+  mode: AppTheorySsrSiteMode,
+  rawS3PathPatterns: string[],
+  lambdaPassthroughPathPatterns: string[],
+): string {
+  const rawS3Prefixes = rawS3PathPatterns.map(pathPatternToUriPrefix).sort((a, b) => b.length - a.length);
+  const rawS3PrefixList = rawS3Prefixes.map((prefix) => `'${prefix}'`).join(",\n      ");
+  const lambdaPassthroughPrefixes = lambdaPassthroughPathPatterns
+    .map(pathPatternToUriPrefix)
+    .sort((a, b) => b.length - a.length);
+  const lambdaPassthroughPrefixList = lambdaPassthroughPrefixes.map((prefix) => `'${prefix}'`).join(",\n      ");
 
   return `
 	function handler(event) {
@@ -70,24 +123,37 @@ function generateSsrViewerRequestFunctionCode(mode: AppTheorySsrSiteMode, direct
 	  }
 
 	  if ('${mode}' === '${AppTheorySsrSiteMode.SSG_ISR}') {
-	    var directS3Prefixes = [
-	      ${prefixList}
+	    var rawS3Prefixes = [
+	      ${rawS3PrefixList}
 	    ];
-	    var isDirectS3Path = false;
+	    var lambdaPassthroughPrefixes = [
+	      ${lambdaPassthroughPrefixList}
+	    ];
+	    var isLambdaPassthroughPath = false;
 
-	    for (var i = 0; i < directS3Prefixes.length; i++) {
-	      var prefix = directS3Prefixes[i];
+	    for (var i = 0; i < lambdaPassthroughPrefixes.length; i++) {
+	      var prefix = lambdaPassthroughPrefixes[i];
 	      if (uri === prefix || uri.startsWith(prefix + '/')) {
-	        isDirectS3Path = true;
+	        isLambdaPassthroughPath = true;
 	        break;
 	      }
 	    }
 
-	    if (!isDirectS3Path) {
+	    if (!isLambdaPassthroughPath) {
+	      var isRawS3Path = false;
+
+	      for (var j = 0; j < rawS3Prefixes.length; j++) {
+	        var rawPrefix = rawS3Prefixes[j];
+	        if (uri === rawPrefix || uri.startsWith(rawPrefix + '/')) {
+	          isRawS3Path = true;
+	          break;
+	        }
+	      }
+
 	      var lastSlash = uri.lastIndexOf('/');
 	      var lastSegment = lastSlash >= 0 ? uri.substring(lastSlash + 1) : uri;
 
-	      if (lastSegment.indexOf('.') === -1) {
+	      if (!isRawS3Path && lastSegment.indexOf('.') === -1) {
 	        request.uri = uri.endsWith('/') ? uri + 'index.html' : uri + '/index.html';
 	      }
 	    }
@@ -173,12 +239,31 @@ export interface AppTheorySsrSiteProps {
   readonly htmlStoreKeyPrefix?: string;
 
   /**
-   * Additional CloudFront path patterns to route directly to the S3 origin.
+   * Additional extensionless HTML section path patterns to route directly to the primary HTML S3 origin.
    *
-   * In `ssg-isr` mode, `/_facetheory/data/*` is added automatically.
-   * Example custom direct-S3 path: "/marketing/*"
+   * Requests like `/marketing` and `/marketing/...` are rewritten to `/index.html`
+   * within the section and stay on S3 instead of falling back to Lambda.
+   *
+   * Example direct-S3 HTML section path: "/marketing/*"
    */
   readonly staticPathPatterns?: string[];
+
+  /**
+   * Additional raw S3 object/data path patterns that should bypass extensionless HTML rewrites.
+   *
+   * In `ssg-isr` mode, `/_facetheory/data/*` is added automatically.
+   * Example direct-S3 object path: "/feeds/*"
+   */
+  readonly directS3PathPatterns?: string[];
+
+  /**
+   * Additional path patterns that should bypass the `ssg-isr` origin group and route directly
+   * to the Lambda Function URL with full method support.
+   *
+   * Use this for same-origin dynamic paths such as auth callbacks, actions, or form posts.
+   * Example direct-SSR path: "/actions/*"
+   */
+  readonly ssrPathPatterns?: string[];
 
   /**
    * Optional TableTheory/DynamoDB table used for FaceTheory ISR metadata and lease coordination.
@@ -234,6 +319,24 @@ export interface AppTheorySsrSiteProps {
    * restrictive permissions-policy. Content-Security-Policy remains origin-defined.
    */
   readonly responseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
+
+  /**
+   * Cache policy applied to direct Lambda-backed SSR behaviors.
+   *
+   * The default is `CACHING_DISABLED` so dynamic Lambda routes stay safe unless you
+   * intentionally opt into a cache policy that matches your app's variance model.
+   * @default cloudfront.CachePolicy.CACHING_DISABLED
+   */
+  readonly ssrCachePolicy?: cloudfront.ICachePolicy;
+
+  /**
+   * Cache policy applied to the cacheable HTML behavior in `ssg-isr` mode.
+   *
+   * The default AppTheory policy keys on query strings plus the stable public HTML
+   * variant headers (`x-*-original-host`, `x-tenant-id`, and any extra forwarded
+   * headers you opt into) while leaving cookies out of the cache key.
+   */
+  readonly htmlCachePolicy?: cloudfront.ICachePolicy;
 
   readonly removalPolicy?: RemovalPolicy;
   readonly autoDeleteObjects?: boolean;
@@ -368,6 +471,15 @@ export class AppTheorySsrSite extends Construct {
         : new origins.FunctionUrlOrigin(this.ssrUrl);
 
     const assetsOrigin = origins.S3BucketOrigin.withOriginAccessControl(this.assetsBucket);
+    const htmlOriginBucket = this.htmlStoreBucket ?? this.assetsBucket;
+    const htmlOrigin = origins.S3BucketOrigin.withOriginAccessControl(
+      htmlOriginBucket,
+      this.htmlStoreBucket && this.htmlStoreKeyPrefix
+        ? {
+            originPath: `/${this.htmlStoreKeyPrefix}`,
+          }
+        : undefined,
+    );
 
     const baseSsrForwardHeaders = [
       "cloudfront-forwarded-proto",
@@ -403,27 +515,62 @@ export class AppTheorySsrSite extends Construct {
         ),
       ),
     );
+    const htmlCacheKeyExcludedHeaders = new Set([
+      "cloudfront-forwarded-proto",
+      "cloudfront-viewer-address",
+      ...ssrOriginalUriHeaders,
+      "x-request-id",
+    ]);
+    const htmlCacheKeyHeaders = Array.from(
+      new Set(ssrForwardHeaders.filter((header) => !htmlCacheKeyExcludedHeaders.has(header))),
+    );
+
+    if (!props.htmlCachePolicy && htmlCacheKeyHeaders.length > maxDefaultCacheKeyHeaders) {
+      throw new Error(
+        `AppTheorySsrSite default htmlCachePolicy supports at most ${maxDefaultCacheKeyHeaders} cache-key headers; received ${htmlCacheKeyHeaders.length}`,
+      );
+    }
 
     const ssrOriginRequestPolicy = new cloudfront.OriginRequestPolicy(this, "SsrOriginRequestPolicy", {
       queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.all(),
       cookieBehavior: cloudfront.OriginRequestCookieBehavior.all(),
       headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(...ssrForwardHeaders),
     });
+    const htmlOriginRequestPolicy = new cloudfront.OriginRequestPolicy(this, "HtmlOriginRequestPolicy", {
+      queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.all(),
+      cookieBehavior: cloudfront.OriginRequestCookieBehavior.none(),
+      headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(...ssrForwardHeaders),
+    });
+    const ssrCachePolicy = props.ssrCachePolicy ?? cloudfront.CachePolicy.CACHING_DISABLED;
+    const htmlCachePolicy =
+      props.htmlCachePolicy ??
+      new cloudfront.CachePolicy(this, "HtmlCachePolicy", {
+        comment: "FaceTheory HTML cache policy keyed by query strings and stable public variant headers",
+        minTtl: Duration.seconds(0),
+        defaultTtl: Duration.seconds(0),
+        maxTtl: Duration.days(365),
+        cookieBehavior: cloudfront.CacheCookieBehavior.none(),
+        headerBehavior: cloudfront.CacheHeaderBehavior.allowList(...htmlCacheKeyHeaders),
+        queryStringBehavior: cloudfront.CacheQueryStringBehavior.all(),
+        enableAcceptEncodingBrotli: true,
+        enableAcceptEncodingGzip: true,
+      });
 
-    const staticPathPatterns = Array.from(
-      new Set(
-        [
-          ...(siteMode === AppTheorySsrSiteMode.SSG_ISR ? [ssgIsrHydrationPathPattern] : []),
-          ...(Array.isArray(props.staticPathPatterns) ? props.staticPathPatterns : []),
-        ]
-          .map((pattern) => trimRepeatedCharStart(String(pattern).trim(), "/"))
-          .filter((pattern) => pattern.length > 0),
-      ),
-    );
+    const staticPathPatterns = normalizePathPatterns(props.staticPathPatterns);
+    const directS3PathPatterns = normalizePathPatterns([
+      ...(siteMode === AppTheorySsrSiteMode.SSG_ISR ? [ssgIsrHydrationPathPattern] : []),
+      ...(Array.isArray(props.directS3PathPatterns) ? props.directS3PathPatterns : []),
+    ]);
+    const ssrPathPatterns = normalizePathPatterns(props.ssrPathPatterns);
+    const behaviorPatternOwners = new Map<string, string>();
+
+    assertNoConflictingBehaviorPatterns("direct S3 paths", [`${assetsKeyPrefix}/*`, ...directS3PathPatterns], behaviorPatternOwners);
+    assertNoConflictingBehaviorPatterns("static HTML paths", staticPathPatterns, behaviorPatternOwners);
+    assertNoConflictingBehaviorPatterns("direct SSR paths", ssrPathPatterns, behaviorPatternOwners);
 
     const viewerRequestFunction = new cloudfront.Function(this, "SsrViewerRequestFunction", {
       code: cloudfront.FunctionCode.fromInline(
-        generateSsrViewerRequestFunctionCode(siteMode, [`/${assetsKeyPrefix}/*`, ...staticPathPatterns]),
+        generateSsrViewerRequestFunctionCode(siteMode, [`${assetsKeyPrefix}/*`, ...directS3PathPatterns], ssrPathPatterns),
       ),
       runtime: cloudfront.FunctionRuntime.JS_2_0,
       comment:
@@ -518,23 +665,50 @@ export class AppTheorySsrSite extends Construct {
       responseHeadersPolicy: this.responseHeadersPolicy,
       functionAssociations: createEdgeFunctionAssociations(),
     });
+    const createStaticHtmlBehavior = (): cloudfront.BehaviorOptions => ({
+      origin: htmlOrigin,
+      viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+      cachePolicy: htmlCachePolicy,
+      originRequestPolicy: htmlOriginRequestPolicy,
+      compress: true,
+      responseHeadersPolicy: this.responseHeadersPolicy,
+      functionAssociations: createEdgeFunctionAssociations(),
+    });
+    const createSsrBehavior = (): cloudfront.BehaviorOptions => ({
+      origin: ssrOrigin,
+      viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+      cachePolicy: ssrCachePolicy,
+      originRequestPolicy: ssrOriginRequestPolicy,
+      responseHeadersPolicy: this.responseHeadersPolicy,
+      functionAssociations: createEdgeFunctionAssociations(),
+    });
 
-    const additionalBehaviors: Record<string, cloudfront.BehaviorOptions> = {
-      [`${assetsKeyPrefix}/*`]: createStaticBehavior(),
+    const additionalBehaviors: Record<string, cloudfront.BehaviorOptions> = {};
+    const addExpandedBehavior = (patterns: string[], factory: () => cloudfront.BehaviorOptions): void => {
+      for (const pattern of expandBehaviorPathPatterns(patterns)) {
+        additionalBehaviors[pattern] = factory();
+      }
     };
 
-    for (const pattern of staticPathPatterns) {
-      additionalBehaviors[pattern] = createStaticBehavior();
-    }
+    addExpandedBehavior([`${assetsKeyPrefix}/*`], createStaticBehavior);
+    addExpandedBehavior(directS3PathPatterns, createStaticBehavior);
+    addExpandedBehavior(staticPathPatterns, createStaticHtmlBehavior);
+    addExpandedBehavior(ssrPathPatterns, createSsrBehavior);
 
     const defaultOrigin =
       siteMode === AppTheorySsrSiteMode.SSG_ISR
         ? new origins.OriginGroup({
-            primaryOrigin: assetsOrigin,
+            primaryOrigin: htmlOrigin,
             fallbackOrigin: ssrOrigin,
             fallbackStatusCodes: [403, 404],
           })
         : ssrOrigin;
+    const defaultAllowedMethods =
+      siteMode === AppTheorySsrSiteMode.SSG_ISR
+        ? cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS
+        : cloudfront.AllowedMethods.ALLOW_ALL;
 
     this.distribution = new cloudfront.Distribution(this, "Distribution", {
       ...(enableLogging && this.logsBucket
@@ -546,15 +720,24 @@ export class AppTheorySsrSite extends Construct {
       defaultBehavior: {
         origin: defaultOrigin,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-        cachePolicy: cloudfront.CachePolicy.USE_ORIGIN_CACHE_CONTROL_HEADERS,
-        originRequestPolicy: ssrOriginRequestPolicy,
+        allowedMethods: defaultAllowedMethods,
+        cachePolicy: siteMode === AppTheorySsrSiteMode.SSG_ISR ? htmlCachePolicy : ssrCachePolicy,
+        originRequestPolicy: siteMode === AppTheorySsrSiteMode.SSG_ISR ? htmlOriginRequestPolicy : ssrOriginRequestPolicy,
         responseHeadersPolicy: this.responseHeadersPolicy,
         functionAssociations: createEdgeFunctionAssociations(),
       },
       additionalBehaviors,
       ...(props.webAclId ? { webAclId: props.webAclId } : {}),
     });
+
+    if (ssrUrlAuthType === lambda.FunctionUrlAuthType.AWS_IAM) {
+      props.ssrFunction.addPermission("AllowCloudFrontInvokeFunctionViaUrl", {
+        action: "lambda:InvokeFunction",
+        principal: new iam.ServicePrincipal("cloudfront.amazonaws.com"),
+        sourceArn: this.distribution.distributionArn,
+        invokedViaFunctionUrl: true,
+      });
+    }
 
     if (this.htmlStoreBucket) {
       this.htmlStoreBucket.grantReadWrite(props.ssrFunction);
