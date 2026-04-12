@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.2](https://github.com/theory-cloud/AppTheory/compare/v0.22.1...v0.22.2) (2026-04-12)
+
+
+### Bug Fixes
+
+* **cdk:** omit x-forwarded-proto from SSR origin policy ([bc8c5b0](https://github.com/theory-cloud/AppTheory/commit/bc8c5b0ad37cbce7f31295467b0c9e02e903aede))
+
 ## [0.22.1](https://github.com/theory-cloud/AppTheory/compare/v0.22.0...v0.22.1) (2026-04-11)
 
 
