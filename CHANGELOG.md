@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.24.1](https://github.com/theory-cloud/AppTheory/compare/v0.24.0...v0.24.1) (2026-04-12)
+
+
+### Bug Fixes
+
+* **cdk:** harden ssr and isr site routing ([e5b57ac](https://github.com/theory-cloud/AppTheory/commit/e5b57ac95e4331354820eaaec55956afa3e8b040))
+* **cdk:** repair AppTheorySsrSite CloudFront OAC deploys ([996aa3d](https://github.com/theory-cloud/AppTheory/commit/996aa3da00cb748ca9fe14f976f418f51061f47b))
+* **cdk:** repair ssr site CloudFront OAC flows ([d81051b](https://github.com/theory-cloud/AppTheory/commit/d81051bfd20e6bc79e6000cd6e5159e57a3ca39b))
+
 ## [0.24.0](https://github.com/theory-cloud/AppTheory/compare/v0.23.0...v0.24.0) (2026-04-12)
 
 
