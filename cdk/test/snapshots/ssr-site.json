@@ -307,6 +307,26 @@
               ],
               "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
               "Compress": true,
+              "FunctionAssociations": [
+                {
+                  "EventType": "viewer-request",
+                  "FunctionARN": {
+                    "Fn::GetAtt": [
+                      "SiteSsrViewerRequestFunction103872E5",
+                      "FunctionARN"
+                    ]
+                  }
+                },
+                {
+                  "EventType": "viewer-response",
+                  "FunctionARN": {
+                    "Fn::GetAtt": [
+                      "SiteSsrViewerResponseFunction3CF15787",
+                      "FunctionARN"
+                    ]
+                  }
+                }
+              ],
               "PathPattern": "assets/*",
               "TargetOriginId": "TestStackSiteDistributionOrigin242A42224",
               "ViewerProtocolPolicy": "redirect-to-https"
@@ -324,6 +344,26 @@
             ],
             "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
             "Compress": true,
+            "FunctionAssociations": [
+              {
+                "EventType": "viewer-request",
+                "FunctionARN": {
+                  "Fn::GetAtt": [
+                    "SiteSsrViewerRequestFunction103872E5",
+                    "FunctionARN"
+                  ]
+                }
+              },
+              {
+                "EventType": "viewer-response",
+                "FunctionARN": {
+                  "Fn::GetAtt": [
+                    "SiteSsrViewerResponseFunction3CF15787",
+                    "FunctionARN"
+                  ]
+                }
+              }
+            ],
             "OriginRequestPolicyId": {
               "Ref": "SiteSsrOriginRequestPolicyF6A13560"
             },
@@ -462,6 +502,8 @@
             "Headers": [
               "cloudfront-forwarded-proto",
               "cloudfront-viewer-address",
+              "x-apptheory-original-host",
+              "x-apptheory-original-uri",
               "x-request-id",
               "x-tenant-id"
             ]
@@ -486,6 +528,50 @@
         }
       },
       "Type": "AWS::Lambda::Url"
+    },
+    "SiteSsrViewerRequestFunction103872E5": {
+      "Properties": {
+        "AutoPublish": true,
+        "FunctionCode": "function handler(event) {\n\t  var request = event.request;\n\t  var headers = request.headers;\n\t  var uri = request.uri || '/';\n\t  var requestIdHeader = headers['x-request-id'];\n\t  var requestId = requestIdHeader && requestIdHeader.value ? requestIdHeader.value.trim() : '';\n\n\t  if (!requestId) {\n\t    requestId = 'req_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);\n\t  }\n\n\t  headers['x-request-id'] = { value: requestId };\n\t  headers['x-apptheory-original-uri'] = { value: uri };\n\n\t  if (headers.host && headers.host.value) {\n\t    headers['x-apptheory-original-host'] = { value: headers.host.value };\n\t  }\n\n\t  if ('ssr-only' === 'ssg-isr') {\n\t    var directS3Prefixes = [\n\t      '/assets'\n\t    ];\n\t    var isDirectS3Path = false;\n\n\t    for (var i = 0; i < directS3Prefixes.length; i++) {\n\t      var prefix = directS3Prefixes[i];\n\t      if (uri === prefix || uri.startsWith(prefix + '/')) {\n\t        isDirectS3Path = true;\n\t        break;\n\t      }\n\t    }\n\n\t    if (!isDirectS3Path) {\n\t      var lastSlash = uri.lastIndexOf('/');\n\t      var lastSegment = lastSlash >= 0 ? uri.substring(lastSlash + 1) : uri;\n\n\t      if (lastSegment.indexOf('.') === -1) {\n\t        request.uri = uri.endsWith('/') ? uri + 'index.html' : uri + '/index.html';\n\t      }\n\t    }\n\t  }\n\n\t  return request;\n\t}",
+        "FunctionConfig": {
+          "Comment": "FaceTheory viewer-request edge context for SSR site",
+          "Runtime": "cloudfront-js-2.0"
+        },
+        "Name": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::Region"
+              },
+              "TestStackSiteSsrrRequestFunction0550A3D9"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::CloudFront::Function"
+    },
+    "SiteSsrViewerResponseFunction3CF15787": {
+      "Properties": {
+        "AutoPublish": true,
+        "FunctionCode": "function handler(event) {\n\t  var request = event.request;\n\t  var response = event.response;\n\t  var requestIdHeader = request.headers['x-request-id'];\n\n\t  if (requestIdHeader && requestIdHeader.value) {\n\t    response.headers['x-request-id'] = { value: requestIdHeader.value };\n\t  }\n\n\t  return response;\n\t}",
+        "FunctionConfig": {
+          "Comment": "FaceTheory viewer-response request-id echo for SSR site",
+          "Runtime": "cloudfront-js-2.0"
+        },
+        "Name": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::Region"
+              },
+              "TestStackSiteSsrResponseFunction50798BB1"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::CloudFront::Function"
     }
   },
   "Rules": {

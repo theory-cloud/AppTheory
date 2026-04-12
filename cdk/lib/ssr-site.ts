@@ -11,8 +11,110 @@ import { Construct } from "constructs";
 
 import { trimRepeatedChar, trimRepeatedCharStart } from "./private/string-utils";
 
+const ssrOriginalUriHeader = "x-apptheory-original-uri";
+const ssrOriginalHostHeader = "x-apptheory-original-host";
+const ssgIsrHydrationPathPattern = "/_facetheory/data/*";
+
+export enum AppTheorySsrSiteMode {
+  /**
+   * Lambda Function URL is the default origin. Direct S3 behaviors are used only for
+   * immutable assets and any explicitly configured static path patterns.
+   */
+  SSR_ONLY = "ssr-only",
+
+  /**
+   * S3 is the primary HTML origin and Lambda SSR/ISR is the fallback. FaceTheory hydration
+   * data routes are kept on S3 and the edge rewrites extensionless paths to `/index.html`.
+   */
+  SSG_ISR = "ssg-isr",
+}
+
+function pathPatternToUriPrefix(pattern: string): string {
+  const normalized = trimRepeatedCharStart(String(pattern).trim(), "/").replace(/\/\*$/, "");
+  return normalized ? `/${normalized}` : "/";
+}
+
+function generateSsrViewerRequestFunctionCode(mode: AppTheorySsrSiteMode, directS3PathPatterns: string[]): string {
+  const directS3Prefixes = directS3PathPatterns.map(pathPatternToUriPrefix).sort((a, b) => b.length - a.length);
+  const prefixList = directS3Prefixes.map((prefix) => `'${prefix}'`).join(",\n      ");
+
+  return `
+	function handler(event) {
+	  var request = event.request;
+	  var headers = request.headers;
+	  var uri = request.uri || '/';
+	  var requestIdHeader = headers['x-request-id'];
+	  var requestId = requestIdHeader && requestIdHeader.value ? requestIdHeader.value.trim() : '';
+
+	  if (!requestId) {
+	    requestId = 'req_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+	  }
+
+	  headers['x-request-id'] = { value: requestId };
+	  headers['${ssrOriginalUriHeader}'] = { value: uri };
+
+	  if (headers.host && headers.host.value) {
+	    headers['${ssrOriginalHostHeader}'] = { value: headers.host.value };
+	  }
+
+	  if ('${mode}' === '${AppTheorySsrSiteMode.SSG_ISR}') {
+	    var directS3Prefixes = [
+	      ${prefixList}
+	    ];
+	    var isDirectS3Path = false;
+
+	    for (var i = 0; i < directS3Prefixes.length; i++) {
+	      var prefix = directS3Prefixes[i];
+	      if (uri === prefix || uri.startsWith(prefix + '/')) {
+	        isDirectS3Path = true;
+	        break;
+	      }
+	    }
+
+	    if (!isDirectS3Path) {
+	      var lastSlash = uri.lastIndexOf('/');
+	      var lastSegment = lastSlash >= 0 ? uri.substring(lastSlash + 1) : uri;
+
+	      if (lastSegment.indexOf('.') === -1) {
+	        request.uri = uri.endsWith('/') ? uri + 'index.html' : uri + '/index.html';
+	      }
+	    }
+	  }
+
+	  return request;
+	}
+	`.trim();
+}
+
+function generateSsrViewerResponseFunctionCode(): string {
+  return `
+	function handler(event) {
+	  var request = event.request;
+	  var response = event.response;
+	  var requestIdHeader = request.headers['x-request-id'];
+
+	  if (requestIdHeader && requestIdHeader.value) {
+	    response.headers['x-request-id'] = { value: requestIdHeader.value };
+	  }
+
+	  return response;
+	}
+	`.trim();
+}
+
 export interface AppTheorySsrSiteProps {
   readonly ssrFunction: lambda.IFunction;
+
+  /**
+   * Explicit deployment mode for the site topology.
+   *
+   * - `ssr-only`: Lambda Function URL is the default origin
+   * - `ssg-isr`: S3 is the primary HTML origin and Lambda is the fallback
+   *
+   * Existing implicit behavior maps to `ssr-only`.
+   * @default AppTheorySsrSiteMode.SSR_ONLY
+   */
+  readonly mode?: AppTheorySsrSiteMode;
 
   /**
    * Lambda Function URL invoke mode for the SSR origin.
@@ -35,8 +137,12 @@ export interface AppTheorySsrSiteProps {
   readonly assetsKeyPrefix?: string;
   readonly assetsManifestKey?: string;
 
-  // Additional CloudFront path patterns to route to the static S3 origin.
-  // Example (FaceTheory SSG hydration): "/_facetheory/data/*"
+  /**
+   * Additional CloudFront path patterns to route directly to the S3 origin.
+   *
+   * In `ssg-isr` mode, `/_facetheory/data/*` is added automatically.
+   * Example custom direct-S3 path: "/marketing/*"
+   */
   readonly staticPathPatterns?: string[];
 
   // Optional DynamoDB table name for ISR/cache metadata owned by app code (TableTheory).
@@ -52,6 +158,8 @@ export interface AppTheorySsrSiteProps {
    * The default AppTheory/FaceTheory-safe edge contract forwards only:
    * - `cloudfront-forwarded-proto`
    * - `cloudfront-viewer-address`
+   * - `x-apptheory-original-host`
+   * - `x-apptheory-original-uri`
    * - `x-request-id`
    * - `x-tenant-id`
    *
@@ -90,6 +198,7 @@ export class AppTheorySsrSite extends Construct {
       throw new Error("AppTheorySsrSite requires props.ssrFunction");
     }
 
+    const siteMode = props.mode ?? AppTheorySsrSiteMode.SSR_ONLY;
     const removalPolicy = props.removalPolicy ?? RemovalPolicy.RETAIN;
     const autoDeleteObjects = props.autoDeleteObjects ?? false;
 
@@ -150,7 +259,14 @@ export class AppTheorySsrSite extends Construct {
 
     const assetsOrigin = origins.S3BucketOrigin.withOriginAccessControl(this.assetsBucket);
 
-    const baseSsrForwardHeaders = ["cloudfront-forwarded-proto", "cloudfront-viewer-address", "x-request-id", "x-tenant-id"];
+    const baseSsrForwardHeaders = [
+      "cloudfront-forwarded-proto",
+      "cloudfront-viewer-address",
+      ssrOriginalHostHeader,
+      ssrOriginalUriHeader,
+      "x-request-id",
+      "x-tenant-id",
+    ];
 
     const disallowedSsrForwardHeaders = new Set(["host", "x-forwarded-proto"]);
 
@@ -184,6 +300,45 @@ export class AppTheorySsrSite extends Construct {
       headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(...ssrForwardHeaders),
     });
 
+    const staticPathPatterns = Array.from(
+      new Set(
+        [
+          ...(siteMode === AppTheorySsrSiteMode.SSG_ISR ? [ssgIsrHydrationPathPattern] : []),
+          ...(Array.isArray(props.staticPathPatterns) ? props.staticPathPatterns : []),
+        ]
+          .map((pattern) => trimRepeatedCharStart(String(pattern).trim(), "/"))
+          .filter((pattern) => pattern.length > 0),
+      ),
+    );
+
+    const viewerRequestFunction = new cloudfront.Function(this, "SsrViewerRequestFunction", {
+      code: cloudfront.FunctionCode.fromInline(
+        generateSsrViewerRequestFunctionCode(siteMode, [`/${assetsKeyPrefix}/*`, ...staticPathPatterns]),
+      ),
+      runtime: cloudfront.FunctionRuntime.JS_2_0,
+      comment:
+        siteMode === AppTheorySsrSiteMode.SSG_ISR
+          ? "FaceTheory viewer-request edge context and HTML rewrite for SSR site"
+          : "FaceTheory viewer-request edge context for SSR site",
+    });
+
+    const viewerResponseFunction = new cloudfront.Function(this, "SsrViewerResponseFunction", {
+      code: cloudfront.FunctionCode.fromInline(generateSsrViewerResponseFunctionCode()),
+      runtime: cloudfront.FunctionRuntime.JS_2_0,
+      comment: "FaceTheory viewer-response request-id echo for SSR site",
+    });
+
+    const createEdgeFunctionAssociations = (): cloudfront.FunctionAssociation[] => [
+      {
+        function: viewerRequestFunction,
+        eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
+      },
+      {
+        function: viewerResponseFunction,
+        eventType: cloudfront.FunctionEventType.VIEWER_RESPONSE,
+      },
+    ];
+
     const domainName = String(props.domainName ?? "").trim();
 
     let distributionCertificate: acm.ICertificate | undefined;
@@ -213,17 +368,8 @@ export class AppTheorySsrSite extends Construct {
       allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
       cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
       compress: true,
+      functionAssociations: createEdgeFunctionAssociations(),
     });
-
-    const staticPathPatterns = Array.from(
-      new Set(
-        Array.isArray(props.staticPathPatterns)
-          ? props.staticPathPatterns
-              .map((pattern) => trimRepeatedCharStart(String(pattern).trim(), "/"))
-              .filter((pattern) => pattern.length > 0)
-          : [],
-      ),
-    );
 
     const additionalBehaviors: Record<string, cloudfront.BehaviorOptions> = {
       [`${assetsKeyPrefix}/*`]: createStaticBehavior(),
@@ -233,6 +379,15 @@ export class AppTheorySsrSite extends Construct {
       additionalBehaviors[pattern] = createStaticBehavior();
     }
 
+    const defaultOrigin =
+      siteMode === AppTheorySsrSiteMode.SSG_ISR
+        ? new origins.OriginGroup({
+            primaryOrigin: assetsOrigin,
+            fallbackOrigin: ssrOrigin,
+            fallbackStatusCodes: [403, 404],
+          })
+        : ssrOrigin;
+
     this.distribution = new cloudfront.Distribution(this, "Distribution", {
       ...(enableLogging && this.logsBucket
         ? { enableLogging: true, logBucket: this.logsBucket, logFilePrefix: "cloudfront/" }
@@ -241,11 +396,12 @@ export class AppTheorySsrSite extends Construct {
         ? { domainNames: distributionDomainNames, certificate: distributionCertificate }
         : {}),
       defaultBehavior: {
-        origin: ssrOrigin,
+        origin: defaultOrigin,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
         originRequestPolicy: ssrOriginRequestPolicy,
+        functionAssociations: createEdgeFunctionAssociations(),
       },
       additionalBehaviors,
       ...(props.webAclId ? { webAclId: props.webAclId } : {}),

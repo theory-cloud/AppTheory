@@ -1210,9 +1210,10 @@ test("AppTheorySsrSite (FaceTheory) synthesizes expected template", () => {
 
   new apptheory.AppTheorySsrSite(stack, "Site", {
     ssrFunction: fn,
+    mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
     cacheTableName: "facetheory-cache-table",
     ssrForwardHeaders: [" X-FaceTheory-Tenant ", "x-facetheory-tenant"],
-    staticPathPatterns: ["/_facetheory/data/* ", "_facetheory/data/*"],
+    staticPathPatterns: ["/marketing/* ", "marketing/*"],
   });
 
   const template = assertions.Template.fromStack(stack).toJSON();
@@ -1254,6 +1255,29 @@ test("AppTheorySsrSite signs the default Function URL origin", () => {
   assert.equal(functionUrls[0].Properties?.AuthType, "AWS_IAM");
   assert.equal(lambdaOriginAccessControls.length, 1);
   assert.equal(cloudfrontInvokePermissions.length, 1);
+});
+
+test("AppTheorySsrSite defaults to ssr-only mode with edge functions", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", { ssrFunction: fn });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const distribution = resources.find((resource) => resource.Type === "AWS::CloudFront::Distribution");
+  const functions = resources.filter((resource) => resource.Type === "AWS::CloudFront::Function");
+
+  assert.ok(distribution, "Should have CloudFront distribution");
+  assert.equal(functions.length, 2);
+  assert.equal(distribution.Properties?.DistributionConfig?.OriginGroups?.Quantity ?? 0, 0);
+  assert.equal(distribution.Properties?.DistributionConfig?.DefaultCacheBehavior?.FunctionAssociations?.length, 2);
 });
 
 test("AppTheorySsrSite allows explicit public Function URL compatibility mode", () => {
@@ -1320,10 +1344,57 @@ test("AppTheorySsrSite defaults to FaceTheory-safe SSR origin request headers", 
   assert.deepEqual(headers, [
     "cloudfront-forwarded-proto",
     "cloudfront-viewer-address",
+    "x-apptheory-original-host",
+    "x-apptheory-original-uri",
     "x-facetheory-tenant",
     "x-request-id",
     "x-tenant-id",
   ]);
+});
+
+test("AppTheorySsrSite ssg-isr mode synthesizes origin-group fallback and edge rewrite", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const distribution = resources.find((resource) => resource.Type === "AWS::CloudFront::Distribution");
+  const functions = resources.filter((resource) => resource.Type === "AWS::CloudFront::Function");
+  const requestFunction = functions.find((resource) =>
+    String(resource.Properties?.FunctionConfig?.Comment ?? "").includes("viewer-request"),
+  );
+
+  assert.ok(distribution, "Should have CloudFront distribution");
+  assert.ok(requestFunction, "Should have SSR viewer-request function");
+  assert.equal(distribution.Properties?.DistributionConfig?.OriginGroups?.Quantity, 1);
+  assert.equal(distribution.Properties?.DistributionConfig?.DefaultCacheBehavior?.FunctionAssociations?.length, 2);
+
+  const originGroupMembers =
+    distribution.Properties?.DistributionConfig?.OriginGroups?.Items?.[0]?.Members?.Items ?? [];
+  const fallbackStatusCodes =
+    distribution.Properties?.DistributionConfig?.OriginGroups?.Items?.[0]?.FailoverCriteria?.StatusCodes?.Items ?? [];
+  const cacheBehaviors = distribution.Properties?.DistributionConfig?.CacheBehaviors ?? [];
+  const hydrationBehavior = cacheBehaviors.find((behavior) => behavior.PathPattern === "_facetheory/data/*");
+
+  assert.equal(originGroupMembers.length, 2);
+  assert.deepEqual(fallbackStatusCodes, [403, 404]);
+  assert.ok(hydrationBehavior, "Should keep FaceTheory hydration path on direct S3 behavior");
+
+  const functionCode = String(requestFunction.Properties?.FunctionCode ?? "");
+  assert.match(functionCode, /x-apptheory-original-host/);
+  assert.match(functionCode, /x-apptheory-original-uri/);
+  assert.match(functionCode, /index\.html/);
 });
 
 test("AppTheorySsrSite rejects disallowed SSR origin request headers", () => {
