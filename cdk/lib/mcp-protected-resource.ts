@@ -2,6 +2,7 @@ import { Stack } from "aws-cdk-lib";
 import * as apigw from "aws-cdk-lib/aws-apigateway";
 import { Construct } from "constructs";
 
+import { trimRepeatedChar } from "./private/string-utils";
 import { AppTheoryRestApiRouter } from "./rest-api-router";
 
 /**
@@ -107,7 +108,7 @@ function metadataPathFromResourceURL(resource: string): string {
 
 function ensureResourcePath(root: apigw.IResource, path: string): apigw.IResource {
   let current = root;
-  const trimmed = String(path ?? "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  const trimmed = trimRepeatedChar(String(path ?? "").trim(), "/");
   if (!trimmed) {
     return current;
   }

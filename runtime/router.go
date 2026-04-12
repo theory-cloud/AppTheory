@@ -12,12 +12,43 @@ type Handler func(*Context) (*Response, error)
 type RouteOption func(*routeOptions)
 
 type routeOptions struct {
-	authRequired bool
+	authRequired     bool
+	optionalAuth     bool
+	requiredScopes   []string
+	requiredAnyScope []string
 }
 
 func RequireAuth() RouteOption {
 	return func(opts *routeOptions) {
 		opts.authRequired = true
+	}
+}
+
+func OptionalAuth() RouteOption {
+	return func(opts *routeOptions) {
+		opts.optionalAuth = true
+	}
+}
+
+func RequireScope(scopes ...string) RouteOption {
+	return func(opts *routeOptions) {
+		normalized := normalizeScopeList(scopes)
+		if len(normalized) == 0 {
+			return
+		}
+		opts.authRequired = true
+		opts.requiredScopes = append(opts.requiredScopes, normalized...)
+	}
+}
+
+func RequireAnyScope(scopes ...string) RouteOption {
+	return func(opts *routeOptions) {
+		normalized := normalizeScopeList(scopes)
+		if len(normalized) == 0 {
+			return
+		}
+		opts.authRequired = true
+		opts.requiredAnyScope = append(opts.requiredAnyScope, normalized...)
 	}
 }
 
@@ -35,11 +66,14 @@ type routeSegment struct {
 }
 
 type route struct {
-	Method       string
-	Pattern      string
-	Segments     []routeSegment
-	Handler      Handler
-	AuthRequired bool
+	Method           string
+	Pattern          string
+	Segments         []routeSegment
+	Handler          Handler
+	AuthRequired     bool
+	OptionalAuth     bool
+	RequiredScopes   []string
+	RequiredAnyScope []string
 
 	staticCount int
 	paramCount  int
@@ -94,15 +128,18 @@ func (r *router) addStrict(method, pattern string, handler Handler, opts routeOp
 	}
 
 	r.routes = append(r.routes, route{
-		Method:       method,
-		Pattern:      pattern,
-		Segments:     segments,
-		Handler:      handler,
-		AuthRequired: opts.authRequired,
-		staticCount:  staticCount,
-		paramCount:   paramCount,
-		hasProxy:     hasProxy,
-		order:        len(r.routes),
+		Method:           method,
+		Pattern:          pattern,
+		Segments:         segments,
+		Handler:          handler,
+		AuthRequired:     opts.authRequired,
+		OptionalAuth:     opts.optionalAuth,
+		RequiredScopes:   append([]string(nil), opts.requiredScopes...),
+		RequiredAnyScope: append([]string(nil), opts.requiredAnyScope...),
+		staticCount:      staticCount,
+		paramCount:       paramCount,
+		hasProxy:         hasProxy,
+		order:            len(r.routes),
 	})
 
 	return nil

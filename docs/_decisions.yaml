@@ -57,12 +57,12 @@ decisions:
           choice: "Document replay as durable"
           reason: "The runtime can now persist stream events across reconnects and cold starts."
           example: |
-            srv := mcp.NewServer("server", "dev", mcp.WithStreamStore(myPersistentStore))
+            srv := mcp.NewServer("server", "dev", mcp.WithStreamStore(mcp.NewDynamoStreamStore(db)))
         if_no:
           choice: "Treat the table as infrastructure only"
-          reason: "The built-in runtime ships MemoryStreamStore; enableStreamTable alone does not make replay durable."
+          reason: "enableStreamTable alone does not make replay durable; the app must still wire mcp.WithStreamStore(...)."
           example: |
-            TODO: wire mcp.WithStreamStore(...) before claiming durable replay.
+            TODO: wire mcp.WithStreamStore(mcp.NewDynamoStreamStore(db)) before claiming durable replay.
 
   choose_api_source_of_truth:
     question: "What source should drive API docs and migration guidance?"

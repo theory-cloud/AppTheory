@@ -19,6 +19,7 @@ from apptheory.jobs import (  # noqa: E402
     JobMeta,
     JobRecord,
     JobRequest,
+    SemaphoreLease,
     DEFAULT_JOBS_TABLE_NAME,
     EnvJobsTableName,
     jobs_table_name,
@@ -90,6 +91,24 @@ class FakeTable:
 
         self.store[key] = deepcopy(current)
         return deepcopy(current)
+
+    def query_all(
+        self,
+        partition: str,
+        *,
+        sort: object | None = None,
+        index_name: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        scan_forward: bool = True,
+        consistent_read: bool = False,
+        projection: list[str] | None = None,
+        filter: object | None = None,
+    ) -> list[object]:
+        _ = sort, index_name, limit, cursor, consistent_read, projection, filter
+        items = [deepcopy(item) for (pk, _sk), item in self.store.items() if pk == partition]
+        items.sort(key=lambda item: str(getattr(item, "sk", "") or ""), reverse=not scan_forward)
+        return items
 
     def _check_condition(
         self,
@@ -183,6 +202,7 @@ class TestJobs(unittest.TestCase):
             meta_table=FakeTable(JobMeta, store),
             record_table=FakeTable(JobRecord, store),
             lock_table=FakeTable(JobLock, store),
+            semaphore_table=FakeTable(SemaphoreLease, store),
             request_table=FakeTable(JobRequest, store),
             clock=clock,
         )
@@ -225,6 +245,48 @@ class TestJobs(unittest.TestCase):
         ledger.release_lease(job_id="j1", owner="w1")
         ledger.release_lease(job_id="j1", owner="w1")  # idempotent
 
+        sem1 = ledger.acquire_semaphore_slot(
+            scope="email",
+            subject="customer_1",
+            limit=2,
+            owner="w1",
+            lease_duration=dt.timedelta(minutes=2),
+        )
+        sem2 = ledger.acquire_semaphore_slot(
+            scope="email",
+            subject="customer_1",
+            limit=2,
+            owner="w2",
+            lease_duration=dt.timedelta(minutes=2),
+        )
+        self.assertEqual({sem1.slot, sem2.slot}, {0, 1})
+
+        with self.assertRaises(JobLedgerError):
+            ledger.acquire_semaphore_slot(
+                scope="email",
+                subject="customer_1",
+                limit=2,
+                owner="w3",
+                lease_duration=dt.timedelta(minutes=2),
+            )
+
+        refreshed_sem = ledger.refresh_semaphore_slot(
+            scope="email",
+            subject="customer_1",
+            slot=sem1.slot,
+            owner="w1",
+            lease_duration=dt.timedelta(minutes=2),
+        )
+        self.assertEqual(refreshed_sem.lease_owner, "w1")
+
+        inspection = ledger.inspect_semaphore(scope="email", subject="customer_1")
+        self.assertEqual(int(inspection["occupancy"]), 2)
+        self.assertEqual([lease.slot for lease in inspection["active_leases"]], [0, 1])
+
+        ledger.release_semaphore_slot(scope="email", subject="customer_1", slot=sem1.slot, owner="w1")
+        with self.assertRaises(JobLedgerError):
+            ledger.release_semaphore_slot(scope="email", subject="customer_1", slot=sem2.slot, owner="w1")
+
         req1, out1 = ledger.create_idempotency_record(job_id="j1", idempotency_key="k1")
         self.assertEqual(out1, "created")
         self.assertEqual(req1.status, "IN_PROGRESS")
@@ -258,6 +320,7 @@ class TestJobs(unittest.TestCase):
             meta_table=FakeTable(JobMeta, store),
             record_table=FakeTable(JobRecord, store),
             lock_table=FakeTable(JobLock, store),
+            semaphore_table=FakeTable(SemaphoreLease, store),
             request_table=FakeTable(JobRequest, store),
             clock=clock,
         )
@@ -286,6 +349,7 @@ class TestJobs(unittest.TestCase):
             meta_table=FakeTable(JobMeta, store),
             record_table=FakeTable(JobRecord, store),
             lock_table=FakeTable(JobLock, store),
+            semaphore_table=FakeTable(SemaphoreLease, store),
             request_table=FakeTable(JobRequest, store),
             clock=clock,
         )
@@ -308,6 +372,26 @@ class TestJobs(unittest.TestCase):
 
         with self.assertRaises(JobLedgerError) as ctx:
             ledger.acquire_lease(job_id="j1", owner="w1", lease_duration=dt.timedelta(0))
+        self.assertEqual(ctx.exception.type, "invalid_input")
+
+        with self.assertRaises(JobLedgerError) as ctx:
+            ledger.acquire_semaphore_slot(
+                scope="",
+                subject="customer_1",
+                limit=1,
+                owner="w1",
+                lease_duration=dt.timedelta(minutes=2),
+            )
+        self.assertEqual(ctx.exception.type, "invalid_input")
+
+        with self.assertRaises(JobLedgerError) as ctx:
+            ledger.refresh_semaphore_slot(
+                scope="email",
+                subject="customer_1",
+                slot=-1,
+                owner="w1",
+                lease_duration=dt.timedelta(minutes=2),
+            )
         self.assertEqual(ctx.exception.type, "invalid_input")
 
         with self.assertRaises(JobLedgerError) as ctx:

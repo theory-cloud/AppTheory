@@ -7,6 +7,8 @@ import * as targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 
+import { stripTrailingPort, trimRepeatedCharEnd } from "./private/string-utils";
+
 export enum AppTheorySpaRewriteMode {
     /**
      * Rewrite extensionless routes to `index.html` within the SPA prefix.
@@ -536,7 +538,7 @@ export class AppTheoryPathRoutedFrontend extends Construct {
             }
 
             const path = String(parsed.pathname ?? "").trim();
-            const originPath = path && path !== "/" ? path.replace(/\/+$/, "") : undefined;
+            const originPath = path && path !== "/" ? trimRepeatedCharEnd(path, "/") : undefined;
             return { domainName, ...(originPath ? { originPath } : {}) };
         }
 
@@ -544,14 +546,14 @@ export class AppTheoryPathRoutedFrontend extends Construct {
         const withoutQuery = urlStr.split("?")[0]?.split("#")[0] ?? urlStr;
         const firstSlashIndex = withoutQuery.indexOf("/");
         const domainPart = (firstSlashIndex >= 0 ? withoutQuery.slice(0, firstSlashIndex) : withoutQuery)
-            .trim()
-            .replace(/:\d+$/, "");
-        if (!domainPart) {
+            .trim();
+        const normalizedDomainPart = stripTrailingPort(domainPart);
+        if (!normalizedDomainPart) {
             throw new Error(`AppTheoryPathRoutedFrontend could not parse domain from apiOriginUrl: ${urlStr}`);
         }
 
         const pathPart = firstSlashIndex >= 0 ? withoutQuery.slice(firstSlashIndex) : "";
-        const originPath = pathPart && pathPart !== "/" ? pathPart.replace(/\/+$/, "") : undefined;
-        return { domainName: domainPart, ...(originPath ? { originPath } : {}) };
+        const originPath = pathPart && pathPart !== "/" ? trimRepeatedCharEnd(pathPart, "/") : undefined;
+        return { domainName: normalizedDomainPart, ...(originPath ? { originPath } : {}) };
     }
 }

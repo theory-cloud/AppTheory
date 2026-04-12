@@ -7,6 +7,9 @@ import * as route53 from "aws-cdk-lib/aws-route53";
 import * as route53targets from "aws-cdk-lib/aws-route53-targets";
 import { Construct } from "constructs";
 
+import { markRestApiStageRouteAsStreaming } from "./private/rest-api-streaming";
+import { trimRepeatedChar } from "./private/string-utils";
+
 /**
  * CORS configuration for the REST API router.
  */
@@ -377,6 +380,7 @@ export class AppTheoryRestApiRouter extends Construct {
             // For streaming routes, apply L1 overrides to ensure full compatibility
             if (options.streaming) {
                 this.applyStreamingOverrides(createdMethod, handler, options);
+                markRestApiStageRouteAsStreaming(this.stage, method, path);
             }
         }
 
@@ -391,10 +395,7 @@ export class AppTheoryRestApiRouter extends Construct {
      */
     private resourceForPath(inputPath: string): apigw.IResource {
         let current: apigw.IResource = this.api.root;
-        const trimmed = String(inputPath ?? "")
-            .trim()
-            .replace(/^\/+/, "")
-            .replace(/\/+$/, "");
+        const trimmed = trimRepeatedChar(String(inputPath ?? "").trim(), "/");
         if (!trimmed) return current;
 
         for (const segment of trimmed.split("/")) {

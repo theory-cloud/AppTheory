@@ -153,6 +153,10 @@ if [[ -f ".github/workflows/prerelease-pr.yml" ]]; then
     echo "branch-release: prerelease-pr workflow must set skip-github-release: true"
     failures=$((failures + 1))
   }
+  grep -Fq "scripts/sync-release-pr-generated.sh" ".github/workflows/prerelease-pr.yml" || {
+    echo "branch-release: prerelease-pr workflow must sync generated cdk artifacts onto the release PR branch"
+    failures=$((failures + 1))
+  }
 fi
 
 if [[ -f ".github/workflows/release-pr.yml" ]]; then
@@ -201,6 +205,10 @@ if [[ -f ".github/workflows/release-pr.yml" ]]; then
   }
   grep -Fq ".release-please-manifest.premain.json" ".github/workflows/release-pr.yml" || {
     echo "branch-release: release-pr workflow must read .release-please-manifest.premain.json to align versions"
+    failures=$((failures + 1))
+  }
+  grep -Fq "scripts/sync-release-pr-generated.sh" ".github/workflows/release-pr.yml" || {
+    echo "branch-release: release-pr workflow must sync generated cdk artifacts onto the release PR branch"
     failures=$((failures + 1))
   }
 fi

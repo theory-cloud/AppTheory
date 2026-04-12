@@ -16,6 +16,7 @@ const logs = require("aws-cdk-lib/aws-logs");
 const route53 = require("aws-cdk-lib/aws-route53");
 
 const apptheory = require("../lib");
+const { restApiStreamingRouteStageVariableName } = require("../lib/private/rest-api-streaming");
 
 function stableJson(value) {
   if (Array.isArray(value)) return value.map(stableJson);
@@ -89,6 +90,21 @@ function restApiMethodPaths(template) {
     });
   }
   return methods;
+}
+
+function restApiStageVariables(template) {
+  for (const resource of Object.values(template.Resources ?? {})) {
+    if (resource.Type === "AWS::ApiGateway::Stage") {
+      return resource.Properties?.Variables ?? {};
+    }
+  }
+  return {};
+}
+
+function assertStreamingRouteStageVariable(template, method, path) {
+  const variables = restApiStageVariables(template);
+  const key = restApiStreamingRouteStageVariableName(method, path);
+  assert.equal(variables[key], "1", `Stage should mark ${method} ${path} as streaming`);
 }
 
 test("AppTheoryFunction synthesizes expected template", () => {
@@ -444,6 +460,7 @@ test("AppTheoryRestApi synthesizes expected template", () => {
   api.addRoute("/sse", ["GET"], { streaming: true });
 
   const template = assertions.Template.fromStack(stack).toJSON();
+  assertStreamingRouteStageVariable(template, "GET", "/sse");
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("rest-api", template);
   } else {
@@ -1206,6 +1223,37 @@ test("AppTheorySsrSite (FaceTheory) synthesizes expected template", () => {
   }
 });
 
+test("AppTheorySsrSite omits disallowed SSR origin request headers", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    ssrForwardHeaders: [" X-Forwarded-Proto ", "x-facetheory-tenant"],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const originRequestPolicies = Object.values(template.Resources ?? {}).filter(
+    (resource) => resource.Type === "AWS::CloudFront::OriginRequestPolicy",
+  );
+
+  assert.equal(originRequestPolicies.length, 1);
+
+  const [policy] = originRequestPolicies;
+  const headers = policy.Properties?.OriginRequestPolicyConfig?.HeadersConfig?.Headers ?? [];
+
+  assert.equal(Array.isArray(headers), true);
+  assert.equal(headers.includes("x-forwarded-proto"), false);
+  assert.equal(headers.includes("cloudfront-forwarded-proto"), true);
+  assert.equal(headers.includes("x-facetheory-tenant"), true);
+});
+
 // ============================================================================
 // AppTheoryRestApiRouter tests
 // ============================================================================
@@ -1255,6 +1303,7 @@ test("AppTheoryRestApiRouter (multi-Lambda) synthesizes expected template", () =
   router.addLambdaIntegration("/inventory/{id}", ["GET", "PUT", "DELETE"], inventoryFn);
 
   const template = assertions.Template.fromStack(stack).toJSON();
+  assertStreamingRouteStageVariable(template, "GET", "/sse");
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("rest-api-router-multi-lambda", template);
   } else {
@@ -1310,6 +1359,9 @@ test("AppTheoryRestApiRouter (streaming parity) synthesizes expected template", 
   }
 
   assert.ok(streamingMethodCount >= 2, "Should have at least 2 streaming methods");
+  assertStreamingRouteStageVariable(template, "GET", "/sse");
+  assertStreamingRouteStageVariable(template, "GET", "/events");
+  assert.equal(restApiStageVariables(template)[restApiStreamingRouteStageVariableName("GET", "/api")], undefined);
 
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("rest-api-router-streaming", template);
@@ -2097,6 +2149,9 @@ test("AppTheoryRemoteMcpServer (basic) synthesizes expected template", () => {
   assert.ok(methodPaths.some((m) => m.method === "GET" && m.path === "/mcp"), "Should have GET /mcp method");
   assert.ok(methodPaths.some((m) => m.method === "DELETE" && m.path === "/mcp"), "Should have DELETE /mcp method");
   assert.ok(streamingMethods >= 2, "Should have streaming enabled on POST and GET");
+  assertStreamingRouteStageVariable(template, "GET", "/mcp");
+  assertStreamingRouteStageVariable(template, "POST", "/mcp");
+  assert.equal(restApiStageVariables(template)[restApiStreamingRouteStageVariableName("DELETE", "/mcp")], undefined);
 
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("remote-mcp-server-basic", template);
@@ -2150,6 +2205,38 @@ test("AppTheoryRemoteMcpServer (actor path) synthesizes expected template", () =
     writeSnapshot("remote-mcp-server-actor-path", template);
   } else {
     expectSnapshot("remote-mcp-server-actor-path", template);
+  }
+});
+
+test("AppTheoryRemoteMcpServer can register /.well-known/mcp.json", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
+    handler: fn,
+    apiName: "apptheory-remote-mcp-discovery-test",
+    actorPath: true,
+    enableWellKnownMcpDiscovery: true,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const methodPaths = restApiMethodPaths(template);
+
+  assert.ok(
+    methodPaths.some((m) => m.method === "GET" && m.path === "/.well-known/mcp.json"),
+    "Should have GET /.well-known/mcp.json method",
+  );
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("remote-mcp-server-discovery", template);
+  } else {
+    expectSnapshot("remote-mcp-server-discovery", template);
   }
 });
 

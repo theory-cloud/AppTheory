@@ -322,7 +322,7 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 		return resp
 	}
 
-	if resp, errorCode, ok := a.authorize(match.Route.AuthRequired, requestCtx, state.requestID, opts.errorResponder); ok {
+	if resp, errorCode, ok := a.authorize(match.Route, requestCtx, state.requestID, opts.errorResponder); ok {
 		state.errorCode = errorCode
 		return resp
 	}
@@ -440,26 +440,40 @@ func (a *App) applyPolicy(
 	return a.httpErrorResponseWithRequestID(code, message, decision.Headers, requestID), code, true
 }
 
+func routeRequiresAuth(route route) bool {
+	return route.AuthRequired || len(route.RequiredScopes) > 0 || len(route.RequiredAnyScope) > 0
+}
+
+func routeShouldResolvePrincipal(route route) bool {
+	return route.OptionalAuth || routeRequiresAuth(route)
+}
+
+func (a *App) authorizeDenied(
+	code string,
+	message string,
+	request Request,
+	requestID string,
+	errorResponder requestErrorResponder,
+) (Response, string, bool) {
+	if errorResponder != nil {
+		return errorResponder(&AppError{Code: code, Message: message}, request, requestID), code, true
+	}
+	return a.httpErrorResponseWithRequestID(code, message, nil, requestID), code, true
+}
+
 func (a *App) authorize(
-	authRequired bool,
+	route route,
 	requestCtx *Context,
 	requestID string,
 	errorResponder requestErrorResponder,
 ) (Response, string, bool) {
-	if !authRequired {
+	if !routeShouldResolvePrincipal(route) {
 		return Response{}, "", false
 	}
 
 	requestCtx.MiddlewareTrace = append(requestCtx.MiddlewareTrace, "auth")
 
-	if a.auth == nil {
-		if errorResponder != nil {
-			return errorResponder(&AppError{Code: errorCodeUnauthorized, Message: errorMessageUnauthorized}, requestCtx.Request, requestID), errorCodeUnauthorized, true
-		}
-		return a.httpErrorResponseWithRequestID(errorCodeUnauthorized, errorMessageUnauthorized, nil, requestID), errorCodeUnauthorized, true
-	}
-
-	identity, err := a.auth(requestCtx)
+	principal, err := a.authenticate(requestCtx)
 	if err != nil {
 		if errorResponder != nil {
 			return errorResponder(err, requestCtx.Request, requestID), errorCodeForError(err), true
@@ -467,15 +481,24 @@ func (a *App) authorize(
 		return a.responseForHTTPErrorWithRequestID(err, requestID), errorCodeForError(err), true
 	}
 
-	identity = strings.TrimSpace(identity)
-	if identity == "" {
-		if errorResponder != nil {
-			return errorResponder(&AppError{Code: errorCodeUnauthorized, Message: errorMessageUnauthorized}, requestCtx.Request, requestID), errorCodeUnauthorized, true
+	if principal == nil {
+		if !routeRequiresAuth(route) {
+			return Response{}, "", false
 		}
-		return a.httpErrorResponseWithRequestID(errorCodeUnauthorized, errorMessageUnauthorized, nil, requestID), errorCodeUnauthorized, true
+		return a.authorizeDenied(errorCodeUnauthorized, errorMessageUnauthorized, requestCtx.Request, requestID, errorResponder)
 	}
 
-	requestCtx.AuthIdentity = identity
+	requestCtx.AuthIdentity = principal.Identity
+	requestCtx.AuthPrincipal = principal
+
+	if len(route.RequiredScopes) > 0 && !principalHasAllScopes(principal, route.RequiredScopes) {
+		return a.authorizeDenied(errorCodeForbidden, errorMessageForbidden, requestCtx.Request, requestID, errorResponder)
+	}
+
+	if len(route.RequiredAnyScope) > 0 && !principalHasAnyScope(principal, route.RequiredAnyScope) {
+		return a.authorizeDenied(errorCodeForbidden, errorMessageForbidden, requestCtx.Request, requestID, errorResponder)
+	}
+
 	return Response{}, "", false
 }
 
