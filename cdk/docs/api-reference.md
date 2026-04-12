@@ -33,6 +33,6 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryPathRoutedFrontend` (CloudFront distribution: multi-SPA routing + API origin + SPA rewrite)
 - `AppTheoryMediaCdn` (CloudFront distribution: S3-backed media CDN; optional private media via key groups)
 - Domain/cert helpers (hosted zone, certificate, custom domains)
-- Higher-level “app”/SSR patterns (where present)
+- Higher-level “app”/SSR patterns (where present; `AppTheorySsrSite` defaults to a signed CloudFront → Function URL origin path)
 
 For the exact list and prop types, read `cdk/lib/*.d.ts`.

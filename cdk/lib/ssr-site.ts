@@ -1,4 +1,4 @@
-import { Fn, RemovalPolicy } from "aws-cdk-lib";
+import { RemovalPolicy } from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
@@ -14,7 +14,21 @@ import { trimRepeatedChar, trimRepeatedCharStart } from "./private/string-utils"
 export interface AppTheorySsrSiteProps {
   readonly ssrFunction: lambda.IFunction;
 
+  /**
+   * Lambda Function URL invoke mode for the SSR origin.
+   * @default lambda.InvokeMode.RESPONSE_STREAM
+   */
   readonly invokeMode?: lambda.InvokeMode;
+
+  /**
+   * Function URL auth type for the SSR origin.
+   *
+   * AppTheory defaults this to `AWS_IAM` so CloudFront reaches the SSR origin
+   * through a signed Origin Access Control path. Set `NONE` only as an explicit
+   * compatibility override for legacy public Function URL deployments.
+   * @default lambda.FunctionUrlAuthType.AWS_IAM
+   */
+  readonly ssrUrlAuthType?: lambda.FunctionUrlAuthType;
 
   readonly assetsBucket?: s3.IBucket;
   readonly assetsPath?: string;
@@ -32,8 +46,19 @@ export interface AppTheorySsrSiteProps {
   // When true (default), AppTheory wires recommended runtime environment variables onto the SSR function.
   readonly wireRuntimeEnv?: boolean;
 
-  // Additional headers to forward to the SSR origin (Lambda Function URL) via the origin request policy.
-  // Example (FaceTheory multi-tenant): "x-facetheory-tenant"
+  /**
+   * Additional headers to forward to the SSR origin (Lambda Function URL) via the origin request policy.
+   *
+   * The default AppTheory/FaceTheory-safe edge contract forwards only:
+   * - `cloudfront-forwarded-proto`
+   * - `cloudfront-viewer-address`
+   * - `x-request-id`
+   * - `x-tenant-id`
+   *
+   * Use this to opt in to additional app-specific headers such as
+   * `x-facetheory-tenant`. `host` and `x-forwarded-proto` are rejected because
+   * they break or bypass the supported origin model.
+   */
   readonly ssrForwardHeaders?: string[];
 
   readonly enableLogging?: boolean;
@@ -110,38 +135,40 @@ export class AppTheorySsrSite extends Construct {
       });
     }
 
+    const ssrUrlAuthType = props.ssrUrlAuthType ?? lambda.FunctionUrlAuthType.AWS_IAM;
+
     this.ssrUrl = new lambda.FunctionUrl(this, "SsrUrl", {
       function: props.ssrFunction,
-      authType: lambda.FunctionUrlAuthType.NONE,
+      authType: ssrUrlAuthType,
       invokeMode: props.invokeMode ?? lambda.InvokeMode.RESPONSE_STREAM,
     });
 
-    const ssrDomainName = Fn.select(2, Fn.split("/", this.ssrUrl.url));
-    const ssrOrigin = new origins.HttpOrigin(ssrDomainName, {
-      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-    });
+    const ssrOrigin =
+      ssrUrlAuthType === lambda.FunctionUrlAuthType.AWS_IAM
+        ? origins.FunctionUrlOrigin.withOriginAccessControl(this.ssrUrl)
+        : new origins.FunctionUrlOrigin(this.ssrUrl);
 
     const assetsOrigin = origins.S3BucketOrigin.withOriginAccessControl(this.assetsBucket);
 
-    const baseSsrForwardHeaders = [
-      "accept",
-      "accept-language",
-      "cache-control",
-      "host",
-      "if-none-match",
-      "user-agent",
-      "x-forwarded-for",
-      "cloudfront-forwarded-proto",
-      "cloudfront-viewer-address",
-    ];
+    const baseSsrForwardHeaders = ["cloudfront-forwarded-proto", "cloudfront-viewer-address", "x-request-id", "x-tenant-id"];
 
-    const disallowedSsrForwardHeaders = new Set(["x-forwarded-proto"]);
+    const disallowedSsrForwardHeaders = new Set(["host", "x-forwarded-proto"]);
 
     const extraSsrForwardHeaders = Array.isArray(props.ssrForwardHeaders)
       ? props.ssrForwardHeaders
           .map((header) => String(header).trim().toLowerCase())
           .filter((header) => header.length > 0)
       : [];
+
+    const requestedDisallowedSsrForwardHeaders = Array.from(
+      new Set(extraSsrForwardHeaders.filter((header) => disallowedSsrForwardHeaders.has(header))),
+    ).sort();
+
+    if (requestedDisallowedSsrForwardHeaders.length > 0) {
+      throw new Error(
+        `AppTheorySsrSite disallows ssrForwardHeaders: ${requestedDisallowedSsrForwardHeaders.join(", ")}`,
+      );
+    }
 
     const ssrForwardHeaders = Array.from(
       new Set(
