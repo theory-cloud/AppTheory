@@ -1,7 +1,8 @@
-import { RemovalPolicy } from "aws-cdk-lib";
+import { Duration, RemovalPolicy } from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as targets from "aws-cdk-lib/aws-route53-targets";
@@ -11,9 +12,14 @@ import { Construct } from "constructs";
 
 import { trimRepeatedChar, trimRepeatedCharStart } from "./private/string-utils";
 
-const ssrOriginalUriHeader = "x-apptheory-original-uri";
-const ssrOriginalHostHeader = "x-apptheory-original-host";
+const apptheoryOriginalUriHeader = "x-apptheory-original-uri";
+const facetheoryOriginalUriHeader = "x-facetheory-original-uri";
+const apptheoryOriginalHostHeader = "x-apptheory-original-host";
+const facetheoryOriginalHostHeader = "x-facetheory-original-host";
+const ssrOriginalUriHeaders = [apptheoryOriginalUriHeader, facetheoryOriginalUriHeader] as const;
+const ssrOriginalHostHeaders = [apptheoryOriginalHostHeader, facetheoryOriginalHostHeader] as const;
 const ssgIsrHydrationPathPattern = "/_facetheory/data/*";
+const defaultIsrHtmlStoreKeyPrefix = "isr";
 
 export enum AppTheorySsrSiteMode {
   /**
@@ -47,14 +53,20 @@ function generateSsrViewerRequestFunctionCode(mode: AppTheorySsrSiteMode, direct
 	  var requestId = requestIdHeader && requestIdHeader.value ? requestIdHeader.value.trim() : '';
 
 	  if (!requestId) {
+	    requestId = event.context && event.context.requestId ? String(event.context.requestId).trim() : '';
+	  }
+
+	  if (!requestId) {
 	    requestId = 'req_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
 	  }
 
 	  headers['x-request-id'] = { value: requestId };
-	  headers['${ssrOriginalUriHeader}'] = { value: uri };
+	  headers['${apptheoryOriginalUriHeader}'] = { value: uri };
+	  headers['${facetheoryOriginalUriHeader}'] = { value: uri };
 
 	  if (headers.host && headers.host.value) {
-	    headers['${ssrOriginalHostHeader}'] = { value: headers.host.value };
+	    headers['${apptheoryOriginalHostHeader}'] = { value: headers.host.value };
+	    headers['${facetheoryOriginalHostHeader}'] = { value: headers.host.value };
 	  }
 
 	  if ('${mode}' === '${AppTheorySsrSiteMode.SSG_ISR}') {
@@ -92,9 +104,17 @@ function generateSsrViewerResponseFunctionCode(): string {
 	  var request = event.request;
 	  var response = event.response;
 	  var requestIdHeader = request.headers['x-request-id'];
+	  var requestId = requestIdHeader && requestIdHeader.value ? requestIdHeader.value.trim() : '';
 
-	  if (requestIdHeader && requestIdHeader.value) {
-	    response.headers['x-request-id'] = { value: requestIdHeader.value };
+	  if (!requestId) {
+	    requestId = event.context && event.context.requestId ? String(event.context.requestId).trim() : '';
+	  }
+
+	  if (requestId) {
+	    response.headers = response.headers || {};
+	    if (!response.headers['x-request-id']) {
+	      response.headers['x-request-id'] = { value: requestId };
+	    }
 	  }
 
 	  return response;
@@ -138,6 +158,21 @@ export interface AppTheorySsrSiteProps {
   readonly assetsManifestKey?: string;
 
   /**
+   * Optional S3 bucket used by FaceTheory ISR HTML storage (`S3HtmlStore`).
+   *
+   * When provided, AppTheory grants the SSR function read/write access and wires:
+   * - `FACETHEORY_ISR_BUCKET`
+   * - `FACETHEORY_ISR_PREFIX`
+   */
+  readonly htmlStoreBucket?: s3.IBucket;
+
+  /**
+   * S3 key prefix used by FaceTheory ISR HTML storage.
+   * @default isr
+   */
+  readonly htmlStoreKeyPrefix?: string;
+
+  /**
    * Additional CloudFront path patterns to route directly to the S3 origin.
    *
    * In `ssg-isr` mode, `/_facetheory/data/*` is added automatically.
@@ -145,8 +180,25 @@ export interface AppTheorySsrSiteProps {
    */
   readonly staticPathPatterns?: string[];
 
-  // Optional DynamoDB table name for ISR/cache metadata owned by app code (TableTheory).
-  // When set, AppTheory will wire environment variables on the SSR function.
+  /**
+   * Optional TableTheory/DynamoDB table used for FaceTheory ISR metadata and lease coordination.
+   *
+   * When provided, AppTheory grants the SSR function read/write access and wires the
+   * metadata table aliases expected by the documented FaceTheory deployment shape.
+   */
+  readonly isrMetadataTable?: dynamodb.ITable;
+
+  /**
+   * Optional ISR/cache metadata table name to wire when you are not passing `isrMetadataTable`.
+   *
+   * Prefer `isrMetadataTable` when AppTheory should also grant access to the SSR Lambda.
+   */
+  readonly isrMetadataTableName?: string;
+
+  /**
+   * Legacy alias for `isrMetadataTableName`.
+   * @deprecated prefer `isrMetadataTable` or `isrMetadataTableName`
+   */
   readonly cacheTableName?: string;
 
   // When true (default), AppTheory wires recommended runtime environment variables onto the SSR function.
@@ -160,6 +212,8 @@ export interface AppTheorySsrSiteProps {
    * - `cloudfront-viewer-address`
    * - `x-apptheory-original-host`
    * - `x-apptheory-original-uri`
+   * - `x-facetheory-original-host`
+   * - `x-facetheory-original-uri`
    * - `x-request-id`
    * - `x-tenant-id`
    *
@@ -171,6 +225,15 @@ export interface AppTheorySsrSiteProps {
 
   readonly enableLogging?: boolean;
   readonly logsBucket?: s3.IBucket;
+
+  /**
+   * CloudFront response headers policy applied to SSR and direct-S3 behaviors.
+   *
+   * If omitted, AppTheory provisions a FaceTheory-aligned baseline policy at the CDN
+   * layer: HSTS, nosniff, frame-options, referrer-policy, XSS protection, and a
+   * restrictive permissions-policy. Content-Security-Policy remains origin-defined.
+   */
+  readonly responseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
 
   readonly removalPolicy?: RemovalPolicy;
   readonly autoDeleteObjects?: boolean;
@@ -186,10 +249,14 @@ export class AppTheorySsrSite extends Construct {
   public readonly assetsBucket: s3.IBucket;
   public readonly assetsKeyPrefix: string;
   public readonly assetsManifestKey: string;
+  public readonly htmlStoreBucket?: s3.IBucket;
+  public readonly htmlStoreKeyPrefix?: string;
+  public readonly isrMetadataTable?: dynamodb.ITable;
   public readonly logsBucket?: s3.IBucket;
   public readonly ssrUrl: lambda.FunctionUrl;
   public readonly distribution: cloudfront.Distribution;
   public readonly certificate?: acm.ICertificate;
+  public readonly responseHeadersPolicy: cloudfront.IResponseHeadersPolicy;
 
   constructor(scope: Construct, id: string, props: AppTheorySsrSiteProps) {
     super(scope, id);
@@ -201,6 +268,7 @@ export class AppTheorySsrSite extends Construct {
     const siteMode = props.mode ?? AppTheorySsrSiteMode.SSR_ONLY;
     const removalPolicy = props.removalPolicy ?? RemovalPolicy.RETAIN;
     const autoDeleteObjects = props.autoDeleteObjects ?? false;
+    const wireRuntimeEnv = props.wireRuntimeEnv ?? true;
 
     this.assetsBucket =
       props.assetsBucket ??
@@ -222,6 +290,7 @@ export class AppTheorySsrSite extends Construct {
           enforceSSL: true,
           removalPolicy,
           autoDeleteObjects,
+          objectOwnership: s3.ObjectOwnership.OBJECT_WRITER,
         });
     }
 
@@ -234,6 +303,47 @@ export class AppTheorySsrSite extends Construct {
 
     this.assetsKeyPrefix = assetsKeyPrefix;
     this.assetsManifestKey = assetsManifestKey;
+
+    const htmlStoreKeyPrefixInput = String(props.htmlStoreKeyPrefix ?? "").trim();
+    const shouldConfigureHtmlStore = Boolean(props.htmlStoreBucket) || htmlStoreKeyPrefixInput.length > 0;
+    if (shouldConfigureHtmlStore) {
+      const htmlStorePrefixRaw = trimRepeatedChar(
+        String(props.htmlStoreKeyPrefix ?? defaultIsrHtmlStoreKeyPrefix).trim(),
+        "/",
+      );
+      this.htmlStoreKeyPrefix = htmlStorePrefixRaw || defaultIsrHtmlStoreKeyPrefix;
+      this.htmlStoreBucket =
+        props.htmlStoreBucket ??
+        new s3.Bucket(this, "HtmlStoreBucket", {
+          blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+          encryption: s3.BucketEncryption.S3_MANAGED,
+          enforceSSL: true,
+          removalPolicy,
+          autoDeleteObjects,
+        });
+    }
+
+    this.isrMetadataTable = props.isrMetadataTable;
+
+    const explicitIsrMetadataTableName = String(props.isrMetadataTableName ?? "").trim();
+    const legacyCacheTableName = String(props.cacheTableName ?? "").trim();
+    const resourceIsrMetadataTableName = String(this.isrMetadataTable?.tableName ?? "").trim();
+
+    const configuredIsrMetadataTableNames = Array.from(
+      new Set(
+        [resourceIsrMetadataTableName, explicitIsrMetadataTableName, legacyCacheTableName].filter(
+          (name) => String(name).trim().length > 0,
+        ),
+      ),
+    );
+
+    if (configuredIsrMetadataTableNames.length > 1) {
+      throw new Error(
+        `AppTheorySsrSite received conflicting ISR metadata table names: ${configuredIsrMetadataTableNames.join(", ")}`,
+      );
+    }
+
+    const isrMetadataTableName = configuredIsrMetadataTableNames[0] ?? "";
 
     if (props.assetsPath) {
       new s3deploy.BucketDeployment(this, "AssetsDeployment", {
@@ -262,8 +372,8 @@ export class AppTheorySsrSite extends Construct {
     const baseSsrForwardHeaders = [
       "cloudfront-forwarded-proto",
       "cloudfront-viewer-address",
-      ssrOriginalHostHeader,
-      ssrOriginalUriHeader,
+      ...ssrOriginalHostHeaders,
+      ...ssrOriginalUriHeaders,
       "x-request-id",
       "x-tenant-id",
     ];
@@ -362,12 +472,50 @@ export class AppTheorySsrSite extends Construct {
 
     this.certificate = distributionCertificate;
 
+    this.responseHeadersPolicy =
+      props.responseHeadersPolicy ??
+      new cloudfront.ResponseHeadersPolicy(this, "ResponseHeadersPolicy", {
+        comment: "FaceTheory baseline security headers (CSP stays origin-defined)",
+        securityHeadersBehavior: {
+          strictTransportSecurity: {
+            accessControlMaxAge: Duration.days(365 * 2),
+            includeSubdomains: true,
+            preload: true,
+            override: true,
+          },
+          contentTypeOptions: { override: true },
+          frameOptions: {
+            frameOption: cloudfront.HeadersFrameOption.DENY,
+            override: true,
+          },
+          referrerPolicy: {
+            referrerPolicy: cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
+            override: true,
+          },
+          xssProtection: {
+            protection: true,
+            modeBlock: true,
+            override: true,
+          },
+        },
+        customHeadersBehavior: {
+          customHeaders: [
+            {
+              header: "permissions-policy",
+              value: "camera=(), microphone=(), geolocation=()",
+              override: true,
+            },
+          ],
+        },
+      });
+
     const createStaticBehavior = (): cloudfront.BehaviorOptions => ({
       origin: assetsOrigin,
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
-      cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+      cachePolicy: cloudfront.CachePolicy.USE_ORIGIN_CACHE_CONTROL_HEADERS,
       compress: true,
+      responseHeadersPolicy: this.responseHeadersPolicy,
       functionAssociations: createEdgeFunctionAssociations(),
     });
 
@@ -399,15 +547,24 @@ export class AppTheorySsrSite extends Construct {
         origin: defaultOrigin,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        cachePolicy: cloudfront.CachePolicy.USE_ORIGIN_CACHE_CONTROL_HEADERS,
         originRequestPolicy: ssrOriginRequestPolicy,
+        responseHeadersPolicy: this.responseHeadersPolicy,
         functionAssociations: createEdgeFunctionAssociations(),
       },
       additionalBehaviors,
       ...(props.webAclId ? { webAclId: props.webAclId } : {}),
     });
 
-    if (props.wireRuntimeEnv ?? true) {
+    if (this.htmlStoreBucket) {
+      this.htmlStoreBucket.grantReadWrite(props.ssrFunction);
+    }
+
+    if (this.isrMetadataTable) {
+      this.isrMetadataTable.grantReadWriteData(props.ssrFunction);
+    }
+
+    if (wireRuntimeEnv) {
       this.assetsBucket.grantRead(props.ssrFunction);
 
       const ssrFunctionAny = props.ssrFunction as any;
@@ -421,12 +578,15 @@ export class AppTheorySsrSite extends Construct {
       ssrFunctionAny.addEnvironment("APPTHEORY_ASSETS_PREFIX", assetsKeyPrefix);
       ssrFunctionAny.addEnvironment("APPTHEORY_ASSETS_MANIFEST_KEY", assetsManifestKey);
 
-      const cacheTableName = String(props.cacheTableName ?? "").trim();
-      if (cacheTableName) {
-        ssrFunctionAny.addEnvironment("APPTHEORY_CACHE_TABLE_NAME", cacheTableName);
-        ssrFunctionAny.addEnvironment("FACETHEORY_CACHE_TABLE_NAME", cacheTableName);
-        ssrFunctionAny.addEnvironment("CACHE_TABLE_NAME", cacheTableName);
-        ssrFunctionAny.addEnvironment("CACHE_TABLE", cacheTableName);
+      if (this.htmlStoreBucket && this.htmlStoreKeyPrefix) {
+        ssrFunctionAny.addEnvironment("FACETHEORY_ISR_BUCKET", this.htmlStoreBucket.bucketName);
+        ssrFunctionAny.addEnvironment("FACETHEORY_ISR_PREFIX", this.htmlStoreKeyPrefix);
+      }
+      if (isrMetadataTableName) {
+        ssrFunctionAny.addEnvironment("APPTHEORY_CACHE_TABLE_NAME", isrMetadataTableName);
+        ssrFunctionAny.addEnvironment("FACETHEORY_CACHE_TABLE_NAME", isrMetadataTableName);
+        ssrFunctionAny.addEnvironment("CACHE_TABLE_NAME", isrMetadataTableName);
+        ssrFunctionAny.addEnvironment("CACHE_TABLE", isrMetadataTableName);
       }
     }
 

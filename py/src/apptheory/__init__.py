@@ -28,7 +28,7 @@ from apptheory.aws_events import (
 from apptheory.aws_http import build_alb_target_group_request, build_apigw_v2_request, build_lambda_function_url_request
 from apptheory.cache import cache_control_isr, cache_control_ssg, cache_control_ssr, etag, matches_if_none_match, vary
 from apptheory.clock import Clock, ManualClock, RealClock
-from apptheory.cloudfront import client_ip, origin_url
+from apptheory.cloudfront import client_ip, origin_url, original_host, original_uri
 from apptheory.context import AppSyncContext, Context, EventContext, WebSocketContext
 from apptheory.errors import (
     HTTP_ERROR_FORMAT_FLAT_LEGACY,
@@ -240,6 +240,8 @@ __all__ = [
     "new_job_ledger_error",
     "normalize_stage",
     "origin_url",
+    "original_host",
+    "original_uri",
     "payment_xml_patterns",
     "rapid_connect_xml_patterns",
     "resource_name",

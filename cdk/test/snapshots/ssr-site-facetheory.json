@@ -23,10 +23,22 @@
             },
             "APPTHEORY_ASSETS_MANIFEST_KEY": "assets/manifest.json",
             "APPTHEORY_ASSETS_PREFIX": "assets",
-            "APPTHEORY_CACHE_TABLE_NAME": "facetheory-cache-table",
-            "CACHE_TABLE": "facetheory-cache-table",
-            "CACHE_TABLE_NAME": "facetheory-cache-table",
-            "FACETHEORY_CACHE_TABLE_NAME": "facetheory-cache-table"
+            "APPTHEORY_CACHE_TABLE_NAME": {
+              "Ref": "IsrMetadataTable303E5A8A"
+            },
+            "CACHE_TABLE": {
+              "Ref": "IsrMetadataTable303E5A8A"
+            },
+            "CACHE_TABLE_NAME": {
+              "Ref": "IsrMetadataTable303E5A8A"
+            },
+            "FACETHEORY_CACHE_TABLE_NAME": {
+              "Ref": "IsrMetadataTable303E5A8A"
+            },
+            "FACETHEORY_ISR_BUCKET": {
+              "Ref": "HtmlStoreBucket27756EC3"
+            },
+            "FACETHEORY_ISR_PREFIX": "isr-pages"
           }
         },
         "Handler": "index.handler",
@@ -79,6 +91,81 @@
               "Action": [
                 "s3:GetObject*",
                 "s3:GetBucket*",
+                "s3:List*",
+                "s3:DeleteObject*",
+                "s3:PutObject",
+                "s3:PutObjectLegalHold",
+                "s3:PutObjectRetention",
+                "s3:PutObjectTagging",
+                "s3:PutObjectVersionTagging",
+                "s3:Abort*"
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "HtmlStoreBucket27756EC3",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "HtmlStoreBucket27756EC3",
+                          "Arn"
+                        ]
+                      },
+                      "/*"
+                    ]
+                  ]
+                }
+              ]
+            },
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable"
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "IsrMetadataTable303E5A8A",
+                    "Arn"
+                  ]
+                }
+              ]
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator"
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "IsrMetadataTable303E5A8A",
+                    "Arn"
+                  ]
+                }
+              ]
+            },
+            {
+              "Action": [
+                "s3:GetObject*",
+                "s3:GetBucket*",
                 "s3:List*"
               ],
               "Effect": "Allow",
@@ -116,6 +203,107 @@
         ]
       },
       "Type": "AWS::IAM::Policy"
+    },
+    "HtmlStoreBucket27756EC3": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        }
+      },
+      "Type": "AWS::S3::Bucket",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "HtmlStoreBucketPolicyE4865FEF": {
+      "Properties": {
+        "Bucket": {
+          "Ref": "HtmlStoreBucket27756EC3"
+        },
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "s3:*",
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              },
+              "Effect": "Deny",
+              "Principal": {
+                "AWS": "*"
+              },
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "HtmlStoreBucket27756EC3",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "HtmlStoreBucket27756EC3",
+                          "Arn"
+                        ]
+                      },
+                      "/*"
+                    ]
+                  ]
+                }
+              ]
+            }
+          ],
+          "Version": "2012-10-17"
+        }
+      },
+      "Type": "AWS::S3::BucketPolicy"
+    },
+    "IsrMetadataTable303E5A8A": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "pk",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "sk",
+            "AttributeType": "S"
+          }
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [
+          {
+            "AttributeName": "pk",
+            "KeyType": "HASH"
+          },
+          {
+            "AttributeName": "sk",
+            "KeyType": "RANGE"
+          }
+        ],
+        "TimeToLiveSpecification": {
+          "AttributeName": "ttl",
+          "Enabled": true
+        }
+      },
+      "Type": "AWS::DynamoDB::Table",
+      "UpdateReplacePolicy": "Retain"
     },
     "SiteAssetsBucket08A02D08": {
       "DeletionPolicy": "Retain",
@@ -242,6 +430,13 @@
             }
           ]
         },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "ObjectWriter"
+            }
+          ]
+        },
         "PublicAccessBlockConfiguration": {
           "BlockPublicAcls": true,
           "BlockPublicPolicy": true,
@@ -309,7 +504,7 @@
                 "HEAD",
                 "OPTIONS"
               ],
-              "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+              "CachePolicyId": "83da9c7e-98b4-4e11-a168-04f0df8e2c65",
               "Compress": true,
               "FunctionAssociations": [
                 {
@@ -332,6 +527,9 @@
                 }
               ],
               "PathPattern": "assets/*",
+              "ResponseHeadersPolicyId": {
+                "Ref": "SiteResponseHeadersPolicy5F343E8C"
+              },
               "TargetOriginId": "TestStackSiteDistributionOrigin3674F8AE3",
               "ViewerProtocolPolicy": "redirect-to-https"
             },
@@ -341,7 +539,7 @@
                 "HEAD",
                 "OPTIONS"
               ],
-              "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+              "CachePolicyId": "83da9c7e-98b4-4e11-a168-04f0df8e2c65",
               "Compress": true,
               "FunctionAssociations": [
                 {
@@ -364,6 +562,9 @@
                 }
               ],
               "PathPattern": "_facetheory/data/*",
+              "ResponseHeadersPolicyId": {
+                "Ref": "SiteResponseHeadersPolicy5F343E8C"
+              },
               "TargetOriginId": "TestStackSiteDistributionOrigin3674F8AE3",
               "ViewerProtocolPolicy": "redirect-to-https"
             },
@@ -373,7 +574,7 @@
                 "HEAD",
                 "OPTIONS"
               ],
-              "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+              "CachePolicyId": "83da9c7e-98b4-4e11-a168-04f0df8e2c65",
               "Compress": true,
               "FunctionAssociations": [
                 {
@@ -396,6 +597,9 @@
                 }
               ],
               "PathPattern": "marketing/*",
+              "ResponseHeadersPolicyId": {
+                "Ref": "SiteResponseHeadersPolicy5F343E8C"
+              },
               "TargetOriginId": "TestStackSiteDistributionOrigin3674F8AE3",
               "ViewerProtocolPolicy": "redirect-to-https"
             }
@@ -410,7 +614,7 @@
               "POST",
               "DELETE"
             ],
-            "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+            "CachePolicyId": "83da9c7e-98b4-4e11-a168-04f0df8e2c65",
             "Compress": true,
             "FunctionAssociations": [
               {
@@ -434,6 +638,9 @@
             ],
             "OriginRequestPolicyId": {
               "Ref": "SiteSsrOriginRequestPolicyF6A13560"
+            },
+            "ResponseHeadersPolicyId": {
+              "Ref": "SiteResponseHeadersPolicy5F343E8C"
             },
             "TargetOriginId": "TestStackSiteDistributionOriginGroup16623DAAA",
             "ViewerProtocolPolicy": "redirect-to-https"
@@ -605,6 +812,48 @@
       },
       "Type": "AWS::Lambda::Permission"
     },
+    "SiteResponseHeadersPolicy5F343E8C": {
+      "Properties": {
+        "ResponseHeadersPolicyConfig": {
+          "Comment": "FaceTheory baseline security headers (CSP stays origin-defined)",
+          "CustomHeadersConfig": {
+            "Items": [
+              {
+                "Header": "permissions-policy",
+                "Override": true,
+                "Value": "camera=(), microphone=(), geolocation=()"
+              }
+            ]
+          },
+          "Name": "TestStackSiteResponseHeadersPolicy3A7D2C48",
+          "SecurityHeadersConfig": {
+            "ContentTypeOptions": {
+              "Override": true
+            },
+            "FrameOptions": {
+              "FrameOption": "DENY",
+              "Override": true
+            },
+            "ReferrerPolicy": {
+              "Override": true,
+              "ReferrerPolicy": "strict-origin-when-cross-origin"
+            },
+            "StrictTransportSecurity": {
+              "AccessControlMaxAgeSec": 63072000,
+              "IncludeSubdomains": true,
+              "Override": true,
+              "Preload": true
+            },
+            "XSSProtection": {
+              "ModeBlock": true,
+              "Override": true,
+              "Protection": true
+            }
+          }
+        }
+      },
+      "Type": "AWS::CloudFront::ResponseHeadersPolicy"
+    },
     "SiteSsrOriginRequestPolicyF6A13560": {
       "Properties": {
         "OriginRequestPolicyConfig": {
@@ -617,7 +866,9 @@
               "cloudfront-forwarded-proto",
               "cloudfront-viewer-address",
               "x-apptheory-original-host",
+              "x-facetheory-original-host",
               "x-apptheory-original-uri",
+              "x-facetheory-original-uri",
               "x-request-id",
               "x-tenant-id",
               "x-facetheory-tenant"
@@ -647,7 +898,7 @@
     "SiteSsrViewerRequestFunction103872E5": {
       "Properties": {
         "AutoPublish": true,
-        "FunctionCode": "function handler(event) {\n\t  var request = event.request;\n\t  var headers = request.headers;\n\t  var uri = request.uri || '/';\n\t  var requestIdHeader = headers['x-request-id'];\n\t  var requestId = requestIdHeader && requestIdHeader.value ? requestIdHeader.value.trim() : '';\n\n\t  if (!requestId) {\n\t    requestId = 'req_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);\n\t  }\n\n\t  headers['x-request-id'] = { value: requestId };\n\t  headers['x-apptheory-original-uri'] = { value: uri };\n\n\t  if (headers.host && headers.host.value) {\n\t    headers['x-apptheory-original-host'] = { value: headers.host.value };\n\t  }\n\n\t  if ('ssg-isr' === 'ssg-isr') {\n\t    var directS3Prefixes = [\n\t      '/_facetheory/data',\n      '/marketing',\n      '/assets'\n\t    ];\n\t    var isDirectS3Path = false;\n\n\t    for (var i = 0; i < directS3Prefixes.length; i++) {\n\t      var prefix = directS3Prefixes[i];\n\t      if (uri === prefix || uri.startsWith(prefix + '/')) {\n\t        isDirectS3Path = true;\n\t        break;\n\t      }\n\t    }\n\n\t    if (!isDirectS3Path) {\n\t      var lastSlash = uri.lastIndexOf('/');\n\t      var lastSegment = lastSlash >= 0 ? uri.substring(lastSlash + 1) : uri;\n\n\t      if (lastSegment.indexOf('.') === -1) {\n\t        request.uri = uri.endsWith('/') ? uri + 'index.html' : uri + '/index.html';\n\t      }\n\t    }\n\t  }\n\n\t  return request;\n\t}",
+        "FunctionCode": "function handler(event) {\n\t  var request = event.request;\n\t  var headers = request.headers;\n\t  var uri = request.uri || '/';\n\t  var requestIdHeader = headers['x-request-id'];\n\t  var requestId = requestIdHeader && requestIdHeader.value ? requestIdHeader.value.trim() : '';\n\n\t  if (!requestId) {\n\t    requestId = event.context && event.context.requestId ? String(event.context.requestId).trim() : '';\n\t  }\n\n\t  if (!requestId) {\n\t    requestId = 'req_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);\n\t  }\n\n\t  headers['x-request-id'] = { value: requestId };\n\t  headers['x-apptheory-original-uri'] = { value: uri };\n\t  headers['x-facetheory-original-uri'] = { value: uri };\n\n\t  if (headers.host && headers.host.value) {\n\t    headers['x-apptheory-original-host'] = { value: headers.host.value };\n\t    headers['x-facetheory-original-host'] = { value: headers.host.value };\n\t  }\n\n\t  if ('ssg-isr' === 'ssg-isr') {\n\t    var directS3Prefixes = [\n\t      '/_facetheory/data',\n      '/marketing',\n      '/assets'\n\t    ];\n\t    var isDirectS3Path = false;\n\n\t    for (var i = 0; i < directS3Prefixes.length; i++) {\n\t      var prefix = directS3Prefixes[i];\n\t      if (uri === prefix || uri.startsWith(prefix + '/')) {\n\t        isDirectS3Path = true;\n\t        break;\n\t      }\n\t    }\n\n\t    if (!isDirectS3Path) {\n\t      var lastSlash = uri.lastIndexOf('/');\n\t      var lastSegment = lastSlash >= 0 ? uri.substring(lastSlash + 1) : uri;\n\n\t      if (lastSegment.indexOf('.') === -1) {\n\t        request.uri = uri.endsWith('/') ? uri + 'index.html' : uri + '/index.html';\n\t      }\n\t    }\n\t  }\n\n\t  return request;\n\t}",
         "FunctionConfig": {
           "Comment": "FaceTheory viewer-request edge context and HTML rewrite for SSR site",
           "Runtime": "cloudfront-js-2.0"
@@ -669,7 +920,7 @@
     "SiteSsrViewerResponseFunction3CF15787": {
       "Properties": {
         "AutoPublish": true,
-        "FunctionCode": "function handler(event) {\n\t  var request = event.request;\n\t  var response = event.response;\n\t  var requestIdHeader = request.headers['x-request-id'];\n\n\t  if (requestIdHeader && requestIdHeader.value) {\n\t    response.headers['x-request-id'] = { value: requestIdHeader.value };\n\t  }\n\n\t  return response;\n\t}",
+        "FunctionCode": "function handler(event) {\n\t  var request = event.request;\n\t  var response = event.response;\n\t  var requestIdHeader = request.headers['x-request-id'];\n\t  var requestId = requestIdHeader && requestIdHeader.value ? requestIdHeader.value.trim() : '';\n\n\t  if (!requestId) {\n\t    requestId = event.context && event.context.requestId ? String(event.context.requestId).trim() : '';\n\t  }\n\n\t  if (requestId) {\n\t    response.headers = response.headers || {};\n\t    if (!response.headers['x-request-id']) {\n\t      response.headers['x-request-id'] = { value: requestId };\n\t    }\n\t  }\n\n\t  return response;\n\t}",
         "FunctionConfig": {
           "Comment": "FaceTheory viewer-response request-id echo for SSR site",
           "Runtime": "cloudfront-js-2.0"

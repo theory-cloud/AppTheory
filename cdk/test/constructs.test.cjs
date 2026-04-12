@@ -1208,10 +1208,25 @@ test("AppTheorySsrSite (FaceTheory) synthesizes expected template", () => {
     code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
   });
 
+  const htmlStoreBucket = new s3.Bucket(stack, "HtmlStoreBucket", {
+    blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+    encryption: s3.BucketEncryption.S3_MANAGED,
+    enforceSSL: true,
+  });
+
+  const isrMetadataTable = new dynamodb.Table(stack, "IsrMetadataTable", {
+    billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+    sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+    timeToLiveAttribute: "ttl",
+  });
+
   new apptheory.AppTheorySsrSite(stack, "Site", {
     ssrFunction: fn,
     mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
-    cacheTableName: "facetheory-cache-table",
+    htmlStoreBucket,
+    htmlStoreKeyPrefix: "isr-pages",
+    isrMetadataTable,
     ssrForwardHeaders: [" X-FaceTheory-Tenant ", "x-facetheory-tenant"],
     staticPathPatterns: ["/marketing/* ", "marketing/*"],
   });
@@ -1346,10 +1361,66 @@ test("AppTheorySsrSite defaults to FaceTheory-safe SSR origin request headers", 
     "cloudfront-viewer-address",
     "x-apptheory-original-host",
     "x-apptheory-original-uri",
+    "x-facetheory-original-host",
+    "x-facetheory-original-uri",
     "x-facetheory-tenant",
     "x-request-id",
     "x-tenant-id",
   ]);
+});
+
+test("AppTheorySsrSite wires first-class ISR HTML store and metadata resources", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const htmlStoreBucket = new s3.Bucket(stack, "HtmlStoreBucket", {
+    blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+    encryption: s3.BucketEncryption.S3_MANAGED,
+    enforceSSL: true,
+  });
+
+  const isrMetadataTable = new dynamodb.Table(stack, "IsrMetadataTable", {
+    billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+    sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+    timeToLiveAttribute: "ttl",
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    htmlStoreBucket,
+    htmlStoreKeyPrefix: "isr-pages",
+    isrMetadataTable,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const lambdaFunctions = Object.values(template.Resources ?? {}).filter(
+    (resource) => resource.Type === "AWS::Lambda::Function",
+  );
+  assert.equal(lambdaFunctions.length, 1);
+
+  const envVars = lambdaFunctions[0].Properties?.Environment?.Variables ?? {};
+  assert.equal(envVars.FACETHEORY_ISR_PREFIX, "isr-pages");
+  assert.ok(envVars.FACETHEORY_ISR_BUCKET, "Should wire FACETHEORY_ISR_BUCKET");
+  assert.ok(envVars.APPTHEORY_CACHE_TABLE_NAME, "Should wire APPTHEORY_CACHE_TABLE_NAME");
+  assert.ok(envVars.FACETHEORY_CACHE_TABLE_NAME, "Should wire FACETHEORY_CACHE_TABLE_NAME");
+  assert.ok(envVars.CACHE_TABLE_NAME, "Should wire CACHE_TABLE_NAME");
+  assert.ok(envVars.CACHE_TABLE, "Should wire CACHE_TABLE");
+
+  const iamPolicies = Object.values(template.Resources ?? {}).filter(
+    (resource) => resource.Type === "AWS::IAM::Policy",
+  );
+  const policyJson = JSON.stringify(iamPolicies);
+  assert.match(policyJson, /s3:GetObject/);
+  assert.match(policyJson, /s3:PutObject/);
+  assert.match(policyJson, /dynamodb:GetItem/);
+  assert.match(policyJson, /dynamodb:PutItem/);
 });
 
 test("AppTheorySsrSite ssg-isr mode synthesizes origin-group fallback and edge rewrite", () => {
@@ -1394,7 +1465,68 @@ test("AppTheorySsrSite ssg-isr mode synthesizes origin-group fallback and edge r
   const functionCode = String(requestFunction.Properties?.FunctionCode ?? "");
   assert.match(functionCode, /x-apptheory-original-host/);
   assert.match(functionCode, /x-apptheory-original-uri/);
+  assert.match(functionCode, /x-facetheory-original-host/);
+  assert.match(functionCode, /x-facetheory-original-uri/);
+  assert.match(functionCode, /event\.context\.requestId/);
   assert.match(functionCode, /index\.html/);
+});
+
+test("AppTheorySsrSite defaults to FaceTheory CDN response headers and origin cache-control policies", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const distribution = resources.find((resource) => resource.Type === "AWS::CloudFront::Distribution");
+  const responseHeadersPolicies = resources.filter((resource) => resource.Type === "AWS::CloudFront::ResponseHeadersPolicy");
+
+  assert.ok(distribution, "Should have CloudFront distribution");
+  assert.equal(responseHeadersPolicies.length, 1);
+
+  const [policy] = responseHeadersPolicies;
+  const responseHeadersConfig = policy.Properties?.ResponseHeadersPolicyConfig ?? {};
+  const securityHeaders = responseHeadersConfig.SecurityHeadersConfig ?? {};
+  const customHeaders = responseHeadersConfig.CustomHeadersConfig?.Items ?? [];
+
+  assert.equal(securityHeaders.StrictTransportSecurity?.Preload, true);
+  assert.equal(securityHeaders.ContentTypeOptions?.Override, true);
+  assert.equal(securityHeaders.FrameOptions?.FrameOption, "DENY");
+  assert.equal(securityHeaders.ReferrerPolicy?.ReferrerPolicy, "strict-origin-when-cross-origin");
+  assert.equal(securityHeaders.XSSProtection?.Override, true);
+  assert.ok(
+    customHeaders.some(
+      (header) =>
+        header.Header === "permissions-policy" &&
+        header.Value === "camera=(), microphone=(), geolocation=()",
+    ),
+    "Should include restrictive permissions-policy header",
+  );
+
+  const defaultBehavior = distribution.Properties?.DistributionConfig?.DefaultCacheBehavior ?? {};
+  const staticBehaviors = distribution.Properties?.DistributionConfig?.CacheBehaviors ?? [];
+
+  assert.equal(defaultBehavior.CachePolicyId, cloudfront.CachePolicy.USE_ORIGIN_CACHE_CONTROL_HEADERS.cachePolicyId);
+  assert.ok(defaultBehavior.ResponseHeadersPolicyId, "Default behavior should use response headers policy");
+
+  for (const behavior of staticBehaviors) {
+    assert.equal(behavior.CachePolicyId, cloudfront.CachePolicy.USE_ORIGIN_CACHE_CONTROL_HEADERS.cachePolicyId);
+    assert.deepEqual(
+      behavior.ResponseHeadersPolicyId,
+      defaultBehavior.ResponseHeadersPolicyId,
+      "Static behaviors should share the default response headers policy",
+    );
+  }
 });
 
 test("AppTheorySsrSite rejects disallowed SSR origin request headers", () => {
