@@ -172,23 +172,21 @@ make rubric
 
 Review the failing synth example or construct before changing the verifier.
 
-## Issue: SSR smoke verification fails in release automation
+## Issue: manual SSR smoke verification fails
 
 Symptoms:
 
 - `./scripts/verify-ssr-site-smoke.sh` fails
-- release or prerelease workflow fails after `make rubric`
 - CloudFront returns `403`, `502`, or never serves the SSR example root path
 
 Cause:
 
-- AWS credentials or the OIDC role variables for the release smoke gate are missing
+- AWS credentials are missing
 - CloudFront cannot reach the Lambda Function URL under the signed origin model
 - a header-policy regression reintroduced a bad SSR origin contract
 
 Fix:
 
-- confirm the repo variables `APPTHEORY_SSR_SMOKE_ROLE_ARN` and `APPTHEORY_SSR_SMOKE_AWS_REGION` are configured
 - run the smoke verifier locally with valid AWS credentials to reproduce the deployed failure
 - inspect the deployed stack outputs, CloudFront root response, asset response, and direct Function URL response
 
