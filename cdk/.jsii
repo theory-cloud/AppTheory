@@ -18503,7 +18503,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/ssr-site.ts",
-          "line": 194
+          "line": 261
         },
         "parameters": [
           {
@@ -18529,7 +18529,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 185
+        "line": 248
       },
       "name": "AppTheorySsrSite",
       "properties": [
@@ -18537,7 +18537,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 186
+            "line": 249
           },
           "name": "assetsBucket",
           "type": {
@@ -18548,7 +18548,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 187
+            "line": 250
           },
           "name": "assetsKeyPrefix",
           "type": {
@@ -18559,7 +18559,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 188
+            "line": 251
           },
           "name": "assetsManifestKey",
           "type": {
@@ -18570,7 +18570,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 191
+            "line": 257
           },
           "name": "distribution",
           "type": {
@@ -18581,7 +18581,18 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 190
+            "line": 259
+          },
+          "name": "responseHeadersPolicy",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 256
           },
           "name": "ssrUrl",
           "type": {
@@ -18592,7 +18603,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 192
+            "line": 258
           },
           "name": "certificate",
           "optional": true,
@@ -18604,7 +18615,43 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 189
+            "line": 252
+          },
+          "name": "htmlStoreBucket",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.IBucket"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 253
+          },
+          "name": "htmlStoreKeyPrefix",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 254
+          },
+          "name": "isrMetadataTable",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.ITable"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 255
           },
           "name": "logsBucket",
           "optional": true,
@@ -18621,7 +18668,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 18
+        "line": 24
       },
       "members": [
         {
@@ -18649,7 +18696,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 105
+        "line": 125
       },
       "name": "AppTheorySsrSiteProps",
       "properties": [
@@ -18658,7 +18705,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 106
+            "line": 126
           },
           "name": "ssrFunction",
           "type": {
@@ -18670,7 +18717,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 135
+            "line": 155
           },
           "name": "assetsBucket",
           "optional": true,
@@ -18683,7 +18730,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 137
+            "line": 157
           },
           "name": "assetsKeyPrefix",
           "optional": true,
@@ -18696,7 +18743,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 138
+            "line": 158
           },
           "name": "assetsManifestKey",
           "optional": true,
@@ -18709,7 +18756,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 136
+            "line": 156
           },
           "name": "assetsPath",
           "optional": true,
@@ -18722,7 +18769,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 176
+            "line": 239
           },
           "name": "autoDeleteObjects",
           "optional": true,
@@ -18732,10 +18779,15 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "deprecated": "prefer `isrMetadataTable` or `isrMetadataTableName`",
+            "stability": "deprecated",
+            "summary": "Legacy alias for `isrMetadataTableName`."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 150
+            "line": 202
           },
           "name": "cacheTableName",
           "optional": true,
@@ -18748,7 +18800,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 180
+            "line": 243
           },
           "name": "certificateArn",
           "optional": true,
@@ -18761,7 +18813,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 178
+            "line": 241
           },
           "name": "domainName",
           "optional": true,
@@ -18774,7 +18826,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 172
+            "line": 226
           },
           "name": "enableLogging",
           "optional": true,
@@ -18787,12 +18839,46 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 179
+            "line": 242
           },
           "name": "hostedZone",
           "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.aws_route53.IHostedZone"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "When provided, AppTheory grants the SSR function read/write access and wires:\n- `FACETHEORY_ISR_BUCKET`\n- `FACETHEORY_ISR_PREFIX`",
+            "summary": "Optional S3 bucket used by FaceTheory ISR HTML storage (`S3HtmlStore`)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 167
+          },
+          "name": "htmlStoreBucket",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.IBucket"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "isr",
+            "summary": "S3 key prefix used by FaceTheory ISR HTML storage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 173
+          },
+          "name": "htmlStoreKeyPrefix",
+          "optional": true,
+          "type": {
+            "primitive": "string"
           }
         },
         {
@@ -18804,7 +18890,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 123
+            "line": 143
           },
           "name": "invokeMode",
           "optional": true,
@@ -18814,10 +18900,44 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "remarks": "When provided, AppTheory grants the SSR function read/write access and wires the\nmetadata table aliases expected by the documented FaceTheory deployment shape.",
+            "summary": "Optional TableTheory/DynamoDB table used for FaceTheory ISR metadata and lease coordination."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 173
+            "line": 189
+          },
+          "name": "isrMetadataTable",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.ITable"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Prefer `isrMetadataTable` when AppTheory should also grant access to the SSR Lambda.",
+            "summary": "Optional ISR/cache metadata table name to wire when you are not passing `isrMetadataTable`."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 196
+          },
+          "name": "isrMetadataTableName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 227
           },
           "name": "logsBucket",
           "optional": true,
@@ -18835,7 +18955,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 117
+            "line": 137
           },
           "name": "mode",
           "optional": true,
@@ -18848,7 +18968,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 175
+            "line": 238
           },
           "name": "removalPolicy",
           "optional": true,
@@ -18859,13 +18979,30 @@
         {
           "abstract": true,
           "docs": {
-            "remarks": "The default AppTheory/FaceTheory-safe edge contract forwards only:\n- `cloudfront-forwarded-proto`\n- `cloudfront-viewer-address`\n- `x-apptheory-original-host`\n- `x-apptheory-original-uri`\n- `x-request-id`\n- `x-tenant-id`\n\nUse this to opt in to additional app-specific headers such as\n`x-facetheory-tenant`. `host` and `x-forwarded-proto` are rejected because\nthey break or bypass the supported origin model.",
+            "remarks": "If omitted, AppTheory provisions a FaceTheory-aligned baseline policy at the CDN\nlayer: HSTS, nosniff, frame-options, referrer-policy, XSS protection, and a\nrestrictive permissions-policy. Content-Security-Policy remains origin-defined.",
+            "summary": "CloudFront response headers policy applied to SSR and direct-S3 behaviors."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 236
+          },
+          "name": "responseHeadersPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudfront.IResponseHeadersPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "The default AppTheory/FaceTheory-safe edge contract forwards only:\n- `cloudfront-forwarded-proto`\n- `cloudfront-viewer-address`\n- `x-apptheory-original-host`\n- `x-apptheory-original-uri`\n- `x-facetheory-original-host`\n- `x-facetheory-original-uri`\n- `x-request-id`\n- `x-tenant-id`\n\nUse this to opt in to additional app-specific headers such as\n`x-facetheory-tenant`. `host` and `x-forwarded-proto` are rejected because\nthey break or bypass the supported origin model.",
             "summary": "Additional headers to forward to the SSR origin (Lambda Function URL) via the origin request policy."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 170
+            "line": 224
           },
           "name": "ssrForwardHeaders",
           "optional": true,
@@ -18888,7 +19025,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 133
+            "line": 153
           },
           "name": "ssrUrlAuthType",
           "optional": true,
@@ -18905,7 +19042,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 146
+            "line": 181
           },
           "name": "staticPathPatterns",
           "optional": true,
@@ -18923,7 +19060,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 182
+            "line": 245
           },
           "name": "webAclId",
           "optional": true,
@@ -18936,7 +19073,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 153
+            "line": 205
           },
           "name": "wireRuntimeEnv",
           "optional": true,
@@ -19936,5 +20073,5 @@
     }
   },
   "version": "0.22.2",
-  "fingerprint": "WzM7rekddfGPYTkOo3vWsZP8jH4fvRNMhKrZRWkifXg="
+  "fingerprint": "3B3YYt3m+FCp/cH3glyK63YcJu4khfXu/EKLqtN7Ib8="
 }
