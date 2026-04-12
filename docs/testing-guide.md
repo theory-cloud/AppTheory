@@ -13,7 +13,7 @@ Use the smallest gate that proves the change, then escalate to the full rubric b
 - public API drift: `./scripts/update-api-snapshots.sh`, `./scripts/verify-api-snapshots.sh`
 - docs contract: `./scripts/verify-docs-standard.sh`
 - full repo gate: `make rubric`
-- release-only live SSR smoke: `./scripts/verify-ssr-site-smoke.sh`
+- optional live SSR smoke: `./scripts/verify-ssr-site-smoke.sh`
 
 ## Fast local loop
 
@@ -50,7 +50,7 @@ make rubric
 `make rubric` includes the language-specific unit-test verifiers above, shared contract fixtures, snapshot verification,
 docs contract checks, and release-build validation.
 
-For the FaceTheory-first SSR deployment path, the release and prerelease GitHub workflows also run:
+For the FaceTheory-first SSR deployment path, you can also run a manual deploy-grade smoke check:
 
 ```bash
 ./scripts/verify-ssr-site-smoke.sh
@@ -59,7 +59,7 @@ For the FaceTheory-first SSR deployment path, the release and prerelease GitHub 
 That verifier deploys `examples/cdk/ssr-site`, checks CloudFront root reachability, asset delivery, and the direct
 Function URL auth model, then destroys the stack. It also keeps the previous Host-header 403 regression covered by
 exercising the CloudFront-to-Function URL path end to end. It requires AWS credentials and is intentionally separate
-from the deterministic local rubric.
+from both the deterministic local rubric and the zero-config release workflow.
 
 If exported APIs changed, refresh snapshots first and then re-run snapshot verification:
 
