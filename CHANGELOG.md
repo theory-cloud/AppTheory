@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.22.1](https://github.com/theory-cloud/AppTheory/compare/v0.22.0...v0.22.1) (2026-04-11)
+
+
+### Bug Fixes
+
+* **mcp:** drain replay tail after stream close ([cf3b396](https://github.com/theory-cloud/AppTheory/commit/cf3b396f471b828c8a81bfc772064a994f4fa06f))
+* preserve buffered responses on streaming REST routes ([549079a](https://github.com/theory-cloud/AppTheory/commit/549079aa06485620cdc4419ac9c7df4394ded3d0))
+* **runtime:** preserve buffered responses on streaming rest routes ([cc230aa](https://github.com/theory-cloud/AppTheory/commit/cc230aa24fa0c8a1dc50520f1ec98bad6007d951))
+
 ## [0.22.0](https://github.com/theory-cloud/AppTheory/compare/v0.21.1...v0.22.0) (2026-04-11)
 
 

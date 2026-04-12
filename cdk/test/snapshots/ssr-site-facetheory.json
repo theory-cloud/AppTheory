@@ -462,7 +462,6 @@
               "if-none-match",
               "user-agent",
               "x-forwarded-for",
-              "x-forwarded-proto",
               "cloudfront-forwarded-proto",
               "cloudfront-viewer-address",
               "x-facetheory-tenant"

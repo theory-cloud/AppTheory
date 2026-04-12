@@ -131,10 +131,11 @@ export class AppTheorySsrSite extends Construct {
       "if-none-match",
       "user-agent",
       "x-forwarded-for",
-      "x-forwarded-proto",
       "cloudfront-forwarded-proto",
       "cloudfront-viewer-address",
     ];
+
+    const disallowedSsrForwardHeaders = new Set(["x-forwarded-proto"]);
 
     const extraSsrForwardHeaders = Array.isArray(props.ssrForwardHeaders)
       ? props.ssrForwardHeaders
@@ -142,7 +143,13 @@ export class AppTheorySsrSite extends Construct {
           .filter((header) => header.length > 0)
       : [];
 
-    const ssrForwardHeaders = Array.from(new Set([...baseSsrForwardHeaders, ...extraSsrForwardHeaders]));
+    const ssrForwardHeaders = Array.from(
+      new Set(
+        [...baseSsrForwardHeaders, ...extraSsrForwardHeaders].filter(
+          (header) => !disallowedSsrForwardHeaders.has(header),
+        ),
+      ),
+    );
 
     const ssrOriginRequestPolicy = new cloudfront.OriginRequestPolicy(this, "SsrOriginRequestPolicy", {
       queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.all(),
