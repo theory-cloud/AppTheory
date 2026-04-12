@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.19.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v0.19.0-rc...v0.19.0-rc.1) (2026-04-12)
+
+
+### Features
+
+* **cdk:** add well-known mcp discovery route ([a0b5ea5](https://github.com/theory-cloud/AppTheory/commit/a0b5ea5edb918aa6507424adcd402694fa999f0e))
+* **jobs:** add leased semaphore primitive ([5a8cf59](https://github.com/theory-cloud/AppTheory/commit/5a8cf59ba4367b5b6d72164250335bb4759f8274))
+* **mcp:** add durable dynamo stream store ([d066816](https://github.com/theory-cloud/AppTheory/commit/d0668165785646bf97e9895a188452ea152ca8a6))
+* resolve issues 307-311 ([e9bd5f7](https://github.com/theory-cloud/AppTheory/commit/e9bd5f74a061ea60190a9448a9e267f41d5cfe4a))
+* **runtime:** add handler convenience helpers ([b8b9157](https://github.com/theory-cloud/AppTheory/commit/b8b9157bdd22cdf61b8c10ec7a0ad813a8247221))
+* **runtime:** add scope-aware auth options ([21dcc61](https://github.com/theory-cloud/AppTheory/commit/21dcc61b27b95f588dd0d02d9fa2fa59128a5e3d))
+* **runtime:** add typed request binding ([a766627](https://github.com/theory-cloud/AppTheory/commit/a766627132587f7a1200bfc9740ab59b0aff599f))
+
+
+### Bug Fixes
+
+* **build:** align cdk python build requirements ([1b42766](https://github.com/theory-cloud/AppTheory/commit/1b42766335b52c171e9688787ae9134b4a88ee2c))
+* **cdk-go:** sync jsii bindings for remote mcp discovery ([b3cc13a](https://github.com/theory-cloud/AppTheory/commit/b3cc13a2eaebbbc30a839008b9bf0a4ad6362bf3))
+* **cdk-go:** sync jsii bindings for remote mcp discovery ([0378a42](https://github.com/theory-cloud/AppTheory/commit/0378a4247fd1b78ebce2daa73fb6d89baea37739))
+* **cdk:** omit x-forwarded-proto from SSR origin policy ([bc8c5b0](https://github.com/theory-cloud/AppTheory/commit/bc8c5b0ad37cbce7f31295467b0c9e02e903aede))
+* **cdk:** sync generated artifacts ([c8e41cd](https://github.com/theory-cloud/AppTheory/commit/c8e41cdda905c1b932febdfd6db14459f874f108))
+* **ci:** read Go version from go.mod ([8176415](https://github.com/theory-cloud/AppTheory/commit/8176415bb60f5962b6f511a46d295f05e7044c06))
+* **deps:** bump TableTheory to v1.5.1 ([c626fca](https://github.com/theory-cloud/AppTheory/commit/c626fcaca6c62a46f3415132354e54c1cce54422))
+* **deps:** resolve open dependabot alerts ([9359931](https://github.com/theory-cloud/AppTheory/commit/9359931ab7ff0b380c3f95ce9ae75314b62fa275))
+* **mcp:** drain replay tail after stream close ([cf3b396](https://github.com/theory-cloud/AppTheory/commit/cf3b396f471b828c8a81bfc772064a994f4fa06f))
+* **mcp:** preserve durable stream replay ordering ([1e6b4f0](https://github.com/theory-cloud/AppTheory/commit/1e6b4f0998397fef6880e04f4f4e4f2d4bdfbfd4))
+* preserve buffered responses on streaming REST routes ([549079a](https://github.com/theory-cloud/AppTheory/commit/549079aa06485620cdc4419ac9c7df4394ded3d0))
+* **release:** sync generated cdk artifacts ([a2025d3](https://github.com/theory-cloud/AppTheory/commit/a2025d3662233d65ceacbc6065070dfe4afa98fa))
+* **release:** sync generated cdk artifacts ([5fd3992](https://github.com/theory-cloud/AppTheory/commit/5fd399261d87819475e52c7b132f0b59c5c7f321))
+* resolve premain into main merge ([48992a1](https://github.com/theory-cloud/AppTheory/commit/48992a1497fce8e44327ad4477d98fdf264b7784))
+* resolve premain into main merge ([d24392f](https://github.com/theory-cloud/AppTheory/commit/d24392fce463f9879cfe5b8ef7420b468c010d75))
+* resolve staging into premain merge ([9744e83](https://github.com/theory-cloud/AppTheory/commit/9744e83a87c575ad6084879b92df659a229109b7))
+* resolve staging into premain merge ([fb8b4dd](https://github.com/theory-cloud/AppTheory/commit/fb8b4dd8c2418bbb8a031c5107180c2ec40d77e1))
+* **runtime:** preserve buffered responses on streaming rest routes ([cc230aa](https://github.com/theory-cloud/AppTheory/commit/cc230aa24fa0c8a1dc50520f1ec98bad6007d951))
+* **runtime:** satisfy rubric checks ([8b15b3f](https://github.com/theory-cloud/AppTheory/commit/8b15b3f0b5b6cf5dedd2304cde5d8ea6d76e7d6b))
+* **security:** address code scanning and dependabot alerts ([e253a3e](https://github.com/theory-cloud/AppTheory/commit/e253a3ee6515a21add094a0139416fb9f3953bb8))
+
 ## [0.22.1](https://github.com/theory-cloud/AppTheory/compare/v0.22.0...v0.22.1) (2026-04-11)
 
 
