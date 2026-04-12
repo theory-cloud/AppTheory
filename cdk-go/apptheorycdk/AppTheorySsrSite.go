@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awscertificatemanager"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awscloudfront"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
 	"github.com/aws/constructs-go/constructs/v10"
@@ -19,9 +20,13 @@ type AppTheorySsrSite interface {
 	AssetsManifestKey() *string
 	Certificate() awscertificatemanager.ICertificate
 	Distribution() awscloudfront.Distribution
+	HtmlStoreBucket() awss3.IBucket
+	HtmlStoreKeyPrefix() *string
+	IsrMetadataTable() awsdynamodb.ITable
 	LogsBucket() awss3.IBucket
 	// The tree node.
 	Node() constructs.Node
+	ResponseHeadersPolicy() awscloudfront.IResponseHeadersPolicy
 	SsrUrl() awslambda.FunctionUrl
 	// Returns a string representation of this construct.
 	ToString() *string
@@ -91,6 +96,36 @@ func (j *jsiiProxy_AppTheorySsrSite) Distribution() awscloudfront.Distribution {
 	return returns
 }
 
+func (j *jsiiProxy_AppTheorySsrSite) HtmlStoreBucket() awss3.IBucket {
+	var returns awss3.IBucket
+	_jsii_.Get(
+		j,
+		"htmlStoreBucket",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheorySsrSite) HtmlStoreKeyPrefix() *string {
+	var returns *string
+	_jsii_.Get(
+		j,
+		"htmlStoreKeyPrefix",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheorySsrSite) IsrMetadataTable() awsdynamodb.ITable {
+	var returns awsdynamodb.ITable
+	_jsii_.Get(
+		j,
+		"isrMetadataTable",
+		&returns,
+	)
+	return returns
+}
+
 func (j *jsiiProxy_AppTheorySsrSite) LogsBucket() awss3.IBucket {
 	var returns awss3.IBucket
 	_jsii_.Get(
@@ -106,6 +141,16 @@ func (j *jsiiProxy_AppTheorySsrSite) Node() constructs.Node {
 	_jsii_.Get(
 		j,
 		"node",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheorySsrSite) ResponseHeadersPolicy() awscloudfront.IResponseHeadersPolicy {
+	var returns awscloudfront.IResponseHeadersPolicy
+	_jsii_.Get(
+		j,
+		"responseHeadersPolicy",
 		&returns,
 	)
 	return returns

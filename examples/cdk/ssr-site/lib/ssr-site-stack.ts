@@ -1,7 +1,9 @@
 import * as path from "node:path";
 
 import { CfnOutput, Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 
 import { AppTheorySsrSite, AppTheorySsrSiteMode } from "@theory-cloud/apptheory-cdk";
@@ -30,10 +32,29 @@ export class SsrSiteStack extends Stack {
       ),
     });
 
+    const isrBucket = new s3.Bucket(this, "IsrBucket", {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      removalPolicy: RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+    });
+
+    const isrMetadataTable = new dynamodb.Table(this, "IsrMetadataTable", {
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+      timeToLiveAttribute: "ttl",
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+
     const site = new AppTheorySsrSite(this, "Site", {
       ssrFunction: ssrFn,
       mode: AppTheorySsrSiteMode.SSG_ISR,
       assetsPath: path.join(__dirname, "..", "assets"),
+      htmlStoreBucket: isrBucket,
+      htmlStoreKeyPrefix: "isr",
+      isrMetadataTable,
       removalPolicy: RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
     });
@@ -43,6 +64,8 @@ export class SsrSiteStack extends Stack {
     new CfnOutput(this, "AssetsBucketName", { value: site.assetsBucket.bucketName });
     new CfnOutput(this, "AssetsKeyPrefix", { value: site.assetsKeyPrefix });
     new CfnOutput(this, "AssetsManifestKey", { value: site.assetsManifestKey });
+    new CfnOutput(this, "IsrBucketName", { value: isrBucket.bucketName });
+    new CfnOutput(this, "IsrMetadataTableName", { value: isrMetadataTable.tableName });
     new CfnOutput(this, "SsrFunctionUrl", { value: site.ssrUrl.url });
   }
 }
