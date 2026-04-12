@@ -17,6 +17,7 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryEventBridgeBus`: custom EventBridge bus with explicit cross-account publish allowlist
 - `AppTheoryEventBridgeRuleTarget`: EventBridge rule or schedule to Lambda target
 - `AppTheoryHttpIngestionEndpoint`: authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer
+- `AppTheorySsrSite`: FaceTheory-first CloudFront + S3 + Lambda URL deployment for SSR, SSG, and ISR
 - `AppTheoryQueue`, `AppTheoryQueueConsumer`, `AppTheoryQueueProcessor`: SQS queue and consumer patterns
 
 ## Supporting constructs exported from `cdk/lib/index.ts`
@@ -38,7 +39,12 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - Use `AppTheoryRestApiRouter` when you need SSE or response streaming
 - Use `AppTheoryMcpServer` for Bedrock AgentCore
 - Use `AppTheoryRemoteMcpServer` plus `AppTheoryMcpProtectedResource` for Claude Remote MCP
+- Use `AppTheorySsrSite` when you need the canonical FaceTheory-first SSR/SSG/ISR deployment story
 - Use `AppTheoryJobsTable`, `AppTheoryS3Ingest`, and `AppTheoryCodeBuildJobRunner` for import pipelines
+
+Guide:
+
+- [FaceTheory-First SSR Site](./ssr-site.md)
 
 ## AppSync note
 
