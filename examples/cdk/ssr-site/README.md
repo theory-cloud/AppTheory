@@ -76,8 +76,8 @@ npx cdk synth
 
 ## Deploy-grade smoke verification
 
-The deterministic synth hash is only the local gate for this example. The release path also runs a live AWS smoke
-check through `scripts/verify-ssr-site-smoke.sh`.
+The deterministic synth hash is the normal automated gate for this example. When you want a real AWS verification pass,
+run the live smoke check through `scripts/verify-ssr-site-smoke.sh` manually.
 
 Manual run from the repo root:
 

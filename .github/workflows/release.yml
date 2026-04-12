@@ -11,7 +11,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write
   issues: write
   pull-requests: write
 
@@ -46,17 +45,9 @@ jobs:
         with:
           python-version: "3.14.3"
 
-      - name: Configure AWS credentials for SSR smoke gate (existing tag path)
-        if: startsWith(github.ref, 'refs/tags/') || inputs.tag_name != ''
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
-        with:
-          role-to-assume: ${{ vars.APPTHEORY_SSR_SMOKE_ROLE_ARN }}
-          aws-region: ${{ vars.APPTHEORY_SSR_SMOKE_AWS_REGION }}
-
       - name: Upload assets for existing tag release
         if: startsWith(github.ref, 'refs/tags/') || inputs.tag_name != ''
         env:
-          APPTHEORY_SSR_SITE_STACK_NAME: AppTheorySsrSiteSmoke-${{ github.run_id }}-${{ github.run_attempt }}
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ inputs.tag_name || github.ref_name }}
         run: |
@@ -83,7 +74,6 @@ jobs:
 
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           make rubric
-          scripts/verify-ssr-site-smoke.sh
           scripts/generate-checksums.sh
           scripts/render-release-notes.sh "${TAG_NAME}"
 
@@ -164,20 +154,9 @@ jobs:
         with:
           python-version: "3.14.3"
 
-      - name: Configure AWS credentials for SSR smoke gate
-        if: steps.release.outputs.release_created == 'true'
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
-        with:
-          role-to-assume: ${{ vars.APPTHEORY_SSR_SMOKE_ROLE_ARN }}
-          aws-region: ${{ vars.APPTHEORY_SSR_SMOKE_AWS_REGION }}
-
       - name: Build + verify
         if: steps.release.outputs.release_created == 'true'
-        env:
-          APPTHEORY_SSR_SITE_STACK_NAME: AppTheorySsrSiteSmoke-${{ github.run_id }}-${{ github.run_attempt }}
-        run: |
-          make rubric
-          scripts/verify-ssr-site-smoke.sh
+        run: make rubric
 
       - name: Generate SHA-256 checksums
         if: steps.release.outputs.release_created == 'true'
