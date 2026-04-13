@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.24.3](https://github.com/theory-cloud/AppTheory/compare/v0.24.2...v0.24.3) (2026-04-13)
+
+
+### Bug Fixes
+
+* pin TableTheory v1.5.4 and replace deprecated PITR prop ([707c170](https://github.com/theory-cloud/AppTheory/commit/707c170983c62a4ac2f65477bab6fc50ce4e2eff))
+* pin TableTheory v1.5.4 and replace deprecated PITR prop ([5d437c5](https://github.com/theory-cloud/AppTheory/commit/5d437c5bb7cbf4e0d8099529e97a0a72bff64e8c))
+
 ## [0.24.2](https://github.com/theory-cloud/AppTheory/compare/v0.24.1...v0.24.2) (2026-04-13)
 
 
