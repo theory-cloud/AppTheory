@@ -119,7 +119,9 @@ export class AppTheoryJobsTable extends Construct {
       timeToLiveAttribute: ttlAttribute,
       removalPolicy,
       deletionProtection: props.deletionProtection,
-      pointInTimeRecovery: enablePITR,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: enablePITR,
+      },
       encryption,
       encryptionKey: props.encryptionKey,
       ...(billingMode === dynamodb.BillingMode.PROVISIONED

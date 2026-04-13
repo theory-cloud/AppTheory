@@ -245,7 +245,9 @@ export class AppTheoryMcpServer extends Construct {
         partitionKey: { name: "sessionId", type: dynamodb.AttributeType.STRING },
         timeToLiveAttribute: "expiresAt",
         removalPolicy: RemovalPolicy.DESTROY,
-        pointInTimeRecovery: true,
+        pointInTimeRecoverySpecification: {
+          pointInTimeRecoveryEnabled: true,
+        },
         encryption: dynamodb.TableEncryption.AWS_MANAGED,
       });
 
