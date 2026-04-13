@@ -55,7 +55,9 @@ export class AppTheoryEventBusTable extends Construct {
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       timeToLiveAttribute: ttlAttribute,
       removalPolicy,
-      pointInTimeRecovery: enablePITR,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: enablePITR,
+      },
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
       stream,
       ...(billingMode === dynamodb.BillingMode.PROVISIONED
