@@ -191,7 +191,9 @@ export class AppTheoryRemoteMcpServer extends Construct {
         partitionKey: { name: "sessionId", type: dynamodb.AttributeType.STRING },
         timeToLiveAttribute: "expiresAt",
         removalPolicy: RemovalPolicy.DESTROY,
-        pointInTimeRecovery: true,
+        pointInTimeRecoverySpecification: {
+          pointInTimeRecoveryEnabled: true,
+        },
         encryption: dynamodb.TableEncryption.AWS_MANAGED,
       });
 
@@ -213,7 +215,9 @@ export class AppTheoryRemoteMcpServer extends Construct {
         sortKey: { name: "eventId", type: dynamodb.AttributeType.STRING },
         timeToLiveAttribute: "expiresAt",
         removalPolicy: RemovalPolicy.DESTROY,
-        pointInTimeRecovery: true,
+        pointInTimeRecoverySpecification: {
+          pointInTimeRecoveryEnabled: true,
+        },
         encryption: dynamodb.TableEncryption.AWS_MANAGED,
       });
 
