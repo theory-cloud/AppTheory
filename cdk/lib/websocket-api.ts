@@ -95,7 +95,9 @@ export class AppTheoryWebSocketApi extends Construct {
         sortKey: { name: skName, type: dynamodb.AttributeType.STRING },
         timeToLiveAttribute: ttlAttribute,
         removalPolicy,
-        pointInTimeRecovery: enablePITR,
+        pointInTimeRecoverySpecification: {
+          pointInTimeRecoveryEnabled: enablePITR,
+        },
         encryption: dynamodb.TableEncryption.AWS_MANAGED,
       });
     }
