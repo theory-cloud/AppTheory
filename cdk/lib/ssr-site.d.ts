@@ -10,6 +10,9 @@ export declare enum AppTheorySsrSiteMode {
     /**
      * Lambda Function URL is the default origin. Direct S3 behaviors are used only for
      * immutable assets and any explicitly configured static path patterns.
+     *
+     * Because this mode exposes Lambda as the default viewer surface with write methods,
+     * omitted `ssrUrlAuthType` resolves to `NONE`.
      */
     SSR_ONLY = "ssr-only",
     /**
@@ -38,10 +41,14 @@ export interface AppTheorySsrSiteProps {
     /**
      * Function URL auth type for the SSR origin.
      *
-     * AppTheory defaults this to `AWS_IAM` so CloudFront reaches the SSR origin
-     * through a signed Origin Access Control path. Set `NONE` only as an explicit
-     * compatibility override for legacy public Function URL deployments.
-     * @default lambda.FunctionUrlAuthType.AWS_IAM
+     * If omitted, AppTheory auto-selects the auth model based on the exposed
+     * Lambda-backed surface:
+     *
+     * - `AWS_IAM` for read-only Lambda traffic (`GET` / `HEAD` / `OPTIONS`)
+     * - `NONE` when Lambda-backed behaviors expose browser-facing write methods
+     *
+     * Set this explicitly to force a specific Function URL auth mode.
+     * @default derived from exposed Lambda methods
      */
     readonly ssrUrlAuthType?: lambda.FunctionUrlAuthType;
     readonly assetsBucket?: s3.IBucket;
@@ -82,6 +89,8 @@ export interface AppTheorySsrSiteProps {
      * to the Lambda Function URL with full method support.
      *
      * Use this for same-origin dynamic paths such as auth callbacks, actions, or form posts.
+     * When `ssrUrlAuthType` is omitted, adding these patterns makes AppTheory select
+     * `NONE` so browser-facing write methods keep working through CloudFront.
      * Example direct-SSR path: "/actions/*"
      */
     readonly ssrPathPatterns?: string[];

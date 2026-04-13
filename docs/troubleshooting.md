@@ -182,13 +182,14 @@ Symptoms:
 Cause:
 
 - AWS credentials are missing
-- CloudFront cannot reach the Lambda Function URL under the signed origin model
+- CloudFront cannot reach the Lambda Function URL under the selected auth model
 - a header-policy regression reintroduced a bad SSR origin contract
 
 Fix:
 
 - run the smoke verifier locally with valid AWS credentials to reproduce the deployed failure
-- inspect the deployed stack outputs, CloudFront root response, asset response, and direct Function URL response
+- inspect the deployed stack outputs, CloudFront root response, asset response, CloudFront `POST` action response, and
+  direct Function URL response
 
 Verification:
 

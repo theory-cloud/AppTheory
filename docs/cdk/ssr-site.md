@@ -44,6 +44,9 @@ new AppTheorySsrSite(this, "Site", {
   // Dynamic same-origin routes that should stay on Lambda.
   ssrPathPatterns: ["/actions/*"],
 
+  // Optional explicit override; omitted auth auto-selects NONE for writable Lambda routes.
+  // ssrUrlAuthType: lambda.FunctionUrlAuthType.NONE,
+
   // Optional app-specific origin headers
   ssrForwardHeaders: ["x-facetheory-tenant"],
 });
@@ -54,9 +57,10 @@ new AppTheorySsrSite(this, "Site", {
 `AppTheorySsrSite` now assumes the stronger FaceTheory deployment contract by default:
 
 - SSR origin:
-  - Lambda Function URL uses `AWS_IAM` auth by default
-  - CloudFront reaches the Function URL through lambda Origin Access Control
-  - `ssrUrlAuthType: NONE` is a compatibility escape hatch, not the preferred path
+  - AppTheory auto-selects the Function URL auth model based on the Lambda-backed surface:
+    - `AWS_IAM` + lambda Origin Access Control for read-only Lambda traffic
+    - `NONE` for browser-facing writable Lambda traffic (`ssr-only`, or `ssg-isr` plus `ssrPathPatterns`)
+  - set `ssrUrlAuthType` explicitly when you need to force a specific Function URL auth mode
 - Edge request normalization:
   - viewer-request preserves an inbound `x-request-id`, otherwise falls back to the CloudFront request ID
   - viewer-request records both `x-apptheory-original-host` / `x-apptheory-original-uri` and
@@ -111,7 +115,7 @@ The live smoke verifier deploys `examples/cdk/ssr-site`, checks:
 - `POST /actions/ping` bypasses the origin group and reaches Lambda with full method support
 - the previous `Host`-forwarding 403 regression stays covered by exercising the CloudFront-to-Function URL path end to end
 - asset and direct-S3 delivery work from S3 through CloudFront
-- direct Function URL access remains blocked under the `AWS_IAM` auth model
+- direct Function URL access matches the deployed auth model for the example's writable route surface
 
 Run it manually when you want an end-to-end AWS check:
 

@@ -57,9 +57,10 @@ For the FaceTheory-first SSR deployment path, you can also run a manual deploy-g
 ```
 
 That verifier deploys `examples/cdk/ssr-site`, checks CloudFront root reachability, asset delivery, and the direct
-Function URL auth model, then destroys the stack. It also keeps the previous Host-header 403 regression covered by
-exercising the CloudFront-to-Function URL path end to end. It requires AWS credentials and is intentionally separate
-from both the deterministic local rubric and the zero-config release workflow.
+Function URL auth model, including writable `POST` coverage, then destroys the stack. It also keeps the previous
+Host-header 403 regression covered by exercising the CloudFront-to-Function URL path end to end. It requires AWS
+credentials and is intentionally separate from both the deterministic local rubric and the zero-config release
+workflow.
 
 If exported APIs changed, refresh snapshots first and then re-run snapshot verification:
 
