@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.2](https://github.com/theory-cloud/AppTheory/compare/v0.24.1...v0.24.2) (2026-04-13)
+
+
+### Bug Fixes
+
+* **cdk:** make ssr site write routes browser-safe ([bd97c10](https://github.com/theory-cloud/AppTheory/commit/bd97c10afeb26870767a351fb963470ce0895332))
+
 ## [0.24.1](https://github.com/theory-cloud/AppTheory/compare/v0.24.0...v0.24.1) (2026-04-12)
 
 
