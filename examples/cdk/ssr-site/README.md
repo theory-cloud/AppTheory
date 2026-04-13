@@ -5,7 +5,7 @@ Canonical operator guide: `docs/cdk/ssr-site.md`
 This example synthesizes an opinionated **SSR site** deployment pattern:
 
 - S3 bucket for immutable assets under `/assets/*`
-- Lambda Function URL origin (response streaming enabled, signed through CloudFront by default)
+- Lambda Function URL origin (response streaming enabled, with auth chosen to match the exposed route shape)
 - CloudFront distribution with explicit `ssr-only` / `ssg-isr` modes and shared FaceTheory edge glue
 - `ssg-isr` primary HTML origin backed by `htmlStoreBucket`, plus direct Lambda carve-outs for same-origin dynamic routes
 
@@ -45,6 +45,9 @@ new AppTheorySsrSite(this, "Site", {
   // Dynamic same-origin routes that should bypass the origin group.
   ssrPathPatterns: ["/actions/*"],
 
+  // This example keeps the auth model explicit because it exposes browser POST routes.
+  ssrUrlAuthType: lambda.FunctionUrlAuthType.NONE,
+
   // Forward FaceTheory's tenant header to SSR when needed (normalized + de-duped).
   ssrForwardHeaders: ["x-facetheory-tenant"],
 });
@@ -52,8 +55,10 @@ new AppTheorySsrSite(this, "Site", {
 
 Default SSR origin contract:
 
-- `AppTheorySsrSite` creates the SSR Function URL with `AWS_IAM` auth and uses CloudFront Function URL OAC by default.
-- Set `ssrUrlAuthType: lambda.FunctionUrlAuthType.NONE` only as an explicit compatibility override for legacy public Function URL flows.
+- `AppTheorySsrSite` auto-selects the Function URL auth model based on the exposed Lambda-backed surface:
+  - `AWS_IAM` + CloudFront Function URL OAC for read-only Lambda traffic
+  - `NONE` for browser-facing writable Lambda traffic such as `ssr-only` or `ssg-isr` plus `ssrPathPatterns`
+- Set `ssrUrlAuthType` explicitly when you need to force a specific Function URL auth mode.
 - `ssr-only` preserves the existing shape: Lambda is the default origin and direct S3 behaviors are only used for assets and explicitly configured static paths.
 - `ssg-isr` promotes the stronger FaceTheory topology: `htmlStoreBucket` becomes the primary HTML origin, Lambda is the fallback for cache misses on `GET` / `HEAD` / `OPTIONS`, `/_facetheory/data/*` stays on direct S3, and extensionless HTML paths rewrite to `/index.html` at the edge.
 - Use `ssrPathPatterns` for same-origin dynamic routes such as actions, callbacks, or form posts that must bypass the origin group and route directly to Lambda with full method support.
@@ -106,7 +111,7 @@ The smoke check covers:
 - HTML store routing on `/marketing` and `/marketing/about`
 - raw S3 hydration data on `/_facetheory/data/home.json`
 - direct Lambda action routing on `POST /actions/ping`
-- direct Function URL access remaining blocked by the signed CloudFront origin contract
+- direct Function URL access matching the example's explicit public auth model for writable routes
 
 ## Build/deploy helpers (optional)
 

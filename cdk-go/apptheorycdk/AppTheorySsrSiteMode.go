@@ -7,6 +7,9 @@ const (
 	//
 	// Direct S3 behaviors are used only for
 	// immutable assets and any explicitly configured static path patterns.
+	//
+	// Because this mode exposes Lambda as the default viewer surface with write methods,
+	// omitted `ssrUrlAuthType` resolves to `NONE`.
 	AppTheorySsrSiteMode_SSR_ONLY AppTheorySsrSiteMode = "SSR_ONLY"
 	// S3 is the primary HTML origin and Lambda SSR/ISR is the fallback.
 	//
