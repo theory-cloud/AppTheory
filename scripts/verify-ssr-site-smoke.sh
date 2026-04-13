@@ -241,6 +241,15 @@ probe_request_exact_trimmed \
   '{}' \
   20 \
   10
-probe_status "${ssr_function_url}" "403" 10 5
+probe_contains "${ssr_function_url}" "200" "Hello from AppTheory SSR Site" "0" 10 5
+probe_request_exact_trimmed \
+  "POST" \
+  "${ssr_function_url%/}/actions/ping" \
+  "200" \
+  '{"method":"POST","path":"/actions/ping"}' \
+  "0" \
+  '{}' \
+  10 \
+  5
 
 echo "ssr-site-smoke: PASS (stack=${stack_name} distribution=${distribution_id})"

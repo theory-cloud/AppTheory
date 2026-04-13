@@ -1239,7 +1239,7 @@ test("AppTheorySsrSite (FaceTheory) synthesizes expected template", () => {
   }
 });
 
-test("AppTheorySsrSite signs the default Function URL origin", () => {
+test("AppTheorySsrSite signs read-only Lambda Function URL origins by default", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -1249,7 +1249,10 @@ test("AppTheorySsrSite signs the default Function URL origin", () => {
     code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
   });
 
-  new apptheory.AppTheorySsrSite(stack, "Site", { ssrFunction: fn });
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+  });
 
   const template = assertions.Template.fromStack(stack).toJSON();
   const resources = Object.values(template.Resources ?? {});
@@ -1287,7 +1290,7 @@ test("AppTheorySsrSite signs the default Function URL origin", () => {
   assert.equal(publicUrlPermissions.length, 0);
 });
 
-test("AppTheorySsrSite keeps the SSR origin on Function URL plus lambda OAC", () => {
+test("AppTheorySsrSite keeps read-only SSR origins on Function URL plus lambda OAC", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -1297,7 +1300,10 @@ test("AppTheorySsrSite keeps the SSR origin on Function URL plus lambda OAC", ()
     code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
   });
 
-  new apptheory.AppTheorySsrSite(stack, "Site", { ssrFunction: fn });
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+  });
 
   const template = assertions.Template.fromStack(stack).toJSON();
   const resources = template.Resources ?? {};
@@ -1334,7 +1340,7 @@ test("AppTheorySsrSite keeps the SSR origin on Function URL plus lambda OAC", ()
   assert.ok(lambdaOrigin.OriginAccessControlId, "Lambda origin should be signed via CloudFront OAC");
 });
 
-test("AppTheorySsrSite defaults to ssr-only mode with edge functions", () => {
+test("AppTheorySsrSite defaults writable ssr-only mode to a public Function URL", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -1350,15 +1356,40 @@ test("AppTheorySsrSite defaults to ssr-only mode with edge functions", () => {
   const resources = Object.values(template.Resources ?? {});
   const distribution = resources.find((resource) => resource.Type === "AWS::CloudFront::Distribution");
   const functions = resources.filter((resource) => resource.Type === "AWS::CloudFront::Function");
+  const functionUrls = resources.filter((resource) => resource.Type === "AWS::Lambda::Url");
+  const lambdaOriginAccessControls = resources.filter(
+    (resource) =>
+      resource.Type === "AWS::CloudFront::OriginAccessControl" &&
+      resource.Properties?.OriginAccessControlConfig?.OriginAccessControlOriginType === "lambda",
+  );
+  const publicUrlPermissions = resources.filter(
+    (resource) =>
+      resource.Type === "AWS::Lambda::Permission" &&
+      resource.Properties?.Principal === "*" &&
+      resource.Properties?.Action === "lambda:InvokeFunctionUrl",
+  );
 
   assert.ok(distribution, "Should have CloudFront distribution");
   assert.equal(functions.length, 2);
+  assert.equal(functionUrls.length, 1);
+  assert.equal(functionUrls[0].Properties?.AuthType, "NONE");
+  assert.equal(lambdaOriginAccessControls.length, 0);
+  assert.equal(publicUrlPermissions.length, 1);
   assert.equal(distribution.Properties?.DistributionConfig?.OriginGroups?.Quantity ?? 0, 0);
   assert.equal(distribution.Properties?.DistributionConfig?.DefaultCacheBehavior?.FunctionAssociations?.length, 2);
   assert.equal(
     distribution.Properties?.DistributionConfig?.DefaultCacheBehavior?.CachePolicyId,
     "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
   );
+  assert.deepEqual(distribution.Properties?.DistributionConfig?.DefaultCacheBehavior?.AllowedMethods, [
+    "GET",
+    "HEAD",
+    "OPTIONS",
+    "PUT",
+    "PATCH",
+    "POST",
+    "DELETE",
+  ]);
 });
 
 test("AppTheorySsrSite allows explicit public Function URL compatibility mode", () => {
@@ -1374,6 +1405,43 @@ test("AppTheorySsrSite allows explicit public Function URL compatibility mode", 
   new apptheory.AppTheorySsrSite(stack, "Site", {
     ssrFunction: fn,
     ssrUrlAuthType: lambda.FunctionUrlAuthType.NONE,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const functionUrls = resources.filter((resource) => resource.Type === "AWS::Lambda::Url");
+  const lambdaOriginAccessControls = resources.filter(
+    (resource) =>
+      resource.Type === "AWS::CloudFront::OriginAccessControl" &&
+      resource.Properties?.OriginAccessControlConfig?.OriginAccessControlOriginType === "lambda",
+  );
+  const publicUrlPermissions = resources.filter(
+    (resource) =>
+      resource.Type === "AWS::Lambda::Permission" &&
+      resource.Properties?.Principal === "*" &&
+      resource.Properties?.Action === "lambda:InvokeFunctionUrl",
+  );
+
+  assert.equal(functionUrls.length, 1);
+  assert.equal(functionUrls[0].Properties?.AuthType, "NONE");
+  assert.equal(lambdaOriginAccessControls.length, 0);
+  assert.equal(publicUrlPermissions.length, 1);
+});
+
+test("AppTheorySsrSite defaults direct SSR write paths to a public Function URL", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+    ssrPathPatterns: ["/actions/*"],
   });
 
   const template = assertions.Template.fromStack(stack).toJSON();

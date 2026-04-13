@@ -100,14 +100,20 @@ type AppTheorySsrSiteProps struct {
 	// Additional path patterns that should bypass the `ssg-isr` origin group and route directly to the Lambda Function URL with full method support.
 	//
 	// Use this for same-origin dynamic paths such as auth callbacks, actions, or form posts.
+	// When `ssrUrlAuthType` is omitted, adding these patterns makes AppTheory select
+	// `NONE` so browser-facing write methods keep working through CloudFront.
 	// Example direct-SSR path: "/actions/*".
 	SsrPathPatterns *[]*string `field:"optional" json:"ssrPathPatterns" yaml:"ssrPathPatterns"`
 	// Function URL auth type for the SSR origin.
 	//
-	// AppTheory defaults this to `AWS_IAM` so CloudFront reaches the SSR origin
-	// through a signed Origin Access Control path. Set `NONE` only as an explicit
-	// compatibility override for legacy public Function URL deployments.
-	// Default: lambda.FunctionUrlAuthType.AWS_IAM
+	// If omitted, AppTheory auto-selects the auth model based on the exposed
+	// Lambda-backed surface:
+	//
+	// - `AWS_IAM` for read-only Lambda traffic (`GET` / `HEAD` / `OPTIONS`)
+	// - `NONE` when Lambda-backed behaviors expose browser-facing write methods
+	//
+	// Set this explicitly to force a specific Function URL auth mode.
+	// Default: derived from exposed Lambda methods.
 	//
 	SsrUrlAuthType awslambda.FunctionUrlAuthType `field:"optional" json:"ssrUrlAuthType" yaml:"ssrUrlAuthType"`
 	// Additional extensionless HTML section path patterns to route directly to the primary HTML S3 origin.
