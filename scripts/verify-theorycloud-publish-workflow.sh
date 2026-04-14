@@ -46,6 +46,16 @@ bash -n \
   "${REPO_ROOT}/scripts/verify-theorycloud-publish-workflow.sh"
 
 bash "${REPO_ROOT}/scripts/verify-theorycloud-apptheory-publish-config.sh"
+THEORYCLOUD_STAGE=lab \
+THEORYCLOUD_PUBLISH_REASON='github:theory-cloud/AppTheory:premain' \
+AWS_REGION=us-east-1 \
+AWS_ROLE_ARN='arn:aws:iam::787107040121:role/KnowledgeTheory-TheoryCloud-AppTheory-lab-Publisher' \
+  bash "${REPO_ROOT}/scripts/verify-theorycloud-apptheory-publish-config.sh"
+THEORYCLOUD_STAGE=live \
+THEORYCLOUD_PUBLISH_REASON='github:theory-cloud/AppTheory:main' \
+AWS_REGION=us-east-1 \
+AWS_ROLE_ARN='arn:aws:iam::787107040121:role/KnowledgeTheory-TheoryCloud-AppTheory-live-Publisher' \
+  bash "${REPO_ROOT}/scripts/verify-theorycloud-apptheory-publish-config.sh"
 
 assert_file_contains "name: AppTheory TheoryCloud subtree publish"
 assert_file_contains "permissions:"
@@ -55,6 +65,7 @@ assert_file_contains "group: apptheory-theorycloud-subtree-publish-\${{ github.r
 assert_file_contains "AWS_REGION: us-east-1"
 assert_file_contains "THEORYCLOUD_STAGE: \${{ github.ref_name == 'premain' && 'lab' || github.ref_name == 'main' && 'live' || '' }}"
 assert_file_contains "AWS_ROLE_ARN: \${{ github.ref_name == 'premain' && 'arn:aws:iam::787107040121:role/KnowledgeTheory-TheoryCloud-AppTheory-lab-Publisher' || github.ref_name == 'main' && 'arn:aws:iam::787107040121:role/KnowledgeTheory-TheoryCloud-AppTheory-live-Publisher' || '' }}"
+assert_file_contains "THEORYCLOUD_PUBLISH_REASON: \${{ format('github:{0}:{1}', github.repository, github.ref_name) }}"
 assert_file_contains "uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2"
 assert_file_contains "uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4"
 assert_file_contains "bash scripts/verify-theorycloud-publish-workflow.sh"
