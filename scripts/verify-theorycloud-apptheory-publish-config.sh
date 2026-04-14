@@ -42,28 +42,34 @@ assert_equals() {
 
 assert_equals "$(bash "${SCRIPT_DIR}/theorycloud-apptheory-env.sh" --stage-for-branch premain)" "lab"
 assert_equals "$(bash "${SCRIPT_DIR}/theorycloud-apptheory-env.sh" --stage-for-branch main)" "live"
+assert_equals "$(THEORYCLOUD_STAGE=lab bash "${SCRIPT_DIR}/theorycloud-apptheory-env.sh" --resolve-stage --branch main)" "lab"
+assert_equals "$(THEORYCLOUD_STAGE=live bash "${SCRIPT_DIR}/theorycloud-apptheory-env.sh" --resolve-stage --branch premain)" "live"
 assert_equals "$(bash "${SCRIPT_DIR}/theorycloud-apptheory-env.sh" --source-s3-uri --stage lab)" "s3://kt-sources-lab-787107040121/theorycloud/apptheory/"
 assert_equals "$(bash "${SCRIPT_DIR}/theorycloud-apptheory-env.sh" --source-s3-uri --stage live)" "s3://kt-sources-live-787107040121/theorycloud/apptheory/"
 assert_equals "$(bash "${SCRIPT_DIR}/theorycloud-apptheory-env.sh" --publish-url --stage lab)" "https://l0lw87lsp1.execute-api.us-east-1.amazonaws.com/v1/internal/publish/theorycloud"
 assert_equals "$(bash "${SCRIPT_DIR}/theorycloud-apptheory-env.sh" --publish-url --stage live)" "https://at3k47vix3.execute-api.us-east-1.amazonaws.com/v1/internal/publish/theorycloud"
 
+run_with_branch_stage_resolution() {
+  env -u THEORYCLOUD_STAGE "$@"
+}
+
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-lab_sync_output="$(THEORYCLOUD_APPTHEORY_SOURCE_REVISION=abc123def456 THEORYCLOUD_S3_SYNC_DRY_RUN=true bash "${SCRIPT_DIR}/sync-theorycloud-apptheory-subtree.sh" --branch premain --output "${TMP_DIR}/lab")"
+lab_sync_output="$(run_with_branch_stage_resolution THEORYCLOUD_APPTHEORY_SOURCE_REVISION=abc123def456 THEORYCLOUD_S3_SYNC_DRY_RUN=true bash "${SCRIPT_DIR}/sync-theorycloud-apptheory-subtree.sh" --branch premain --output "${TMP_DIR}/lab")"
 assert_contains "${lab_sync_output}" 'stage=lab'
 assert_contains "${lab_sync_output}" 'branch=premain'
 assert_contains "${lab_sync_output}" 'destination=s3://kt-sources-lab-787107040121/theorycloud/apptheory/'
 assert_contains "${lab_sync_output}" 'delete=true'
 assert_contains "${lab_sync_output}" 'command=aws s3 sync'
 
-live_sync_output="$(THEORYCLOUD_APPTHEORY_SOURCE_REVISION=abc123def456 THEORYCLOUD_S3_SYNC_DRY_RUN=true bash "${SCRIPT_DIR}/sync-theorycloud-apptheory-subtree.sh" --branch main --output "${TMP_DIR}/live")"
+live_sync_output="$(run_with_branch_stage_resolution THEORYCLOUD_APPTHEORY_SOURCE_REVISION=abc123def456 THEORYCLOUD_S3_SYNC_DRY_RUN=true bash "${SCRIPT_DIR}/sync-theorycloud-apptheory-subtree.sh" --branch main --output "${TMP_DIR}/live")"
 assert_contains "${live_sync_output}" 'stage=live'
 assert_contains "${live_sync_output}" 'branch=main'
 assert_contains "${live_sync_output}" 'destination=s3://kt-sources-live-787107040121/theorycloud/apptheory/'
 assert_contains "${live_sync_output}" 'delete=true'
 
-lab_publish_output="$(THEORYCLOUD_PUBLISH_DRY_RUN=true bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch premain --source-revision abc123def456 --idempotency-key test-lab)"
+lab_publish_output="$(run_with_branch_stage_resolution THEORYCLOUD_PUBLISH_DRY_RUN=true bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch premain --source-revision abc123def456 --idempotency-key test-lab)"
 assert_contains "${lab_publish_output}" 'stage=lab'
 assert_contains "${lab_publish_output}" 'branch=premain'
 assert_contains "${lab_publish_output}" 'url=https://l0lw87lsp1.execute-api.us-east-1.amazonaws.com/v1/internal/publish/theorycloud'
@@ -71,7 +77,7 @@ assert_contains "${lab_publish_output}" 'payload={"source_revision":"abc123def45
 assert_contains "${lab_publish_output}" 'command=awscurl --service execute-api --region us-east-1 -X POST -H content-type: application/json --fail-with-body -o <response-file> --data'
 assert_not_contains "${lab_publish_output}" "-w '%{http_code}'"
 
-live_publish_output="$(THEORYCLOUD_PUBLISH_DRY_RUN=true bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch main --source-revision abc123def456 --idempotency-key test-live)"
+live_publish_output="$(run_with_branch_stage_resolution THEORYCLOUD_PUBLISH_DRY_RUN=true bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch main --source-revision abc123def456 --idempotency-key test-live)"
 assert_contains "${live_publish_output}" 'stage=live'
 assert_contains "${live_publish_output}" 'branch=main'
 assert_contains "${live_publish_output}" 'url=https://at3k47vix3.execute-api.us-east-1.amazonaws.com/v1/internal/publish/theorycloud'
@@ -112,7 +118,7 @@ printf '%s' '{"job_id":"fake-job","status":"enqueued"}' > "${output_file}"
 EOF_AWSCURL
 chmod +x "${TMP_DIR}/bin/awscurl"
 
-live_publish_exec_output="$(PATH="${TMP_DIR}/bin:${PATH}" FAKE_AWSCURL_ARGS_LOG="${FAKE_AWSCURL_ARGS_LOG}" THEORYCLOUD_PUBLISH_DRY_RUN=false bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch premain --source-revision abc123def456 --idempotency-key test-exec)"
+live_publish_exec_output="$(run_with_branch_stage_resolution PATH="${TMP_DIR}/bin:${PATH}" FAKE_AWSCURL_ARGS_LOG="${FAKE_AWSCURL_ARGS_LOG}" THEORYCLOUD_PUBLISH_DRY_RUN=false bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch premain --source-revision abc123def456 --idempotency-key test-exec)"
 live_publish_exec_args="$(cat "${FAKE_AWSCURL_ARGS_LOG}")"
 assert_contains "${live_publish_exec_output}" 'trigger-theorycloud-publish: PASS (url=https://l0lw87lsp1.execute-api.us-east-1.amazonaws.com/v1/internal/publish/theorycloud)'
 assert_contains "${live_publish_exec_output}" '{"job_id":"fake-job","status":"enqueued"}'
