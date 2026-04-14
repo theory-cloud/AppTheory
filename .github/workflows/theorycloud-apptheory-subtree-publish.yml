@@ -6,6 +6,7 @@ on:
       - premain
       - main
     paths:
+      - ".github/workflows/theorycloud-apptheory-subtree-publish.yml"
       - "docs/README.md"
       - "docs/_contract.yaml"
       - "docs/_concepts.yaml"
@@ -22,6 +23,12 @@ on:
       - "docs/integrations/**"
       - "docs/migration/**"
       - "docs/llm-faq/**"
+      - "scripts/stage-theorycloud-apptheory-subtree.sh"
+      - "scripts/theorycloud-apptheory-env.sh"
+      - "scripts/sync-theorycloud-apptheory-subtree.sh"
+      - "scripts/trigger-theorycloud-publish.sh"
+      - "scripts/verify-theorycloud-apptheory-publish-config.sh"
+      - "scripts/verify-theorycloud-publish-workflow.sh"
 
 permissions:
   contents: read
