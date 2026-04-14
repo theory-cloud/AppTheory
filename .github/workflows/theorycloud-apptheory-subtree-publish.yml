@@ -1,0 +1,98 @@
+name: AppTheory TheoryCloud subtree publish
+
+on:
+  push:
+    branches:
+      - premain
+      - main
+    paths:
+      - "docs/README.md"
+      - "docs/_contract.yaml"
+      - "docs/_concepts.yaml"
+      - "docs/_patterns.yaml"
+      - "docs/_decisions.yaml"
+      - "docs/getting-started.md"
+      - "docs/api-reference.md"
+      - "docs/core-patterns.md"
+      - "docs/testing-guide.md"
+      - "docs/troubleshooting.md"
+      - "docs/migration-guide.md"
+      - "docs/cdk/**"
+      - "docs/features/**"
+      - "docs/integrations/**"
+      - "docs/migration/**"
+      - "docs/llm-faq/**"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: apptheory-theorycloud-subtree-publish-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      THEORYCLOUD_STAGE: ${{ github.ref_name == 'premain' && 'lab' || github.ref_name == 'main' && 'live' || '' }}
+      AWS_ROLE_ARN: ${{ github.ref_name == 'premain' && vars.THEORYCLOUD_AWS_ROLE_ARN_LAB || github.ref_name == 'main' && vars.THEORYCLOUD_AWS_ROLE_ARN_LIVE || '' }}
+      THEORYCLOUD_PUBLISH_REASON: ${{ format('github:{0}:{1}', github.repository, github.ref_name) }}
+    steps:
+      - name: Checkout protected branch head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Validate workflow and helper configuration
+        run: |
+          set -euo pipefail
+
+          : "${AWS_REGION:?missing vars.AWS_REGION (or default)}"
+          : "${THEORYCLOUD_STAGE:?missing stage resolution}"
+          : "${AWS_ROLE_ARN:?missing stage-scoped AWS role ARN}"
+
+          case "${THEORYCLOUD_STAGE}" in
+            lab|live) ;;
+            *)
+              echo "unsupported theorycloud stage: ${THEORYCLOUD_STAGE}" >&2
+              exit 1
+              ;;
+          esac
+
+          bash scripts/verify-theorycloud-apptheory-publish-config.sh
+          bash scripts/verify-theorycloud-publish-workflow.sh
+
+      - name: Assume stage-scoped theorycloud publish role
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-session-name: apptheory-${{ github.ref_name }}-${{ github.run_id }}
+
+      - name: Install awscurl
+        run: |
+          set -euo pipefail
+
+          python3 -m pip install --user --upgrade pip
+          python3 -m pip install --user awscurl
+          printf '%s\n' "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+
+      - name: Sync AppTheory subtree into shared theorycloud source state
+        run: |
+          set -euo pipefail
+
+          bash scripts/sync-theorycloud-apptheory-subtree.sh \
+            --stage "${THEORYCLOUD_STAGE}" \
+            --output /tmp/apptheory-theorycloud
+
+      - name: Trigger shared theorycloud publish
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          bash scripts/trigger-theorycloud-publish.sh \
+            --stage "${THEORYCLOUD_STAGE}" \
+            --source-revision "${SOURCE_REVISION}"
