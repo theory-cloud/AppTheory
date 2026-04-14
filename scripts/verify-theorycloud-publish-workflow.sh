@@ -17,6 +17,13 @@ assert_file_contains() {
   fi
 }
 
+assert_file_not_contains() {
+  local needle="$1"
+  if grep -Fq -- "${needle}" "${WORKFLOW_FILE}"; then
+    fail "workflow must not contain '${needle}'"
+  fi
+}
+
 assert_contains() {
   local haystack="$1"
   local needle="$2"
@@ -45,13 +52,17 @@ assert_file_contains "permissions:"
 assert_file_contains "  contents: read"
 assert_file_contains "  id-token: write"
 assert_file_contains "group: apptheory-theorycloud-subtree-publish-\${{ github.ref_name }}"
+assert_file_contains "AWS_REGION: us-east-1"
 assert_file_contains "THEORYCLOUD_STAGE: \${{ github.ref_name == 'premain' && 'lab' || github.ref_name == 'main' && 'live' || '' }}"
-assert_file_contains "AWS_ROLE_ARN: \${{ github.ref_name == 'premain' && vars.THEORYCLOUD_AWS_ROLE_ARN_LAB || github.ref_name == 'main' && vars.THEORYCLOUD_AWS_ROLE_ARN_LIVE || '' }}"
+assert_file_contains "AWS_ROLE_ARN: \${{ github.ref_name == 'premain' && 'arn:aws:iam::787107040121:role/KnowledgeTheory-TheoryCloud-AppTheory-lab-Publisher' || github.ref_name == 'main' && 'arn:aws:iam::787107040121:role/KnowledgeTheory-TheoryCloud-AppTheory-live-Publisher' || '' }}"
 assert_file_contains "uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2"
 assert_file_contains "uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4"
 assert_file_contains "bash scripts/verify-theorycloud-publish-workflow.sh"
 assert_file_contains "bash scripts/sync-theorycloud-apptheory-subtree.sh \\"
 assert_file_contains "bash scripts/trigger-theorycloud-publish.sh \\"
+assert_file_not_contains "vars.AWS_REGION"
+assert_file_not_contains "vars.THEORYCLOUD_AWS_ROLE_ARN_LAB"
+assert_file_not_contains "vars.THEORYCLOUD_AWS_ROLE_ARN_LIVE"
 
 branches_block="$(awk '
   /^    branches:$/ {capture=1; next}
