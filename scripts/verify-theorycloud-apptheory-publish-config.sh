@@ -53,6 +53,10 @@ run_with_branch_stage_resolution() {
   env -u THEORYCLOUD_STAGE "$@"
 }
 
+run_with_default_publish_env() {
+  env -u THEORYCLOUD_STAGE -u THEORYCLOUD_PUBLISH_REASON "$@"
+}
+
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
@@ -69,7 +73,7 @@ assert_contains "${live_sync_output}" 'branch=main'
 assert_contains "${live_sync_output}" 'destination=s3://kt-sources-live-787107040121/theorycloud/apptheory/'
 assert_contains "${live_sync_output}" 'delete=true'
 
-lab_publish_output="$(run_with_branch_stage_resolution THEORYCLOUD_PUBLISH_DRY_RUN=true bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch premain --source-revision abc123def456 --idempotency-key test-lab)"
+lab_publish_output="$(run_with_default_publish_env THEORYCLOUD_PUBLISH_DRY_RUN=true bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch premain --source-revision abc123def456 --idempotency-key test-lab)"
 assert_contains "${lab_publish_output}" 'stage=lab'
 assert_contains "${lab_publish_output}" 'branch=premain'
 assert_contains "${lab_publish_output}" 'url=https://l0lw87lsp1.execute-api.us-east-1.amazonaws.com/v1/internal/publish/theorycloud'
@@ -77,13 +81,23 @@ assert_contains "${lab_publish_output}" 'payload={"source_revision":"abc123def45
 assert_contains "${lab_publish_output}" 'command=awscurl --service execute-api --region us-east-1 -X POST -H content-type: application/json --fail-with-body -o <response-file> --data'
 assert_not_contains "${lab_publish_output}" "-w '%{http_code}'"
 
-live_publish_output="$(run_with_branch_stage_resolution THEORYCLOUD_PUBLISH_DRY_RUN=true bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch main --source-revision abc123def456 --idempotency-key test-live)"
+live_publish_output="$(run_with_default_publish_env THEORYCLOUD_PUBLISH_DRY_RUN=true bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch main --source-revision abc123def456 --idempotency-key test-live)"
 assert_contains "${live_publish_output}" 'stage=live'
 assert_contains "${live_publish_output}" 'branch=main'
 assert_contains "${live_publish_output}" 'url=https://at3k47vix3.execute-api.us-east-1.amazonaws.com/v1/internal/publish/theorycloud'
 assert_contains "${live_publish_output}" 'payload={"source_revision":"abc123def456","idempotency_key":"test-live","reason":"docs sync complete","force":false}'
 assert_contains "${live_publish_output}" 'command=awscurl --service execute-api --region us-east-1 -X POST -H content-type: application/json --fail-with-body -o <response-file> --data'
 assert_not_contains "${live_publish_output}" "-w '%{http_code}'"
+
+lab_publish_workflow_reason_output="$(THEORYCLOUD_PUBLISH_REASON=github:theory-cloud/AppTheory:premain run_with_branch_stage_resolution THEORYCLOUD_PUBLISH_DRY_RUN=true bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch premain --source-revision abc123def456 --idempotency-key test-lab-workflow)"
+assert_contains "${lab_publish_workflow_reason_output}" 'stage=lab'
+assert_contains "${lab_publish_workflow_reason_output}" 'branch=premain'
+assert_contains "${lab_publish_workflow_reason_output}" 'payload={"source_revision":"abc123def456","idempotency_key":"test-lab-workflow","reason":"github:theory-cloud/AppTheory:premain","force":false}'
+
+live_publish_workflow_reason_output="$(THEORYCLOUD_PUBLISH_REASON=github:theory-cloud/AppTheory:main run_with_branch_stage_resolution THEORYCLOUD_PUBLISH_DRY_RUN=true bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch main --source-revision abc123def456 --idempotency-key test-live-workflow)"
+assert_contains "${live_publish_workflow_reason_output}" 'stage=live'
+assert_contains "${live_publish_workflow_reason_output}" 'branch=main'
+assert_contains "${live_publish_workflow_reason_output}" 'payload={"source_revision":"abc123def456","idempotency_key":"test-live-workflow","reason":"github:theory-cloud/AppTheory:main","force":false}'
 
 FAKE_AWSCURL_ARGS_LOG="${TMP_DIR}/awscurl-args.log"
 mkdir -p "${TMP_DIR}/bin"
@@ -118,7 +132,7 @@ printf '%s' '{"job_id":"fake-job","status":"enqueued"}' > "${output_file}"
 EOF_AWSCURL
 chmod +x "${TMP_DIR}/bin/awscurl"
 
-lab_publish_exec_output="$(run_with_branch_stage_resolution PATH="${TMP_DIR}/bin:${PATH}" FAKE_AWSCURL_ARGS_LOG="${FAKE_AWSCURL_ARGS_LOG}" THEORYCLOUD_PUBLISH_DRY_RUN=false bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch premain --source-revision abc123def456 --idempotency-key test-lab-exec)"
+lab_publish_exec_output="$(run_with_default_publish_env PATH="${TMP_DIR}/bin:${PATH}" FAKE_AWSCURL_ARGS_LOG="${FAKE_AWSCURL_ARGS_LOG}" THEORYCLOUD_PUBLISH_DRY_RUN=false bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch premain --source-revision abc123def456 --idempotency-key test-lab-exec)"
 lab_publish_exec_args="$(cat "${FAKE_AWSCURL_ARGS_LOG}")"
 assert_contains "${lab_publish_exec_output}" 'trigger-theorycloud-publish: PASS (url=https://l0lw87lsp1.execute-api.us-east-1.amazonaws.com/v1/internal/publish/theorycloud)'
 assert_contains "${lab_publish_exec_output}" '{"job_id":"fake-job","status":"enqueued"}'
@@ -138,7 +152,7 @@ assert_contains "${lab_publish_exec_args}" 'https://l0lw87lsp1.execute-api.us-ea
 assert_not_has_line "${lab_publish_exec_args}" "-w"
 
 : > "${FAKE_AWSCURL_ARGS_LOG}"
-live_publish_exec_output="$(run_with_branch_stage_resolution PATH="${TMP_DIR}/bin:${PATH}" FAKE_AWSCURL_ARGS_LOG="${FAKE_AWSCURL_ARGS_LOG}" THEORYCLOUD_PUBLISH_DRY_RUN=false bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch main --source-revision abc123def456 --idempotency-key test-live-exec)"
+live_publish_exec_output="$(run_with_default_publish_env PATH="${TMP_DIR}/bin:${PATH}" FAKE_AWSCURL_ARGS_LOG="${FAKE_AWSCURL_ARGS_LOG}" THEORYCLOUD_PUBLISH_DRY_RUN=false bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch main --source-revision abc123def456 --idempotency-key test-live-exec)"
 live_publish_exec_args="$(cat "${FAKE_AWSCURL_ARGS_LOG}")"
 assert_contains "${live_publish_exec_output}" 'trigger-theorycloud-publish: PASS (url=https://at3k47vix3.execute-api.us-east-1.amazonaws.com/v1/internal/publish/theorycloud)'
 assert_contains "${live_publish_exec_output}" '{"job_id":"fake-job","status":"enqueued"}'
@@ -156,5 +170,17 @@ assert_contains "${live_publish_exec_args}" '--data'
 assert_contains "${live_publish_exec_args}" '{"source_revision":"abc123def456","idempotency_key":"test-live-exec","reason":"docs sync complete","force":false}'
 assert_contains "${live_publish_exec_args}" 'https://at3k47vix3.execute-api.us-east-1.amazonaws.com/v1/internal/publish/theorycloud'
 assert_not_has_line "${live_publish_exec_args}" "-w"
+
+: > "${FAKE_AWSCURL_ARGS_LOG}"
+lab_publish_workflow_exec_output="$(THEORYCLOUD_PUBLISH_REASON=github:theory-cloud/AppTheory:premain run_with_branch_stage_resolution PATH="${TMP_DIR}/bin:${PATH}" FAKE_AWSCURL_ARGS_LOG="${FAKE_AWSCURL_ARGS_LOG}" THEORYCLOUD_PUBLISH_DRY_RUN=false bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch premain --source-revision abc123def456 --idempotency-key test-lab-workflow-exec)"
+lab_publish_workflow_exec_args="$(cat "${FAKE_AWSCURL_ARGS_LOG}")"
+assert_contains "${lab_publish_workflow_exec_output}" 'trigger-theorycloud-publish: PASS (url=https://l0lw87lsp1.execute-api.us-east-1.amazonaws.com/v1/internal/publish/theorycloud)'
+assert_contains "${lab_publish_workflow_exec_args}" '{"source_revision":"abc123def456","idempotency_key":"test-lab-workflow-exec","reason":"github:theory-cloud/AppTheory:premain","force":false}'
+
+: > "${FAKE_AWSCURL_ARGS_LOG}"
+live_publish_workflow_exec_output="$(THEORYCLOUD_PUBLISH_REASON=github:theory-cloud/AppTheory:main run_with_branch_stage_resolution PATH="${TMP_DIR}/bin:${PATH}" FAKE_AWSCURL_ARGS_LOG="${FAKE_AWSCURL_ARGS_LOG}" THEORYCLOUD_PUBLISH_DRY_RUN=false bash "${SCRIPT_DIR}/trigger-theorycloud-publish.sh" --branch main --source-revision abc123def456 --idempotency-key test-live-workflow-exec)"
+live_publish_workflow_exec_args="$(cat "${FAKE_AWSCURL_ARGS_LOG}")"
+assert_contains "${live_publish_workflow_exec_output}" 'trigger-theorycloud-publish: PASS (url=https://at3k47vix3.execute-api.us-east-1.amazonaws.com/v1/internal/publish/theorycloud)'
+assert_contains "${live_publish_workflow_exec_args}" '{"source_revision":"abc123def456","idempotency_key":"test-live-workflow-exec","reason":"github:theory-cloud/AppTheory:main","force":false}'
 
 echo 'verify-theorycloud-apptheory-publish-config: PASS'
