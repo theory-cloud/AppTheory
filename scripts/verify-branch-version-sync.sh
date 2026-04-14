@@ -6,7 +6,10 @@ set -euo pipefail
 # Why this exists:
 # - `main` cuts stable releases using `.release-please-manifest.json`
 # - `premain` cuts prereleases using `.release-please-manifest.premain.json`
-# If `premain` doesn't regularly back-merge `main`, prereleases can get stuck on an old major/minor track.
+# - after a stable cut, the released `main` head must be promoted back into `staging`
+# - `premain` receives that baseline only through `staging` -> `premain` promotions
+# If `staging` or `premain` drift from the latest stable baseline on `main`,
+# prereleases can get stuck on an old major/minor track.
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   # `scripts/verify-builds.sh` runs rubric in git-less working copies; this verifier needs git metadata.
@@ -51,15 +54,15 @@ fi
 mode="skip"
 if [[ "${branch}" == "premain" ]]; then
   if [[ "${head_ref}" == "staging" ]]; then
-    # Staging -> premain promotions should validate the current remote premain
-    # branch, not the synthetic merge ref, so staging cannot mask an out-of-sync
-    # prerelease baseline on premain itself.
-    mode="promotion"
+    # Staging -> premain is the only supported path to refresh premain, so
+    # validate the promoted content itself (the checked-out PR merge/head),
+    # not the current remote premain branch.
+    mode="staging-promotion"
   else
     mode="premain"
   fi
 elif [[ "${branch}" == "main" && "${head_ref}" == "premain" ]]; then
-  mode="promotion"
+  mode="main-promotion"
 fi
 
 if [[ "${mode}" == "skip" ]]; then
@@ -93,10 +96,14 @@ if [[ -z "${main_stable}" ]]; then
   exit 1
 fi
 
+subject_label="premain"
 premain_stable=""
 premain_version=""
 
-if [[ "${mode}" == "premain" ]]; then
+if [[ "${mode}" == "premain" || "${mode}" == "staging-promotion" ]]; then
+  if [[ "${mode}" == "staging-promotion" ]]; then
+    subject_label="staging->premain promotion"
+  fi
   premain_stable="$(
     python3 - <<'PY'
 import json
@@ -155,13 +162,14 @@ if [[ -z "${premain_version}" ]]; then
 fi
 
 if [[ "${premain_stable}" != "${main_stable}" ]]; then
-  echo "branch-version-sync: FAIL (premain .release-please-manifest.json ${premain_stable} != origin/main ${main_stable})"
-  echo "branch-version-sync: hint: merge main into premain (back-merge after stable releases)"
+  echo "branch-version-sync: FAIL (${subject_label} .release-please-manifest.json ${premain_stable} != origin/main ${main_stable})"
+  echo "branch-version-sync: hint: back-merge the released main head into staging before promoting staging to premain"
   exit 1
 fi
 
 export MAIN_STABLE="${main_stable}"
 export PREMAIN_VERSION="${premain_version}"
+export SUBJECT_LABEL="${subject_label}"
 
 python3 - <<'PY'
 import os
@@ -193,11 +201,11 @@ except Exception as exc:
 if premain_tuple < main_tuple:
     print(
         "branch-version-sync: FAIL "
-        f"(premain prerelease track {premain_version} is behind main {main_stable})"
+        f"({os.environ['SUBJECT_LABEL']} prerelease track {premain_version} is behind main {main_stable})"
     )
     print(
         "branch-version-sync: hint: reset .release-please-manifest.premain.json "
-        "to the latest stable version after cutting a release on main"
+        "on staging to the latest stable version after cutting a release on main"
     )
     sys.exit(1)
 PY
