@@ -34,14 +34,14 @@ assert_equals "$(bash "${SCRIPT_DIR}/theorycloud-apptheory-env.sh" --publish-url
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-lab_sync_output="$(THEORYCLOUD_S3_SYNC_DRY_RUN=true bash "${SCRIPT_DIR}/sync-theorycloud-apptheory-subtree.sh" --branch premain --output "${TMP_DIR}/lab")"
+lab_sync_output="$(THEORYCLOUD_APPTHEORY_SOURCE_REVISION=abc123def456 THEORYCLOUD_S3_SYNC_DRY_RUN=true bash "${SCRIPT_DIR}/sync-theorycloud-apptheory-subtree.sh" --branch premain --output "${TMP_DIR}/lab")"
 assert_contains "${lab_sync_output}" 'stage=lab'
 assert_contains "${lab_sync_output}" 'branch=premain'
 assert_contains "${lab_sync_output}" 'destination=s3://kt-sources-lab-787107040121/theorycloud/apptheory/'
 assert_contains "${lab_sync_output}" 'delete=true'
 assert_contains "${lab_sync_output}" 'command=aws s3 sync'
 
-live_sync_output="$(THEORYCLOUD_S3_SYNC_DRY_RUN=true bash "${SCRIPT_DIR}/sync-theorycloud-apptheory-subtree.sh" --branch main --output "${TMP_DIR}/live")"
+live_sync_output="$(THEORYCLOUD_APPTHEORY_SOURCE_REVISION=abc123def456 THEORYCLOUD_S3_SYNC_DRY_RUN=true bash "${SCRIPT_DIR}/sync-theorycloud-apptheory-subtree.sh" --branch main --output "${TMP_DIR}/live")"
 assert_contains "${live_sync_output}" 'stage=live'
 assert_contains "${live_sync_output}" 'branch=main'
 assert_contains "${live_sync_output}" 'destination=s3://kt-sources-live-787107040121/theorycloud/apptheory/'
