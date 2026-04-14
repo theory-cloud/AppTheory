@@ -27,6 +27,8 @@ Release flow (TableTheory pattern):
   - The `Release PR (main)` workflow aligns stable releases to the premain RC baseline (via `release-as`), then opens the stable
     release-please PR.
   - **Merging the stable release-please PR** cuts the stable tag + GitHub release.
+- The release-pr workflows ignore pushes whose head commit is the merged `release-please--branches--*` branch, so cutting a
+  release does not immediately open the next release PR again.
 - **post-release sync**: back-merge `main` into `staging` (and `premain` as needed) so the next cycle starts from the latest stable baseline.
 
 Important: release automation is driven by **Conventional Commits**. Commits typed as `fix:` / `feat:` are treated as user-facing

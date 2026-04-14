@@ -32,7 +32,8 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryLambdaRole` (Lambda execution role helper; baseline + X-Ray + KMS + escape hatches)
 - `AppTheoryPathRoutedFrontend` (CloudFront distribution: multi-SPA routing + API origin + SPA rewrite)
 - `AppTheoryMediaCdn` (CloudFront distribution: S3-backed media CDN; optional private media via key groups)
+- `AppTheorySsrSite` (FaceTheory-first CloudFront + S3 + Lambda URL SSR/SSG/ISR deployment; see `docs/cdk/ssr-site.md`)
 - Domain/cert helpers (hosted zone, certificate, custom domains)
-- Higher-level “app”/SSR patterns (where present)
+- Higher-level "app"/SSR patterns now converge on the FaceTheory-first deployment contract rather than a weaker helper path
 
 For the exact list and prop types, read `cdk/lib/*.d.ts`.

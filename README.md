@@ -32,6 +32,7 @@ AppTheory today. See [CHANGELOG](CHANGELOG.md) for release history.
 
 - [Getting started guide](docs/getting-started.md) — local workspace, deterministic app path in each runtime, deployment
 - [API reference](docs/api-reference.md) — full Go runtime surface
+- [FaceTheory-first SSR CDK guide](docs/cdk/ssr-site.md) — canonical CloudFront + S3 + Lambda URL deployment story
 - [TypeScript docs](ts/docs/README.md) | [Python docs](py/docs/README.md) | [CDK docs](cdk/docs/README.md)
 
 ## Charter

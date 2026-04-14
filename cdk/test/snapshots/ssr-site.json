@@ -266,6 +266,13 @@
             }
           ]
         },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "ObjectWriter"
+            }
+          ]
+        },
         "PublicAccessBlockConfiguration": {
           "BlockPublicAcls": true,
           "BlockPublicPolicy": true,
@@ -333,9 +340,67 @@
                 "HEAD",
                 "OPTIONS"
               ],
-              "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+              "CachePolicyId": "83da9c7e-98b4-4e11-a168-04f0df8e2c65",
               "Compress": true,
+              "FunctionAssociations": [
+                {
+                  "EventType": "viewer-request",
+                  "FunctionARN": {
+                    "Fn::GetAtt": [
+                      "SiteSsrViewerRequestFunction103872E5",
+                      "FunctionARN"
+                    ]
+                  }
+                },
+                {
+                  "EventType": "viewer-response",
+                  "FunctionARN": {
+                    "Fn::GetAtt": [
+                      "SiteSsrViewerResponseFunction3CF15787",
+                      "FunctionARN"
+                    ]
+                  }
+                }
+              ],
               "PathPattern": "assets/*",
+              "ResponseHeadersPolicyId": {
+                "Ref": "SiteResponseHeadersPolicy5F343E8C"
+              },
+              "TargetOriginId": "TestStackSiteDistributionOrigin242A42224",
+              "ViewerProtocolPolicy": "redirect-to-https"
+            },
+            {
+              "AllowedMethods": [
+                "GET",
+                "HEAD",
+                "OPTIONS"
+              ],
+              "CachePolicyId": "83da9c7e-98b4-4e11-a168-04f0df8e2c65",
+              "Compress": true,
+              "FunctionAssociations": [
+                {
+                  "EventType": "viewer-request",
+                  "FunctionARN": {
+                    "Fn::GetAtt": [
+                      "SiteSsrViewerRequestFunction103872E5",
+                      "FunctionARN"
+                    ]
+                  }
+                },
+                {
+                  "EventType": "viewer-response",
+                  "FunctionARN": {
+                    "Fn::GetAtt": [
+                      "SiteSsrViewerResponseFunction3CF15787",
+                      "FunctionARN"
+                    ]
+                  }
+                }
+              ],
+              "PathPattern": "assets",
+              "ResponseHeadersPolicyId": {
+                "Ref": "SiteResponseHeadersPolicy5F343E8C"
+              },
               "TargetOriginId": "TestStackSiteDistributionOrigin242A42224",
               "ViewerProtocolPolicy": "redirect-to-https"
             }
@@ -352,8 +417,31 @@
             ],
             "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
             "Compress": true,
+            "FunctionAssociations": [
+              {
+                "EventType": "viewer-request",
+                "FunctionARN": {
+                  "Fn::GetAtt": [
+                    "SiteSsrViewerRequestFunction103872E5",
+                    "FunctionARN"
+                  ]
+                }
+              },
+              {
+                "EventType": "viewer-response",
+                "FunctionARN": {
+                  "Fn::GetAtt": [
+                    "SiteSsrViewerResponseFunction3CF15787",
+                    "FunctionARN"
+                  ]
+                }
+              }
+            ],
             "OriginRequestPolicyId": {
               "Ref": "SiteSsrOriginRequestPolicyF6A13560"
+            },
+            "ResponseHeadersPolicyId": {
+              "Ref": "SiteResponseHeadersPolicy5F343E8C"
             },
             "TargetOriginId": "TestStackSiteDistributionOrigin169649692",
             "ViewerProtocolPolicy": "redirect-to-https"
@@ -430,6 +518,115 @@
       },
       "Type": "AWS::CloudFront::OriginAccessControl"
     },
+    "SiteHtmlCachePolicy2B4843D5": {
+      "Properties": {
+        "CachePolicyConfig": {
+          "Comment": "FaceTheory HTML cache policy keyed by query strings and stable public variant headers",
+          "DefaultTTL": 0,
+          "MaxTTL": 31536000,
+          "MinTTL": 0,
+          "Name": {
+            "Fn::Join": [
+              "",
+              [
+                "TestStackSiteHtmlCachePolicy2F65894E-",
+                {
+                  "Ref": "AWS::Region"
+                }
+              ]
+            ]
+          },
+          "ParametersInCacheKeyAndForwardedToOrigin": {
+            "CookiesConfig": {
+              "CookieBehavior": "none"
+            },
+            "EnableAcceptEncodingBrotli": true,
+            "EnableAcceptEncodingGzip": true,
+            "HeadersConfig": {
+              "HeaderBehavior": "whitelist",
+              "Headers": [
+                "x-apptheory-original-host",
+                "x-facetheory-original-host",
+                "x-tenant-id"
+              ]
+            },
+            "QueryStringsConfig": {
+              "QueryStringBehavior": "all"
+            }
+          }
+        }
+      },
+      "Type": "AWS::CloudFront::CachePolicy"
+    },
+    "SiteHtmlOriginRequestPolicy308D38C5": {
+      "Properties": {
+        "OriginRequestPolicyConfig": {
+          "CookiesConfig": {
+            "CookieBehavior": "none"
+          },
+          "HeadersConfig": {
+            "HeaderBehavior": "whitelist",
+            "Headers": [
+              "cloudfront-forwarded-proto",
+              "cloudfront-viewer-address",
+              "x-apptheory-original-host",
+              "x-facetheory-original-host",
+              "x-apptheory-original-uri",
+              "x-facetheory-original-uri",
+              "x-request-id",
+              "x-tenant-id"
+            ]
+          },
+          "Name": "TestStackSiteHtmlOriginRequestPolicy00AFE701",
+          "QueryStringsConfig": {
+            "QueryStringBehavior": "all"
+          }
+        }
+      },
+      "Type": "AWS::CloudFront::OriginRequestPolicy"
+    },
+    "SiteResponseHeadersPolicy5F343E8C": {
+      "Properties": {
+        "ResponseHeadersPolicyConfig": {
+          "Comment": "FaceTheory baseline security headers (CSP stays origin-defined)",
+          "CustomHeadersConfig": {
+            "Items": [
+              {
+                "Header": "permissions-policy",
+                "Override": true,
+                "Value": "camera=(), microphone=(), geolocation=()"
+              }
+            ]
+          },
+          "Name": "TestStackSiteResponseHeadersPolicy3A7D2C48",
+          "SecurityHeadersConfig": {
+            "ContentTypeOptions": {
+              "Override": true
+            },
+            "FrameOptions": {
+              "FrameOption": "DENY",
+              "Override": true
+            },
+            "ReferrerPolicy": {
+              "Override": true,
+              "ReferrerPolicy": "strict-origin-when-cross-origin"
+            },
+            "StrictTransportSecurity": {
+              "AccessControlMaxAgeSec": 63072000,
+              "IncludeSubdomains": true,
+              "Override": true,
+              "Preload": true
+            },
+            "XSSProtection": {
+              "ModeBlock": true,
+              "Override": true,
+              "Protection": true
+            }
+          }
+        }
+      },
+      "Type": "AWS::CloudFront::ResponseHeadersPolicy"
+    },
     "SiteSsrOriginRequestPolicyF6A13560": {
       "Properties": {
         "OriginRequestPolicyConfig": {
@@ -439,15 +636,14 @@
           "HeadersConfig": {
             "HeaderBehavior": "whitelist",
             "Headers": [
-              "accept",
-              "accept-language",
-              "cache-control",
-              "host",
-              "if-none-match",
-              "user-agent",
-              "x-forwarded-for",
               "cloudfront-forwarded-proto",
-              "cloudfront-viewer-address"
+              "cloudfront-viewer-address",
+              "x-apptheory-original-host",
+              "x-facetheory-original-host",
+              "x-apptheory-original-uri",
+              "x-facetheory-original-uri",
+              "x-request-id",
+              "x-tenant-id"
             ]
           },
           "Name": "TestStackSiteSsrOriginRequestPolicy8F5A5074",
@@ -470,6 +666,50 @@
         }
       },
       "Type": "AWS::Lambda::Url"
+    },
+    "SiteSsrViewerRequestFunction103872E5": {
+      "Properties": {
+        "AutoPublish": true,
+        "FunctionCode": "function handler(event) {\n\t  var request = event.request;\n\t  var headers = request.headers;\n\t  var uri = request.uri || '/';\n\t  var requestIdHeader = headers['x-request-id'];\n\t  var requestId = requestIdHeader && requestIdHeader.value ? requestIdHeader.value.trim() : '';\n\n\t  if (!requestId) {\n\t    requestId = event.context && event.context.requestId ? String(event.context.requestId).trim() : '';\n\t  }\n\n\t  if (!requestId) {\n\t    requestId = 'req_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);\n\t  }\n\n\t  headers['x-request-id'] = { value: requestId };\n\t  headers['x-apptheory-original-uri'] = { value: uri };\n\t  headers['x-facetheory-original-uri'] = { value: uri };\n\n\t  if (headers.host && headers.host.value) {\n\t    headers['x-apptheory-original-host'] = { value: headers.host.value };\n\t    headers['x-facetheory-original-host'] = { value: headers.host.value };\n\t  }\n\n\t  if ('ssr-only' === 'ssg-isr') {\n\t    var rawS3Prefixes = [\n\t      '/assets'\n\t    ];\n\t    var lambdaPassthroughPrefixes = [\n\t      \n\t    ];\n\t    var isLambdaPassthroughPath = false;\n\n\t    for (var i = 0; i < lambdaPassthroughPrefixes.length; i++) {\n\t      var prefix = lambdaPassthroughPrefixes[i];\n\t      if (uri === prefix || uri.startsWith(prefix + '/')) {\n\t        isLambdaPassthroughPath = true;\n\t        break;\n\t      }\n\t    }\n\n\t    if (!isLambdaPassthroughPath) {\n\t      var isRawS3Path = false;\n\n\t      for (var j = 0; j < rawS3Prefixes.length; j++) {\n\t        var rawPrefix = rawS3Prefixes[j];\n\t        if (uri === rawPrefix || uri.startsWith(rawPrefix + '/')) {\n\t          isRawS3Path = true;\n\t          break;\n\t        }\n\t      }\n\n\t      var lastSlash = uri.lastIndexOf('/');\n\t      var lastSegment = lastSlash >= 0 ? uri.substring(lastSlash + 1) : uri;\n\n\t      if (!isRawS3Path && lastSegment.indexOf('.') === -1) {\n\t        request.uri = uri.endsWith('/') ? uri + 'index.html' : uri + '/index.html';\n\t      }\n\t    }\n\t  }\n\n\t  return request;\n\t}",
+        "FunctionConfig": {
+          "Comment": "FaceTheory viewer-request edge context for SSR site",
+          "Runtime": "cloudfront-js-2.0"
+        },
+        "Name": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::Region"
+              },
+              "TestStackSiteSsrrRequestFunction0550A3D9"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::CloudFront::Function"
+    },
+    "SiteSsrViewerResponseFunction3CF15787": {
+      "Properties": {
+        "AutoPublish": true,
+        "FunctionCode": "function handler(event) {\n\t  var request = event.request;\n\t  var response = event.response;\n\t  var requestIdHeader = request.headers['x-request-id'];\n\t  var requestId = requestIdHeader && requestIdHeader.value ? requestIdHeader.value.trim() : '';\n\n\t  if (!requestId) {\n\t    requestId = event.context && event.context.requestId ? String(event.context.requestId).trim() : '';\n\t  }\n\n\t  if (requestId) {\n\t    response.headers = response.headers || {};\n\t    if (!response.headers['x-request-id']) {\n\t      response.headers['x-request-id'] = { value: requestId };\n\t    }\n\t  }\n\n\t  return response;\n\t}",
+        "FunctionConfig": {
+          "Comment": "FaceTheory viewer-response request-id echo for SSR site",
+          "Runtime": "cloudfront-js-2.0"
+        },
+        "Name": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::Region"
+              },
+              "TestStackSiteSsrResponseFunction50798BB1"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::CloudFront::Function"
     }
   },
   "Rules": {

@@ -1,47 +1,80 @@
-# AppTheory SSR Site (Lambda URL + CloudFront) — CDK Example
+# AppTheory SSR Site (Lambda URL + CloudFront) - CDK Example
+
+Canonical operator guide: `docs/cdk/ssr-site.md`
 
 This example synthesizes an opinionated **SSR site** deployment pattern:
 
 - S3 bucket for immutable assets under `/assets/*`
-- Lambda Function URL origin (response streaming enabled)
-- CloudFront distribution with two origins + path routing
+- Lambda Function URL origin (response streaming enabled, with auth chosen to match the exposed route shape)
+- CloudFront distribution with explicit `ssr-only` / `ssg-isr` modes and shared FaceTheory edge glue
+- `ssg-isr` primary HTML origin backed by `htmlStoreBucket`, plus direct Lambda carve-outs for same-origin dynamic routes
 
 The construct (`AppTheorySsrSite`) also wires recommended runtime environment variables onto the SSR function:
 
 - `APPTHEORY_ASSETS_BUCKET`
 - `APPTHEORY_ASSETS_PREFIX`
 - `APPTHEORY_ASSETS_MANIFEST_KEY`
+- Optional (when configured): `FACETHEORY_ISR_BUCKET`, `FACETHEORY_ISR_PREFIX`
 - Optional (when configured): `APPTHEORY_CACHE_TABLE_NAME`, `FACETHEORY_CACHE_TABLE_NAME`, `CACHE_TABLE_NAME`, `CACHE_TABLE`
 
 ## FaceTheory-first deployment guide
 
-FaceTheory’s recommended topology splits CloudFront behaviors so static paths don’t traverse the SSR Lambda:
+FaceTheory's recommended topology splits CloudFront behaviors so static paths don't traverse the SSR Lambda:
 
-- `assets/*` → S3 (assets)
-- `/_facetheory/data/*` → S3 (SSG hydration JSON)
-- default `*` → Lambda Function URL (SSR + ISR)
+- `assets/*` -> S3 (assets)
+- `/_facetheory/data/*` -> S3 (SSG hydration JSON)
+- default `*` -> S3 primary HTML origin with Lambda Function URL fallback
 
 Example configuration:
 
 ```ts
 new AppTheorySsrSite(this, "Site", {
   ssrFunction: ssrFn,
+  mode: AppTheorySsrSiteMode.SSG_ISR,
 
-  // Static routes served directly from S3 (accepts with/without leading "/").
-  staticPathPatterns: ["/_facetheory/data/*"],
+  // FaceTheory ISR HTML storage (`S3HtmlStore`).
+  htmlStoreBucket: isrBucket,
+  htmlStoreKeyPrefix: "isr",
 
-  // Forward FaceTheory’s tenant header to SSR when needed (normalized + de-duped).
+  // FaceTheory ISR metadata + lease coordination (TableTheory schema).
+  isrMetadataTable,
+
+  // Cacheable HTML sections that should stay on the HTML store.
+  staticPathPatterns: ["/marketing/*"],
+
+  // Dynamic same-origin routes that should bypass the origin group.
+  ssrPathPatterns: ["/actions/*"],
+
+  // This example keeps the auth model explicit because it exposes browser POST routes.
+  ssrUrlAuthType: lambda.FunctionUrlAuthType.NONE,
+
+  // Forward FaceTheory's tenant header to SSR when needed (normalized + de-duped).
   ssrForwardHeaders: ["x-facetheory-tenant"],
-
-  // ISR/cache metadata table (TableTheory). Wires FACETHEORY_CACHE_TABLE_NAME + generic aliases.
-  cacheTableName: "facetheory-isr-metadata",
 });
 ```
 
-Notes for ISR permissions (app-defined):
+Default SSR origin contract:
 
-- Your SSR Lambda needs **read/write** access to the S3 bucket/prefix used by your HTML store (e.g. `S3HtmlStore`).
-- Your SSR Lambda needs **read/write** access to the DynamoDB table backing ISR metadata + leases (TableTheory schema).
+- `AppTheorySsrSite` auto-selects the Function URL auth model based on the exposed Lambda-backed surface:
+  - `AWS_IAM` + CloudFront Function URL OAC for read-only Lambda traffic
+  - `NONE` for browser-facing writable Lambda traffic such as `ssr-only` or `ssg-isr` plus `ssrPathPatterns`
+- Set `ssrUrlAuthType` explicitly when you need to force a specific Function URL auth mode.
+- `ssr-only` preserves the existing shape: Lambda is the default origin and direct S3 behaviors are only used for assets and explicitly configured static paths.
+- `ssg-isr` promotes the stronger FaceTheory topology: `htmlStoreBucket` becomes the primary HTML origin, Lambda is the fallback for cache misses on `GET` / `HEAD` / `OPTIONS`, `/_facetheory/data/*` stays on direct S3, and extensionless HTML paths rewrite to `/index.html` at the edge.
+- Use `ssrPathPatterns` for same-origin dynamic routes such as actions, callbacks, or form posts that must bypass the origin group and route directly to Lambda with full method support.
+- The viewer-request function preserves an inbound `x-request-id`, otherwise falls back to the CloudFront request ID, and records both `x-apptheory-*` and `x-facetheory-*` original host/URI headers for the origin contract.
+- The viewer-response function echoes `x-request-id` back to clients for both S3 and SSR responses.
+- Default forwarded headers are limited to safe edge context: `cloudfront-forwarded-proto`, `cloudfront-viewer-address`, `x-apptheory-original-host`, `x-apptheory-original-uri`, `x-facetheory-original-host`, `x-facetheory-original-uri`, `x-request-id`, and `x-tenant-id`.
+- Additional app-specific headers remain opt-in via `ssrForwardHeaders`; `host` and `x-forwarded-proto` are intentionally rejected.
+- Direct Lambda-backed SSR behaviors default to `CACHING_DISABLED` unless you opt into `ssrCachePolicy`.
+- The default `ssg-isr` HTML behavior and any `staticPathPatterns` HTML sections use a public cache policy that keys on all query strings plus stable public variant headers, excludes cookies, and still lets origin cache-control headers drive freshness.
+- Direct S3 asset/data behaviors continue to use origin-defined cache-control semantics.
+- AppTheory provisions baseline CDN security headers by default: HSTS, `nosniff`, `frame-options`, `referrer-policy`, XSS protection, and a restrictive `permissions-policy`. CSP remains origin-defined.
+
+Notes for ISR resource wiring:
+
+- If you pass `htmlStoreBucket` and `isrMetadataTable`, `AppTheorySsrSite` grants the SSR Lambda read/write access and wires the matching env vars automatically.
+- If you use name-only wiring (`isrMetadataTableName` / legacy `cacheTableName`), you still need to grant table access in your app stack.
 
 ## Prerequisites
 
@@ -55,6 +88,30 @@ cd examples/cdk/ssr-site
 npm ci
 npx cdk synth
 ```
+
+## Deploy-grade smoke verification
+
+The deterministic synth hash is the normal automated gate for this example. When you want a real AWS verification pass,
+run the live smoke check through `scripts/verify-ssr-site-smoke.sh` manually.
+
+Manual run from the repo root:
+
+```bash
+./scripts/verify-ssr-site-smoke.sh
+```
+
+Optional environment:
+
+- `APPTHEORY_SSR_SITE_STACK_NAME` to override the temporary stack name
+- `APPTHEORY_SSR_SMOKE_KEEP_STACK=1` to keep the deployed stack for debugging
+
+The smoke check covers:
+
+- SSR fallback on `/`
+- HTML store routing on `/marketing` and `/marketing/about`
+- raw S3 hydration data on `/_facetheory/data/home.json`
+- direct Lambda action routing on `POST /actions/ping`
+- direct Function URL access matching the example's explicit public auth model for writable routes
 
 ## Build/deploy helpers (optional)
 

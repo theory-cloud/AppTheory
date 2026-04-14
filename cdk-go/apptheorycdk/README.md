@@ -30,7 +30,7 @@ Status: early; start with a small “top 20%” set and grow based on real usage
 * `AppTheoryPathRoutedFrontend` — CloudFront distribution for multi-SPA routing + API origin (stage domain pattern).
 * `AppTheoryMediaCdn` — CloudFront distribution for an S3-backed media CDN (optional private media via key groups).
 * `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).
-* `AppTheorySsrSite` — SSR site pattern (Lambda + CloudFront + domain/cert helpers).
+* `AppTheorySsrSite` — SSR site pattern with explicit `ssr-only` / `ssg-isr` modes, shared FaceTheory edge functions, and a signed Function URL fallback path.
 
 ## Minimal example
 
