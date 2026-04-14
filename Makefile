@@ -1,6 +1,7 @@
 # AppTheory Makefile
 
-.PHONY: all build test test-unit lint fmt fmt-check rubric verify-builds
+.PHONY: all build test test-unit lint fmt fmt-check rubric verify-builds \
+	theorycloud-apptheory-subtree verify-theorycloud-apptheory-subtree
 
 TOOLCHAIN := $(shell awk '/^toolchain / {print $$2}' go.mod | head -n 1)
 export GOTOOLCHAIN ?= $(TOOLCHAIN)
@@ -39,3 +40,9 @@ rubric:
 
 verify-builds:
 	@./scripts/verify-builds.sh
+
+theorycloud-apptheory-subtree:
+	@bash ./scripts/stage-theorycloud-apptheory-subtree.sh
+
+verify-theorycloud-apptheory-subtree:
+	@bash ./scripts/verify-theorycloud-apptheory-subtree.sh
