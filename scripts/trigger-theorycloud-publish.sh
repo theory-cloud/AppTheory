@@ -127,7 +127,7 @@ if [[ "${PUBLISH_DRY_RUN}" == "true" ]]; then
   fi
   echo "url=${PUBLISH_URL}"
   echo "payload=${PAYLOAD}"
-  echo "command=awscurl --service execute-api --region ${AWS_REGION} -X POST -H content-type:application/json --data ${PAYLOAD} ${PUBLISH_URL}"
+  echo "command=awscurl --service execute-api --region ${AWS_REGION} -X POST -H content-type: application/json --fail-with-body -o <response-file> --data ${PAYLOAD} ${PUBLISH_URL}"
   echo "trigger-theorycloud-publish: PASS (dry-run; url=${PUBLISH_URL})"
   exit 0
 fi
@@ -135,19 +135,18 @@ fi
 command -v awscurl >/dev/null 2>&1 || fail "awscurl is required for publish invocation"
 
 response_file="$(mktemp)"
-http_code="$(awscurl --service execute-api --region "${AWS_REGION}" -X POST -H 'content-type: application/json' --data "${PAYLOAD}" -o "${response_file}" -w '%{http_code}' "${PUBLISH_URL}")" || {
-  status=$?
-  rm -f "${response_file}"
-  fail "awscurl invocation failed for ${PUBLISH_URL} (exit ${status})"
-}
+trap 'rm -f "${response_file}"' EXIT
 
-if [[ ! "${http_code}" =~ ^2 ]]; then
-  body="$(cat "${response_file}")"
-  rm -f "${response_file}"
-  fail "publish returned HTTP ${http_code}: ${body}"
+if awscurl --service execute-api --region "${AWS_REGION}" -X POST -H 'content-type: application/json' --fail-with-body --data "${PAYLOAD}" -o "${response_file}" "${PUBLISH_URL}"; then
+  :
+else
+  status=$?
+  body="$(cat "${response_file}" 2>/dev/null || true)"
+  fail "awscurl invocation failed for ${PUBLISH_URL} (exit ${status}): ${body}"
 fi
 
 body="$(cat "${response_file}")"
-rm -f "${response_file}"
-echo "trigger-theorycloud-publish: PASS (url=${PUBLISH_URL}; http=${http_code})"
+echo "trigger-theorycloud-publish: PASS (url=${PUBLISH_URL})"
 printf '%s\n' "${body}"
+rm -f "${response_file}"
+trap - EXIT
