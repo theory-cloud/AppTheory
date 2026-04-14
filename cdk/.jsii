@@ -11632,7 +11632,7 @@
           },
           "locationInModule": {
             "filename": "lib/eventbus-table.ts",
-            "line": 103
+            "line": 105
           },
           "name": "bind",
           "parameters": [
@@ -12999,7 +12999,7 @@
           },
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 173
+            "line": 175
           },
           "name": "bindEnvironment",
           "parameters": [
@@ -13017,7 +13017,7 @@
           },
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 180
+            "line": 182
           },
           "name": "grantReadTo",
           "parameters": [
@@ -13035,7 +13035,7 @@
           },
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 194
+            "line": 196
           },
           "name": "grantReadWriteTo",
           "parameters": [
@@ -13053,7 +13053,7 @@
           },
           "locationInModule": {
             "filename": "lib/jobs-table.ts",
-            "line": 187
+            "line": 189
           },
           "name": "grantWriteTo",
           "parameters": [
@@ -20152,5 +20152,5 @@
     }
   },
   "version": "0.24.2",
-  "fingerprint": "X+auK/1swoNoBiz/zPilZzleTej8DQbrSTwqI4+hDAM="
+  "fingerprint": "FEs0WIGszOXsKxjUm/VdyFvamCizERnLjwD/oNwxTo8="
 }
