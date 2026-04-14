@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.24.4-rc](https://github.com/theory-cloud/AppTheory/compare/v0.24.3...v0.24.4-rc) (2026-04-14)
+
+
+### Bug Fixes
+
+* **ci:** cover live theorycloud publish exec path ([7ce66c6](https://github.com/theory-cloud/AppTheory/commit/7ce66c66672725116d2d33e09819e0e8be620459))
+* **ci:** cover live theorycloud publish exec path ([ce8ef69](https://github.com/theory-cloud/AppTheory/commit/ce8ef6900ef77a8614d5765ced14031e71941b31))
+
 ## [0.24.3](https://github.com/theory-cloud/AppTheory/compare/v0.24.2...v0.24.3) (2026-04-13)
 
 
