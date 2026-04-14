@@ -13,6 +13,8 @@ export declare function cacheControlISR(revalidateSeconds: number, staleWhileRev
 export declare function etag(body: Uint8Array | string): string;
 export declare function matchesIfNoneMatch(headers: Headers, tag: string): boolean;
 export declare function vary(existing: string[] | null | undefined, ...add: string[]): string[];
+export declare function originalHost(headers: Headers): string;
+export declare function originalURI(headers: Headers): string;
 export declare function originURL(headers: Headers): string;
 export declare function clientIP(headers: Headers): string;
 export {};

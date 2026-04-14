@@ -1,23 +1,162 @@
 import { RemovalPolicy } from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
+export declare enum AppTheorySsrSiteMode {
+    /**
+     * Lambda Function URL is the default origin. Direct S3 behaviors are used only for
+     * immutable assets and any explicitly configured static path patterns.
+     *
+     * Because this mode exposes Lambda as the default viewer surface with write methods,
+     * omitted `ssrUrlAuthType` resolves to `NONE`.
+     */
+    SSR_ONLY = "ssr-only",
+    /**
+     * S3 is the primary HTML origin and Lambda SSR/ISR is the fallback. FaceTheory hydration
+     * data routes are kept on S3 and the edge rewrites extensionless paths to `/index.html`.
+     */
+    SSG_ISR = "ssg-isr"
+}
 export interface AppTheorySsrSiteProps {
     readonly ssrFunction: lambda.IFunction;
+    /**
+     * Explicit deployment mode for the site topology.
+     *
+     * - `ssr-only`: Lambda Function URL is the default origin
+     * - `ssg-isr`: S3 is the primary HTML origin and Lambda is the fallback
+     *
+     * Existing implicit behavior maps to `ssr-only`.
+     * @default AppTheorySsrSiteMode.SSR_ONLY
+     */
+    readonly mode?: AppTheorySsrSiteMode;
+    /**
+     * Lambda Function URL invoke mode for the SSR origin.
+     * @default lambda.InvokeMode.RESPONSE_STREAM
+     */
     readonly invokeMode?: lambda.InvokeMode;
+    /**
+     * Function URL auth type for the SSR origin.
+     *
+     * If omitted, AppTheory auto-selects the auth model based on the exposed
+     * Lambda-backed surface:
+     *
+     * - `AWS_IAM` for read-only Lambda traffic (`GET` / `HEAD` / `OPTIONS`)
+     * - `NONE` when Lambda-backed behaviors expose browser-facing write methods
+     *
+     * Set this explicitly to force a specific Function URL auth mode.
+     * @default derived from exposed Lambda methods
+     */
+    readonly ssrUrlAuthType?: lambda.FunctionUrlAuthType;
     readonly assetsBucket?: s3.IBucket;
     readonly assetsPath?: string;
     readonly assetsKeyPrefix?: string;
     readonly assetsManifestKey?: string;
+    /**
+     * Optional S3 bucket used by FaceTheory ISR HTML storage (`S3HtmlStore`).
+     *
+     * When provided, AppTheory grants the SSR function read/write access and wires:
+     * - `FACETHEORY_ISR_BUCKET`
+     * - `FACETHEORY_ISR_PREFIX`
+     */
+    readonly htmlStoreBucket?: s3.IBucket;
+    /**
+     * S3 key prefix used by FaceTheory ISR HTML storage.
+     * @default isr
+     */
+    readonly htmlStoreKeyPrefix?: string;
+    /**
+     * Additional extensionless HTML section path patterns to route directly to the primary HTML S3 origin.
+     *
+     * Requests like `/marketing` and `/marketing/...` are rewritten to `/index.html`
+     * within the section and stay on S3 instead of falling back to Lambda.
+     *
+     * Example direct-S3 HTML section path: "/marketing/*"
+     */
     readonly staticPathPatterns?: string[];
+    /**
+     * Additional raw S3 object/data path patterns that should bypass extensionless HTML rewrites.
+     *
+     * In `ssg-isr` mode, `/_facetheory/data/*` is added automatically.
+     * Example direct-S3 object path: "/feeds/*"
+     */
+    readonly directS3PathPatterns?: string[];
+    /**
+     * Additional path patterns that should bypass the `ssg-isr` origin group and route directly
+     * to the Lambda Function URL with full method support.
+     *
+     * Use this for same-origin dynamic paths such as auth callbacks, actions, or form posts.
+     * When `ssrUrlAuthType` is omitted, adding these patterns makes AppTheory select
+     * `NONE` so browser-facing write methods keep working through CloudFront.
+     * Example direct-SSR path: "/actions/*"
+     */
+    readonly ssrPathPatterns?: string[];
+    /**
+     * Optional TableTheory/DynamoDB table used for FaceTheory ISR metadata and lease coordination.
+     *
+     * When provided, AppTheory grants the SSR function read/write access and wires the
+     * metadata table aliases expected by the documented FaceTheory deployment shape.
+     */
+    readonly isrMetadataTable?: dynamodb.ITable;
+    /**
+     * Optional ISR/cache metadata table name to wire when you are not passing `isrMetadataTable`.
+     *
+     * Prefer `isrMetadataTable` when AppTheory should also grant access to the SSR Lambda.
+     */
+    readonly isrMetadataTableName?: string;
+    /**
+     * Legacy alias for `isrMetadataTableName`.
+     * @deprecated prefer `isrMetadataTable` or `isrMetadataTableName`
+     */
     readonly cacheTableName?: string;
     readonly wireRuntimeEnv?: boolean;
+    /**
+     * Additional headers to forward to the SSR origin (Lambda Function URL) via the origin request policy.
+     *
+     * The default AppTheory/FaceTheory-safe edge contract forwards only:
+     * - `cloudfront-forwarded-proto`
+     * - `cloudfront-viewer-address`
+     * - `x-apptheory-original-host`
+     * - `x-apptheory-original-uri`
+     * - `x-facetheory-original-host`
+     * - `x-facetheory-original-uri`
+     * - `x-request-id`
+     * - `x-tenant-id`
+     *
+     * Use this to opt in to additional app-specific headers such as
+     * `x-facetheory-tenant`. `host` and `x-forwarded-proto` are rejected because
+     * they break or bypass the supported origin model.
+     */
     readonly ssrForwardHeaders?: string[];
     readonly enableLogging?: boolean;
     readonly logsBucket?: s3.IBucket;
+    /**
+     * CloudFront response headers policy applied to SSR and direct-S3 behaviors.
+     *
+     * If omitted, AppTheory provisions a FaceTheory-aligned baseline policy at the CDN
+     * layer: HSTS, nosniff, frame-options, referrer-policy, XSS protection, and a
+     * restrictive permissions-policy. Content-Security-Policy remains origin-defined.
+     */
+    readonly responseHeadersPolicy?: cloudfront.IResponseHeadersPolicy;
+    /**
+     * Cache policy applied to direct Lambda-backed SSR behaviors.
+     *
+     * The default is `CACHING_DISABLED` so dynamic Lambda routes stay safe unless you
+     * intentionally opt into a cache policy that matches your app's variance model.
+     * @default cloudfront.CachePolicy.CACHING_DISABLED
+     */
+    readonly ssrCachePolicy?: cloudfront.ICachePolicy;
+    /**
+     * Cache policy applied to the cacheable HTML behavior in `ssg-isr` mode.
+     *
+     * The default AppTheory policy keys on query strings plus the stable public HTML
+     * variant headers (`x-*-original-host`, `x-tenant-id`, and any extra forwarded
+     * headers you opt into) while leaving cookies out of the cache key.
+     */
+    readonly htmlCachePolicy?: cloudfront.ICachePolicy;
     readonly removalPolicy?: RemovalPolicy;
     readonly autoDeleteObjects?: boolean;
     readonly domainName?: string;
@@ -29,9 +168,13 @@ export declare class AppTheorySsrSite extends Construct {
     readonly assetsBucket: s3.IBucket;
     readonly assetsKeyPrefix: string;
     readonly assetsManifestKey: string;
+    readonly htmlStoreBucket?: s3.IBucket;
+    readonly htmlStoreKeyPrefix?: string;
+    readonly isrMetadataTable?: dynamodb.ITable;
     readonly logsBucket?: s3.IBucket;
     readonly ssrUrl: lambda.FunctionUrl;
     readonly distribution: cloudfront.Distribution;
     readonly certificate?: acm.ICertificate;
+    readonly responseHeadersPolicy: cloudfront.IResponseHeadersPolicy;
     constructor(scope: Construct, id: string, props: AppTheorySsrSiteProps);
 }

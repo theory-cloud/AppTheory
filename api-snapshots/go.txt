@@ -1639,6 +1639,10 @@ func OptionalAuth() RouteOption
 
 func OriginURL(map[string][]string) string
 
+func OriginalHost(map[string][]string) string
+
+func OriginalURI(map[string][]string) string
+
 func RateLimitMiddleware(RateLimitConfig) Middleware
 
 func RequireAnyScope(...string) RouteOption

@@ -10,6 +10,7 @@ This guide maps common symptoms to verified fixes.
 | Snapshot drift | `./scripts/verify-api-snapshots.sh` | Run `./scripts/update-api-snapshots.sh` and review the public API delta |
 | Cross-language behavior mismatch | `./scripts/verify-contract-tests.sh` | Update fixtures/tests or fix runtime parity |
 | CDK synth or package failure | `make rubric` | Inspect the failing `verify-cdk-*` or build step and regenerate outputs |
+| Live SSR smoke failure | `./scripts/verify-ssr-site-smoke.sh` | Check AWS credentials, deploy outputs, and CloudFront / Function URL reachability |
 | Docs contract issue | `./scripts/verify-docs-standard.sh` | Restore the canonical docs set under `docs/` |
 
 ## Issue: version alignment check fails
@@ -170,6 +171,32 @@ make rubric
 ```
 
 Review the failing synth example or construct before changing the verifier.
+
+## Issue: manual SSR smoke verification fails
+
+Symptoms:
+
+- `./scripts/verify-ssr-site-smoke.sh` fails
+- CloudFront returns `403`, `502`, or never serves the SSR example root path
+
+Cause:
+
+- AWS credentials are missing
+- CloudFront cannot reach the Lambda Function URL under the selected auth model
+- a header-policy regression reintroduced a bad SSR origin contract
+
+Fix:
+
+- run the smoke verifier locally with valid AWS credentials to reproduce the deployed failure
+- inspect the deployed stack outputs, CloudFront root response, asset response, CloudFront `POST` action response, and
+  direct Function URL response
+
+Verification:
+
+```bash
+./scripts/verify-ssr-site-smoke.sh
+make rubric
+```
 
 ## Issue: docs-standard fails after a docs change
 

@@ -81,7 +81,9 @@ export class AppTheoryDynamoTable extends Construct {
       ...(ttlAttribute ? { timeToLiveAttribute: ttlAttribute } : {}),
       removalPolicy,
       deletionProtection: props.deletionProtection,
-      pointInTimeRecovery: enablePITR,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: enablePITR,
+      },
       encryption,
       encryptionKey: props.encryptionKey,
       stream,

@@ -253,15 +253,37 @@ function firstCommaToken(value: unknown): string {
   return String(value ?? "").split(",", 1)[0] ?? "";
 }
 
+function originalHostFromCanonicalizedHeaders(h: Headers): string {
+  const forwarded = parseForwardedHeader(firstHeaderValue(h, "forwarded"));
+  const host =
+    firstHeaderValue(h, "x-apptheory-original-host") ||
+    firstHeaderValue(h, "x-facetheory-original-host") ||
+    firstHeaderValue(h, "x-forwarded-host") ||
+    forwarded.host ||
+    firstHeaderValue(h, "host");
+  return firstCommaToken(host).trim();
+}
+
+function originalURIFromCanonicalizedHeaders(h: Headers): string {
+  return (
+    firstHeaderValue(h, "x-apptheory-original-uri") ||
+    firstHeaderValue(h, "x-facetheory-original-uri")
+  ).trim();
+}
+
+export function originalHost(headers: Headers): string {
+  return originalHostFromCanonicalizedHeaders(canonicalizeHeaders(headers));
+}
+
+export function originalURI(headers: Headers): string {
+  return originalURIFromCanonicalizedHeaders(canonicalizeHeaders(headers));
+}
+
 export function originURL(headers: Headers): string {
   const h = canonicalizeHeaders(headers);
   const forwarded = parseForwardedHeader(firstHeaderValue(h, "forwarded"));
 
-  let host =
-    firstHeaderValue(h, "x-forwarded-host") ||
-    forwarded.host ||
-    firstHeaderValue(h, "host");
-  host = firstCommaToken(host).trim();
+  const host = originalHostFromCanonicalizedHeaders(h);
   if (!host) return "";
 
   let proto =

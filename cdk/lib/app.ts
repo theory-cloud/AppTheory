@@ -73,7 +73,9 @@ export class AppTheoryApp extends Construct {
           ? { name: props.databaseSortKey, type: dynamodb.AttributeType.STRING }
           : undefined,
         timeToLiveAttribute: "ttl",
-        pointInTimeRecovery: true,
+        pointInTimeRecoverySpecification: {
+          pointInTimeRecoveryEnabled: true,
+        },
         encryption: dynamodb.TableEncryption.AWS_MANAGED,
         stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
       });
@@ -90,7 +92,9 @@ export class AppTheoryApp extends Construct {
         partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
         sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
         timeToLiveAttribute: "ttl",
-        pointInTimeRecovery: true,
+        pointInTimeRecoverySpecification: {
+          pointInTimeRecoveryEnabled: true,
+        },
         encryption: dynamodb.TableEncryption.AWS_MANAGED,
       });
 
