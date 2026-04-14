@@ -35,9 +35,9 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      AWS_REGION: us-east-1
       THEORYCLOUD_STAGE: ${{ github.ref_name == 'premain' && 'lab' || github.ref_name == 'main' && 'live' || '' }}
-      AWS_ROLE_ARN: ${{ github.ref_name == 'premain' && vars.THEORYCLOUD_AWS_ROLE_ARN_LAB || github.ref_name == 'main' && vars.THEORYCLOUD_AWS_ROLE_ARN_LIVE || '' }}
+      AWS_ROLE_ARN: ${{ github.ref_name == 'premain' && 'arn:aws:iam::787107040121:role/KnowledgeTheory-TheoryCloud-AppTheory-lab-Publisher' || github.ref_name == 'main' && 'arn:aws:iam::787107040121:role/KnowledgeTheory-TheoryCloud-AppTheory-live-Publisher' || '' }}
       THEORYCLOUD_PUBLISH_REASON: ${{ format('github:{0}:{1}', github.repository, github.ref_name) }}
     steps:
       - name: Checkout protected branch head
@@ -49,7 +49,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          : "${AWS_REGION:?missing vars.AWS_REGION (or default)}"
+          : "${AWS_REGION:?missing literal AWS region}"
           : "${THEORYCLOUD_STAGE:?missing stage resolution}"
           : "${AWS_ROLE_ARN:?missing stage-scoped AWS role ARN}"
 
