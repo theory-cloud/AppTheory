@@ -80,6 +80,7 @@ paths_block="$(awk '
 ' "${WORKFLOW_FILE}")"
 
 for required_path in \
+  '".github/workflows/theorycloud-apptheory-subtree-publish.yml"' \
   '"docs/README.md"' \
   '"docs/_contract.yaml"' \
   '"docs/_concepts.yaml"' \
@@ -95,14 +96,16 @@ for required_path in \
   '"docs/features/**"' \
   '"docs/integrations/**"' \
   '"docs/migration/**"' \
-  '"docs/llm-faq/**"'
+  '"docs/llm-faq/**"' \
+  '"scripts/stage-theorycloud-apptheory-subtree.sh"' \
+  '"scripts/theorycloud-apptheory-env.sh"' \
+  '"scripts/sync-theorycloud-apptheory-subtree.sh"' \
+  '"scripts/trigger-theorycloud-publish.sh"' \
+  '"scripts/verify-theorycloud-apptheory-publish-config.sh"' \
+  '"scripts/verify-theorycloud-publish-workflow.sh"'
 do
   assert_contains "${paths_block}" "${required_path}"
 done
-
-if grep -Eq 'scripts/|\.github/workflows/' <<<"${paths_block}"; then
-  fail "workflow paths must be limited to canonical docs changes"
-fi
 
 for disallowed_path in \
   'docs/development/' \
