@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.24.5](https://github.com/theory-cloud/AppTheory/compare/v0.24.4...v0.24.5) (2026-04-15)
+
+
+### Bug Fixes
+
+* **deps:** bump TableTheory to v1.5.5 ([0858353](https://github.com/theory-cloud/AppTheory/commit/08583531297cda149ebcc6b11f422c41c9b5f544))
+* **deps:** bump TableTheory to v1.5.5 ([668c500](https://github.com/theory-cloud/AppTheory/commit/668c50080676507e5331136a32cf3d9c58bd2baa))
+
 ## [0.24.4-rc.1](https://github.com/theory-cloud/AppTheory/compare/v0.24.4-rc...v0.24.4-rc.1) (2026-04-15)
 
 
