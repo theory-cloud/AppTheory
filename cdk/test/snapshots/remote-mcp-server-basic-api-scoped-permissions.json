@@ -1,0 +1,414 @@
+{
+  "Outputs": {
+    "RemoteMcpApiEndpoint13A0DE9A": {
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "https://",
+            {
+              "Ref": "RemoteMcpApi6A28A6F0"
+            },
+            ".execute-api.",
+            {
+              "Ref": "AWS::Region"
+            },
+            ".",
+            {
+              "Ref": "AWS::URLSuffix"
+            },
+            "/",
+            {
+              "Ref": "RemoteMcpApiDeploymentStageprod63002A1D"
+            },
+            "/"
+          ]
+        ]
+      }
+    }
+  },
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "Fn9270CBC0": {
+      "DependsOn": [
+        "FnServiceRoleB9001A96"
+      ],
+      "Properties": {
+        "Code": {
+          "ZipFile": "exports.handler = async () => ({ statusCode: 200, body: 'ok' });"
+        },
+        "Environment": {
+          "Variables": {
+            "MCP_ENDPOINT": {
+              "Fn::Join": [
+                "",
+                [
+                  "https://",
+                  {
+                    "Ref": "RemoteMcpApi6A28A6F0"
+                  },
+                  ".execute-api.",
+                  {
+                    "Ref": "AWS::Region"
+                  },
+                  ".",
+                  {
+                    "Ref": "AWS::URLSuffix"
+                  },
+                  "/prod/mcp"
+                ]
+              ]
+            }
+          }
+        },
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "FnServiceRoleB9001A96",
+            "Arn"
+          ]
+        },
+        "Runtime": "nodejs24.x"
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "FnServiceRoleB9001A96": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+              ]
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "RemoteMcpApi6A28A6F0": {
+      "Properties": {
+        "EndpointConfiguration": {
+          "Types": [
+            "REGIONAL"
+          ]
+        },
+        "Name": "apptheory-remote-mcp-test"
+      },
+      "Type": "AWS::ApiGateway::RestApi"
+    },
+    "RemoteMcpApiAccountFAD8D99A": {
+      "DeletionPolicy": "Retain",
+      "DependsOn": [
+        "RemoteMcpApi6A28A6F0"
+      ],
+      "Properties": {
+        "CloudWatchRoleArn": {
+          "Fn::GetAtt": [
+            "RemoteMcpApiCloudWatchRoleE6BA8C69",
+            "Arn"
+          ]
+        }
+      },
+      "Type": "AWS::ApiGateway::Account",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "RemoteMcpApiApiPermissionApiScopedTestStackFnDC3B58FBTestStackRemoteMcpApi4383765ED77CE35F": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region"
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":",
+              {
+                "Ref": "RemoteMcpApi6A28A6F0"
+              },
+              "/*/*/*"
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "RemoteMcpApiCloudWatchRoleE6BA8C69": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "apigateway.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+              ]
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "RemoteMcpApiDeploymentC23505CBc4005053a3bfb3a0905041b79696594b": {
+      "DependsOn": [
+        "RemoteMcpApimcpDELETEFC6BA5B9",
+        "RemoteMcpApimcpGETC98E2584",
+        "RemoteMcpApimcpPOSTB1694D76",
+        "RemoteMcpApimcp6079DB6F"
+      ],
+      "Metadata": {
+        "aws:cdk:do-not-refactor": true
+      },
+      "Properties": {
+        "Description": "Automatically created by the RestApi construct",
+        "RestApiId": {
+          "Ref": "RemoteMcpApi6A28A6F0"
+        }
+      },
+      "Type": "AWS::ApiGateway::Deployment"
+    },
+    "RemoteMcpApiDeploymentStageprod63002A1D": {
+      "DependsOn": [
+        "RemoteMcpApiAccountFAD8D99A"
+      ],
+      "Properties": {
+        "DeploymentId": {
+          "Ref": "RemoteMcpApiDeploymentC23505CBc4005053a3bfb3a0905041b79696594b"
+        },
+        "RestApiId": {
+          "Ref": "RemoteMcpApi6A28A6F0"
+        },
+        "StageName": "prod",
+        "Variables": {
+          "APPTHEORYSTREAMINGV12e315fa5c67a10e0559d6e70b4bfba00": "1",
+          "APPTHEORYSTREAMINGV18792f92bbc3e937d5e5df2999ed6fed5": "1"
+        }
+      },
+      "Type": "AWS::ApiGateway::Stage"
+    },
+    "RemoteMcpApimcp6079DB6F": {
+      "Properties": {
+        "ParentId": {
+          "Fn::GetAtt": [
+            "RemoteMcpApi6A28A6F0",
+            "RootResourceId"
+          ]
+        },
+        "PathPart": "mcp",
+        "RestApiId": {
+          "Ref": "RemoteMcpApi6A28A6F0"
+        }
+      },
+      "Type": "AWS::ApiGateway::Resource"
+    },
+    "RemoteMcpApimcpDELETEFC6BA5B9": {
+      "Properties": {
+        "AuthorizationType": "NONE",
+        "HttpMethod": "DELETE",
+        "Integration": {
+          "IntegrationHttpMethod": "POST",
+          "ResponseTransferMode": "BUFFERED",
+          "Type": "AWS_PROXY",
+          "Uri": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":apigateway:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":lambda:path/2015-03-31/functions/",
+                {
+                  "Fn::GetAtt": [
+                    "Fn9270CBC0",
+                    "Arn"
+                  ]
+                },
+                "/invocations"
+              ]
+            ]
+          }
+        },
+        "ResourceId": {
+          "Ref": "RemoteMcpApimcp6079DB6F"
+        },
+        "RestApiId": {
+          "Ref": "RemoteMcpApi6A28A6F0"
+        }
+      },
+      "Type": "AWS::ApiGateway::Method"
+    },
+    "RemoteMcpApimcpGETC98E2584": {
+      "Properties": {
+        "AuthorizationType": "NONE",
+        "HttpMethod": "GET",
+        "Integration": {
+          "IntegrationHttpMethod": "POST",
+          "ResponseTransferMode": "STREAM",
+          "TimeoutInMillis": 900000,
+          "Type": "AWS_PROXY",
+          "Uri": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":apigateway:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":lambda:path/2021-11-15/functions/",
+                {
+                  "Fn::GetAtt": [
+                    "Fn9270CBC0",
+                    "Arn"
+                  ]
+                },
+                "/response-streaming-invocations"
+              ]
+            ]
+          }
+        },
+        "ResourceId": {
+          "Ref": "RemoteMcpApimcp6079DB6F"
+        },
+        "RestApiId": {
+          "Ref": "RemoteMcpApi6A28A6F0"
+        }
+      },
+      "Type": "AWS::ApiGateway::Method"
+    },
+    "RemoteMcpApimcpPOSTB1694D76": {
+      "Properties": {
+        "AuthorizationType": "NONE",
+        "HttpMethod": "POST",
+        "Integration": {
+          "IntegrationHttpMethod": "POST",
+          "ResponseTransferMode": "STREAM",
+          "TimeoutInMillis": 900000,
+          "Type": "AWS_PROXY",
+          "Uri": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition"
+                },
+                ":apigateway:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":lambda:path/2021-11-15/functions/",
+                {
+                  "Fn::GetAtt": [
+                    "Fn9270CBC0",
+                    "Arn"
+                  ]
+                },
+                "/response-streaming-invocations"
+              ]
+            ]
+          }
+        },
+        "ResourceId": {
+          "Ref": "RemoteMcpApimcp6079DB6F"
+        },
+        "RestApiId": {
+          "Ref": "RemoteMcpApi6A28A6F0"
+        }
+      },
+      "Type": "AWS::ApiGateway::Method"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}

@@ -101,6 +101,30 @@ function restApiStageVariables(template) {
   return {};
 }
 
+function lambdaPermissionSourceArns(template) {
+  const sourceArns = [];
+  for (const resource of Object.values(template.Resources ?? {})) {
+    if (resource.Type !== "AWS::Lambda::Permission") continue;
+    sourceArns.push(JSON.stringify(stableJson(resource.Properties?.SourceArn ?? null)));
+  }
+  return sourceArns;
+}
+
+function lambdaPermissionCount(template) {
+  return lambdaPermissionSourceArns(template).length;
+}
+
+function assertNoTestInvokeStagePermissions(template) {
+  const sourceArns = lambdaPermissionSourceArns(template);
+  assert.ok(sourceArns.length >= 1, "Should synthesize at least one Lambda permission");
+  for (const sourceArn of sourceArns) {
+    assert.ok(
+      !sourceArn.includes("/test-invoke-stage/"),
+      `Should not include test-invoke-stage Lambda permission: ${sourceArn}`,
+    );
+  }
+}
+
 function assertStreamingRouteStageVariable(template, method, path) {
   const variables = restApiStageVariables(template);
   const key = restApiStreamingRouteStageVariableName(method, path);
@@ -466,6 +490,50 @@ test("AppTheoryRestApi synthesizes expected template", () => {
   } else {
     expectSnapshot("rest-api", template);
   }
+});
+
+test("AppTheoryRestApi can suppress test-invoke-stage permissions", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const api = new apptheory.AppTheoryRestApi(stack, "RestApi", {
+    handler: fn,
+    apiName: "apptheory-test",
+    allowTestInvoke: false,
+  });
+  api.addRoute("/sse", ["GET"], { streaming: true });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(lambdaPermissionCount(template), 3, "Should synthesize one permission per REST method without test invoke");
+  assertNoTestInvokeStagePermissions(template);
+});
+
+test("AppTheoryRestApi can use API-scoped invoke permissions", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const api = new apptheory.AppTheoryRestApi(stack, "RestApi", {
+    handler: fn,
+    apiName: "apptheory-test",
+    scopePermissionToMethod: false,
+  });
+  api.addRoute("/sse", ["GET"], { streaming: true });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(lambdaPermissionCount(template), 1, "Should synthesize one API-scoped permission for the shared Lambda");
+  assertNoTestInvokeStagePermissions(template);
 });
 
 test("AppTheoryEventBridgeHandler synthesizes expected template", () => {
@@ -1910,6 +1978,104 @@ test("AppTheoryRestApiRouter (multi-Lambda) synthesizes expected template", () =
   }
 });
 
+test("AppTheoryRestApiRouter can suppress test-invoke-stage permissions", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const sseFn = new lambda.Function(stack, "SseFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'sse' });"),
+  });
+
+  const graphqlFn = new lambda.Function(stack, "GraphqlFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'graphql' });"),
+  });
+
+  const apiFn = new lambda.Function(stack, "ApiFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'api' });"),
+  });
+
+  const inventoryFn = new lambda.Function(stack, "InventoryFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'inventory' });"),
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-router-no-test-invoke",
+    allowTestInvoke: false,
+  });
+
+  router.addLambdaIntegration("/sse", ["GET"], sseFn, { streaming: true });
+  router.addLambdaIntegration("/api/graphql", ["POST"], graphqlFn);
+  router.addLambdaIntegration("/{proxy+}", ["ANY"], apiFn);
+  router.addLambdaIntegration("/inventory/{id}", ["GET", "PUT", "DELETE"], inventoryFn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(lambdaPermissionCount(template), 6, "Should synthesize one permission per method/path pair without test invoke");
+  assertNoTestInvokeStagePermissions(template);
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("rest-api-router-multi-lambda-no-test-invoke", template);
+  } else {
+    expectSnapshot("rest-api-router-multi-lambda-no-test-invoke", template);
+  }
+});
+
+test("AppTheoryRestApiRouter can use API-scoped invoke permissions", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const sseFn = new lambda.Function(stack, "SseFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'sse' });"),
+  });
+
+  const graphqlFn = new lambda.Function(stack, "GraphqlFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'graphql' });"),
+  });
+
+  const apiFn = new lambda.Function(stack, "ApiFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'api' });"),
+  });
+
+  const inventoryFn = new lambda.Function(stack, "InventoryFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'inventory' });"),
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-router-api-scoped",
+    scopePermissionToMethod: false,
+  });
+
+  router.addLambdaIntegration("/sse", ["GET"], sseFn, { streaming: true });
+  router.addLambdaIntegration("/api/graphql", ["POST"], graphqlFn);
+  router.addLambdaIntegration("/{proxy+}", ["ANY"], apiFn);
+  router.addLambdaIntegration("/inventory/{id}", ["GET", "PUT", "DELETE"], inventoryFn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(lambdaPermissionCount(template), 4, "Should synthesize one API-scoped permission per Lambda");
+  assertNoTestInvokeStagePermissions(template);
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("rest-api-router-multi-lambda-api-scoped-permissions", template);
+  } else {
+    expectSnapshot("rest-api-router-multi-lambda-api-scoped-permissions", template);
+  }
+});
+
 test("AppTheoryRestApiRouter (streaming parity) synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -2756,6 +2922,60 @@ test("AppTheoryRemoteMcpServer (basic) synthesizes expected template", () => {
     writeSnapshot("remote-mcp-server-basic", template);
   } else {
     expectSnapshot("remote-mcp-server-basic", template);
+  }
+});
+
+test("AppTheoryRemoteMcpServer can suppress test-invoke-stage permissions", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
+    handler: fn,
+    apiName: "apptheory-remote-mcp-test",
+    allowTestInvoke: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(lambdaPermissionCount(template), 3, "Should synthesize one permission per Remote MCP method without test invoke");
+  assertNoTestInvokeStagePermissions(template);
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("remote-mcp-server-basic-no-test-invoke", template);
+  } else {
+    expectSnapshot("remote-mcp-server-basic-no-test-invoke", template);
+  }
+});
+
+test("AppTheoryRemoteMcpServer can use API-scoped invoke permissions", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
+    handler: fn,
+    apiName: "apptheory-remote-mcp-test",
+    scopePermissionToMethod: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(lambdaPermissionCount(template), 1, "Should synthesize one API-scoped permission for the Remote MCP handler");
+  assertNoTestInvokeStagePermissions(template);
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("remote-mcp-server-basic-api-scoped-permissions", template);
+  } else {
+    expectSnapshot("remote-mcp-server-basic-api-scoped-permissions", template);
   }
 });
 
