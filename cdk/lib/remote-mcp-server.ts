@@ -59,6 +59,28 @@ export interface AppTheoryRemoteMcpServerProps {
   readonly domain?: AppTheoryRestApiRouterDomainOptions;
 
   /**
+   * Whether API Gateway console test invocations should be granted Lambda invoke permissions.
+   *
+   * When false, the construct suppresses the extra `test-invoke-stage` Lambda permissions
+   * that CDK adds for each REST API method. This reduces Lambda resource policy size while
+   * preserving deployed-stage invoke permissions.
+   *
+   * @default true
+   */
+  readonly allowTestInvoke?: boolean;
+
+  /**
+   * Whether Lambda invoke permissions should be scoped to individual REST API methods.
+   *
+   * When false, the construct grants one API-scoped invoke permission per Lambda instead of
+   * one permission per method/path pair. This is the scalable choice for large Remote MCP
+   * route bundles that share one handler.
+   *
+   * @default true
+   */
+  readonly scopePermissionToMethod?: boolean;
+
+  /**
    * Enable per-actor MCP endpoint bundles.
    *
    * When enabled, the construct mounts the transport at `/mcp/{actor}` and
@@ -163,6 +185,8 @@ export class AppTheoryRemoteMcpServer extends Construct {
       stage: props.stage,
       cors: props.cors,
       domain: props.domain,
+      allowTestInvoke: props.allowTestInvoke,
+      scopePermissionToMethod: props.scopePermissionToMethod,
     });
 
     const transportPath = props.actorPath ? "/mcp/{actor}" : "/mcp";
