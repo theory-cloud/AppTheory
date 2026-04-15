@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "apptheory"
-version = "0.24.3"
+version = "0.24.4"
 requires-python = ">=3.14"
 description = "AppTheory — multi-language serverless application framework (Python package)"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
-  "tabletheory-py @ https://github.com/theory-cloud/TableTheory/releases/download/v1.5.4/tabletheory_py-1.5.4-py3-none-any.whl",
+  "tabletheory-py @ https://github.com/theory-cloud/TableTheory/releases/download/v1.5.5/tabletheory_py-1.5.5-py3-none-any.whl",
 ]
 
 [tool.setuptools]
