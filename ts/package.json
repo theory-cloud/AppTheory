@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-apigatewaymanagementapi": "^3.1015.0",
-    "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v1.5.4/theory-cloud-tabletheory-ts-1.5.4.tgz"
+    "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v1.5.5/theory-cloud-tabletheory-ts-1.5.5.tgz"
   },
   "overrides": {
     "@typescript-eslint/typescript-estree": {
