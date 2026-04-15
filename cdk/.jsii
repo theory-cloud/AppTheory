@@ -16481,7 +16481,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/remote-mcp-server.ts",
-          "line": 157
+          "line": 179
         },
         "parameters": [
           {
@@ -16507,7 +16507,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/remote-mcp-server.ts",
-        "line": 136
+        "line": 158
       },
       "name": "AppTheoryRemoteMcpServer",
       "properties": [
@@ -16518,7 +16518,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 145
+            "line": 167
           },
           "name": "endpoint",
           "type": {
@@ -16532,7 +16532,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 140
+            "line": 162
           },
           "name": "router",
           "type": {
@@ -16546,7 +16546,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 150
+            "line": 172
           },
           "name": "sessionTable",
           "optional": true,
@@ -16561,7 +16561,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 155
+            "line": 177
           },
           "name": "streamTable",
           "optional": true,
@@ -16612,9 +16612,27 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 73
+            "line": 95
           },
           "name": "actorPath",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "remarks": "When false, the construct suppresses the extra `test-invoke-stage` Lambda permissions\nthat CDK adds for each REST API method. This reduces Lambda resource policy size while\npreserving deployed-stage invoke permissions.",
+            "summary": "Whether API Gateway console test invocations should be granted Lambda invoke permissions."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/remote-mcp-server.ts",
+            "line": 70
+          },
+          "name": "allowTestInvoke",
           "optional": true,
           "type": {
             "primitive": "boolean"
@@ -16707,7 +16725,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 90
+            "line": 112
           },
           "name": "enableSessionTable",
           "optional": true,
@@ -16725,7 +16743,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 112
+            "line": 134
           },
           "name": "enableStreamTable",
           "optional": true,
@@ -16743,9 +16761,27 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 84
+            "line": 106
           },
           "name": "enableWellKnownMcpDiscovery",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "remarks": "When false, the construct grants one API-scoped invoke permission per Lambda instead of\none permission per method/path pair. This is the scalable choice for large Remote MCP\nroute bundles that share one handler.",
+            "summary": "Whether Lambda invoke permissions should be scoped to individual REST API methods."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/remote-mcp-server.ts",
+            "line": 81
+          },
+          "name": "scopePermissionToMethod",
           "optional": true,
           "type": {
             "primitive": "boolean"
@@ -16760,7 +16796,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 96
+            "line": 118
           },
           "name": "sessionTableName",
           "optional": true,
@@ -16777,7 +16813,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 102
+            "line": 124
           },
           "name": "sessionTtlMinutes",
           "optional": true,
@@ -16811,7 +16847,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 118
+            "line": 140
           },
           "name": "streamTableName",
           "optional": true,
@@ -16828,7 +16864,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 124
+            "line": 146
           },
           "name": "streamTtlMinutes",
           "optional": true,
@@ -16846,7 +16882,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/rest-api.ts",
-          "line": 21
+          "line": 44
         },
         "parameters": [
           {
@@ -16872,13 +16908,13 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/rest-api.ts",
-        "line": 17
+        "line": 38
       },
       "methods": [
         {
           "locationInModule": {
             "filename": "lib/rest-api.ts",
-            "line": 34
+            "line": 63
           },
           "name": "addRoute",
           "parameters": [
@@ -16916,7 +16952,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api.ts",
-            "line": 18
+            "line": 39
           },
           "name": "api",
           "type": {
@@ -16951,6 +16987,24 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "default": "true",
+            "remarks": "When false, the construct suppresses the extra `test-invoke-stage` Lambda permissions\nthat CDK adds for each REST API method. This reduces Lambda resource policy size while\npreserving deployed-stage invoke permissions.",
+            "summary": "Whether API Gateway console test invocations should be granted Lambda invoke permissions."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api.ts",
+            "line": 20
+          },
+          "name": "allowTestInvoke",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api.ts",
@@ -16960,6 +17014,24 @@
           "optional": true,
           "type": {
             "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "remarks": "When false, the construct grants one API-scoped invoke permission per Lambda instead of\none permission per method/path pair. This is the scalable choice for large front-controller\nAPIs that route many REST paths to the same Lambda.",
+            "summary": "Whether Lambda invoke permissions should be scoped to individual REST API methods."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api.ts",
+            "line": 31
+          },
+          "name": "scopePermissionToMethod",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
           }
         }
       ],
@@ -16972,7 +17044,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/rest-api.ts",
-        "line": 13
+        "line": 34
       },
       "name": "AppTheoryRestApiRouteOptions",
       "properties": [
@@ -16981,7 +17053,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api.ts",
-            "line": 14
+            "line": 35
           },
           "name": "streaming",
           "optional": true,
@@ -17004,7 +17076,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/rest-api-router.ts",
-          "line": 314
+          "line": 338
         },
         "parameters": [
           {
@@ -17031,7 +17103,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/rest-api-router.ts",
-        "line": 275
+        "line": 297
       },
       "methods": [
         {
@@ -17040,7 +17112,7 @@
           },
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 360
+            "line": 386
           },
           "name": "addLambdaIntegration",
           "parameters": [
@@ -17098,7 +17170,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 279
+            "line": 301
           },
           "name": "api",
           "type": {
@@ -17112,7 +17184,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 284
+            "line": 306
           },
           "name": "stage",
           "type": {
@@ -17126,7 +17198,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 304
+            "line": 326
           },
           "name": "aaaaRecord",
           "optional": true,
@@ -17141,7 +17213,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 309
+            "line": 331
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -17156,7 +17228,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 299
+            "line": 321
           },
           "name": "aRecord",
           "optional": true,
@@ -17171,7 +17243,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 294
+            "line": 316
           },
           "name": "basePathMapping",
           "optional": true,
@@ -17186,7 +17258,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 289
+            "line": 311
           },
           "name": "domainName",
           "optional": true,
@@ -17575,6 +17647,24 @@
         {
           "abstract": true,
           "docs": {
+            "default": "true",
+            "remarks": "When false, the construct suppresses the extra `test-invoke-stage` Lambda permissions\nthat CDK adds for each REST API method. This reduces Lambda resource policy size while\npreserving deployed-stage invoke permissions.",
+            "summary": "Whether API Gateway console test invocations should be granted Lambda invoke permissions."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 263
+          },
+          "name": "allowTestInvoke",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
             "default": "HEADER",
             "summary": "API key source type."
           },
@@ -17756,6 +17846,24 @@
             "line": 246
           },
           "name": "retainDeployments",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "remarks": "When false, the construct grants one API-scoped invoke permission per Lambda instead of\none permission per method/path pair. This is the scalable choice for large front-controller\nAPIs that route many REST paths to the same Lambda.",
+            "summary": "Whether Lambda invoke permissions should be scoped to individual REST API methods."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/rest-api-router.ts",
+            "line": 274
+          },
+          "name": "scopePermissionToMethod",
           "optional": true,
           "type": {
             "primitive": "boolean"
@@ -20152,5 +20260,5 @@
     }
   },
   "version": "0.24.5",
-  "fingerprint": "7o5AuoaEgeV7gUkiCVSTVfKCxHbW9tBFprzYW1ToeLw="
+  "fingerprint": "J3PnUTjasPh+jleH7xakYCUx/esUxQ+aRTEXZV0rdgk="
 }
