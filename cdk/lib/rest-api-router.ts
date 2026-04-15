@@ -250,6 +250,28 @@ export interface AppTheoryRestApiRouterProps {
      * @default HEADER
      */
     readonly apiKeySourceType?: apigw.ApiKeySourceType;
+
+    /**
+     * Whether API Gateway console test invocations should be granted Lambda invoke permissions.
+     *
+     * When false, the construct suppresses the extra `test-invoke-stage` Lambda permissions
+     * that CDK adds for each REST API method. This reduces Lambda resource policy size while
+     * preserving deployed-stage invoke permissions.
+     *
+     * @default true
+     */
+    readonly allowTestInvoke?: boolean;
+
+    /**
+     * Whether Lambda invoke permissions should be scoped to individual REST API methods.
+     *
+     * When false, the construct grants one API-scoped invoke permission per Lambda instead of
+     * one permission per method/path pair. This is the scalable choice for large front-controller
+     * APIs that route many REST paths to the same Lambda.
+     *
+     * @default true
+     */
+    readonly scopePermissionToMethod?: boolean;
 }
 
 /**
@@ -310,6 +332,8 @@ export class AppTheoryRestApiRouter extends Construct {
 
     private readonly corsOptions?: AppTheoryRestApiRouterCorsOptions;
     private readonly corsEnabled: boolean;
+    private readonly allowTestInvoke: boolean;
+    private readonly scopePermissionToMethod: boolean;
 
     constructor(scope: Construct, id: string, props: AppTheoryRestApiRouterProps = {}) {
         super(scope, id);
@@ -324,6 +348,8 @@ export class AppTheoryRestApiRouter extends Construct {
         } else {
             this.corsEnabled = false;
         }
+        this.allowTestInvoke = props.allowTestInvoke ?? true;
+        this.scopePermissionToMethod = props.scopePermissionToMethod ?? true;
 
         const stageOpts = props.stage ?? {};
         const stageName = stageOpts.stageName ?? "prod";
@@ -419,6 +445,8 @@ export class AppTheoryRestApiRouter extends Construct {
         // Note: The URI suffix and timeout will be fixed via L1 overrides
         return new apigw.LambdaIntegration(handler, {
             proxy: true,
+            allowTestInvoke: this.allowTestInvoke,
+            scopePermissionToMethod: this.scopePermissionToMethod,
             responseTransferMode: streaming ? apigw.ResponseTransferMode.STREAM : apigw.ResponseTransferMode.BUFFERED,
             timeout: options.timeout ?? (streaming ? Duration.minutes(15) : undefined),
             passthroughBehavior: options.passthroughBehavior,

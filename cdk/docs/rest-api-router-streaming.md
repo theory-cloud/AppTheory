@@ -22,6 +22,35 @@ Use `AppTheoryRestApiRouter` when you need:
 
 Use the simpler `AppTheoryRestApi` when you have a single Lambda handling all routes via proxy integration.
 
+## Lambda permission policy size
+
+API Gateway REST API v1 adds Lambda invoke permissions per method/path pair. By default, CDK also adds
+extra permissions for the API Gateway console's `test-invoke-stage`.
+
+For large router-style APIs, the scalable option is to collapse those method-scoped grants into one
+API-scoped permission per Lambda:
+
+```typescript
+const router = new AppTheoryRestApiRouter(this, "Router", {
+  apiName: "large-rest-api",
+  scopePermissionToMethod: false,
+});
+```
+
+That changes Lambda policy growth from per-route to per-Lambda/per-API.
+
+If you want to stay method-scoped but trim console-only permissions, you can also set:
+
+```typescript
+const router = new AppTheoryRestApiRouter(this, "Router", {
+  apiName: "method-scoped-rest-api",
+  allowTestInvoke: false,
+});
+```
+
+That preserves deployed-stage method permissions and only suppresses the extra `test-invoke-stage`
+entries.
+
 ## Streaming Enablement
 
 ### What Makes Streaming Work

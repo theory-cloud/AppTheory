@@ -6,6 +6,14 @@ import (
 
 // Props for the AppTheoryRestApiRouter construct.
 type AppTheoryRestApiRouterProps struct {
+	// Whether API Gateway console test invocations should be granted Lambda invoke permissions.
+	//
+	// When false, the construct suppresses the extra `test-invoke-stage` Lambda permissions
+	// that CDK adds for each REST API method. This reduces Lambda resource policy size while
+	// preserving deployed-stage invoke permissions.
+	// Default: true.
+	//
+	AllowTestInvoke *bool `field:"optional" json:"allowTestInvoke" yaml:"allowTestInvoke"`
 	// API key source type.
 	// Default: HEADER.
 	//
@@ -47,6 +55,14 @@ type AppTheoryRestApiRouterProps struct {
 	// Default: false.
 	//
 	RetainDeployments *bool `field:"optional" json:"retainDeployments" yaml:"retainDeployments"`
+	// Whether Lambda invoke permissions should be scoped to individual REST API methods.
+	//
+	// When false, the construct grants one API-scoped invoke permission per Lambda instead of
+	// one permission per method/path pair. This is the scalable choice for large front-controller
+	// APIs that route many REST paths to the same Lambda.
+	// Default: true.
+	//
+	ScopePermissionToMethod *bool `field:"optional" json:"scopePermissionToMethod" yaml:"scopePermissionToMethod"`
 	// Stage configuration.
 	Stage *AppTheoryRestApiRouterStageOptions `field:"optional" json:"stage" yaml:"stage"`
 }
