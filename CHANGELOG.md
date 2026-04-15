@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.24.4](https://github.com/theory-cloud/AppTheory/compare/v0.24.3...v0.24.4) (2026-04-15)
+
+
+### Bug Fixes
+
+* **ci:** cover live theorycloud publish exec path ([7ce66c6](https://github.com/theory-cloud/AppTheory/commit/7ce66c66672725116d2d33e09819e0e8be620459))
+* **ci:** cover live theorycloud publish exec path ([ce8ef69](https://github.com/theory-cloud/AppTheory/commit/ce8ef6900ef77a8614d5765ced14031e71941b31))
+* **ci:** isolate theorycloud verifier publish reason ([d6c282b](https://github.com/theory-cloud/AppTheory/commit/d6c282b00480f130d0f8d8254981990b9c4bd668))
+* **ci:** isolate theorycloud verifier publish reason ([f69e2ed](https://github.com/theory-cloud/AppTheory/commit/f69e2ede3128b9db68af4d81b7de3641e7d6e8bc))
+* **ci:** trigger theorycloud publish for stack changes ([f17bdba](https://github.com/theory-cloud/AppTheory/commit/f17bdbafe26d8e9f765be67740f613d9aaa2b1f9))
+* **ci:** trigger theorycloud publish for stack changes ([34a8da6](https://github.com/theory-cloud/AppTheory/commit/34a8da688c4cd43f7ebfb92a21280a83c64568c6))
+
+## [0.24.4-rc](https://github.com/theory-cloud/AppTheory/compare/v0.24.3...v0.24.4-rc) (2026-04-14)
+
+
+### Bug Fixes
+
+* **ci:** cover live theorycloud publish exec path ([7ce66c6](https://github.com/theory-cloud/AppTheory/commit/7ce66c66672725116d2d33e09819e0e8be620459))
+* **ci:** cover live theorycloud publish exec path ([ce8ef69](https://github.com/theory-cloud/AppTheory/commit/ce8ef6900ef77a8614d5765ced14031e71941b31))
+* **ci:** isolate theorycloud verifier publish reason ([d6c282b](https://github.com/theory-cloud/AppTheory/commit/d6c282b00480f130d0f8d8254981990b9c4bd668))
+* **ci:** isolate theorycloud verifier publish reason ([f69e2ed](https://github.com/theory-cloud/AppTheory/commit/f69e2ede3128b9db68af4d81b7de3641e7d6e8bc))
+* **ci:** trigger theorycloud publish for stack changes ([f17bdba](https://github.com/theory-cloud/AppTheory/commit/f17bdbafe26d8e9f765be67740f613d9aaa2b1f9))
+* **ci:** trigger theorycloud publish for stack changes ([34a8da6](https://github.com/theory-cloud/AppTheory/commit/34a8da688c4cd43f7ebfb92a21280a83c64568c6))
+
 ## [0.24.3](https://github.com/theory-cloud/AppTheory/compare/v0.24.2...v0.24.3) (2026-04-13)
 
 
