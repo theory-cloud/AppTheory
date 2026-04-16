@@ -54,6 +54,7 @@ const handler = new lambda.Function(stack, "McpHandler", {
 const mcp = new AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
   handler,
   apiName: "remote-mcp",
+  scopePermissionToMethod: false,
   enableSessionTable: true,
   sessionTtlMinutes: 120,
   // enableStreamTable: true, // optional; pair with mcp.NewDynamoStreamStore(db)
@@ -83,6 +84,14 @@ const mcp = new AppTheoryRemoteMcpServer(stack, "RemoteMcpPerActor", {
 // discovery route === /.well-known/oauth-protected-resource/mcp/{actor}
 // well-known discovery route === /.well-known/mcp.json
 ```
+
+## Lambda permission policy size
+
+For large Remote MCP route bundles that share one Lambda, set `scopePermissionToMethod: false` to collapse
+per-route invoke permissions into one API-scoped permission per Lambda.
+
+If you want to keep method-scoped permissions but suppress the extra API Gateway console
+`test-invoke-stage` entries, set `allowTestInvoke: false` instead.
 
 ## Keepalive + resumability guidance
 
