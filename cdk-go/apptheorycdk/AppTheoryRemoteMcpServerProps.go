@@ -23,6 +23,14 @@ type AppTheoryRemoteMcpServerProps struct {
 	// Default: false.
 	//
 	ActorPath *bool `field:"optional" json:"actorPath" yaml:"actorPath"`
+	// Whether API Gateway console test invocations should be granted Lambda invoke permissions.
+	//
+	// When false, the construct suppresses the extra `test-invoke-stage` Lambda permissions
+	// that CDK adds for each REST API method. This reduces Lambda resource policy size while
+	// preserving deployed-stage invoke permissions.
+	// Default: true.
+	//
+	AllowTestInvoke *bool `field:"optional" json:"allowTestInvoke" yaml:"allowTestInvoke"`
 	// Optional API name.
 	// Default: undefined.
 	//
@@ -61,6 +69,14 @@ type AppTheoryRemoteMcpServerProps struct {
 	// Default: false.
 	//
 	EnableWellKnownMcpDiscovery *bool `field:"optional" json:"enableWellKnownMcpDiscovery" yaml:"enableWellKnownMcpDiscovery"`
+	// Whether Lambda invoke permissions should be scoped to individual REST API methods.
+	//
+	// When false, the construct grants one API-scoped invoke permission per Lambda instead of
+	// one permission per method/path pair. This is the scalable choice for large Remote MCP
+	// route bundles that share one handler.
+	// Default: true.
+	//
+	ScopePermissionToMethod *bool `field:"optional" json:"scopePermissionToMethod" yaml:"scopePermissionToMethod"`
 	// Session DynamoDB table name (only used when enableSessionTable is true).
 	// Default: undefined (auto-generated).
 	//

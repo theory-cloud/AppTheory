@@ -213,6 +213,26 @@ export interface AppTheoryRestApiRouterProps {
      * @default HEADER
      */
     readonly apiKeySourceType?: apigw.ApiKeySourceType;
+    /**
+     * Whether API Gateway console test invocations should be granted Lambda invoke permissions.
+     *
+     * When false, the construct suppresses the extra `test-invoke-stage` Lambda permissions
+     * that CDK adds for each REST API method. This reduces Lambda resource policy size while
+     * preserving deployed-stage invoke permissions.
+     *
+     * @default true
+     */
+    readonly allowTestInvoke?: boolean;
+    /**
+     * Whether Lambda invoke permissions should be scoped to individual REST API methods.
+     *
+     * When false, the construct grants one API-scoped invoke permission per Lambda instead of
+     * one permission per method/path pair. This is the scalable choice for large front-controller
+     * APIs that route many REST paths to the same Lambda.
+     *
+     * @default true
+     */
+    readonly scopePermissionToMethod?: boolean;
 }
 /**
  * A REST API v1 router that supports multi-Lambda routing with full streaming parity.
@@ -265,6 +285,8 @@ export declare class AppTheoryRestApiRouter extends Construct {
     readonly accessLogGroup?: logs.ILogGroup;
     private readonly corsOptions?;
     private readonly corsEnabled;
+    private readonly allowTestInvoke;
+    private readonly scopePermissionToMethod;
     constructor(scope: Construct, id: string, props?: AppTheoryRestApiRouterProps);
     /**
      * Add a Lambda integration for the specified path and HTTP methods.
