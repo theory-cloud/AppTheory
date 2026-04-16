@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.24.6-rc](https://github.com/theory-cloud/AppTheory/compare/v0.24.5...v0.24.6-rc) (2026-04-16)
+
+
+### Bug Fixes
+
+* **cdk:** support api-scoped rest invoke permissions ([d570635](https://github.com/theory-cloud/AppTheory/commit/d570635004bda4dd59e0bbe8b6c4482573125264))
+* **cdk:** support api-scoped rest invoke permissions ([7e52140](https://github.com/theory-cloud/AppTheory/commit/7e521408761edc4f1e3b8450b8afccf6ed0985d6))
+* **release:** reset premain prerelease track to 0.24.5 ([92e28a3](https://github.com/theory-cloud/AppTheory/commit/92e28a39323becb2dc37d60b8265ca2df074a541))
+* **release:** reset premain prerelease track to 0.24.5 ([ef4aa07](https://github.com/theory-cloud/AppTheory/commit/ef4aa07baa109b0f8c21893d527926cc54469ce8))
+
 ## [0.24.5](https://github.com/theory-cloud/AppTheory/compare/v0.24.4...v0.24.5) (2026-04-15)
 
 
