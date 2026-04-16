@@ -8,6 +8,27 @@ import { trimRepeatedChar } from "./private/string-utils";
 export interface AppTheoryRestApiProps {
   readonly handler: lambda.IFunction;
   readonly apiName?: string;
+  /**
+   * Whether API Gateway console test invocations should be granted Lambda invoke permissions.
+   *
+   * When false, the construct suppresses the extra `test-invoke-stage` Lambda permissions
+   * that CDK adds for each REST API method. This reduces Lambda resource policy size while
+   * preserving deployed-stage invoke permissions.
+   *
+   * @default true
+   */
+  readonly allowTestInvoke?: boolean;
+
+  /**
+   * Whether Lambda invoke permissions should be scoped to individual REST API methods.
+   *
+   * When false, the construct grants one API-scoped invoke permission per Lambda instead of
+   * one permission per method/path pair. This is the scalable choice for large front-controller
+   * APIs that route many REST paths to the same Lambda.
+   *
+   * @default true
+   */
+  readonly scopePermissionToMethod?: boolean;
 }
 
 export interface AppTheoryRestApiRouteOptions {
@@ -17,16 +38,24 @@ export interface AppTheoryRestApiRouteOptions {
 export class AppTheoryRestApi extends Construct {
   public readonly api: apigw.RestApi;
   private readonly handler: lambda.IFunction;
+  private readonly allowTestInvoke: boolean;
+  private readonly scopePermissionToMethod: boolean;
 
   constructor(scope: Construct, id: string, props: AppTheoryRestApiProps) {
     super(scope, id);
 
     this.handler = props.handler;
+    this.allowTestInvoke = props.allowTestInvoke ?? true;
+    this.scopePermissionToMethod = props.scopePermissionToMethod ?? true;
     this.api = new apigw.RestApi(this, "Api", {
       restApiName: props.apiName,
     });
 
-    const defaultIntegration = new apigw.LambdaIntegration(this.handler, { proxy: true });
+    const defaultIntegration = new apigw.LambdaIntegration(this.handler, {
+      proxy: true,
+      allowTestInvoke: this.allowTestInvoke,
+      scopePermissionToMethod: this.scopePermissionToMethod,
+    });
     this.api.root.addMethod("ANY", defaultIntegration);
     this.api.root.addResource("{proxy+}").addMethod("ANY", defaultIntegration);
   }
@@ -35,6 +64,8 @@ export class AppTheoryRestApi extends Construct {
     const resource = resourceForPath(this.api, path);
     const integration = new apigw.LambdaIntegration(this.handler, {
       proxy: true,
+      allowTestInvoke: this.allowTestInvoke,
+      scopePermissionToMethod: this.scopePermissionToMethod,
       responseTransferMode: options.streaming ? apigw.ResponseTransferMode.STREAM : apigw.ResponseTransferMode.BUFFERED,
     });
     for (const method of methods) {
