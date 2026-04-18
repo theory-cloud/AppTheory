@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.25.0-rc](https://github.com/theory-cloud/AppTheory/compare/v0.24.6-rc...v0.25.0-rc) (2026-04-18)
+
+
+### Features
+
+* **mcp:** add initial listener budget options ([796377f](https://github.com/theory-cloud/AppTheory/commit/796377f41845d2f906027c70f69d0cfbbd256372))
+* **mcp:** add initial listener budget options ([e61c0f0](https://github.com/theory-cloud/AppTheory/commit/e61c0f037911ad1a1795d041b7e234ed79a3be9c))
+
+
+### Bug Fixes
+
+* **runtime:** canonicalize remote mcp apigw trailing slashes ([9c3cd3f](https://github.com/theory-cloud/AppTheory/commit/9c3cd3f811bc3e1fffafa6e5a0bbd9a88ddc4f9b))
+* **runtime:** canonicalize remote mcp apigw trailing slashes ([a83c08d](https://github.com/theory-cloud/AppTheory/commit/a83c08dcc35b99c49819b0f562b7fc30d9dd705b))
+
 ## [0.24.6](https://github.com/theory-cloud/AppTheory/compare/v0.24.5...v0.24.6) (2026-04-16)
 
 
