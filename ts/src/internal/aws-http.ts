@@ -110,10 +110,32 @@ const REMOTE_MCP_APIGW_CANONICAL_RESOURCES = new Set<string>([
   "/.well-known/oauth-protected-resource/mcp/{actor}",
 ]);
 
+function trimEdgeSlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+
+  while (start < end && value[start] === "/") {
+    start += 1;
+  }
+  while (end > start && value[end - 1] === "/") {
+    end -= 1;
+  }
+
+  return value.slice(start, end);
+}
+
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+
+  while (end > 0 && value[end - 1] === "/") {
+    end -= 1;
+  }
+
+  return value.slice(0, end);
+}
+
 function normalizeAPIGatewayProxyRoutePath(path: unknown): string {
-  const trimmed = String(path ?? "")
-    .trim()
-    .replace(/^\/+|\/+$/g, "");
+  const trimmed = trimEdgeSlashes(String(path ?? "").trim());
   if (!trimmed) return "/";
 
   const parts = trimmed
@@ -150,7 +172,7 @@ function shouldCanonicalizeAPIGatewayProxyRequestPath(
 function canonicalizeAPIGatewayProxyRequestPath(path: unknown): string {
   const normalized = normalizePath(path);
   if (normalized === "/") return normalized;
-  return normalized.replace(/\/+$/, "") || "/";
+  return trimTrailingSlashes(normalized) || "/";
 }
 
 export function requestFromAPIGatewayProxy(
