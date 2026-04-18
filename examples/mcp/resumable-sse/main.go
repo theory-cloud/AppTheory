@@ -12,7 +12,14 @@ import (
 )
 
 func buildServer() *mcp.Server {
-	srv := mcp.NewServer("resumable-sse", "dev")
+	srv := mcp.NewServer("resumable-sse", "dev",
+		// On Lambda, cap the initial keepalive listener before the function deadline.
+		// Replay/resume GET requests with Last-Event-ID keep the normal replay path.
+		mcp.WithInitialSessionListenerBudget(mcp.InitialSessionListenerBudgetOptions{
+			SafetyBuffer: 5 * time.Second,
+			MaxDuration:  25 * time.Second,
+		}),
+	)
 
 	_ = srv.Registry().RegisterStreamingTool(mcp.ToolDef{
 		Name:        "countdown",
