@@ -47,6 +47,11 @@ const (
 	sessionInitializedValue  = "true"
 )
 
+const (
+	defaultInitialSessionListenerSafetyBuffer = 5 * time.Second
+	defaultInitialSessionListenerMaxDuration  = 25 * time.Second
+)
+
 // Server is the MCP protocol handler. It dispatches JSON-RPC 2.0 messages
 // to the appropriate MCP method handlers (initialize, tools/list, tools/call).
 type Server struct {
@@ -60,10 +65,32 @@ type Server struct {
 	idGen            apptheory.IDGenerator
 	logger           *slog.Logger
 	originValidator  OriginValidator
+
+	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
 
 // ServerOption configures a Server.
 type ServerOption func(*Server)
+
+// InitialSessionListenerBudgetOptions configures how the initial GET /mcp
+// session listener is capped against the Lambda remaining-time budget.
+//
+// The option is explicit opt-in and applies only when GET /mcp is used without
+// Last-Event-ID (the keepalive listener path). Resume/replay GET requests keep
+// their existing behavior.
+//
+// Zero values use the framework defaults:
+//   - SafetyBuffer: 5s
+//   - MaxDuration: 25s
+type InitialSessionListenerBudgetOptions struct {
+	SafetyBuffer time.Duration
+	MaxDuration  time.Duration
+}
+
+type initialSessionListenerBudgetConfig struct {
+	safetyBuffer time.Duration
+	maxDuration  time.Duration
+}
 
 // WithSessionStore sets the session store for the server.
 func WithSessionStore(store SessionStore) ServerOption {
@@ -100,6 +127,19 @@ func WithLogger(logger *slog.Logger) ServerOption {
 func WithOriginValidator(v OriginValidator) ServerOption {
 	return func(s *Server) {
 		s.originValidator = v
+	}
+}
+
+// WithInitialSessionListenerBudget caps the initial GET /mcp keepalive listener
+// against the Lambda remaining-time budget when RemainingMS is available.
+//
+// This option is explicit opt-in and applies only to GET /mcp requests without
+// Last-Event-ID. Resume/replay requests continue to use the existing stream
+// replay path unchanged.
+func WithInitialSessionListenerBudget(opts InitialSessionListenerBudgetOptions) ServerOption {
+	cfg := normalizeInitialSessionListenerBudgetOptions(opts)
+	return func(s *Server) {
+		s.initialSessionListenerBudget = &cfg
 	}
 }
 
@@ -276,7 +316,7 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 	if lastEventID == "" {
 		// No resumable stream requested. Keep the connection open as a session-level
 		// SSE listener (clients will reconnect in a tight loop if we return EOF).
-		return s.openSessionListener(ctx, sessionID)
+		return s.openSessionListener(ctx, sessionID, c.RemainingMS)
 	}
 
 	streamID, err := s.streamStore.StreamForEvent(ctx, sessionID, lastEventID)
@@ -300,19 +340,22 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 	return s.streamToSSE(ctx, sessionID, events)
 }
 
-func (s *Server) openSessionListener(ctx context.Context, sessionID string) (*apptheory.Response, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+func (s *Server) openSessionListener(ctx context.Context, sessionID string, remainingMS int) (*apptheory.Response, error) {
+	listenerCtx, cancel := s.initialSessionListenerContext(ctx, remainingMS)
 
 	pr, pw := io.Pipe()
 
 	go func() {
+		defer cancel()
 		defer func() {
 			if err := pw.Close(); err != nil && !errors.Is(err, io.ErrClosedPipe) {
-				s.logger.WarnContext(ctx, "session listener close error", "sessionId", sessionID, "error", err)
+				s.logger.WarnContext(listenerCtx, "session listener close error", "sessionId", sessionID, "error", err)
 			}
 		}()
+
+		if listenerCtx.Err() != nil {
+			return
+		}
 
 		// Emit an initial keepalive comment so the stream produces output quickly
 		// (useful for clients/proxies that expect early bytes).
@@ -327,7 +370,7 @@ func (s *Server) openSessionListener(ctx context.Context, sessionID string) (*ap
 
 		for {
 			select {
-			case <-ctx.Done():
+			case <-listenerCtx.Done():
 				return
 			case <-ticker.C:
 				if _, err := pw.Write([]byte(": keepalive\n\n")); err != nil {
@@ -348,6 +391,56 @@ func (s *Server) openSessionListener(ctx context.Context, sessionID string) (*ap
 		BodyReader: pr,
 	}
 	return resp, nil
+}
+
+func normalizeInitialSessionListenerBudgetOptions(opts InitialSessionListenerBudgetOptions) initialSessionListenerBudgetConfig {
+	safetyBuffer := opts.SafetyBuffer
+	if safetyBuffer <= 0 {
+		safetyBuffer = defaultInitialSessionListenerSafetyBuffer
+	}
+
+	maxDuration := opts.MaxDuration
+	if maxDuration <= 0 {
+		maxDuration = defaultInitialSessionListenerMaxDuration
+	}
+
+	return initialSessionListenerBudgetConfig{
+		safetyBuffer: safetyBuffer,
+		maxDuration:  maxDuration,
+	}
+}
+
+func (s *Server) initialSessionListenerBudgetDuration(remainingMS int) (time.Duration, bool) {
+	if s == nil || s.initialSessionListenerBudget == nil || remainingMS <= 0 {
+		return 0, false
+	}
+
+	budget := (time.Duration(remainingMS) * time.Millisecond) - s.initialSessionListenerBudget.safetyBuffer
+	if budget <= 0 {
+		return 0, true
+	}
+
+	if maxDuration := s.initialSessionListenerBudget.maxDuration; maxDuration > 0 && budget > maxDuration {
+		budget = maxDuration
+	}
+	return budget, true
+}
+
+func (s *Server) initialSessionListenerContext(ctx context.Context, remainingMS int) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	budget, ok := s.initialSessionListenerBudgetDuration(remainingMS)
+	if !ok {
+		return ctx, func() {}
+	}
+	if budget <= 0 {
+		listenerCtx, cancel := context.WithCancel(ctx)
+		cancel()
+		return listenerCtx, cancel
+	}
+	return context.WithTimeout(ctx, budget)
 }
 
 func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error) {
