@@ -198,6 +198,29 @@ For streaming tool calls, AppTheory assigns SSE event ids and persists them in t
 - `GET /mcp` without `last-event-id` opens a session listener that stays alive with keepalive comments so reconnecting
   clients do not hit immediate EOF loops
 
+### Budgeting the initial keepalive listener on Lambda
+
+If you want that initial `GET /mcp` keepalive listener to end before the Lambda deadline, opt in explicitly:
+
+```go
+srv := mcp.NewServer("my-mcp-server", "dev",
+  mcp.WithInitialSessionListenerBudget(mcp.InitialSessionListenerBudgetOptions{
+    SafetyBuffer: 5 * time.Second,
+    MaxDuration:  25 * time.Second,
+  }),
+)
+```
+
+Important scope notes:
+
+- this is explicit opt-in; without the option, the keepalive listener behavior is unchanged
+- it applies only to `GET /mcp` without `last-event-id`
+- replay/resume `GET /mcp` requests with `last-event-id` keep their existing behavior
+- when Lambda `RemainingMS` is available, AppTheory subtracts `SafetyBuffer` from the remaining time and caps the
+  listener with `MaxDuration`
+- when `RemainingMS` is unavailable, the keepalive listener continues unchanged even if the option is configured
+- early termination simply ends the listener; AppTheory does not emit a special final SSE event or comment
+
 ---
 
 ## Resources

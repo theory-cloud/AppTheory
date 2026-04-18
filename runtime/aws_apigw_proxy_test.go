@@ -31,6 +31,114 @@ func TestRequestFromAPIGatewayProxy_UsesFallbacks(t *testing.T) {
 	}
 }
 
+func TestRequestFromAPIGatewayProxy_CanonicalizesRemoteMCPRouteFamilyTrailingSlash(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name         string
+		resource     string
+		resourcePath string
+		path         string
+		expectedPath string
+	}{
+		{
+			name:         "mcp root",
+			resource:     "/mcp",
+			path:         "/mcp/",
+			expectedPath: "/mcp",
+		},
+		{
+			name:         "mcp actor",
+			resource:     "/mcp/{actor}",
+			path:         "/mcp/agent1/",
+			expectedPath: "/mcp/agent1",
+		},
+		{
+			name:         "protected resource root via request context",
+			resourcePath: "/.well-known/oauth-protected-resource/mcp",
+			path:         "/.well-known/oauth-protected-resource/mcp/",
+			expectedPath: "/.well-known/oauth-protected-resource/mcp",
+		},
+		{
+			name:         "protected resource actor",
+			resource:     "/.well-known/oauth-protected-resource/mcp/{actor}",
+			path:         "/.well-known/oauth-protected-resource/mcp/agent1/",
+			expectedPath: "/.well-known/oauth-protected-resource/mcp/agent1",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			req, err := requestFromAPIGatewayProxy(events.APIGatewayProxyRequest{
+				Resource:   tc.resource,
+				Path:       tc.path,
+				HTTPMethod: "GET",
+				RequestContext: events.APIGatewayProxyRequestContext{
+					ResourcePath: tc.resourcePath,
+					Path:         tc.path,
+					HTTPMethod:   "GET",
+				},
+			})
+			if err != nil {
+				t.Fatalf("requestFromAPIGatewayProxy returned error: %v", err)
+			}
+			if req.Path != tc.expectedPath {
+				t.Fatalf("path = %q, want %q", req.Path, tc.expectedPath)
+			}
+		})
+	}
+}
+
+func TestRequestFromAPIGatewayProxy_PreservesTrailingSlashOutsideScopedRemoteMCPRoutes(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name     string
+		resource string
+		path     string
+	}{
+		{
+			name:     "proxy route",
+			resource: "/files/{path+}",
+			path:     "/files/a/b/",
+		},
+		{
+			name:     "other param route",
+			resource: "/users/{id}",
+			path:     "/users/123/",
+		},
+		{
+			name:     "missing matched resource",
+			resource: "",
+			path:     "/mcp/",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			req, err := requestFromAPIGatewayProxy(events.APIGatewayProxyRequest{
+				Resource:   tc.resource,
+				Path:       tc.path,
+				HTTPMethod: "GET",
+				RequestContext: events.APIGatewayProxyRequestContext{
+					Path:       tc.path,
+					HTTPMethod: "GET",
+				},
+			})
+			if err != nil {
+				t.Fatalf("requestFromAPIGatewayProxy returned error: %v", err)
+			}
+			if req.Path != tc.path {
+				t.Fatalf("path = %q, want %q", req.Path, tc.path)
+			}
+		})
+	}
+}
+
 func TestIsTextEventStream(t *testing.T) {
 	if !isTextEventStream(map[string][]string{"content-type": {"text/event-stream; charset=utf-8"}}) {
 		t.Fatal("expected text/event-stream content type to be detected")

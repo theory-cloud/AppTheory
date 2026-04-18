@@ -1,0 +1,53 @@
+{
+  "id": "m3.apigw_proxy.remote_protected_resource_root_trailing_slash",
+  "tier": "m3",
+  "name": "APIGW REST API v1: protected resource /mcp and /mcp/ are equivalent on the Remote MCP adapter path",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/.well-known/oauth-protected-resource/mcp",
+        "handler": "echo_request"
+      }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "apigw_proxy",
+      "event": {
+        "resource": "/.well-known/oauth-protected-resource/mcp",
+        "path": "/.well-known/oauth-protected-resource/mcp/",
+        "httpMethod": "GET",
+        "headers": {},
+        "multiValueHeaders": {},
+        "queryStringParameters": {},
+        "multiValueQueryStringParameters": {},
+        "requestContext": {
+          "requestId": "req-1",
+          "resourcePath": "/.well-known/oauth-protected-resource/mcp",
+          "path": "/.well-known/oauth-protected-resource/mcp/",
+          "httpMethod": "GET"
+        },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "method": "GET",
+        "path": "/.well-known/oauth-protected-resource/mcp",
+        "query": {},
+        "headers": {},
+        "cookies": {},
+        "body_b64": "",
+        "is_base64": false
+      },
+      "is_base64": false
+    }
+  }
+}

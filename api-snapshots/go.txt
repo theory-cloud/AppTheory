@@ -1893,6 +1893,11 @@ type Icon struct {
 	Theme    string   `json:"theme,omitempty"`
 }
 
+type InitialSessionListenerBudgetOptions struct {
+	SafetyBuffer time.Duration
+	MaxDuration  time.Duration
+}
+
 type MemorySessionStore struct {
 	mu    sync.RWMutex
 	store map[string]*Session
@@ -2002,6 +2007,8 @@ type Server struct {
 	idGen            apptheory.IDGenerator
 	logger           *slog.Logger
 	originValidator  OriginValidator
+
+	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
 
 type ServerOption func(*Server)
@@ -2107,6 +2114,8 @@ func ParseRequest([]byte) (*Request, error)
 func ParseResponse([]byte) (*Response, error)
 
 func WithClock(apptheory.Clock) MemorySessionStoreOption
+
+func WithInitialSessionListenerBudget(InitialSessionListenerBudgetOptions) ServerOption
 
 func WithLogger(*slog.Logger) ServerOption
 
