@@ -91,6 +91,12 @@ If you enable the optional Remote MCP stream table, wire a concrete persistent `
 `mcp.NewDynamoStreamStore(db)` with `mcp.WithStreamStore(...)`. `enableStreamTable` alone still only provisions the
 storage and env vars.
 
+For actor-scoped deployments on this sanctioned REST API v1 path, AppTheory now accepts both `/mcp/{actor}` and
+`/mcp/{actor}/`, plus the matching
+`/.well-known/oauth-protected-resource/mcp/{actor}` / `/.well-known/oauth-protected-resource/mcp/{actor}/` forms.
+You no longer need app-local trailing-slash stripping for those Remote MCP routes. This is intentionally narrow to the
+Remote MCP REST API v1 path and is not a broad router-wide canonicalization rule.
+
 ## 4) Testing (no AWS required)
 
 Deterministic test helpers:
