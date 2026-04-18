@@ -80,6 +80,11 @@ const mcp = new AppTheoryRemoteMcpServer(stack, "RemoteMcpPerActor", {
 // discovery route === /.well-known/oauth-protected-resource/mcp/{actor}
 ```
 
+On this REST API v1 deploy path, the actor-scoped transport and discovery routes accept both the canonical path and the
+same path with a trailing slash. You do not need app-local trailing-slash stripping for `/mcp/{actor}` or
+`/.well-known/oauth-protected-resource/mcp/{actor}` when they are provisioned through
+`AppTheoryRemoteMcpServer({ actorPath: true })`.
+
 ## CORS option
 
 `AppTheoryRemoteMcpServer` exposes the underlying REST router `cors` option for API Gateway preflight handling.

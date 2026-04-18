@@ -63,3 +63,5 @@ new AppTheoryMcpProtectedResource(stack, "ProtectedResource", {
 - for API Gateway REST APIs, `/.well-known/...` sits under the same stage or base path as your `/mcp` route
 - for per-actor bundles (`/mcp/{actor}`), prefer `AppTheoryRemoteMcpServer({ actorPath: true })`, which co-registers
   the matching discovery route automatically
+- on that sanctioned REST API v1 actor-path deploy shape, AppTheory accepts both the canonical discovery path and the
+  same path with a trailing slash, so app-local slash stripping is no longer required there
