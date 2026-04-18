@@ -82,7 +82,7 @@ class AppTheoryHostedZone extends constructs_1.Construct {
 }
 exports.AppTheoryHostedZone = AppTheoryHostedZone;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryHostedZone[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryHostedZone", version: "0.24.6" };
+AppTheoryHostedZone[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryHostedZone", version: "0.25.0-rc" };
 function sanitizeCloudFormationExportName(name) {
     const input = String(name ?? "").trim();
     if (!input)
