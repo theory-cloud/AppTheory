@@ -1,5 +1,5 @@
 import { STATUS_CODES } from "node:http";
-import { headersFromSingle, parseRawQueryString, queryFromSingle, toBuffer, } from "./http.js";
+import { headersFromSingle, normalizePath, parseRawQueryString, queryFromSingle, toBuffer, } from "./http.js";
 import { normalizeRequest } from "./request.js";
 import { normalizeResponse } from "./response.js";
 export function requestFromWebSocketEvent(event) {
@@ -30,7 +30,7 @@ export function requestFromWebSocketEvent(event) {
         isBase64: Boolean(event.isBase64Encoded),
     });
 }
-function requestFromAPIGatewayProxyLike(event) {
+function requestFromAPIGatewayProxyLike(event, pathOverride) {
     const headers = {};
     for (const [key, values] of Object.entries(event.multiValueHeaders ?? {})) {
         headers[key] = Array.isArray(values) ? values.map((v) => String(v)) : [];
@@ -56,15 +56,61 @@ function requestFromAPIGatewayProxyLike(event) {
     const rcPath = rc && typeof rc["path"] === "string" ? String(rc["path"]) : "/";
     return {
         method: String(event.httpMethod ?? rcMethod ?? ""),
-        path: String(event.path ?? rcPath ?? "/"),
+        path: String(pathOverride ?? event.path ?? rcPath ?? "/"),
         query,
         headers,
         body: toBuffer(String(event.body ?? "")),
         isBase64: Boolean(event.isBase64Encoded),
     };
 }
+const REMOTE_MCP_APIGW_CANONICAL_RESOURCES = new Set([
+    "/mcp",
+    "/mcp/{actor}",
+    "/.well-known/oauth-protected-resource/mcp",
+    "/.well-known/oauth-protected-resource/mcp/{actor}",
+]);
+function normalizeAPIGatewayProxyRoutePath(path) {
+    const trimmed = String(path ?? "")
+        .trim()
+        .replace(/^\/+|\/+$/g, "");
+    if (!trimmed)
+        return "/";
+    const parts = trimmed
+        .split("/")
+        .map((part) => part.trim())
+        .filter((part) => part);
+    if (parts.length === 0)
+        return "/";
+    return `/${parts.join("/")}`;
+}
+function apigatewayProxyMatchedResource(event) {
+    const resource = normalizeAPIGatewayProxyRoutePath(event.resource);
+    if (resource !== "/")
+        return resource;
+    const rc = event.requestContext && typeof event.requestContext === "object"
+        ? event.requestContext
+        : null;
+    const rcResource = rc && typeof rc["resourcePath"] === "string"
+        ? normalizeAPIGatewayProxyRoutePath(rc["resourcePath"])
+        : "";
+    return rcResource === "/" ? "" : rcResource;
+}
+function shouldCanonicalizeAPIGatewayProxyRequestPath(event) {
+    return REMOTE_MCP_APIGW_CANONICAL_RESOURCES.has(apigatewayProxyMatchedResource(event));
+}
+function canonicalizeAPIGatewayProxyRequestPath(path) {
+    const normalized = normalizePath(path);
+    if (normalized === "/")
+        return normalized;
+    return normalized.replace(/\/+$/, "") || "/";
+}
 export function requestFromAPIGatewayProxy(event) {
-    return requestFromAPIGatewayProxyLike(event);
+    const path = shouldCanonicalizeAPIGatewayProxyRequestPath(event)
+        ? canonicalizeAPIGatewayProxyRequestPath(event.path ??
+            event.requestContext?.["path"] ??
+            "/")
+        : undefined;
+    return requestFromAPIGatewayProxyLike(event, path);
 }
 export function requestFromALBTargetGroup(event) {
     return requestFromAPIGatewayProxyLike(event);

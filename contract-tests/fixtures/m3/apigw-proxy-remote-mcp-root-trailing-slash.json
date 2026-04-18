@@ -1,0 +1,47 @@
+{
+  "id": "m3.apigw_proxy.remote_mcp_root_trailing_slash",
+  "tier": "m3",
+  "name": "APIGW REST API v1: /mcp and /mcp/ are equivalent on the Remote MCP adapter path",
+  "setup": {
+    "routes": [{ "method": "GET", "path": "/mcp", "handler": "echo_request" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "apigw_proxy",
+      "event": {
+        "resource": "/mcp",
+        "path": "/mcp/",
+        "httpMethod": "GET",
+        "headers": {},
+        "multiValueHeaders": {},
+        "queryStringParameters": {},
+        "multiValueQueryStringParameters": {},
+        "requestContext": {
+          "requestId": "req-1",
+          "resourcePath": "/mcp",
+          "path": "/mcp/",
+          "httpMethod": "GET"
+        },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "method": "GET",
+        "path": "/mcp",
+        "query": {},
+        "headers": {},
+        "cookies": {},
+        "body_b64": "",
+        "is_base64": false
+      },
+      "is_base64": false
+    }
+  }
+}
