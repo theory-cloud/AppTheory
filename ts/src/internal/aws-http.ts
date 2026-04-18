@@ -15,6 +15,7 @@ import type { Headers, Query, Request, Response } from "../types.js";
 
 import {
   headersFromSingle,
+  normalizePath,
   parseRawQueryString,
   queryFromSingle,
   toBuffer,
@@ -59,6 +60,7 @@ export function requestFromWebSocketEvent(
 
 function requestFromAPIGatewayProxyLike(
   event: APIGatewayProxyRequest,
+  pathOverride?: string,
 ): Request {
   const headers: Headers = {};
   for (const [key, values] of Object.entries(event.multiValueHeaders ?? {})) {
@@ -93,7 +95,7 @@ function requestFromAPIGatewayProxyLike(
 
   return {
     method: String(event.httpMethod ?? rcMethod ?? ""),
-    path: String(event.path ?? rcPath ?? "/"),
+    path: String(pathOverride ?? event.path ?? rcPath ?? "/"),
     query,
     headers,
     body: toBuffer(String(event.body ?? "")),
@@ -101,10 +103,69 @@ function requestFromAPIGatewayProxyLike(
   };
 }
 
+const REMOTE_MCP_APIGW_CANONICAL_RESOURCES = new Set<string>([
+  "/mcp",
+  "/mcp/{actor}",
+  "/.well-known/oauth-protected-resource/mcp",
+  "/.well-known/oauth-protected-resource/mcp/{actor}",
+]);
+
+function normalizeAPIGatewayProxyRoutePath(path: unknown): string {
+  const trimmed = String(path ?? "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
+  if (!trimmed) return "/";
+
+  const parts = trimmed
+    .split("/")
+    .map((part) => part.trim())
+    .filter((part) => part);
+  if (parts.length === 0) return "/";
+  return `/${parts.join("/")}`;
+}
+
+function apigatewayProxyMatchedResource(event: APIGatewayProxyRequest): string {
+  const resource = normalizeAPIGatewayProxyRoutePath(event.resource);
+  if (resource !== "/") return resource;
+
+  const rc =
+    event.requestContext && typeof event.requestContext === "object"
+      ? (event.requestContext as Record<string, unknown>)
+      : null;
+  const rcResource =
+    rc && typeof rc["resourcePath"] === "string"
+      ? normalizeAPIGatewayProxyRoutePath(rc["resourcePath"])
+      : "";
+  return rcResource === "/" ? "" : rcResource;
+}
+
+function shouldCanonicalizeAPIGatewayProxyRequestPath(
+  event: APIGatewayProxyRequest,
+): boolean {
+  return REMOTE_MCP_APIGW_CANONICAL_RESOURCES.has(
+    apigatewayProxyMatchedResource(event),
+  );
+}
+
+function canonicalizeAPIGatewayProxyRequestPath(path: unknown): string {
+  const normalized = normalizePath(path);
+  if (normalized === "/") return normalized;
+  return normalized.replace(/\/+$/, "") || "/";
+}
+
 export function requestFromAPIGatewayProxy(
   event: APIGatewayProxyRequest,
 ): Request {
-  return requestFromAPIGatewayProxyLike(event);
+  const path = shouldCanonicalizeAPIGatewayProxyRequestPath(event)
+    ? canonicalizeAPIGatewayProxyRequestPath(
+        event.path ??
+          (event.requestContext as Record<string, unknown> | undefined)?.[
+            "path"
+          ] ??
+          "/",
+      )
+    : undefined;
+  return requestFromAPIGatewayProxyLike(event, path);
 }
 
 export function requestFromALBTargetGroup(
