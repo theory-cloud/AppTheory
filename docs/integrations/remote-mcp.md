@@ -91,6 +91,12 @@ If you enable the optional Remote MCP stream table, wire a concrete persistent `
 `mcp.NewDynamoStreamStore(db)` with `mcp.WithStreamStore(...)`. `enableStreamTable` alone still only provisions the
 storage and env vars.
 
+For actor-scoped deployments on this sanctioned REST API v1 path, AppTheory now accepts both `/mcp/{actor}` and
+`/mcp/{actor}/`, plus the matching
+`/.well-known/oauth-protected-resource/mcp/{actor}` / `/.well-known/oauth-protected-resource/mcp/{actor}/` forms.
+You no longer need app-local trailing-slash stripping for those Remote MCP routes. This is intentionally narrow to the
+Remote MCP REST API v1 path and is not a broad router-wide canonicalization rule.
+
 ## 4) Testing (no AWS required)
 
 Deterministic test helpers:
@@ -123,6 +129,11 @@ API Gateway REST response streaming connections are time-bounded and can disconn
 - keep tool output durable (event log + `Last-Event-ID` replay) by wiring `mcp.NewDynamoStreamStore(db)` or another
   persistent `StreamStore`
 - execute long work asynchronously (worker Lambdas) and append progress/results into the event log
+
+If you want the initial `GET /mcp` keepalive listener to end before the Lambda deadline, opt in with
+`mcp.WithInitialSessionListenerBudget(...)`. This applies only to the initial listener path with no `Last-Event-ID`;
+resume/replay `GET /mcp` requests keep their existing behavior. The example in `examples/mcp/resumable-sse` uses the
+default budget values (`SafetyBuffer: 5s`, `MaxDuration: 25s`) explicitly so the Lambda behavior is visible in code.
 
 Detailed compatibility notes and HTTP transcripts are maintained in non-canonical planning docs and intentionally kept
 out of this user-facing guide.

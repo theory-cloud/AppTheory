@@ -97,6 +97,99 @@ class TestAwsHttp(unittest.TestCase):
         self.assertEqual(alb_req.headers["x"], ["override"])
         self.assertEqual(alb_req.headers["y"], ["2", "3"])
 
+    def test_request_from_proxy_canonicalizes_remote_mcp_trailing_slash_only(self) -> None:
+        cases = [
+            {
+                "name": "mcp root",
+                "event": {
+                    "httpMethod": "GET",
+                    "path": "/mcp/",
+                    "resource": "/mcp",
+                    "requestContext": {"httpMethod": "GET", "path": "/mcp/"},
+                },
+                "want": "/mcp",
+            },
+            {
+                "name": "mcp actor",
+                "event": {
+                    "httpMethod": "GET",
+                    "path": "/mcp/agent1/",
+                    "resource": "/mcp/{actor}",
+                    "requestContext": {"httpMethod": "GET", "path": "/mcp/agent1/"},
+                },
+                "want": "/mcp/agent1",
+            },
+            {
+                "name": "protected resource root via request context",
+                "event": {
+                    "httpMethod": "GET",
+                    "path": "/.well-known/oauth-protected-resource/mcp/",
+                    "requestContext": {
+                        "httpMethod": "GET",
+                        "path": "/.well-known/oauth-protected-resource/mcp/",
+                        "resourcePath": "/.well-known/oauth-protected-resource/mcp",
+                    },
+                },
+                "want": "/.well-known/oauth-protected-resource/mcp",
+            },
+            {
+                "name": "protected resource actor",
+                "event": {
+                    "httpMethod": "GET",
+                    "path": "/.well-known/oauth-protected-resource/mcp/agent1/",
+                    "resource": "/.well-known/oauth-protected-resource/mcp/{actor}",
+                    "requestContext": {
+                        "httpMethod": "GET",
+                        "path": "/.well-known/oauth-protected-resource/mcp/agent1/",
+                    },
+                },
+                "want": "/.well-known/oauth-protected-resource/mcp/agent1",
+            },
+            {
+                "name": "proxy route preserved",
+                "event": {
+                    "httpMethod": "GET",
+                    "path": "/files/a/b/",
+                    "resource": "/files/{path+}",
+                    "requestContext": {"httpMethod": "GET", "path": "/files/a/b/"},
+                },
+                "want": "/files/a/b/",
+            },
+            {
+                "name": "unscoped route preserved",
+                "event": {
+                    "httpMethod": "GET",
+                    "path": "/users/123/",
+                    "resource": "/users/{id}",
+                    "requestContext": {"httpMethod": "GET", "path": "/users/123/"},
+                },
+                "want": "/users/123/",
+            },
+            {
+                "name": "missing matched resource preserved",
+                "event": {
+                    "httpMethod": "GET",
+                    "path": "/mcp/",
+                    "requestContext": {"httpMethod": "GET", "path": "/mcp/"},
+                },
+                "want": "/mcp/",
+            },
+        ]
+
+        for case in cases:
+            with self.subTest(case["name"]):
+                event = {
+                    "headers": {},
+                    "multiValueHeaders": {},
+                    "queryStringParameters": {},
+                    "multiValueQueryStringParameters": {},
+                    "body": "",
+                    "isBase64Encoded": False,
+                    **case["event"],
+                }
+                req = request_from_apigw_proxy(event)
+                self.assertEqual(req.path, case["want"])
+
     def test_response_converters_preserve_headers_and_cookies(self) -> None:
         resp = Response(
             status=200,
@@ -132,4 +225,3 @@ class TestAwsHttp(unittest.TestCase):
         out = apigw_v2_response_from_response(b64)
         self.assertTrue(out["isBase64Encoded"])
         self.assertEqual(out["body"], base64.b64encode(b"\x00\xff").decode("ascii"))
-
