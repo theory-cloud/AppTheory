@@ -1,0 +1,39 @@
+{
+  "id": "m3.apigw_proxy.preserve_proxy_trailing_slash_capture",
+  "tier": "m3",
+  "name": "APIGW REST API v1: {proxy+} preserves a terminal slash in the captured value",
+  "setup": {
+    "routes": [{ "method": "GET", "path": "/files/{path+}", "handler": "echo_path_params" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "apigw_proxy",
+      "event": {
+        "resource": "/files/{path+}",
+        "path": "/files/a/b/",
+        "httpMethod": "GET",
+        "headers": {},
+        "multiValueHeaders": {},
+        "queryStringParameters": {},
+        "multiValueQueryStringParameters": {},
+        "requestContext": {
+          "requestId": "req-1",
+          "resourcePath": "/files/{path+}",
+          "path": "/files/a/b/",
+          "httpMethod": "GET"
+        },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": { "params": { "path": "a/b/" } },
+      "is_base64": false
+    }
+  }
+}
