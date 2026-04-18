@@ -1,0 +1,39 @@
+{
+  "id": "m3.apigw_proxy.remote_mcp_actor_trailing_slash",
+  "tier": "m3",
+  "name": "APIGW REST API v1: /mcp/{actor} and /mcp/{actor}/ are equivalent on the Remote MCP adapter path",
+  "setup": {
+    "routes": [{ "method": "GET", "path": "/mcp/{actor}", "handler": "echo_path_params" }]
+  },
+  "input": {
+    "aws_event": {
+      "source": "apigw_proxy",
+      "event": {
+        "resource": "/mcp/{actor}",
+        "path": "/mcp/agent1/",
+        "httpMethod": "GET",
+        "headers": {},
+        "multiValueHeaders": {},
+        "queryStringParameters": {},
+        "multiValueQueryStringParameters": {},
+        "requestContext": {
+          "requestId": "req-1",
+          "resourcePath": "/mcp/{actor}",
+          "path": "/mcp/agent1/",
+          "httpMethod": "GET"
+        },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": { "params": { "actor": "agent1" } },
+      "is_base64": false
+    }
+  }
+}
