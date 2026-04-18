@@ -43,10 +43,7 @@ func (a *App) serveAPIGatewayProxyLambda(ctx context.Context, event events.APIGa
 }
 
 func requestFromAPIGatewayProxy(event events.APIGatewayProxyRequest) (Request, error) {
-	path := event.Path
-	if path == "" {
-		path = event.RequestContext.Path
-	}
+	path := apigatewayProxyRequestPath(event)
 
 	method := event.HTTPMethod
 	if method == "" {
@@ -61,6 +58,37 @@ func requestFromAPIGatewayProxy(event events.APIGatewayProxyRequest) (Request, e
 		Body:     []byte(event.Body),
 		IsBase64: event.IsBase64Encoded,
 	}, nil
+}
+
+func apigatewayProxyRequestPath(event events.APIGatewayProxyRequest) string {
+	path := event.Path
+	if path == "" {
+		path = event.RequestContext.Path
+	}
+	if !shouldCanonicalizeAPIGatewayProxyRequestPath(event) {
+		return path
+	}
+	return canonicalizeAPIGatewayProxyRequestPath(path)
+}
+
+func shouldCanonicalizeAPIGatewayProxyRequestPath(event events.APIGatewayProxyRequest) bool {
+	switch apigatewayProxyMatchedResource(event) {
+	case "/mcp",
+		"/mcp/{actor}",
+		"/.well-known/oauth-protected-resource/mcp",
+		"/.well-known/oauth-protected-resource/mcp/{actor}":
+		return true
+	default:
+		return false
+	}
+}
+
+func canonicalizeAPIGatewayProxyRequestPath(path string) string {
+	normalized := normalizePath(path)
+	if normalized == "/" {
+		return normalized
+	}
+	return strings.TrimRight(normalized, "/")
 }
 
 func isTextEventStream(headers map[string][]string) bool {
@@ -103,13 +131,20 @@ func apigatewayProxyRouteMethod(event events.APIGatewayProxyRequest) string {
 }
 
 func apigatewayProxyRouteResource(event events.APIGatewayProxyRequest) string {
-	if resource := normalizeAPIGatewayProxyRoutePath(event.Resource); resource != "" {
-		return resource
-	}
-	if resource := normalizeAPIGatewayProxyRoutePath(event.RequestContext.ResourcePath); resource != "" {
+	if resource := apigatewayProxyMatchedResource(event); resource != "" {
 		return resource
 	}
 	return normalizeAPIGatewayProxyRoutePath(event.Path)
+}
+
+func apigatewayProxyMatchedResource(event events.APIGatewayProxyRequest) string {
+	if resource := normalizeAPIGatewayProxyRoutePath(event.Resource); resource != "/" {
+		return resource
+	}
+	if resource := normalizeAPIGatewayProxyRoutePath(event.RequestContext.ResourcePath); resource != "/" {
+		return resource
+	}
+	return ""
 }
 
 func normalizeAPIGatewayProxyRoutePath(path string) string {

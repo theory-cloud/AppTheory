@@ -10,6 +10,15 @@ from apptheory.request import Request
 from apptheory.response import Response
 from apptheory.util import normalize_path, to_bytes
 
+_REMOTE_MCP_APIGW_CANONICAL_RESOURCES = frozenset(
+    {
+        "/mcp",
+        "/mcp/{actor}",
+        "/.well-known/oauth-protected-resource/mcp",
+        "/.well-known/oauth-protected-resource/mcp/{actor}",
+    }
+)
+
 
 def request_from_apigw_v2(event: dict[str, Any]) -> Request:
     return _request_from_http_event(event)
@@ -32,7 +41,7 @@ def request_from_apigw_proxy(event: dict[str, Any]) -> Request:
 
     return Request(
         method=str(event.get("httpMethod") or request_context.get("httpMethod") or ""),
-        path=str(event.get("path") or request_context.get("path") or "/"),
+        path=_apigw_proxy_request_path(event, request_context),
         query=query,
         headers=headers,
         body=str(event.get("body") or ""),
@@ -369,6 +378,47 @@ def _query_from_proxy(
             continue
         out[str(key)] = [str(value)]
     return out
+
+
+def _apigw_proxy_request_path(event: dict[str, Any], request_context: dict[str, Any]) -> str:
+    path = str(event.get("path") or request_context.get("path") or "/")
+    if not _should_canonicalize_apigw_proxy_request_path(event, request_context):
+        return path
+    return _canonicalize_apigw_proxy_request_path(path)
+
+
+def _should_canonicalize_apigw_proxy_request_path(event: dict[str, Any], request_context: dict[str, Any]) -> bool:
+    return _apigw_proxy_matched_resource(event, request_context) in _REMOTE_MCP_APIGW_CANONICAL_RESOURCES
+
+
+def _apigw_proxy_matched_resource(event: dict[str, Any], request_context: dict[str, Any]) -> str:
+    resource = _normalize_apigw_proxy_route_path(event.get("resource"))
+    if resource != "/":
+        return resource
+
+    request_context_resource = _normalize_apigw_proxy_route_path(request_context.get("resourcePath"))
+    if request_context_resource != "/":
+        return request_context_resource
+
+    return ""
+
+
+def _normalize_apigw_proxy_route_path(path: Any) -> str:
+    trimmed = str(path or "").strip().strip("/")
+    if not trimmed:
+        return "/"
+
+    parts = [part.strip() for part in trimmed.split("/") if part.strip()]
+    if not parts:
+        return "/"
+    return "/" + "/".join(parts)
+
+
+def _canonicalize_apigw_proxy_request_path(path: str) -> str:
+    normalized = normalize_path(path)
+    if normalized == "/":
+        return normalized
+    return normalized.rstrip("/") or "/"
 
 
 def _parse_raw_query_string(raw: str) -> dict[str, list[str]]:
