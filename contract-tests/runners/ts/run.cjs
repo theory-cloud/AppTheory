@@ -1962,6 +1962,10 @@ function builtInAppTheoryHandler(runtime, name) {
       return () => {
         throw new Error("boom");
       };
+    case "unexpected_error":
+      return () => {
+        throw new Error("boom");
+      };
     case "binary_body":
       return () => runtime.binary(200, Buffer.from([0x00, 0x01, 0x02]), "application/octet-stream");
     case "unauthorized":
