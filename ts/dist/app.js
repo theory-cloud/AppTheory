@@ -8,7 +8,7 @@ import { applyAppSyncContextValues, appSyncErrorResponse, appSyncPayloadFromResp
 import { albTargetGroupResponseFromResponse, apigatewayProxyResponseFromResponse, apigatewayV2ResponseFromResponse, lambdaFunctionURLResponseFromResponse, requestFromALBTargetGroup, requestFromAPIGatewayProxy, requestFromAPIGatewayV2, requestFromLambdaFunctionURL, requestFromWebSocketEvent, } from "./internal/aws-http.js";
 import { serveLambdaFunctionURLStreaming, } from "./internal/aws-lambda-streaming.js";
 import { dynamoDBTableNameFromStreamArn, eventBridgeRuleNameFromArn, kinesisStreamNameFromArn, snsTopicNameFromArn, sqsQueueNameFromArn, webSocketManagementEndpoint, } from "./internal/aws-names.js";
-import { canonicalizeHeaders, cloneQuery, firstHeaderValue, normalizeMethod, normalizePath, } from "./internal/http.js";
+import { canonicalizeHeaders, cloneQuery, firstHeaderValue, normalizeBodyStream, normalizeMethod, normalizePath, } from "./internal/http.js";
 import { normalizeRequest } from "./internal/request.js";
 import { errorResponse, errorResponseWithFormat, errorResponseWithRequestId, errorResponseWithRequestIdAndFormat, normalizeResponse, responseForError, responseForErrorWithFormat, responseForErrorWithRequestId, responseForErrorWithRequestIdAndFormat, } from "./internal/response.js";
 import { Router } from "./internal/router.js";
@@ -406,11 +406,17 @@ export class App {
             return finish(respondToServeError(err, normalized, requestId), code);
         }
         if (this._limits.maxResponseBytes > 0 &&
-            Buffer.from(resp.body).length > this._limits.maxResponseBytes) {
+            resp.body.length > this._limits.maxResponseBytes) {
             if (typeof contextOptions?.errorResponder === "function") {
                 return finish(respondToServeError(new AppError("app.too_large", "response too large"), normalized, requestId), "app.too_large");
             }
             return finish(this._httpErrorResponseWithRequestId("app.too_large", "response too large", {}, requestId), "app.too_large");
+        }
+        if (this._limits.maxResponseBytes > 0 && resp.bodyStream) {
+            resp = {
+                ...resp,
+                bodyStream: limitResponseBodyStream(resp.bodyStream, resp.body.length, this._limits.maxResponseBytes),
+            };
         }
         return finish(resp, "");
     }
@@ -1032,6 +1038,23 @@ function defaultPolicyMessage(code) {
         default:
             return "internal error";
     }
+}
+function limitResponseBodyStream(bodyStream, initialBytes, maxResponseBytes) {
+    return (async function* () {
+        let emitted = Math.max(0, Number(initialBytes) || 0);
+        for await (const chunk of normalizeBodyStream(bodyStream)) {
+            const bytes = Buffer.from(chunk ?? []);
+            if (bytes.length === 0) {
+                yield bytes;
+                continue;
+            }
+            if (emitted + bytes.length > maxResponseBytes) {
+                throw new AppError("app.too_large", "response too large");
+            }
+            emitted += bytes.length;
+            yield bytes;
+        }
+    })();
 }
 function extractRemainingMs(ctx) {
     if (ctx && typeof ctx === "object") {
