@@ -21,12 +21,11 @@ type BearerTokenValidator func(ctx context.Context, token string) error
 type RequireBearerTokenOptions struct {
 	// ResourceMetadataURL is used to build the RFC9728 discovery challenge.
 	//
-	// If empty, the middleware attempts to derive it from MCP_ENDPOINT, and then
-	// from request headers (Host + X-Forwarded-Proto) as a last resort.
+	// If empty, the middleware attempts to derive it from MCP_ENDPOINT only.
 	ResourceMetadataURL string
 
-	// Validator, when provided, is called for every request. If it returns an
-	// error the request is rejected with 401.
+	// Validator is called for every request. If it is omitted, or if it returns
+	// an error, the request is rejected with 401.
 	Validator BearerTokenValidator
 }
 
@@ -40,10 +39,11 @@ func RequireBearerTokenMiddleware(opts RequireBearerTokenOptions) apptheory.Midd
 			if err != nil {
 				return unauthorizedResponse(c, opts), nil
 			}
-			if opts.Validator != nil {
-				if err := opts.Validator(c.Context(), token); err != nil {
-					return unauthorizedResponse(c, opts), nil
-				}
+			if opts.Validator == nil {
+				return unauthorizedResponse(c, opts), nil
+			}
+			if err := opts.Validator(c.Context(), token); err != nil {
+				return unauthorizedResponse(c, opts), nil
 			}
 
 			c.Set(ContextKeyBearerToken, token)
@@ -78,8 +78,6 @@ func unauthorizedResponse(c *apptheory.Context, opts RequireBearerTokenOptions) 
 			mcpEndpoint = resolved
 		}
 		if derived, ok := ResourceMetadataURLFromMcpEndpoint(mcpEndpoint); ok {
-			metaURL = derived
-		} else if derived, ok := ProtectedResourceMetadataURLForRequest(c.Request.Headers); ok {
 			metaURL = derived
 		}
 	}
