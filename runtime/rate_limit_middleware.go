@@ -2,6 +2,8 @@ package apptheory
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 
 	"github.com/theory-cloud/apptheory/pkg/limited"
@@ -121,13 +123,13 @@ func defaultRateLimitIdentifier(ctx *Context) string {
 	}
 
 	if apiKey := firstHeaderValue(ctx.Request.Headers, "x-api-key"); apiKey != "" {
-		return apiKey
+		return hashRateLimitCredentialIdentifier("api_key", apiKey)
 	}
 
 	auth := firstHeaderValue(ctx.Request.Headers, "authorization")
 	if strings.HasPrefix(auth, "Bearer ") {
 		if token := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")); token != "" {
-			return token
+			return hashRateLimitCredentialIdentifier("bearer", token)
 		}
 	}
 
@@ -140,6 +142,17 @@ func defaultRateLimitIdentifier(ctx *Context) string {
 	}
 
 	return "anonymous"
+}
+
+func hashRateLimitCredentialIdentifier(kind, raw string) string {
+	kind = strings.TrimSpace(kind)
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	sum := sha256.Sum256([]byte(kind + ":" + raw))
+	return kind + ":sha256:" + hex.EncodeToString(sum[:])
 }
 
 func defaultRateLimitResource(ctx *Context) string {

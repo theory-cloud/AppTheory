@@ -29,3 +29,29 @@ Why this changed:
 
 - Accepting arbitrary Bearer tokens when no validator was configured was not fail-closed.
 - Deriving protected-resource metadata from request headers trusted attacker-influenced inputs in proxy setups.
+
+## Go rate-limit middleware now hashes credential-derived identifiers by default
+
+Affected surface:
+
+- `runtime.RateLimitMiddleware(...)` when you rely on the default `ExtractIdentifier`
+
+What changed:
+
+- The Go runtime no longer stores raw credential material as the default limiter identifier.
+- Requests identified by `x-api-key` now use `api_key:sha256:<hex>`.
+- Requests identified by `Authorization: Bearer ...` now use `bearer:sha256:<hex>`.
+- `AuthIdentity`, `TenantID`, and explicit `ExtractIdentifier` overrides are unchanged.
+
+What you need to do:
+
+1. Expect a one-time bucket reset for any deployment that previously keyed limits directly on API keys or Bearer tokens.
+2. Update dashboards, operational tooling, or table inspection workflows that expected raw credential values in limiter
+   keys.
+3. If you need a different identifier shape, provide an explicit `ExtractIdentifier` instead of depending on the
+   default.
+
+Why this changed:
+
+- Raw API keys and Bearer tokens should not be stored in rate-limit tables by default.
+- Hashing keeps default limiter behavior deterministic while reducing credential exposure in storage and diagnostics.
