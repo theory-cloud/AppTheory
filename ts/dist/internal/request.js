@@ -1,26 +1,26 @@
 import { Buffer } from "node:buffer";
 import { AppError } from "../errors.js";
 import { canonicalizeHeaders, cloneQuery, normalizeMethod, normalizePath, parseCookies, toBuffer, } from "./http.js";
-function isValidBase64String(value) {
+function decodedBase64Length(value) {
     if (value.length === 0)
-        return true;
+        return 0;
     if (value.length % 4 !== 0)
-        return false;
+        return -1;
     if (/[^A-Za-z0-9+/=]/.test(value))
-        return false;
+        return -1;
     const firstPad = value.indexOf("=");
     if (firstPad === -1)
-        return true;
+        return (value.length / 4) * 3;
     const padLen = value.length - firstPad;
     if (padLen > 2)
-        return false;
+        return -1;
     for (let i = firstPad; i < value.length; i += 1) {
         if (value[i] !== "=")
-            return false;
+            return -1;
     }
-    return true;
+    return (value.length / 4) * 3 - padLen;
 }
-export function normalizeRequest(request) {
+export function normalizeRequest(request, maxRequestBytes = 0) {
     const method = normalizeMethod(request.method);
     const path = normalizePath(request.path);
     const query = cloneQuery(request.query);
@@ -30,8 +30,12 @@ export function normalizeRequest(request) {
     let body;
     if (isBase64) {
         const asString = rawBody.toString("utf8");
-        if (!isValidBase64String(asString)) {
+        const decodedLength = decodedBase64Length(asString);
+        if (decodedLength < 0) {
             throw new AppError("app.bad_request", "invalid base64");
+        }
+        if (maxRequestBytes > 0 && decodedLength > maxRequestBytes) {
+            throw new AppError("app.too_large", "request too large");
         }
         body = Buffer.from(asString, "base64");
     }
