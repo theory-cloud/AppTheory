@@ -9,4 +9,4 @@ export interface NormalizedRequest {
     body: Buffer;
     isBase64: boolean;
 }
-export declare function normalizeRequest(request: Request): NormalizedRequest;
+export declare function normalizeRequest(request: Request, maxRequestBytes?: number): NormalizedRequest;
