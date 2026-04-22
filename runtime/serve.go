@@ -272,10 +272,14 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 		return preflightResponse(headers)
 	}
 
-	normalized, err := normalizeRequest(req)
+	normalized, err := normalizeRequestWithMaxBytes(req, a.limits.MaxRequestBytes)
 	if err != nil {
 		state.errorCode = errorCodeForError(err)
-		return a.respondToServeError(opts, err, req, state.requestID)
+		errorReq := req
+		if state.errorCode == errorCodeTooLarge {
+			errorReq = normalized
+		}
+		return a.respondToServeError(opts, err, errorReq, state.requestID)
 	}
 
 	state.method = normalized.Method

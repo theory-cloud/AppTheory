@@ -20,6 +20,10 @@ type Request struct {
 }
 
 func normalizeRequest(in Request) (Request, error) {
+	return normalizeRequestWithMaxBytes(in, 0)
+}
+
+func normalizeRequestWithMaxBytes(in Request, maxRequestBytes int) (Request, error) {
 	out := in
 	out.Method = strings.ToUpper(strings.TrimSpace(in.Method))
 	out.Path = normalizePath(in.Path)
@@ -28,6 +32,15 @@ func normalizeRequest(in Request) (Request, error) {
 	out.Headers = canonicalizeHeaders(in.Headers)
 
 	if in.IsBase64 {
+		decodedLen, err := decodedBase64Len(in.Body)
+		if err != nil {
+			return Request{}, &AppError{Code: errorCodeBadRequest, Message: "invalid base64"}
+		}
+		if maxRequestBytes > 0 && decodedLen > maxRequestBytes {
+			out.Cookies = parseCookies(out.Headers["cookie"])
+			out.IsBase64 = in.IsBase64
+			return out, &AppError{Code: errorCodeTooLarge, Message: errorMessageRequestTooLarge}
+		}
 		decoded, err := base64.StdEncoding.DecodeString(string(in.Body))
 		if err != nil {
 			return Request{}, &AppError{Code: errorCodeBadRequest, Message: "invalid base64"}
@@ -40,6 +53,57 @@ func normalizeRequest(in Request) (Request, error) {
 	out.Cookies = parseCookies(out.Headers["cookie"])
 	out.IsBase64 = in.IsBase64
 	return out, nil
+}
+
+func decodedBase64Len(src []byte) (int, error) {
+	cleanLen := 0
+	padStart := -1
+	padCount := 0
+
+	for _, b := range src {
+		switch {
+		case b == '\r' || b == '\n':
+			continue
+		case b >= 'A' && b <= 'Z':
+			if padStart >= 0 {
+				return 0, base64.CorruptInputError(cleanLen)
+			}
+		case b >= 'a' && b <= 'z':
+			if padStart >= 0 {
+				return 0, base64.CorruptInputError(cleanLen)
+			}
+		case b >= '0' && b <= '9':
+			if padStart >= 0 {
+				return 0, base64.CorruptInputError(cleanLen)
+			}
+		case b == '+' || b == '/':
+			if padStart >= 0 {
+				return 0, base64.CorruptInputError(cleanLen)
+			}
+		case b == '=':
+			if padStart < 0 {
+				padStart = cleanLen
+			}
+			padCount++
+			if padCount > 2 {
+				return 0, base64.CorruptInputError(cleanLen)
+			}
+		default:
+			return 0, base64.CorruptInputError(cleanLen)
+		}
+		cleanLen++
+	}
+
+	if cleanLen == 0 {
+		return 0, nil
+	}
+	if cleanLen%4 != 0 {
+		return 0, base64.CorruptInputError(cleanLen)
+	}
+	if padStart >= 0 && cleanLen-padStart > 2 {
+		return 0, base64.CorruptInputError(padStart)
+	}
+	return (cleanLen/4)*3 - padCount, nil
 }
 
 func normalizePath(path string) string {
