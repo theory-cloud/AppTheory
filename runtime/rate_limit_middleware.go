@@ -12,6 +12,8 @@ import (
 // RateLimitDecisionKey is the Context key used by RateLimitMiddleware to store the last LimitDecision.
 const RateLimitDecisionKey = "rate_limit_decision"
 
+const anonymousRateLimitIdentifier = "anonymous"
+
 type RateLimitConfig struct {
 	// Limiter is required. If nil, RateLimitMiddleware is a no-op.
 	Limiter limited.RateLimiter
@@ -119,7 +121,7 @@ func checkRateLimit(ctx context.Context, limiter limited.RateLimiter, key limite
 
 func defaultRateLimitIdentifier(ctx *Context) string {
 	if ctx == nil {
-		return "anonymous"
+		return anonymousRateLimitIdentifier
 	}
 
 	if apiKey := firstHeaderValue(ctx.Request.Headers, "x-api-key"); apiKey != "" {
@@ -141,7 +143,7 @@ func defaultRateLimitIdentifier(ctx *Context) string {
 		return tenant
 	}
 
-	return "anonymous"
+	return anonymousRateLimitIdentifier
 }
 
 func hashRateLimitCredentialIdentifier(kind, raw string) string {
