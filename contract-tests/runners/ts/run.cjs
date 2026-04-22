@@ -332,6 +332,10 @@ function builtInHandler(name) {
       return () => {
         throw new Error("boom");
       };
+    case "unexpected_error":
+      return () => {
+        throw new Error("boom");
+      };
     case "binary_body":
       return () => ({
         status: 200,
