@@ -346,6 +346,7 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 		state.errorCode = errorCodeTooLarge
 		return a.respondToServeError(opts, &AppError{Code: errorCodeTooLarge, Message: errorMessageResponseTooLarge}, normalized, state.requestID)
 	}
+	resp = limitStreamedResponse(resp, a.limits.MaxResponseBytes)
 
 	return resp
 }
