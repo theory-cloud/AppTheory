@@ -61,26 +61,10 @@ func decodedBase64Len(src []byte) (int, error) {
 	padCount := 0
 
 	for _, b := range src {
-		switch {
-		case b == '\r' || b == '\n':
+		if b == '\r' || b == '\n' {
 			continue
-		case b >= 'A' && b <= 'Z':
-			if padStart >= 0 {
-				return 0, base64.CorruptInputError(cleanLen)
-			}
-		case b >= 'a' && b <= 'z':
-			if padStart >= 0 {
-				return 0, base64.CorruptInputError(cleanLen)
-			}
-		case b >= '0' && b <= '9':
-			if padStart >= 0 {
-				return 0, base64.CorruptInputError(cleanLen)
-			}
-		case b == '+' || b == '/':
-			if padStart >= 0 {
-				return 0, base64.CorruptInputError(cleanLen)
-			}
-		case b == '=':
+		}
+		if b == '=' {
 			if padStart < 0 {
 				padStart = cleanLen
 			}
@@ -88,7 +72,10 @@ func decodedBase64Len(src []byte) (int, error) {
 			if padCount > 2 {
 				return 0, base64.CorruptInputError(cleanLen)
 			}
-		default:
+			cleanLen++
+			continue
+		}
+		if padStart >= 0 || !isBase64AlphabetByte(b) {
 			return 0, base64.CorruptInputError(cleanLen)
 		}
 		cleanLen++
@@ -104,6 +91,14 @@ func decodedBase64Len(src []byte) (int, error) {
 		return 0, base64.CorruptInputError(padStart)
 	}
 	return (cleanLen/4)*3 - padCount, nil
+}
+
+func isBase64AlphabetByte(b byte) bool {
+	return (b >= 'A' && b <= 'Z') ||
+		(b >= 'a' && b <= 'z') ||
+		(b >= '0' && b <= '9') ||
+		b == '+' ||
+		b == '/'
 }
 
 func normalizePath(path string) string {

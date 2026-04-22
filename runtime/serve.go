@@ -275,11 +275,7 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 	normalized, err := normalizeRequestWithMaxBytes(req, a.limits.MaxRequestBytes)
 	if err != nil {
 		state.errorCode = errorCodeForError(err)
-		errorReq := req
-		if state.errorCode == errorCodeTooLarge {
-			errorReq = normalized
-		}
-		return a.respondToServeError(opts, err, errorReq, state.requestID)
+		return a.respondToServeError(opts, err, requestForNormalizeError(req, normalized, state.errorCode), state.requestID)
 	}
 
 	state.method = normalized.Method
@@ -352,6 +348,13 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 	}
 
 	return resp
+}
+
+func requestForNormalizeError(fallback Request, normalized Request, errorCode string) Request {
+	if errorCode == errorCodeTooLarge {
+		return normalized
+	}
+	return fallback
 }
 
 func (a *App) resolvePortableRequestID(headers map[string][]string, opts serveOptions) string {
