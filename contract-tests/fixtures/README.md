@@ -25,6 +25,7 @@ Each fixture is a single JSON object.
   - `path` (string): route pattern (supports `{param}` segments).
   - `handler` (string): built-in handler name provided by each language runner.
 - `setup.middlewares` (array, optional): built-in middleware chain names applied in registration order.
+- `setup.cors` (object, optional): portable CORS configuration. When `allow_credentials` is `true`, fixtures require explicit `allowed_origins`; omitted allowlists must not reflect origins or emit credentialed CORS headers.
 - `setup.limits` (object, optional): guardrails configuration.
   - `max_request_bytes` (number): reject requests over this size with `app.too_large`. When `input.request.is_base64`
     is `true`, this limit applies to the decoded request body bytes.
