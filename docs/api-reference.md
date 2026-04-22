@@ -191,6 +191,15 @@ The `limited` feature set provides DynamoDB-backed cross-instance rate limiting.
 - TypeScript: exports in `api-snapshots/ts.txt` including `DynamoRateLimiter`, `FixedWindowStrategy`, `SlidingWindowStrategy`, and `MultiWindowStrategy`
 - Python: exports in `api-snapshots/py.txt` under `apptheory.limited`
 
+Go runtime note:
+
+- `runtime.RateLimitMiddleware(...)` hashes default credential-derived identifiers before they reach limiter backends:
+  - `x-api-key` → `api_key:sha256:<hex>`
+  - `Authorization: Bearer ...` → `bearer:sha256:<hex>`
+- `AuthIdentity`, `TenantID`, and explicit `ExtractIdentifier` overrides are unchanged.
+- This avoids storing raw credentials in rate-limit tables, but it also changes observed key values and resets any
+  existing credential-backed buckets on first deploy.
+
 ### Sanitization
 
 Safe logging helpers are exported in all three runtimes:
