@@ -128,3 +128,21 @@ func TestWithAuthHook_RemainsCompatibleWithPrincipalFlow(t *testing.T) {
 		t.Fatalf("unexpected payload: %#v", body)
 	}
 }
+
+func TestRequireAuth_RejectsEmptyPrincipalIdentity(t *testing.T) {
+	t.Parallel()
+
+	app := New(
+		WithTier(TierP2),
+		WithIDGenerator(fixedIDGenerator("req_1")),
+		WithAuthPrincipalHook(func(*Context) (*AuthPrincipal, error) {
+			return &AuthPrincipal{}, nil
+		}),
+	)
+	app.Get("/protected", func(*Context) (*Response, error) { return Text(200, "ok"), nil }, RequireAuth())
+
+	resp := app.Serve(context.Background(), Request{Method: "GET", Path: "/protected"})
+	if resp.Status != 401 {
+		t.Fatalf("expected 401, got %d", resp.Status)
+	}
+}
