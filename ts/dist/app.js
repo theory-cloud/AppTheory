@@ -307,7 +307,7 @@ export class App {
         }
         let normalized;
         try {
-            normalized = normalizeRequest(request);
+            normalized = normalizeRequest(request, this._limits.maxRequestBytes);
         }
         catch (err) {
             const code = errorCodeFrom(err);
