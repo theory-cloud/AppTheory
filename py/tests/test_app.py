@@ -31,6 +31,7 @@ from apptheory.app import (  # noqa: E402
 from apptheory.errors import AppError, AppTheoryError  # noqa: E402
 from apptheory.request import Request, normalize_request_with_max_bytes  # noqa: E402
 from apptheory.response import Response  # noqa: E402
+from apptheory.testkit import create_test_env  # noqa: E402
 
 
 def _ok(_ctx) -> Response:
@@ -174,6 +175,28 @@ class TestApp(unittest.TestCase):
         limited_resp.get("/", big)
         too_large_resp = limited_resp.serve(Request(method="GET", path="/", body=""))
         self.assertEqual(too_large_resp.status, 413)
+
+        limited_stream_resp: App = create_app(tier="p2", limits=Limits(max_response_bytes=5))
+        limited_stream_resp.get(
+            "/stream",
+            lambda _ctx: Response(
+                status=200,
+                headers={"content-type": ["text/html; charset=utf-8"]},
+                cookies=[],
+                body=b"",
+                is_base64=False,
+                body_stream=iter([b"<h1>", b"Hello</h1>"]),
+            ),
+        )
+        stream_env = create_test_env()
+        stream_out = stream_env.invoke_streaming(
+            limited_stream_resp,
+            Request(method="GET", path="/stream", body=""),
+        )
+        self.assertEqual(stream_out.status, 200)
+        self.assertEqual(stream_out.body, b"<h1>")
+        self.assertEqual(stream_out.chunks, [b"<h1>"])
+        self.assertEqual(stream_out.stream_error_code, "app.too_large")
 
         bad_norm = limited_resp.serve(Request(method="GET", path="/", body={"bad": True}))
         self.assertEqual(bad_norm.status, 500)
