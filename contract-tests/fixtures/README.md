@@ -38,6 +38,8 @@ Each fixture is a single JSON object.
   - `chunks` (array, optional): expected streamed response chunks (when using the streaming test harness).
   - `stream_error_code` (string, optional): expected error code when an error occurs after streaming begins.
 - `expect.output_json` (any, optional): expected output value for non-HTTP fixtures (for example: `m1`).
+  - For AppSync fixtures, portable AppTheory/AppError payloads retain their intended messages, while non-portable
+    exceptions must surface the generic `internal error` message.
 - `expect.error` (object, optional): expected thrown error (for example: fail-closed `m1` routing).
   - `message` (string): error message to match.
 - `expect.logs` (array, optional): expected structured log records (P2 portable envelope).

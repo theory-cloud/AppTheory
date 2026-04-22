@@ -1475,7 +1475,7 @@ def _appsync_error_payload(exc: Exception, request: Request, request_id: str) ->
 
     return {
         "pay_theory_error": True,
-        "error_message": str(exc or "internal error"),
+        "error_message": "internal error",
         "error_type": _APPSYNC_ERROR_TYPE_SYSTEM,
         "error_data": {},
         "error_info": {},
