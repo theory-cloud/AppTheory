@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,12 @@ func TestClaudeRemoteMcp_UnauthorizedChallenge_AndProtectedResourceMetadata(t *t
 	// Protect all MCP routes.
 	auth := oauthruntime.RequireBearerTokenMiddleware(oauthruntime.RequireBearerTokenOptions{
 		ResourceMetadataURL: "https://mcp.example.com/.well-known/oauth-protected-resource",
+		Validator: func(ctx context.Context, token string) error {
+			if strings.TrimSpace(token) == "token-123" {
+				return nil
+			}
+			return errors.New("invalid bearer token")
+		},
 	})
 	protected := auth(mcpServer.Handler())
 	app.Post("/mcp", protected)
@@ -154,6 +161,12 @@ func TestClaudeRemoteMcp_Lifecycle_AndStreamingResume_WithBearerAuth(t *testing.
 
 	auth := oauthruntime.RequireBearerTokenMiddleware(oauthruntime.RequireBearerTokenOptions{
 		ResourceMetadataURL: "https://mcp.example.com/.well-known/oauth-protected-resource",
+		Validator: func(ctx context.Context, token string) error {
+			if strings.TrimSpace(token) == "token-123" {
+				return nil
+			}
+			return errors.New("invalid bearer token")
+		},
 	})
 	protected := auth(mcpServer.Handler())
 	app.Post("/mcp", protected)
