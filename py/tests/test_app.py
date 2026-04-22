@@ -562,7 +562,7 @@ class TestApp(unittest.TestCase):
             out,
             {
                 "pay_theory_error": True,
-                "error_message": "boom",
+                "error_message": "internal error",
                 "error_type": "SYSTEM_ERROR",
                 "error_data": {},
                 "error_info": {},
