@@ -864,6 +864,12 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
 
         return handler
 
+    if name == "unexpected_error":
+        def handler(_ctx):
+            raise RuntimeError("boom")
+
+        return handler
+
     if name == "binary_body":
         return lambda _ctx: runtime.binary(200, bytes([0, 1, 2]), content_type="application/octet-stream")
 

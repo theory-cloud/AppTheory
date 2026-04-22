@@ -87,7 +87,7 @@ test("serveAppSync preserves Lift-style generic unexpected errors", async () => 
 
   assert.deepEqual(out, {
     pay_theory_error: true,
-    error_message: "boom",
+    error_message: "internal error",
     error_type: "SYSTEM_ERROR",
     error_data: {},
     error_info: {},

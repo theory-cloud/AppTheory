@@ -332,6 +332,10 @@ function builtInHandler(name) {
       return () => {
         throw new Error("boom");
       };
+    case "unexpected_error":
+      return () => {
+        throw new Error("boom");
+      };
     case "binary_body":
       return () => ({
         status: 200,
@@ -1955,6 +1959,10 @@ function builtInAppTheoryHandler(runtime, name) {
         });
       };
     case "panic":
+      return () => {
+        throw new Error("boom");
+      };
+    case "unexpected_error":
       return () => {
         throw new Error("boom");
       };
