@@ -97,6 +97,25 @@ class TestApp(unittest.TestCase):
         with self.assertRaises(ValueError):
             app.handle_strict("GET", "/{proxy+}/x", _ok)
 
+    def test_credentialed_cors_requires_allowlist(self) -> None:
+        app: App = create_app(tier="p1", cors=CORSConfig(allow_credentials=True))
+        app.get("/", _ok)
+
+        resp = app.serve(
+            Request(
+                method="GET",
+                path="/",
+                headers={"origin": "https://example.com"},
+                body="",
+            )
+        )
+
+        self.assertEqual(resp.status, 200)
+        self.assertNotIn("access-control-allow-origin", resp.headers)
+        self.assertNotIn("access-control-allow-credentials", resp.headers)
+        self.assertNotIn("access-control-allow-headers", resp.headers)
+        self.assertIn("x-request-id", resp.headers)
+
     def test_tier_p2_preflight_policy_auth_and_limits(self) -> None:
         cors = CORSConfig(allowed_origins=["*"], allow_credentials=True, allow_headers=["X-One", " X-Two ", ""])
         app: App = create_app(
