@@ -436,7 +436,7 @@ func TestServeAppSync_FormatsUnexpectedErrors(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected appsync error payload, got %T", out)
 	}
-	if payload["pay_theory_error"] != true || payload["error_message"] != "boom" || payload["error_type"] != appSyncErrorTypeSystem {
+	if payload["pay_theory_error"] != true || payload["error_message"] != errorMessageInternal || payload["error_type"] != appSyncErrorTypeSystem {
 		t.Fatalf("unexpected appsync unexpected-error payload: %#v", payload)
 	}
 	if errorData, ok := payload["error_data"].(map[string]any); !ok || len(errorData) != 0 {

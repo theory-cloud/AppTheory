@@ -300,13 +300,9 @@ func appSyncErrorPayload(err error, request Request, requestID string) map[strin
 		)
 	}
 
-	message := errorMessageInternal
-	if err != nil && strings.TrimSpace(err.Error()) != "" {
-		message = err.Error()
-	}
 	return map[string]any{
 		"pay_theory_error": true,
-		"error_message":    message,
+		"error_message":    errorMessageInternal,
 		"error_type":       appSyncErrorTypeSystem,
 		"error_data":       map[string]any{},
 		"error_info":       map[string]any{},
