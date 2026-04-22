@@ -55,6 +55,38 @@ func TestServeP0_HandlerErrors(t *testing.T) {
 	}
 }
 
+func TestServePortable_CredentialedCORSRequiresAllowlist(t *testing.T) {
+	app := New(
+		WithTier(TierP1),
+		WithIDGenerator(fixedIDGenerator("req_1")),
+		WithCORS(CORSConfig{AllowCredentials: true}),
+	)
+	app.Get("/ok", func(_ *Context) (*Response, error) { return Text(200, "ok"), nil })
+
+	resp := app.Serve(context.Background(), Request{
+		Method: "GET",
+		Path:   "/ok",
+		Headers: map[string][]string{
+			"Origin": {"https://a.example"},
+		},
+	})
+	if resp.Status != 200 {
+		t.Fatalf("expected 200, got %d", resp.Status)
+	}
+	if got := resp.Headers["access-control-allow-origin"]; len(got) != 0 {
+		t.Fatalf("expected no allow-origin, got %v", got)
+	}
+	if got := resp.Headers["access-control-allow-credentials"]; len(got) != 0 {
+		t.Fatalf("expected no allow-credentials, got %v", got)
+	}
+	if got := resp.Headers["access-control-allow-headers"]; len(got) != 0 {
+		t.Fatalf("expected no allow-headers, got %v", got)
+	}
+	if got := resp.Headers["x-request-id"]; len(got) != 1 || got[0] != "req_1" {
+		t.Fatalf("unexpected x-request-id: %v", got)
+	}
+}
+
 func TestServePortable_AddsRequestIDAuthAndCORS(t *testing.T) {
 	app := New(
 		WithTier(TierP2),
