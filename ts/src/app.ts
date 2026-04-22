@@ -77,6 +77,7 @@ import {
   canonicalizeHeaders,
   cloneQuery,
   firstHeaderValue,
+  normalizeBodyStream,
   normalizeMethod,
   normalizePath,
 } from "./internal/http.js";
@@ -94,7 +95,7 @@ import {
 } from "./internal/response.js";
 import { Router } from "./internal/router.js";
 import { vary } from "./response.js";
-import type { Headers, Query, Request, Response } from "./types.js";
+import type { BodyStream, Headers, Query, Request, Response } from "./types.js";
 import { WebSocketManagementClient } from "./websocket-management.js";
 
 export type Tier = "p0" | "p1" | "p2";
@@ -823,7 +824,7 @@ export class App {
 
     if (
       this._limits.maxResponseBytes > 0 &&
-      Buffer.from(resp.body).length > this._limits.maxResponseBytes
+      resp.body.length > this._limits.maxResponseBytes
     ) {
       if (typeof contextOptions?.errorResponder === "function") {
         return finish(
@@ -844,6 +845,17 @@ export class App {
         ),
         "app.too_large",
       );
+    }
+
+    if (this._limits.maxResponseBytes > 0 && resp.bodyStream) {
+      resp = {
+        ...resp,
+        bodyStream: limitResponseBodyStream(
+          resp.bodyStream,
+          resp.body.length,
+          this._limits.maxResponseBytes,
+        ),
+      };
     }
 
     return finish(resp, "");
@@ -1675,6 +1687,28 @@ function defaultPolicyMessage(code: string): string {
     default:
       return "internal error";
   }
+}
+
+function limitResponseBodyStream(
+  bodyStream: BodyStream,
+  initialBytes: number,
+  maxResponseBytes: number,
+): AsyncIterable<Uint8Array> {
+  return (async function* () {
+    let emitted = Math.max(0, Number(initialBytes) || 0);
+    for await (const chunk of normalizeBodyStream(bodyStream)) {
+      const bytes = Buffer.from(chunk ?? []);
+      if (bytes.length === 0) {
+        yield bytes;
+        continue;
+      }
+      if (emitted + bytes.length > maxResponseBytes) {
+        throw new AppError("app.too_large", "response too large");
+      }
+      emitted += bytes.length;
+      yield bytes;
+    }
+  })();
 }
 
 function extractRemainingMs(ctx: unknown): number {

@@ -700,11 +700,7 @@ class App:
             )
 
         resp = normalize_response(resp)
-        if (
-            self._limits.max_response_bytes > 0
-            and resp.body_stream is None
-            and len(resp.body) > self._limits.max_response_bytes
-        ):
+        if self._limits.max_response_bytes > 0 and len(resp.body) > self._limits.max_response_bytes:
             if error_responder is not None:
                 return finish(
                     respond_to_error(AppError("app.too_large", "response too large"), normalized, request_id),
@@ -717,6 +713,13 @@ class App:
                     request_id=request_id,
                 ),
                 "app.too_large",
+            )
+
+        if self._limits.max_response_bytes > 0 and resp.body_stream is not None:
+            resp.body_stream = _limit_response_stream(
+                resp.body_stream,
+                len(resp.body),
+                self._limits.max_response_bytes,
             )
 
         return finish(resp)
@@ -1751,3 +1754,21 @@ def _default_policy_message(code: str) -> str:
             return "overloaded"
         case _:
             return "internal error"
+
+
+def _limit_response_stream(body_stream: Any, initial_bytes: int, max_response_bytes: int):
+    emitted = max(0, int(initial_bytes or 0))
+
+    def gen():
+        nonlocal emitted
+        for chunk in body_stream:
+            data = bytes(chunk or b"")
+            if not data:
+                yield data
+                continue
+            if emitted + len(data) > max_response_bytes:
+                raise AppError("app.too_large", "response too large")
+            emitted += len(data)
+            yield data
+
+    return gen()
