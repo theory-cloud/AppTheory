@@ -700,10 +700,7 @@ class App:
             )
 
         resp = normalize_response(resp)
-        if (
-            self._limits.max_response_bytes > 0
-            and len(resp.body) > self._limits.max_response_bytes
-        ):
+        if self._limits.max_response_bytes > 0 and len(resp.body) > self._limits.max_response_bytes:
             if error_responder is not None:
                 return finish(
                     respond_to_error(AppError("app.too_large", "response too large"), normalized, request_id),
