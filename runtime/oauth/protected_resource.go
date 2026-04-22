@@ -130,12 +130,13 @@ func CanonicalizeIssuerURL(raw string) (string, bool) {
 	return out.String(), true
 }
 
-// ProtectedResourceMetadataURLForRequest attempts to derive an absolute
-// root `/.well-known/oauth-protected-resource` URL from common proxy headers.
+// ProtectedResourceMetadataURLForRequest derives an absolute root
+// `/.well-known/oauth-protected-resource` URL from common proxy headers.
 //
-// Prefer using ResourceMetadataURLFromMcpEndpoint with MCP_ENDPOINT for AWS
-// deployments. This helper is intentionally root-only and does not attempt to
-// infer path-scoped protected resources from request paths.
+// Prefer using ResourceMetadataURLFromMcpEndpoint with an explicit MCP endpoint
+// URL for AWS Remote MCP deployments. This helper is intentionally root-only
+// and does not attempt to infer path-scoped protected resources from request
+// paths.
 func ProtectedResourceMetadataURLForRequest(headers map[string][]string) (string, bool) {
 	host := firstHeader(headers, "host")
 	if host == "" {

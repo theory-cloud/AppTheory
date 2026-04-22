@@ -72,9 +72,17 @@ You typically:
    see below).
 3) Validate Bearer tokens against Autheory (JWT verify via JWKS or introspection).
 
-When you deploy with `AppTheoryRemoteMcpServer`, the construct injects `MCP_ENDPOINT`. If
-`RequireBearerTokenMiddleware(...)` is used without an explicit `ResourceMetadataURL`, the middleware derives the
-RFC9728 protected-resource metadata challenge URL from that endpoint by default.
+Important fail-closed rules:
+- `RequireBearerTokenMiddleware(...)` now requires a `Validator`. If you omit it, the middleware rejects every request
+  with `401` instead of accepting any syntactically valid Bearer token.
+- The middleware derives the RFC9728 protected-resource metadata challenge URL only from an explicit
+  `ResourceMetadataURL` or from the injected `MCP_ENDPOINT`. It no longer falls back to `Host` /
+  `X-Forwarded-Proto` request headers.
+
+When you deploy with `AppTheoryRemoteMcpServer`, the construct injects `MCP_ENDPOINT`. That is the canonical metadata
+source when you do not provide `ResourceMetadataURL` explicitly.
+
+For migration notes, see `docs/migration/v1-security.md`.
 
 ## 3) Deploy on AWS (REST API v1 response streaming)
 

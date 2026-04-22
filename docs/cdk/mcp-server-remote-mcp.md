@@ -141,6 +141,15 @@ This matters for OAuth discovery. If `oauth.RequireBearerTokenMiddleware(...)` i
 `ResourceMetadataURL`, the middleware derives the RFC9728 `/.well-known/oauth-protected-resource` challenge URL from
 `MCP_ENDPOINT`.
 
+Important fail-closed rules:
+
+- `RequireBearerTokenMiddleware(...)` requires an explicit `Validator`; omitting it causes every request to be rejected
+  with `401`.
+- The middleware no longer derives protected-resource metadata from `Host` / `X-Forwarded-Proto` request headers.
+  Use `MCP_ENDPOINT` or pass `ResourceMetadataURL` explicitly.
+
+For migration notes, see `docs/migration/v1-security.md`.
+
 ## Keepalive, replay, and origin guidance
 
 For SSE connections, expect disconnects. Prefer:

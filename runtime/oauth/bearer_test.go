@@ -90,3 +90,48 @@ func TestRequireBearerTokenMiddleware_ValidatorRuns(t *testing.T) {
 	require.Equal(t, 200, resp.Status)
 	require.Equal(t, 1, called)
 }
+
+func TestRequireBearerTokenMiddleware_RejectsWhenValidatorMissing(t *testing.T) {
+	mw := RequireBearerTokenMiddleware(RequireBearerTokenOptions{
+		ResourceMetadataURL: "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+	})
+
+	called := false
+	handler := mw(func(*apptheory.Context) (*apptheory.Response, error) {
+		called = true
+		return &apptheory.Response{Status: 200}, nil
+	})
+
+	resp, err := handler(&apptheory.Context{
+		Request: apptheory.Request{
+			Headers: map[string][]string{
+				"authorization": {"Bearer ok"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 401, resp.Status)
+	require.Equal(t, []string{`Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"`}, resp.Headers["www-authenticate"])
+	require.False(t, called)
+}
+
+func TestRequireBearerTokenMiddleware_DoesNotDeriveMetadataFromRequestHeaders(t *testing.T) {
+	t.Setenv("MCP_ENDPOINT", "")
+
+	mw := RequireBearerTokenMiddleware(RequireBearerTokenOptions{})
+	handler := mw(func(*apptheory.Context) (*apptheory.Response, error) {
+		return &apptheory.Response{Status: 200}, nil
+	})
+
+	resp, err := handler(&apptheory.Context{
+		Request: apptheory.Request{
+			Headers: map[string][]string{
+				"host":              {"mcp.example.com"},
+				"x-forwarded-proto": {"https"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 401, resp.Status)
+	require.Equal(t, []string{"Bearer"}, resp.Headers["www-authenticate"])
+}
