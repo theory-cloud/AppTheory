@@ -2,6 +2,7 @@ package apptheory
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,9 +14,11 @@ type stubRateLimiter struct {
 	err      error
 
 	recordCalls int
+	lastKey     limited.RateLimitKey
 }
 
-func (s *stubRateLimiter) CheckLimit(_ context.Context, _ limited.RateLimitKey) (*limited.LimitDecision, error) {
+func (s *stubRateLimiter) CheckLimit(_ context.Context, key limited.RateLimitKey) (*limited.LimitDecision, error) {
+	s.lastKey = key
 	return s.decision, s.err
 }
 
@@ -95,5 +98,81 @@ func TestRateLimitMiddleware_FailOpenOnLimiterError(t *testing.T) {
 	}
 	if !called {
 		t.Fatalf("expected handler to be called")
+	}
+}
+
+func TestDefaultRateLimitIdentifier_HashesCredentialHeaders(t *testing.T) {
+	apiKeyCtx := &Context{
+		Request: Request{
+			Headers: map[string][]string{
+				"x-api-key": {"k_secret"},
+			},
+		},
+	}
+	if got := defaultRateLimitIdentifier(apiKeyCtx); got == "k_secret" {
+		t.Fatalf("expected api key identifier to be hashed, got raw value")
+	} else if want := hashRateLimitCredentialIdentifier("api_key", "k_secret"); got != want {
+		t.Fatalf("expected hashed api key identifier %q, got %q", want, got)
+	}
+
+	bearerCtx := &Context{
+		Request: Request{
+			Headers: map[string][]string{
+				"authorization": {"Bearer tok_secret"},
+			},
+		},
+	}
+	if got := defaultRateLimitIdentifier(bearerCtx); got == "tok_secret" {
+		t.Fatalf("expected bearer identifier to be hashed, got raw value")
+	} else if want := hashRateLimitCredentialIdentifier("bearer", "tok_secret"); got != want {
+		t.Fatalf("expected hashed bearer identifier %q, got %q", want, got)
+	}
+}
+
+func TestDefaultRateLimitIdentifier_FallbacksRemainStable(t *testing.T) {
+	authIdentityCtx := &Context{AuthIdentity: "user_123"}
+	if got := defaultRateLimitIdentifier(authIdentityCtx); got != "user_123" {
+		t.Fatalf("expected auth identity fallback, got %q", got)
+	}
+
+	tenantCtx := &Context{TenantID: "tenant_123"}
+	if got := defaultRateLimitIdentifier(tenantCtx); got != "tenant_123" {
+		t.Fatalf("expected tenant fallback, got %q", got)
+	}
+
+	if got := defaultRateLimitIdentifier(&Context{}); got != "anonymous" {
+		t.Fatalf("expected anonymous fallback, got %q", got)
+	}
+}
+
+func TestRateLimitMiddleware_DefaultIdentifierStoredInLimiterIsHashed(t *testing.T) {
+	limiter := &stubRateLimiter{
+		decision: &limited.LimitDecision{Allowed: true, CurrentCount: 0, Limit: 10, ResetsAt: time.Now()},
+	}
+
+	app := New(WithTier(TierP0))
+	app.Use(RateLimitMiddleware(RateLimitConfig{Limiter: limiter}))
+	app.Get("/ok", func(_ *Context) (*Response, error) {
+		return Text(200, "ok"), nil
+	})
+
+	resp := app.Serve(context.Background(), Request{
+		Method: "GET",
+		Path:   "/ok",
+		Headers: map[string][]string{
+			"x-api-key": {"k_secret"},
+		},
+	})
+	if resp.Status != 200 {
+		t.Fatalf("expected status 200, got %d", resp.Status)
+	}
+	if limiter.lastKey.Identifier == "" {
+		t.Fatalf("expected limiter identifier to be recorded")
+	}
+	if strings.Contains(limiter.lastKey.Identifier, "k_secret") {
+		t.Fatalf("expected hashed limiter identifier, got %q", limiter.lastKey.Identifier)
+	}
+	if want := hashRateLimitCredentialIdentifier("api_key", "k_secret"); limiter.lastKey.Identifier != want {
+		t.Fatalf("expected hashed limiter identifier %q, got %q", want, limiter.lastKey.Identifier)
 	}
 }
