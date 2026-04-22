@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -301,6 +302,9 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 	},
 	"panic": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		panic("boom")
+	},
+	"unexpected_error": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return nil, errors.New("boom")
 	},
 	"binary_body": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		return apptheory.Binary(200, []byte{0x00, 0x01, 0x02}, "application/octet-stream"), nil
