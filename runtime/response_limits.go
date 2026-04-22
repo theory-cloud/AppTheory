@@ -15,7 +15,7 @@ func limitStreamedResponse(resp Response, maxBytes int) Response {
 		emitted: len(resp.Body),
 	}
 	if resp.BodyReader != nil {
-		resp.BodyReader = &limitedResponseReader{reader: resp.BodyReader, limiter: limiter}
+		resp.BodyReader = limitBodyReader(resp.BodyReader, limiter)
 	}
 	if resp.BodyStream != nil {
 		resp.BodyStream = limitBodyStream(resp.BodyStream, limiter)
@@ -46,21 +46,6 @@ func (l *responseSizeLimiter) allowChunk(size int) bool {
 	}
 	l.emitted += size
 	return true
-}
-
-func (l *responseSizeLimiter) remaining() int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	if l.tripped {
-		return 0
-	}
-	remaining := l.max - l.emitted
-	if remaining <= 0 {
-		l.tripped = true
-		return 0
-	}
-	return remaining
 }
 
 func (l *responseSizeLimiter) consumeReader(size int) (int, bool) {
@@ -115,52 +100,67 @@ func limitBodyStream(stream BodyStream, limiter *responseSizeLimiter) BodyStream
 	return out
 }
 
-type limitedResponseReader struct {
-	reader     io.Reader
-	limiter    *responseSizeLimiter
-	pendingErr error
+func limitBodyReader(reader io.Reader, limiter *responseSizeLimiter) io.Reader {
+	if reader == nil || limiter == nil {
+		return reader
+	}
+
+	pr, pw := io.Pipe()
+	go func() {
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := reader.Read(buf)
+			if writeLimitedReaderChunk(pw, limiter, buf[:n]) {
+				return
+			}
+			if err == nil {
+				continue
+			}
+			if err == io.EOF {
+				closeResponseLimitPipeWriter(pw)
+				return
+			}
+			closeResponseLimitPipeWriterWithError(pw, err)
+			return
+		}
+	}()
+
+	return pr
 }
 
-func (r *limitedResponseReader) Read(p []byte) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-	if r.pendingErr != nil {
-		err := r.pendingErr
-		r.pendingErr = nil
-		return 0, err
+func writeLimitedReaderChunk(pw *io.PipeWriter, limiter *responseSizeLimiter, chunk []byte) bool {
+	if len(chunk) == 0 {
+		return false
 	}
 
-	remaining := r.limiter.remaining()
-	if remaining <= 0 {
-		return 0, r.limiter.limitErr()
-	}
-
-	readSize := len(p)
-	if readSize > remaining {
-		readSize = remaining + 1
-	}
-
-	target := p
-	if readSize != len(p) {
-		target = make([]byte, readSize)
-	}
-
-	n, err := r.reader.Read(target)
-	if n == 0 {
-		return 0, err
-	}
-
-	emit, overflow := r.limiter.consumeReader(n)
-	copy(p, target[:emit])
-	if overflow {
-		r.pendingErr = r.limiter.limitErr()
-		if emit > 0 {
-			return emit, nil
+	emit, overflow := limiter.consumeReader(len(chunk))
+	if emit > 0 {
+		if _, err := pw.Write(chunk[:emit]); err != nil {
+			return true
 		}
-		err := r.pendingErr
-		r.pendingErr = nil
-		return 0, err
 	}
-	return emit, err
+	if !overflow {
+		return false
+	}
+
+	closeResponseLimitPipeWriterWithError(pw, limiter.limitErr())
+	return true
+}
+
+func closeResponseLimitPipeWriter(pw *io.PipeWriter) {
+	if pw == nil {
+		return
+	}
+	if err := pw.Close(); err != nil {
+		return
+	}
+}
+
+func closeResponseLimitPipeWriterWithError(pw *io.PipeWriter, err error) {
+	if pw == nil {
+		return
+	}
+	if closeErr := pw.CloseWithError(err); closeErr != nil {
+		return
+	}
 }
