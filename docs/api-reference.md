@@ -242,6 +242,12 @@ AppTheory includes Go runtime support for MCP and OAuth-adjacent remote-MCP flow
 - `testkit/oauth`: Claude-like end-to-end OAuth flow helpers for remote MCP tests (`NewClaudePublicClient`,
   `AuthorizeOptions`, `Authorize`)
 
+Remote MCP auth hardening note:
+
+- `oauth.RequireBearerTokenMiddleware(...)` is fail-closed in Go: you must provide a `Validator`, and metadata
+  discovery for the `WWW-Authenticate` challenge comes from `ResourceMetadataURL` or `MCP_ENDPOINT`, not request
+  headers.
+
 Related canonical integration guides:
 
 - [Integration Guides](./integrations/README.md)
