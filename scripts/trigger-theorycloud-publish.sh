@@ -127,22 +127,44 @@ if [[ "${PUBLISH_DRY_RUN}" == "true" ]]; then
   fi
   echo "url=${PUBLISH_URL}"
   echo "payload=${PAYLOAD}"
-  echo "command=awscurl --service execute-api --region ${AWS_REGION} -X POST -H content-type: application/json --fail-with-body -o <response-file> --data ${PAYLOAD} ${PUBLISH_URL}"
+  echo "command=curl --aws-sigv4 aws:amz:${AWS_REGION}:execute-api --user <sigv4-credentials> -H content-type: application/json -H x-amz-security-token: <aws-session-token> -X POST --fail-with-body -o <response-file> --data ${PAYLOAD} ${PUBLISH_URL}"
   echo "trigger-theorycloud-publish: PASS (dry-run; url=${PUBLISH_URL})"
   exit 0
 fi
 
-command -v awscurl >/dev/null 2>&1 || fail "awscurl is required for publish invocation"
+command -v curl >/dev/null 2>&1 || fail "curl is required for publish invocation"
+
+AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
+AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
+AWS_SESSION_TOKEN="${AWS_SESSION_TOKEN:-}"
+
+if [[ -z "${AWS_ACCESS_KEY_ID}" || -z "${AWS_SECRET_ACCESS_KEY}" ]]; then
+  fail "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are required for publish invocation"
+fi
 
 response_file="$(mktemp)"
 trap 'rm -f "${response_file}"' EXIT
 
-if awscurl --service execute-api --region "${AWS_REGION}" -X POST -H 'content-type: application/json' --fail-with-body --data "${PAYLOAD}" -o "${response_file}" "${PUBLISH_URL}"; then
+curl_args=(
+  --aws-sigv4 "aws:amz:${AWS_REGION}:execute-api"
+  --user "${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}"
+  -X POST
+  -H 'content-type: application/json'
+  --fail-with-body
+  --data "${PAYLOAD}"
+  -o "${response_file}"
+)
+
+if [[ -n "${AWS_SESSION_TOKEN}" ]]; then
+  curl_args+=(-H "x-amz-security-token: ${AWS_SESSION_TOKEN}")
+fi
+
+if curl "${curl_args[@]}" "${PUBLISH_URL}"; then
   :
 else
   status=$?
   body="$(cat "${response_file}" 2>/dev/null || true)"
-  fail "awscurl invocation failed for ${PUBLISH_URL} (exit ${status}): ${body}"
+  fail "curl invocation failed for ${PUBLISH_URL} (exit ${status}): ${body}"
 fi
 
 body="$(cat "${response_file}")"

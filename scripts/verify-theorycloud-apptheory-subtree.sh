@@ -20,6 +20,27 @@ if [[ -d "${OUTPUT_DIR}/docs" ]]; then
   exit 1
 fi
 
+SYMLINK_DOCS_ROOT="${TMP_DIR}/docs-symlink-check"
+mkdir -p "${SYMLINK_DOCS_ROOT}"
+cp -R "${REPO_ROOT}/docs/." "${SYMLINK_DOCS_ROOT}"
+ln -s /etc/passwd "${SYMLINK_DOCS_ROOT}/integrations/passwd.md"
+
+SYMLINK_OUTPUT_DIR="${TMP_DIR}/out-symlink-check"
+SYMLINK_FAILURE_LOG="${TMP_DIR}/symlink-failure.log"
+if bash "${SCRIPT_DIR}/stage-theorycloud-apptheory-subtree.sh" \
+  --docs-root "${SYMLINK_DOCS_ROOT}" \
+  --output "${SYMLINK_OUTPUT_DIR}" \
+  >"${TMP_DIR}/symlink-check.stdout" 2>"${SYMLINK_FAILURE_LOG}"; then
+  echo "expected docs subtree staging to reject symlinked files" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'docs subtree staging does not allow symlinks: integrations/passwd.md' "${SYMLINK_FAILURE_LOG}"; then
+  echo "expected symlink rejection message for integrations/passwd.md" >&2
+  cat "${SYMLINK_FAILURE_LOG}" >&2
+  exit 1
+fi
+
 python3 - "${REPO_ROOT}/docs" "${OUTPUT_DIR}" "$(git -C "${REPO_ROOT}" rev-parse HEAD)" <<'PY'
 import datetime as dt
 import fnmatch
