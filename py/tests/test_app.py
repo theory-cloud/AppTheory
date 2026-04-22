@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import sys
 import unittest
@@ -28,7 +29,7 @@ from apptheory.app import (  # noqa: E402
     _websocket_management_endpoint,
 )
 from apptheory.errors import AppError, AppTheoryError  # noqa: E402
-from apptheory.request import Request  # noqa: E402
+from apptheory.request import Request, normalize_request_with_max_bytes  # noqa: E402
 from apptheory.response import Response  # noqa: E402
 
 
@@ -149,6 +150,21 @@ class TestApp(unittest.TestCase):
         limited_req.get("/", _ok)
         too_large_req = limited_req.serve(Request(method="POST", path="/", body="ab"))
         self.assertEqual(too_large_req.status, 413)
+        too_large_base64_req = limited_req.serve(
+            Request(
+                method="POST",
+                path="/",
+                body=base64.b64encode(b"ab").decode("ascii"),
+                is_base64=True,
+            )
+        )
+        self.assertEqual(too_large_base64_req.status, 413)
+        with self.assertRaises(AppError) as invalid_base64:
+            normalize_request_with_max_bytes(
+                Request(method="POST", path="/", body="AAAA=AAA", is_base64=True),
+                max_request_bytes=1,
+            )
+        self.assertEqual(invalid_base64.exception.code, "app.bad_request")
 
         limited_resp: App = create_app(tier="p2", limits=Limits(max_response_bytes=1))
 

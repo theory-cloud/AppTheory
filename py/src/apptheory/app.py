@@ -35,7 +35,7 @@ from apptheory.errors import (
     status_for_error_code,
 )
 from apptheory.ids import IdGenerator, RealIdGenerator
-from apptheory.request import Request, normalize_request
+from apptheory.request import Request, normalize_request, normalize_request_with_max_bytes
 from apptheory.response import Response, normalize_response
 from apptheory.router import Router
 from apptheory.util import canonicalize_headers, clone_query
@@ -588,7 +588,7 @@ class App:
             return finish(normalize_response(resp))
 
         try:
-            normalized = normalize_request(request)
+            normalized = normalize_request_with_max_bytes(request, self._limits.max_request_bytes)
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
             return finish(respond_to_error(exc, request, request_id), error_code)
