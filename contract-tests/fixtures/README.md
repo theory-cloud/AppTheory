@@ -26,7 +26,8 @@ Each fixture is a single JSON object.
   - `handler` (string): built-in handler name provided by each language runner.
 - `setup.middlewares` (array, optional): built-in middleware chain names applied in registration order.
 - `setup.limits` (object, optional): guardrails configuration.
-  - `max_request_bytes` (number): reject requests over this size with `app.too_large`.
+  - `max_request_bytes` (number): reject requests over this size with `app.too_large`. When `input.request.is_base64`
+    is `true`, this limit applies to the decoded request body bytes.
   - `max_response_bytes` (number): reject responses over this size with `app.too_large`.
 - `input.request` (object): request presented to the runtime under test.
 - `input.context` (object, optional): synthetic invocation context (portable subset).
