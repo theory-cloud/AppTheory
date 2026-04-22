@@ -643,7 +643,7 @@ export class App {
 
     let normalized: Context["request"];
     try {
-      normalized = normalizeRequest(request);
+      normalized = normalizeRequest(request, this._limits.maxRequestBytes);
     } catch (err) {
       const code = errorCodeFrom(err);
       return finish(respondToServeError(err, request, requestId), code);

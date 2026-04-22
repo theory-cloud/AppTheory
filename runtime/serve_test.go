@@ -2,6 +2,7 @@ package apptheory
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -154,6 +155,12 @@ func TestServePortable_PolicyAndLimits(t *testing.T) {
 	resp = app.Serve(context.Background(), Request{Method: "GET", Path: "/ok", Body: []byte("xx")})
 	if resp.Status != 413 {
 		t.Fatalf("expected 413 request too large, got %d", resp.Status)
+	}
+
+	encoded := base64.StdEncoding.EncodeToString([]byte("xx"))
+	resp = app.Serve(context.Background(), Request{Method: "GET", Path: "/ok", Body: []byte(encoded), IsBase64: true})
+	if resp.Status != 413 {
+		t.Fatalf("expected 413 base64 request too large, got %d", resp.Status)
 	}
 
 	app = New(WithTier(TierP2), WithLimits(Limits{MaxResponseBytes: 1}))
