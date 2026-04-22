@@ -28,7 +28,9 @@ Each fixture is a single JSON object.
 - `setup.limits` (object, optional): guardrails configuration.
   - `max_request_bytes` (number): reject requests over this size with `app.too_large`. When `input.request.is_base64`
     is `true`, this limit applies to the decoded request body bytes.
-  - `max_response_bytes` (number): reject responses over this size with `app.too_large`.
+  - `max_response_bytes` (number): reject responses over this size with `app.too_large`. For streamed responses
+    (`expect.response.chunks`), the already-committed status/headers remain intact and the stream terminates with
+    `expect.response.stream_error_code = "app.too_large"` once the next streamed chunk would exceed the limit.
 - `input.request` (object): request presented to the runtime under test.
 - `input.context` (object, optional): synthetic invocation context (portable subset).
 - `setup.routes[].auth_required` (boolean, optional): whether the route requires auth.
