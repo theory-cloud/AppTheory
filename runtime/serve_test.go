@@ -2,6 +2,7 @@ package apptheory
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -51,6 +52,38 @@ func TestServeP0_HandlerErrors(t *testing.T) {
 	resp = app.Serve(context.Background(), Request{Method: "GET", Path: "/err"})
 	if resp.Status != 500 {
 		t.Fatalf("expected 500, got %d", resp.Status)
+	}
+}
+
+func TestServePortable_CredentialedCORSRequiresAllowlist(t *testing.T) {
+	app := New(
+		WithTier(TierP1),
+		WithIDGenerator(fixedIDGenerator("req_1")),
+		WithCORS(CORSConfig{AllowCredentials: true}),
+	)
+	app.Get("/ok", func(_ *Context) (*Response, error) { return Text(200, "ok"), nil })
+
+	resp := app.Serve(context.Background(), Request{
+		Method: "GET",
+		Path:   "/ok",
+		Headers: map[string][]string{
+			"Origin": {"https://a.example"},
+		},
+	})
+	if resp.Status != 200 {
+		t.Fatalf("expected 200, got %d", resp.Status)
+	}
+	if got := resp.Headers["access-control-allow-origin"]; len(got) != 0 {
+		t.Fatalf("expected no allow-origin, got %v", got)
+	}
+	if got := resp.Headers["access-control-allow-credentials"]; len(got) != 0 {
+		t.Fatalf("expected no allow-credentials, got %v", got)
+	}
+	if got := resp.Headers["access-control-allow-headers"]; len(got) != 0 {
+		t.Fatalf("expected no allow-headers, got %v", got)
+	}
+	if got := resp.Headers["x-request-id"]; len(got) != 1 || got[0] != "req_1" {
+		t.Fatalf("unexpected x-request-id: %v", got)
 	}
 }
 
@@ -154,6 +187,12 @@ func TestServePortable_PolicyAndLimits(t *testing.T) {
 	resp = app.Serve(context.Background(), Request{Method: "GET", Path: "/ok", Body: []byte("xx")})
 	if resp.Status != 413 {
 		t.Fatalf("expected 413 request too large, got %d", resp.Status)
+	}
+
+	encoded := base64.StdEncoding.EncodeToString([]byte("xx"))
+	resp = app.Serve(context.Background(), Request{Method: "GET", Path: "/ok", Body: []byte(encoded), IsBase64: true})
+	if resp.Status != 413 {
+		t.Fatalf("expected 413 base64 request too large, got %d", resp.Status)
 	}
 
 	app = New(WithTier(TierP2), WithLimits(Limits{MaxResponseBytes: 1}))

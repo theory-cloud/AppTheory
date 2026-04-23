@@ -1,5 +1,6 @@
 import { Duration, RemovalPolicy } from "aws-cdk-lib";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
+import type * as kms from "aws-cdk-lib/aws-kms";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import { Construct } from "constructs";
 
@@ -62,6 +63,18 @@ export interface AppTheoryQueueProps {
      * @default - AWS managed encryption is used
      */
     readonly encryption?: sqs.QueueEncryption;
+
+    /**
+     * External KMS key to use for queue encryption when you require a customer-managed key.
+     * @default - no customer-managed KMS key
+     */
+    readonly encryptionMasterKey?: kms.IKey;
+
+    /**
+     * Whether to create a queue policy that denies non-TLS requests.
+     * @default false
+     */
+    readonly enforceSSL?: boolean;
 
     /**
      * Whether to enable content-based deduplication for FIFO queues.
@@ -157,6 +170,8 @@ export class AppTheoryQueue extends Construct {
                 visibilityTimeout: props.dlqVisibilityTimeout ?? props.visibilityTimeout,
                 retentionPeriod: props.dlqRetentionPeriod ?? Duration.days(14),
                 encryption: props.encryption,
+                encryptionMasterKey: props.encryptionMasterKey,
+                enforceSSL: props.enforceSSL,
                 fifo: props.fifo,
                 contentBasedDeduplication: props.fifo ? props.contentBasedDeduplication : undefined,
                 removalPolicy,
@@ -170,6 +185,8 @@ export class AppTheoryQueue extends Construct {
             retentionPeriod: props.retentionPeriod,
             receiveMessageWaitTime: props.receiveMessageWaitTime,
             encryption: props.encryption,
+            encryptionMasterKey: props.encryptionMasterKey,
+            enforceSSL: props.enforceSSL,
             fifo: props.fifo,
             contentBasedDeduplication: props.fifo ? props.contentBasedDeduplication : undefined,
             deadLetterQueue: this.deadLetterQueue

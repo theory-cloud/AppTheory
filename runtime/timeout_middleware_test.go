@@ -73,3 +73,32 @@ func TestTimeoutMiddleware_TimeoutAndPanicRecovery(t *testing.T) {
 		t.Fatalf("expected internal error response for panic, got %d", resp.Status)
 	}
 }
+
+func TestTimeoutMiddleware_PropagatesCooperativeCancellation(t *testing.T) {
+	app := New(WithTier(TierP0))
+	app.Use(TimeoutMiddleware(TimeoutConfig{DefaultTimeout: 5 * time.Millisecond}))
+
+	sideEffect := make(chan struct{}, 1)
+	app.Get("/cooperative", func(ctx *Context) (*Response, error) {
+		select {
+		case <-ctx.Context().Done():
+			return Text(200, "canceled"), nil
+		case <-time.After(20 * time.Millisecond):
+			sideEffect <- struct{}{}
+			return Text(200, "late"), nil
+		}
+	})
+
+	resp := app.Serve(context.Background(), Request{Method: "GET", Path: "/cooperative"})
+	if resp.Status != 408 {
+		t.Fatalf("expected timeout response (408), got %d", resp.Status)
+	}
+
+	time.Sleep(30 * time.Millisecond)
+
+	select {
+	case <-sideEffect:
+		t.Fatal("cooperative handler committed a post-timeout side effect")
+	default:
+	}
+}

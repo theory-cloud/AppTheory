@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import sys
 import unittest
@@ -28,8 +29,9 @@ from apptheory.app import (  # noqa: E402
     _websocket_management_endpoint,
 )
 from apptheory.errors import AppError, AppTheoryError  # noqa: E402
-from apptheory.request import Request  # noqa: E402
+from apptheory.request import Request, normalize_request_with_max_bytes  # noqa: E402
 from apptheory.response import Response  # noqa: E402
+from apptheory.testkit import create_test_env  # noqa: E402
 
 
 def _ok(_ctx) -> Response:
@@ -95,6 +97,25 @@ class TestApp(unittest.TestCase):
         with self.assertRaises(ValueError):
             app.handle_strict("GET", "/{proxy+}/x", _ok)
 
+    def test_credentialed_cors_requires_allowlist(self) -> None:
+        app: App = create_app(tier="p1", cors=CORSConfig(allow_credentials=True))
+        app.get("/", _ok)
+
+        resp = app.serve(
+            Request(
+                method="GET",
+                path="/",
+                headers={"origin": "https://example.com"},
+                body="",
+            )
+        )
+
+        self.assertEqual(resp.status, 200)
+        self.assertNotIn("access-control-allow-origin", resp.headers)
+        self.assertNotIn("access-control-allow-credentials", resp.headers)
+        self.assertNotIn("access-control-allow-headers", resp.headers)
+        self.assertIn("x-request-id", resp.headers)
+
     def test_tier_p2_preflight_policy_auth_and_limits(self) -> None:
         cors = CORSConfig(allowed_origins=["*"], allow_credentials=True, allow_headers=["X-One", " X-Two ", ""])
         app: App = create_app(
@@ -149,6 +170,21 @@ class TestApp(unittest.TestCase):
         limited_req.get("/", _ok)
         too_large_req = limited_req.serve(Request(method="POST", path="/", body="ab"))
         self.assertEqual(too_large_req.status, 413)
+        too_large_base64_req = limited_req.serve(
+            Request(
+                method="POST",
+                path="/",
+                body=base64.b64encode(b"ab").decode("ascii"),
+                is_base64=True,
+            )
+        )
+        self.assertEqual(too_large_base64_req.status, 413)
+        with self.assertRaises(AppError) as invalid_base64:
+            normalize_request_with_max_bytes(
+                Request(method="POST", path="/", body="AAAA=AAA", is_base64=True),
+                max_request_bytes=1,
+            )
+        self.assertEqual(invalid_base64.exception.code, "app.bad_request")
 
         limited_resp: App = create_app(tier="p2", limits=Limits(max_response_bytes=1))
 
@@ -158,6 +194,28 @@ class TestApp(unittest.TestCase):
         limited_resp.get("/", big)
         too_large_resp = limited_resp.serve(Request(method="GET", path="/", body=""))
         self.assertEqual(too_large_resp.status, 413)
+
+        limited_stream_resp: App = create_app(tier="p2", limits=Limits(max_response_bytes=5))
+        limited_stream_resp.get(
+            "/stream",
+            lambda _ctx: Response(
+                status=200,
+                headers={"content-type": ["text/html; charset=utf-8"]},
+                cookies=[],
+                body=b"",
+                is_base64=False,
+                body_stream=iter([b"<h1>", b"Hello</h1>"]),
+            ),
+        )
+        stream_env = create_test_env()
+        stream_out = stream_env.invoke_streaming(
+            limited_stream_resp,
+            Request(method="GET", path="/stream", body=""),
+        )
+        self.assertEqual(stream_out.status, 200)
+        self.assertEqual(stream_out.body, b"<h1>")
+        self.assertEqual(stream_out.chunks, [b"<h1>"])
+        self.assertEqual(stream_out.stream_error_code, "app.too_large")
 
         bad_norm = limited_resp.serve(Request(method="GET", path="/", body={"bad": True}))
         self.assertEqual(bad_norm.status, 500)
@@ -523,7 +581,7 @@ class TestApp(unittest.TestCase):
             out,
             {
                 "pay_theory_error": True,
-                "error_message": "boom",
+                "error_message": "internal error",
                 "error_type": "SYSTEM_ERROR",
                 "error_data": {},
                 "error_info": {},

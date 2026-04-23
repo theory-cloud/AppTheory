@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -184,11 +185,8 @@ func NewEvent(eventType, tenantID, sourceID string, payload any) (*Event, error)
 
 	now := time.Now().UTC()
 
-	// Construct partition and sort keys:
-	// - partition: tenant_id#event_type
-	// - sort: timestamp_nanos#id
-	partitionKey := fmt.Sprintf("%s#%s", tenantID, eventType)
-	sortKey := fmt.Sprintf("%d#%s", now.UnixNano(), id)
+	partitionKey := eventPartitionKey(tenantID, eventType)
+	sortKey := eventSortKey(now, id)
 
 	return &Event{
 		ID:           id,
@@ -204,6 +202,14 @@ func NewEvent(eventType, tenantID, sourceID string, payload any) (*Event, error)
 		Metadata:     make(map[string]string),
 		Tags:         make([]string, 0),
 	}, nil
+}
+
+func eventPartitionKey(tenantID, eventType string) string {
+	return fmt.Sprintf("%s#%s", strings.TrimSpace(tenantID), strings.TrimSpace(eventType))
+}
+
+func eventSortKey(publishedAt time.Time, id string) string {
+	return fmt.Sprintf("%d#%s", publishedAt.UnixNano(), strings.TrimSpace(id))
 }
 
 // WithTTL sets an expiration time for the event.

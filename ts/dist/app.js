@@ -8,7 +8,7 @@ import { applyAppSyncContextValues, appSyncErrorResponse, appSyncPayloadFromResp
 import { albTargetGroupResponseFromResponse, apigatewayProxyResponseFromResponse, apigatewayV2ResponseFromResponse, lambdaFunctionURLResponseFromResponse, requestFromALBTargetGroup, requestFromAPIGatewayProxy, requestFromAPIGatewayV2, requestFromLambdaFunctionURL, requestFromWebSocketEvent, } from "./internal/aws-http.js";
 import { serveLambdaFunctionURLStreaming, } from "./internal/aws-lambda-streaming.js";
 import { dynamoDBTableNameFromStreamArn, eventBridgeRuleNameFromArn, kinesisStreamNameFromArn, snsTopicNameFromArn, sqsQueueNameFromArn, webSocketManagementEndpoint, } from "./internal/aws-names.js";
-import { canonicalizeHeaders, cloneQuery, firstHeaderValue, normalizeMethod, normalizePath, } from "./internal/http.js";
+import { canonicalizeHeaders, cloneQuery, firstHeaderValue, normalizeBodyStream, normalizeMethod, normalizePath, } from "./internal/http.js";
 import { normalizeRequest } from "./internal/request.js";
 import { errorResponse, errorResponseWithFormat, errorResponseWithRequestId, errorResponseWithRequestIdAndFormat, normalizeResponse, responseForError, responseForErrorWithFormat, responseForErrorWithRequestId, responseForErrorWithRequestIdAndFormat, } from "./internal/response.js";
 import { Router } from "./internal/router.js";
@@ -307,7 +307,7 @@ export class App {
         }
         let normalized;
         try {
-            normalized = normalizeRequest(request);
+            normalized = normalizeRequest(request, this._limits.maxRequestBytes);
         }
         catch (err) {
             const code = errorCodeFrom(err);
@@ -406,11 +406,17 @@ export class App {
             return finish(respondToServeError(err, normalized, requestId), code);
         }
         if (this._limits.maxResponseBytes > 0 &&
-            Buffer.from(resp.body).length > this._limits.maxResponseBytes) {
+            resp.body.length > this._limits.maxResponseBytes) {
             if (typeof contextOptions?.errorResponder === "function") {
                 return finish(respondToServeError(new AppError("app.too_large", "response too large"), normalized, requestId), "app.too_large");
             }
             return finish(this._httpErrorResponseWithRequestId("app.too_large", "response too large", {}, requestId), "app.too_large");
+        }
+        if (this._limits.maxResponseBytes > 0 && resp.bodyStream) {
+            resp = {
+                ...resp,
+                bodyStream: limitResponseBodyStream(resp.bodyStream, resp.body.length, this._limits.maxResponseBytes),
+            };
         }
         return finish(resp, "");
     }
@@ -857,6 +863,50 @@ export function createLambdaFunctionURLStreamingHandler(app) {
     }
     return async (event, ctx) => app.serveLambdaFunctionURL(event, ctx);
 }
+function isAbortSignalLike(value) {
+    return typeof AbortSignal !== "undefined" && value instanceof AbortSignal;
+}
+function abortSignalFromTimeoutCarrier(value) {
+    if (isAbortSignalLike(value)) {
+        return value;
+    }
+    if (value && typeof value === "object") {
+        const signal = value.signal;
+        if (isAbortSignalLike(signal)) {
+            return signal;
+        }
+    }
+    return null;
+}
+function timeoutContextCarrier(parent, signal) {
+    if (parent == null) {
+        return signal;
+    }
+    if (typeof parent === "object") {
+        return { ...parent, signal };
+    }
+    return { parent, signal };
+}
+function cloneContextWithTimeoutCarrier(ctx, carrier) {
+    const ctxInternal = ctx;
+    const clone = new Context({
+        request: ctx.request,
+        params: ctx.params,
+        clock: ctxInternal._clock,
+        ids: ctxInternal._ids,
+        ctx: carrier,
+        requestId: ctx.requestId,
+        tenantId: ctx.tenantId,
+        authIdentity: ctx.authIdentity,
+        remainingMs: ctx.remainingMs,
+        middlewareTrace: ctx.middlewareTrace,
+        webSocket: ctx.asWebSocket(),
+        appSync: ctx.asAppSync(),
+    });
+    const cloneInternal = clone;
+    cloneInternal._values = ctxInternal._values;
+    return clone;
+}
 function normalizeTimeoutConfig(config) {
     let defaultTimeoutMs = Number(config?.defaultTimeoutMs ?? 0);
     if (!Number.isFinite(defaultTimeoutMs))
@@ -917,19 +967,45 @@ export function timeoutMiddleware(config = {}) {
         if (timeoutMs <= 0) {
             return next(ctx);
         }
-        let timer = null;
+        const controller = new AbortController();
+        const parentSignal = abortSignalFromTimeoutCarrier(ctx?.ctx ?? null);
+        let removeParentAbortListener = () => { };
+        if (parentSignal) {
+            if (parentSignal.aborted) {
+                controller.abort(parentSignal.reason);
+            }
+            else {
+                const onParentAbort = () => controller.abort(parentSignal.reason);
+                parentSignal.addEventListener("abort", onParentAbort, { once: true });
+                removeParentAbortListener = () => parentSignal.removeEventListener("abort", onParentAbort);
+            }
+        }
+        const handlerCtx = cloneContextWithTimeoutCarrier(ctx, timeoutContextCarrier(ctx?.ctx ?? null, controller.signal));
+        let timer = setTimeout(() => {
+            controller.abort(cfg.timeoutMessage);
+        }, timeoutMs);
+        let removeTimeoutAbortListener = () => { };
         const timeoutPromise = new Promise((_resolve, reject) => {
             void _resolve;
-            timer = setTimeout(() => reject(new AppError("app.timeout", cfg.timeoutMessage)), timeoutMs);
+            const onAbort = () => reject(new AppError("app.timeout", cfg.timeoutMessage));
+            if (controller.signal.aborted) {
+                onAbort();
+                return;
+            }
+            controller.signal.addEventListener("abort", onAbort, { once: true });
+            removeTimeoutAbortListener = () => controller.signal.removeEventListener("abort", onAbort);
         });
         try {
-            const run = Promise.resolve().then(() => next(ctx));
+            const run = Promise.resolve().then(() => next(handlerCtx));
             return await Promise.race([run, timeoutPromise]);
         }
         finally {
             if (timer) {
                 clearTimeout(timer);
+                timer = null;
             }
+            removeTimeoutAbortListener();
+            removeParentAbortListener();
         }
     };
 }
@@ -988,7 +1064,7 @@ function corsOriginAllowed(origin, cors) {
         return false;
     const allowed = cors.allowedOrigins;
     if (allowed === null) {
-        return true;
+        return !cors.allowCredentials;
     }
     if (!Array.isArray(allowed) || allowed.length === 0) {
         return false;
@@ -1032,6 +1108,23 @@ function defaultPolicyMessage(code) {
         default:
             return "internal error";
     }
+}
+function limitResponseBodyStream(bodyStream, initialBytes, maxResponseBytes) {
+    return (async function* () {
+        let emitted = Math.max(0, Number(initialBytes) || 0);
+        for await (const chunk of normalizeBodyStream(bodyStream)) {
+            const bytes = Buffer.from(chunk ?? []);
+            if (bytes.length === 0) {
+                yield bytes;
+                continue;
+            }
+            if (emitted + bytes.length > maxResponseBytes) {
+                throw new AppError("app.too_large", "response too large");
+            }
+            emitted += bytes.length;
+            yield bytes;
+        }
+    })();
 }
 function extractRemainingMs(ctx) {
     if (ctx && typeof ctx === "object") {

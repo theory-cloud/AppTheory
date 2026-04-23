@@ -385,6 +385,17 @@ class TestJobs(unittest.TestCase):
         self.assertEqual(ctx.exception.type, "invalid_input")
 
         with self.assertRaises(JobLedgerError) as ctx:
+            ledger.acquire_semaphore_slot(
+                scope="email",
+                subject="customer_1",
+                limit=10_000,
+                owner="w1",
+                lease_duration=dt.timedelta(minutes=2),
+            )
+        self.assertEqual(ctx.exception.type, "invalid_input")
+        self.assertEqual(ctx.exception.message, "limit must be <= 256")
+
+        with self.assertRaises(JobLedgerError) as ctx:
             ledger.refresh_semaphore_slot(
                 scope="email",
                 subject="customer_1",

@@ -6,6 +6,8 @@ import argparse
 import base64
 import json
 import sys
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -795,7 +797,18 @@ def _load_apptheory_runtime():
     return apptheory
 
 
-def _built_in_apptheory_handler(runtime: Any, name: str):
+def _cooperative_cancelled(value: Any) -> bool:
+    if isinstance(value, threading.Event):
+        return value.is_set()
+
+    event = getattr(value, "cancelled", None)
+    if isinstance(event, threading.Event):
+        return event.is_set()
+
+    return False
+
+
+def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = None):
     if name == "static_pong":
         return lambda _ctx: runtime.text(200, "pong")
 
@@ -805,6 +818,25 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
 
             time.sleep(0.05)
             return runtime.text(200, "done")
+
+        return handler
+
+    if name == "cooperative_cancel_side_effect":
+        def handler(ctx):
+            deadline = time.monotonic() + 0.02
+            while time.monotonic() < deadline:
+                if _cooperative_cancelled(getattr(ctx, "ctx", None)):
+                    return runtime.text(200, "cancelled")
+                time.sleep(0.001)
+            if effects is not None:
+                effects.metrics.append(
+                    {
+                        "name": "timeout.side_effect_committed",
+                        "value": 1,
+                        "tags": {"handler": "cooperative_cancel_side_effect"},
+                    }
+                )
+            return runtime.text(200, "late")
 
         return handler
 
@@ -859,6 +891,12 @@ def _built_in_apptheory_handler(runtime: Any, name: str):
         return handler
 
     if name == "panic":
+        def handler(_ctx):
+            raise RuntimeError("boom")
+
+        return handler
+
+    if name == "unexpected_error":
         def handler(_ctx):
             raise RuntimeError("boom")
 
@@ -1641,6 +1679,7 @@ def run_fixture_m12(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespon
     runtime = _load_apptheory_runtime()
     ids = runtime.ManualIdGenerator()
     ids.push("req_test_123")
+    effects = _DummyEffectsApp()
 
     setup = fixture.get("setup", {})
     limits = setup.get("limits", {}) or {}
@@ -1663,7 +1702,7 @@ def run_fixture_m12(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespon
 
     for route in setup.get("routes", []) or []:
         name = str(route.get("handler", ""))
-        handler = _built_in_apptheory_handler(runtime, name)
+        handler = _built_in_apptheory_handler(runtime, name, effects)
         if handler is None:
             raise RuntimeError(f"unknown handler {name!r}")
         app.handle(
@@ -1695,7 +1734,8 @@ def run_fixture_m12(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespon
     )
 
     expected = fixture.get("expect", {}).get("response", {})
-    return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
+    time.sleep(0.03)
+    return run_fixture_compare(fixture, actual, expected, effects)
 
 
 def run_fixture_m14(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:

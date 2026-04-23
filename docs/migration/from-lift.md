@@ -7,6 +7,7 @@ functionality remains available for Go users** (portable subset + documented Go-
 
 ## Start Here
 
+- Consolidated v1.0 security migration notes: `docs/migration/v1-security.md`
 - Representative migration notes: `docs/migration/g4-representative-migration.md`
 - Canonical interface map: `docs/api-reference.md`
 - Canonical runtime patterns: `docs/core-patterns.md`
@@ -459,9 +460,15 @@ Planned:
 
 ## Validation Checklist
 
+- Review `docs/migration/v1-security.md` before cutover for fail-closed changes that affect auth hooks, CORS, AppSync
+  error masking, SSR/CDK defaults, MCP transport, and logging expectations.
 - Service builds and passes its unit/integration tests.
 - End-to-end HTTP behavior matches expected client contracts (error codes/envelopes, CORS/auth behavior).
 - Rate limiting behavior matches `limited` semantics where used.
+- If your Go HTTP service relied on raw API keys or Bearer tokens appearing in rate-limit tables or dashboards,
+  update those expectations before cutover. AppTheory’s default `RateLimitMiddleware(...)` now hashes
+  credential-derived identifiers (`api_key:sha256:...` / `bearer:sha256:...`), which intentionally resets those
+  buckets and changes the observable identifier values.
 - Deploy templates updated (CDK/examples as needed).
 
 ## Representative Migration (G4)

@@ -1,5 +1,6 @@
 import { Duration, RemovalPolicy } from "aws-cdk-lib";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
+import type * as kms from "aws-cdk-lib/aws-kms";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import { Construct } from "constructs";
 /**
@@ -53,6 +54,16 @@ export interface AppTheoryQueueProps {
      * @default - AWS managed encryption is used
      */
     readonly encryption?: sqs.QueueEncryption;
+    /**
+     * External KMS key to use for queue encryption when you require a customer-managed key.
+     * @default - no customer-managed KMS key
+     */
+    readonly encryptionMasterKey?: kms.IKey;
+    /**
+     * Whether to create a queue policy that denies non-TLS requests.
+     * @default false
+     */
+    readonly enforceSSL?: boolean;
     /**
      * Whether to enable content-based deduplication for FIFO queues.
      * Only applicable for FIFO queues.

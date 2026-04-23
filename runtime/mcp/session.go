@@ -17,6 +17,13 @@ type Session struct {
 	Data      map[string]string `json:"data,omitempty"`
 }
 
+func sessionExpiredAt(now time.Time, sess *Session) bool {
+	if sess == nil || sess.ExpiresAt.IsZero() {
+		return false
+	}
+	return !sess.ExpiresAt.After(now)
+}
+
 // SessionStore is the interface for session persistence backends.
 type SessionStore interface {
 	Get(ctx context.Context, id string) (*Session, error)
@@ -68,7 +75,7 @@ func (m *MemorySessionStore) Get(_ context.Context, id string) (*Session, error)
 	}
 
 	// Check TTL expiration.
-	if !sess.ExpiresAt.IsZero() && m.clock.Now().After(sess.ExpiresAt) {
+	if sessionExpiredAt(m.clock.Now(), sess) {
 		// Lazily remove expired session.
 		m.mu.Lock()
 		delete(m.store, id)
