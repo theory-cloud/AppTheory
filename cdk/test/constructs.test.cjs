@@ -1295,6 +1295,7 @@ test("AppTheorySsrSite (FaceTheory) synthesizes expected template", () => {
     htmlStoreBucket,
     htmlStoreKeyPrefix: "isr-pages",
     isrMetadataTable,
+    allowViewerTenantHeaders: true,
     ssrForwardHeaders: [" X-FaceTheory-Tenant ", "x-facetheory-tenant"],
     staticPathPatterns: ["/marketing/* ", "marketing/*"],
   });
@@ -1408,7 +1409,7 @@ test("AppTheorySsrSite keeps read-only SSR origins on Function URL plus lambda O
   assert.ok(lambdaOrigin.OriginAccessControlId, "Lambda origin should be signed via CloudFront OAC");
 });
 
-test("AppTheorySsrSite defaults writable ssr-only mode to a public Function URL", () => {
+test("AppTheorySsrSite signs writable ssr-only mode by default", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -1430,6 +1431,19 @@ test("AppTheorySsrSite defaults writable ssr-only mode to a public Function URL"
       resource.Type === "AWS::CloudFront::OriginAccessControl" &&
       resource.Properties?.OriginAccessControlConfig?.OriginAccessControlOriginType === "lambda",
   );
+  const cloudfrontInvokePermissions = resources.filter(
+    (resource) =>
+      resource.Type === "AWS::Lambda::Permission" &&
+      resource.Properties?.Principal === "cloudfront.amazonaws.com" &&
+      resource.Properties?.Action === "lambda:InvokeFunctionUrl",
+  );
+  const cloudfrontInvokeViaUrlPermissions = resources.filter(
+    (resource) =>
+      resource.Type === "AWS::Lambda::Permission" &&
+      resource.Properties?.Principal === "cloudfront.amazonaws.com" &&
+      resource.Properties?.Action === "lambda:InvokeFunction" &&
+      resource.Properties?.InvokedViaFunctionUrl === true,
+  );
   const publicUrlPermissions = resources.filter(
     (resource) =>
       resource.Type === "AWS::Lambda::Permission" &&
@@ -1440,9 +1454,11 @@ test("AppTheorySsrSite defaults writable ssr-only mode to a public Function URL"
   assert.ok(distribution, "Should have CloudFront distribution");
   assert.equal(functions.length, 2);
   assert.equal(functionUrls.length, 1);
-  assert.equal(functionUrls[0].Properties?.AuthType, "NONE");
-  assert.equal(lambdaOriginAccessControls.length, 0);
-  assert.equal(publicUrlPermissions.length, 1);
+  assert.equal(functionUrls[0].Properties?.AuthType, "AWS_IAM");
+  assert.equal(lambdaOriginAccessControls.length, 1);
+  assert.equal(cloudfrontInvokePermissions.length, 1);
+  assert.equal(cloudfrontInvokeViaUrlPermissions.length, 1);
+  assert.equal(publicUrlPermissions.length, 0);
   assert.equal(distribution.Properties?.DistributionConfig?.OriginGroups?.Quantity ?? 0, 0);
   assert.equal(distribution.Properties?.DistributionConfig?.DefaultCacheBehavior?.FunctionAssociations?.length, 2);
   assert.equal(
@@ -1496,7 +1512,7 @@ test("AppTheorySsrSite allows explicit public Function URL compatibility mode", 
   assert.equal(publicUrlPermissions.length, 1);
 });
 
-test("AppTheorySsrSite defaults direct SSR write paths to a public Function URL", () => {
+test("AppTheorySsrSite signs direct SSR write paths by default", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -1520,6 +1536,19 @@ test("AppTheorySsrSite defaults direct SSR write paths to a public Function URL"
       resource.Type === "AWS::CloudFront::OriginAccessControl" &&
       resource.Properties?.OriginAccessControlConfig?.OriginAccessControlOriginType === "lambda",
   );
+  const cloudfrontInvokePermissions = resources.filter(
+    (resource) =>
+      resource.Type === "AWS::Lambda::Permission" &&
+      resource.Properties?.Principal === "cloudfront.amazonaws.com" &&
+      resource.Properties?.Action === "lambda:InvokeFunctionUrl",
+  );
+  const cloudfrontInvokeViaUrlPermissions = resources.filter(
+    (resource) =>
+      resource.Type === "AWS::Lambda::Permission" &&
+      resource.Properties?.Principal === "cloudfront.amazonaws.com" &&
+      resource.Properties?.Action === "lambda:InvokeFunction" &&
+      resource.Properties?.InvokedViaFunctionUrl === true,
+  );
   const publicUrlPermissions = resources.filter(
     (resource) =>
       resource.Type === "AWS::Lambda::Permission" &&
@@ -1528,9 +1557,11 @@ test("AppTheorySsrSite defaults direct SSR write paths to a public Function URL"
   );
 
   assert.equal(functionUrls.length, 1);
-  assert.equal(functionUrls[0].Properties?.AuthType, "NONE");
-  assert.equal(lambdaOriginAccessControls.length, 0);
-  assert.equal(publicUrlPermissions.length, 1);
+  assert.equal(functionUrls[0].Properties?.AuthType, "AWS_IAM");
+  assert.equal(lambdaOriginAccessControls.length, 1);
+  assert.equal(cloudfrontInvokePermissions.length, 1);
+  assert.equal(cloudfrontInvokeViaUrlPermissions.length, 1);
+  assert.equal(publicUrlPermissions.length, 0);
 });
 
 test("AppTheorySsrSite defaults to FaceTheory-safe SSR origin request headers", () => {
@@ -1543,10 +1574,7 @@ test("AppTheorySsrSite defaults to FaceTheory-safe SSR origin request headers", 
     code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
   });
 
-  new apptheory.AppTheorySsrSite(stack, "Site", {
-    ssrFunction: fn,
-    ssrForwardHeaders: [" X-FaceTheory-Tenant ", "x-facetheory-tenant"],
-  });
+  new apptheory.AppTheorySsrSite(stack, "Site", { ssrFunction: fn });
 
   const template = assertions.Template.fromStack(stack).toJSON();
   const originRequestPolicies = Object.values(template.Resources ?? {}).filter(
@@ -1573,13 +1601,99 @@ test("AppTheorySsrSite defaults to FaceTheory-safe SSR origin request headers", 
     "x-apptheory-original-uri",
     "x-facetheory-original-host",
     "x-facetheory-original-uri",
-    "x-facetheory-tenant",
     "x-request-id",
-    "x-tenant-id",
   ]);
   assert.deepEqual(htmlHeaders, headers, "HTML and SSR policies should share the safe edge header contract");
   assert.ok(!headers.includes("host"), "Should not forward raw host to Function URL origin");
   assert.ok(!headers.includes("x-forwarded-proto"), "Should not forward x-forwarded-proto to Function URL origin");
+});
+
+test("AppTheorySsrSite strips viewer-supplied tenant headers by default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", { ssrFunction: fn });
+
+  const resources = Object.values(assertions.Template.fromStack(stack).toJSON().Resources ?? {});
+  const viewerRequestFunction = resources.find(
+    (resource) =>
+      resource.Type === "AWS::CloudFront::Function" &&
+      String(resource.Properties?.FunctionConfig?.Comment ?? "").includes("viewer-request"),
+  );
+
+  assert.ok(viewerRequestFunction, "Should synthesize a viewer-request CloudFront Function");
+  assert.match(viewerRequestFunction.Properties?.FunctionCode ?? "", /'x-tenant-id'/);
+});
+
+test("AppTheorySsrSite rejects tenant-like ssrForwardHeaders without compatibility mode", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: fn,
+        ssrForwardHeaders: ["x-facetheory-tenant"],
+      }),
+    /allowViewerTenantHeaders=true/,
+  );
+});
+
+test("AppTheorySsrSite allows explicit tenant-header passthrough compatibility mode", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    allowViewerTenantHeaders: true,
+    ssrForwardHeaders: [" X-FaceTheory-Tenant ", "x-facetheory-tenant"],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const originRequestPolicies = Object.values(template.Resources ?? {}).filter(
+    (resource) => resource.Type === "AWS::CloudFront::OriginRequestPolicy",
+  );
+  const ssrPolicy = originRequestPolicies.find(
+    (resource) => resource.Properties?.OriginRequestPolicyConfig?.CookiesConfig?.CookieBehavior === "all",
+  );
+  const viewerRequestFunction = Object.values(template.Resources ?? {}).find(
+    (resource) =>
+      resource.Type === "AWS::CloudFront::Function" &&
+      String(resource.Properties?.FunctionConfig?.Comment ?? "").includes("viewer-request"),
+  );
+
+  const headers = [...(ssrPolicy.Properties?.OriginRequestPolicyConfig?.HeadersConfig?.Headers ?? [])].sort();
+
+  assert.deepEqual(headers, [
+    "cloudfront-forwarded-proto",
+    "cloudfront-viewer-address",
+    "x-apptheory-original-host",
+    "x-apptheory-original-uri",
+    "x-facetheory-original-host",
+    "x-facetheory-original-uri",
+    "x-facetheory-tenant",
+    "x-request-id",
+    "x-tenant-id",
+  ]);
+  assert.doesNotMatch(viewerRequestFunction.Properties?.FunctionCode ?? "", /'x-tenant-id'/);
 });
 
 test("AppTheorySsrSite wires first-class ISR HTML store and metadata resources", () => {
@@ -1687,7 +1801,6 @@ test("AppTheorySsrSite ssg-isr mode creates a stable public HTML cache key", () 
   new apptheory.AppTheorySsrSite(stack, "Site", {
     ssrFunction: fn,
     mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
-    ssrForwardHeaders: ["x-facetheory-tenant"],
   });
 
   const template = assertions.Template.fromStack(stack).toJSON();
@@ -1708,12 +1821,45 @@ test("AppTheorySsrSite ssg-isr mode creates a stable public HTML cache key", () 
   assert.deepEqual(headers, [
     "x-apptheory-original-host",
     "x-facetheory-original-host",
-    "x-facetheory-tenant",
-    "x-tenant-id",
   ]);
   assert.deepEqual(distribution.Properties?.DistributionConfig?.DefaultCacheBehavior?.CachePolicyId, {
     Ref: cachePolicyLogicalId,
   });
+});
+
+test("AppTheorySsrSite ssg-isr mode allows explicit tenant headers into the public HTML cache key only in compatibility mode", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+    allowViewerTenantHeaders: true,
+    ssrForwardHeaders: ["x-facetheory-tenant"],
+  });
+
+  const resources = assertions.Template.fromStack(stack).toJSON().Resources ?? {};
+  const cachePolicyEntry = Object.entries(resources).find(([, resource]) => resource.Type === "AWS::CloudFront::CachePolicy");
+
+  assert.ok(cachePolicyEntry, "Should synthesize a custom HTML cache policy");
+
+  const [, cachePolicy] = cachePolicyEntry;
+  const headers = [
+    ...(cachePolicy.Properties?.CachePolicyConfig?.ParametersInCacheKeyAndForwardedToOrigin?.HeadersConfig?.Headers ?? []),
+  ].sort();
+
+  assert.deepEqual(headers, [
+    "x-apptheory-original-host",
+    "x-facetheory-original-host",
+    "x-facetheory-tenant",
+    "x-tenant-id",
+  ]);
 });
 
 test("AppTheorySsrSite ssg-isr mode synthesizes origin-group fallback and edge rewrite", () => {
