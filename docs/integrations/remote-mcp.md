@@ -84,7 +84,8 @@ Important fail-closed rules:
 When you deploy with `AppTheoryRemoteMcpServer`, the construct injects `MCP_ENDPOINT`. That is the canonical metadata
 source when you do not provide `ResourceMetadataURL` explicitly.
 
-For migration notes, see `docs/migration/v1-security.md`.
+For migration notes covering Bearer validation, initial listener keepalive changes, and expired-session fail-closed
+behavior, see `docs/migration/v1-security.md`.
 
 ## 3) Deploy on AWS (REST API v1 response streaming)
 

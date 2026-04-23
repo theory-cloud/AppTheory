@@ -2,6 +2,8 @@
 
 Canonical operator guide: `docs/cdk/ssr-site.md`
 
+Consolidated v1.0 security migration notes: `docs/migration/v1-security.md`
+
 This example synthesizes an opinionated **SSR site** deployment pattern:
 
 - S3 bucket for immutable assets under `/assets/*`
