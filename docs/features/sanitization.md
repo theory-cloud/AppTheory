@@ -5,6 +5,9 @@ PCI/PII-heavy services (including import pipelines).
 
 Sanitization is a **last line of defense**. Prefer not to log secrets at all, and treat any logged payload as user data.
 
+For v1.0 migration notes covering the restored token-like redaction heuristics and `authorization_id` redaction, see
+`docs/migration/v1-security.md`.
+
 ## What to sanitize
 
 - **Log strings**: strip control characters (`\r`, `\n`) to prevent log forging.

@@ -9,6 +9,10 @@ For the Claude-first Remote MCP deployment guide, see:
 
 - `docs/integrations/remote-mcp.md`
 
+For v1.0 fail-closed migration notes that affect MCP transport and session behavior, see:
+
+- `docs/migration/v1-security.md`
+
 OAuth helper surfaces used by Remote MCP deployments and Autheory are in:
 
 - `github.com/theory-cloud/apptheory/runtime/oauth`

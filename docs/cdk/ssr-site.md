@@ -6,6 +6,9 @@ Use this guide when you want the canonical AppTheory deployment pattern for Face
 `examples/cdk/ssr-site/` is the canonical implementation to copy from; it is not a weaker helper path separate from
 the FaceTheory deployment contract.
 
+For v1.0 fail-closed migration notes covering Function URL auth defaults, tenant-header trust, and related cache-key
+changes, see `docs/migration/v1-security.md`.
+
 ## Preferred mode
 
 Prefer `mode: AppTheorySsrSiteMode.SSG_ISR` unless you are intentionally keeping a narrower compatibility path.
