@@ -44,11 +44,12 @@ new AppTheorySsrSite(this, "Site", {
   // Dynamic same-origin routes that should stay on Lambda.
   ssrPathPatterns: ["/actions/*"],
 
-  // Optional explicit override; omitted auth auto-selects NONE for writable Lambda routes.
+  // Optional explicit compatibility override. Omit this to keep the default
+  // CloudFront-signed AWS_IAM Function URL origin.
   // ssrUrlAuthType: lambda.FunctionUrlAuthType.NONE,
 
   // Optional app-specific origin headers
-  ssrForwardHeaders: ["x-facetheory-tenant"],
+  ssrForwardHeaders: ["x-facetheory-segment"],
 });
 ```
 
@@ -57,14 +58,13 @@ new AppTheorySsrSite(this, "Site", {
 `AppTheorySsrSite` now assumes the stronger FaceTheory deployment contract by default:
 
 - SSR origin:
-  - AppTheory auto-selects the Function URL auth model based on the Lambda-backed surface:
-    - `AWS_IAM` + lambda Origin Access Control for read-only Lambda traffic
-    - `NONE` for browser-facing writable Lambda traffic (`ssr-only`, or `ssg-isr` plus `ssrPathPatterns`)
-  - set `ssrUrlAuthType` explicitly when you need to force a specific Function URL auth mode
+  - omitted `ssrUrlAuthType` now fails closed to `AWS_IAM` + lambda Origin Access Control for **all** CloudFront-to-Lambda traffic
+  - set `ssrUrlAuthType: lambda.FunctionUrlAuthType.NONE` only when you intentionally require public direct Function URL access as a compatibility choice
 - Edge request normalization:
   - viewer-request preserves an inbound `x-request-id`, otherwise falls back to the CloudFront request ID
   - viewer-request records both `x-apptheory-original-host` / `x-apptheory-original-uri` and
     `x-facetheory-original-host` / `x-facetheory-original-uri`
+  - viewer-request strips `x-tenant-id` by default, and tenant-like `ssrForwardHeaders` are rejected unless you explicitly enable compatibility passthrough
   - raw `host` and `x-forwarded-proto` are intentionally rejected from the SSR origin request allowlist
 - CDN response headers:
   - baseline security headers are set at CloudFront: HSTS, `nosniff`, frame options, referrer policy, XSS protection,
@@ -77,10 +77,35 @@ new AppTheorySsrSite(this, "Site", {
     behaviors:
     - all query strings are part of the cache key
     - cookies are excluded from the cache key and are not forwarded to the HTML S3 origin
-    - stable public variant headers (`x-*-original-host`, `x-tenant-id`, and opted-in forwarded headers) are part of
-      the cache key
+    - stable public variant headers (`x-*-original-host` and non-tenant opted-in forwarded headers) are part of the
+      cache key by default
+    - tenant-like viewer headers join the cache key only when `allowViewerTenantHeaders: true` is explicitly enabled
     - origin cache-control headers still drive freshness within that safe cache key
   - direct S3 asset/data behaviors continue to use origin cache-control semantics
+
+## Tenant trust
+
+`AppTheorySsrSite` now distinguishes **forwarded edge context** from **trusted tenant derivation**:
+
+- `x-apptheory-original-host` / `x-facetheory-original-host` remain the safe edge context headers for host-aware SSR.
+- viewer-supplied tenant headers are **not trusted by default**:
+  - `x-tenant-id` is stripped before the request reaches the origin
+  - tenant-like entries in `ssrForwardHeaders` are rejected unless compatibility passthrough is explicitly enabled
+- if your tenancy depends on host mapping, derive the tenant inside your SSR function from the original-host headers and your allowlisted domain mapping
+
+Compatibility escape hatch:
+
+```ts
+new AppTheorySsrSite(this, "Site", {
+  ssrFunction,
+  allowViewerTenantHeaders: true,
+  ssrForwardHeaders: ["x-facetheory-tenant"],
+});
+```
+
+Use `allowViewerTenantHeaders: true` only as a migration bridge for existing FaceTheory-first deployments that still
+depend on viewer-supplied tenant headers. It restores legacy passthrough for `x-tenant-id` and tenant-like
+`ssrForwardHeaders`, but those headers remain **viewer-controlled**, not trusted edge-derived values.
 
 ## Runtime env wiring
 
@@ -115,7 +140,7 @@ The live smoke verifier deploys `examples/cdk/ssr-site`, checks:
 - `POST /actions/ping` bypasses the origin group and reaches Lambda with full method support
 - the previous `Host`-forwarding 403 regression stays covered by exercising the CloudFront-to-Function URL path end to end
 - asset and direct-S3 delivery work from S3 through CloudFront
-- direct Function URL access matches the deployed auth model for the example's writable route surface
+- direct Function URL access matches the deployed auth model for the example's explicit compatibility setting
 
 Run it manually when you want an end-to-end AWS check:
 
