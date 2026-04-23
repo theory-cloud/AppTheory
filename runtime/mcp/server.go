@@ -1050,6 +1050,14 @@ func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID strin
 			s.logger.ErrorContext(ctx, "stream store close error", "sessionId", sessionID, "streamId", streamID, "error", err)
 		}
 	}()
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.ErrorContext(ctx, "streaming tool panic", "sessionId", sessionID, "streamId", streamID, "panic", r)
+			if err := s.appendStreamResponse(ctx, sessionID, streamID, NewErrorResponse(req.ID, CodeInternalError, "internal error")); err != nil {
+				s.logger.ErrorContext(ctx, "stream store append error", "sessionId", sessionID, "streamId", streamID, "error", err)
+			}
+		}
+	}()
 
 	var params toolsCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
