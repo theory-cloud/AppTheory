@@ -897,6 +897,12 @@ func (s *Server) getSession(ctx context.Context, sessionID string) (*Session, er
 	if err != nil {
 		return nil, err
 	}
+	if sessionExpiredAt(now, sess) {
+		if deleteErr := s.sessionStore.Delete(ctx, sessionID); deleteErr != nil && !errors.Is(deleteErr, ErrSessionNotFound) {
+			s.logger.WarnContext(ctx, "failed to delete expired session", "sessionId", sessionID, "error", deleteErr)
+		}
+		return nil, ErrSessionNotFound
+	}
 
 	// Refresh session TTL on access (sliding window).
 	sess.ExpiresAt = now.Add(ttl)
