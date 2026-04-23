@@ -20,7 +20,8 @@ OAuth helper surfaces used by Remote MCP deployments and Autheory are in:
 AppTheory implements MCP Streamable HTTP on a single path:
 
 - `POST /mcp`: JSON-RPC requests, notifications, and client responses
-- `GET /mcp`: resumable SSE replay via `Last-Event-ID`, or a keepalive listener when `Last-Event-ID` is absent
+- `GET /mcp`: resumable SSE replay via `Last-Event-ID`, or a short-lived keepalive SSE response when `Last-Event-ID`
+  is absent
 - `DELETE /mcp`: session termination
 
 Header names are case-insensitive on the wire. The examples in this doc use lowercase HTTP headers.
@@ -195,12 +196,15 @@ For streaming tool calls, AppTheory assigns SSE event ids and persists them in t
 
 - `GET /mcp` with `last-event-id: <id>` resumes or replays that stream
 - clients must reuse the same `mcp-session-id`
-- `GET /mcp` without `last-event-id` opens a session listener that stays alive with keepalive comments so reconnecting
-  clients do not hit immediate EOF loops
+- `GET /mcp` without `last-event-id` emits one keepalive comment and closes by default so idle callers do not hold
+  Lambda concurrency indefinitely
+- if you want that path to stay open for a bounded window before EOF, opt in with
+  `WithInitialSessionListenerBudget(...)`
 
-### Budgeting the initial keepalive listener on Lambda
+### Keeping the initial keepalive path open for a bounded window on Lambda
 
-If you want that initial `GET /mcp` keepalive listener to end before the Lambda deadline, opt in explicitly:
+If you want that initial `GET /mcp` keepalive path to stay open for a bounded window before the Lambda deadline, opt in
+explicitly:
 
 ```go
 srv := mcp.NewServer("my-mcp-server", "dev",
@@ -213,12 +217,13 @@ srv := mcp.NewServer("my-mcp-server", "dev",
 
 Important scope notes:
 
-- this is explicit opt-in; without the option, the keepalive listener behavior is unchanged
+- this is explicit opt-in; without the option, AppTheory emits one keepalive comment and closes
 - it applies only to `GET /mcp` without `last-event-id`
 - replay/resume `GET /mcp` requests with `last-event-id` keep their existing behavior
 - when Lambda `RemainingMS` is available, AppTheory subtracts `SafetyBuffer` from the remaining time and caps the
   listener with `MaxDuration`
-- when `RemainingMS` is unavailable, the keepalive listener continues unchanged even if the option is configured
+- when `RemainingMS` is unavailable, the configured budget does not cap the listener; use this option only on
+  Lambda-backed deployments where `RemainingMS` is available
 - early termination simply ends the listener; AppTheory does not emit a special final SSE event or comment
 
 ---

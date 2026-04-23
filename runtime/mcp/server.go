@@ -363,6 +363,15 @@ func (s *Server) openSessionListener(ctx context.Context, sessionID string, rema
 			return
 		}
 
+		// By default this initial GET /mcp path emits one keepalive comment and
+		// closes so idle callers do not hold Lambda concurrency indefinitely.
+		// Operators can opt into a bounded keepalive window with
+		// WithInitialSessionListenerBudget when they need to avoid immediate EOF
+		// reconnect loops.
+		if s == nil || s.initialSessionListenerBudget == nil {
+			return
+		}
+
 		// Keepalives prevent API Gateway idle timeouts (Regional endpoints idle out
 		// after ~5 minutes without data).
 		ticker := time.NewTicker(2 * time.Minute)

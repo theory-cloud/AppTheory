@@ -337,7 +337,7 @@ func TestToolsCallStreaming_CanResumeViaGETWithLastEventID(t *testing.T) {
 	}
 }
 
-func TestGET_NoLastEventID_OpensSessionListenerAndKeepsAlive(t *testing.T) {
+func TestGET_NoLastEventID_ReturnsShortKeepaliveResponse(t *testing.T) {
 	s := NewServer("test-server", "1.0.0")
 	sessionID := initializeSession(t, s)
 
@@ -375,5 +375,27 @@ func TestGET_NoLastEventID_OpensSessionListenerAndKeepsAlive(t *testing.T) {
 	}
 	if !strings.HasPrefix(frame, ":") || !strings.Contains(frame, "keepalive") {
 		t.Fatalf("expected keepalive comment frame, got:\n%s", frame)
+	}
+
+	var (
+		rest    []byte
+		restErr error
+	)
+	restDone := make(chan struct{})
+	go func() {
+		defer close(restDone)
+		rest, restErr = io.ReadAll(reader)
+	}()
+
+	select {
+	case <-restDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for short keepalive response to close")
+	}
+	if restErr != nil {
+		t.Fatalf("read short keepalive response: %v", restErr)
+	}
+	if len(rest) != 0 {
+		t.Fatalf("expected no extra listener frames after initial keepalive, got %q", string(rest))
 	}
 }
