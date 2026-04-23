@@ -16,7 +16,6 @@ _ALLOWED_FIELDS: set[str] = {
     "card_type",
     # Common system identifiers that are safe/necessary for debugging and correlation.
     "transaction_id",
-    "authorization_id",
     "merchant_uid",
     # External system identifiers (MIDs, acceptor IDs, terminal IDs, etc.).
     "mid",
@@ -57,6 +56,7 @@ _SENSITIVE_FIELDS: dict[str, str] = {
     "api_key": "fully",
     "api_token": "fully",
     "api_key_id": "partial",
+    "authorization_id": "fully",
     "authorization": "fully",
     "authorization_header": "fully",
 }
@@ -180,7 +180,56 @@ def _sanitize_field_value_with_parent(parent_key: str, key: str, value: Any) -> 
             return _mask_restricted_string(str(value or ""))
         return _mask_restricted_string(str(value or ""))
 
+    if _should_heuristically_redact_key(key):
+        return _REDACTED_VALUE
+
     return _sanitize_value_with_parent(k, value)
+
+
+def _should_heuristically_redact_key(key: str) -> bool:
+    segments = _sanitization_key_segments(key)
+    if not segments:
+        return False
+
+    for index, segment in enumerate(segments):
+        if segment in {"token", "secret", "password"}:
+            return True
+        if segment == "key" and index > 0 and segments[index - 1] in {"api", "private", "secret"}:
+            return True
+
+    return False
+
+
+def _sanitization_key_segments(key: str) -> list[str]:
+    value = str(key or "").strip()
+    if not value:
+        return []
+
+    segments: list[str] = []
+    current: list[str] = []
+    previous = ""
+
+    def flush() -> None:
+        nonlocal current
+        if not current:
+            return
+        segments.append("".join(current))
+        current = []
+
+    for char in value:
+        if not char.isalnum():
+            flush()
+            previous = ""
+            continue
+
+        if previous and char.isupper() and (previous.islower() or previous.isdigit()):
+            flush()
+
+        current.append(char.lower())
+        previous = char
+
+    flush()
+    return segments
 
 
 def _sanitize_value(value: Any) -> Any:
