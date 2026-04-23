@@ -64,9 +64,10 @@ These are enforced in the rubric via:
 - Stable releases: `vX.Y.Z`
 - Pre-releases: `vX.Y.Z-rc.N` (recommended)
 
-Initial public release:
+Initial public stable release:
 
-- The first public AppTheory release is planned as `v0.1.0` (tag on `main`).
+- The first `main` stable cut for the v1 line is planned as `v1.0.0`.
+- The corresponding prerelease line starts on `premain` as `v1.0.0-rc.1`.
 
 Breaking changes:
 
