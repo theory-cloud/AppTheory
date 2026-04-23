@@ -536,6 +536,8 @@ export type CompleteIdempotencyRecordInput = {
   ttlSeconds?: number;
 };
 
+const maxSemaphoreAcquireLimit = 256;
+
 function requireNonEmpty(value: unknown, field: string): string {
   const v = String(value ?? "").trim();
   if (!v) throw newJobLedgerError("invalid_input", `${field} is required`);
@@ -546,6 +548,17 @@ function requirePositiveInt(value: unknown, field: string): number {
   const n = Math.floor(Number(value) || 0);
   if (n <= 0) throw newJobLedgerError("invalid_input", `${field} must be > 0`);
   return n;
+}
+
+function requireSemaphoreLimit(value: unknown): number {
+  const limit = requirePositiveInt(value, "limit");
+  if (limit > maxSemaphoreAcquireLimit) {
+    throw newJobLedgerError(
+      "invalid_input",
+      `limit must be <= ${maxSemaphoreAcquireLimit}`,
+    );
+  }
+  return limit;
 }
 
 function requireNonNegativeInt(value: unknown, field: string): number {
@@ -867,7 +880,7 @@ export class DynamoJobLedger {
   ): Promise<SemaphoreLease> {
     const scope = requireNonEmpty(input?.scope, "scope");
     const subject = requireNonEmpty(input?.subject, "subject");
-    const limit = requirePositiveInt(input?.limit, "limit");
+    const limit = requireSemaphoreLimit(input?.limit);
     const owner = requireNonEmpty(input?.owner, "owner");
 
     const leaseDurationMs = Math.floor(
