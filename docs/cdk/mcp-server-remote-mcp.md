@@ -148,7 +148,8 @@ Important fail-closed rules:
 - The middleware no longer derives protected-resource metadata from `Host` / `X-Forwarded-Proto` request headers.
   Use `MCP_ENDPOINT` or pass `ResourceMetadataURL` explicitly.
 
-For migration notes, see `docs/migration/v1-security.md`.
+For migration notes covering Bearer validation, initial listener keepalive changes, and expired-session fail-closed
+behavior, see `docs/migration/v1-security.md`.
 
 ## Keepalive, replay, and origin guidance
 

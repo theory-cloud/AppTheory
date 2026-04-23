@@ -41,6 +41,8 @@ That means:
 
 If your service needs a different key shape, set `ExtractIdentifier` explicitly instead of relying on the default.
 
+For the broader v1.0 fail-closed migration checklist, see `docs/migration/v1-security.md`.
+
 ## Running (optional)
 
 This is a minimal demo server; it requires AWS credentials unless you point TableTheory at DynamoDB Local.
