@@ -40,6 +40,12 @@ ensure_golangci_lint_pinned() {
 
 ensure_golangci_lint_pinned
 
-golangci-lint run --timeout=5m --config .golangci-v2.yml ./...
+mapfile -t go_package_dirs < <(go list -f '{{.Dir}}' ./...)
+if [[ ${#go_package_dirs[@]} -eq 0 ]]; then
+  echo "go-lint: FAIL (go list returned zero package directories)" >&2
+  exit 1
+fi
+
+golangci-lint run --timeout=5m --config .golangci-v2.yml "${go_package_dirs[@]}"
 
 echo "go-lint: PASS"
