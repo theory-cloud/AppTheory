@@ -29,6 +29,11 @@ Verification command surface:
 - `./scripts/verify-docs-standard.sh`
 - `make rubric`
 
+Security migration note:
+
+- For consolidated v1.0 fail-closed migration guidance across the surfaces documented here, see
+  `docs/migration/v1-security.md`.
+
 ## Core runtime entrypoints
 
 | Concern | Go | TypeScript | Python |
@@ -157,6 +162,7 @@ AppTheory supports the standard AWS direct Lambda resolver event shape in all th
     `error_type`, `error_data`, and `error_info`
   - portable AppTheory/AppError payloads include `error_data.status_code` and may include `request_id`, `trace_id`,
     `timestamp`, plus `error_info.code`, `trigger_type`, `method`, `path`, and optional `details`
+  - non-portable exceptions now mask to `error_message: "internal error"` instead of echoing raw exception text
 
 Recipe:
 
@@ -199,6 +205,7 @@ Go runtime note:
 - `AuthIdentity`, `TenantID`, and explicit `ExtractIdentifier` overrides are unchanged.
 - This avoids storing raw credentials in rate-limit tables, but it also changes observed key values and resets any
   existing credential-backed buckets on first deploy.
+- For operator migration guidance, see `docs/migration/v1-security.md`.
 
 ### Sanitization
 
@@ -209,6 +216,11 @@ Safe logging helpers are exported in all three runtimes:
 - Python: `sanitize_log_string`, `sanitize_field_value`, `sanitize_json`, `sanitize_json_value`, `sanitize_xml`
 
 Guide: [Sanitization](./features/sanitization.md)
+
+Operational note:
+
+- Sanitization heuristics once again redact token-like unknown keys by default, including `authorization_id`. See
+  `docs/migration/v1-security.md` if you have log-processing workflows that depended on those values remaining visible.
 
 ### Jobs ledger
 
