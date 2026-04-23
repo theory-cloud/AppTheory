@@ -29,7 +29,7 @@ func TimeoutMiddleware(config TimeoutConfig) Middleware {
 			timeoutCtx, cancel := context.WithTimeout(ctx.Context(), timeout)
 			defer cancel()
 
-			handlerCtx := withDerivedTimeoutContext(ctx, timeoutCtx)
+			handlerCtx := withDerivedTimeoutContext(timeoutCtx, ctx)
 
 			type result struct {
 				resp *Response
@@ -57,7 +57,7 @@ func TimeoutMiddleware(config TimeoutConfig) Middleware {
 	}
 }
 
-func withDerivedTimeoutContext(ctx *Context, derived context.Context) *Context {
+func withDerivedTimeoutContext(derived context.Context, ctx *Context) *Context {
 	if ctx == nil {
 		return &Context{ctx: derived}
 	}

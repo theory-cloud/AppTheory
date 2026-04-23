@@ -82,7 +82,7 @@ func TestTimeoutMiddleware_PropagatesCooperativeCancellation(t *testing.T) {
 	app.Get("/cooperative", func(ctx *Context) (*Response, error) {
 		select {
 		case <-ctx.Context().Done():
-			return Text(200, "cancelled"), nil
+			return Text(200, "canceled"), nil
 		case <-time.After(20 * time.Millisecond):
 			sideEffect <- struct{}{}
 			return Text(200, "late"), nil
