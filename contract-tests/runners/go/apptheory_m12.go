@@ -67,6 +67,9 @@ func runFixtureM12(f Fixture) error {
 	}
 
 	time.Sleep(30 * time.Millisecond)
+	if f.Expect.Metrics != nil && metrics == nil {
+		metrics = []FixtureMetricRecord{}
+	}
 
 	return compareFixtureResponse(f, actual, nil, metrics, nil)
 }
