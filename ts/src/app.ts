@@ -1472,6 +1472,61 @@ type NormalizedTimeoutConfig = {
   timeoutMessage: string;
 };
 
+function isAbortSignalLike(value: unknown): value is AbortSignal {
+  return typeof AbortSignal !== "undefined" && value instanceof AbortSignal;
+}
+
+function abortSignalFromTimeoutCarrier(value: unknown): AbortSignal | null {
+  if (isAbortSignalLike(value)) {
+    return value;
+  }
+  if (value && typeof value === "object") {
+    const signal = (value as { signal?: unknown }).signal;
+    if (isAbortSignalLike(signal)) {
+      return signal;
+    }
+  }
+  return null;
+}
+
+function timeoutContextCarrier(parent: unknown, signal: AbortSignal): unknown {
+  if (parent == null) {
+    return signal;
+  }
+  if (typeof parent === "object") {
+    return { ...parent, signal };
+  }
+  return { parent, signal };
+}
+
+function cloneContextWithTimeoutCarrier(
+  ctx: Context,
+  carrier: unknown,
+): Context {
+  const ctxInternal = ctx as unknown as {
+    _clock: Clock;
+    _ids: IdGenerator;
+    _values: Map<string, unknown>;
+  };
+  const clone = new Context({
+    request: ctx.request,
+    params: ctx.params,
+    clock: ctxInternal._clock,
+    ids: ctxInternal._ids,
+    ctx: carrier,
+    requestId: ctx.requestId,
+    tenantId: ctx.tenantId,
+    authIdentity: ctx.authIdentity,
+    remainingMs: ctx.remainingMs,
+    middlewareTrace: ctx.middlewareTrace,
+    webSocket: ctx.asWebSocket(),
+    appSync: ctx.asAppSync(),
+  });
+  const cloneInternal = clone as unknown as { _values: Map<string, unknown> };
+  cloneInternal._values = ctxInternal._values;
+  return clone;
+}
+
 function normalizeTimeoutConfig(
   config: TimeoutConfig,
 ): NormalizedTimeoutConfig {
@@ -1550,22 +1605,53 @@ export function timeoutMiddleware(config: TimeoutConfig = {}): Middleware {
       return next(ctx);
     }
 
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    const controller = new AbortController();
+    const parentSignal = abortSignalFromTimeoutCarrier(ctx?.ctx ?? null);
+    let removeParentAbortListener = () => {};
+    if (parentSignal) {
+      if (parentSignal.aborted) {
+        controller.abort(parentSignal.reason);
+      } else {
+        const onParentAbort = () => controller.abort(parentSignal.reason);
+        parentSignal.addEventListener("abort", onParentAbort, { once: true });
+        removeParentAbortListener = () =>
+          parentSignal.removeEventListener("abort", onParentAbort);
+      }
+    }
+
+    const handlerCtx = cloneContextWithTimeoutCarrier(
+      ctx,
+      timeoutContextCarrier(ctx?.ctx ?? null, controller.signal),
+    );
+
+    let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      controller.abort(cfg.timeoutMessage);
+    }, timeoutMs);
+
+    let removeTimeoutAbortListener = () => {};
     const timeoutPromise = new Promise<Response>((_resolve, reject) => {
       void _resolve;
-      timer = setTimeout(
-        () => reject(new AppError("app.timeout", cfg.timeoutMessage)),
-        timeoutMs,
-      );
+      const onAbort = () =>
+        reject(new AppError("app.timeout", cfg.timeoutMessage));
+      if (controller.signal.aborted) {
+        onAbort();
+        return;
+      }
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      removeTimeoutAbortListener = () =>
+        controller.signal.removeEventListener("abort", onAbort);
     });
 
     try {
-      const run = Promise.resolve().then(() => next(ctx));
+      const run = Promise.resolve().then(() => next(handlerCtx));
       return await Promise.race([run, timeoutPromise]);
     } finally {
       if (timer) {
         clearTimeout(timer);
+        timer = null;
       }
+      removeTimeoutAbortListener();
+      removeParentAbortListener();
     }
   };
 }
