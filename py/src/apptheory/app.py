@@ -1679,7 +1679,7 @@ def _cors_origin_allowed(origin: str, cors: CORSConfig) -> bool:
         return False
 
     if cors.allowed_origins is None:
-        return True
+        return not cors.allow_credentials
     if not cors.allowed_origins:
         return False
 

@@ -24,7 +24,10 @@ func TestCORSOriginAllowed(t *testing.T) {
 		t.Fatal("expected empty origin to be rejected")
 	}
 	if !corsOriginAllowed("https://x.example", CORSConfig{AllowedOrigins: nil}) {
-		t.Fatal("expected nil AllowedOrigins to allow all")
+		t.Fatal("expected nil AllowedOrigins without credentials to allow all")
+	}
+	if corsOriginAllowed("https://x.example", CORSConfig{AllowedOrigins: nil, AllowCredentials: true}) {
+		t.Fatal("expected credentials without explicit AllowedOrigins to deny all")
 	}
 	if corsOriginAllowed("https://x.example", CORSConfig{AllowedOrigins: []string{}}) {
 		t.Fatal("expected empty AllowedOrigins slice to deny all")
