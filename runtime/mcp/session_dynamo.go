@@ -50,7 +50,11 @@ func (d *DynamoSessionStore) Get(ctx context.Context, id string) (*Session, erro
 		return nil, err
 	}
 
-	return recordToSession(&record), nil
+	sess := recordToSession(&record)
+	if sessionExpiredAt(time.Now().UTC(), sess) {
+		return nil, ErrSessionNotFound
+	}
+	return sess, nil
 }
 
 // Put stores a session. Overwrites any existing session with the same ID.

@@ -166,6 +166,38 @@ func TestRequireSession_Errors(t *testing.T) {
 	}
 }
 
+func TestRequireSession_RejectsExpiredSessionBeforeRefresh(t *testing.T) {
+	s := NewServer("test", "dev")
+	ctx := context.Background()
+
+	putCalled := false
+	deleteCalled := false
+	s.sessionStore = stubSessionStore{
+		get: func(context.Context, string) (*Session, error) {
+			return &Session{ID: "expired", ExpiresAt: time.Now().Add(-time.Minute)}, nil
+		},
+		put: func(context.Context, *Session) error {
+			putCalled = true
+			return nil
+		},
+		delete: func(context.Context, string) error {
+			deleteCalled = true
+			return nil
+		},
+	}
+
+	_, _, resp := s.requireSession(ctx, map[string][]string{"mcp-session-id": {"expired"}})
+	if resp == nil || resp.Status != 404 {
+		t.Fatalf("expected expired session to return 404, got %+v", resp)
+	}
+	if putCalled {
+		t.Fatalf("expected expired session to skip refresh put")
+	}
+	if !deleteCalled {
+		t.Fatalf("expected expired session cleanup delete to run")
+	}
+}
+
 func TestHandleGET_EventNotFound_AndStoreErrors(t *testing.T) {
 	s := NewServer("test", "dev")
 	sessionID := initializeSession(t, s)
