@@ -20,9 +20,8 @@ var AllowedFields = map[string]bool{
 	"card_type":  true,
 
 	// Common system identifiers that are safe/necessary for debugging and correlation.
-	"transaction_id":   true,
-	"authorization_id": true,
-	"merchant_uid":     true,
+	"transaction_id": true,
+	"merchant_uid":   true,
 
 	// External system identifiers (MIDs, acceptor IDs, terminal IDs, etc.).
 	"mid":         true,
@@ -79,6 +78,7 @@ var SensitiveFields = map[string]SanitizationType{
 	"api_key":              FullyRedact,
 	"api_token":            FullyRedact,
 	"api_key_id":           PartialMask,
+	"authorization_id":     FullyRedact,
 	"authorization":        FullyRedact,
 	"authorization_header": FullyRedact,
 }
@@ -195,6 +195,10 @@ func sanitizeFieldValueWithParent(parentKey string, key string, value any) any {
 		return sanitizeSensitiveFieldValue(parentKey, keyLower, keyCanonical, value, typ)
 	}
 
+	if shouldHeuristicallyRedactKey(key) {
+		return redactedValue
+	}
+
 	return sanitizeValueWithParent(keyLower, value)
 }
 
@@ -235,6 +239,66 @@ func sanitizePartialMaskedValue(parentKey, keyLower, keyCanonical string, value 
 		return maskRestrictedValue(value)
 	}
 	return maskRestrictedValue(value)
+}
+
+func shouldHeuristicallyRedactKey(key string) bool {
+	segments := sanitizationKeySegments(key)
+	if len(segments) == 0 {
+		return false
+	}
+
+	for i, segment := range segments {
+		switch segment {
+		case "token", "secret", "password":
+			return true
+		case "key":
+			if i > 0 {
+				switch segments[i-1] {
+				case "api", "private", "secret":
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+func sanitizationKeySegments(key string) []string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil
+	}
+
+	segments := make([]string, 0, 4)
+	var b strings.Builder
+
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		segments = append(segments, b.String())
+		b.Reset()
+	}
+
+	var prev rune
+	for _, r := range key {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			flush()
+			prev = 0
+			continue
+		}
+
+		if unicode.IsUpper(r) && prev != 0 && (unicode.IsLower(prev) || unicode.IsDigit(prev)) {
+			flush()
+		}
+
+		b.WriteRune(unicode.ToLower(r))
+		prev = r
+	}
+
+	flush()
+	return segments
 }
 
 func isCardNumberKey(keyCanonical string) bool {

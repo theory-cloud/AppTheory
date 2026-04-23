@@ -28,7 +28,11 @@ func (a *App) authenticate(ctx *Context) (*AuthPrincipal, error) {
 		if err != nil {
 			return nil, err
 		}
-		return normalizeAuthPrincipal(principal), nil
+		principal = normalizeAuthPrincipal(principal)
+		if principal == nil || principal.Identity == "" {
+			return nil, nil
+		}
+		return principal, nil
 	}
 	if a.auth == nil {
 		return nil, nil

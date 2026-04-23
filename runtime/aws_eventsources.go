@@ -26,6 +26,19 @@ type EventContext struct {
 	values map[string]any
 }
 
+func (c *EventContext) cloneForRecord() *EventContext {
+	if c == nil {
+		return nil
+	}
+	return &EventContext{
+		ctx:         c.ctx,
+		clock:       c.clock,
+		ids:         c.ids,
+		RequestID:   c.RequestID,
+		RemainingMS: c.RemainingMS,
+	}
+}
+
 func (c *EventContext) Context() context.Context {
 	if c == nil || c.ctx == nil {
 		return context.Background()
@@ -180,7 +193,7 @@ func serveBatchItemFailures[Record any, Failure any](
 	if handler != nil {
 		evtCtx := a.eventContext(ctx)
 		runner = func(record Record) error {
-			return handler(evtCtx, record)
+			return handler(evtCtx.cloneForRecord(), record)
 		}
 	}
 	return batchItemFailures(records, runner, recordID, failureForID)

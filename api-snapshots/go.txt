@@ -939,9 +939,8 @@ var AllowedFields = map[string]bool{
 	"card_brand": true,
 	"card_type":  true,
 
-	"transaction_id":   true,
-	"authorization_id": true,
-	"merchant_uid":     true,
+	"transaction_id": true,
+	"merchant_uid":   true,
 
 	"mid":         true,
 	"merchant_id": true,
@@ -1046,6 +1045,7 @@ var SensitiveFields = map[string]SanitizationType{
 	"api_key":              FullyRedact,
 	"api_token":            FullyRedact,
 	"api_key_id":           PartialMask,
+	"authorization_id":     FullyRedact,
 	"authorization":        FullyRedact,
 	"authorization_header": FullyRedact,
 }

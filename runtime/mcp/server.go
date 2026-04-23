@@ -363,6 +363,15 @@ func (s *Server) openSessionListener(ctx context.Context, sessionID string, rema
 			return
 		}
 
+		// By default this initial GET /mcp path emits one keepalive comment and
+		// closes so idle callers do not hold Lambda concurrency indefinitely.
+		// Operators can opt into a bounded keepalive window with
+		// WithInitialSessionListenerBudget when they need to avoid immediate EOF
+		// reconnect loops.
+		if s == nil || s.initialSessionListenerBudget == nil {
+			return
+		}
+
 		// Keepalives prevent API Gateway idle timeouts (Regional endpoints idle out
 		// after ~5 minutes without data).
 		ticker := time.NewTicker(2 * time.Minute)
@@ -888,6 +897,12 @@ func (s *Server) getSession(ctx context.Context, sessionID string) (*Session, er
 	if err != nil {
 		return nil, err
 	}
+	if sessionExpiredAt(now, sess) {
+		if deleteErr := s.sessionStore.Delete(ctx, sessionID); deleteErr != nil && !errors.Is(deleteErr, ErrSessionNotFound) {
+			s.logger.WarnContext(ctx, "failed to delete expired session", "sessionId", sessionID, "error", deleteErr)
+		}
+		return nil, ErrSessionNotFound
+	}
 
 	// Refresh session TTL on access (sliding window).
 	sess.ExpiresAt = now.Add(ttl)
@@ -1033,6 +1048,14 @@ func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID strin
 	defer func() {
 		if err := s.streamStore.Close(ctx, sessionID, streamID); err != nil {
 			s.logger.ErrorContext(ctx, "stream store close error", "sessionId", sessionID, "streamId", streamID, "error", err)
+		}
+	}()
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.ErrorContext(ctx, "streaming tool panic", "sessionId", sessionID, "streamId", streamID, "panic", r)
+			if err := s.appendStreamResponse(ctx, sessionID, streamID, NewErrorResponse(req.ID, CodeInternalError, "internal error")); err != nil {
+				s.logger.ErrorContext(ctx, "stream store append error", "sessionId", sessionID, "streamId", streamID, "error", err)
+			}
 		}
 	}()
 

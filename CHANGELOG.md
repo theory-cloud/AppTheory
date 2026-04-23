@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.25.1](https://github.com/theory-cloud/AppTheory/compare/v0.25.0...v0.25.1) (2026-04-18)
+
+
+### Bug Fixes
+
+* **deps:** bump TableTheory to v1.6.0 ([0cc21dc](https://github.com/theory-cloud/AppTheory/commit/0cc21dc0993bb8165e0cbdbb1ce88ab41e195f62))
+* **ts:** replace slash-trim regexes ([e87752f](https://github.com/theory-cloud/AppTheory/commit/e87752f11225d692d2c97319a485317650ed2d75))
+
 ## [0.25.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v0.25.0-rc...v0.25.0-rc.1) (2026-04-18)
 
 

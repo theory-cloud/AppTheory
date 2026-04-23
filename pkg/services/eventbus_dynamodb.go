@@ -284,12 +284,8 @@ func prepareEventForPublish(event *Event, now time.Time, ttl time.Duration, even
 		event.CreatedAt = now
 	}
 
-	if strings.TrimSpace(event.PartitionKey) == "" {
-		event.PartitionKey = fmt.Sprintf("%s#%s", tenantID, eventType)
-	}
-	if strings.TrimSpace(event.SortKey) == "" {
-		event.SortKey = fmt.Sprintf("%d#%s", event.PublishedAt.UnixNano(), event.ID)
-	}
+	event.PartitionKey = eventPartitionKey(tenantID, eventType)
+	event.SortKey = eventSortKey(event.PublishedAt, event.ID)
 
 	if ttl > 0 && event.ExpiresAt.IsZero() {
 		event.ExpiresAt = now.Add(ttl)
@@ -357,7 +353,7 @@ func (d *DynamoDBEventBus) buildQuery(ctx context.Context, query *EventQuery) ta
 		applyPublishedAtTimeRange(q, query)
 		q = q.OrderBy("PublishedAt", "DESC")
 	} else {
-		partitionKey := fmt.Sprintf("%s#%s", query.TenantID, query.EventType)
+		partitionKey := eventPartitionKey(query.TenantID, query.EventType)
 		q = q.Where("PartitionKey", "=", partitionKey)
 		applySortKeyTimeRange(q, query)
 		q = q.OrderBy("SortKey", "DESC")

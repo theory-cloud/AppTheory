@@ -36,6 +36,39 @@
       },
       "Type": "AWS::Lambda::Function"
     },
+    "FnAllowCloudFrontInvokeFunctionViaUrlA2377146": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "Fn9270CBC0",
+            "Arn"
+          ]
+        },
+        "InvokedViaFunctionUrl": true,
+        "Principal": "cloudfront.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":cloudfront::",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":distribution/",
+              {
+                "Ref": "SiteDistribution390DED28"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
     "FnServiceRoleB9001A96": {
       "Properties": {
         "AssumeRolePolicyDocument": {
@@ -112,34 +145,6 @@
         ]
       },
       "Type": "AWS::IAM::Policy"
-    },
-    "Fninvokefunction5F592A77": {
-      "Properties": {
-        "Action": "lambda:InvokeFunction",
-        "FunctionName": {
-          "Fn::GetAtt": [
-            "Fn9270CBC0",
-            "Arn"
-          ]
-        },
-        "InvokedViaFunctionUrl": true,
-        "Principal": "*"
-      },
-      "Type": "AWS::Lambda::Permission"
-    },
-    "Fninvokefunctionurl993E5E7C": {
-      "Properties": {
-        "Action": "lambda:InvokeFunctionUrl",
-        "FunctionName": {
-          "Fn::GetAtt": [
-            "Fn9270CBC0",
-            "Arn"
-          ]
-        },
-        "FunctionUrlAuthType": "NONE",
-        "Principal": "*"
-      },
-      "Type": "AWS::Lambda::Permission"
     },
     "SiteAssetsBucket08A02D08": {
       "DeletionPolicy": "Retain",
@@ -482,7 +487,13 @@
                   }
                 ]
               },
-              "Id": "TestStackSiteDistributionOrigin169649692"
+              "Id": "TestStackSiteDistributionOrigin169649692",
+              "OriginAccessControlId": {
+                "Fn::GetAtt": [
+                  "SiteDistributionOrigin1FunctionUrlOriginAccessControlFF5C1633",
+                  "Id"
+                ]
+              }
             },
             {
               "DomainName": {
@@ -506,6 +517,49 @@
         }
       },
       "Type": "AWS::CloudFront::Distribution"
+    },
+    "SiteDistributionOrigin1FunctionUrlOriginAccessControlFF5C1633": {
+      "Properties": {
+        "OriginAccessControlConfig": {
+          "Name": "TestStackSiteDistributionOrinctionUrlOriginAccessControl6B81100A",
+          "OriginAccessControlOriginType": "lambda",
+          "SigningBehavior": "always",
+          "SigningProtocol": "sigv4"
+        }
+      },
+      "Type": "AWS::CloudFront::OriginAccessControl"
+    },
+    "SiteDistributionOrigin1InvokeFromApiForTestStackSiteDistributionOrigin169649692629265E1": {
+      "Properties": {
+        "Action": "lambda:InvokeFunctionUrl",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "SiteSsrUrl2D74149D",
+            "FunctionArn"
+          ]
+        },
+        "Principal": "cloudfront.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":cloudfront::",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              ":distribution/",
+              {
+                "Ref": "SiteDistribution390DED28"
+              }
+            ]
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Permission"
     },
     "SiteDistributionOrigin2S3OriginAccessControlD62333BA": {
       "Properties": {
@@ -546,8 +600,7 @@
               "HeaderBehavior": "whitelist",
               "Headers": [
                 "x-apptheory-original-host",
-                "x-facetheory-original-host",
-                "x-tenant-id"
+                "x-facetheory-original-host"
               ]
             },
             "QueryStringsConfig": {
@@ -573,8 +626,7 @@
               "x-facetheory-original-host",
               "x-apptheory-original-uri",
               "x-facetheory-original-uri",
-              "x-request-id",
-              "x-tenant-id"
+              "x-request-id"
             ]
           },
           "Name": "TestStackSiteHtmlOriginRequestPolicy00AFE701",
@@ -642,8 +694,7 @@
               "x-facetheory-original-host",
               "x-apptheory-original-uri",
               "x-facetheory-original-uri",
-              "x-request-id",
-              "x-tenant-id"
+              "x-request-id"
             ]
           },
           "Name": "TestStackSiteSsrOriginRequestPolicy8F5A5074",
@@ -656,7 +707,7 @@
     },
     "SiteSsrUrl2D74149D": {
       "Properties": {
-        "AuthType": "NONE",
+        "AuthType": "AWS_IAM",
         "InvokeMode": "RESPONSE_STREAM",
         "TargetFunctionArn": {
           "Fn::GetAtt": [
@@ -670,7 +721,7 @@
     "SiteSsrViewerRequestFunction103872E5": {
       "Properties": {
         "AutoPublish": true,
-        "FunctionCode": "function handler(event) {\n\t  var request = event.request;\n\t  var headers = request.headers;\n\t  var uri = request.uri || '/';\n\t  var requestIdHeader = headers['x-request-id'];\n\t  var requestId = requestIdHeader && requestIdHeader.value ? requestIdHeader.value.trim() : '';\n\n\t  if (!requestId) {\n\t    requestId = event.context && event.context.requestId ? String(event.context.requestId).trim() : '';\n\t  }\n\n\t  if (!requestId) {\n\t    requestId = 'req_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);\n\t  }\n\n\t  headers['x-request-id'] = { value: requestId };\n\t  headers['x-apptheory-original-uri'] = { value: uri };\n\t  headers['x-facetheory-original-uri'] = { value: uri };\n\n\t  if (headers.host && headers.host.value) {\n\t    headers['x-apptheory-original-host'] = { value: headers.host.value };\n\t    headers['x-facetheory-original-host'] = { value: headers.host.value };\n\t  }\n\n\t  if ('ssr-only' === 'ssg-isr') {\n\t    var rawS3Prefixes = [\n\t      '/assets'\n\t    ];\n\t    var lambdaPassthroughPrefixes = [\n\t      \n\t    ];\n\t    var isLambdaPassthroughPath = false;\n\n\t    for (var i = 0; i < lambdaPassthroughPrefixes.length; i++) {\n\t      var prefix = lambdaPassthroughPrefixes[i];\n\t      if (uri === prefix || uri.startsWith(prefix + '/')) {\n\t        isLambdaPassthroughPath = true;\n\t        break;\n\t      }\n\t    }\n\n\t    if (!isLambdaPassthroughPath) {\n\t      var isRawS3Path = false;\n\n\t      for (var j = 0; j < rawS3Prefixes.length; j++) {\n\t        var rawPrefix = rawS3Prefixes[j];\n\t        if (uri === rawPrefix || uri.startsWith(rawPrefix + '/')) {\n\t          isRawS3Path = true;\n\t          break;\n\t        }\n\t      }\n\n\t      var lastSlash = uri.lastIndexOf('/');\n\t      var lastSegment = lastSlash >= 0 ? uri.substring(lastSlash + 1) : uri;\n\n\t      if (!isRawS3Path && lastSegment.indexOf('.') === -1) {\n\t        request.uri = uri.endsWith('/') ? uri + 'index.html' : uri + '/index.html';\n\t      }\n\t    }\n\t  }\n\n\t  return request;\n\t}",
+        "FunctionCode": "function handler(event) {\n\t  var request = event.request;\n\t  request.headers = request.headers || {};\n\t  var headers = request.headers;\n\t  var uri = request.uri || '/';\n\t  var blockedViewerTenantHeaders = [\n\t    'x-tenant-id'\n\t  ];\n\n\t  for (var blockedIndex = 0; blockedIndex < blockedViewerTenantHeaders.length; blockedIndex++) {\n\t    delete headers[blockedViewerTenantHeaders[blockedIndex]];\n\t  }\n\n\t  var requestIdHeader = headers['x-request-id'];\n\t  var requestId = requestIdHeader && requestIdHeader.value ? requestIdHeader.value.trim() : '';\n\n\t  if (!requestId) {\n\t    requestId = event.context && event.context.requestId ? String(event.context.requestId).trim() : '';\n\t  }\n\n\t  if (!requestId) {\n\t    requestId = 'req_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);\n\t  }\n\n\t  headers['x-request-id'] = { value: requestId };\n\t  headers['x-apptheory-original-uri'] = { value: uri };\n\t  headers['x-facetheory-original-uri'] = { value: uri };\n\n\t  if (headers.host && headers.host.value) {\n\t    headers['x-apptheory-original-host'] = { value: headers.host.value };\n\t    headers['x-facetheory-original-host'] = { value: headers.host.value };\n\t  }\n\n\t  if ('ssr-only' === 'ssg-isr') {\n\t    var rawS3Prefixes = [\n\t      '/assets'\n\t    ];\n\t    var lambdaPassthroughPrefixes = [\n\t      \n\t    ];\n\t    var isLambdaPassthroughPath = false;\n\n\t    for (var i = 0; i < lambdaPassthroughPrefixes.length; i++) {\n\t      var prefix = lambdaPassthroughPrefixes[i];\n\t      if (uri === prefix || uri.startsWith(prefix + '/')) {\n\t        isLambdaPassthroughPath = true;\n\t        break;\n\t      }\n\t    }\n\n\t    if (!isLambdaPassthroughPath) {\n\t      var isRawS3Path = false;\n\n\t      for (var j = 0; j < rawS3Prefixes.length; j++) {\n\t        var rawPrefix = rawS3Prefixes[j];\n\t        if (uri === rawPrefix || uri.startsWith(rawPrefix + '/')) {\n\t          isRawS3Path = true;\n\t          break;\n\t        }\n\t      }\n\n\t      var lastSlash = uri.lastIndexOf('/');\n\t      var lastSegment = lastSlash >= 0 ? uri.substring(lastSlash + 1) : uri;\n\n\t      if (!isRawS3Path && lastSegment.indexOf('.') === -1) {\n\t        request.uri = uri.endsWith('/') ? uri + 'index.html' : uri + '/index.html';\n\t      }\n\t    }\n\t  }\n\n\t  return request;\n\t}",
         "FunctionConfig": {
           "Comment": "FaceTheory viewer-request edge context for SSR site",
           "Runtime": "cloudfront-js-2.0"

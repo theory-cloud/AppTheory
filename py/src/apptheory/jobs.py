@@ -12,6 +12,7 @@ from apptheory.sanitization import sanitize_field_value, sanitize_log_string
 
 EnvJobsTableName = "APPTHEORY_JOBS_TABLE_NAME"
 DEFAULT_JOBS_TABLE_NAME = "apptheory-jobs"
+MAX_SEMAPHORE_ACQUIRE_LIMIT = 256
 
 JobStatus = Literal["PENDING", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED"]
 RecordStatus = Literal["PENDING", "PROCESSING", "SUCCEEDED", "FAILED", "SKIPPED"]
@@ -71,6 +72,15 @@ def semaphore_partition_key(scope: str, subject: str) -> str:
 
 def semaphore_slot_sort_key(slot: int) -> str:
     return f"SLOT#{max(0, int(slot)):09d}"
+
+
+def validate_semaphore_limit(limit: int) -> int:
+    normalized = int(limit)
+    if normalized <= 0:
+        raise new_error("invalid_input", "limit must be > 0")
+    if normalized > MAX_SEMAPHORE_ACQUIRE_LIMIT:
+        raise new_error("invalid_input", f"limit must be <= {MAX_SEMAPHORE_ACQUIRE_LIMIT}")
+    return normalized
 
 
 def unix_seconds(value: dt.datetime) -> int:
@@ -586,8 +596,7 @@ class DynamoJobLedger:
             raise new_error("invalid_input", "scope is required")
         if not subject:
             raise new_error("invalid_input", "subject is required")
-        if int(limit) <= 0:
-            raise new_error("invalid_input", "limit must be > 0")
+        limit = validate_semaphore_limit(limit)
         if not owner:
             raise new_error("invalid_input", "owner is required")
 
@@ -602,7 +611,7 @@ class DynamoJobLedger:
         ttl_unix = _normalize_ttl_unix_seconds(now, ttl, dt.timedelta(0))
         pk = semaphore_partition_key(scope, subject)
 
-        for slot in range(int(limit)):
+        for slot in range(limit):
             sk = semaphore_slot_sort_key(slot)
             try:
                 return self.semaphore_table.update(

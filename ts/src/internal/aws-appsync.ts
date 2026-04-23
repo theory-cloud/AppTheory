@@ -360,10 +360,9 @@ export function appSyncErrorPayload(
       request,
     );
   }
-  const message = err instanceof Error ? err.message : String(err ?? "").trim();
   return {
     pay_theory_error: true,
-    error_message: message || "internal error",
+    error_message: "internal error",
     error_type: APPSYNC_ERROR_TYPE_SYSTEM,
     error_data: {},
     error_info: {},

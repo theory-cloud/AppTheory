@@ -122,3 +122,53 @@ func TestNormalizeRequest_InvalidBase64ReturnsAppError(t *testing.T) {
 		t.Fatalf("expected code %q, got %q", errorCodeBadRequest, appErr.Code)
 	}
 }
+
+func TestNormalizeRequestWithMaxBytes_RejectsOversizedBase64(t *testing.T) {
+	encoded := base64.StdEncoding.EncodeToString([]byte("hello"))
+
+	req, err := normalizeRequestWithMaxBytes(Request{
+		Method:   " post ",
+		Path:     "foo",
+		Headers:  map[string][]string{"Cookie": {"a=b"}},
+		Body:     []byte(encoded),
+		IsBase64: true,
+	}, 4)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var appErr *AppError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("expected AppError, got %T", err)
+	}
+	if appErr.Code != errorCodeTooLarge {
+		t.Fatalf("expected code %q, got %q", errorCodeTooLarge, appErr.Code)
+	}
+	if req.Method != "POST" || req.Path != "/foo" {
+		t.Fatalf("unexpected normalized request metadata: method=%q path=%q", req.Method, req.Path)
+	}
+	if req.Cookies["a"] != "b" {
+		t.Fatalf("unexpected cookies: %v", req.Cookies)
+	}
+	if len(req.Body) != len(encoded) {
+		t.Fatalf("expected encoded body to remain intact, got len=%d want=%d", len(req.Body), len(encoded))
+	}
+}
+
+func TestNormalizeRequestWithMaxBytes_InvalidBase64StillReturnsBadRequest(t *testing.T) {
+	_, err := normalizeRequestWithMaxBytes(Request{
+		Method:   "GET",
+		Path:     "/",
+		Body:     []byte("AAAA=AAA"),
+		IsBase64: true,
+	}, 1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var appErr *AppError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("expected AppError, got %T", err)
+	}
+	if appErr.Code != errorCodeBadRequest {
+		t.Fatalf("expected code %q, got %q", errorCodeBadRequest, appErr.Code)
+	}
+}

@@ -109,9 +109,21 @@ contract_only_patterns = [normalize(value) for value in sections["fixed_contract
 out_of_scope_patterns = [normalize(value) for value in sections["out_of_scope"]]
 exclusion_rules = out_of_scope_patterns + contract_only_patterns
 
+all_paths = sorted(docs_root.rglob("*"))
+symlink_paths = sorted(
+    path.relative_to(docs_root).as_posix()
+    for path in all_paths
+    if path.is_symlink()
+)
+if symlink_paths:
+    raise SystemExit(
+        "docs subtree staging does not allow symlinks: "
+        + ", ".join(symlink_paths)
+    )
+
 all_files = sorted(
     path.relative_to(docs_root).as_posix()
-    for path in docs_root.rglob("*")
+    for path in all_paths
     if path.is_file()
 )
 

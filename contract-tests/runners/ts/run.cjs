@@ -83,7 +83,7 @@ function loadFixtures(fixturesRoot) {
 }
 
 function canonicalizeHeaders(headers) {
-  const out = {};
+  const out = Object.create(null);
   if (!headers) return out;
   const keys = Object.keys(headers).sort();
   for (const key of keys) {
@@ -91,7 +91,7 @@ function canonicalizeHeaders(headers) {
     if (!lower) continue;
     const values = Array.isArray(headers[key]) ? headers[key] : [headers[key]];
     if (!out[lower]) out[lower] = [];
-    out[lower].push(...values);
+    out[lower].push(...values.map((v) => String(v)));
   }
   return out;
 }
@@ -329,6 +329,10 @@ function builtInHandler(name) {
         }
       };
     case "panic":
+      return () => {
+        throw new Error("boom");
+      };
+    case "unexpected_error":
       return () => {
         throw new Error("boom");
       };
@@ -639,8 +643,8 @@ async function runFixture(fixture) {
     return compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
   }
   if (tier === "m12") {
-    const { actual } = await runFixtureM12(fixture);
-    return compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
+    const { actual, effects } = await runFixtureM12(fixture);
+    return compareFixture(fixture, actual, effects);
   }
   if (tier === "m14") {
     const { actual } = await runFixtureM14(fixture);
@@ -1317,6 +1321,7 @@ async function runFixtureM3(fixture) {
 
 async function runFixtureM12(fixture) {
   const runtime = await loadAppTheoryRuntime();
+  const effects = { logs: [], metrics: [], spans: [] };
 
   const ids = new runtime.ManualIdGenerator();
   ids.queue("req_test_123");
@@ -1363,7 +1368,7 @@ async function runFixtureM12(fixture) {
   }
 
   for (const route of fixture.setup?.routes ?? []) {
-    const handler = builtInAppTheoryHandler(runtime, route.handler);
+    const handler = builtInAppTheoryHandler(runtime, route.handler, effects);
     if (!handler) {
       throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
     }
@@ -1391,7 +1396,9 @@ async function runFixtureM12(fixture) {
     is_base64: resp.isBase64 ?? false,
   };
 
-  return { actual };
+  await sleepMs(30);
+
+  return { actual, effects };
 }
 
 async function runFixtureM14(fixture) {
@@ -1628,6 +1635,42 @@ function canonicalResponseFromAPIGatewayProxyResponse(resp) {
     body,
     is_base64: isBase64Encoded,
   };
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function abortSignalFromContextCarrier(value) {
+  if (typeof AbortSignal !== "undefined" && value instanceof AbortSignal) {
+    return value;
+  }
+  if (value && typeof value === "object") {
+    const signal = value.signal;
+    if (typeof AbortSignal !== "undefined" && signal instanceof AbortSignal) {
+      return signal;
+    }
+  }
+  return null;
+}
+
+async function waitForAbort(signal, timeoutMs) {
+  if (!signal) return false;
+  if (signal.aborted) return true;
+
+  return await new Promise((resolve) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(false);
+    }, timeoutMs);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 async function runFixtureP1(fixture) {
@@ -1908,16 +1951,27 @@ async function runFixtureP2Output(fixture) {
   return { actualOutput, actualError, effects };
 }
 
-function builtInAppTheoryHandler(runtime, name) {
+function builtInAppTheoryHandler(runtime, name, effects) {
   switch (name) {
     case "static_pong":
       return () => runtime.text(200, "pong");
     case "sleep_50ms":
       return async () => {
-        await new Promise((resolve) => {
-          setTimeout(resolve, 50);
-        });
+        await sleepMs(50);
         return runtime.text(200, "done");
+      };
+    case "cooperative_cancel_side_effect":
+      return async (ctx) => {
+        const signal = abortSignalFromContextCarrier(ctx?.ctx ?? null);
+        if (await waitForAbort(signal, 20)) {
+          return runtime.text(200, "cancelled");
+        }
+        effects?.metrics?.push({
+          name: "timeout.side_effect_committed",
+          value: 1,
+          tags: { handler: "cooperative_cancel_side_effect" },
+        });
+        return runtime.text(200, "late");
       };
     case "echo_path_params":
       return (ctx) => runtime.json(200, { params: ctx.params ?? {} });
@@ -1955,6 +2009,10 @@ function builtInAppTheoryHandler(runtime, name) {
         });
       };
     case "panic":
+      return () => {
+        throw new Error("boom");
+      };
+    case "unexpected_error":
       return () => {
         throw new Error("boom");
       };
