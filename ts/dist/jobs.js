@@ -239,6 +239,7 @@ function toSemaphoreLease(item) {
             : {}),
     };
 }
+const maxSemaphoreAcquireLimit = 256;
 function requireNonEmpty(value, field) {
     const v = String(value ?? "").trim();
     if (!v)
@@ -250,6 +251,13 @@ function requirePositiveInt(value, field) {
     if (n <= 0)
         throw newJobLedgerError("invalid_input", `${field} must be > 0`);
     return n;
+}
+function requireSemaphoreLimit(value) {
+    const limit = requirePositiveInt(value, "limit");
+    if (limit > maxSemaphoreAcquireLimit) {
+        throw newJobLedgerError("invalid_input", `limit must be <= ${maxSemaphoreAcquireLimit}`);
+    }
+    return limit;
 }
 function requireNonNegativeInt(value, field) {
     const n = Math.floor(Number(value));
@@ -505,7 +513,7 @@ export class DynamoJobLedger {
     async acquireSemaphoreSlot(input) {
         const scope = requireNonEmpty(input?.scope, "scope");
         const subject = requireNonEmpty(input?.subject, "subject");
-        const limit = requirePositiveInt(input?.limit, "limit");
+        const limit = requireSemaphoreLimit(input?.limit);
         const owner = requireNonEmpty(input?.owner, "owner");
         const leaseDurationMs = Math.floor(Number(input?.leaseDurationMs ?? this._config.defaultLeaseDurationMs) ||
             0);
