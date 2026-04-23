@@ -35,6 +35,8 @@ Each fixture is a single JSON object.
     (`expect.response.chunks`), the already-committed status/headers remain intact and the stream terminates with
     `expect.response.stream_error_code = "app.too_large"` once the next streamed chunk would exceed the limit.
 - `input.request` (object): request presented to the runtime under test.
+  - `headers` keys are canonicalized to lowercase but otherwise treated as ordinary header names, including
+    prototype-like keys such as `constructor` and `__proto__`.
 - `input.context` (object, optional): synthetic invocation context (portable subset).
 - `setup.routes[].auth_required` (boolean, optional): whether the route requires auth.
 - `expect.response` (object): expected canonical response.
