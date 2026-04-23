@@ -13,7 +13,6 @@ const allowedSanitizeFields = new Set([
 
   // Common system identifiers that are safe/necessary for debugging and correlation.
   "transaction_id",
-  "authorization_id",
   "merchant_uid",
 
   // External system identifiers (MIDs, acceptor IDs, terminal IDs, etc.).
@@ -60,6 +59,7 @@ const sensitiveSanitizeFields = new Map<string, "fully" | "partial">([
   ["api_key", "fully"],
   ["api_token", "fully"],
   ["api_key_id", "partial"],
+  ["authorization_id", "fully"],
   ["authorization", "fully"],
   ["authorization_header", "fully"],
 ]);
@@ -227,7 +227,70 @@ function sanitizeFieldValueWithParent(
     return maskRestrictedString(value);
   }
 
+  if (shouldHeuristicallyRedactKey(key)) return REDACTED_VALUE;
+
   return sanitizeValueWithParent(k, value);
+}
+
+function shouldHeuristicallyRedactKey(key: string): boolean {
+  const segments = sanitizationKeySegments(key);
+  if (segments.length === 0) return false;
+
+  for (let i = 0; i < segments.length; i += 1) {
+    const segment = segments[i];
+    if (segment === "token" || segment === "secret" || segment === "password") {
+      return true;
+    }
+    if (
+      segment === "key" &&
+      i > 0 &&
+      (segments[i - 1] === "api" ||
+        segments[i - 1] === "private" ||
+        segments[i - 1] === "secret")
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function sanitizationKeySegments(key: string): string[] {
+  const value = String(key ?? "").trim();
+  if (!value) return [];
+
+  const segments: string[] = [];
+  let current = "";
+  let previous = "";
+
+  const flush = (): void => {
+    if (!current) return;
+    segments.push(current);
+    current = "";
+  };
+
+  for (const char of value) {
+    const isAlphaNumeric = /[\p{L}\p{N}]/u.test(char);
+    if (!isAlphaNumeric) {
+      flush();
+      previous = "";
+      continue;
+    }
+
+    if (
+      previous &&
+      /[\p{Lu}]/u.test(char) &&
+      (/[\p{Ll}]/u.test(previous) || /[\p{N}]/u.test(previous))
+    ) {
+      flush();
+    }
+
+    current += char.toLowerCase();
+    previous = char;
+  }
+
+  flush();
+  return segments;
 }
 
 export function sanitizeJSON(jsonBytes: Uint8Array | string): string {
