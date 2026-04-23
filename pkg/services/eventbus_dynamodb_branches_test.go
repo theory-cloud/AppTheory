@@ -112,6 +112,42 @@ func TestValidateEventForPublish_AndValidateEventQuery_Errors(t *testing.T) {
 	require.Error(t, validateEventQuery(&EventQuery{}))
 }
 
+func TestDynamoDBEventBus_Publish_CanonicalizesStorageKeys(t *testing.T) {
+	t.Parallel()
+
+	db := new(tablemocks.MockDB)
+	q := new(tablemocks.MockQuery)
+
+	db.On("Model", mock.Anything).Return(q).Once()
+	q.On("WithContext", mock.Anything).Return(q).Once()
+	q.On("IfNotExists").Return(q).Once()
+	q.On("Create").Return(nil).Once()
+
+	bus := NewDynamoDBEventBus(db, EventBusConfig{
+		RetryAttempts:  0,
+		RetryBaseDelay: 0,
+	})
+
+	now := time.Date(2026, 1, 1, 0, 0, 0, 123, time.UTC)
+	event := &Event{
+		ID:           "evt_1",
+		EventType:    "evt",
+		TenantID:     "tenant_1",
+		SourceID:     "src_1",
+		Payload:      []byte(`{}`),
+		PublishedAt:  now,
+		CreatedAt:    now,
+		PartitionKey: "victim#evt",
+		SortKey:      "0#forged",
+	}
+
+	id, err := bus.Publish(context.Background(), event)
+	require.NoError(t, err)
+	require.Equal(t, "evt_1", id)
+	require.Equal(t, "tenant_1#evt", event.PartitionKey)
+	require.Equal(t, fmt.Sprintf("%d#evt_1", now.UnixNano()), event.SortKey)
+}
+
 func TestDynamoDBEventBus_GetEvent_ReturnsErrorOnQueryFailure(t *testing.T) {
 	t.Parallel()
 
