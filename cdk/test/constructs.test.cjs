@@ -14,6 +14,7 @@ const kms = require("aws-cdk-lib/aws-kms");
 const lambda = require("aws-cdk-lib/aws-lambda");
 const logs = require("aws-cdk-lib/aws-logs");
 const route53 = require("aws-cdk-lib/aws-route53");
+const sqs = require("aws-cdk-lib/aws-sqs");
 
 const apptheory = require("../lib");
 const { restApiStreamingRouteStageVariableName } = require("../lib/private/rest-api-streaming");
@@ -447,6 +448,49 @@ test("AppTheoryQueueProcessor (with DLQ) synthesizes expected template", () => {
   } else {
     expectSnapshot("queue-processor-with-dlq", template);
   }
+});
+
+test("AppTheoryQueueProcessor preserves legacy queueProps security settings", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const consumer = new lambda.Function(stack, "Consumer", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const key = new kms.Key(stack, "QueueKey");
+
+  new apptheory.AppTheoryQueueProcessor(stack, "Queue", {
+    consumer,
+    queueProps: {
+      queueName: "secure-legacy-queue",
+      visibilityTimeout: cdk.Duration.seconds(45),
+      retentionPeriod: cdk.Duration.days(7),
+      receiveMessageWaitTime: cdk.Duration.seconds(20),
+      encryption: sqs.QueueEncryption.KMS,
+      encryptionMasterKey: key,
+      enforceSSL: true,
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const queue = resources.find(
+    (resource) => resource.Type === "AWS::SQS::Queue" && resource.Properties?.QueueName === "secure-legacy-queue",
+  );
+  const queuePolicy = resources.find(
+    (resource) =>
+      resource.Type === "AWS::SQS::QueuePolicy" &&
+      JSON.stringify(resource.Properties?.PolicyDocument ?? {}).includes("aws:SecureTransport"),
+  );
+
+  assert.ok(queue, "Should synthesize the legacy queue");
+  assert.equal(queue.Properties?.MessageRetentionPeriod, 604800);
+  assert.equal(queue.Properties?.VisibilityTimeout, 45);
+  assert.equal(queue.Properties?.ReceiveMessageWaitTimeSeconds, 20);
+  assert.ok(queue.Properties?.KmsMasterKeyId, "Should preserve legacy encryptionMasterKey");
+  assert.ok(queuePolicy, "Should preserve legacy enforceSSL queue policy");
 });
 
 
