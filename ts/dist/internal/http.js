@@ -1,5 +1,8 @@
 import { Buffer } from "node:buffer";
 import { AppError } from "../errors.js";
+function emptyHeaders() {
+    return Object.create(null);
+}
 export function normalizeMethod(method) {
     return String(method ?? "")
         .trim()
@@ -25,7 +28,7 @@ export function splitPath(path) {
     return value.split("/");
 }
 export function canonicalizeHeaders(headers) {
-    const out = {};
+    const out = emptyHeaders();
     if (headers === null ||
         headers === undefined ||
         typeof headers !== "object") {
@@ -105,7 +108,7 @@ export async function* normalizeBodyStream(bodyStream) {
     throw new TypeError("bodyStream must be an Iterable or AsyncIterable");
 }
 export function headersFromSingle(headers, ignoreCookieHeader) {
-    const out = {};
+    const out = emptyHeaders();
     if (!headers)
         return out;
     for (const [key, value] of Object.entries(headers)) {
