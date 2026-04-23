@@ -994,7 +994,7 @@ function corsOriginAllowed(origin, cors) {
         return false;
     const allowed = cors.allowedOrigins;
     if (allowed === null) {
-        return true;
+        return !cors.allowCredentials;
     }
     if (!Array.isArray(allowed) || allowed.length === 0) {
         return false;
