@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -84,3 +85,25 @@ class TestMiddleware(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "bad"):
             mw(ctx, boom)
 
+    def test_timeout_middleware_propagates_cooperative_cancellation_before_side_effects(self) -> None:
+        mw = timeout_middleware(TimeoutConfig(default_timeout_ms=5, timeout_message="too slow"))
+        ctx = Context(request=Request(method="GET", path="/"))
+        side_effect = threading.Event()
+
+        def cooperative(handler_ctx: Context):
+            deadline = time.monotonic() + 0.02
+            while time.monotonic() < deadline:
+                carrier = getattr(handler_ctx, "ctx", None)
+                cancelled = getattr(carrier, "cancelled", None)
+                if isinstance(cancelled, threading.Event) and cancelled.is_set():
+                    return "cancelled"
+                time.sleep(0.001)
+            side_effect.set()
+            return "late"
+
+        with self.assertRaises(AppError) as cm:
+            mw(ctx, cooperative)
+
+        self.assertEqual(cm.exception.code, "app.timeout")
+        time.sleep(0.03)
+        self.assertFalse(side_effect.is_set())
