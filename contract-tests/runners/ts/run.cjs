@@ -83,7 +83,7 @@ function loadFixtures(fixturesRoot) {
 }
 
 function canonicalizeHeaders(headers) {
-  const out = {};
+  const out = Object.create(null);
   if (!headers) return out;
   const keys = Object.keys(headers).sort();
   for (const key of keys) {
@@ -91,7 +91,7 @@ function canonicalizeHeaders(headers) {
     if (!lower) continue;
     const values = Array.isArray(headers[key]) ? headers[key] : [headers[key]];
     if (!out[lower]) out[lower] = [];
-    out[lower].push(...values);
+    out[lower].push(...values.map((v) => String(v)));
   }
   return out;
 }

@@ -3,6 +3,10 @@ import { Buffer } from "node:buffer";
 import { AppError } from "../errors.js";
 import type { BodyStream, Headers, Query } from "../types.js";
 
+function emptyHeaders(): Headers {
+  return Object.create(null) as Headers;
+}
+
 export function normalizeMethod(method: unknown): string {
   return String(method ?? "")
     .trim()
@@ -26,7 +30,7 @@ export function splitPath(path: unknown): string[] {
 }
 
 export function canonicalizeHeaders(headers: unknown): Headers {
-  const out: Headers = {};
+  const out = emptyHeaders();
   if (
     headers === null ||
     headers === undefined ||
@@ -116,7 +120,7 @@ export function headersFromSingle(
   headers: Record<string, unknown> | null | undefined,
   ignoreCookieHeader: boolean,
 ): Headers {
-  const out: Headers = {};
+  const out = emptyHeaders();
   if (!headers) return out;
 
   for (const [key, value] of Object.entries(headers)) {
