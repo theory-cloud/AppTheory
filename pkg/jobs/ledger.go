@@ -16,6 +16,8 @@ type DynamoJobLedger struct {
 	clock  Clock
 }
 
+const maxSemaphoreAcquireLimit = 256
+
 var _ JobLedger = (*DynamoJobLedger)(nil)
 
 func NewDynamoJobLedger(db tablecore.DB, config *Config) *DynamoJobLedger {
@@ -312,8 +314,8 @@ func (l *DynamoJobLedger) AcquireSemaphoreSlot(ctx context.Context, in AcquireSe
 	if err := validateSemaphoreKey(in.Scope, in.Subject); err != nil {
 		return nil, err
 	}
-	if in.Limit <= 0 {
-		return nil, NewError(ErrorTypeInvalidInput, "limit must be > 0")
+	if err := validateSemaphoreLimit(in.Limit); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(in.Owner) == "" {
 		return nil, NewError(ErrorTypeInvalidInput, "owner is required")
@@ -626,6 +628,16 @@ func validateSemaphoreKey(scope, subject string) error {
 func validateSemaphoreSlot(slot int) error {
 	if slot < 0 {
 		return NewError(ErrorTypeInvalidInput, "slot must be >= 0")
+	}
+	return nil
+}
+
+func validateSemaphoreLimit(limit int) error {
+	if limit <= 0 {
+		return NewError(ErrorTypeInvalidInput, "limit must be > 0")
+	}
+	if limit > maxSemaphoreAcquireLimit {
+		return NewError(ErrorTypeInvalidInput, "limit must be <= 256")
 	}
 	return nil
 }
