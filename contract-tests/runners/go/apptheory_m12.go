@@ -116,7 +116,7 @@ func builtInM12Handler(name string, metrics *[]FixtureMetricRecord) apptheory.Ha
 	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		select {
 		case <-ctx.Context().Done():
-			return apptheory.Text(200, "cancelled"), nil
+			return apptheory.Text(200, "canceled"), nil
 		case <-time.After(20 * time.Millisecond):
 			if metrics != nil {
 				*metrics = append(*metrics, FixtureMetricRecord{
