@@ -16,6 +16,31 @@ class TimeoutConfig:
     timeout_message: str = "request timeout"
 
 
+@dataclass(slots=True)
+class _TimeoutCancellationCarrier:
+    parent: Any | None
+    cancelled: threading.Event
+
+
+def _clone_context_with_timeout_ctx(ctx: Context, carrier: Any) -> Context:
+    clone = Context(
+        request=ctx.request,
+        params=ctx.params,
+        clock=ctx.clock,
+        id_generator=ctx.id_generator,
+        ctx=carrier,
+        request_id=ctx.request_id,
+        tenant_id=ctx.tenant_id,
+        auth_identity=ctx.auth_identity,
+        remaining_ms=ctx.remaining_ms,
+        middleware_trace=ctx.middleware_trace,
+        websocket=ctx.websocket,
+        appsync=ctx.appsync,
+    )
+    clone._values = ctx._values
+    return clone
+
+
 def timeout_middleware(config: TimeoutConfig) -> Middleware:
     cfg = _normalize_timeout_config(config)
 
@@ -26,10 +51,15 @@ def timeout_middleware(config: TimeoutConfig) -> Middleware:
 
         result: dict[str, Any] = {}
         done = threading.Event()
+        cancelled = threading.Event()
+        handler_ctx = _clone_context_with_timeout_ctx(
+            ctx,
+            _TimeoutCancellationCarrier(getattr(ctx, "ctx", None), cancelled),
+        )
 
         def run() -> None:
             try:
-                result["resp"] = next_handler(ctx)
+                result["resp"] = next_handler(handler_ctx)
             except Exception as exc:  # noqa: BLE001
                 result["exc"] = exc
             finally:
@@ -39,6 +69,7 @@ def timeout_middleware(config: TimeoutConfig) -> Middleware:
         thread.start()
 
         if not done.wait(timeout=float(timeout_ms) / 1000.0):
+            cancelled.set()
             raise AppError("app.timeout", cfg.timeout_message)
 
         if "exc" in result:
