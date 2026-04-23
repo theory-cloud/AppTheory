@@ -40,8 +40,12 @@ Sanitization is key-name driven:
   `pan_value`, `pan`, `primary_account_number`.
 
 Unknown keys fall back to safe string sanitization (strip `\r`/`\n`) and recursive sanitization for nested objects.
-AppTheory intentionally avoids substring-based redaction rules because they can over-redact non-secret business fields
-(for example GraphQL response fields that contain `"authorization"` in the name).
+AppTheory uses **segment-based secret heuristics** for otherwise-unknown keys:
+
+- exact segments like `token`, `secret`, and `password` trigger full redaction
+- explicit sensitive aliases like `authorization_id` are treated as secrets
+- business keys that merely contain those strings as part of a larger identifier (for example
+  `authorizationCode` or `tokenization_method`) remain readable
 
 ### Context-aware `accountNumber`
 

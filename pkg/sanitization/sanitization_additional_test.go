@@ -146,18 +146,35 @@ func TestSanitizeXML_RapidConnectFixture(t *testing.T) {
 	}
 }
 
-func TestSanitizeFieldValue_AllowsAuthorizationID_AndAliases(t *testing.T) {
+func TestSanitizeFieldValue_RedactsAuthorizationID_AndAliases(t *testing.T) {
 	t.Parallel()
 
-	if got := SanitizeFieldValue("authorization_id", "auth_123"); got != "auth_123" {
-		t.Fatalf("expected authorization_id to be preserved, got %#v", got)
+	if got := SanitizeFieldValue("authorization_id", "auth_123"); got != redactedValue {
+		t.Fatalf("expected authorization_id to be redacted, got %#v", got)
 	}
-	if got := SanitizeFieldValue("authorizationId", "auth_123"); got != "auth_123" {
-		t.Fatalf("expected authorizationId alias to be preserved, got %#v", got)
+	if got := SanitizeFieldValue("authorizationId", "auth_123"); got != redactedValue {
+		t.Fatalf("expected authorizationId alias to be redacted, got %#v", got)
 	}
 }
 
-func TestSanitizeFieldValue_DoesNotSubstringRedactBusinessKeys(t *testing.T) {
+func TestSanitizeFieldValue_HeuristicallyRedactsTokenLikeKeys(t *testing.T) {
+	t.Parallel()
+
+	if got := SanitizeFieldValue("session_token", "tok_123"); got != redactedValue {
+		t.Fatalf("expected session_token to be redacted, got %#v", got)
+	}
+	if got := SanitizeFieldValue("csrfToken", "tok_123"); got != redactedValue {
+		t.Fatalf("expected csrfToken to be redacted, got %#v", got)
+	}
+	if got := SanitizeFieldValue("authorizationToken", "tok_123"); got != redactedValue {
+		t.Fatalf("expected authorizationToken to be redacted, got %#v", got)
+	}
+	if got := SanitizeFieldValue("sessionSecret", "sec_123"); got != redactedValue {
+		t.Fatalf("expected sessionSecret to be redacted, got %#v", got)
+	}
+}
+
+func TestSanitizeFieldValue_PreservesBusinessKeys(t *testing.T) {
 	t.Parallel()
 
 	if got := SanitizeFieldValue("authorizationCode", "ok_1"); got != "ok_1" {
@@ -215,8 +232,8 @@ func TestSanitizeFieldValue_TesouroGraphQLFixture(t *testing.T) {
 		t.Fatalf("expected transaction to be map, got %T (%#v)", data["transaction"], data["transaction"])
 	}
 
-	if tx["authorizationId"] != "auth_123" {
-		t.Fatalf("expected transaction.authorizationId to be preserved, got %#v", tx["authorizationId"])
+	if tx["authorizationId"] != redactedValue {
+		t.Fatalf("expected transaction.authorizationId to be redacted, got %#v", tx["authorizationId"])
 	}
 	if tx["authorizationCode"] != "ok_1" {
 		t.Fatalf("expected transaction.authorizationCode to be preserved, got %#v", tx["authorizationCode"])
