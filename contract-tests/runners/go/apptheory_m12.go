@@ -11,6 +11,7 @@ import (
 func runFixtureM12(f Fixture) error {
 	now := time.Unix(0, 0).UTC()
 	app := newAppTheoryFixtureAppP1(now, f.Setup.Limits, f.Setup.CORS, f.Setup.HTTPErrorFormat)
+	var metrics []FixtureMetricRecord
 
 	for _, name := range f.Setup.Middlewares {
 		mw := builtInM12Middleware(name)
@@ -21,7 +22,7 @@ func runFixtureM12(f Fixture) error {
 	}
 
 	for _, r := range f.Setup.Routes {
-		handler := builtInAppTheoryHandler(r.Handler)
+		handler := builtInM12Handler(r.Handler, &metrics)
 		if handler == nil {
 			return &apptheory.AppError{Code: "app.internal", Message: "internal error"}
 		}
@@ -65,7 +66,9 @@ func runFixtureM12(f Fixture) error {
 		actual.BodyReader = nil
 	}
 
-	return compareFixtureResponse(f, actual, nil, nil, nil)
+	time.Sleep(30 * time.Millisecond)
+
+	return compareFixtureResponse(f, actual, nil, metrics, nil)
 }
 
 func builtInM12Middleware(name string) apptheory.Middleware {
@@ -99,5 +102,29 @@ func builtInM12Middleware(name string) apptheory.Middleware {
 		return apptheory.TimeoutMiddleware(apptheory.TimeoutConfig{DefaultTimeout: 5 * time.Millisecond})
 	default:
 		return nil
+	}
+}
+
+func builtInM12Handler(name string, metrics *[]FixtureMetricRecord) apptheory.Handler {
+	if strings.TrimSpace(name) != "cooperative_cancel_side_effect" {
+		return builtInAppTheoryHandler(name)
+	}
+
+	return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		select {
+		case <-ctx.Context().Done():
+			return apptheory.Text(200, "cancelled"), nil
+		case <-time.After(20 * time.Millisecond):
+			if metrics != nil {
+				*metrics = append(*metrics, FixtureMetricRecord{
+					Name:  "timeout.side_effect_committed",
+					Value: 1,
+					Tags: map[string]string{
+						"handler": "cooperative_cancel_side_effect",
+					},
+				})
+			}
+			return apptheory.Text(200, "late"), nil
+		}
 	}
 }
