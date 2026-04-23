@@ -1224,6 +1224,46 @@ test("AppTheoryEnhancedSecurity synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryEnhancedSecurity ipWhitelist enforces default deny semantics", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const vpc = ec2.Vpc.fromVpcAttributes(stack, "Vpc", {
+    vpcId: "vpc-123456",
+    vpcCidrBlock: "10.0.0.0/16",
+    availabilityZones: ["us-east-1a"],
+    privateSubnetIds: ["subnet-private"],
+    privateSubnetRouteTableIds: ["rtb-private"],
+  });
+
+  new apptheory.AppTheoryEnhancedSecurity(stack, "Security", {
+    vpc,
+    enableWaf: true,
+    environment: "dev",
+    applicationName: "apptheory-test",
+    wafConfig: {
+      ipWhitelist: ["203.0.113.0/24"],
+      enableRateLimit: false,
+      enableSQLiProtection: false,
+      enableXSSProtection: false,
+      enableKnownBadInputs: false,
+    },
+  });
+
+  const resources = Object.values(assertions.Template.fromStack(stack).toJSON().Resources ?? {});
+  const webAcl = resources.find((resource) => resource.Type === "AWS::WAFv2::WebACL");
+
+  assert.ok(webAcl, "Should synthesize a WAF WebACL");
+  assert.deepEqual(webAcl.Properties?.DefaultAction, {
+    Block: {
+      CustomResponse: {
+        ResponseCode: 403,
+        CustomResponseBodyKey: "AccessDenied",
+      },
+    },
+  });
+});
+
 test("AppTheoryApp synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
