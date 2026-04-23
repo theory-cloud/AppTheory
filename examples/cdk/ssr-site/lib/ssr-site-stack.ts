@@ -60,8 +60,8 @@ export class SsrSiteStack extends Stack {
     const site = new AppTheorySsrSite(this, "Site", {
       ssrFunction: ssrFn,
       mode: AppTheorySsrSiteMode.SSG_ISR,
-      // This example includes public POST routes under /actions/*, so it uses a public
-      // Function URL origin instead of the signed read-only Lambda origin shape.
+      // This example keeps direct Function URL access public on purpose so the smoke
+      // check exercises the explicit compatibility path as well as the CloudFront path.
       ssrUrlAuthType: lambda.FunctionUrlAuthType.NONE,
       assetsPath: path.join(__dirname, "..", "assets"),
       htmlStoreBucket: isrBucket,

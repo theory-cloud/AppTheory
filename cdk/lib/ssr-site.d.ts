@@ -10,9 +10,6 @@ export declare enum AppTheorySsrSiteMode {
     /**
      * Lambda Function URL is the default origin. Direct S3 behaviors are used only for
      * immutable assets and any explicitly configured static path patterns.
-     *
-     * Because this mode exposes Lambda as the default viewer surface with write methods,
-     * omitted `ssrUrlAuthType` resolves to `NONE`.
      */
     SSR_ONLY = "ssr-only",
     /**
@@ -41,14 +38,12 @@ export interface AppTheorySsrSiteProps {
     /**
      * Function URL auth type for the SSR origin.
      *
-     * If omitted, AppTheory auto-selects the auth model based on the exposed
-     * Lambda-backed surface:
+     * If omitted, AppTheory fails closed to `AWS_IAM` and signs CloudFront-to-Lambda
+     * traffic with lambda Origin Access Control.
      *
-     * - `AWS_IAM` for read-only Lambda traffic (`GET` / `HEAD` / `OPTIONS`)
-     * - `NONE` when Lambda-backed behaviors expose browser-facing write methods
-     *
-     * Set this explicitly to force a specific Function URL auth mode.
-     * @default derived from exposed Lambda methods
+     * Set this explicitly to `NONE` only when you intentionally require public
+     * direct Function URL access as a deliberate compatibility choice.
+     * @default lambda.FunctionUrlAuthType.AWS_IAM
      */
     readonly ssrUrlAuthType?: lambda.FunctionUrlAuthType;
     readonly assetsBucket?: s3.IBucket;
@@ -89,8 +84,6 @@ export interface AppTheorySsrSiteProps {
      * to the Lambda Function URL with full method support.
      *
      * Use this for same-origin dynamic paths such as auth callbacks, actions, or form posts.
-     * When `ssrUrlAuthType` is omitted, adding these patterns makes AppTheory select
-     * `NONE` so browser-facing write methods keep working through CloudFront.
      * Example direct-SSR path: "/actions/*"
      */
     readonly ssrPathPatterns?: string[];
@@ -124,13 +117,28 @@ export interface AppTheorySsrSiteProps {
      * - `x-facetheory-original-host`
      * - `x-facetheory-original-uri`
      * - `x-request-id`
-     * - `x-tenant-id`
      *
      * Use this to opt in to additional app-specific headers such as
-     * `x-facetheory-tenant`. `host` and `x-forwarded-proto` are rejected because
-     * they break or bypass the supported origin model.
+     * `x-facetheory-segment`. Tenant-like viewer headers are rejected unless
+     * `allowViewerTenantHeaders` is explicitly enabled as a compatibility mode.
+     * `host` and `x-forwarded-proto` are rejected because they break or bypass the
+     * supported origin model.
      */
     readonly ssrForwardHeaders?: string[];
+    /**
+     * Compatibility escape hatch for legacy viewer-supplied tenant headers.
+     *
+     * When false (default), AppTheory strips `x-tenant-id` at the edge and rejects
+     * tenant-like entries in `ssrForwardHeaders` so viewer-supplied tenant headers
+     * cannot influence origin routing or HTML cache partitioning. When true,
+     * AppTheory restores legacy passthrough behavior for `x-tenant-id` and any
+     * tenant-like `ssrForwardHeaders`.
+     *
+     * Prefer deriving tenant from trusted host mapping using the original-host
+     * edge headers instead of enabling passthrough.
+     * @default false
+     */
+    readonly allowViewerTenantHeaders?: boolean;
     readonly enableLogging?: boolean;
     readonly logsBucket?: s3.IBucket;
     /**
@@ -153,8 +161,10 @@ export interface AppTheorySsrSiteProps {
      * Cache policy applied to the cacheable HTML behavior in `ssg-isr` mode.
      *
      * The default AppTheory policy keys on query strings plus the stable public HTML
-     * variant headers (`x-*-original-host`, `x-tenant-id`, and any extra forwarded
-     * headers you opt into) while leaving cookies out of the cache key.
+     * variant headers (`x-*-original-host` and any non-tenant extra forwarded
+     * headers you opt into) while leaving cookies out of the cache key. Tenant-like
+     * viewer headers join the cache key only when `allowViewerTenantHeaders` is
+     * explicitly enabled.
      */
     readonly htmlCachePolicy?: cloudfront.ICachePolicy;
     readonly removalPolicy?: RemovalPolicy;

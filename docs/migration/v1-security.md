@@ -55,3 +55,47 @@ Why this changed:
 
 - Raw API keys and Bearer tokens should not be stored in rate-limit tables by default.
 - Hashing keeps default limiter behavior deterministic while reducing credential exposure in storage and diagnostics.
+
+## AppTheorySsrSite now fails closed on Function URL access and tenant-header trust
+
+Affected surface:
+
+- `cdk/lib/AppTheorySsrSite`
+
+What changed:
+
+- Omitted `ssrUrlAuthType` now defaults to `AWS_IAM` for all SSR site topologies. CloudFront signs the Lambda Function
+  URL origin with lambda Origin Access Control by default.
+- Public direct Function URL access now requires an explicit compatibility opt-in:
+  `ssrUrlAuthType: lambda.FunctionUrlAuthType.NONE`.
+- Viewer-supplied tenant headers are no longer trusted by default:
+  - `x-tenant-id` is stripped at the edge
+  - tenant-like entries in `ssrForwardHeaders` are rejected unless you explicitly set
+    `allowViewerTenantHeaders: true`
+- The default `ssg-isr` HTML cache key no longer varies on tenant-like viewer headers unless compatibility passthrough
+  is explicitly enabled.
+
+What you need to do:
+
+1. If you depended on public direct Function URL access, set `ssrUrlAuthType: lambda.FunctionUrlAuthType.NONE`
+   explicitly.
+2. If you previously forwarded `x-tenant-id` or headers such as `x-facetheory-tenant` from the viewer, migrate to a
+   trusted derivation model:
+   - derive tenant from `x-apptheory-original-host` / `x-facetheory-original-host` inside the SSR function using your
+     allowlisted host mapping, or
+   - inject a trusted tenant header upstream before the request reaches the AppTheory origin contract.
+3. If you need temporary backwards compatibility while you migrate, set:
+
+   ```ts
+   allowViewerTenantHeaders: true,
+   ssrForwardHeaders: ["x-facetheory-tenant"],
+   ```
+
+   This restores legacy passthrough, but those tenant headers remain viewer-controlled.
+
+Why this changed:
+
+- Public Function URL defaults bypass CloudFront-only controls such as WAF, geo/IP restrictions, and signed-origin
+  enforcement.
+- Forwarding viewer-supplied tenant headers without a trust contract let clients influence origin tenant context and
+  `ssg-isr` HTML cache partitioning.
