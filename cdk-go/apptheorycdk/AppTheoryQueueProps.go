@@ -2,6 +2,7 @@ package apptheorycdk
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awskms"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awssqs"
 )
@@ -30,6 +31,14 @@ type AppTheoryQueueProps struct {
 	// Default: - AWS managed encryption is used.
 	//
 	Encryption awssqs.QueueEncryption `field:"optional" json:"encryption" yaml:"encryption"`
+	// External KMS key to use for queue encryption when you require a customer-managed key.
+	// Default: - no customer-managed KMS key.
+	//
+	EncryptionMasterKey awskms.IKey `field:"optional" json:"encryptionMasterKey" yaml:"encryptionMasterKey"`
+	// Whether to create a queue policy that denies non-TLS requests.
+	// Default: false.
+	//
+	EnforceSSL *bool `field:"optional" json:"enforceSSL" yaml:"enforceSSL"`
 	// Whether the queue is a FIFO queue.
 	// Default: false.
 	//
