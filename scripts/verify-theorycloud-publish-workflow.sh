@@ -71,6 +71,8 @@ assert_file_contains "uses: aws-actions/configure-aws-credentials@7474bc4690e29a
 assert_file_contains "bash scripts/verify-theorycloud-publish-workflow.sh"
 assert_file_contains "bash scripts/sync-theorycloud-apptheory-subtree.sh \\"
 assert_file_contains "bash scripts/trigger-theorycloud-publish.sh \\"
+assert_file_not_contains "Install awscurl"
+assert_file_not_contains "pip install --user awscurl"
 assert_file_not_contains "vars.AWS_REGION"
 assert_file_not_contains "vars.THEORYCLOUD_AWS_ROLE_ARN_LAB"
 assert_file_not_contains "vars.THEORYCLOUD_AWS_ROLE_ARN_LIVE"

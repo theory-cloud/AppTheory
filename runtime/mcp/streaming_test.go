@@ -337,7 +337,7 @@ func TestToolsCallStreaming_CanResumeViaGETWithLastEventID(t *testing.T) {
 	}
 }
 
-func TestGET_NoLastEventID_OpensSessionListenerAndKeepsAlive(t *testing.T) {
+func TestGET_NoLastEventID_ReturnsShortKeepaliveResponse(t *testing.T) {
 	s := NewServer("test-server", "1.0.0")
 	sessionID := initializeSession(t, s)
 
@@ -375,5 +375,72 @@ func TestGET_NoLastEventID_OpensSessionListenerAndKeepsAlive(t *testing.T) {
 	}
 	if !strings.HasPrefix(frame, ":") || !strings.Contains(frame, "keepalive") {
 		t.Fatalf("expected keepalive comment frame, got:\n%s", frame)
+	}
+
+	var (
+		rest    []byte
+		restErr error
+	)
+	restDone := make(chan struct{})
+	go func() {
+		defer close(restDone)
+		rest, restErr = io.ReadAll(reader)
+	}()
+
+	select {
+	case <-restDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for short keepalive response to close")
+	}
+	if restErr != nil {
+		t.Fatalf("read short keepalive response: %v", restErr)
+	}
+	if len(rest) != 0 {
+		t.Fatalf("expected no extra listener frames after initial keepalive, got %q", string(rest))
+	}
+}
+
+func TestToolsCallStreaming_PanicReturnsInternalError(t *testing.T) {
+	s := NewServer("test-server", "1.0.0")
+	sessionID := initializeSession(t, s)
+
+	if err := s.registry.RegisterStreamingTool(
+		ToolDef{
+			Name:        "panic_tool",
+			Description: "Panics during streaming execution",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+		},
+		func(context.Context, json.RawMessage, func(SSEEvent)) (*ToolResult, error) {
+			panic("boom")
+		},
+	); err != nil {
+		t.Fatalf("register streaming tool: %v", err)
+	}
+
+	params := toolsCallParams{Name: "panic_tool", Arguments: json.RawMessage(`{}`)}
+	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: mustMarshal(t, params)})
+
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"text/event-stream"}
+
+	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if resp.BodyReader == nil {
+		t.Fatalf("expected streaming response BodyReader to be set")
+	}
+
+	b, err := io.ReadAll(resp.BodyReader)
+	if err != nil {
+		t.Fatalf("read panic SSE stream: %v", err)
+	}
+
+	all := string(b)
+	if !strings.Contains(all, `"error":{"code":-32603,"message":"internal error"}`) {
+		t.Fatalf("expected internal error payload, got:\n%s", all)
+	}
+	if strings.Contains(all, "boom") {
+		t.Fatalf("panic text leaked into stream:\n%s", all)
 	}
 }

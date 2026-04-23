@@ -1,6 +1,7 @@
 package apptheory
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -25,6 +26,11 @@ func TimeoutMiddleware(config TimeoutConfig) Middleware {
 				return next(ctx)
 			}
 
+			timeoutCtx, cancel := context.WithTimeout(ctx.Context(), timeout)
+			defer cancel()
+
+			handlerCtx := withDerivedTimeoutContext(timeoutCtx, ctx)
+
 			type result struct {
 				resp *Response
 				err  error
@@ -37,21 +43,28 @@ func TimeoutMiddleware(config TimeoutConfig) Middleware {
 						ch <- result{resp: nil, err: &AppError{Code: errorCodeInternal, Message: errorMessageInternal}}
 					}
 				}()
-				resp, err := next(ctx)
+				resp, err := next(handlerCtx)
 				ch <- result{resp: resp, err: err}
 			}()
-
-			timer := time.NewTimer(timeout)
-			defer timer.Stop()
 
 			select {
 			case res := <-ch:
 				return res.resp, res.err
-			case <-timer.C:
+			case <-timeoutCtx.Done():
 				return nil, &AppError{Code: errorCodeTimeout, Message: cfg.TimeoutMessage}
 			}
 		}
 	}
+}
+
+func withDerivedTimeoutContext(derived context.Context, ctx *Context) *Context {
+	if ctx == nil {
+		return &Context{ctx: derived}
+	}
+
+	cloned := *ctx
+	cloned.ctx = derived
+	return &cloned
 }
 
 func normalizeTimeoutConfig(in TimeoutConfig) TimeoutConfig {

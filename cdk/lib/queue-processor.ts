@@ -152,17 +152,20 @@ export class AppTheoryQueueProcessor extends Construct {
 
     // Determine if we should use legacy queueProps or new props
     const useLegacyProps = props.queueProps !== undefined;
+    const legacyQueueProps = props.queueProps;
 
     // Create the queue using AppTheoryQueue
     // For backwards compatibility, DLQ is disabled by default (original behavior)
     this.queueConstruct = new AppTheoryQueue(this, "AppTheoryQueue", {
-      queueName: useLegacyProps ? props.queueProps?.queueName : props.queueName,
-      visibilityTimeout: useLegacyProps
-        ? props.queueProps?.visibilityTimeout
-        : props.visibilityTimeout,
-      receiveMessageWaitTime: useLegacyProps
-        ? props.queueProps?.receiveMessageWaitTime
-        : props.receiveMessageWaitTime,
+      queueName: useLegacyProps ? legacyQueueProps?.queueName : props.queueName,
+      visibilityTimeout: useLegacyProps ? legacyQueueProps?.visibilityTimeout : props.visibilityTimeout,
+      retentionPeriod: useLegacyProps ? legacyQueueProps?.retentionPeriod : undefined,
+      receiveMessageWaitTime: useLegacyProps ? legacyQueueProps?.receiveMessageWaitTime : props.receiveMessageWaitTime,
+      encryption: useLegacyProps ? legacyQueueProps?.encryption : undefined,
+      encryptionMasterKey: useLegacyProps ? legacyQueueProps?.encryptionMasterKey : undefined,
+      enforceSSL: useLegacyProps ? legacyQueueProps?.enforceSSL : undefined,
+      fifo: useLegacyProps ? legacyQueueProps?.fifo : undefined,
+      contentBasedDeduplication: useLegacyProps ? legacyQueueProps?.contentBasedDeduplication : undefined,
       enableDlq: props.enableDlq ?? false, // Backwards compatible: no DLQ by default
       maxReceiveCount: props.maxReceiveCount,
       removalPolicy: props.removalPolicy,

@@ -35,7 +35,7 @@ from apptheory.errors import (
     status_for_error_code,
 )
 from apptheory.ids import IdGenerator, RealIdGenerator
-from apptheory.request import Request, normalize_request
+from apptheory.request import Request, normalize_request, normalize_request_with_max_bytes
 from apptheory.response import Response, normalize_response
 from apptheory.router import Router
 from apptheory.util import canonicalize_headers, clone_query
@@ -588,7 +588,7 @@ class App:
             return finish(normalize_response(resp))
 
         try:
-            normalized = normalize_request(request)
+            normalized = normalize_request_with_max_bytes(request, self._limits.max_request_bytes)
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
             return finish(respond_to_error(exc, request, request_id), error_code)
@@ -700,11 +700,7 @@ class App:
             )
 
         resp = normalize_response(resp)
-        if (
-            self._limits.max_response_bytes > 0
-            and resp.body_stream is None
-            and len(resp.body) > self._limits.max_response_bytes
-        ):
+        if self._limits.max_response_bytes > 0 and len(resp.body) > self._limits.max_response_bytes:
             if error_responder is not None:
                 return finish(
                     respond_to_error(AppError("app.too_large", "response too large"), normalized, request_id),
@@ -717,6 +713,13 @@ class App:
                     request_id=request_id,
                 ),
                 "app.too_large",
+            )
+
+        if self._limits.max_response_bytes > 0 and resp.body_stream is not None:
+            resp.body_stream = _limit_response_stream(
+                resp.body_stream,
+                len(resp.body),
+                self._limits.max_response_bytes,
             )
 
         return finish(resp)
@@ -1472,7 +1475,7 @@ def _appsync_error_payload(exc: Exception, request: Request, request_id: str) ->
 
     return {
         "pay_theory_error": True,
-        "error_message": str(exc or "internal error"),
+        "error_message": "internal error",
         "error_type": _APPSYNC_ERROR_TYPE_SYSTEM,
         "error_data": {},
         "error_info": {},
@@ -1676,7 +1679,7 @@ def _cors_origin_allowed(origin: str, cors: CORSConfig) -> bool:
         return False
 
     if cors.allowed_origins is None:
-        return True
+        return not cors.allow_credentials
     if not cors.allowed_origins:
         return False
 
@@ -1751,3 +1754,21 @@ def _default_policy_message(code: str) -> str:
             return "overloaded"
         case _:
             return "internal error"
+
+
+def _limit_response_stream(body_stream: Any, initial_bytes: int, max_response_bytes: int):
+    emitted = max(0, int(initial_bytes or 0))
+
+    def gen():
+        nonlocal emitted
+        for chunk in body_stream:
+            data = bytes(chunk or b"")
+            if not data:
+                yield data
+                continue
+            if emitted + len(data) > max_response_bytes:
+                raise AppError("app.too_large", "response too large")
+            emitted += len(data)
+            yield data
+
+    return gen()

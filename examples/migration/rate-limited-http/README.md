@@ -25,6 +25,24 @@ The goal is to demonstrate an **end-to-end migration** of rate limiting to AppTh
 3. Ensure the rate limit table name is configured once (recommended via env):
    - `APPTHEORY_RATE_LIMIT_TABLE_NAME=rate-limits` (default is `rate-limits`)
 
+## v1 security note
+
+The Go runtime’s default `RateLimitMiddleware(...)` identifier extraction now hashes credential-derived identifiers
+before they reach the limiter backend:
+
+- `x-api-key` → `api_key:sha256:<hex>`
+- `Authorization: Bearer ...` → `bearer:sha256:<hex>`
+
+That means:
+
+- raw credentials are no longer stored in rate-limit keys or Dynamo rows by default
+- any existing credential-backed buckets reset on first deploy of the new default
+- dashboards or operational tooling that previously inspected raw identifier values must be updated
+
+If your service needs a different key shape, set `ExtractIdentifier` explicitly instead of relying on the default.
+
+For the broader v1.0 fail-closed migration checklist, see `docs/migration/v1-security.md`.
+
 ## Running (optional)
 
 This is a minimal demo server; it requires AWS credentials unless you point TableTheory at DynamoDB Local.
@@ -44,4 +62,3 @@ Then request:
 ```bash
 curl -i http://localhost:8080/hello
 ```
-

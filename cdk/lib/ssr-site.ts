@@ -22,14 +22,12 @@ const ssrOriginalHostHeaders = [apptheoryOriginalHostHeader, facetheoryOriginalH
 const ssgIsrHydrationPathPattern = "/_facetheory/data/*";
 const defaultIsrHtmlStoreKeyPrefix = "isr";
 const maxDefaultCacheKeyHeaders = 10;
+const defaultViewerTenantHeader = "x-tenant-id";
 
 export enum AppTheorySsrSiteMode {
   /**
    * Lambda Function URL is the default origin. Direct S3 behaviors are used only for
    * immutable assets and any explicitly configured static path patterns.
-   *
-   * Because this mode exposes Lambda as the default viewer surface with write methods,
-   * omitted `ssrUrlAuthType` resolves to `NONE`.
    */
   SSR_ONLY = "ssr-only",
 
@@ -88,10 +86,20 @@ function assertNoConflictingBehaviorPatterns(
   }
 }
 
+function canonicalizeHeaderName(header: string): string {
+  return String(header).trim().toLowerCase();
+}
+
+function isTenantHeaderName(header: string): boolean {
+  const normalized = canonicalizeHeaderName(header).replace(/[^a-z0-9]+/g, "-");
+  return normalized === defaultViewerTenantHeader || /(^|-)tenant(-|$)/.test(normalized);
+}
+
 function generateSsrViewerRequestFunctionCode(
   mode: AppTheorySsrSiteMode,
   rawS3PathPatterns: string[],
   lambdaPassthroughPathPatterns: string[],
+  blockedViewerTenantHeaders: string[],
 ): string {
   const rawS3Prefixes = rawS3PathPatterns.map(pathPatternToUriPrefix).sort((a, b) => b.length - a.length);
   const rawS3PrefixList = rawS3Prefixes.map((prefix) => `'${prefix}'`).join(",\n      ");
@@ -99,12 +107,22 @@ function generateSsrViewerRequestFunctionCode(
     .map(pathPatternToUriPrefix)
     .sort((a, b) => b.length - a.length);
   const lambdaPassthroughPrefixList = lambdaPassthroughPrefixes.map((prefix) => `'${prefix}'`).join(",\n      ");
+  const blockedViewerTenantHeaderList = blockedViewerTenantHeaders.map((header) => `'${header}'`).join(",\n      ");
 
   return `
 	function handler(event) {
 	  var request = event.request;
+	  request.headers = request.headers || {};
 	  var headers = request.headers;
 	  var uri = request.uri || '/';
+	  var blockedViewerTenantHeaders = [
+	    ${blockedViewerTenantHeaderList}
+	  ];
+
+	  for (var blockedIndex = 0; blockedIndex < blockedViewerTenantHeaders.length; blockedIndex++) {
+	    delete headers[blockedViewerTenantHeaders[blockedIndex]];
+	  }
+
 	  var requestIdHeader = headers['x-request-id'];
 	  var requestId = requestIdHeader && requestIdHeader.value ? requestIdHeader.value.trim() : '';
 
@@ -214,14 +232,12 @@ export interface AppTheorySsrSiteProps {
   /**
    * Function URL auth type for the SSR origin.
    *
-   * If omitted, AppTheory auto-selects the auth model based on the exposed
-   * Lambda-backed surface:
+   * If omitted, AppTheory fails closed to `AWS_IAM` and signs CloudFront-to-Lambda
+   * traffic with lambda Origin Access Control.
    *
-   * - `AWS_IAM` for read-only Lambda traffic (`GET` / `HEAD` / `OPTIONS`)
-   * - `NONE` when Lambda-backed behaviors expose browser-facing write methods
-   *
-   * Set this explicitly to force a specific Function URL auth mode.
-   * @default derived from exposed Lambda methods
+   * Set this explicitly to `NONE` only when you intentionally require public
+   * direct Function URL access as a deliberate compatibility choice.
+   * @default lambda.FunctionUrlAuthType.AWS_IAM
    */
   readonly ssrUrlAuthType?: lambda.FunctionUrlAuthType;
 
@@ -268,8 +284,6 @@ export interface AppTheorySsrSiteProps {
    * to the Lambda Function URL with full method support.
    *
    * Use this for same-origin dynamic paths such as auth callbacks, actions, or form posts.
-   * When `ssrUrlAuthType` is omitted, adding these patterns makes AppTheory select
-   * `NONE` so browser-facing write methods keep working through CloudFront.
    * Example direct-SSR path: "/actions/*"
    */
   readonly ssrPathPatterns?: string[];
@@ -309,13 +323,29 @@ export interface AppTheorySsrSiteProps {
    * - `x-facetheory-original-host`
    * - `x-facetheory-original-uri`
    * - `x-request-id`
-   * - `x-tenant-id`
    *
    * Use this to opt in to additional app-specific headers such as
-   * `x-facetheory-tenant`. `host` and `x-forwarded-proto` are rejected because
-   * they break or bypass the supported origin model.
+   * `x-facetheory-segment`. Tenant-like viewer headers are rejected unless
+   * `allowViewerTenantHeaders` is explicitly enabled as a compatibility mode.
+   * `host` and `x-forwarded-proto` are rejected because they break or bypass the
+   * supported origin model.
    */
   readonly ssrForwardHeaders?: string[];
+
+  /**
+   * Compatibility escape hatch for legacy viewer-supplied tenant headers.
+   *
+   * When false (default), AppTheory strips `x-tenant-id` at the edge and rejects
+   * tenant-like entries in `ssrForwardHeaders` so viewer-supplied tenant headers
+   * cannot influence origin routing or HTML cache partitioning. When true,
+   * AppTheory restores legacy passthrough behavior for `x-tenant-id` and any
+   * tenant-like `ssrForwardHeaders`.
+   *
+   * Prefer deriving tenant from trusted host mapping using the original-host
+   * edge headers instead of enabling passthrough.
+   * @default false
+   */
+  readonly allowViewerTenantHeaders?: boolean;
 
   readonly enableLogging?: boolean;
   readonly logsBucket?: s3.IBucket;
@@ -342,8 +372,10 @@ export interface AppTheorySsrSiteProps {
    * Cache policy applied to the cacheable HTML behavior in `ssg-isr` mode.
    *
    * The default AppTheory policy keys on query strings plus the stable public HTML
-   * variant headers (`x-*-original-host`, `x-tenant-id`, and any extra forwarded
-   * headers you opt into) while leaving cookies out of the cache key.
+   * variant headers (`x-*-original-host` and any non-tenant extra forwarded
+   * headers you opt into) while leaving cookies out of the cache key. Tenant-like
+   * viewer headers join the cache key only when `allowViewerTenantHeaders` is
+   * explicitly enabled.
    */
   readonly htmlCachePolicy?: cloudfront.ICachePolicy;
 
@@ -473,11 +505,8 @@ export class AppTheorySsrSite extends Construct {
     ]);
     const ssrPathPatterns = normalizePathPatterns(props.ssrPathPatterns);
     const behaviorPatternOwners = new Map<string, string>();
-    const hasWritableLambdaSurface = siteMode === AppTheorySsrSiteMode.SSR_ONLY || ssrPathPatterns.length > 0;
-
-    const ssrUrlAuthType =
-      props.ssrUrlAuthType ??
-      (hasWritableLambdaSurface ? lambda.FunctionUrlAuthType.NONE : lambda.FunctionUrlAuthType.AWS_IAM);
+    const ssrUrlAuthType = props.ssrUrlAuthType ?? lambda.FunctionUrlAuthType.AWS_IAM;
+    const allowViewerTenantHeaders = props.allowViewerTenantHeaders ?? false;
 
     this.ssrUrl = new lambda.FunctionUrl(this, "SsrUrl", {
       function: props.ssrFunction,
@@ -507,15 +536,12 @@ export class AppTheorySsrSite extends Construct {
       ...ssrOriginalHostHeaders,
       ...ssrOriginalUriHeaders,
       "x-request-id",
-      "x-tenant-id",
     ];
 
     const disallowedSsrForwardHeaders = new Set(["host", "x-forwarded-proto"]);
 
     const extraSsrForwardHeaders = Array.isArray(props.ssrForwardHeaders)
-      ? props.ssrForwardHeaders
-          .map((header) => String(header).trim().toLowerCase())
-          .filter((header) => header.length > 0)
+      ? props.ssrForwardHeaders.map(canonicalizeHeaderName).filter((header) => header.length > 0)
       : [];
 
     const requestedDisallowedSsrForwardHeaders = Array.from(
@@ -528,9 +554,26 @@ export class AppTheorySsrSite extends Construct {
       );
     }
 
+    const requestedTenantSsrForwardHeaders = Array.from(
+      new Set(extraSsrForwardHeaders.filter((header) => isTenantHeaderName(header))),
+    ).sort();
+
+    if (requestedTenantSsrForwardHeaders.length > 0 && !allowViewerTenantHeaders) {
+      throw new Error(
+        `AppTheorySsrSite requires allowViewerTenantHeaders=true for tenant-like ssrForwardHeaders: ${requestedTenantSsrForwardHeaders.join(", ")}`,
+      );
+    }
+
+    const tenantPassthroughHeaders = allowViewerTenantHeaders
+      ? Array.from(new Set([defaultViewerTenantHeader, ...requestedTenantSsrForwardHeaders]))
+      : [];
+    const blockedViewerTenantHeaders = allowViewerTenantHeaders
+      ? []
+      : Array.from(new Set([defaultViewerTenantHeader, ...requestedTenantSsrForwardHeaders])).sort();
+
     const ssrForwardHeaders = Array.from(
       new Set(
-        [...baseSsrForwardHeaders, ...extraSsrForwardHeaders].filter(
+        [...baseSsrForwardHeaders, ...tenantPassthroughHeaders, ...extraSsrForwardHeaders].filter(
           (header) => !disallowedSsrForwardHeaders.has(header),
         ),
       ),
@@ -582,7 +625,12 @@ export class AppTheorySsrSite extends Construct {
 
     const viewerRequestFunction = new cloudfront.Function(this, "SsrViewerRequestFunction", {
       code: cloudfront.FunctionCode.fromInline(
-        generateSsrViewerRequestFunctionCode(siteMode, [`${assetsKeyPrefix}/*`, ...directS3PathPatterns], ssrPathPatterns),
+        generateSsrViewerRequestFunctionCode(
+          siteMode,
+          [`${assetsKeyPrefix}/*`, ...directS3PathPatterns],
+          ssrPathPatterns,
+          blockedViewerTenantHeaders,
+        ),
       ),
       runtime: cloudfront.FunctionRuntime.JS_2_0,
       comment:

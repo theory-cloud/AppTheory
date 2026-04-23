@@ -1,6 +1,6 @@
 {
   "name": "@theory-cloud/apptheory-cdk",
-  "version": "0.25.1",
+  "version": "1.0.0-rc.1",
   "description": "AppTheory CDK constructs (TS-first jsii)",
   "author": "Theory Cloud",
   "repository": {
@@ -38,7 +38,7 @@
   "overrides": {
     "ajv": "8.18.0",
     "flatted": "3.4.2",
-    "@xmldom/xmldom": "0.9.9",
+    "@xmldom/xmldom": "0.9.10",
     "picomatch": "2.3.2",
     "aws-cdk-lib": {
       "minimatch": "10.2.4"

@@ -497,9 +497,21 @@ class WafBuilder {
   }
 
   private createWebAcl(): wafv2.CfnWebACL {
+    const defaultAction =
+      this.config.ipWhitelist && this.config.ipWhitelist.length > 0
+        ? {
+            block: {
+              customResponse: {
+                responseCode: 403,
+                customResponseBodyKey: "AccessDenied",
+              },
+            },
+          }
+        : { allow: {} };
+
     return new wafv2.CfnWebACL(this.scope, "WebACL", {
       scope: "REGIONAL",
-      defaultAction: { allow: {} },
+      defaultAction,
       rules: this.rules,
       customResponseBodies: {
         RateLimitExceeded: {
