@@ -534,6 +534,25 @@ func TestDynamoJobLedger_AcquireSemaphoreSlot_Full(t *testing.T) {
 	require.Equal(t, ErrorTypeConflict, typed.Type)
 }
 
+func TestDynamoJobLedger_AcquireSemaphoreSlot_RejectsPathologicalLimit(t *testing.T) {
+	ledger := NewDynamoJobLedger(nil, DefaultConfig())
+
+	lease, err := ledger.AcquireSemaphoreSlot(context.Background(), AcquireSemaphoreSlotInput{
+		Scope:         "email",
+		Subject:       "customer_1",
+		Limit:         maxSemaphoreAcquireLimit + 1,
+		Owner:         "worker_a",
+		LeaseDuration: 2 * time.Minute,
+	})
+	require.Nil(t, lease)
+	require.Error(t, err)
+
+	var typed *Error
+	require.ErrorAs(t, err, &typed)
+	require.Equal(t, ErrorTypeInvalidInput, typed.Type)
+	require.Equal(t, "limit must be <= 256", typed.Message)
+}
+
 func TestDynamoJobLedger_RefreshSemaphoreSlot_Success(t *testing.T) {
 	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
 
