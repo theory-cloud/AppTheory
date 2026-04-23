@@ -1,0 +1,33 @@
+{
+  "id": "p2.appsync.error_internal_masked",
+  "tier": "p2",
+  "name": "AppSync non-portable errors are masked as internal error",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/createThing", "handler": "unexpected_error" }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "appsync",
+      "event": {
+        "arguments": {
+          "id": "thing_123"
+        },
+        "info": {
+          "fieldName": "createThing",
+          "parentTypeName": "Mutation"
+        }
+      }
+    }
+  },
+  "expect": {
+    "output_json": {
+      "pay_theory_error": true,
+      "error_message": "internal error",
+      "error_type": "SYSTEM_ERROR",
+      "error_data": {},
+      "error_info": {}
+    }
+  }
+}

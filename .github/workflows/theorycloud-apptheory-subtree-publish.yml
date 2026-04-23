@@ -78,14 +78,6 @@ jobs:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           role-session-name: apptheory-${{ github.ref_name }}-${{ github.run_id }}
 
-      - name: Install awscurl
-        run: |
-          set -euo pipefail
-
-          python3 -m pip install --user --upgrade pip
-          python3 -m pip install --user awscurl
-          printf '%s\n' "${HOME}/.local/bin" >> "${GITHUB_PATH}"
-
       - name: Sync AppTheory subtree into shared theorycloud source state
         run: |
           set -euo pipefail

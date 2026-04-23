@@ -7,6 +7,9 @@ request mapping template rewrites to use the runtime adapters documented here.
 
 If you also need the infrastructure side, see [CDK AppSync Lambda Resolvers](../cdk/appsync-lambda-resolvers.md).
 
+For v1.0 migration notes covering AppSync internal-error masking and other fail-closed changes, see
+`docs/migration/v1-security.md`.
+
 ## Choose the entrypoint
 
 Use the explicit AppSync entrypoint when the Lambda is dedicated to AppSync:
@@ -184,6 +187,9 @@ Portable AppTheory/AppError values also carry deterministic metadata:
 
 Binary and streaming response bodies are intentionally out of scope for AppSync and fail closed with deterministic
 system-error envelopes.
+
+Non-portable exceptions now mask to `error_message: "internal error"` instead of echoing raw exception text. If you
+need a caller-visible message, return a portable AppTheory/AppError instead.
 
 ## Local tests
 

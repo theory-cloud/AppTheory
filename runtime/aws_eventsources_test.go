@@ -70,6 +70,32 @@ func TestServeSQS_BatchFailuresAndMiddleware(t *testing.T) {
 	}
 }
 
+func TestServeSQS_IsolatesEventContextValuesPerRecord(t *testing.T) {
+	app := New()
+	app.SQS("queue1", func(ctx *EventContext, msg events.SQSMessage) error {
+		switch msg.MessageId {
+		case "1":
+			ctx.Set("tenant", "tenant_1")
+		case "2":
+			if ctx.Get("tenant") != nil {
+				return errors.New("stale tenant value leaked from prior record")
+			}
+		}
+		return nil
+	})
+
+	out := app.ServeSQS(context.Background(), events.SQSEvent{
+		Records: []events.SQSMessage{
+			{MessageId: "1", EventSourceARN: "arn:aws:sqs:us-east-1:123:queue1"},
+			{MessageId: "2", EventSourceARN: "arn:aws:sqs:us-east-1:123:queue1"},
+		},
+	})
+
+	if len(out.BatchItemFailures) != 0 {
+		t.Fatalf("expected isolated record contexts, got failures %#v", out.BatchItemFailures)
+	}
+}
+
 func TestServeKinesis_BatchFailures(t *testing.T) {
 	app := New()
 	app.Kinesis("stream1", func(_ *EventContext, record events.KinesisEventRecord) error {

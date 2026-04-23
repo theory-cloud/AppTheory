@@ -25,16 +25,26 @@ Each fixture is a single JSON object.
   - `path` (string): route pattern (supports `{param}` segments).
   - `handler` (string): built-in handler name provided by each language runner.
 - `setup.middlewares` (array, optional): built-in middleware chain names applied in registration order.
+  - Timeout fixtures may use cooperative handlers that must observe middleware cancellation before committing
+    post-timeout side effects.
+- `setup.cors` (object, optional): portable CORS configuration. When `allow_credentials` is `true`, fixtures require explicit `allowed_origins`; omitted allowlists must not reflect origins or emit credentialed CORS headers.
 - `setup.limits` (object, optional): guardrails configuration.
-  - `max_request_bytes` (number): reject requests over this size with `app.too_large`.
-  - `max_response_bytes` (number): reject responses over this size with `app.too_large`.
+  - `max_request_bytes` (number): reject requests over this size with `app.too_large`. When `input.request.is_base64`
+    is `true`, this limit applies to the decoded request body bytes.
+  - `max_response_bytes` (number): reject responses over this size with `app.too_large`. For streamed responses
+    (`expect.response.chunks`), the already-committed status/headers remain intact and the stream terminates with
+    `expect.response.stream_error_code = "app.too_large"` once the next streamed chunk would exceed the limit.
 - `input.request` (object): request presented to the runtime under test.
+  - `headers` keys are canonicalized to lowercase but otherwise treated as ordinary header names, including
+    prototype-like keys such as `constructor` and `__proto__`.
 - `input.context` (object, optional): synthetic invocation context (portable subset).
 - `setup.routes[].auth_required` (boolean, optional): whether the route requires auth.
 - `expect.response` (object): expected canonical response.
   - `chunks` (array, optional): expected streamed response chunks (when using the streaming test harness).
   - `stream_error_code` (string, optional): expected error code when an error occurs after streaming begins.
 - `expect.output_json` (any, optional): expected output value for non-HTTP fixtures (for example: `m1`).
+  - For AppSync fixtures, portable AppTheory/AppError payloads retain their intended messages, while non-portable
+    exceptions must surface the generic `internal error` message.
 - `expect.error` (object, optional): expected thrown error (for example: fail-closed `m1` routing).
   - `message` (string): error message to match.
 - `expect.logs` (array, optional): expected structured log records (P2 portable envelope).

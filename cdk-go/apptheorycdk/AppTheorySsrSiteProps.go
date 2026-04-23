@@ -10,12 +10,25 @@ import (
 )
 
 type AppTheorySsrSiteProps struct {
-	SsrFunction       awslambda.IFunction `field:"required" json:"ssrFunction" yaml:"ssrFunction"`
-	AssetsBucket      awss3.IBucket       `field:"optional" json:"assetsBucket" yaml:"assetsBucket"`
-	AssetsKeyPrefix   *string             `field:"optional" json:"assetsKeyPrefix" yaml:"assetsKeyPrefix"`
-	AssetsManifestKey *string             `field:"optional" json:"assetsManifestKey" yaml:"assetsManifestKey"`
-	AssetsPath        *string             `field:"optional" json:"assetsPath" yaml:"assetsPath"`
-	AutoDeleteObjects *bool               `field:"optional" json:"autoDeleteObjects" yaml:"autoDeleteObjects"`
+	SsrFunction awslambda.IFunction `field:"required" json:"ssrFunction" yaml:"ssrFunction"`
+	// Compatibility escape hatch for legacy viewer-supplied tenant headers.
+	//
+	// When false (default), AppTheory strips `x-tenant-id` at the edge and rejects
+	// tenant-like entries in `ssrForwardHeaders` so viewer-supplied tenant headers
+	// cannot influence origin routing or HTML cache partitioning. When true,
+	// AppTheory restores legacy passthrough behavior for `x-tenant-id` and any
+	// tenant-like `ssrForwardHeaders`.
+	//
+	// Prefer deriving tenant from trusted host mapping using the original-host
+	// edge headers instead of enabling passthrough.
+	// Default: false.
+	//
+	AllowViewerTenantHeaders *bool         `field:"optional" json:"allowViewerTenantHeaders" yaml:"allowViewerTenantHeaders"`
+	AssetsBucket             awss3.IBucket `field:"optional" json:"assetsBucket" yaml:"assetsBucket"`
+	AssetsKeyPrefix          *string       `field:"optional" json:"assetsKeyPrefix" yaml:"assetsKeyPrefix"`
+	AssetsManifestKey        *string       `field:"optional" json:"assetsManifestKey" yaml:"assetsManifestKey"`
+	AssetsPath               *string       `field:"optional" json:"assetsPath" yaml:"assetsPath"`
+	AutoDeleteObjects        *bool         `field:"optional" json:"autoDeleteObjects" yaml:"autoDeleteObjects"`
 	// Legacy alias for `isrMetadataTableName`.
 	// Deprecated: prefer `isrMetadataTable` or `isrMetadataTableName`.
 	CacheTableName *string `field:"optional" json:"cacheTableName" yaml:"cacheTableName"`
@@ -31,8 +44,10 @@ type AppTheorySsrSiteProps struct {
 	// Cache policy applied to the cacheable HTML behavior in `ssg-isr` mode.
 	//
 	// The default AppTheory policy keys on query strings plus the stable public HTML
-	// variant headers (`x-*-original-host`, `x-tenant-id`, and any extra forwarded
-	// headers you opt into) while leaving cookies out of the cache key.
+	// variant headers (`x-*-original-host` and any non-tenant extra forwarded
+	// headers you opt into) while leaving cookies out of the cache key. Tenant-like
+	// viewer headers join the cache key only when `allowViewerTenantHeaders` is
+	// explicitly enabled.
 	HtmlCachePolicy awscloudfront.ICachePolicy `field:"optional" json:"htmlCachePolicy" yaml:"htmlCachePolicy"`
 	// Optional S3 bucket used by FaceTheory ISR HTML storage (`S3HtmlStore`).
 	//
@@ -91,29 +106,26 @@ type AppTheorySsrSiteProps struct {
 	// - `x-facetheory-original-host`
 	// - `x-facetheory-original-uri`
 	// - `x-request-id`
-	// - `x-tenant-id`
 	//
 	// Use this to opt in to additional app-specific headers such as
-	// `x-facetheory-tenant`. `host` and `x-forwarded-proto` are rejected because
-	// they break or bypass the supported origin model.
+	// `x-facetheory-segment`. Tenant-like viewer headers are rejected unless
+	// `allowViewerTenantHeaders` is explicitly enabled as a compatibility mode.
+	// `host` and `x-forwarded-proto` are rejected because they break or bypass the
+	// supported origin model.
 	SsrForwardHeaders *[]*string `field:"optional" json:"ssrForwardHeaders" yaml:"ssrForwardHeaders"`
 	// Additional path patterns that should bypass the `ssg-isr` origin group and route directly to the Lambda Function URL with full method support.
 	//
 	// Use this for same-origin dynamic paths such as auth callbacks, actions, or form posts.
-	// When `ssrUrlAuthType` is omitted, adding these patterns makes AppTheory select
-	// `NONE` so browser-facing write methods keep working through CloudFront.
 	// Example direct-SSR path: "/actions/*".
 	SsrPathPatterns *[]*string `field:"optional" json:"ssrPathPatterns" yaml:"ssrPathPatterns"`
 	// Function URL auth type for the SSR origin.
 	//
-	// If omitted, AppTheory auto-selects the auth model based on the exposed
-	// Lambda-backed surface:
+	// If omitted, AppTheory fails closed to `AWS_IAM` and signs CloudFront-to-Lambda
+	// traffic with lambda Origin Access Control.
 	//
-	// - `AWS_IAM` for read-only Lambda traffic (`GET` / `HEAD` / `OPTIONS`)
-	// - `NONE` when Lambda-backed behaviors expose browser-facing write methods
-	//
-	// Set this explicitly to force a specific Function URL auth mode.
-	// Default: derived from exposed Lambda methods.
+	// Set this explicitly to `NONE` only when you intentionally require public
+	// direct Function URL access as a deliberate compatibility choice.
+	// Default: lambda.FunctionUrlAuthType.AWS_IAM
 	//
 	SsrUrlAuthType awslambda.FunctionUrlAuthType `field:"optional" json:"ssrUrlAuthType" yaml:"ssrUrlAuthType"`
 	// Additional extensionless HTML section path patterns to route directly to the primary HTML S3 origin.

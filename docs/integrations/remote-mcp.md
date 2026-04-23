@@ -52,7 +52,9 @@ Important behaviors for Claude compatibility:
 - `tools/call` may stream with SSE when the client includes `Accept: text/event-stream`.
 - SSE frames stay on `event: message`; progress is emitted as JSON-RPC `notifications/progress`, not custom SSE event names.
 - Disconnections are not cancellation; resumability uses `GET /mcp` + `Last-Event-ID`.
-- `GET /mcp` without `Last-Event-ID` stays open as a keepalive listener for the current session.
+- `GET /mcp` without `Last-Event-ID` emits a short-lived keepalive SSE response by default.
+- If you want that path to stay open for a bounded window on Lambda, use
+  `mcp.WithInitialSessionListenerBudget(...)`.
 - If the request includes an `Origin` header, the default runtime allowlist is Claude-oriented (`https://claude.ai`,
   `https://claude.com`); use `mcp.WithOriginValidator(...)` for other browser origins.
 
@@ -72,9 +74,18 @@ You typically:
    see below).
 3) Validate Bearer tokens against Autheory (JWT verify via JWKS or introspection).
 
-When you deploy with `AppTheoryRemoteMcpServer`, the construct injects `MCP_ENDPOINT`. If
-`RequireBearerTokenMiddleware(...)` is used without an explicit `ResourceMetadataURL`, the middleware derives the
-RFC9728 protected-resource metadata challenge URL from that endpoint by default.
+Important fail-closed rules:
+- `RequireBearerTokenMiddleware(...)` now requires a `Validator`. If you omit it, the middleware rejects every request
+  with `401` instead of accepting any syntactically valid Bearer token.
+- The middleware derives the RFC9728 protected-resource metadata challenge URL only from an explicit
+  `ResourceMetadataURL` or from the injected `MCP_ENDPOINT`. It no longer falls back to `Host` /
+  `X-Forwarded-Proto` request headers.
+
+When you deploy with `AppTheoryRemoteMcpServer`, the construct injects `MCP_ENDPOINT`. That is the canonical metadata
+source when you do not provide `ResourceMetadataURL` explicitly.
+
+For migration notes covering Bearer validation, initial listener keepalive changes, and expired-session fail-closed
+behavior, see `docs/migration/v1-security.md`.
 
 ## 3) Deploy on AWS (REST API v1 response streaming)
 
@@ -130,10 +141,11 @@ API Gateway REST response streaming connections are time-bounded and can disconn
   persistent `StreamStore`
 - execute long work asynchronously (worker Lambdas) and append progress/results into the event log
 
-If you want the initial `GET /mcp` keepalive listener to end before the Lambda deadline, opt in with
-`mcp.WithInitialSessionListenerBudget(...)`. This applies only to the initial listener path with no `Last-Event-ID`;
-resume/replay `GET /mcp` requests keep their existing behavior. The example in `examples/mcp/resumable-sse` uses the
-default budget values (`SafetyBuffer: 5s`, `MaxDuration: 25s`) explicitly so the Lambda behavior is visible in code.
+If you want the initial `GET /mcp` keepalive path to stay open for a bounded window before the Lambda deadline, opt in
+with `mcp.WithInitialSessionListenerBudget(...)`. This applies only to the initial listener path with no
+`Last-Event-ID`; resume/replay `GET /mcp` requests keep their existing behavior. The example in
+`examples/mcp/resumable-sse` uses the default budget values (`SafetyBuffer: 5s`, `MaxDuration: 25s`) explicitly so the
+Lambda behavior is visible in code.
 
 Detailed compatibility notes and HTTP transcripts are maintained in non-canonical planning docs and intentionally kept
 out of this user-facing guide.

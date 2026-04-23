@@ -56,7 +56,7 @@ func corsOriginAllowed(origin string, cfg CORSConfig) bool {
 		return false
 	}
 	if cfg.AllowedOrigins == nil {
-		return true
+		return !cfg.AllowCredentials
 	}
 	if len(cfg.AllowedOrigins) == 0 {
 		return false
