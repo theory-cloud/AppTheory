@@ -6,13 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambdacontext"
 
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
 func runFixtureM1(f Fixture) error {
+	now := time.Unix(0, 0).UTC()
 	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
 
 	for _, name := range f.Setup.Middlewares {
@@ -60,7 +63,7 @@ func runFixtureM1(f Fixture) error {
 	}
 
 	for _, r := range f.Setup.EventBridge {
-		handler := builtInEventBridgeHandler(r.Handler)
+		handler := builtInEventBridgeHandler(r.Handler, f.Input.AWSEvent.Event)
 		if handler == nil {
 			return fmt.Errorf("unknown eventbridge handler %q", r.Handler)
 		}
@@ -76,7 +79,12 @@ func runFixtureM1(f Fixture) error {
 		return errors.New("fixture missing input.aws_event")
 	}
 
-	out, err := app.HandleLambda(context.Background(), f.Input.AWSEvent.Event)
+	ctx, cancel := fixtureM1LambdaContext(now, f.Input.Context)
+	if cancel != nil {
+		defer cancel()
+	}
+
+	out, err := app.HandleLambda(ctx, f.Input.AWSEvent.Event)
 	return compareFixtureM1Result(f, out, err)
 }
 
@@ -268,12 +276,176 @@ func builtInDynamoDBStreamHandler(name string) apptheory.DynamoDBStreamHandler {
 	return apptheory.DynamoDBStreamHandler(handler)
 }
 
-func builtInEventBridgeHandler(name string) apptheory.EventBridgeHandler {
-	handler := builtInOutputHandler[events.EventBridgeEvent](name, "eventbridge")
-	if handler == nil {
-		return nil
+func builtInEventBridgeHandler(name string, rawInput ...json.RawMessage) apptheory.EventBridgeHandler {
+	var raw json.RawMessage
+	if len(rawInput) > 0 {
+		raw = rawInput[0]
 	}
-	return apptheory.EventBridgeHandler(handler)
+	switch strings.TrimSpace(name) {
+	case "eventbridge_workload_envelope":
+		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
+			return eventBridgeWorkloadEnvelopeSummary(ctx, event, raw), nil
+		}
+	case "eventbridge_require_workload_envelope":
+		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
+			summary := eventBridgeWorkloadEnvelopeSummary(ctx, event, raw)
+			if strings.TrimSpace(asString(summary["source"])) == "" ||
+				strings.TrimSpace(asString(summary["detail_type"])) == "" ||
+				strings.TrimSpace(asString(summary["correlation_id"])) == "" {
+				return nil, errors.New("apptheory: eventbridge workload envelope invalid")
+			}
+			return summary, nil
+		}
+	default:
+		handler := builtInOutputHandler[events.EventBridgeEvent](name, "eventbridge")
+		if handler == nil {
+			return nil
+		}
+		return apptheory.EventBridgeHandler(handler)
+	}
+}
+
+func fixtureM1LambdaContext(now time.Time, input FixtureContext) (context.Context, context.CancelFunc) {
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if input.RemainingMS > 0 {
+		ctx, cancel = context.WithDeadline(ctx, now.Add(time.Duration(input.RemainingMS)*time.Millisecond))
+	}
+	if requestID := strings.TrimSpace(input.AWSRequestID); requestID != "" {
+		ctx = lambdacontext.NewContext(ctx, &lambdacontext.LambdaContext{AwsRequestID: requestID})
+	}
+	return ctx, cancel
+}
+
+func eventBridgeWorkloadEnvelopeSummary(
+	ctx *apptheory.EventContext,
+	event events.EventBridgeEvent,
+	raw json.RawMessage,
+) map[string]any {
+	rawObject := rawJSONObject(raw)
+	correlationID, correlationSource := eventBridgeCorrelationID(ctx, event, rawObject)
+
+	return map[string]any{
+		"account":            event.AccountID,
+		"correlation_id":     correlationID,
+		"correlation_source": correlationSource,
+		"detail_type":        event.DetailType,
+		"event_id":           event.ID,
+		"region":             event.Region,
+		"request_id":         ctxRequestID(ctx),
+		"resources":          event.Resources,
+		"source":             event.Source,
+		"time":               rawString(rawObject, "time"),
+	}
+}
+
+func eventBridgeCorrelationID(
+	ctx *apptheory.EventContext,
+	event events.EventBridgeEvent,
+	raw map[string]any,
+) (string, string) {
+	if value := rawString(rawObjectField(raw, "metadata"), "correlation_id"); value != "" {
+		return value, "metadata.correlation_id"
+	}
+	if value := rawHeaderString(rawObjectField(raw, "headers"), "x-correlation-id"); value != "" {
+		return value, "headers.x-correlation-id"
+	}
+	if value := rawString(rawObjectField(raw, "detail"), "correlation_id"); value != "" {
+		return value, "detail.correlation_id"
+	}
+	if value := strings.TrimSpace(event.ID); value != "" {
+		return value, "event.id"
+	}
+	if value := ctxLambdaAWSRequestID(ctx); value != "" {
+		return value, "lambda.aws_request_id"
+	}
+	return "", ""
+}
+
+func rawJSONObject(raw json.RawMessage) map[string]any {
+	var object map[string]any
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+		return map[string]any{}
+	}
+	return object
+}
+
+func rawObjectField(object map[string]any, key string) map[string]any {
+	if object == nil {
+		return map[string]any{}
+	}
+	value, ok := object[key]
+	if !ok {
+		return map[string]any{}
+	}
+	child, ok := value.(map[string]any)
+	if !ok || child == nil {
+		return map[string]any{}
+	}
+	return child
+}
+
+func rawString(object map[string]any, key string) string {
+	if object == nil {
+		return ""
+	}
+	value, ok := object[key]
+	if !ok {
+		return ""
+	}
+	return asString(value)
+}
+
+func rawHeaderString(headers map[string]any, key string) string {
+	key = strings.TrimSpace(strings.ToLower(key))
+	if key == "" || headers == nil {
+		return ""
+	}
+	for name, value := range headers {
+		if strings.TrimSpace(strings.ToLower(name)) != key {
+			continue
+		}
+		if single := asString(value); single != "" {
+			return single
+		}
+		if values, ok := value.([]any); ok {
+			for _, entry := range values {
+				if single := asString(entry); single != "" {
+					return single
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func asString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	default:
+		return ""
+	}
+}
+
+func ctxRequestID(ctx *apptheory.EventContext) string {
+	if ctx == nil {
+		return ""
+	}
+	return strings.TrimSpace(ctx.RequestID)
+}
+
+func ctxLambdaAWSRequestID(ctx *apptheory.EventContext) string {
+	if ctx == nil {
+		return ""
+	}
+	lambdaCtx, ok := lambdacontext.FromContext(ctx.Context())
+	if !ok || lambdaCtx == nil {
+		return ""
+	}
+	return strings.TrimSpace(lambdaCtx.AwsRequestID)
 }
 
 func builtInOutputHandler[Event any](name string, prefix string) func(*apptheory.EventContext, Event) (any, error) {
