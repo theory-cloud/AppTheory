@@ -1,0 +1,39 @@
+{
+  "id": "m1.eventbridge.workload_envelope_validation_fails_closed",
+  "tier": "m1",
+  "name": "EventBridge workload envelope: validation helper fails closed without correlation",
+  "setup": {
+    "eventbridge": [
+      {
+        "source": "apptheory.release",
+        "detail_type": "release.started",
+        "handler": "eventbridge_require_workload_envelope"
+      }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "eventbridge",
+      "event": {
+        "version": "0",
+        "id": "",
+        "detail-type": "release.started",
+        "source": "apptheory.release",
+        "account": "000000000000",
+        "time": "2026-04-24T12:00:00Z",
+        "region": "us-east-1",
+        "resources": [
+          "arn:aws:events:us-east-1:000000000000:rule/release-control"
+        ],
+        "detail": {
+          "release_id": "rel_123"
+        }
+      }
+    }
+  },
+  "expect": {
+    "error": {
+      "message": "apptheory: eventbridge workload envelope invalid"
+    }
+  }
+}

@@ -1,0 +1,164 @@
+{
+  "id": "m1.dynamodb_stream.observability_partial_failure",
+  "tier": "m1",
+  "name": "DynamoDB Streams observability: partial failure emits per-record effects",
+  "setup": {
+    "dynamodb": [
+      {
+        "table": "ReleaseState",
+        "handler": "ddb_observed_fail_on_remove"
+      }
+    ]
+  },
+  "input": {
+    "context": {
+      "aws_request_id": "aws-req-ddb-observed"
+    },
+    "aws_event": {
+      "source": "dynamodb_streams",
+      "event": {
+        "Records": [
+          {
+            "eventID": "stream-obs-1",
+            "eventName": "MODIFY",
+            "eventVersion": "1.1",
+            "eventSource": "aws:dynamodb",
+            "awsRegion": "us-east-1",
+            "dynamodb": {
+              "Keys": {
+                "pk": {
+                  "S": "release#rel_123"
+                }
+              },
+              "NewImage": {
+                "secret": {
+                  "S": "do-not-log"
+                }
+              },
+              "SequenceNumber": "000000000000000101",
+              "SizeBytes": 128,
+              "StreamViewType": "NEW_AND_OLD_IMAGES"
+            },
+            "eventSourceARN": "arn:aws:dynamodb:us-east-1:000000000000:table/ReleaseState/stream/2026-04-24T12:00:00.000"
+          },
+          {
+            "eventID": "stream-obs-2",
+            "eventName": "REMOVE",
+            "eventVersion": "1.1",
+            "eventSource": "aws:dynamodb",
+            "awsRegion": "us-east-1",
+            "dynamodb": {
+              "Keys": {
+                "pk": {
+                  "S": "release#rel_123"
+                }
+              },
+              "NewImage": {
+                "secret": {
+                  "S": "do-not-log"
+                }
+              },
+              "SequenceNumber": "000000000000000102",
+              "SizeBytes": 128,
+              "StreamViewType": "NEW_AND_OLD_IMAGES"
+            },
+            "eventSourceARN": "arn:aws:dynamodb:us-east-1:000000000000:table/ReleaseState/stream/2026-04-24T12:00:00.000"
+          }
+        ]
+      }
+    }
+  },
+  "expect": {
+    "output_json": {
+      "batchItemFailures": [
+        {
+          "itemIdentifier": "stream-obs-2"
+        }
+      ]
+    },
+    "logs": [
+      {
+        "level": "info",
+        "event": "event.completed",
+        "request_id": "aws-req-ddb-observed",
+        "tenant_id": "",
+        "method": "",
+        "path": "",
+        "status": 0,
+        "error_code": "",
+        "trigger": "dynamodb_stream",
+        "correlation_id": "stream-obs-1",
+        "table_name": "ReleaseState",
+        "event_id": "stream-obs-1",
+        "event_name": "MODIFY"
+      },
+      {
+        "level": "error",
+        "event": "event.completed",
+        "request_id": "aws-req-ddb-observed",
+        "tenant_id": "",
+        "method": "",
+        "path": "",
+        "status": 0,
+        "error_code": "app.internal",
+        "trigger": "dynamodb_stream",
+        "correlation_id": "stream-obs-2",
+        "table_name": "ReleaseState",
+        "event_id": "stream-obs-2",
+        "event_name": "REMOVE"
+      }
+    ],
+    "metrics": [
+      {
+        "name": "apptheory.event",
+        "value": 1,
+        "tags": {
+          "correlation_id": "stream-obs-1",
+          "error_code": "",
+          "event_name": "MODIFY",
+          "outcome": "success",
+          "table_name": "ReleaseState",
+          "trigger": "dynamodb_stream"
+        }
+      },
+      {
+        "name": "apptheory.event",
+        "value": 1,
+        "tags": {
+          "correlation_id": "stream-obs-2",
+          "error_code": "app.internal",
+          "event_name": "REMOVE",
+          "outcome": "error",
+          "table_name": "ReleaseState",
+          "trigger": "dynamodb_stream"
+        }
+      }
+    ],
+    "spans": [
+      {
+        "name": "dynamodb_stream ReleaseState MODIFY",
+        "attributes": {
+          "correlation.id": "stream-obs-1",
+          "dynamodb.event_id": "stream-obs-1",
+          "dynamodb.event_name": "MODIFY",
+          "dynamodb.table_name": "ReleaseState",
+          "error.code": "",
+          "outcome": "success",
+          "trigger": "dynamodb_stream"
+        }
+      },
+      {
+        "name": "dynamodb_stream ReleaseState REMOVE",
+        "attributes": {
+          "correlation.id": "stream-obs-2",
+          "dynamodb.event_id": "stream-obs-2",
+          "dynamodb.event_name": "REMOVE",
+          "dynamodb.table_name": "ReleaseState",
+          "error.code": "app.internal",
+          "outcome": "error",
+          "trigger": "dynamodb_stream"
+        }
+      }
+    ]
+  }
+}

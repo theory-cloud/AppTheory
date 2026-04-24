@@ -1,0 +1,37 @@
+{
+  "id": "m1.eventbridge.workload_envelope_unmatched_null",
+  "tier": "m1",
+  "name": "EventBridge workload envelope: unmatched event remains null",
+  "setup": {
+    "eventbridge": [
+      {
+        "source": "apptheory.release",
+        "detail_type": "release.started",
+        "handler": "eventbridge_workload_envelope"
+      }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "eventbridge",
+      "event": {
+        "version": "0",
+        "id": "evt-unmatched",
+        "detail-type": "release.started",
+        "source": "apptheory.other",
+        "account": "000000000000",
+        "time": "2026-04-24T12:00:00Z",
+        "region": "us-east-1",
+        "resources": [
+          "arn:aws:events:us-east-1:000000000000:rule/release-control"
+        ],
+        "detail": {
+          "release_id": "rel_123"
+        }
+      }
+    }
+  },
+  "expect": {
+    "output_json": null
+  }
+}
