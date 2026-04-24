@@ -19,6 +19,39 @@ const (
 	eventBridgeCorrelationSourceAWSRequestID = "lambda.aws_request_id"
 )
 
+// DynamoDBStreamRecordSummary is the portable, safe summary for a DynamoDB Streams record.
+type DynamoDBStreamRecordSummary struct {
+	AWSRegion      string `json:"aws_region"`
+	EventID        string `json:"event_id"`
+	EventName      string `json:"event_name"`
+	SafeLog        string `json:"safe_log"`
+	SequenceNumber string `json:"sequence_number"`
+	SizeBytes      int64  `json:"size_bytes"`
+	StreamViewType string `json:"stream_view_type"`
+	TableName      string `json:"table_name"`
+}
+
+// NormalizeDynamoDBStreamRecord returns a portable, safe summary for a DynamoDB Streams record.
+//
+// The summary intentionally excludes raw Keys, NewImage, and OldImage values so sensitive item
+// material cannot be copied into logs, metrics, spans, or handler summaries through this helper.
+func NormalizeDynamoDBStreamRecord(record events.DynamoDBEventRecord) DynamoDBStreamRecordSummary {
+	tableName := dynamoDBTableNameFromStreamARN(record.EventSourceArn)
+	sequenceNumber := strings.TrimSpace(record.Change.SequenceNumber)
+	eventID := strings.TrimSpace(record.EventID)
+	eventName := strings.TrimSpace(record.EventName)
+	return DynamoDBStreamRecordSummary{
+		AWSRegion:      strings.TrimSpace(record.AWSRegion),
+		EventID:        eventID,
+		EventName:      eventName,
+		SafeLog:        "table=" + tableName + " event_id=" + eventID + " event_name=" + eventName + " sequence_number=" + sequenceNumber,
+		SequenceNumber: sequenceNumber,
+		SizeBytes:      record.Change.SizeBytes,
+		StreamViewType: strings.TrimSpace(record.Change.StreamViewType),
+		TableName:      tableName,
+	}
+}
+
 // EventBridgeWorkloadEnvelope is the portable, safe summary AppTheory exposes for EventBridge workloads.
 type EventBridgeWorkloadEnvelope struct {
 	Account           string   `json:"account"`

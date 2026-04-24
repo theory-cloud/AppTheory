@@ -1402,6 +1402,17 @@ type Context struct {
 
 type DynamoDBStreamHandler func(*EventContext, events.DynamoDBEventRecord) error
 
+type DynamoDBStreamRecordSummary struct {
+	AWSRegion      string `json:"aws_region"`
+	EventID        string `json:"event_id"`
+	EventName      string `json:"event_name"`
+	SafeLog        string `json:"safe_log"`
+	SequenceNumber string `json:"sequence_number"`
+	SizeBytes      int64  `json:"size_bytes"`
+	StreamViewType string `json:"stream_view_type"`
+	TableName      string `json:"table_name"`
+}
+
 type EventBridgeHandler func(*EventContext, events.EventBridgeEvent) (any, error)
 
 type EventBridgeScheduledWorkloadResultSummary struct {
@@ -1669,6 +1680,8 @@ func New(...Option) *App
 func NewAppTheoryError(string, string) *AppTheoryError
 
 func NoContent() *Response
+
+func NormalizeDynamoDBStreamRecord(events.DynamoDBEventRecord) DynamoDBStreamRecordSummary
 
 func NormalizeEventBridgeScheduledWorkload(
 	*EventContext,
