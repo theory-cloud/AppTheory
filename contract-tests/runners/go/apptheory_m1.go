@@ -261,9 +261,18 @@ func builtInSNSHandler(name string) apptheory.SNSHandler {
 }
 
 func builtInDynamoDBStreamHandler(name string) apptheory.DynamoDBStreamHandler {
-	if strings.TrimSpace(name) == "ddb_requires_event_middleware" {
+	switch strings.TrimSpace(name) {
+	case "ddb_requires_event_middleware":
 		return func(ctx *apptheory.EventContext, _ events.DynamoDBEventRecord) error {
 			return requireEventMiddleware(ctx)
+		}
+	case "ddb_require_normalized_summary":
+		return func(_ *apptheory.EventContext, record events.DynamoDBEventRecord) error {
+			return requireDynamoDBSafeSummary(record, false)
+		}
+	case "ddb_require_normalized_summary_fail_on_remove":
+		return func(_ *apptheory.EventContext, record events.DynamoDBEventRecord) error {
+			return requireDynamoDBSafeSummary(record, true)
 		}
 	}
 
@@ -278,6 +287,56 @@ func builtInDynamoDBStreamHandler(name string) apptheory.DynamoDBStreamHandler {
 		return nil
 	}
 	return apptheory.DynamoDBStreamHandler(handler)
+}
+
+func requireDynamoDBSafeSummary(record events.DynamoDBEventRecord, failOnRemove bool) error {
+	summary := dynamoDBSafeSummary(record)
+	for _, key := range []string{"table_name", "event_id", "event_name", "sequence_number", "stream_view_type"} {
+		if strings.TrimSpace(asString(summary[key])) == "" {
+			return fmt.Errorf("missing normalized dynamodb %s", key)
+		}
+	}
+	if rawLog := strings.TrimSpace(asString(summary["safe_log"])); rawLog == "" || strings.Contains(rawLog, "do-not-log") {
+		return errors.New("unsafe dynamodb stream summary")
+	}
+	if failOnRemove && strings.TrimSpace(record.EventName) == "REMOVE" {
+		return errors.New("fail")
+	}
+	return nil
+}
+
+func dynamoDBSafeSummary(record events.DynamoDBEventRecord) map[string]any {
+	tableName := dynamoDBFixtureTableNameFromStreamARN(record.EventSourceArn)
+	sequenceNumber := strings.TrimSpace(record.Change.SequenceNumber)
+	eventID := strings.TrimSpace(record.EventID)
+	eventName := strings.TrimSpace(record.EventName)
+	return map[string]any{
+		"aws_region":       strings.TrimSpace(record.AWSRegion),
+		"event_id":         eventID,
+		"event_name":       eventName,
+		"safe_log":         fmt.Sprintf("table=%s event_id=%s event_name=%s sequence_number=%s", tableName, eventID, eventName, sequenceNumber),
+		"sequence_number":  sequenceNumber,
+		"size_bytes":       int(record.Change.SizeBytes),
+		"stream_view_type": strings.TrimSpace(record.Change.StreamViewType),
+		"table_name":       tableName,
+	}
+}
+
+func dynamoDBFixtureTableNameFromStreamARN(arn string) string {
+	arn = strings.TrimSpace(arn)
+	if arn == "" {
+		return ""
+	}
+	if _, after, ok := strings.Cut(arn, ":table/"); ok {
+		if table, _, ok := strings.Cut(after, "/stream/"); ok {
+			return table
+		}
+		if table, _, ok := strings.Cut(after, "/"); ok {
+			return table
+		}
+		return after
+	}
+	return ""
 }
 
 func builtInEventBridgeHandler(name string, rawInput ...json.RawMessage) apptheory.EventBridgeHandler {

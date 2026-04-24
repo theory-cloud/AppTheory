@@ -1318,7 +1318,62 @@ def _built_in_dynamodb_stream_handler(name: str):
 
         return handler
 
+    if name == "ddb_require_normalized_summary":
+        return lambda _ctx, record: _require_dynamodb_safe_summary(record, False)
+
+    if name == "ddb_require_normalized_summary_fail_on_remove":
+        return lambda _ctx, record: _require_dynamodb_safe_summary(record, True)
+
     return None
+
+
+def _require_dynamodb_safe_summary(record: Any, fail_on_remove: bool) -> None:
+    summary = _dynamodb_safe_summary(record)
+    for key in ("table_name", "event_id", "event_name", "sequence_number", "stream_view_type"):
+        if not str(summary.get(key) or "").strip():
+            raise RuntimeError(f"missing normalized dynamodb {key}")
+    safe_log = str(summary.get("safe_log") or "").strip()
+    if not safe_log or "do-not-log" in safe_log:
+        raise RuntimeError("unsafe dynamodb stream summary")
+    if fail_on_remove and str((record or {}).get("eventName") or "").strip() == "REMOVE":
+        raise RuntimeError("fail")
+
+
+def _dynamodb_safe_summary(record: Any) -> dict[str, Any]:
+    record_obj = record if isinstance(record, dict) else {}
+    dynamodb = record_obj.get("dynamodb") if isinstance(record_obj.get("dynamodb"), dict) else {}
+    table_name = _dynamodb_fixture_table_name_from_stream_arn(str(record_obj.get("eventSourceARN") or ""))
+    sequence_number = str(dynamodb.get("SequenceNumber") or "").strip()
+    event_id = str(record_obj.get("eventID") or "").strip()
+    event_name = str(record_obj.get("eventName") or "").strip()
+    return {
+        "aws_region": str(record_obj.get("awsRegion") or "").strip(),
+        "event_id": event_id,
+        "event_name": event_name,
+        "safe_log": f"table={table_name} event_id={event_id} event_name={event_name} sequence_number={sequence_number}",
+        "sequence_number": sequence_number,
+        "size_bytes": int(dynamodb.get("SizeBytes") or 0),
+        "stream_view_type": str(dynamodb.get("StreamViewType") or "").strip(),
+        "table_name": table_name,
+    }
+
+
+def _dynamodb_fixture_table_name_from_stream_arn(arn: str) -> str:
+    value = str(arn or "").strip()
+    if not value:
+        return ""
+    marker = ":table/"
+    index = value.find(marker)
+    if index < 0:
+        return ""
+    after = value[index + len(marker):]
+    stream_index = after.find("/stream/")
+    if stream_index >= 0:
+        return after[:stream_index]
+    slash_index = after.find("/")
+    if slash_index >= 0:
+        return after[:slash_index]
+    return after
 
 
 def _built_in_eventbridge_handler(name: str):

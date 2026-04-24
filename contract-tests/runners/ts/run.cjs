@@ -1095,9 +1095,64 @@ function builtInDynamoDBStreamHandler(name) {
           throw new Error("bad trace");
         }
       };
+    case "ddb_require_normalized_summary":
+      return async (_ctx, record) => {
+        requireDynamoDBSafeSummary(record, false);
+      };
+    case "ddb_require_normalized_summary_fail_on_remove":
+      return async (_ctx, record) => {
+        requireDynamoDBSafeSummary(record, true);
+      };
     default:
       return null;
   }
+}
+
+function requireDynamoDBSafeSummary(record, failOnRemove) {
+  const summary = dynamoDBSafeSummary(record);
+  for (const key of ["table_name", "event_id", "event_name", "sequence_number", "stream_view_type"]) {
+    if (!String(summary[key] ?? "").trim()) {
+      throw new Error(`missing normalized dynamodb ${key}`);
+    }
+  }
+  const safeLog = String(summary.safe_log ?? "").trim();
+  if (!safeLog || safeLog.includes("do-not-log")) {
+    throw new Error("unsafe dynamodb stream summary");
+  }
+  if (failOnRemove && String(record?.eventName ?? "").trim() === "REMOVE") {
+    throw new Error("fail");
+  }
+}
+
+function dynamoDBSafeSummary(record) {
+  const tableName = dynamoDBFixtureTableNameFromStreamArn(String(record?.eventSourceARN ?? ""));
+  const sequenceNumber = String(record?.dynamodb?.SequenceNumber ?? "").trim();
+  const eventId = String(record?.eventID ?? "").trim();
+  const eventName = String(record?.eventName ?? "").trim();
+  return {
+    aws_region: String(record?.awsRegion ?? "").trim(),
+    event_id: eventId,
+    event_name: eventName,
+    safe_log: `table=${tableName} event_id=${eventId} event_name=${eventName} sequence_number=${sequenceNumber}`,
+    sequence_number: sequenceNumber,
+    size_bytes: Number(record?.dynamodb?.SizeBytes ?? 0),
+    stream_view_type: String(record?.dynamodb?.StreamViewType ?? "").trim(),
+    table_name: tableName,
+  };
+}
+
+function dynamoDBFixtureTableNameFromStreamArn(arn) {
+  const value = String(arn ?? "").trim();
+  if (!value) return "";
+  const marker = ":table/";
+  const idx = value.indexOf(marker);
+  if (idx < 0) return "";
+  const after = value.slice(idx + marker.length);
+  const streamIdx = after.indexOf("/stream/");
+  if (streamIdx >= 0) return after.slice(0, streamIdx);
+  const slashIdx = after.indexOf("/");
+  if (slashIdx >= 0) return after.slice(0, slashIdx);
+  return after;
 }
 
 function builtInEventBridgeHandler(name) {
