@@ -82,6 +82,21 @@ Scheduled workload fixtures are EventBridge fixtures with `source = "aws.events"
 - `deadline_unix_ms`: fixed runner clock (`1970-01-01T00:00:00Z`) plus `remaining_ms`, or `0` when no remaining time is available.
 - `result`: a structured object with `status`, `processed`, and `failed`; missing counts default to `0`, and missing status defaults to `ok`.
 
+
+## M1 DynamoDB Streams normalization fixtures
+
+DynamoDB stream normalization fixtures keep the runtime contract on the partial-batch response path while pinning the safe record summary a handler must be able to derive. The runner-only handlers `ddb_require_normalized_summary` and `ddb_require_normalized_summary_fail_on_remove` validate these portable fields for each record before returning the normal DynamoDB `batchItemFailures` response:
+
+- `table_name`: parsed from `eventSourceARN`.
+- `event_id`: `eventID`.
+- `event_name`: `eventName`.
+- `sequence_number`: `dynamodb.SequenceNumber`.
+- `size_bytes`: `dynamodb.SizeBytes`.
+- `stream_view_type`: `dynamodb.StreamViewType`.
+- `safe_log`: a summary composed only from table/event/sequence metadata; raw `Keys`, `NewImage`, and `OldImage` values are not included.
+
+The partial-failure fixture intentionally fails only the `REMOVE` record after summary validation, proving the existing per-record retry behavior remains intact while the normalized summary contract grows.
+
 ## Bytes in JSON
 
 Because JSON cannot carry raw bytes, fixtures encode request/response bodies as:
