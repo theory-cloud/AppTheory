@@ -16,7 +16,11 @@ import (
 
 func runFixtureM1(f Fixture) error {
 	now := time.Unix(0, 0).UTC()
-	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	app := apptheory.New(
+		apptheory.WithTier(apptheory.TierP0),
+		apptheory.WithClock(fixedClock{now: now}),
+		apptheory.WithIDGenerator(fixedIDGenerator{id: "req_test_123"}),
+	)
 
 	for _, name := range f.Setup.Middlewares {
 		mw := builtInM1EventMiddleware(name)
@@ -286,6 +290,10 @@ func builtInEventBridgeHandler(name string, rawInput ...json.RawMessage) apptheo
 		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
 			return eventBridgeWorkloadEnvelopeSummary(ctx, event, raw), nil
 		}
+	case "eventbridge_scheduled_summary":
+		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
+			return eventBridgeScheduledSummary(ctx, event, raw), nil
+		}
 	case "eventbridge_require_workload_envelope":
 		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
 			summary := eventBridgeWorkloadEnvelopeSummary(ctx, event, raw)
@@ -336,6 +344,70 @@ func eventBridgeWorkloadEnvelopeSummary(
 		"resources":          event.Resources,
 		"source":             event.Source,
 		"time":               rawString(rawObject, "time"),
+	}
+}
+
+func eventBridgeScheduledSummary(
+	ctx *apptheory.EventContext,
+	event events.EventBridgeEvent,
+	raw json.RawMessage,
+) map[string]any {
+	rawObject := rawJSONObject(raw)
+	envelope := eventBridgeWorkloadEnvelopeSummary(ctx, event, raw)
+	detail := rawObjectField(rawObject, "detail")
+	result := rawObjectField(detail, "result")
+
+	runID := rawString(detail, "run_id")
+	if runID == "" {
+		runID = strings.TrimSpace(event.ID)
+	}
+	if runID == "" {
+		runID = ctxLambdaAWSRequestID(ctx)
+	}
+
+	idempotencyKey := rawString(detail, "idempotency_key")
+	if idempotencyKey == "" {
+		if eventID := strings.TrimSpace(event.ID); eventID != "" {
+			idempotencyKey = "eventbridge:" + eventID
+		} else if requestID := ctxLambdaAWSRequestID(ctx); requestID != "" {
+			idempotencyKey = "lambda:" + requestID
+		}
+	}
+
+	status := rawString(result, "status")
+	if status == "" {
+		status = rawString(detail, "status")
+	}
+	if status == "" {
+		status = "ok"
+	}
+
+	remainingMS := 0
+	var deadlineUnixMS int64
+	if ctx != nil {
+		remainingMS = ctx.RemainingMS
+		if remainingMS > 0 {
+			deadlineUnixMS = ctx.Now().UnixMilli() + int64(remainingMS)
+		}
+	}
+
+	return map[string]any{
+		"correlation_id":     envelope["correlation_id"],
+		"correlation_source": envelope["correlation_source"],
+		"deadline_unix_ms":   deadlineUnixMS,
+		"detail_type":        envelope["detail_type"],
+		"event_id":           envelope["event_id"],
+		"idempotency_key":    idempotencyKey,
+		"kind":               "scheduled",
+		"remaining_ms":       remainingMS,
+		"result": map[string]any{
+			"failed":    rawInt(result, "failed"),
+			"processed": rawInt(result, "processed"),
+			"status":    status,
+		},
+		"run_id":         runID,
+		"scheduled_time": envelope["time"],
+		"source":         envelope["source"],
 	}
 }
 
@@ -394,6 +466,32 @@ func rawString(object map[string]any, key string) string {
 		return ""
 	}
 	return asString(value)
+}
+
+func rawInt(object map[string]any, key string) int {
+	if object == nil {
+		return 0
+	}
+	value, ok := object[key]
+	if !ok {
+		return 0
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err != nil {
+			return 0
+		}
+		return int(parsed)
+	default:
+		return 0
+	}
 }
 
 func rawHeaderString(headers map[string]any, key string) string {

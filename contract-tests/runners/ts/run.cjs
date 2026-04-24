@@ -1110,6 +1110,8 @@ function builtInEventBridgeHandler(name) {
       return async (ctx) => ({ mw: ctx.get("mw"), trace: ctx.get("trace") });
     case "eventbridge_workload_envelope":
       return async (ctx, event) => eventBridgeWorkloadEnvelopeSummary(ctx, event);
+    case "eventbridge_scheduled_summary":
+      return async (ctx, event) => eventBridgeScheduledSummary(ctx, event);
     case "eventbridge_require_workload_envelope":
       return async (ctx, event) => {
         const summary = eventBridgeWorkloadEnvelopeSummary(ctx, event);
@@ -1137,6 +1139,48 @@ function eventBridgeWorkloadEnvelopeSummary(ctx, event) {
     resources: Array.isArray(event?.resources) ? event.resources.map((resource) => String(resource)) : [],
     source: String(event?.source ?? "").trim(),
     time: String(event?.time ?? "").trim(),
+  };
+}
+
+function eventBridgeScheduledSummary(ctx, event) {
+  const envelope = eventBridgeWorkloadEnvelopeSummary(ctx, event);
+  const detail = event && typeof event.detail === "object" && !Array.isArray(event.detail) ? event.detail : {};
+  const result = detail.result && typeof detail.result === "object" && !Array.isArray(detail.result) ? detail.result : {};
+
+  let runId = objectString(detail, "run_id");
+  if (!runId) runId = String(event?.id ?? "").trim();
+  if (!runId) runId = String(ctx?.ctx?.awsRequestId ?? "").trim();
+
+  let idempotencyKey = objectString(detail, "idempotency_key");
+  if (!idempotencyKey) {
+    const eventId = String(event?.id ?? "").trim();
+    const requestId = String(ctx?.ctx?.awsRequestId ?? "").trim();
+    if (eventId) idempotencyKey = `eventbridge:${eventId}`;
+    else if (requestId) idempotencyKey = `lambda:${requestId}`;
+  }
+
+  let status = objectString(result, "status") || objectString(detail, "status") || "ok";
+  status = String(status).trim() || "ok";
+  const remainingMs = Number(ctx?.remainingMs ?? 0) > 0 ? Math.floor(Number(ctx.remainingMs)) : 0;
+  const deadlineUnixMs = remainingMs > 0 ? ctx.now().getTime() + remainingMs : 0;
+
+  return {
+    correlation_id: envelope.correlation_id,
+    correlation_source: envelope.correlation_source,
+    deadline_unix_ms: deadlineUnixMs,
+    detail_type: envelope.detail_type,
+    event_id: envelope.event_id,
+    idempotency_key: idempotencyKey,
+    kind: "scheduled",
+    remaining_ms: remainingMs,
+    result: {
+      failed: objectInt(result, "failed"),
+      processed: objectInt(result, "processed"),
+      status,
+    },
+    run_id: runId,
+    scheduled_time: envelope.time,
+    source: envelope.source,
   };
 }
 
@@ -1172,6 +1216,14 @@ function eventBridgeCorrelationId(ctx, event) {
 function objectString(object, key) {
   if (!object || typeof object !== "object" || Array.isArray(object)) return "";
   return String(object[key] ?? "").trim();
+}
+
+
+function objectInt(object, key) {
+  if (!object || typeof object !== "object" || Array.isArray(object)) return 0;
+  const value = Number(object[key] ?? 0);
+  if (!Number.isFinite(value)) return 0;
+  return Math.trunc(value);
 }
 
 function headerString(headers, key) {
@@ -1225,7 +1277,9 @@ function builtInEventMiddleware(name) {
 
 async function runFixtureM1(fixture) {
   const runtime = await loadAppTheoryRuntime();
-  const app = runtime.createApp({ tier: "p0" });
+  const ids = new runtime.ManualIdGenerator();
+  ids.queue("req_test_123");
+  const app = runtime.createApp({ tier: "p0", clock: new runtime.ManualClock(new Date(0)), ids });
 
   for (const name of fixture.setup?.middlewares ?? []) {
     const mw = builtInEventMiddleware(name);

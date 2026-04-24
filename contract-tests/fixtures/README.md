@@ -69,6 +69,19 @@ The canonical correlation precedence is:
 
 `input.context.aws_request_id` is the portable fixture spelling for a Lambda invocation request ID. It may be paired with `input.context.remaining_ms` when a non-HTTP fixture needs deterministic remaining-time behavior.
 
+
+## M1 scheduled workload fixtures
+
+Scheduled workload fixtures are EventBridge fixtures with `source = "aws.events"` and `detail-type = "Scheduled Event"`. The built-in runner handler `eventbridge_scheduled_summary` pins the portable result summary shape used by later runtime helpers:
+
+- `kind`: always `scheduled`.
+- `run_id`: `detail.run_id`, then EventBridge `id`, then Lambda `awsRequestId`.
+- `idempotency_key`: `detail.idempotency_key`, then `eventbridge:<event.id>`, then `lambda:<awsRequestId>`.
+- `correlation_id` / `correlation_source`: the EventBridge workload precedence above.
+- `remaining_ms`: the portable remaining invocation time from `input.context.remaining_ms`.
+- `deadline_unix_ms`: fixed runner clock (`1970-01-01T00:00:00Z`) plus `remaining_ms`, or `0` when no remaining time is available.
+- `result`: a structured object with `status`, `processed`, and `failed`; missing counts default to `0`, and missing status defaults to `ok`.
+
 ## Bytes in JSON
 
 Because JSON cannot carry raw bytes, fixtures encode request/response bodies as:
