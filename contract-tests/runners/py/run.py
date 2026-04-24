@@ -1330,6 +1330,8 @@ def _built_in_eventbridge_handler(name: str):
         return lambda ctx, _event: {"mw": ctx.get("mw"), "trace": ctx.get("trace")}
     if name == "eventbridge_workload_envelope":
         return lambda ctx, event: _eventbridge_workload_envelope_summary(ctx, event)
+    if name == "eventbridge_scheduled_summary":
+        return lambda ctx, event: _eventbridge_scheduled_summary(ctx, event)
     if name == "eventbridge_require_workload_envelope":
         def handler(ctx, event):
             summary = _eventbridge_workload_envelope_summary(ctx, event)
@@ -1356,6 +1358,54 @@ def _eventbridge_workload_envelope_summary(ctx: Any, event: Any) -> dict[str, An
         "resources": [str(value) for value in resources] if isinstance(resources, list) else [],
         "source": str(event_obj.get("source") or "").strip(),
         "time": str(event_obj.get("time") or "").strip(),
+    }
+
+
+def _eventbridge_scheduled_summary(ctx: Any, event: Any) -> dict[str, Any]:
+    event_obj = event if isinstance(event, dict) else {}
+    envelope = _eventbridge_workload_envelope_summary(ctx, event_obj)
+    detail = event_obj.get("detail") if isinstance(event_obj.get("detail"), dict) else {}
+    result = detail.get("result") if isinstance(detail.get("result"), dict) else {}
+
+    run_id = _object_string(detail, "run_id")
+    if not run_id:
+        run_id = str(event_obj.get("id") or "").strip()
+    if not run_id:
+        run_id = str(getattr(getattr(ctx, "ctx", None), "aws_request_id", "") or "").strip()
+
+    idempotency_key = _object_string(detail, "idempotency_key")
+    if not idempotency_key:
+        event_id = str(event_obj.get("id") or "").strip()
+        request_id = str(getattr(getattr(ctx, "ctx", None), "aws_request_id", "") or "").strip()
+        if event_id:
+            idempotency_key = f"eventbridge:{event_id}"
+        elif request_id:
+            idempotency_key = f"lambda:{request_id}"
+
+    status = _object_string(result, "status") or _object_string(detail, "status") or "ok"
+    remaining_ms = int(getattr(ctx, "remaining_ms", 0) or 0)
+    deadline_unix_ms = 0
+    if remaining_ms > 0:
+        now = ctx.now()
+        deadline_unix_ms = int(now.timestamp() * 1000) + remaining_ms
+
+    return {
+        "correlation_id": envelope["correlation_id"],
+        "correlation_source": envelope["correlation_source"],
+        "deadline_unix_ms": deadline_unix_ms,
+        "detail_type": envelope["detail_type"],
+        "event_id": envelope["event_id"],
+        "idempotency_key": idempotency_key,
+        "kind": "scheduled",
+        "remaining_ms": remaining_ms,
+        "result": {
+            "failed": _object_int(result, "failed"),
+            "processed": _object_int(result, "processed"),
+            "status": status,
+        },
+        "run_id": run_id,
+        "scheduled_time": envelope["time"],
+        "source": envelope["source"],
     }
 
 
@@ -1388,6 +1438,15 @@ def _object_string(obj: Any, key: str) -> str:
         return ""
     return str(obj.get(key) or "").strip()
 
+
+
+def _object_int(obj: Any, key: str) -> int:
+    if not isinstance(obj, dict):
+        return 0
+    try:
+        return int(obj.get(key) or 0)
+    except Exception:  # noqa: BLE001
+        return 0
 
 def _header_string(headers: Any, key: str) -> str:
     if not isinstance(headers, dict):
@@ -1534,7 +1593,9 @@ def _built_in_websocket_handler(runtime: Any, name: str):
 
 def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _DummyEffectsApp]:
     runtime = _load_apptheory_runtime()
-    app = runtime.create_app(tier="p0")
+    ids = runtime.ManualIdGenerator()
+    ids.push("req_test_123")
+    app = runtime.create_app(tier="p0", clock=runtime.ManualClock(), id_generator=ids)
 
     setup = fixture.get("setup", {}) or {}
     for name in setup.get("middlewares", []) or []:
