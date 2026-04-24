@@ -116,7 +116,7 @@ func (a *App) recordEventObservability(observation eventObservation, outcome str
 	}
 
 	level := logLevelInfo
-	if errorCode != "" || outcome == "error" {
+	if errorCode != "" || outcome == logLevelError {
 		level = logLevelError
 	}
 
