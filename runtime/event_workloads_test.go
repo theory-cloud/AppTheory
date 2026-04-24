@@ -3,6 +3,7 @@ package apptheory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -138,5 +139,93 @@ func TestNormalizeDynamoDBStreamRecord_ExcludesRawImagesFromSafeLog(t *testing.T
 		if strings.Contains(summary.SafeLog, sentinel) {
 			t.Fatalf("safe log leaked sentinel %q: %q", sentinel, summary.SafeLog)
 		}
+	}
+}
+
+func TestServeEventBridge_RecoversPanicAndRecordsEventObservability(t *testing.T) {
+	t.Parallel()
+
+	var logs []LogRecord
+	var metrics []MetricRecord
+	var spans []SpanRecord
+	app := New(WithObservability(ObservabilityHooks{
+		Log: func(r LogRecord) {
+			logs = append(logs, r)
+		},
+		Metric: func(r MetricRecord) {
+			metrics = append(metrics, r)
+		},
+		Span: func(r SpanRecord) {
+			spans = append(spans, r)
+		},
+	}))
+	app.EventBridge(EventBridgePattern("apptheory.test", "thing.panic"), func(_ *EventContext, _ events.EventBridgeEvent) (any, error) {
+		panic("do-not-log")
+	})
+
+	ctx := lambdacontext.NewContext(context.Background(), &lambdacontext.LambdaContext{AwsRequestID: "aws-req"})
+	out, err := app.ServeEventBridge(ctx, events.EventBridgeEvent{
+		ID:         "evt-1",
+		Source:     "apptheory.test",
+		DetailType: "thing.panic",
+	})
+	if out != nil || err == nil || err.Error() != eventWorkloadFailedMessage {
+		t.Fatalf("expected safe event workload failure, out=%v err=%v", out, err)
+	}
+	if strings.Contains(err.Error(), "do-not-log") {
+		t.Fatalf("safe error leaked panic payload: %v", err)
+	}
+	if len(logs) != 1 || logs[0].Level != "error" || logs[0].ErrorCode != "app.internal" || logs[0].CorrelationID != "evt-1" {
+		t.Fatalf("unexpected event log records: %#v", logs)
+	}
+	if len(metrics) != 1 || metrics[0].Tags["outcome"] != "error" || metrics[0].Tags["trigger"] != "eventbridge" {
+		t.Fatalf("unexpected event metrics: %#v", metrics)
+	}
+	if len(spans) != 1 || spans[0].Attributes["error.code"] != "app.internal" {
+		t.Fatalf("unexpected event spans: %#v", spans)
+	}
+}
+
+func TestServeDynamoDBStream_RecordsPerRecordObservability(t *testing.T) {
+	t.Parallel()
+
+	var logs []LogRecord
+	app := New(WithObservability(ObservabilityHooks{
+		Log: func(r LogRecord) {
+			logs = append(logs, r)
+		},
+	}))
+	app.DynamoDB("ReleaseState", func(_ *EventContext, record events.DynamoDBEventRecord) error {
+		if record.EventName == "REMOVE" {
+			return errors.New("do-not-log")
+		}
+		return nil
+	})
+
+	out := app.ServeDynamoDBStream(context.Background(), events.DynamoDBEvent{Records: []events.DynamoDBEventRecord{
+		{
+			EventID:        "stream-1",
+			EventName:      "MODIFY",
+			EventSourceArn: "arn:aws:dynamodb:us-east-1:000000000000:table/ReleaseState/stream/2026",
+			Change:         events.DynamoDBStreamRecord{SequenceNumber: "1", StreamViewType: "NEW_AND_OLD_IMAGES"},
+		},
+		{
+			EventID:        "stream-2",
+			EventName:      "REMOVE",
+			EventSourceArn: "arn:aws:dynamodb:us-east-1:000000000000:table/ReleaseState/stream/2026",
+			Change:         events.DynamoDBStreamRecord{SequenceNumber: "2", StreamViewType: "NEW_AND_OLD_IMAGES"},
+		},
+	}})
+	if len(out.BatchItemFailures) != 1 || out.BatchItemFailures[0].ItemIdentifier != "stream-2" {
+		t.Fatalf("unexpected batch failures: %#v", out.BatchItemFailures)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("expected per-record logs, got %#v", logs)
+	}
+	if logs[0].Level != "info" || logs[0].Trigger != "dynamodb_stream" || logs[0].CorrelationID != "stream-1" {
+		t.Fatalf("unexpected success log: %#v", logs[0])
+	}
+	if logs[1].Level != "error" || logs[1].ErrorCode != "app.internal" || logs[1].EventID != "stream-2" {
+		t.Fatalf("unexpected error log: %#v", logs[1])
 	}
 }

@@ -12,6 +12,8 @@ import (
 )
 
 const (
+	eventWorkloadFailedMessage = "apptheory: event workload failed"
+
 	eventBridgeCorrelationSourceMetadata     = "metadata.correlation_id"
 	eventBridgeCorrelationSourceHeader       = "headers.x-correlation-id"
 	eventBridgeCorrelationSourceDetail       = "detail.correlation_id"
@@ -103,9 +105,55 @@ func RequireEventBridgeWorkloadEnvelope(
 	if strings.TrimSpace(envelope.Source) == "" ||
 		strings.TrimSpace(envelope.DetailType) == "" ||
 		strings.TrimSpace(envelope.CorrelationID) == "" {
-		return envelope, errors.New("apptheory: eventbridge workload envelope invalid")
+		return envelope, safeEventError{message: "apptheory: eventbridge workload envelope invalid"}
 	}
 	return envelope, nil
+}
+
+func eventWorkloadFailedError() error {
+	return errors.New(eventWorkloadFailedMessage)
+}
+
+type safeEventError struct {
+	message string
+}
+
+func (e safeEventError) Error() string { return e.message }
+
+func (e safeEventError) safeEventError() {}
+
+func sanitizeEventWorkloadError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var safe interface{ safeEventError() }
+	if errors.As(err, &safe) {
+		return err
+	}
+	return eventWorkloadFailedError()
+}
+
+func eventBridgeObservation(ctx *EventContext, event events.EventBridgeEvent) eventObservation {
+	envelope := NormalizeEventBridgeWorkloadEnvelope(ctx, event)
+	return eventObservation{
+		Trigger:       eventTriggerEventBridge,
+		RequestID:     envelope.RequestID,
+		CorrelationID: envelope.CorrelationID,
+		Source:        envelope.Source,
+		DetailType:    envelope.DetailType,
+	}
+}
+
+func dynamoDBStreamObservation(ctx *EventContext, record events.DynamoDBEventRecord) eventObservation {
+	summary := NormalizeDynamoDBStreamRecord(record)
+	return eventObservation{
+		Trigger:       eventTriggerDynamoDBStream,
+		RequestID:     eventContextRequestID(ctx),
+		CorrelationID: summary.EventID,
+		TableName:     summary.TableName,
+		EventID:       summary.EventID,
+		EventName:     summary.EventName,
+	}
 }
 
 // EventBridgeScheduledWorkloadSummary is the portable summary for EventBridge scheduled workloads.
