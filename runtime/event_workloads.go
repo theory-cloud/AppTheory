@@ -75,6 +75,91 @@ func RequireEventBridgeWorkloadEnvelope(
 	return envelope, nil
 }
 
+// EventBridgeScheduledWorkloadSummary is the portable summary for EventBridge scheduled workloads.
+type EventBridgeScheduledWorkloadSummary struct {
+	CorrelationID     string                                    `json:"correlation_id"`
+	CorrelationSource string                                    `json:"correlation_source"`
+	DeadlineUnixMS    int64                                     `json:"deadline_unix_ms"`
+	DetailType        string                                    `json:"detail_type"`
+	EventID           string                                    `json:"event_id"`
+	IdempotencyKey    string                                    `json:"idempotency_key"`
+	Kind              string                                    `json:"kind"`
+	RemainingMS       int                                       `json:"remaining_ms"`
+	Result            EventBridgeScheduledWorkloadResultSummary `json:"result"`
+	RunID             string                                    `json:"run_id"`
+	ScheduledTime     string                                    `json:"scheduled_time"`
+	Source            string                                    `json:"source"`
+}
+
+// EventBridgeScheduledWorkloadResultSummary is the safe result summary for a scheduled workload.
+type EventBridgeScheduledWorkloadResultSummary struct {
+	Failed    int    `json:"failed"`
+	Processed int    `json:"processed"`
+	Status    string `json:"status"`
+}
+
+// NormalizeEventBridgeScheduledWorkload returns the canonical scheduled workload summary for an
+// EventBridge scheduled event.
+func NormalizeEventBridgeScheduledWorkload(
+	ctx *EventContext,
+	event events.EventBridgeEvent,
+) EventBridgeScheduledWorkloadSummary {
+	rawObject := eventContextRawJSONObject(ctx)
+	detail := eventBridgeDetailObject(event, rawObject)
+	result := rawObjectField(detail, "result")
+	envelope := NormalizeEventBridgeWorkloadEnvelope(ctx, event)
+
+	runID := rawString(detail, "run_id")
+	if runID == "" {
+		runID = strings.TrimSpace(event.ID)
+	}
+	if runID == "" {
+		runID = eventContextLambdaAWSRequestID(ctx)
+	}
+
+	idempotencyKey := rawString(detail, "idempotency_key")
+	if idempotencyKey == "" {
+		if eventID := strings.TrimSpace(event.ID); eventID != "" {
+			idempotencyKey = "eventbridge:" + eventID
+		} else if requestID := eventContextLambdaAWSRequestID(ctx); requestID != "" {
+			idempotencyKey = "lambda:" + requestID
+		}
+	}
+
+	status := rawString(result, "status")
+	if status == "" {
+		status = rawString(detail, "status")
+	}
+	if status == "" {
+		status = "ok"
+	}
+
+	remainingMS := eventContextRemainingMS(ctx)
+	var deadlineUnixMS int64
+	if remainingMS > 0 && ctx != nil {
+		deadlineUnixMS = ctx.Now().UnixMilli() + int64(remainingMS)
+	}
+
+	return EventBridgeScheduledWorkloadSummary{
+		CorrelationID:     envelope.CorrelationID,
+		CorrelationSource: envelope.CorrelationSource,
+		DeadlineUnixMS:    deadlineUnixMS,
+		DetailType:        envelope.DetailType,
+		EventID:           envelope.EventID,
+		IdempotencyKey:    idempotencyKey,
+		Kind:              "scheduled",
+		RemainingMS:       remainingMS,
+		Result: EventBridgeScheduledWorkloadResultSummary{
+			Failed:    rawInt(result, "failed"),
+			Processed: rawInt(result, "processed"),
+			Status:    status,
+		},
+		RunID:         runID,
+		ScheduledTime: envelope.Time,
+		Source:        envelope.Source,
+	}
+}
+
 func eventBridgeCorrelationID(
 	ctx *EventContext,
 	event events.EventBridgeEvent,
@@ -197,6 +282,39 @@ func rawHeaderString(headers map[string]any, key string) string {
 		}
 	}
 	return ""
+}
+
+func eventContextRemainingMS(ctx *EventContext) int {
+	if ctx == nil {
+		return 0
+	}
+	return ctx.RemainingMS
+}
+
+func rawInt(object map[string]any, key string) int {
+	if object == nil {
+		return 0
+	}
+	value, ok := object[key]
+	if !ok {
+		return 0
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err != nil {
+			return 0
+		}
+		return int(parsed)
+	default:
+		return 0
+	}
 }
 
 func asTrimmedString(value any) string {
