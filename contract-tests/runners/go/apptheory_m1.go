@@ -397,7 +397,7 @@ func builtInEventBridgeHandler(name string, rawInput ...any) apptheory.EventBrid
 	switch strings.TrimSpace(name) {
 	case "eventbridge_workload_envelope":
 		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
-			return eventBridgeWorkloadEnvelopeSummary(ctx, event, raw), nil
+			return apptheory.NormalizeEventBridgeWorkloadEnvelope(ctx, event), nil
 		}
 	case "eventbridge_scheduled_summary":
 		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
@@ -417,13 +417,7 @@ func builtInEventBridgeHandler(name string, rawInput ...any) apptheory.EventBrid
 		}
 	case "eventbridge_require_workload_envelope":
 		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
-			summary := eventBridgeWorkloadEnvelopeSummary(ctx, event, raw)
-			if strings.TrimSpace(asString(summary["source"])) == "" ||
-				strings.TrimSpace(asString(summary["detail_type"])) == "" ||
-				strings.TrimSpace(asString(summary["correlation_id"])) == "" {
-				return nil, errors.New("apptheory: eventbridge workload envelope invalid")
-			}
-			return summary, nil
+			return apptheory.RequireEventBridgeWorkloadEnvelope(ctx, event)
 		}
 	default:
 		handler := builtInOutputHandler[events.EventBridgeEvent](name, "eventbridge")

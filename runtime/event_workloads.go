@@ -1,0 +1,211 @@
+package apptheory
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambdacontext"
+)
+
+const (
+	eventBridgeCorrelationSourceMetadata     = "metadata.correlation_id"
+	eventBridgeCorrelationSourceHeader       = "headers.x-correlation-id"
+	eventBridgeCorrelationSourceDetail       = "detail.correlation_id"
+	eventBridgeCorrelationSourceEventID      = "event.id"
+	eventBridgeCorrelationSourceAWSRequestID = "lambda.aws_request_id"
+)
+
+// EventBridgeWorkloadEnvelope is the portable, safe summary AppTheory exposes for EventBridge workloads.
+type EventBridgeWorkloadEnvelope struct {
+	Account           string   `json:"account"`
+	CorrelationID     string   `json:"correlation_id"`
+	CorrelationSource string   `json:"correlation_source"`
+	DetailType        string   `json:"detail_type"`
+	EventID           string   `json:"event_id"`
+	Region            string   `json:"region"`
+	RequestID         string   `json:"request_id"`
+	Resources         []string `json:"resources"`
+	Source            string   `json:"source"`
+	Time              string   `json:"time"`
+}
+
+// NormalizeEventBridgeWorkloadEnvelope returns the canonical EventBridge workload envelope.
+//
+// Correlation IDs are selected in the contract-defined order:
+// metadata.correlation_id, headers["x-correlation-id"], detail.correlation_id, event.id,
+// and finally the Lambda awsRequestId.
+func NormalizeEventBridgeWorkloadEnvelope(
+	ctx *EventContext,
+	event events.EventBridgeEvent,
+) EventBridgeWorkloadEnvelope {
+	rawObject := eventContextRawJSONObject(ctx)
+	detail := eventBridgeDetailObject(event, rawObject)
+	correlationID, correlationSource := eventBridgeCorrelationID(ctx, event, rawObject, detail)
+
+	return EventBridgeWorkloadEnvelope{
+		Account:           strings.TrimSpace(event.AccountID),
+		CorrelationID:     correlationID,
+		CorrelationSource: correlationSource,
+		DetailType:        strings.TrimSpace(event.DetailType),
+		EventID:           strings.TrimSpace(event.ID),
+		Region:            strings.TrimSpace(event.Region),
+		RequestID:         eventContextRequestID(ctx),
+		Resources:         append([]string(nil), event.Resources...),
+		Source:            strings.TrimSpace(event.Source),
+		Time:              eventBridgeEventTime(event, rawObject),
+	}
+}
+
+// RequireEventBridgeWorkloadEnvelope returns the canonical EventBridge workload envelope and fails closed
+// when source, detail type, or correlation identity is missing.
+func RequireEventBridgeWorkloadEnvelope(
+	ctx *EventContext,
+	event events.EventBridgeEvent,
+) (EventBridgeWorkloadEnvelope, error) {
+	envelope := NormalizeEventBridgeWorkloadEnvelope(ctx, event)
+	if strings.TrimSpace(envelope.Source) == "" ||
+		strings.TrimSpace(envelope.DetailType) == "" ||
+		strings.TrimSpace(envelope.CorrelationID) == "" {
+		return envelope, errors.New("apptheory: eventbridge workload envelope invalid")
+	}
+	return envelope, nil
+}
+
+func eventBridgeCorrelationID(
+	ctx *EventContext,
+	event events.EventBridgeEvent,
+	raw map[string]any,
+	detail map[string]any,
+) (string, string) {
+	if value := rawString(rawObjectField(raw, "metadata"), "correlation_id"); value != "" {
+		return value, eventBridgeCorrelationSourceMetadata
+	}
+	if value := rawHeaderString(rawObjectField(raw, "headers"), "x-correlation-id"); value != "" {
+		return value, eventBridgeCorrelationSourceHeader
+	}
+	if value := rawString(detail, "correlation_id"); value != "" {
+		return value, eventBridgeCorrelationSourceDetail
+	}
+	if value := strings.TrimSpace(event.ID); value != "" {
+		return value, eventBridgeCorrelationSourceEventID
+	}
+	if value := eventContextLambdaAWSRequestID(ctx); value != "" {
+		return value, eventBridgeCorrelationSourceAWSRequestID
+	}
+	return "", ""
+}
+
+func eventBridgeDetailObject(event events.EventBridgeEvent, raw map[string]any) map[string]any {
+	detail := rawObjectField(raw, "detail")
+	if len(detail) > 0 {
+		return detail
+	}
+	return rawJSONObject(event.Detail)
+}
+
+func eventBridgeEventTime(event events.EventBridgeEvent, raw map[string]any) string {
+	if value := rawString(raw, "time"); value != "" {
+		return value
+	}
+	if event.Time.IsZero() {
+		return ""
+	}
+	return event.Time.UTC().Format(time.RFC3339)
+}
+
+func eventContextRequestID(ctx *EventContext) string {
+	if ctx == nil {
+		return ""
+	}
+	return strings.TrimSpace(ctx.RequestID)
+}
+
+func eventContextLambdaAWSRequestID(ctx *EventContext) string {
+	if ctx == nil {
+		return ""
+	}
+	lambdaCtx, ok := lambdacontext.FromContext(ctx.Context())
+	if !ok || lambdaCtx == nil {
+		return ""
+	}
+	return strings.TrimSpace(lambdaCtx.AwsRequestID)
+}
+
+func eventContextRawJSONObject(ctx *EventContext) map[string]any {
+	if ctx == nil || len(ctx.rawEvent) == 0 {
+		return map[string]any{}
+	}
+	return rawJSONObject(ctx.rawEvent)
+}
+
+func rawJSONObject(raw json.RawMessage) map[string]any {
+	var object map[string]any
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+		return map[string]any{}
+	}
+	return object
+}
+
+func rawObjectField(object map[string]any, key string) map[string]any {
+	if object == nil {
+		return map[string]any{}
+	}
+	value, ok := object[key]
+	if !ok {
+		return map[string]any{}
+	}
+	child, ok := value.(map[string]any)
+	if !ok || child == nil {
+		return map[string]any{}
+	}
+	return child
+}
+
+func rawString(object map[string]any, key string) string {
+	if object == nil {
+		return ""
+	}
+	value, ok := object[key]
+	if !ok {
+		return ""
+	}
+	return asTrimmedString(value)
+}
+
+func rawHeaderString(headers map[string]any, key string) string {
+	key = strings.TrimSpace(strings.ToLower(key))
+	if key == "" || headers == nil {
+		return ""
+	}
+	for name, value := range headers {
+		if strings.TrimSpace(strings.ToLower(name)) != key {
+			continue
+		}
+		if single := asTrimmedString(value); single != "" {
+			return single
+		}
+		if values, ok := value.([]any); ok {
+			for _, entry := range values {
+				if single := asTrimmedString(entry); single != "" {
+					return single
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func asTrimmedString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	default:
+		return ""
+	}
+}

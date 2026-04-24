@@ -1410,6 +1410,19 @@ type EventBridgeSelector struct {
 	DetailType string
 }
 
+type EventBridgeWorkloadEnvelope struct {
+	Account           string   `json:"account"`
+	CorrelationID     string   `json:"correlation_id"`
+	CorrelationSource string   `json:"correlation_source"`
+	DetailType        string   `json:"detail_type"`
+	EventID           string   `json:"event_id"`
+	Region            string   `json:"region"`
+	RequestID         string   `json:"request_id"`
+	Resources         []string `json:"resources"`
+	Source            string   `json:"source"`
+	Time              string   `json:"time"`
+}
+
 type EventContext struct {
 	ctx context.Context
 
@@ -1419,7 +1432,8 @@ type EventContext struct {
 	RequestID   string
 	RemainingMS int
 
-	values map[string]any
+	rawEvent json.RawMessage
+	values   map[string]any
 }
 
 type EventHandler func(*EventContext, any) (any, error)
@@ -1635,6 +1649,11 @@ func NewAppTheoryError(string, string) *AppTheoryError
 
 func NoContent() *Response
 
+func NormalizeEventBridgeWorkloadEnvelope(
+	*EventContext,
+	events.EventBridgeEvent,
+) EventBridgeWorkloadEnvelope
+
 func OptionalAuth() RouteOption
 
 func OriginURL(map[string][]string) string
@@ -1648,6 +1667,11 @@ func RateLimitMiddleware(RateLimitConfig) Middleware
 func RequireAnyScope(...string) RouteOption
 
 func RequireAuth() RouteOption
+
+func RequireEventBridgeWorkloadEnvelope(
+	*EventContext,
+	events.EventBridgeEvent,
+) (EventBridgeWorkloadEnvelope, error)
 
 func RequireScope(...string) RouteOption
 
