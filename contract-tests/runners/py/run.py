@@ -1328,7 +1328,96 @@ def _built_in_eventbridge_handler(name: str):
         return lambda _ctx, _event: {"handler": "b"}
     if name == "eventbridge_echo_event_middleware":
         return lambda ctx, _event: {"mw": ctx.get("mw"), "trace": ctx.get("trace")}
+    if name == "eventbridge_workload_envelope":
+        return lambda ctx, event: _eventbridge_workload_envelope_summary(ctx, event)
+    if name == "eventbridge_require_workload_envelope":
+        def handler(ctx, event):
+            summary = _eventbridge_workload_envelope_summary(ctx, event)
+            if not summary["source"] or not summary["detail_type"] or not summary["correlation_id"]:
+                raise RuntimeError("apptheory: eventbridge workload envelope invalid")
+            return summary
+
+        return handler
     return None
+
+
+def _eventbridge_workload_envelope_summary(ctx: Any, event: Any) -> dict[str, Any]:
+    event_obj = event if isinstance(event, dict) else {}
+    correlation_id, correlation_source = _eventbridge_correlation_id(ctx, event_obj)
+    resources = event_obj.get("resources") or []
+    return {
+        "account": str(event_obj.get("account") or "").strip(),
+        "correlation_id": correlation_id,
+        "correlation_source": correlation_source,
+        "detail_type": str(event_obj.get("detail-type") or event_obj.get("detailType") or "").strip(),
+        "event_id": str(event_obj.get("id") or "").strip(),
+        "region": str(event_obj.get("region") or "").strip(),
+        "request_id": str(getattr(ctx, "request_id", "") or "").strip(),
+        "resources": [str(value) for value in resources] if isinstance(resources, list) else [],
+        "source": str(event_obj.get("source") or "").strip(),
+        "time": str(event_obj.get("time") or "").strip(),
+    }
+
+
+def _eventbridge_correlation_id(ctx: Any, event: dict[str, Any]) -> tuple[str, str]:
+    metadata_correlation = _object_string(event.get("metadata"), "correlation_id")
+    if metadata_correlation:
+        return metadata_correlation, "metadata.correlation_id"
+
+    header_correlation = _header_string(event.get("headers"), "x-correlation-id")
+    if header_correlation:
+        return header_correlation, "headers.x-correlation-id"
+
+    detail_correlation = _object_string(event.get("detail"), "correlation_id")
+    if detail_correlation:
+        return detail_correlation, "detail.correlation_id"
+
+    event_id = str(event.get("id") or "").strip()
+    if event_id:
+        return event_id, "event.id"
+
+    request_id = str(getattr(getattr(ctx, "ctx", None), "aws_request_id", "") or "").strip()
+    if request_id:
+        return request_id, "lambda.aws_request_id"
+
+    return "", ""
+
+
+def _object_string(obj: Any, key: str) -> str:
+    if not isinstance(obj, dict):
+        return ""
+    return str(obj.get(key) or "").strip()
+
+
+def _header_string(headers: Any, key: str) -> str:
+    if not isinstance(headers, dict):
+        return ""
+    wanted = str(key or "").strip().lower()
+    for name, value in headers.items():
+        if str(name).strip().lower() != wanted:
+            continue
+        if isinstance(value, list):
+            for entry in value:
+                candidate = str(entry or "").strip()
+                if candidate:
+                    return candidate
+            return ""
+        return str(value or "").strip()
+    return ""
+
+
+class _FixtureLambdaContext:
+    def __init__(self, values: dict[str, Any]) -> None:
+        self.aws_request_id = str(values.get("aws_request_id") or "").strip()
+        self.awsRequestId = self.aws_request_id
+        self.remaining_ms = int(values.get("remaining_ms") or 0)
+
+    def get_remaining_time_in_millis(self) -> int:
+        return self.remaining_ms if self.remaining_ms > 0 else 0
+
+
+def _fixture_lambda_context(values: dict[str, Any] | None) -> _FixtureLambdaContext:
+    return _FixtureLambdaContext(values or {})
 
 
 @dataclass(slots=True)
@@ -1498,7 +1587,7 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
     actual_output = None
     actual_error: Exception | None = None
     try:
-        actual_output = app.handle_lambda(event, ctx={})
+        actual_output = app.handle_lambda(event, ctx=_fixture_lambda_context(input_.get("context") or {}))
     except Exception as exc:  # noqa: BLE001
         actual_error = exc
     expect_obj = fixture.get("expect", {}) or {}
@@ -2172,7 +2261,7 @@ def run_fixture_p2_output(fixture: dict[str, Any]) -> tuple[bool, str, dict[str,
     actual_output = None
     actual_error: Exception | None = None
     try:
-        actual_output = app.handle_lambda((aws_event or {}).get("event") or {}, ctx={})
+        actual_output = app.handle_lambda((aws_event or {}).get("event") or {}, ctx=_fixture_lambda_context((fixture.get("input", {}) or {}).get("context") or {}))
     except Exception as exc:  # noqa: BLE001
         actual_error = exc
 

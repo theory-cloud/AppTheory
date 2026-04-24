@@ -90,7 +90,8 @@ type FixtureAWSEvent struct {
 }
 
 type FixtureContext struct {
-	RemainingMS int `json:"remaining_ms,omitempty"`
+	RemainingMS  int    `json:"remaining_ms,omitempty"`
+	AWSRequestID string `json:"aws_request_id,omitempty"`
 }
 
 type FixtureRequest struct {

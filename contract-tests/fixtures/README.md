@@ -51,6 +51,24 @@ Each fixture is a single JSON object.
 - `expect.metrics` (array, optional): expected metric emissions (portable subset).
 - `expect.spans` (array, optional): expected trace span emissions (portable subset).
 
+
+## M1 EventBridge workload envelope fixtures
+
+EventBridge workload fixtures pin the portable non-HTTP envelope before runtime helpers are exported. Runners must preserve the existing AppTheory dispatch path: an unmatched EventBridge event returns JSON `null`, not an alternate error path. Matching workload fixtures use these built-in runner handlers only to express the contract:
+
+- `eventbridge_workload_envelope`: returns a normalized, safe envelope summary containing `event_id`, `source`, `detail_type`, `account`, `region`, `time`, `resources`, `request_id`, `correlation_id`, and `correlation_source`.
+- `eventbridge_require_workload_envelope`: returns the same summary only when the workload envelope is valid; missing required envelope identity fails closed with `apptheory: eventbridge workload envelope invalid`.
+
+The canonical correlation precedence is:
+
+1. `event.metadata.correlation_id`
+2. `event.headers["x-correlation-id"]` (case-insensitive header name; scalar or first non-empty list value)
+3. `event.detail.correlation_id`
+4. EventBridge `event.id`
+5. Lambda context `awsRequestId` / fixture `input.context.aws_request_id`
+
+`input.context.aws_request_id` is the portable fixture spelling for a Lambda invocation request ID. It may be paired with `input.context.remaining_ms` when a non-HTTP fixture needs deterministic remaining-time behavior.
+
 ## Bytes in JSON
 
 Because JSON cannot carry raw bytes, fixtures encode request/response bodies as:

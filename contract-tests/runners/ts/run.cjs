@@ -1108,9 +1108,98 @@ function builtInEventBridgeHandler(name) {
       return async () => ({ handler: "b" });
     case "eventbridge_echo_event_middleware":
       return async (ctx) => ({ mw: ctx.get("mw"), trace: ctx.get("trace") });
+    case "eventbridge_workload_envelope":
+      return async (ctx, event) => eventBridgeWorkloadEnvelopeSummary(ctx, event);
+    case "eventbridge_require_workload_envelope":
+      return async (ctx, event) => {
+        const summary = eventBridgeWorkloadEnvelopeSummary(ctx, event);
+        if (!summary.source || !summary.detail_type || !summary.correlation_id) {
+          throw new Error("apptheory: eventbridge workload envelope invalid");
+        }
+        return summary;
+      };
     default:
       return null;
   }
+}
+
+function eventBridgeWorkloadEnvelopeSummary(ctx, event) {
+  const detailType = String(event?.["detail-type"] ?? event?.detailType ?? "").trim();
+  const { correlationId, correlationSource } = eventBridgeCorrelationId(ctx, event);
+  return {
+    account: String(event?.account ?? "").trim(),
+    correlation_id: correlationId,
+    correlation_source: correlationSource,
+    detail_type: detailType,
+    event_id: String(event?.id ?? "").trim(),
+    region: String(event?.region ?? "").trim(),
+    request_id: String(ctx?.requestId ?? "").trim(),
+    resources: Array.isArray(event?.resources) ? event.resources.map((resource) => String(resource)) : [],
+    source: String(event?.source ?? "").trim(),
+    time: String(event?.time ?? "").trim(),
+  };
+}
+
+function eventBridgeCorrelationId(ctx, event) {
+  const metadataCorrelation = objectString(event?.metadata, "correlation_id");
+  if (metadataCorrelation) {
+    return { correlationId: metadataCorrelation, correlationSource: "metadata.correlation_id" };
+  }
+
+  const headerCorrelation = headerString(event?.headers, "x-correlation-id");
+  if (headerCorrelation) {
+    return { correlationId: headerCorrelation, correlationSource: "headers.x-correlation-id" };
+  }
+
+  const detailCorrelation = objectString(event?.detail, "correlation_id");
+  if (detailCorrelation) {
+    return { correlationId: detailCorrelation, correlationSource: "detail.correlation_id" };
+  }
+
+  const eventId = String(event?.id ?? "").trim();
+  if (eventId) {
+    return { correlationId: eventId, correlationSource: "event.id" };
+  }
+
+  const requestId = String(ctx?.ctx?.awsRequestId ?? "").trim();
+  if (requestId) {
+    return { correlationId: requestId, correlationSource: "lambda.aws_request_id" };
+  }
+
+  return { correlationId: "", correlationSource: "" };
+}
+
+function objectString(object, key) {
+  if (!object || typeof object !== "object" || Array.isArray(object)) return "";
+  return String(object[key] ?? "").trim();
+}
+
+function headerString(headers, key) {
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) return "";
+  const wanted = String(key ?? "").trim().toLowerCase();
+  for (const [name, value] of Object.entries(headers)) {
+    if (String(name).trim().toLowerCase() !== wanted) continue;
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const candidate = String(entry ?? "").trim();
+        if (candidate) return candidate;
+      }
+      return "";
+    }
+    return String(value ?? "").trim();
+  }
+  return "";
+}
+
+function fixtureLambdaContext(inputContext) {
+  const ctx = {};
+  const requestId = String(inputContext?.aws_request_id ?? "").trim();
+  const remainingMs = Number(inputContext?.remaining_ms ?? 0);
+  if (requestId) ctx.awsRequestId = requestId;
+  if (Number.isFinite(remainingMs) && remainingMs > 0) {
+    ctx.remaining_ms = Math.floor(remainingMs);
+  }
+  return ctx;
 }
 
 function builtInEventMiddleware(name) {
@@ -1194,7 +1283,7 @@ async function runFixtureM1(fixture) {
   let actualOutput = null;
   let actualError = null;
   try {
-    actualOutput = await app.handleLambda(awsEvent.event ?? {}, {});
+    actualOutput = await app.handleLambda(awsEvent.event ?? {}, fixtureLambdaContext(fixture.input?.context ?? {}));
   } catch (err) {
     actualError = err;
   }
@@ -1943,7 +2032,7 @@ async function runFixtureP2Output(fixture) {
   let actualOutput = null;
   let actualError = null;
   try {
-    actualOutput = await app.handleLambda(awsEvent.event ?? {}, {});
+    actualOutput = await app.handleLambda(awsEvent.event ?? {}, fixtureLambdaContext(fixture.input?.context ?? {}));
   } catch (err) {
     actualError = err;
   }
