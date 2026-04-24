@@ -1,0 +1,60 @@
+{
+  "id": "m1.eventbridge.workload_envelope_correlation_metadata",
+  "tier": "m1",
+  "name": "EventBridge workload envelope: metadata correlation wins",
+  "setup": {
+    "eventbridge": [
+      {
+        "source": "apptheory.release",
+        "detail_type": "release.started",
+        "handler": "eventbridge_workload_envelope"
+      }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "eventbridge",
+      "event": {
+        "version": "0",
+        "id": "evt-metadata",
+        "detail-type": "release.started",
+        "source": "apptheory.release",
+        "account": "000000000000",
+        "time": "2026-04-24T12:00:00Z",
+        "region": "us-east-1",
+        "resources": [
+          "arn:aws:events:us-east-1:000000000000:rule/release-control"
+        ],
+        "detail": {
+          "release_id": "rel_123",
+          "correlation_id": "corr-detail"
+        },
+        "metadata": {
+          "correlation_id": "corr-metadata"
+        },
+        "headers": {
+          "x-correlation-id": "corr-header"
+        }
+      }
+    },
+    "context": {
+      "aws_request_id": "aws-req-metadata"
+    }
+  },
+  "expect": {
+    "output_json": {
+      "account": "000000000000",
+      "correlation_id": "corr-metadata",
+      "correlation_source": "metadata.correlation_id",
+      "detail_type": "release.started",
+      "event_id": "evt-metadata",
+      "region": "us-east-1",
+      "request_id": "aws-req-metadata",
+      "resources": [
+        "arn:aws:events:us-east-1:000000000000:rule/release-control"
+      ],
+      "source": "apptheory.release",
+      "time": "2026-04-24T12:00:00Z"
+    }
+  }
+}

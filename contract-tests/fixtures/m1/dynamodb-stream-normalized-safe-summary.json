@@ -1,0 +1,65 @@
+{
+  "id": "m1.dynamodb_stream.normalized_safe_summary",
+  "tier": "m1",
+  "name": "DynamoDB Streams: normalized safe record summary excludes raw images",
+  "setup": {
+    "dynamodb": [
+      {
+        "table": "ReleaseState",
+        "handler": "ddb_require_normalized_summary"
+      }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "dynamodb_streams",
+      "event": {
+        "Records": [
+          {
+            "eventID": "stream-evt-1",
+            "eventName": "MODIFY",
+            "eventVersion": "1.1",
+            "eventSource": "aws:dynamodb",
+            "awsRegion": "us-east-1",
+            "dynamodb": {
+              "ApproximateCreationDateTime": 1777032000,
+              "Keys": {
+                "pk": {
+                  "S": "release#rel_123"
+                },
+                "sk": {
+                  "S": "state"
+                }
+              },
+              "NewImage": {
+                "pk": {
+                  "S": "release#rel_123"
+                },
+                "secret": {
+                  "S": "do-not-log"
+                }
+              },
+              "OldImage": {
+                "pk": {
+                  "S": "release#rel_123"
+                },
+                "secret": {
+                  "S": "previous-secret"
+                }
+              },
+              "SequenceNumber": "000000000000000001",
+              "SizeBytes": 128,
+              "StreamViewType": "NEW_AND_OLD_IMAGES"
+            },
+            "eventSourceARN": "arn:aws:dynamodb:us-east-1:000000000000:table/ReleaseState/stream/2026-04-24T12:00:00.000"
+          }
+        ]
+      }
+    }
+  },
+  "expect": {
+    "output_json": {
+      "batchItemFailures": []
+    }
+  }
+}

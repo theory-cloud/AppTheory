@@ -1,0 +1,56 @@
+{
+  "id": "m1.eventbridge.scheduled_summary_event_id_fallback",
+  "tier": "m1",
+  "name": "EventBridge scheduled workload: event id run/idempotency fallback",
+  "setup": {
+    "eventbridge": [
+      {
+        "source": "aws.events",
+        "detail_type": "Scheduled Event",
+        "handler": "eventbridge_scheduled_summary"
+      }
+    ]
+  },
+  "input": {
+    "context": {
+      "aws_request_id": "aws-req-schedule-fallback",
+      "remaining_ms": 1
+    },
+    "aws_event": {
+      "source": "eventbridge",
+      "event": {
+        "version": "0",
+        "id": "sched-evt-fallback",
+        "detail-type": "Scheduled Event",
+        "source": "aws.events",
+        "account": "000000000000",
+        "time": "2026-04-24T12:00:00Z",
+        "region": "us-east-1",
+        "resources": [
+          "arn:aws:events:us-east-1:000000000000:rule/release-control-schedule"
+        ],
+        "detail": {}
+      }
+    }
+  },
+  "expect": {
+    "output_json": {
+      "correlation_id": "sched-evt-fallback",
+      "correlation_source": "event.id",
+      "deadline_unix_ms": 1,
+      "detail_type": "Scheduled Event",
+      "event_id": "sched-evt-fallback",
+      "idempotency_key": "eventbridge:sched-evt-fallback",
+      "kind": "scheduled",
+      "remaining_ms": 1,
+      "result": {
+        "status": "ok",
+        "processed": 0,
+        "failed": 0
+      },
+      "run_id": "sched-evt-fallback",
+      "scheduled_time": "2026-04-24T12:00:00Z",
+      "source": "aws.events"
+    }
+  }
+}
