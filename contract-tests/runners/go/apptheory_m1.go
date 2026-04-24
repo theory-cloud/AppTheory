@@ -338,7 +338,11 @@ func requireDynamoDBSafeSummary(record events.DynamoDBEventRecord, failOnRemove 
 			return fmt.Errorf("missing normalized dynamodb %s", key)
 		}
 	}
-	if rawLog := strings.TrimSpace(asString(summary["safe_log"])); rawLog == "" || strings.Contains(rawLog, "do-not-log") {
+	if rawLog := strings.TrimSpace(asString(summary["safe_log"])); rawLog == "" || containsAny(rawLog, []string{
+		"release#rel_123",
+		"do-not-log",
+		"previous-secret",
+	}) {
 		return errors.New("unsafe dynamodb stream summary")
 	}
 	if failOnRemove && strings.TrimSpace(record.EventName) == dynamoDBEventNameRemove {
@@ -348,37 +352,17 @@ func requireDynamoDBSafeSummary(record events.DynamoDBEventRecord, failOnRemove 
 }
 
 func dynamoDBSafeSummary(record events.DynamoDBEventRecord) map[string]any {
-	tableName := dynamoDBFixtureTableNameFromStreamARN(record.EventSourceArn)
-	sequenceNumber := strings.TrimSpace(record.Change.SequenceNumber)
-	eventID := strings.TrimSpace(record.EventID)
-	eventName := strings.TrimSpace(record.EventName)
+	summary := apptheory.NormalizeDynamoDBStreamRecord(record)
 	return map[string]any{
-		"aws_region":       strings.TrimSpace(record.AWSRegion),
-		"event_id":         eventID,
-		"event_name":       eventName,
-		"safe_log":         fmt.Sprintf("table=%s event_id=%s event_name=%s sequence_number=%s", tableName, eventID, eventName, sequenceNumber),
-		"sequence_number":  sequenceNumber,
-		"size_bytes":       int(record.Change.SizeBytes),
-		"stream_view_type": strings.TrimSpace(record.Change.StreamViewType),
-		"table_name":       tableName,
+		"aws_region":       summary.AWSRegion,
+		"event_id":         summary.EventID,
+		"event_name":       summary.EventName,
+		"safe_log":         summary.SafeLog,
+		"sequence_number":  summary.SequenceNumber,
+		"size_bytes":       int(summary.SizeBytes),
+		"stream_view_type": summary.StreamViewType,
+		"table_name":       summary.TableName,
 	}
-}
-
-func dynamoDBFixtureTableNameFromStreamARN(arn string) string {
-	arn = strings.TrimSpace(arn)
-	if arn == "" {
-		return ""
-	}
-	if _, after, ok := strings.Cut(arn, ":table/"); ok {
-		if table, _, ok := strings.Cut(after, "/stream/"); ok {
-			return table
-		}
-		if table, _, ok := strings.Cut(after, "/"); ok {
-			return table
-		}
-		return after
-	}
-	return ""
 }
 
 func builtInEventBridgeHandler(name string, rawInput ...any) apptheory.EventBridgeHandler {
@@ -648,6 +632,15 @@ func rawHeaderString(headers map[string]any, key string) string {
 		}
 	}
 	return ""
+}
+
+func containsAny(value string, sentinels []string) bool {
+	for _, sentinel := range sentinels {
+		if sentinel != "" && strings.Contains(value, sentinel) {
+			return true
+		}
+	}
+	return false
 }
 
 func asString(value any) string {

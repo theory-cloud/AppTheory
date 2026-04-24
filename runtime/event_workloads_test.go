@@ -3,6 +3,7 @@ package apptheory
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,5 +104,39 @@ func TestNormalizeEventBridgeScheduledWorkload_BuildsDeterministicSummary(t *tes
 	}
 	if summary.Result.Status != "ok" || summary.Result.Processed != 3 || summary.Result.Failed != 1 {
 		t.Fatalf("unexpected result summary: %#v", summary.Result)
+	}
+}
+
+func TestNormalizeDynamoDBStreamRecord_ExcludesRawImagesFromSafeLog(t *testing.T) {
+	t.Parallel()
+
+	summary := NormalizeDynamoDBStreamRecord(events.DynamoDBEventRecord{
+		AWSRegion:      "us-east-1",
+		EventID:        "stream-evt-1",
+		EventName:      "MODIFY",
+		EventSourceArn: "arn:aws:dynamodb:us-east-1:000000000000:table/ReleaseState/stream/2026-04-24T12:00:00.000",
+		Change: events.DynamoDBStreamRecord{
+			Keys: map[string]events.DynamoDBAttributeValue{
+				"pk": events.NewStringAttribute("release#rel_123"),
+			},
+			NewImage: map[string]events.DynamoDBAttributeValue{
+				"secret": events.NewStringAttribute("do-not-log"),
+			},
+			OldImage: map[string]events.DynamoDBAttributeValue{
+				"secret": events.NewStringAttribute("previous-secret"),
+			},
+			SequenceNumber: "000000000000000001",
+			SizeBytes:      128,
+			StreamViewType: "NEW_AND_OLD_IMAGES",
+		},
+	})
+
+	if summary.TableName != "ReleaseState" || summary.SequenceNumber != "000000000000000001" {
+		t.Fatalf("unexpected normalized summary: %#v", summary)
+	}
+	for _, sentinel := range []string{"release#rel_123", "do-not-log", "previous-secret"} {
+		if strings.Contains(summary.SafeLog, sentinel) {
+			t.Fatalf("safe log leaked sentinel %q: %q", sentinel, summary.SafeLog)
+		}
 	}
 }
