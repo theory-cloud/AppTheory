@@ -97,6 +97,18 @@ DynamoDB stream normalization fixtures keep the runtime contract on the partial-
 
 The partial-failure fixture intentionally fails only the `REMOVE` record after summary validation, proving the existing per-record retry behavior remains intact while the normalized summary contract grows.
 
+
+## M1 non-HTTP observability and safe error fixtures
+
+Non-HTTP observability fixtures use the existing `expect.logs`, `expect.metrics`, and `expect.spans` fixture fields for event workloads. Event log records keep the HTTP fields present but empty/zero and add event dimensions for the non-HTTP trigger:
+
+- EventBridge effects include `trigger = "eventbridge"`, `correlation_id`, `source`, and `detail_type`.
+- DynamoDB Streams effects include `trigger = "dynamodb_stream"`, `correlation_id` (the stream `eventID`), `table_name`, `event_id`, and `event_name`.
+- Metrics use the portable name `apptheory.event` with tags for `trigger`, correlation identity, outcome, and error code.
+- Spans use trigger-specific names and attributes; raw event details, DynamoDB keys, and image values are not emitted.
+
+The safe-panic fixture pins the posture for non-HTTP handler panics/errors: observability records carry `error_code = "app.internal"`, while the surfaced error is the safe message `apptheory: event workload failed`.
+
 ## Bytes in JSON
 
 Because JSON cannot carry raw bytes, fixtures encode request/response bodies as:
