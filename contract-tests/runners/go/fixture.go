@@ -147,14 +147,21 @@ type FixtureLimits struct {
 }
 
 type FixtureLogRecord struct {
-	Level     string `json:"level"`
-	Event     string `json:"event"`
-	RequestID string `json:"request_id"`
-	TenantID  string `json:"tenant_id"`
-	Method    string `json:"method"`
-	Path      string `json:"path"`
-	Status    int    `json:"status"`
-	ErrorCode string `json:"error_code"`
+	Level         string `json:"level"`
+	Event         string `json:"event"`
+	RequestID     string `json:"request_id"`
+	TenantID      string `json:"tenant_id"`
+	Method        string `json:"method"`
+	Path          string `json:"path"`
+	Status        int    `json:"status"`
+	ErrorCode     string `json:"error_code"`
+	Trigger       string `json:"trigger,omitempty"`
+	CorrelationID string `json:"correlation_id,omitempty"`
+	Source        string `json:"source,omitempty"`
+	DetailType    string `json:"detail_type,omitempty"`
+	TableName     string `json:"table_name,omitempty"`
+	EventID       string `json:"event_id,omitempty"`
+	EventName     string `json:"event_name,omitempty"`
 }
 
 type FixtureMetricRecord struct {

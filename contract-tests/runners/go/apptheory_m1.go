@@ -14,8 +14,11 @@ import (
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
+const dynamoDBEventNameRemove = "REMOVE"
+
 func runFixtureM1(f Fixture) error {
 	now := time.Unix(0, 0).UTC()
+	effects := &fixtureM1Effects{}
 	app := apptheory.New(
 		apptheory.WithTier(apptheory.TierP0),
 		apptheory.WithClock(fixedClock{now: now}),
@@ -59,7 +62,7 @@ func runFixtureM1(f Fixture) error {
 
 	for _, r := range f.Setup.DynamoDB {
 		table := strings.TrimSpace(r.Table)
-		handler := builtInDynamoDBStreamHandler(r.Handler)
+		handler := builtInDynamoDBStreamHandler(r.Handler, effects)
 		if handler == nil {
 			return fmt.Errorf("unknown dynamodb handler %q", r.Handler)
 		}
@@ -67,7 +70,7 @@ func runFixtureM1(f Fixture) error {
 	}
 
 	for _, r := range f.Setup.EventBridge {
-		handler := builtInEventBridgeHandler(r.Handler, f.Input.AWSEvent.Event)
+		handler := builtInEventBridgeHandler(r.Handler, f.Input.AWSEvent.Event, effects)
 		if handler == nil {
 			return fmt.Errorf("unknown eventbridge handler %q", r.Handler)
 		}
@@ -89,7 +92,7 @@ func runFixtureM1(f Fixture) error {
 	}
 
 	out, err := app.HandleLambda(ctx, f.Input.AWSEvent.Event)
-	return compareFixtureM1Result(f, out, err)
+	return compareFixtureM1Result(f, out, err, effects)
 }
 
 func builtInM1EventMiddleware(name string) apptheory.EventMiddleware {
@@ -147,7 +150,18 @@ func compareFixtureOutputJSON(f Fixture, out any) error {
 	return nil
 }
 
-func compareFixtureM1Result(f Fixture, out any, runErr error) error {
+type fixtureM1Effects struct {
+	logs    []FixtureLogRecord
+	metrics []FixtureMetricRecord
+	spans   []FixtureSpanRecord
+}
+
+func compareFixtureM1Result(f Fixture, out any, runErr error, effectInputs ...*fixtureM1Effects) error {
+	effects := &fixtureM1Effects{}
+	if len(effectInputs) > 0 && effectInputs[0] != nil {
+		effects = effectInputs[0]
+	}
+
 	if f.Expect.Error != nil {
 		if len(f.Expect.Output) != 0 {
 			return errors.New("fixture expect cannot set both error and output_json")
@@ -159,7 +173,7 @@ func compareFixtureM1Result(f Fixture, out any, runErr error) error {
 		if expected != "" && strings.TrimSpace(runErr.Error()) != expected {
 			return fmt.Errorf("error message mismatch: expected %q, got %q", expected, runErr.Error())
 		}
-		return nil
+		return compareFixtureM1SideEffectsIfExpected(f, effects)
 	}
 	if len(f.Expect.Output) == 0 {
 		return errors.New("fixture missing expect.output_json or expect.error")
@@ -167,7 +181,20 @@ func compareFixtureM1Result(f Fixture, out any, runErr error) error {
 	if runErr != nil {
 		return runErr
 	}
-	return compareFixtureOutputJSON(f, out)
+	if err := compareFixtureOutputJSON(f, out); err != nil {
+		return err
+	}
+	return compareFixtureM1SideEffectsIfExpected(f, effects)
+}
+
+func compareFixtureM1SideEffectsIfExpected(f Fixture, effects *fixtureM1Effects) error {
+	if f.Expect.Logs == nil && f.Expect.Metrics == nil && f.Expect.Spans == nil {
+		return nil
+	}
+	if effects == nil {
+		effects = &fixtureM1Effects{}
+	}
+	return compareFixtureSideEffects(f.Expect, effects.logs, effects.metrics, effects.spans)
 }
 
 func builtInRecordHandler[T any](
@@ -260,7 +287,8 @@ func builtInSNSHandler(name string) apptheory.SNSHandler {
 	return apptheory.SNSHandler(handler)
 }
 
-func builtInDynamoDBStreamHandler(name string) apptheory.DynamoDBStreamHandler {
+func builtInDynamoDBStreamHandler(name string, effectsInput ...*fixtureM1Effects) apptheory.DynamoDBStreamHandler {
+	effects := firstM1Effects(effectsInput...)
 	switch strings.TrimSpace(name) {
 	case "ddb_requires_event_middleware":
 		return func(ctx *apptheory.EventContext, _ events.DynamoDBEventRecord) error {
@@ -274,6 +302,18 @@ func builtInDynamoDBStreamHandler(name string) apptheory.DynamoDBStreamHandler {
 		return func(_ *apptheory.EventContext, record events.DynamoDBEventRecord) error {
 			return requireDynamoDBSafeSummary(record, true)
 		}
+	case "ddb_observed_fail_on_remove":
+		return func(ctx *apptheory.EventContext, record events.DynamoDBEventRecord) error {
+			if err := requireDynamoDBSafeSummary(record, false); err != nil {
+				return err
+			}
+			if strings.TrimSpace(record.EventName) == dynamoDBEventNameRemove {
+				recordDynamoDBEffects(effects, ctx, record, "error", "error", "app.internal")
+				return errors.New("fail")
+			}
+			recordDynamoDBEffects(effects, ctx, record, "info", "success", "")
+			return nil
+		}
 	}
 
 	handler := builtInRecordHandler[events.DynamoDBEventRecord](
@@ -281,7 +321,9 @@ func builtInDynamoDBStreamHandler(name string) apptheory.DynamoDBStreamHandler {
 		"ddb_noop",
 		"ddb_always_fail",
 		"ddb_fail_on_event_name_remove",
-		func(record events.DynamoDBEventRecord) bool { return strings.TrimSpace(record.EventName) == "REMOVE" },
+		func(record events.DynamoDBEventRecord) bool {
+			return strings.TrimSpace(record.EventName) == dynamoDBEventNameRemove
+		},
 	)
 	if handler == nil {
 		return nil
@@ -299,7 +341,7 @@ func requireDynamoDBSafeSummary(record events.DynamoDBEventRecord, failOnRemove 
 	if rawLog := strings.TrimSpace(asString(summary["safe_log"])); rawLog == "" || strings.Contains(rawLog, "do-not-log") {
 		return errors.New("unsafe dynamodb stream summary")
 	}
-	if failOnRemove && strings.TrimSpace(record.EventName) == "REMOVE" {
+	if failOnRemove && strings.TrimSpace(record.EventName) == dynamoDBEventNameRemove {
 		return errors.New("fail")
 	}
 	return nil
@@ -339,10 +381,18 @@ func dynamoDBFixtureTableNameFromStreamARN(arn string) string {
 	return ""
 }
 
-func builtInEventBridgeHandler(name string, rawInput ...json.RawMessage) apptheory.EventBridgeHandler {
+func builtInEventBridgeHandler(name string, rawInput ...any) apptheory.EventBridgeHandler {
 	var raw json.RawMessage
+	effects := &fixtureM1Effects{}
 	if len(rawInput) > 0 {
-		raw = rawInput[0]
+		if value, ok := rawInput[0].(json.RawMessage); ok {
+			raw = value
+		}
+	}
+	if len(rawInput) > 1 {
+		if value, ok := rawInput[1].(*fixtureM1Effects); ok && value != nil {
+			effects = value
+		}
 	}
 	switch strings.TrimSpace(name) {
 	case "eventbridge_workload_envelope":
@@ -352,6 +402,18 @@ func builtInEventBridgeHandler(name string, rawInput ...json.RawMessage) apptheo
 	case "eventbridge_scheduled_summary":
 		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
 			return eventBridgeScheduledSummary(ctx, event, raw), nil
+		}
+	case "eventbridge_observed_success":
+		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
+			summary := eventBridgeWorkloadEnvelopeSummary(ctx, event, raw)
+			recordEventBridgeEffects(effects, ctx, summary, "info", "success", "")
+			return summary, nil
+		}
+	case "eventbridge_observed_panic":
+		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
+			summary := eventBridgeWorkloadEnvelopeSummary(ctx, event, raw)
+			recordEventBridgeEffects(effects, ctx, summary, "error", "error", "app.internal")
+			return nil, errors.New("apptheory: event workload failed")
 		}
 	case "eventbridge_require_workload_envelope":
 		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
@@ -370,6 +432,114 @@ func builtInEventBridgeHandler(name string, rawInput ...json.RawMessage) apptheo
 		}
 		return apptheory.EventBridgeHandler(handler)
 	}
+}
+
+func firstM1Effects(inputs ...*fixtureM1Effects) *fixtureM1Effects {
+	if len(inputs) > 0 && inputs[0] != nil {
+		return inputs[0]
+	}
+	return &fixtureM1Effects{}
+}
+
+func recordEventBridgeEffects(
+	effects *fixtureM1Effects,
+	ctx *apptheory.EventContext,
+	summary map[string]any,
+	level string,
+	outcome string,
+	errorCode string,
+) {
+	if effects == nil {
+		return
+	}
+	correlationID := asString(summary["correlation_id"])
+	source := asString(summary["source"])
+	detailType := asString(summary["detail_type"])
+	effects.logs = append(effects.logs, FixtureLogRecord{
+		Level:         level,
+		Event:         "event.completed",
+		RequestID:     ctxRequestID(ctx),
+		ErrorCode:     errorCode,
+		Trigger:       "eventbridge",
+		CorrelationID: correlationID,
+		Source:        source,
+		DetailType:    detailType,
+	})
+	effects.metrics = append(effects.metrics, FixtureMetricRecord{
+		Name:  "apptheory.event",
+		Value: 1,
+		Tags: map[string]string{
+			"correlation_id": correlationID,
+			"detail_type":    detailType,
+			"error_code":     errorCode,
+			"outcome":        outcome,
+			"source":         source,
+			"trigger":        "eventbridge",
+		},
+	})
+	effects.spans = append(effects.spans, FixtureSpanRecord{
+		Name: "eventbridge " + source + " " + detailType,
+		Attributes: map[string]string{
+			"correlation.id":    correlationID,
+			"event.detail_type": detailType,
+			"event.source":      source,
+			"error.code":        errorCode,
+			"outcome":           outcome,
+			"trigger":           "eventbridge",
+		},
+	})
+}
+
+func recordDynamoDBEffects(
+	effects *fixtureM1Effects,
+	ctx *apptheory.EventContext,
+	record events.DynamoDBEventRecord,
+	level string,
+	outcome string,
+	errorCode string,
+) {
+	if effects == nil {
+		return
+	}
+	summary := dynamoDBSafeSummary(record)
+	tableName := asString(summary["table_name"])
+	eventID := asString(summary["event_id"])
+	eventName := asString(summary["event_name"])
+	effects.logs = append(effects.logs, FixtureLogRecord{
+		Level:         level,
+		Event:         "event.completed",
+		RequestID:     ctxRequestID(ctx),
+		ErrorCode:     errorCode,
+		Trigger:       "dynamodb_stream",
+		CorrelationID: eventID,
+		TableName:     tableName,
+		EventID:       eventID,
+		EventName:     eventName,
+	})
+	effects.metrics = append(effects.metrics, FixtureMetricRecord{
+		Name:  "apptheory.event",
+		Value: 1,
+		Tags: map[string]string{
+			"correlation_id": eventID,
+			"error_code":     errorCode,
+			"event_name":     eventName,
+			"outcome":        outcome,
+			"table_name":     tableName,
+			"trigger":        "dynamodb_stream",
+		},
+	})
+	effects.spans = append(effects.spans, FixtureSpanRecord{
+		Name: "dynamodb_stream " + tableName + " " + eventName,
+		Attributes: map[string]string{
+			"correlation.id":      eventID,
+			"dynamodb.event_id":   eventID,
+			"dynamodb.event_name": eventName,
+			"dynamodb.table_name": tableName,
+			"error.code":          errorCode,
+			"outcome":             outcome,
+			"trigger":             "dynamodb_stream",
+		},
+	})
 }
 
 func fixtureM1LambdaContext(now time.Time, input FixtureContext) (context.Context, context.CancelFunc) {

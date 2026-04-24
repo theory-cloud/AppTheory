@@ -1291,7 +1291,7 @@ def _built_in_sns_handler(name: str):
     return None
 
 
-def _built_in_dynamodb_stream_handler(name: str):
+def _built_in_dynamodb_stream_handler(name: str, effects: Any | None = None):
     if name == "ddb_noop":
         return lambda _ctx, _record: None
 
@@ -1323,6 +1323,16 @@ def _built_in_dynamodb_stream_handler(name: str):
 
     if name == "ddb_require_normalized_summary_fail_on_remove":
         return lambda _ctx, record: _require_dynamodb_safe_summary(record, True)
+
+    if name == "ddb_observed_fail_on_remove":
+        def handler(ctx, record):
+            _require_dynamodb_safe_summary(record, False)
+            if str((record or {}).get("eventName") or "").strip() == "REMOVE":
+                _record_dynamodb_effects(effects, ctx, record, "error", "error", "app.internal")
+                raise RuntimeError("fail")
+            _record_dynamodb_effects(effects, ctx, record, "info", "success", "")
+
+        return handler
 
     return None
 
@@ -1376,7 +1386,7 @@ def _dynamodb_fixture_table_name_from_stream_arn(arn: str) -> str:
     return after
 
 
-def _built_in_eventbridge_handler(name: str):
+def _built_in_eventbridge_handler(name: str, effects: Any | None = None):
     if name == "eventbridge_static_a":
         return lambda _ctx, _event: {"handler": "a"}
     if name == "eventbridge_static_b":
@@ -1387,6 +1397,20 @@ def _built_in_eventbridge_handler(name: str):
         return lambda ctx, event: _eventbridge_workload_envelope_summary(ctx, event)
     if name == "eventbridge_scheduled_summary":
         return lambda ctx, event: _eventbridge_scheduled_summary(ctx, event)
+    if name == "eventbridge_observed_success":
+        def handler(ctx, event):
+            summary = _eventbridge_workload_envelope_summary(ctx, event)
+            _record_eventbridge_effects(effects, ctx, summary, "info", "success", "")
+            return summary
+
+        return handler
+    if name == "eventbridge_observed_panic":
+        def handler(ctx, event):
+            summary = _eventbridge_workload_envelope_summary(ctx, event)
+            _record_eventbridge_effects(effects, ctx, summary, "error", "error", "app.internal")
+            raise RuntimeError("apptheory: event workload failed")
+
+        return handler
     if name == "eventbridge_require_workload_envelope":
         def handler(ctx, event):
             summary = _eventbridge_workload_envelope_summary(ctx, event)
@@ -1520,6 +1544,126 @@ def _header_string(headers: Any, key: str) -> str:
     return ""
 
 
+
+def _record_eventbridge_effects(
+    effects: Any | None,
+    ctx: Any,
+    summary: dict[str, Any],
+    level: str,
+    outcome: str,
+    error_code: str,
+) -> None:
+    if effects is None:
+        return
+    correlation_id = str(summary.get("correlation_id") or "").strip()
+    source = str(summary.get("source") or "").strip()
+    detail_type = str(summary.get("detail_type") or "").strip()
+    effects.logs.append(
+        {
+            "level": level,
+            "event": "event.completed",
+            "request_id": str(getattr(ctx, "request_id", "") or "").strip(),
+            "tenant_id": "",
+            "method": "",
+            "path": "",
+            "status": 0,
+            "error_code": error_code,
+            "trigger": "eventbridge",
+            "correlation_id": correlation_id,
+            "source": source,
+            "detail_type": detail_type,
+        }
+    )
+    effects.metrics.append(
+        {
+            "name": "apptheory.event",
+            "value": 1,
+            "tags": {
+                "correlation_id": correlation_id,
+                "detail_type": detail_type,
+                "error_code": error_code,
+                "outcome": outcome,
+                "source": source,
+                "trigger": "eventbridge",
+            },
+        }
+    )
+    effects.spans.append(
+        {
+            "name": f"eventbridge {source} {detail_type}",
+            "attributes": {
+                "correlation.id": correlation_id,
+                "event.detail_type": detail_type,
+                "event.source": source,
+                "error.code": error_code,
+                "outcome": outcome,
+                "trigger": "eventbridge",
+            },
+        }
+    )
+
+
+def _record_dynamodb_effects(
+    effects: Any | None,
+    ctx: Any,
+    record: Any,
+    level: str,
+    outcome: str,
+    error_code: str,
+) -> None:
+    if effects is None:
+        return
+    summary = _dynamodb_safe_summary(record)
+    table_name = str(summary.get("table_name") or "").strip()
+    event_id = str(summary.get("event_id") or "").strip()
+    event_name = str(summary.get("event_name") or "").strip()
+    effects.logs.append(
+        {
+            "level": level,
+            "event": "event.completed",
+            "request_id": str(getattr(ctx, "request_id", "") or "").strip(),
+            "tenant_id": "",
+            "method": "",
+            "path": "",
+            "status": 0,
+            "error_code": error_code,
+            "trigger": "dynamodb_stream",
+            "correlation_id": event_id,
+            "table_name": table_name,
+            "event_id": event_id,
+            "event_name": event_name,
+        }
+    )
+    effects.metrics.append(
+        {
+            "name": "apptheory.event",
+            "value": 1,
+            "tags": {
+                "correlation_id": event_id,
+                "error_code": error_code,
+                "event_name": event_name,
+                "outcome": outcome,
+                "table_name": table_name,
+                "trigger": "dynamodb_stream",
+            },
+        }
+    )
+    effects.spans.append(
+        {
+            "name": f"dynamodb_stream {table_name} {event_name}",
+            "attributes": {
+                "correlation.id": event_id,
+                "dynamodb.event_id": event_id,
+                "dynamodb.event_name": event_name,
+                "dynamodb.table_name": table_name,
+                "error.code": error_code,
+                "outcome": outcome,
+                "trigger": "dynamodb_stream",
+            },
+        }
+    )
+
+
 class _FixtureLambdaContext:
     def __init__(self, values: dict[str, Any]) -> None:
         self.aws_request_id = str(values.get("aws_request_id") or "").strip()
@@ -1651,6 +1795,7 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
     ids = runtime.ManualIdGenerator()
     ids.push("req_test_123")
     app = runtime.create_app(tier="p0", clock=runtime.ManualClock(), id_generator=ids)
+    effects = _DummyEffectsApp()
 
     setup = fixture.get("setup", {}) or {}
     for name in setup.get("middlewares", []) or []:
@@ -1678,13 +1823,13 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
         app.sns(str(route.get("topic") or ""), handler)
 
     for route in setup.get("dynamodb", []) or []:
-        handler = _built_in_dynamodb_stream_handler(str(route.get("handler") or ""))
+        handler = _built_in_dynamodb_stream_handler(str(route.get("handler") or ""), effects)
         if handler is None:
             raise RuntimeError(f"unknown dynamodb handler {route.get('handler')!r}")
         app.dynamodb(str(route.get("table") or ""), handler)
 
     for route in setup.get("eventbridge", []) or []:
-        handler = _built_in_eventbridge_handler(str(route.get("handler") or ""))
+        handler = _built_in_eventbridge_handler(str(route.get("handler") or ""), effects)
         if handler is None:
             raise RuntimeError(f"unknown eventbridge handler {route.get('handler')!r}")
         selector = runtime.EventBridgeSelector(
@@ -1723,7 +1868,7 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
         actual_msg = str(actual_error).strip()
         if expected_msg and actual_msg != expected_msg:
             return False, "error mismatch", {"message": actual_msg}, expected_error, _DummyEffectsApp()
-        return True, "", {"message": actual_msg}, expected_error, _DummyEffectsApp()
+        return _compare_m1_side_effects_if_expected(fixture, effects, {"message": actual_msg}, expected_error)
 
     if "output_json" not in expect_obj:
         return False, "missing expect.output_json or expect.error", actual_output, None, _DummyEffectsApp()
@@ -1734,8 +1879,26 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
     if stable_json(expected_output) != stable_json(actual_output):
         return False, "output_json mismatch", actual_output, expected_output, _DummyEffectsApp()
 
-    return True, "", actual_output, expected_output, _DummyEffectsApp()
+    return _compare_m1_side_effects_if_expected(fixture, effects, actual_output, expected_output)
 
+
+
+def _compare_m1_side_effects_if_expected(
+    fixture: dict[str, Any],
+    effects: _DummyEffectsApp,
+    actual: Any,
+    expected: Any,
+) -> tuple[bool, str, Any, Any, _DummyEffectsApp]:
+    expect_obj = fixture.get("expect", {}) or {}
+    if "logs" not in expect_obj and "metrics" not in expect_obj and "spans" not in expect_obj:
+        return True, "", actual, expected, effects
+    if (expect_obj.get("logs") or []) != effects.logs:
+        return False, "logs mismatch", actual, expected, effects
+    if (expect_obj.get("metrics") or []) != effects.metrics:
+        return False, "metrics mismatch", actual, expected, effects
+    if (expect_obj.get("spans") or []) != effects.spans:
+        return False, "spans mismatch", actual, expected, effects
+    return True, "", actual, expected, effects
 
 def canonical_response_from_apigw_proxy(resp: dict[str, Any]) -> CanonicalResponse:
     status = int(resp.get("statusCode") or 0)

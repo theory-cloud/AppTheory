@@ -1,0 +1,99 @@
+{
+  "id": "m1.eventbridge.observability_success",
+  "tier": "m1",
+  "name": "EventBridge observability: success emits correlation-aware effects",
+  "setup": {
+    "eventbridge": [
+      {
+        "source": "apptheory.release",
+        "detail_type": "release.observed",
+        "handler": "eventbridge_observed_success"
+      }
+    ]
+  },
+  "input": {
+    "context": {
+      "aws_request_id": "aws-req-observed"
+    },
+    "aws_event": {
+      "source": "eventbridge",
+      "event": {
+        "version": "0",
+        "id": "evt-observed",
+        "detail-type": "release.observed",
+        "source": "apptheory.release",
+        "account": "000000000000",
+        "time": "2026-04-24T12:00:00Z",
+        "region": "us-east-1",
+        "resources": [
+          "arn:aws:events:us-east-1:000000000000:rule/release-observed"
+        ],
+        "detail": {
+          "release_id": "rel_123"
+        },
+        "metadata": {
+          "correlation_id": "corr-observed"
+        }
+      }
+    }
+  },
+  "expect": {
+    "output_json": {
+      "account": "000000000000",
+      "correlation_id": "corr-observed",
+      "correlation_source": "metadata.correlation_id",
+      "detail_type": "release.observed",
+      "event_id": "evt-observed",
+      "region": "us-east-1",
+      "request_id": "aws-req-observed",
+      "resources": [
+        "arn:aws:events:us-east-1:000000000000:rule/release-observed"
+      ],
+      "source": "apptheory.release",
+      "time": "2026-04-24T12:00:00Z"
+    },
+    "logs": [
+      {
+        "level": "info",
+        "event": "event.completed",
+        "request_id": "aws-req-observed",
+        "tenant_id": "",
+        "method": "",
+        "path": "",
+        "status": 0,
+        "error_code": "",
+        "trigger": "eventbridge",
+        "correlation_id": "corr-observed",
+        "source": "apptheory.release",
+        "detail_type": "release.observed"
+      }
+    ],
+    "metrics": [
+      {
+        "name": "apptheory.event",
+        "value": 1,
+        "tags": {
+          "correlation_id": "corr-observed",
+          "detail_type": "release.observed",
+          "error_code": "",
+          "outcome": "success",
+          "source": "apptheory.release",
+          "trigger": "eventbridge"
+        }
+      }
+    ],
+    "spans": [
+      {
+        "name": "eventbridge apptheory.release release.observed",
+        "attributes": {
+          "correlation.id": "corr-observed",
+          "event.detail_type": "release.observed",
+          "event.source": "apptheory.release",
+          "error.code": "",
+          "outcome": "success",
+          "trigger": "eventbridge"
+        }
+      }
+    ]
+  }
+}
