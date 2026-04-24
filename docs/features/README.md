@@ -10,6 +10,7 @@ contract.
 
 - [Sanitization](./sanitization.md)
 - [Jobs Ledger](./jobs-ledger.md)
+- [Event Workload Contracts](./event-workloads.md)
 
 ## Boundary
 
