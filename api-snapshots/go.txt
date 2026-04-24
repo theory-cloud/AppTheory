@@ -1498,6 +1498,14 @@ type LogRecord struct {
 	Path      string
 	Status    int
 	ErrorCode string
+
+	Trigger       string
+	CorrelationID string
+	Source        string
+	DetailType    string
+	TableName     string
+	EventID       string
+	EventName     string
 }
 
 type MetricRecord struct {
@@ -1899,6 +1907,8 @@ func (*WebSocketContext) SendMessage([]byte) error
 func (RandomIDGenerator) NewID() string
 
 func (RealClock) Now() time.Time
+
+func (safeEventError) Error() string
 
 ## github.com/theory-cloud/apptheory/runtime/mcp
 

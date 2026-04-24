@@ -576,7 +576,7 @@ func (a *App) ServeEventBridge(ctx context.Context, event events.EventBridgeEven
 	return a.serveEventBridge(ctx, event, nil)
 }
 
-func (a *App) serveEventBridge(ctx context.Context, event events.EventBridgeEvent, raw json.RawMessage) (any, error) {
+func (a *App) serveEventBridge(ctx context.Context, event events.EventBridgeEvent, raw json.RawMessage) (out any, err error) {
 	handler := a.eventBridgeHandlerForEvent(event)
 	if handler == nil {
 		return nil, nil
@@ -584,6 +584,22 @@ func (a *App) serveEventBridge(ctx context.Context, event events.EventBridgeEven
 
 	evtCtx := a.eventContext(ctx)
 	evtCtx.rawEvent = append(json.RawMessage(nil), raw...)
+	observation := eventBridgeObservation(evtCtx, event)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			out = nil
+			err = eventWorkloadFailedError()
+			a.recordEventObservability(observation, "error", "app.internal")
+			return
+		}
+		if err != nil {
+			err = sanitizeEventWorkloadError(err)
+			a.recordEventObservability(observation, "error", "app.internal")
+			return
+		}
+		a.recordEventObservability(observation, "success", "")
+	}()
+
 	if a != nil && len(a.eventMiddlewares) > 0 {
 		original := handler
 		wrapped := a.applyEventMiddlewares(func(ctx *EventContext, event any) (any, error) {
@@ -664,7 +680,41 @@ var dynamoDBBatchSpec = newBatchEventSpec[events.DynamoDBEventRecord, events.Dyn
 //
 // If the table is unrecognized, it fails closed by returning all records as failures.
 func (a *App) ServeDynamoDBStream(ctx context.Context, event events.DynamoDBEvent) events.DynamoDBEventResponse {
-	return serveBatchEvent(ctx, a, event.Records, a.dynamoDBHandlerForEvent(event), dynamoDBBatchSpec)
+	handler := a.dynamoDBHandlerForEvent(event)
+	handler = wrapEventRecordHandler(a, handler, dynamoDBBatchSpec.coerce, dynamoDBBatchSpec.invalidTypeError)
+
+	evtCtx := a.eventContext(ctx)
+	failures := make([]events.DynamoDBBatchItemFailure, 0, len(event.Records))
+	for _, record := range event.Records {
+		recordCtx := evtCtx.cloneForRecord()
+		err := runDynamoDBStreamRecordHandler(recordCtx, record, handler)
+		if err != nil {
+			id := strings.TrimSpace(dynamoDBBatchSpec.recordID(record))
+			if id != "" {
+				failures = append(failures, dynamoDBBatchSpec.failureForID(id))
+			}
+			a.recordEventObservability(dynamoDBStreamObservation(recordCtx, record), "error", "app.internal")
+			continue
+		}
+		a.recordEventObservability(dynamoDBStreamObservation(recordCtx, record), "success", "")
+	}
+	return dynamoDBBatchSpec.responseForFailures(failures)
+}
+
+func runDynamoDBStreamRecordHandler(
+	ctx *EventContext,
+	record events.DynamoDBEventRecord,
+	handler func(*EventContext, events.DynamoDBEventRecord) error,
+) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = eventWorkloadFailedError()
+		}
+	}()
+	if handler == nil {
+		return eventWorkloadFailedError()
+	}
+	return handler(ctx, record)
 }
 
 type lambdaEnvelope struct {
