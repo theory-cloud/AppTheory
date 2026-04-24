@@ -23,7 +23,8 @@ type EventContext struct {
 	RequestID   string
 	RemainingMS int
 
-	values map[string]any
+	rawEvent json.RawMessage
+	values   map[string]any
 }
 
 func (c *EventContext) cloneForRecord() *EventContext {
@@ -36,6 +37,7 @@ func (c *EventContext) cloneForRecord() *EventContext {
 		ids:         c.ids,
 		RequestID:   c.RequestID,
 		RemainingMS: c.RemainingMS,
+		rawEvent:    append(json.RawMessage(nil), c.rawEvent...),
 	}
 }
 
@@ -571,12 +573,17 @@ func (a *App) eventBridgeHandlerForEvent(event events.EventBridgeEvent) EventBri
 //
 // If no handler matches, it returns (nil, nil).
 func (a *App) ServeEventBridge(ctx context.Context, event events.EventBridgeEvent) (any, error) {
+	return a.serveEventBridge(ctx, event, nil)
+}
+
+func (a *App) serveEventBridge(ctx context.Context, event events.EventBridgeEvent, raw json.RawMessage) (any, error) {
 	handler := a.eventBridgeHandlerForEvent(event)
 	if handler == nil {
 		return nil, nil
 	}
 
 	evtCtx := a.eventContext(ctx)
+	evtCtx.rawEvent = append(json.RawMessage(nil), raw...)
 	if a != nil && len(a.eventMiddlewares) > 0 {
 		original := handler
 		wrapped := a.applyEventMiddlewares(func(ctx *EventContext, event any) (any, error) {
@@ -731,7 +738,7 @@ func (a *App) handleLambdaEventBridge(ctx context.Context, event json.RawMessage
 	if strings.TrimSpace(ev.DetailType) == "" && env.DetailTypeAlt != nil {
 		ev.DetailType = strings.TrimSpace(*env.DetailTypeAlt)
 	}
-	out, err := a.ServeEventBridge(ctx, ev)
+	out, err := a.serveEventBridge(ctx, ev, event)
 	return out, true, err
 }
 
