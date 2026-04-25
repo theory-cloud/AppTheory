@@ -166,7 +166,7 @@ class AppTheoryMcpServer extends constructs_1.Construct {
 }
 exports.AppTheoryMcpServer = AppTheoryMcpServer;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryMcpServer[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpServer", version: "1.0.0" };
+AppTheoryMcpServer[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMcpServer", version: "1.0.0-rc.2" };
 /**
  * Convert a domain name to a Route53 record name relative to the zone.
  */
