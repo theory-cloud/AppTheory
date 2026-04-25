@@ -466,8 +466,8 @@ Planned:
 - End-to-end HTTP behavior matches expected client contracts (error codes/envelopes, CORS/auth behavior).
 - Rate limiting behavior matches `limited` semantics where used.
 - If your Go HTTP service relied on raw API keys or Bearer tokens appearing in rate-limit tables or dashboards,
-  update those expectations before cutover. AppTheory’s default `RateLimitMiddleware(...)` now hashes
-  credential-derived identifiers (`api_key:sha256:...` / `bearer:sha256:...`), which intentionally resets those
+  update those expectations before cutover. AppTheory’s default `RateLimitMiddleware(...)` now fingerprints
+  credential-derived identifiers (`api_key:hmac-sha256:...` / `bearer:hmac-sha256:...`), which intentionally resets those
   buckets and changes the observable identifier values.
 - Deploy templates updated (CDK/examples as needed).
 
