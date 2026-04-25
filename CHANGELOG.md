@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.0.0-rc.2](https://github.com/theory-cloud/AppTheory/compare/v1.0.0-rc.1...v1.0.0-rc.2) (2026-04-25)
+
+
+### Features
+
+* **examples:** add event workload reference handlers ([e7413b9](https://github.com/theory-cloud/AppTheory/commit/e7413b999124cb5d798cf7fe3bcd424ad576a29e))
+* **examples:** add event workload reference handlers ([8bc8aea](https://github.com/theory-cloud/AppTheory/commit/8bc8aeabd9fa4064d9d29f1e4393a292e93c817a))
+* **py:** add event workload helpers ([deeebc0](https://github.com/theory-cloud/AppTheory/commit/deeebc0f6439779471cc60a1286eadf60646876b))
+* **py:** add event workload observability ([56c3b62](https://github.com/theory-cloud/AppTheory/commit/56c3b623c30b32c8c2b95db2f9e419dc7d58f845))
+* **py:** add eventbridge workload envelopes ([8bb555f](https://github.com/theory-cloud/AppTheory/commit/8bb555f6f65928b2c425a01913dfe11ac8fe0dd3))
+* **py:** add scheduled workload helpers ([a8c9238](https://github.com/theory-cloud/AppTheory/commit/a8c92381944a8f4962f95d002bd6c667dc47e30d))
+* **py:** normalize dynamodb stream records ([2452ccf](https://github.com/theory-cloud/AppTheory/commit/2452ccffd157e52b41583f1cfdc9afe7732a417c))
+* **runtime:** add event workload observability ([006fb78](https://github.com/theory-cloud/AppTheory/commit/006fb78fe64c7042ee3e63cb6b29b00520561f0e))
+* **runtime:** add eventbridge workload envelopes ([45f7a30](https://github.com/theory-cloud/AppTheory/commit/45f7a306d09e722dc2d8d89d8730d84045b0cd12))
+* **runtime:** add go event workload helpers ([3ac7ffe](https://github.com/theory-cloud/AppTheory/commit/3ac7ffea455237bf90aa3e0b6192be99d8b9ff83))
+* **runtime:** add scheduled workload helpers ([f3280fa](https://github.com/theory-cloud/AppTheory/commit/f3280fa3e25c03f98be59743ad3ab006c502ddbf))
+* **runtime:** normalize dynamodb stream records ([583c11d](https://github.com/theory-cloud/AppTheory/commit/583c11d0bf821233246ba5b3cc33654fa5c2e39d))
+* **ts:** add event workload helpers ([495f556](https://github.com/theory-cloud/AppTheory/commit/495f5569f2d5c1fef4284ee7efd10374d359c342))
+* **ts:** add event workload observability ([d32f3a1](https://github.com/theory-cloud/AppTheory/commit/d32f3a1aac7eea3c493bb073d9fbbe41104117cf))
+* **ts:** add eventbridge workload envelopes ([dd3e153](https://github.com/theory-cloud/AppTheory/commit/dd3e153decda723ffd066ab9e1130d2ecfb80ef1))
+* **ts:** add scheduled workload helpers ([dd8a735](https://github.com/theory-cloud/AppTheory/commit/dd8a7358f8c7852ea9af6117cd5d09e3a7a85c0e))
+* **ts:** normalize dynamodb stream records ([21f3c14](https://github.com/theory-cloud/AppTheory/commit/21f3c1452907a52f2ce85fda086b7f19cdc4a8cf))
+
+
+### Bug Fixes
+
+* **runtime:** satisfy event observability lint ([05a6f1c](https://github.com/theory-cloud/AppTheory/commit/05a6f1c54209ed9001be5de3bfd1fda78342039d))
+* **security:** update dependencies and limiter fingerprints ([9ec5587](https://github.com/theory-cloud/AppTheory/commit/9ec55870a29b18baf18712c7eea194b2ec7cdf69))
+* **security:** update dependencies and limiter fingerprints ([37381e0](https://github.com/theory-cloud/AppTheory/commit/37381e02d0bb929478ce1f71b9b1d19996822d69))
+
 ## [1.0.0](https://github.com/theory-cloud/AppTheory/compare/v0.25.1...v1.0.0) (2026-04-23)
 
 
