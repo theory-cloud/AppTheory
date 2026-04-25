@@ -1,0 +1,53 @@
+{
+  "id": "m1.eventbridge.workload_envelope_correlation_aws_request_id",
+  "tier": "m1",
+  "name": "EventBridge workload envelope: Lambda request id correlation fallback",
+  "setup": {
+    "eventbridge": [
+      {
+        "source": "apptheory.release",
+        "detail_type": "release.started",
+        "handler": "eventbridge_workload_envelope"
+      }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "eventbridge",
+      "event": {
+        "version": "0",
+        "id": "",
+        "detail-type": "release.started",
+        "source": "apptheory.release",
+        "account": "000000000000",
+        "time": "2026-04-24T12:00:00Z",
+        "region": "us-east-1",
+        "resources": [
+          "arn:aws:events:us-east-1:000000000000:rule/release-control"
+        ],
+        "detail": {
+          "release_id": "rel_123"
+        }
+      }
+    },
+    "context": {
+      "aws_request_id": "aws-req-fallback"
+    }
+  },
+  "expect": {
+    "output_json": {
+      "account": "000000000000",
+      "correlation_id": "aws-req-fallback",
+      "correlation_source": "lambda.aws_request_id",
+      "detail_type": "release.started",
+      "event_id": "",
+      "region": "us-east-1",
+      "request_id": "aws-req-fallback",
+      "resources": [
+        "arn:aws:events:us-east-1:000000000000:rule/release-control"
+      ],
+      "source": "apptheory.release",
+      "time": "2026-04-24T12:00:00Z"
+    }
+  }
+}

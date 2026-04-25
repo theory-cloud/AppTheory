@@ -132,6 +132,35 @@ Fix:
 - route untyped events through `HandleLambda`, `handleLambda`, or `handle_lambda`
 - use the deterministic event builders in the test env when reproducing the failure
 
+
+## Issue: event workload logs include raw event details
+
+Symptoms:
+
+- EventBridge or DynamoDB stream logs include domain payloads, DynamoDB keys, or image values
+- correlation IDs differ across languages
+- retry diagnostics expose raw record data
+
+Cause:
+
+- the handler logged raw AWS events instead of the AppTheory event workload safe summary
+- the producer treated top-level EventBridge `headers` as AWS-native instead of an AppTheory portable envelope convention
+- idempotency was derived from an unstable execution ID instead of the event/run key
+
+Fix:
+
+- use the correlation precedence documented in `docs/features/event-workloads.md`
+- put producer-owned correlation in `detail.correlation_id` unless you are deliberately using an AppTheory portable envelope
+- for DynamoDB Streams, log only table name, event ID/name, sequence number, size, and stream view type
+- use scheduled workload `detail.idempotency_key` or the derived `eventbridge:<event.id>` / `lambda:<awsRequestId>` fallback before committing side effects
+
+Verification:
+
+```bash
+./scripts/verify-contract-tests.sh
+make rubric
+```
+
 ## Issue: Python build fails in CI but passes locally
 
 Symptoms:

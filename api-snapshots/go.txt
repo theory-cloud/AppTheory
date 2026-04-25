@@ -1402,12 +1402,57 @@ type Context struct {
 
 type DynamoDBStreamHandler func(*EventContext, events.DynamoDBEventRecord) error
 
+type DynamoDBStreamRecordSummary struct {
+	AWSRegion      string `json:"aws_region"`
+	EventID        string `json:"event_id"`
+	EventName      string `json:"event_name"`
+	SafeLog        string `json:"safe_log"`
+	SequenceNumber string `json:"sequence_number"`
+	SizeBytes      int64  `json:"size_bytes"`
+	StreamViewType string `json:"stream_view_type"`
+	TableName      string `json:"table_name"`
+}
+
 type EventBridgeHandler func(*EventContext, events.EventBridgeEvent) (any, error)
+
+type EventBridgeScheduledWorkloadResultSummary struct {
+	Failed    int    `json:"failed"`
+	Processed int    `json:"processed"`
+	Status    string `json:"status"`
+}
+
+type EventBridgeScheduledWorkloadSummary struct {
+	CorrelationID     string                                    `json:"correlation_id"`
+	CorrelationSource string                                    `json:"correlation_source"`
+	DeadlineUnixMS    int64                                     `json:"deadline_unix_ms"`
+	DetailType        string                                    `json:"detail_type"`
+	EventID           string                                    `json:"event_id"`
+	IdempotencyKey    string                                    `json:"idempotency_key"`
+	Kind              string                                    `json:"kind"`
+	RemainingMS       int                                       `json:"remaining_ms"`
+	Result            EventBridgeScheduledWorkloadResultSummary `json:"result"`
+	RunID             string                                    `json:"run_id"`
+	ScheduledTime     string                                    `json:"scheduled_time"`
+	Source            string                                    `json:"source"`
+}
 
 type EventBridgeSelector struct {
 	RuleName   string
 	Source     string
 	DetailType string
+}
+
+type EventBridgeWorkloadEnvelope struct {
+	Account           string   `json:"account"`
+	CorrelationID     string   `json:"correlation_id"`
+	CorrelationSource string   `json:"correlation_source"`
+	DetailType        string   `json:"detail_type"`
+	EventID           string   `json:"event_id"`
+	Region            string   `json:"region"`
+	RequestID         string   `json:"request_id"`
+	Resources         []string `json:"resources"`
+	Source            string   `json:"source"`
+	Time              string   `json:"time"`
 }
 
 type EventContext struct {
@@ -1419,7 +1464,8 @@ type EventContext struct {
 	RequestID   string
 	RemainingMS int
 
-	values map[string]any
+	rawEvent json.RawMessage
+	values   map[string]any
 }
 
 type EventHandler func(*EventContext, any) (any, error)
@@ -1452,6 +1498,14 @@ type LogRecord struct {
 	Path      string
 	Status    int
 	ErrorCode string
+
+	Trigger       string
+	CorrelationID string
+	Source        string
+	DetailType    string
+	TableName     string
+	EventID       string
+	EventName     string
 }
 
 type MetricRecord struct {
@@ -1635,6 +1689,18 @@ func NewAppTheoryError(string, string) *AppTheoryError
 
 func NoContent() *Response
 
+func NormalizeDynamoDBStreamRecord(events.DynamoDBEventRecord) DynamoDBStreamRecordSummary
+
+func NormalizeEventBridgeScheduledWorkload(
+	*EventContext,
+	events.EventBridgeEvent,
+) EventBridgeScheduledWorkloadSummary
+
+func NormalizeEventBridgeWorkloadEnvelope(
+	*EventContext,
+	events.EventBridgeEvent,
+) EventBridgeWorkloadEnvelope
+
 func OptionalAuth() RouteOption
 
 func OriginURL(map[string][]string) string
@@ -1648,6 +1714,11 @@ func RateLimitMiddleware(RateLimitConfig) Middleware
 func RequireAnyScope(...string) RouteOption
 
 func RequireAuth() RouteOption
+
+func RequireEventBridgeWorkloadEnvelope(
+	*EventContext,
+	events.EventBridgeEvent,
+) (EventBridgeWorkloadEnvelope, error)
 
 func RequireScope(...string) RouteOption
 
@@ -1836,6 +1907,8 @@ func (*WebSocketContext) SendMessage([]byte) error
 func (RandomIDGenerator) NewID() string
 
 func (RealClock) Now() time.Time
+
+func (safeEventError) Error() string
 
 ## github.com/theory-cloud/apptheory/runtime/mcp
 

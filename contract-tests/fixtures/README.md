@@ -51,6 +51,64 @@ Each fixture is a single JSON object.
 - `expect.metrics` (array, optional): expected metric emissions (portable subset).
 - `expect.spans` (array, optional): expected trace span emissions (portable subset).
 
+
+## M1 EventBridge workload envelope fixtures
+
+EventBridge workload fixtures pin the portable non-HTTP envelope before runtime helpers are exported. Runners must preserve the existing AppTheory dispatch path: an unmatched EventBridge event returns JSON `null`, not an alternate error path. Matching workload fixtures use these built-in runner handlers only to express the contract:
+
+- `eventbridge_workload_envelope`: returns a normalized, safe envelope summary containing `event_id`, `source`, `detail_type`, `account`, `region`, `time`, `resources`, `request_id`, `correlation_id`, and `correlation_source`.
+- `eventbridge_require_workload_envelope`: returns the same summary only when the workload envelope is valid; missing required envelope identity fails closed with `apptheory: eventbridge workload envelope invalid`.
+
+The canonical correlation precedence is:
+
+1. `event.metadata.correlation_id`
+2. `event.headers["x-correlation-id"]` (case-insensitive header name; scalar or first non-empty list value)
+3. `event.detail.correlation_id`
+4. EventBridge `event.id`
+5. Lambda context `awsRequestId` / fixture `input.context.aws_request_id`
+
+`input.context.aws_request_id` is the portable fixture spelling for a Lambda invocation request ID. It may be paired with `input.context.remaining_ms` when a non-HTTP fixture needs deterministic remaining-time behavior.
+
+
+## M1 scheduled workload fixtures
+
+Scheduled workload fixtures are EventBridge fixtures with `source = "aws.events"` and `detail-type = "Scheduled Event"`. The built-in runner handler `eventbridge_scheduled_summary` pins the portable result summary shape used by later runtime helpers:
+
+- `kind`: always `scheduled`.
+- `run_id`: `detail.run_id`, then EventBridge `id`, then Lambda `awsRequestId`.
+- `idempotency_key`: `detail.idempotency_key`, then `eventbridge:<event.id>`, then `lambda:<awsRequestId>`.
+- `correlation_id` / `correlation_source`: the EventBridge workload precedence above.
+- `remaining_ms`: the portable remaining invocation time from `input.context.remaining_ms`.
+- `deadline_unix_ms`: fixed runner clock (`1970-01-01T00:00:00Z`) plus `remaining_ms`, or `0` when no remaining time is available.
+- `result`: a structured object with `status`, `processed`, and `failed`; missing counts default to `0`, and missing status defaults to `ok`.
+
+
+## M1 DynamoDB Streams normalization fixtures
+
+DynamoDB stream normalization fixtures keep the runtime contract on the partial-batch response path while pinning the safe record summary a handler must be able to derive. The runner-only handlers `ddb_require_normalized_summary` and `ddb_require_normalized_summary_fail_on_remove` validate these portable fields for each record before returning the normal DynamoDB `batchItemFailures` response:
+
+- `table_name`: parsed from `eventSourceARN`.
+- `event_id`: `eventID`.
+- `event_name`: `eventName`.
+- `sequence_number`: `dynamodb.SequenceNumber`.
+- `size_bytes`: `dynamodb.SizeBytes`.
+- `stream_view_type`: `dynamodb.StreamViewType`.
+- `safe_log`: a summary composed only from table/event/sequence metadata; raw `Keys`, `NewImage`, and `OldImage` values are not included.
+
+The partial-failure fixture intentionally fails only the `REMOVE` record after summary validation, proving the existing per-record retry behavior remains intact while the normalized summary contract grows.
+
+
+## M1 non-HTTP observability and safe error fixtures
+
+Non-HTTP observability fixtures use the existing `expect.logs`, `expect.metrics`, and `expect.spans` fixture fields for event workloads. Event log records keep the HTTP fields present but empty/zero and add event dimensions for the non-HTTP trigger:
+
+- EventBridge effects include `trigger = "eventbridge"`, `correlation_id`, `source`, and `detail_type`.
+- DynamoDB Streams effects include `trigger = "dynamodb_stream"`, `correlation_id` (the stream `eventID`), `table_name`, `event_id`, and `event_name`.
+- Metrics use the portable name `apptheory.event` with tags for `trigger`, correlation identity, outcome, and error code.
+- Spans use trigger-specific names and attributes; raw event details, DynamoDB keys, and image values are not emitted.
+
+The safe-panic fixture pins the posture for non-HTTP handler panics/errors: observability records carry `error_code = "app.internal"`, while the surfaced error is the safe message `apptheory: event workload failed`.
+
 ## Bytes in JSON
 
 Because JSON cannot carry raw bytes, fixtures encode request/response bodies as:

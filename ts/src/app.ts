@@ -35,6 +35,10 @@ import type {
 } from "./context.js";
 import { AppError, AppTheoryError } from "./errors.js";
 import {
+  normalizeDynamoDBStreamRecord,
+  normalizeEventBridgeWorkloadEnvelope,
+} from "./event-workloads.js";
+import {
   type HTTPErrorFormat,
   normalizeHTTPErrorFormat,
 } from "./http-error-format.js";
@@ -152,6 +156,13 @@ export interface LogRecord {
   path: string;
   status: number;
   errorCode: string;
+  trigger?: string;
+  correlationId?: string;
+  source?: string;
+  detailType?: string;
+  tableName?: string;
+  eventId?: string;
+  eventName?: string;
 }
 
 export interface MetricRecord {
@@ -1276,8 +1287,21 @@ export class App {
       return null;
     }
     const eventCtx = this._eventContext(ctx);
+    const observation = eventBridgeObservation(eventCtx, event);
     const wrapped = this._applyEventMiddlewares(handler);
-    return await (wrapped ?? handler)(eventCtx, event);
+    try {
+      const out = await (wrapped ?? handler)(eventCtx, event);
+      recordEventObservability(this._observability, observation, "success", "");
+      return out;
+    } catch (err) {
+      recordEventObservability(
+        this._observability,
+        observation,
+        "error",
+        "app.internal",
+      );
+      throw sanitizeEventWorkloadError(err);
+    }
   }
 
   private _dynamoDBHandlerForEvent(
@@ -1301,14 +1325,6 @@ export class App {
   ): Promise<DynamoDBStreamEventResponse> {
     const records = Array.isArray(event?.Records) ? event.Records : [];
     const handler = this._dynamoDBHandlerForEvent(event);
-    if (!handler) {
-      const failures = records
-        .map((r) => String(r?.eventID ?? "").trim())
-        .filter(Boolean)
-        .map((id) => ({ itemIdentifier: id }));
-      return { batchItemFailures: failures };
-    }
-
     const eventCtx = this._eventContext(ctx);
     let failures: Array<{ itemIdentifier: string }> = [];
 
@@ -1316,15 +1332,28 @@ export class App {
     for (const record of records) {
       let recordError: unknown = null;
       try {
+        if (!handler) {
+          throw eventWorkloadFailedError();
+        }
         await (wrapped ?? handler)(eventCtx, record);
       } catch (err) {
         recordError = err;
       }
+
+      const observation = dynamoDBStreamObservation(eventCtx, record);
       if (recordError) {
         failures.push({
           itemIdentifier: String(record?.eventID ?? ""),
         });
+        recordEventObservability(
+          this._observability,
+          observation,
+          "error",
+          "app.internal",
+        );
+        continue;
       }
+      recordEventObservability(this._observability, observation, "success", "");
     }
 
     failures = failures.filter((f) => f.itemIdentifier);
@@ -1822,6 +1851,185 @@ function extractRemainingMs(ctx: unknown): number {
     }
   }
   return 0;
+}
+
+type EventObservation = {
+  trigger: string;
+  requestId: string;
+  correlationId: string;
+  source: string;
+  detailType: string;
+  tableName: string;
+  eventId: string;
+  eventName: string;
+};
+
+const EVENT_WORKLOAD_FAILED_MESSAGE = "apptheory: event workload failed";
+const EVENT_TRIGGER_EVENTBRIDGE = "eventbridge";
+const EVENT_TRIGGER_DYNAMODB_STREAM = "dynamodb_stream";
+
+function eventWorkloadFailedError(): Error {
+  return new Error(EVENT_WORKLOAD_FAILED_MESSAGE);
+}
+
+function sanitizeEventWorkloadError(err: unknown): Error {
+  if (isSafeEventError(err)) {
+    return err;
+  }
+  return eventWorkloadFailedError();
+}
+
+function isSafeEventError(err: unknown): err is Error {
+  if (!(err instanceof Error)) return false;
+  return (err as Error & { safeEventError?: unknown }).safeEventError === true;
+}
+
+function eventBridgeObservation(
+  ctx: EventContext,
+  event: EventBridgeEvent,
+): EventObservation {
+  const envelope = normalizeEventBridgeWorkloadEnvelope(ctx, event);
+  return {
+    trigger: EVENT_TRIGGER_EVENTBRIDGE,
+    requestId: envelope.request_id,
+    correlationId: envelope.correlation_id,
+    source: envelope.source,
+    detailType: envelope.detail_type,
+    tableName: "",
+    eventId: "",
+    eventName: "",
+  };
+}
+
+function dynamoDBStreamObservation(
+  ctx: EventContext,
+  record: DynamoDBStreamRecord,
+): EventObservation {
+  const summary = normalizeDynamoDBStreamRecord(record);
+  return {
+    trigger: EVENT_TRIGGER_DYNAMODB_STREAM,
+    requestId: eventContextRequestId(ctx),
+    correlationId: summary.event_id,
+    source: "",
+    detailType: "",
+    tableName: summary.table_name,
+    eventId: summary.event_id,
+    eventName: summary.event_name,
+  };
+}
+
+function eventContextRequestId(ctx: EventContext | null | undefined): string {
+  return typeof ctx?.requestId === "string" ? ctx.requestId.trim() : "";
+}
+
+function recordEventObservability(
+  hooks: ObservabilityHooks | null,
+  observation: EventObservation,
+  outcome: string,
+  errorCode: string,
+): void {
+  if (!hooks) return;
+
+  const level = errorCode || outcome === "error" ? "error" : "info";
+
+  if (typeof hooks.log === "function") {
+    const record: LogRecord = {
+      level,
+      event: "event.completed",
+      requestId: observation.requestId,
+      tenantId: "",
+      method: "",
+      path: "",
+      status: 0,
+      errorCode,
+    };
+    addNonEmptyLogField(record, "trigger", observation.trigger);
+    addNonEmptyLogField(record, "correlationId", observation.correlationId);
+    addNonEmptyLogField(record, "source", observation.source);
+    addNonEmptyLogField(record, "detailType", observation.detailType);
+    addNonEmptyLogField(record, "tableName", observation.tableName);
+    addNonEmptyLogField(record, "eventId", observation.eventId);
+    addNonEmptyLogField(record, "eventName", observation.eventName);
+    hooks.log(record);
+  }
+
+  if (typeof hooks.metric === "function") {
+    hooks.metric({
+      name: "apptheory.event",
+      value: 1,
+      tags: eventMetricTags(observation, outcome, errorCode),
+    });
+  }
+
+  if (typeof hooks.span === "function") {
+    hooks.span({
+      name: eventSpanName(observation),
+      attributes: eventSpanAttributes(observation, outcome, errorCode),
+    });
+  }
+}
+
+function addNonEmptyLogField(
+  record: LogRecord,
+  field: keyof LogRecord,
+  value: string,
+): void {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return;
+  (record as unknown as Record<string, unknown>)[field] = normalized;
+}
+
+function eventMetricTags(
+  observation: EventObservation,
+  outcome: string,
+  errorCode: string,
+): Record<string, string> {
+  const tags: Record<string, string> = {
+    correlation_id: observation.correlationId,
+    error_code: errorCode,
+    outcome,
+    trigger: observation.trigger,
+  };
+  if (observation.trigger === EVENT_TRIGGER_EVENTBRIDGE) {
+    tags["detail_type"] = observation.detailType;
+    tags["source"] = observation.source;
+  } else if (observation.trigger === EVENT_TRIGGER_DYNAMODB_STREAM) {
+    tags["event_name"] = observation.eventName;
+    tags["table_name"] = observation.tableName;
+  }
+  return tags;
+}
+
+function eventSpanName(observation: EventObservation): string {
+  if (observation.trigger === EVENT_TRIGGER_EVENTBRIDGE) {
+    return `${EVENT_TRIGGER_EVENTBRIDGE} ${observation.source} ${observation.detailType}`;
+  }
+  if (observation.trigger === EVENT_TRIGGER_DYNAMODB_STREAM) {
+    return `${EVENT_TRIGGER_DYNAMODB_STREAM} ${observation.tableName} ${observation.eventName}`;
+  }
+  return observation.trigger;
+}
+
+function eventSpanAttributes(
+  observation: EventObservation,
+  outcome: string,
+  errorCode: string,
+): Record<string, string> {
+  const attrs: Record<string, string> = {
+    "correlation.id": observation.correlationId,
+    "error.code": errorCode,
+    outcome,
+    trigger: observation.trigger,
+  };
+  if (observation.trigger === EVENT_TRIGGER_EVENTBRIDGE) {
+    attrs["event.detail_type"] = observation.detailType;
+    attrs["event.source"] = observation.source;
+  } else if (observation.trigger === EVENT_TRIGGER_DYNAMODB_STREAM) {
+    attrs["dynamodb.event_id"] = observation.eventId;
+    attrs["dynamodb.event_name"] = observation.eventName;
+    attrs["dynamodb.table_name"] = observation.tableName;
+  }
+  return attrs;
 }
 
 function recordObservability(
