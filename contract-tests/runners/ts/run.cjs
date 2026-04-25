@@ -1193,7 +1193,7 @@ function dynamoDBFixtureTableNameFromStreamArn(arn) {
   return after;
 }
 
-function builtInEventBridgeHandler(name, effects) {
+function builtInEventBridgeHandler(runtime, name, effects) {
   switch (String(name ?? "").trim()) {
     case "eventbridge_static_a":
       return async () => ({ handler: "a" });
@@ -1202,7 +1202,7 @@ function builtInEventBridgeHandler(name, effects) {
     case "eventbridge_echo_event_middleware":
       return async (ctx) => ({ mw: ctx.get("mw"), trace: ctx.get("trace") });
     case "eventbridge_workload_envelope":
-      return async (ctx, event) => eventBridgeWorkloadEnvelopeSummary(ctx, event);
+      return async (ctx, event) => runtime.normalizeEventBridgeWorkloadEnvelope(ctx, event);
     case "eventbridge_scheduled_summary":
       return async (ctx, event) => eventBridgeScheduledSummary(ctx, event);
     case "eventbridge_observed_success":
@@ -1218,13 +1218,7 @@ function builtInEventBridgeHandler(name, effects) {
         throw new Error("apptheory: event workload failed");
       };
     case "eventbridge_require_workload_envelope":
-      return async (ctx, event) => {
-        const summary = eventBridgeWorkloadEnvelopeSummary(ctx, event);
-        if (!summary.source || !summary.detail_type || !summary.correlation_id) {
-          throw new Error("apptheory: eventbridge workload envelope invalid");
-        }
-        return summary;
-      };
+      return async (ctx, event) => runtime.requireEventBridgeWorkloadEnvelope(ctx, event);
     default:
       return null;
   }
@@ -1520,7 +1514,7 @@ async function runFixtureM1(fixture) {
   }
 
   for (const route of fixture.setup?.eventbridge ?? []) {
-    const handler = builtInEventBridgeHandler(route.handler, effects);
+    const handler = builtInEventBridgeHandler(runtime, route.handler, effects);
     if (!handler) {
       throw new Error(`unknown eventbridge handler ${JSON.stringify(route.handler)}`);
     }
