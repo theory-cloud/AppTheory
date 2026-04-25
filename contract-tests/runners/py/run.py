@@ -1291,7 +1291,7 @@ def _built_in_sns_handler(name: str):
     return None
 
 
-def _built_in_dynamodb_stream_handler(name: str):
+def _built_in_dynamodb_stream_handler(runtime: Any, name: str):
     if name == "ddb_noop":
         return lambda _ctx, _record: None
 
@@ -1318,17 +1318,72 @@ def _built_in_dynamodb_stream_handler(name: str):
 
         return handler
 
+    if name == "ddb_require_normalized_summary":
+        return lambda _ctx, record: _require_dynamodb_safe_summary(runtime, record, False)
+
+    if name == "ddb_require_normalized_summary_fail_on_remove":
+        return lambda _ctx, record: _require_dynamodb_safe_summary(runtime, record, True)
+
+    if name == "ddb_observed_fail_on_remove":
+        def handler(ctx, record):
+            _require_dynamodb_safe_summary(runtime, record, False)
+            if str((record or {}).get("eventName") or "").strip() == "REMOVE":
+                raise RuntimeError("raw dynamodb remove failure: do-not-log")
+
+        return handler
+
     return None
 
 
-def _built_in_eventbridge_handler(name: str):
+def _require_dynamodb_safe_summary(runtime: Any, record: Any, fail_on_remove: bool) -> None:
+    summary = runtime.normalize_dynamodb_stream_record(record)
+    for key in ("table_name", "event_id", "event_name", "sequence_number", "stream_view_type"):
+        if not str(summary.get(key) or "").strip():
+            raise RuntimeError(f"missing normalized dynamodb {key}")
+    serialized_summary = json.dumps(summary, sort_keys=True)
+    if not str(summary.get("safe_log") or "").strip() or any(
+        sentinel in serialized_summary for sentinel in ("release#rel_123", "do-not-log", "previous-secret")
+    ):
+        raise RuntimeError("unsafe dynamodb stream summary")
+    if fail_on_remove and str((record or {}).get("eventName") or "").strip() == "REMOVE":
+        raise RuntimeError("fail")
+
+
+def _built_in_eventbridge_handler(runtime: Any, name: str):
     if name == "eventbridge_static_a":
         return lambda _ctx, _event: {"handler": "a"}
     if name == "eventbridge_static_b":
         return lambda _ctx, _event: {"handler": "b"}
     if name == "eventbridge_echo_event_middleware":
         return lambda ctx, _event: {"mw": ctx.get("mw"), "trace": ctx.get("trace")}
+    if name == "eventbridge_workload_envelope":
+        return lambda ctx, event: runtime.normalize_eventbridge_workload_envelope(ctx, event)
+    if name == "eventbridge_scheduled_summary":
+        return lambda ctx, event: runtime.normalize_eventbridge_scheduled_workload(ctx, event)
+    if name == "eventbridge_observed_success":
+        return lambda ctx, event: runtime.normalize_eventbridge_workload_envelope(ctx, event)
+    if name == "eventbridge_observed_panic":
+        def handler(_ctx, _event):
+            raise RuntimeError("raw eventbridge panic: do-not-log")
+
+        return handler
+    if name == "eventbridge_require_workload_envelope":
+        return lambda ctx, event: runtime.require_eventbridge_workload_envelope(ctx, event)
     return None
+
+
+class _FixtureLambdaContext:
+    def __init__(self, values: dict[str, Any]) -> None:
+        self.aws_request_id = str(values.get("aws_request_id") or "").strip()
+        self.awsRequestId = self.aws_request_id
+        self.remaining_ms = int(values.get("remaining_ms") or 0)
+
+    def get_remaining_time_in_millis(self) -> int:
+        return self.remaining_ms if self.remaining_ms > 0 else 0
+
+
+def _fixture_lambda_context(values: dict[str, Any] | None) -> _FixtureLambdaContext:
+    return _FixtureLambdaContext(values or {})
 
 
 @dataclass(slots=True)
@@ -1445,7 +1500,21 @@ def _built_in_websocket_handler(runtime: Any, name: str):
 
 def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _DummyEffectsApp]:
     runtime = _load_apptheory_runtime()
-    app = runtime.create_app(tier="p0")
+    ids = runtime.ManualIdGenerator()
+    ids.push("req_test_123")
+    effects = _DummyEffectsApp()
+    app = runtime.create_app(
+        tier="p0",
+        clock=runtime.ManualClock(),
+        id_generator=ids,
+        observability=runtime.ObservabilityHooks(
+            log=lambda record: effects.logs.append(_m1_log_record(record)),
+            metric=lambda record: effects.metrics.append(
+                {"name": record.name, "value": record.value, "tags": record.tags}
+            ),
+            span=lambda record: effects.spans.append({"name": record.name, "attributes": record.attributes}),
+        ),
+    )
 
     setup = fixture.get("setup", {}) or {}
     for name in setup.get("middlewares", []) or []:
@@ -1473,13 +1542,13 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
         app.sns(str(route.get("topic") or ""), handler)
 
     for route in setup.get("dynamodb", []) or []:
-        handler = _built_in_dynamodb_stream_handler(str(route.get("handler") or ""))
+        handler = _built_in_dynamodb_stream_handler(runtime, str(route.get("handler") or ""))
         if handler is None:
             raise RuntimeError(f"unknown dynamodb handler {route.get('handler')!r}")
         app.dynamodb(str(route.get("table") or ""), handler)
 
     for route in setup.get("eventbridge", []) or []:
-        handler = _built_in_eventbridge_handler(str(route.get("handler") or ""))
+        handler = _built_in_eventbridge_handler(runtime, str(route.get("handler") or ""))
         if handler is None:
             raise RuntimeError(f"unknown eventbridge handler {route.get('handler')!r}")
         selector = runtime.EventBridgeSelector(
@@ -1498,7 +1567,7 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
     actual_output = None
     actual_error: Exception | None = None
     try:
-        actual_output = app.handle_lambda(event, ctx={})
+        actual_output = app.handle_lambda(event, ctx=_fixture_lambda_context(input_.get("context") or {}))
     except Exception as exc:  # noqa: BLE001
         actual_error = exc
     expect_obj = fixture.get("expect", {}) or {}
@@ -1518,7 +1587,7 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
         actual_msg = str(actual_error).strip()
         if expected_msg and actual_msg != expected_msg:
             return False, "error mismatch", {"message": actual_msg}, expected_error, _DummyEffectsApp()
-        return True, "", {"message": actual_msg}, expected_error, _DummyEffectsApp()
+        return _compare_m1_side_effects_if_expected(fixture, effects, {"message": actual_msg}, expected_error)
 
     if "output_json" not in expect_obj:
         return False, "missing expect.output_json or expect.error", actual_output, None, _DummyEffectsApp()
@@ -1529,7 +1598,52 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
     if stable_json(expected_output) != stable_json(actual_output):
         return False, "output_json mismatch", actual_output, expected_output, _DummyEffectsApp()
 
-    return True, "", actual_output, expected_output, _DummyEffectsApp()
+    return _compare_m1_side_effects_if_expected(fixture, effects, actual_output, expected_output)
+
+
+
+def _compare_m1_side_effects_if_expected(
+    fixture: dict[str, Any],
+    effects: _DummyEffectsApp,
+    actual: Any,
+    expected: Any,
+) -> tuple[bool, str, Any, Any, _DummyEffectsApp]:
+    expect_obj = fixture.get("expect", {}) or {}
+    if "logs" not in expect_obj and "metrics" not in expect_obj and "spans" not in expect_obj:
+        return True, "", actual, expected, effects
+    if (expect_obj.get("logs") or []) != effects.logs:
+        return False, "logs mismatch", actual, expected, effects
+    if (expect_obj.get("metrics") or []) != effects.metrics:
+        return False, "metrics mismatch", actual, expected, effects
+    if (expect_obj.get("spans") or []) != effects.spans:
+        return False, "spans mismatch", actual, expected, effects
+    return True, "", actual, expected, effects
+
+
+def _m1_log_record(record: Any) -> dict[str, Any]:
+    output = {
+        "level": getattr(record, "level", ""),
+        "event": getattr(record, "event", ""),
+        "request_id": getattr(record, "request_id", ""),
+        "tenant_id": getattr(record, "tenant_id", ""),
+        "method": getattr(record, "method", ""),
+        "path": getattr(record, "path", ""),
+        "status": getattr(record, "status", 0),
+        "error_code": getattr(record, "error_code", ""),
+    }
+    for name in (
+        "trigger",
+        "correlation_id",
+        "source",
+        "detail_type",
+        "table_name",
+        "event_id",
+        "event_name",
+    ):
+        value = str(getattr(record, name, "") or "").strip()
+        if value:
+            output[name] = value
+    return output
 
 
 def canonical_response_from_apigw_proxy(resp: dict[str, Any]) -> CanonicalResponse:
@@ -2172,7 +2286,7 @@ def run_fixture_p2_output(fixture: dict[str, Any]) -> tuple[bool, str, dict[str,
     actual_output = None
     actual_error: Exception | None = None
     try:
-        actual_output = app.handle_lambda((aws_event or {}).get("event") or {}, ctx={})
+        actual_output = app.handle_lambda((aws_event or {}).get("event") or {}, ctx=_fixture_lambda_context((fixture.get("input", {}) or {}).get("context") or {}))
     except Exception as exc:  # noqa: BLE001
         actual_error = exc
 

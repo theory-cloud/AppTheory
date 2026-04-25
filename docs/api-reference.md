@@ -112,6 +112,15 @@ Notes:
 - Exact field casing varies by AWS integration; prefer deterministic event builders from the test envs
 - Package-local runtime docs may add language-specific examples, but the canonical cross-language dispatch guidance lives here
 
+Event workload contract notes:
+
+- EventBridge workload fixtures pin portable envelope/correlation behavior for future helpers.
+- `metadata.correlation_id` and top-level `headers["x-correlation-id"]` are AppTheory portable envelope conventions, not AWS-native EventBridge fields.
+- Scheduled workloads use EventBridge scheduled events and derive run IDs, idempotency keys, remaining-time/deadline fields, and structured result summaries.
+- DynamoDB Streams workloads keep the Lambda partial-batch response contract and derive only safe record summaries.
+
+Guide: [Event Workload Contracts](./features/event-workloads.md)
+
 ### AppSync resolvers
 
 AppTheory supports the standard AWS direct Lambda resolver event shape in all three runtimes.
@@ -199,9 +208,10 @@ The `limited` feature set provides DynamoDB-backed cross-instance rate limiting.
 
 Go runtime note:
 
-- `runtime.RateLimitMiddleware(...)` hashes default credential-derived identifiers before they reach limiter backends:
-  - `x-api-key` → `api_key:sha256:<hex>`
-  - `Authorization: Bearer ...` → `bearer:sha256:<hex>`
+- `runtime.RateLimitMiddleware(...)` fingerprints default credential-derived identifiers before they reach limiter
+  backends:
+  - `x-api-key` → `api_key:hmac-sha256:<hex>`
+  - `Authorization: Bearer ...` → `bearer:hmac-sha256:<hex>`
 - `AuthIdentity`, `TenantID`, and explicit `ExtractIdentifier` overrides are unchanged.
 - This avoids storing raw credentials in rate-limit tables, but it also changes observed key values and resets any
   existing credential-backed buckets on first deploy.
