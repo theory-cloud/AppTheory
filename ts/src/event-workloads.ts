@@ -24,6 +24,29 @@ export interface EventBridgeWorkloadEnvelope {
   time: string;
 }
 
+/** Safe result summary for a scheduled EventBridge workload. */
+export interface EventBridgeScheduledWorkloadResultSummary {
+  failed: number;
+  processed: number;
+  status: string;
+}
+
+/** Portable summary for EventBridge scheduled workloads. */
+export interface EventBridgeScheduledWorkloadSummary {
+  correlation_id: string;
+  correlation_source: string;
+  deadline_unix_ms: number;
+  detail_type: string;
+  event_id: string;
+  idempotency_key: string;
+  kind: "scheduled";
+  remaining_ms: number;
+  result: EventBridgeScheduledWorkloadResultSummary;
+  run_id: string;
+  scheduled_time: string;
+  source: string;
+}
+
 class SafeEventError extends Error {
   readonly safeEventError = true;
 
@@ -80,6 +103,55 @@ export function requireEventBridgeWorkloadEnvelope(
     throw new SafeEventError(EVENTBRIDGE_ENVELOPE_INVALID);
   }
   return envelope;
+}
+
+/** Return the canonical scheduled workload summary for an EventBridge scheduled event. */
+export function normalizeEventBridgeScheduledWorkload(
+  ctx: EventContext | null | undefined,
+  event: EventBridgeEvent,
+): EventBridgeScheduledWorkloadSummary {
+  const detail = objectFromValue(event?.detail);
+  const result = objectFromValue(detail["result"]);
+  const envelope = normalizeEventBridgeWorkloadEnvelope(ctx, event);
+
+  let runId = objectString(detail, "run_id");
+  if (!runId) runId = objectString(event, "id");
+  if (!runId) runId = lambdaAWSRequestId(ctx);
+
+  let idempotencyKey = objectString(detail, "idempotency_key");
+  if (!idempotencyKey) {
+    const eventId = objectString(event, "id");
+    const requestId = lambdaAWSRequestId(ctx);
+    if (eventId) idempotencyKey = `eventbridge:${eventId}`;
+    else if (requestId) idempotencyKey = `lambda:${requestId}`;
+  }
+
+  let status =
+    objectString(result, "status") || objectString(detail, "status") || "ok";
+  status = status.trim() || "ok";
+
+  const remainingMs = eventContextRemainingMs(ctx);
+  const deadlineUnixMs =
+    remainingMs > 0 && ctx ? ctx.now().getTime() + remainingMs : 0;
+
+  return {
+    correlation_id: envelope.correlation_id,
+    correlation_source: envelope.correlation_source,
+    deadline_unix_ms: deadlineUnixMs,
+    detail_type: envelope.detail_type,
+    event_id: envelope.event_id,
+    idempotency_key: idempotencyKey,
+    kind: "scheduled",
+    remaining_ms: remainingMs,
+    result: {
+      failed: objectInt(result, "failed"),
+      processed: objectInt(result, "processed"),
+      status,
+    },
+    run_id: runId,
+    scheduled_time: envelope.time,
+    source: envelope.source,
+  };
 }
 
 function eventBridgeCorrelationId(
@@ -155,6 +227,12 @@ function eventContextRequestId(ctx: EventContext | null | undefined): string {
   return typeof ctx?.requestId === "string" ? ctx.requestId.trim() : "";
 }
 
+function eventContextRemainingMs(ctx: EventContext | null | undefined): number {
+  const value = Number(ctx?.remainingMs ?? 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.floor(value);
+}
+
 function lambdaAWSRequestId(ctx: EventContext | null | undefined): string {
   const lambdaContext = ctx?.ctx;
   if (!lambdaContext || typeof lambdaContext !== "object") return "";
@@ -180,6 +258,12 @@ function objectFromValue(value: unknown): Record<string, unknown> {
 
 function objectString(object: Record<string, unknown>, key: string): string {
   return asTrimmedString(object[key]);
+}
+
+function objectInt(object: Record<string, unknown>, key: string): number {
+  const value = object[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.trunc(value);
 }
 
 function headerString(headers: Record<string, unknown>, key: string): string {
