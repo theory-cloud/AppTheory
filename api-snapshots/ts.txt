@@ -36,6 +36,7 @@ DynamoDBStreamEvent	interface
 DynamoDBStreamEventResponse	interface
 DynamoDBStreamHandler	type
 DynamoDBStreamRecord	interface
+DynamoDBStreamRecordSummary	interface
 DynamoJobLedger	class
 DynamoRateLimiter	class
 EnvJobsTableName	const
@@ -186,6 +187,7 @@ maskFirstLast4	function
 matchesIfNoneMatch	function
 newError	function
 newJobLedgerError	function
+normalizeDynamoDBStreamRecord	function
 normalizeEventBridgeScheduledWorkload	function
 normalizeEventBridgeWorkloadEnvelope	function
 normalizeHTTPErrorFormat	function

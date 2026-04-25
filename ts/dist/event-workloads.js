@@ -1,3 +1,4 @@
+import { dynamoDBTableNameFromStreamArn } from "./internal/aws-names.js";
 const EVENTBRIDGE_ENVELOPE_INVALID = "apptheory: eventbridge workload envelope invalid";
 const CORRELATION_SOURCE_METADATA = "metadata.correlation_id";
 const CORRELATION_SOURCE_HEADER = "headers.x-correlation-id";
@@ -10,6 +11,30 @@ class SafeEventError extends Error {
         super(message);
         this.name = "SafeEventError";
     }
+}
+/**
+ * Return a portable, safe summary for a DynamoDB Streams record.
+ *
+ * Raw Keys, NewImage, and OldImage values are intentionally excluded so item
+ * material cannot be copied into logs, metrics, spans, or handler summaries
+ * through this helper.
+ */
+export function normalizeDynamoDBStreamRecord(record) {
+    const change = objectFromValue(record?.dynamodb);
+    const tableName = dynamoDBTableNameFromStreamArn(objectString(record, "eventSourceARN"));
+    const sequenceNumber = objectString(change, "SequenceNumber");
+    const eventId = objectString(record, "eventID");
+    const eventName = objectString(record, "eventName");
+    return {
+        aws_region: objectString(record, "awsRegion"),
+        event_id: eventId,
+        event_name: eventName,
+        safe_log: `table=${tableName} event_id=${eventId} event_name=${eventName} sequence_number=${sequenceNumber}`,
+        sequence_number: sequenceNumber,
+        size_bytes: objectInt(change, "SizeBytes"),
+        stream_view_type: objectString(change, "StreamViewType"),
+        table_name: tableName,
+    };
 }
 /**
  * Return the canonical EventBridge workload envelope.
