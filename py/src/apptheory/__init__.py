@@ -37,7 +37,10 @@ from apptheory.errors import (
     AppTheoryError,
 )
 from apptheory.event_workloads import (
+    EventBridgeScheduledWorkloadResultSummary,
+    EventBridgeScheduledWorkloadSummary,
     EventBridgeWorkloadEnvelope,
+    normalize_eventbridge_scheduled_workload,
     normalize_eventbridge_workload_envelope,
     require_eventbridge_workload_envelope,
 )
@@ -179,6 +182,8 @@ __all__ = [
     "Context",
     "DynamoJobLedger",
     "EnvJobsTableName",
+    "EventBridgeScheduledWorkloadResultSummary",
+    "EventBridgeScheduledWorkloadSummary",
     "EventBridgeSelector",
     "EventBridgeWorkloadEnvelope",
     "EventContext",
@@ -244,6 +249,7 @@ __all__ = [
     "mask_first_last4",
     "matches_if_none_match",
     "new_job_ledger_error",
+    "normalize_eventbridge_scheduled_workload",
     "normalize_eventbridge_workload_envelope",
     "normalize_stage",
     "origin_url",
