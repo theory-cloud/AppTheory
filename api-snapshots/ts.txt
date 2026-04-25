@@ -43,6 +43,8 @@ ErrorEnvelope	type
 ErrorType	type
 EventBridgeEvent	interface
 EventBridgeHandler	type
+EventBridgeScheduledWorkloadResultSummary	interface
+EventBridgeScheduledWorkloadSummary	interface
 EventBridgeSelector	interface
 EventBridgeWorkloadEnvelope	interface
 EventContext	class
@@ -184,6 +186,7 @@ maskFirstLast4	function
 matchesIfNoneMatch	function
 newError	function
 newJobLedgerError	function
+normalizeEventBridgeScheduledWorkload	function
 normalizeEventBridgeWorkloadEnvelope	function
 normalizeHTTPErrorFormat	function
 normalizeStage	function

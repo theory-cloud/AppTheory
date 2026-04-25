@@ -1204,7 +1204,7 @@ function builtInEventBridgeHandler(runtime, name, effects) {
     case "eventbridge_workload_envelope":
       return async (ctx, event) => runtime.normalizeEventBridgeWorkloadEnvelope(ctx, event);
     case "eventbridge_scheduled_summary":
-      return async (ctx, event) => eventBridgeScheduledSummary(ctx, event);
+      return async (ctx, event) => runtime.normalizeEventBridgeScheduledWorkload(ctx, event);
     case "eventbridge_observed_success":
       return async (ctx, event) => {
         const summary = eventBridgeWorkloadEnvelopeSummary(ctx, event);

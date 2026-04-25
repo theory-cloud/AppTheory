@@ -13,6 +13,27 @@ export interface EventBridgeWorkloadEnvelope {
     source: string;
     time: string;
 }
+/** Safe result summary for a scheduled EventBridge workload. */
+export interface EventBridgeScheduledWorkloadResultSummary {
+    failed: number;
+    processed: number;
+    status: string;
+}
+/** Portable summary for EventBridge scheduled workloads. */
+export interface EventBridgeScheduledWorkloadSummary {
+    correlation_id: string;
+    correlation_source: string;
+    deadline_unix_ms: number;
+    detail_type: string;
+    event_id: string;
+    idempotency_key: string;
+    kind: "scheduled";
+    remaining_ms: number;
+    result: EventBridgeScheduledWorkloadResultSummary;
+    run_id: string;
+    scheduled_time: string;
+    source: string;
+}
 /**
  * Return the canonical EventBridge workload envelope.
  *
@@ -26,3 +47,5 @@ export declare function normalizeEventBridgeWorkloadEnvelope(ctx: EventContext |
  * detail type, or correlation identity is missing.
  */
 export declare function requireEventBridgeWorkloadEnvelope(ctx: EventContext | null | undefined, event: EventBridgeEvent): EventBridgeWorkloadEnvelope;
+/** Return the canonical scheduled workload summary for an EventBridge scheduled event. */
+export declare function normalizeEventBridgeScheduledWorkload(ctx: EventContext | null | undefined, event: EventBridgeEvent): EventBridgeScheduledWorkloadSummary;
