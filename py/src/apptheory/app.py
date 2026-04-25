@@ -34,6 +34,7 @@ from apptheory.errors import (
     response_for_error_with_request_id_and_format,
     status_for_error_code,
 )
+from apptheory.event_workloads import normalize_dynamodb_stream_record, normalize_eventbridge_workload_envelope
 from apptheory.ids import IdGenerator, RealIdGenerator
 from apptheory.request import Request, normalize_request, normalize_request_with_max_bytes
 from apptheory.response import Response, normalize_response
@@ -41,6 +42,10 @@ from apptheory.router import Router
 from apptheory.util import canonicalize_headers, clone_query
 
 T = TypeVar("T")
+
+_EVENT_WORKLOAD_FAILED_MESSAGE = "apptheory: event workload failed"
+_EVENT_TRIGGER_EVENTBRIDGE = "eventbridge"
+_EVENT_TRIGGER_DYNAMODB_STREAM = "dynamodb_stream"
 
 
 def _resolve(value: T | Awaitable[T]) -> T:
@@ -112,6 +117,13 @@ class LogRecord:
     path: str
     status: int
     error_code: str
+    trigger: str = ""
+    correlation_id: str = ""
+    source: str = ""
+    detail_type: str = ""
+    table_name: str = ""
+    event_id: str = ""
+    event_name: str = ""
 
 
 @dataclass(slots=True)
@@ -144,6 +156,18 @@ class PolicyDecision:
         self.code = str(code)
         self.message = str(message)
         self.headers = dict(headers or {})
+
+
+@dataclass(slots=True)
+class _EventObservation:
+    trigger: str
+    request_id: str
+    correlation_id: str
+    source: str = ""
+    detail_type: str = ""
+    table_name: str = ""
+    event_id: str = ""
+    event_name: str = ""
 
 
 @dataclass(slots=True)
@@ -1000,8 +1024,16 @@ class App:
         handler = self._eventbridge_handler_for_event(event)
         if handler is None:
             return None
+        evt_ctx = self._event_context(ctx)
+        observation = _eventbridge_observation(evt_ctx, event)
         wrapped = self._apply_event_middlewares(handler)
-        return _resolve(wrapped(self._event_context(ctx), event))
+        try:
+            output = _resolve(wrapped(evt_ctx, event))
+        except Exception as exc:  # noqa: BLE001
+            _record_event_observability(self._observability, observation, "error", "app.internal")
+            raise _sanitize_event_workload_error(exc) from None
+        _record_event_observability(self._observability, observation, "success", "")
+        return output
 
     def _dynamodb_handler_for_event(self, event: dict[str, Any]) -> DynamoDBStreamHandler | None:
         records = event.get("Records") or []
@@ -1022,28 +1054,28 @@ class App:
             records = []
 
         handler = self._dynamodb_handler_for_event(event)
-        if handler is None:
-            failures = []
-            for record in records:
-                if not isinstance(record, dict):
-                    continue
-                event_id = str(record.get("eventID") or "").strip()
-                if event_id:
-                    failures.append({"itemIdentifier": event_id})
-            return {"batchItemFailures": failures}
-
         evt_ctx = self._event_context(ctx)
-        wrapped = self._apply_event_middlewares(handler)
+        wrapped = self._apply_event_middlewares(handler) if handler is not None else None
         failures = []
         for record in records:
             if not isinstance(record, dict):
                 continue
+            record_error: Exception | None = None
             try:
+                if handler is None or wrapped is None:
+                    raise _event_workload_failed_error()
                 _resolve(wrapped(evt_ctx, record))
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                record_error = exc
+
+            observation = _dynamodb_stream_observation(evt_ctx, record)
+            if record_error is not None:
                 event_id = str(record.get("eventID") or "").strip()
                 if event_id:
                     failures.append({"itemIdentifier": event_id})
+                _record_event_observability(self._observability, observation, "error", "app.internal")
+                continue
+            _record_event_observability(self._observability, observation, "success", "")
 
         return {"batchItemFailures": failures}
 
@@ -1744,6 +1776,132 @@ def _remaining_ms(ctx: Any | None) -> int:
     except Exception:  # noqa: BLE001
         return 0
     return value_int if value_int > 0 else 0
+
+
+def _event_workload_failed_error() -> RuntimeError:
+    return RuntimeError(_EVENT_WORKLOAD_FAILED_MESSAGE)
+
+
+def _is_safe_event_error(exc: Exception) -> bool:
+    return getattr(exc, "safe_event_error", False) is True
+
+
+def _sanitize_event_workload_error(exc: Exception) -> Exception:
+    if _is_safe_event_error(exc):
+        return exc
+    return _event_workload_failed_error()
+
+
+def _eventbridge_observation(ctx: EventContext, event: dict[str, Any]) -> _EventObservation:
+    envelope = normalize_eventbridge_workload_envelope(ctx, event)
+    return _EventObservation(
+        trigger=_EVENT_TRIGGER_EVENTBRIDGE,
+        request_id=str(envelope.get("request_id") or "").strip(),
+        correlation_id=str(envelope.get("correlation_id") or "").strip(),
+        source=str(envelope.get("source") or "").strip(),
+        detail_type=str(envelope.get("detail_type") or "").strip(),
+    )
+
+
+def _dynamodb_stream_observation(ctx: EventContext, record: dict[str, Any]) -> _EventObservation:
+    summary = normalize_dynamodb_stream_record(record)
+    event_id = str(summary.get("event_id") or "").strip()
+    return _EventObservation(
+        trigger=_EVENT_TRIGGER_DYNAMODB_STREAM,
+        request_id=str(getattr(ctx, "request_id", "") or "").strip(),
+        correlation_id=event_id,
+        table_name=str(summary.get("table_name") or "").strip(),
+        event_id=event_id,
+        event_name=str(summary.get("event_name") or "").strip(),
+    )
+
+
+def _record_event_observability(
+    hooks: ObservabilityHooks,
+    observation: _EventObservation,
+    outcome: str,
+    error_code: str,
+) -> None:
+    level = "error" if error_code or outcome == "error" else "info"
+
+    if hooks.log is not None:
+        hooks.log(
+            LogRecord(
+                level=level,
+                event="event.completed",
+                request_id=observation.request_id,
+                tenant_id="",
+                method="",
+                path="",
+                status=0,
+                error_code=error_code,
+                trigger=observation.trigger,
+                correlation_id=observation.correlation_id,
+                source=observation.source,
+                detail_type=observation.detail_type,
+                table_name=observation.table_name,
+                event_id=observation.event_id,
+                event_name=observation.event_name,
+            )
+        )
+
+    if hooks.metric is not None:
+        hooks.metric(
+            MetricRecord(
+                name="apptheory.event",
+                value=1,
+                tags=_event_metric_tags(observation, outcome, error_code),
+            )
+        )
+
+    if hooks.span is not None:
+        hooks.span(
+            SpanRecord(
+                name=_event_span_name(observation),
+                attributes=_event_span_attributes(observation, outcome, error_code),
+            )
+        )
+
+
+def _event_metric_tags(observation: _EventObservation, outcome: str, error_code: str) -> dict[str, str]:
+    tags = {
+        "correlation_id": observation.correlation_id,
+        "error_code": error_code,
+        "outcome": outcome,
+        "trigger": observation.trigger,
+    }
+    if observation.trigger == _EVENT_TRIGGER_EVENTBRIDGE:
+        tags["detail_type"] = observation.detail_type
+        tags["source"] = observation.source
+    elif observation.trigger == _EVENT_TRIGGER_DYNAMODB_STREAM:
+        tags["event_name"] = observation.event_name
+        tags["table_name"] = observation.table_name
+    return tags
+
+
+def _event_span_name(observation: _EventObservation) -> str:
+    if observation.trigger == _EVENT_TRIGGER_EVENTBRIDGE:
+        return f"{_EVENT_TRIGGER_EVENTBRIDGE} {observation.source} {observation.detail_type}"
+    if observation.trigger == _EVENT_TRIGGER_DYNAMODB_STREAM:
+        return f"{_EVENT_TRIGGER_DYNAMODB_STREAM} {observation.table_name} {observation.event_name}"
+    return observation.trigger
+
+
+def _event_span_attributes(observation: _EventObservation, outcome: str, error_code: str) -> dict[str, str]:
+    attrs = {
+        "correlation.id": observation.correlation_id,
+        "error.code": error_code,
+        "outcome": outcome,
+        "trigger": observation.trigger,
+    }
+    if observation.trigger == _EVENT_TRIGGER_EVENTBRIDGE:
+        attrs["event.detail_type"] = observation.detail_type
+        attrs["event.source"] = observation.source
+    elif observation.trigger == _EVENT_TRIGGER_DYNAMODB_STREAM:
+        attrs["dynamodb.event_id"] = observation.event_id
+        attrs["dynamodb.event_name"] = observation.event_name
+        attrs["dynamodb.table_name"] = observation.table_name
+    return attrs
 
 
 def _default_policy_message(code: str) -> str:
