@@ -2,6 +2,7 @@ package apptheory
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
@@ -13,6 +14,11 @@ import (
 const RateLimitDecisionKey = "rate_limit_decision"
 
 const anonymousRateLimitIdentifier = "anonymous"
+const rateLimitCredentialFingerprintAlgorithm = "hmac-sha256"
+
+// rateLimitIdentifierDomain is a stable framework domain separator, not a verification secret.
+// It keeps default sensitive-header-derived limiter keys deterministic without storing the source value itself.
+const rateLimitIdentifierDomain = "apptheory/rate-limit/identifier-fingerprint/v1"
 
 type RateLimitConfig struct {
 	// Limiter is required. If nil, RateLimitMiddleware is a no-op.
@@ -125,13 +131,13 @@ func defaultRateLimitIdentifier(ctx *Context) string {
 	}
 
 	if apiKey := firstHeaderValue(ctx.Request.Headers, "x-api-key"); apiKey != "" {
-		return hashRateLimitCredentialIdentifier("api_key", apiKey)
+		return fingerprintRateLimitCredentialIdentifier("api_key", apiKey)
 	}
 
 	auth := firstHeaderValue(ctx.Request.Headers, "authorization")
 	if strings.HasPrefix(auth, "Bearer ") {
 		if token := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")); token != "" {
-			return hashRateLimitCredentialIdentifier("bearer", token)
+			return fingerprintRateLimitCredentialIdentifier("bearer", token)
 		}
 	}
 
@@ -146,15 +152,18 @@ func defaultRateLimitIdentifier(ctx *Context) string {
 	return anonymousRateLimitIdentifier
 }
 
-func hashRateLimitCredentialIdentifier(kind, raw string) string {
+func fingerprintRateLimitCredentialIdentifier(kind, credentialValue string) string {
 	kind = strings.TrimSpace(kind)
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	credentialValue = strings.TrimSpace(credentialValue)
+	if credentialValue == "" {
 		return ""
 	}
 
-	sum := sha256.Sum256([]byte(kind + ":" + raw))
-	return kind + ":sha256:" + hex.EncodeToString(sum[:])
+	mac := hmac.New(sha256.New, []byte(rateLimitIdentifierDomain))
+	_, _ = mac.Write([]byte(kind))
+	_, _ = mac.Write([]byte{0})
+	_, _ = mac.Write([]byte(credentialValue))
+	return kind + ":" + rateLimitCredentialFingerprintAlgorithm + ":" + hex.EncodeToString(mac.Sum(nil))
 }
 
 func defaultRateLimitResource(ctx *Context) string {
