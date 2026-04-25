@@ -1291,7 +1291,7 @@ def _built_in_sns_handler(name: str):
     return None
 
 
-def _built_in_dynamodb_stream_handler(name: str, effects: Any | None = None):
+def _built_in_dynamodb_stream_handler(runtime: Any, name: str, effects: Any | None = None):
     if name == "ddb_noop":
         return lambda _ctx, _record: None
 
@@ -1319,14 +1319,14 @@ def _built_in_dynamodb_stream_handler(name: str, effects: Any | None = None):
         return handler
 
     if name == "ddb_require_normalized_summary":
-        return lambda _ctx, record: _require_dynamodb_safe_summary(record, False)
+        return lambda _ctx, record: _require_dynamodb_safe_summary(runtime, record, False)
 
     if name == "ddb_require_normalized_summary_fail_on_remove":
-        return lambda _ctx, record: _require_dynamodb_safe_summary(record, True)
+        return lambda _ctx, record: _require_dynamodb_safe_summary(runtime, record, True)
 
     if name == "ddb_observed_fail_on_remove":
         def handler(ctx, record):
-            _require_dynamodb_safe_summary(record, False)
+            _require_dynamodb_safe_summary(runtime, record, False)
             if str((record or {}).get("eventName") or "").strip() == "REMOVE":
                 _record_dynamodb_effects(effects, ctx, record, "error", "error", "app.internal")
                 raise RuntimeError("fail")
@@ -1337,13 +1337,15 @@ def _built_in_dynamodb_stream_handler(name: str, effects: Any | None = None):
     return None
 
 
-def _require_dynamodb_safe_summary(record: Any, fail_on_remove: bool) -> None:
-    summary = _dynamodb_safe_summary(record)
+def _require_dynamodb_safe_summary(runtime: Any, record: Any, fail_on_remove: bool) -> None:
+    summary = runtime.normalize_dynamodb_stream_record(record)
     for key in ("table_name", "event_id", "event_name", "sequence_number", "stream_view_type"):
         if not str(summary.get(key) or "").strip():
             raise RuntimeError(f"missing normalized dynamodb {key}")
-    safe_log = str(summary.get("safe_log") or "").strip()
-    if not safe_log or "do-not-log" in safe_log:
+    serialized_summary = json.dumps(summary, sort_keys=True)
+    if not str(summary.get("safe_log") or "").strip() or any(
+        sentinel in serialized_summary for sentinel in ("release#rel_123", "do-not-log", "previous-secret")
+    ):
         raise RuntimeError("unsafe dynamodb stream summary")
     if fail_on_remove and str((record or {}).get("eventName") or "").strip() == "REMOVE":
         raise RuntimeError("fail")
@@ -1817,7 +1819,7 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
         app.sns(str(route.get("topic") or ""), handler)
 
     for route in setup.get("dynamodb", []) or []:
-        handler = _built_in_dynamodb_stream_handler(str(route.get("handler") or ""), effects)
+        handler = _built_in_dynamodb_stream_handler(runtime, str(route.get("handler") or ""), effects)
         if handler is None:
             raise RuntimeError(f"unknown dynamodb handler {route.get('handler')!r}")
         app.dynamodb(str(route.get("table") or ""), handler)

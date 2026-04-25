@@ -37,9 +37,11 @@ from apptheory.errors import (
     AppTheoryError,
 )
 from apptheory.event_workloads import (
+    DynamoDBStreamRecordSummary,
     EventBridgeScheduledWorkloadResultSummary,
     EventBridgeScheduledWorkloadSummary,
     EventBridgeWorkloadEnvelope,
+    normalize_dynamodb_stream_record,
     normalize_eventbridge_scheduled_workload,
     normalize_eventbridge_workload_envelope,
     require_eventbridge_workload_envelope,
@@ -180,6 +182,7 @@ __all__ = [
     "CORSConfig",
     "Clock",
     "Context",
+    "DynamoDBStreamRecordSummary",
     "DynamoJobLedger",
     "EnvJobsTableName",
     "EventBridgeScheduledWorkloadResultSummary",
@@ -249,6 +252,7 @@ __all__ = [
     "mask_first_last4",
     "matches_if_none_match",
     "new_job_ledger_error",
+    "normalize_dynamodb_stream_record",
     "normalize_eventbridge_scheduled_workload",
     "normalize_eventbridge_workload_envelope",
     "normalize_stage",

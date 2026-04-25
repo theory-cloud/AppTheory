@@ -6,6 +6,7 @@ import json
 import math
 from typing import Any
 
+DynamoDBStreamRecordSummary = dict[str, Any]
 EventBridgeScheduledWorkloadResultSummary = dict[str, Any]
 EventBridgeScheduledWorkloadSummary = dict[str, Any]
 EventBridgeWorkloadEnvelope = dict[str, Any]
@@ -20,6 +21,33 @@ _CORRELATION_SOURCE_AWS_REQUEST_ID = "lambda.aws_request_id"
 
 class _SafeEventError(RuntimeError):
     safe_event_error = True
+
+
+def normalize_dynamodb_stream_record(record: dict[str, Any]) -> DynamoDBStreamRecordSummary:
+    """Return a portable, safe summary for a DynamoDB Streams record.
+
+    Raw Keys, NewImage, and OldImage values are intentionally excluded so item
+    material cannot be copied into logs, metrics, spans, or handler summaries
+    through this helper.
+    """
+
+    record_obj = record if isinstance(record, dict) else {}
+    change = _object_from_value(record_obj.get("dynamodb"))
+    table_name = _dynamodb_table_name_from_stream_arn(_object_string(record_obj, "eventSourceARN"))
+    sequence_number = _object_string(change, "SequenceNumber")
+    event_id = _object_string(record_obj, "eventID")
+    event_name = _object_string(record_obj, "eventName")
+
+    return {
+        "aws_region": _object_string(record_obj, "awsRegion"),
+        "event_id": event_id,
+        "event_name": event_name,
+        "safe_log": f"table={table_name} event_id={event_id} event_name={event_name} sequence_number={sequence_number}",
+        "sequence_number": sequence_number,
+        "size_bytes": _object_int(change, "SizeBytes"),
+        "stream_view_type": _object_string(change, "StreamViewType"),
+        "table_name": table_name,
+    }
 
 
 def normalize_eventbridge_workload_envelope(ctx: Any, event: dict[str, Any]) -> EventBridgeWorkloadEnvelope:
@@ -55,6 +83,24 @@ def require_eventbridge_workload_envelope(ctx: Any, event: dict[str, Any]) -> Ev
     if not envelope["source"] or not envelope["detail_type"] or not envelope["correlation_id"]:
         raise _SafeEventError(_EVENTBRIDGE_ENVELOPE_INVALID)
     return envelope
+
+
+def _dynamodb_table_name_from_stream_arn(arn: str) -> str:
+    value = str(arn or "").strip()
+    if not value:
+        return ""
+    marker = ":table/"
+    index = value.find(marker)
+    if index < 0:
+        return ""
+    after = value[index + len(marker) :]
+    stream_index = after.find("/stream/")
+    if stream_index >= 0:
+        return after[:stream_index]
+    slash_index = after.find("/")
+    if slash_index >= 0:
+        return after[:slash_index]
+    return after
 
 
 def normalize_eventbridge_scheduled_workload(ctx: Any, event: dict[str, Any]) -> EventBridgeScheduledWorkloadSummary:
