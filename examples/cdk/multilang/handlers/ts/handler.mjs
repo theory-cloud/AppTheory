@@ -1,10 +1,19 @@
-import { createApp, json, sse } from "./vendor/apptheory/index.js";
+import {
+  createApp,
+  json,
+  normalizeDynamoDBStreamRecord,
+  normalizeEventBridgeScheduledWorkload,
+  normalizeEventBridgeWorkloadEnvelope,
+  sse,
+} from "./vendor/apptheory/index.js";
 
 const tier = process.env.APPTHEORY_TIER ?? "p2";
 const name = process.env.APPTHEORY_DEMO_NAME ?? "apptheory-multilang";
 const lang = process.env.APPTHEORY_LANG ?? "ts";
 const queueName = process.env.APPTHEORY_DEMO_QUEUE_NAME ?? "";
-const ruleName = process.env.APPTHEORY_DEMO_RULE_NAME ?? "";
+const scheduleRuleName = process.env.APPTHEORY_DEMO_SCHEDULE_RULE_NAME ?? process.env.APPTHEORY_DEMO_RULE_NAME ?? "";
+const eventSource = process.env.APPTHEORY_DEMO_EVENT_SOURCE ?? "apptheory.example";
+const eventDetailType = process.env.APPTHEORY_DEMO_EVENT_DETAIL_TYPE ?? "example.item.changed";
 const tableName = process.env.APPTHEORY_DEMO_TABLE_NAME ?? "";
 
 const app = createApp({ tier });
@@ -21,8 +30,34 @@ app.get("/", (ctx) =>
 );
 
 app.sqs(queueName, async () => {});
-app.eventBridge({ ruleName }, async () => ({ ok: true, trigger: "eventbridge", lang }));
-app.dynamoDB(tableName, async () => {});
+app.eventBridge({ source: eventSource, detailType: eventDetailType }, async (ctx, event) => {
+  const envelope = normalizeEventBridgeWorkloadEnvelope(ctx, event);
+  return {
+    ok: true,
+    trigger: "eventbridge",
+    kind: "rule",
+    lang,
+    correlation_id: envelope.correlation_id,
+    source: envelope.source,
+    detail_type: envelope.detail_type,
+  };
+});
+app.eventBridge({ ruleName: scheduleRuleName }, async (ctx, event) => {
+  const summary = normalizeEventBridgeScheduledWorkload(ctx, event);
+  return {
+    ok: true,
+    trigger: "eventbridge",
+    kind: "schedule",
+    lang,
+    correlation_id: summary.correlation_id,
+    run_id: summary.run_id,
+    scheduled_time: summary.scheduled_time,
+  };
+});
+app.dynamoDB(tableName, async (_ctx, record) => {
+  const summary = normalizeDynamoDBStreamRecord(record);
+  if (!summary.event_id) throw new Error("missing dynamodb event id");
+});
 
 app.get("/hello/{name}", (ctx) =>
   json(200, {
