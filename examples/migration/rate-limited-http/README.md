@@ -27,11 +27,11 @@ The goal is to demonstrate an **end-to-end migration** of rate limiting to AppTh
 
 ## v1 security note
 
-The Go runtime’s default `RateLimitMiddleware(...)` identifier extraction now hashes credential-derived identifiers
+The Go runtime’s default `RateLimitMiddleware(...)` identifier extraction now fingerprints credential-derived identifiers
 before they reach the limiter backend:
 
-- `x-api-key` → `api_key:sha256:<hex>`
-- `Authorization: Bearer ...` → `bearer:sha256:<hex>`
+- `x-api-key` → `api_key:hmac-sha256:<hex>`
+- `Authorization: Bearer ...` → `bearer:hmac-sha256:<hex>`
 
 That means:
 
