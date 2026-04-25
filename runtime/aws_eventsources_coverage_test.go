@@ -146,8 +146,8 @@ func TestServeEventBridge_EventMiddleware_TypeAssertionFailure(t *testing.T) {
 	})
 
 	_, err := app.ServeEventBridge(context.Background(), events.EventBridgeEvent{Source: "src", DetailType: "dt"})
-	if err == nil || !strings.Contains(err.Error(), "invalid eventbridge event type") {
-		t.Fatalf("expected invalid type error, got %v", err)
+	if err == nil || err.Error() != eventWorkloadFailedMessage {
+		t.Fatalf("expected safe event workload error, got %v", err)
 	}
 }
 
