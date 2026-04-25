@@ -208,9 +208,10 @@ The `limited` feature set provides DynamoDB-backed cross-instance rate limiting.
 
 Go runtime note:
 
-- `runtime.RateLimitMiddleware(...)` hashes default credential-derived identifiers before they reach limiter backends:
-  - `x-api-key` → `api_key:sha256:<hex>`
-  - `Authorization: Bearer ...` → `bearer:sha256:<hex>`
+- `runtime.RateLimitMiddleware(...)` fingerprints default credential-derived identifiers before they reach limiter
+  backends:
+  - `x-api-key` → `api_key:hmac-sha256:<hex>`
+  - `Authorization: Bearer ...` → `bearer:hmac-sha256:<hex>`
 - `AuthIdentity`, `TenantID`, and explicit `ExtractIdentifier` overrides are unchanged.
 - This avoids storing raw credentials in rate-limit tables, but it also changes observed key values and resets any
   existing credential-backed buckets on first deploy.
