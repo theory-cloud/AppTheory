@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
+EventBridgeScheduledWorkloadResultSummary = dict[str, Any]
+EventBridgeScheduledWorkloadSummary = dict[str, Any]
 EventBridgeWorkloadEnvelope = dict[str, Any]
 
 _EVENTBRIDGE_ENVELOPE_INVALID = "apptheory: eventbridge workload envelope invalid"
@@ -54,6 +57,57 @@ def require_eventbridge_workload_envelope(ctx: Any, event: dict[str, Any]) -> Ev
     return envelope
 
 
+def normalize_eventbridge_scheduled_workload(ctx: Any, event: dict[str, Any]) -> EventBridgeScheduledWorkloadSummary:
+    """Return the canonical scheduled workload summary for an EventBridge scheduled event."""
+
+    event_obj = event if isinstance(event, dict) else {}
+    detail = _object_from_value(event_obj.get("detail"))
+    result = _object_from_value(detail.get("result"))
+    envelope = normalize_eventbridge_workload_envelope(ctx, event_obj)
+
+    run_id = _object_string(detail, "run_id")
+    if not run_id:
+        run_id = _object_string(event_obj, "id")
+    if not run_id:
+        run_id = _lambda_aws_request_id(ctx)
+
+    idempotency_key = _object_string(detail, "idempotency_key")
+    if not idempotency_key:
+        event_id = _object_string(event_obj, "id")
+        request_id = _lambda_aws_request_id(ctx)
+        if event_id:
+            idempotency_key = f"eventbridge:{event_id}"
+        elif request_id:
+            idempotency_key = f"lambda:{request_id}"
+
+    status = _object_string(result, "status") or _object_string(detail, "status") or "ok"
+    status = status.strip() or "ok"
+
+    remaining_ms = _event_context_remaining_ms(ctx)
+    deadline_unix_ms = 0
+    if remaining_ms > 0 and ctx is not None:
+        deadline_unix_ms = int(ctx.now().timestamp() * 1000) + remaining_ms
+
+    return {
+        "correlation_id": envelope["correlation_id"],
+        "correlation_source": envelope["correlation_source"],
+        "deadline_unix_ms": deadline_unix_ms,
+        "detail_type": envelope["detail_type"],
+        "event_id": envelope["event_id"],
+        "idempotency_key": idempotency_key,
+        "kind": "scheduled",
+        "remaining_ms": remaining_ms,
+        "result": {
+            "failed": _object_int(result, "failed"),
+            "processed": _object_int(result, "processed"),
+            "status": status,
+        },
+        "run_id": run_id,
+        "scheduled_time": envelope["time"],
+        "source": envelope["source"],
+    }
+
+
 def _eventbridge_correlation_id(
     ctx: Any,
     event: dict[str, Any],
@@ -95,6 +149,14 @@ def _event_context_request_id(ctx: Any) -> str:
     return str(getattr(ctx, "request_id", "") or "").strip()
 
 
+def _event_context_remaining_ms(ctx: Any) -> int:
+    try:
+        value = int(getattr(ctx, "remaining_ms", 0) or 0)
+    except Exception:  # noqa: BLE001
+        return 0
+    return value if value > 0 else 0
+
+
 def _lambda_aws_request_id(ctx: Any) -> str:
     lambda_ctx = getattr(ctx, "ctx", None)
     if lambda_ctx is None:
@@ -118,6 +180,15 @@ def _object_string(obj: dict[str, Any], key: str) -> str:
     if not isinstance(obj, dict):
         return ""
     return _as_trimmed_string(obj.get(key))
+
+
+def _object_int(obj: dict[str, Any], key: str) -> int:
+    if not isinstance(obj, dict):
+        return 0
+    value = obj.get(key)
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(float(value)):
+        return 0
+    return int(value)
 
 
 def _header_string(headers: dict[str, Any], key: str) -> str:

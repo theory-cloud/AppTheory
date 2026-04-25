@@ -1396,7 +1396,7 @@ def _built_in_eventbridge_handler(runtime: Any, name: str, effects: Any | None =
     if name == "eventbridge_workload_envelope":
         return lambda ctx, event: runtime.normalize_eventbridge_workload_envelope(ctx, event)
     if name == "eventbridge_scheduled_summary":
-        return lambda ctx, event: _eventbridge_scheduled_summary(ctx, event)
+        return lambda ctx, event: runtime.normalize_eventbridge_scheduled_workload(ctx, event)
     if name == "eventbridge_observed_success":
         def handler(ctx, event):
             summary = _eventbridge_workload_envelope_summary(ctx, event)
