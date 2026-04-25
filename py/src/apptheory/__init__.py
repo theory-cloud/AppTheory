@@ -36,6 +36,11 @@ from apptheory.errors import (
     AppError,
     AppTheoryError,
 )
+from apptheory.event_workloads import (
+    EventBridgeWorkloadEnvelope,
+    normalize_eventbridge_workload_envelope,
+    require_eventbridge_workload_envelope,
+)
 from apptheory.ids import IDGenerator, IdGenerator, ManualIdGenerator, RealIdGenerator
 
 try:
@@ -175,6 +180,7 @@ __all__ = [
     "DynamoJobLedger",
     "EnvJobsTableName",
     "EventBridgeSelector",
+    "EventBridgeWorkloadEnvelope",
     "EventContext",
     "FakeWebSocketClientFactory",
     "FakeWebSocketManagementClient",
@@ -238,12 +244,14 @@ __all__ = [
     "mask_first_last4",
     "matches_if_none_match",
     "new_job_ledger_error",
+    "normalize_eventbridge_workload_envelope",
     "normalize_stage",
     "origin_url",
     "original_host",
     "original_uri",
     "payment_xml_patterns",
     "rapid_connect_xml_patterns",
+    "require_eventbridge_workload_envelope",
     "resource_name",
     "safe_json_for_html",
     "sanitize_error_envelope",
