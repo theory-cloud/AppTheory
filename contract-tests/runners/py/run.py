@@ -1386,7 +1386,7 @@ def _dynamodb_fixture_table_name_from_stream_arn(arn: str) -> str:
     return after
 
 
-def _built_in_eventbridge_handler(name: str, effects: Any | None = None):
+def _built_in_eventbridge_handler(runtime: Any, name: str, effects: Any | None = None):
     if name == "eventbridge_static_a":
         return lambda _ctx, _event: {"handler": "a"}
     if name == "eventbridge_static_b":
@@ -1394,7 +1394,7 @@ def _built_in_eventbridge_handler(name: str, effects: Any | None = None):
     if name == "eventbridge_echo_event_middleware":
         return lambda ctx, _event: {"mw": ctx.get("mw"), "trace": ctx.get("trace")}
     if name == "eventbridge_workload_envelope":
-        return lambda ctx, event: _eventbridge_workload_envelope_summary(ctx, event)
+        return lambda ctx, event: runtime.normalize_eventbridge_workload_envelope(ctx, event)
     if name == "eventbridge_scheduled_summary":
         return lambda ctx, event: _eventbridge_scheduled_summary(ctx, event)
     if name == "eventbridge_observed_success":
@@ -1412,13 +1412,7 @@ def _built_in_eventbridge_handler(name: str, effects: Any | None = None):
 
         return handler
     if name == "eventbridge_require_workload_envelope":
-        def handler(ctx, event):
-            summary = _eventbridge_workload_envelope_summary(ctx, event)
-            if not summary["source"] or not summary["detail_type"] or not summary["correlation_id"]:
-                raise RuntimeError("apptheory: eventbridge workload envelope invalid")
-            return summary
-
-        return handler
+        return lambda ctx, event: runtime.require_eventbridge_workload_envelope(ctx, event)
     return None
 
 
@@ -1829,7 +1823,7 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
         app.dynamodb(str(route.get("table") or ""), handler)
 
     for route in setup.get("eventbridge", []) or []:
-        handler = _built_in_eventbridge_handler(str(route.get("handler") or ""), effects)
+        handler = _built_in_eventbridge_handler(runtime, str(route.get("handler") or ""), effects)
         if handler is None:
             raise RuntimeError(f"unknown eventbridge handler {route.get('handler')!r}")
         selector = runtime.EventBridgeSelector(
