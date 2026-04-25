@@ -1133,13 +1133,11 @@ function builtInDynamoDBStreamHandler(runtime, name, effects) {
         requireDynamoDBSafeSummary(runtime, record, true);
       };
     case "ddb_observed_fail_on_remove":
-      return async (ctx, record) => {
+      return async (_ctx, record) => {
         requireDynamoDBSafeSummary(runtime, record, false);
         if (String(record?.eventName ?? "").trim() === "REMOVE") {
-          recordDynamoDBEffects(effects, ctx, record, "error", "error", "app.internal");
-          throw new Error("fail");
+          throw new Error("raw dynamodb remove failure: do-not-log");
         }
-        recordDynamoDBEffects(effects, ctx, record, "info", "success", "");
       };
     default:
       return null;
@@ -1207,16 +1205,10 @@ function builtInEventBridgeHandler(runtime, name, effects) {
     case "eventbridge_scheduled_summary":
       return async (ctx, event) => runtime.normalizeEventBridgeScheduledWorkload(ctx, event);
     case "eventbridge_observed_success":
-      return async (ctx, event) => {
-        const summary = eventBridgeWorkloadEnvelopeSummary(ctx, event);
-        recordEventBridgeEffects(effects, ctx, summary, "info", "success", "");
-        return summary;
-      };
+      return async (ctx, event) => runtime.normalizeEventBridgeWorkloadEnvelope(ctx, event);
     case "eventbridge_observed_panic":
-      return async (ctx, event) => {
-        const summary = eventBridgeWorkloadEnvelopeSummary(ctx, event);
-        recordEventBridgeEffects(effects, ctx, summary, "error", "error", "app.internal");
-        throw new Error("apptheory: event workload failed");
+      return async () => {
+        throw new Error("raw eventbridge panic: do-not-log");
       };
     case "eventbridge_require_workload_envelope":
       return async (ctx, event) => runtime.requireEventBridgeWorkloadEnvelope(ctx, event);
@@ -1471,8 +1463,40 @@ async function runFixtureM1(fixture) {
   const runtime = await loadAppTheoryRuntime();
   const ids = new runtime.ManualIdGenerator();
   ids.queue("req_test_123");
-  const app = runtime.createApp({ tier: "p0", clock: new runtime.ManualClock(new Date(0)), ids });
   const effects = { logs: [], metrics: [], spans: [] };
+  const app = runtime.createApp({
+    tier: "p0",
+    clock: new runtime.ManualClock(new Date(0)),
+    ids,
+    observability: {
+      log: (r) => {
+        const record = {
+          level: r.level,
+          event: r.event,
+          request_id: r.requestId,
+          tenant_id: r.tenantId,
+          method: r.method,
+          path: r.path,
+          status: r.status,
+          error_code: r.errorCode,
+        };
+        if (r.trigger) record.trigger = r.trigger;
+        if (r.correlationId) record.correlation_id = r.correlationId;
+        if (r.source) record.source = r.source;
+        if (r.detailType) record.detail_type = r.detailType;
+        if (r.tableName) record.table_name = r.tableName;
+        if (r.eventId) record.event_id = r.eventId;
+        if (r.eventName) record.event_name = r.eventName;
+        effects.logs.push(record);
+      },
+      metric: (r) => {
+        effects.metrics.push({ name: r.name, value: r.value, tags: r.tags });
+      },
+      span: (r) => {
+        effects.spans.push({ name: r.name, attributes: r.attributes });
+      },
+    },
+  });
 
   for (const name of fixture.setup?.middlewares ?? []) {
     const mw = builtInEventMiddleware(name);

@@ -34,6 +34,13 @@ export interface LogRecord {
     path: string;
     status: number;
     errorCode: string;
+    trigger?: string;
+    correlationId?: string;
+    source?: string;
+    detailType?: string;
+    tableName?: string;
+    eventId?: string;
+    eventName?: string;
 }
 export interface MetricRecord {
     name: string;
