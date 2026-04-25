@@ -5,6 +5,7 @@ import * as path from "node:path";
 import {
   AppTheoryDynamoDBStreamMapping,
   AppTheoryEventBridgeHandler,
+  AppTheoryEventBridgeRuleTarget,
   AppTheoryFunction,
   AppTheoryFunctionAlarms,
   AppTheoryHttpApi,
@@ -52,10 +53,14 @@ export class MultiLangStack extends Stack {
 
     const tier = contextValue(app, "tier") ?? "p2";
     const name = contextValue(app, "name") ?? "apptheory-multilang";
+    const eventSource = "apptheory.example";
+    const eventDetailType = "example.item.changed";
 
     const commonEnv = {
       APPTHEORY_TIER: tier,
       APPTHEORY_DEMO_NAME: name,
+      APPTHEORY_DEMO_EVENT_SOURCE: eventSource,
+      APPTHEORY_DEMO_EVENT_DETAIL_TYPE: eventDetailType,
     };
 
     const goHandler = new AppTheoryFunction(this, "GoHandler", {
@@ -159,6 +164,15 @@ export class MultiLangStack extends Stack {
       schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
     });
     goHandler.fn.addEnvironment("APPTHEORY_DEMO_RULE_NAME", goSchedule.rule.ruleName);
+    goHandler.fn.addEnvironment("APPTHEORY_DEMO_SCHEDULE_RULE_NAME", goSchedule.rule.ruleName);
+    const goEventRule = new AppTheoryEventBridgeRuleTarget(this, "GoEventRule", {
+      handler: goHandler.fn,
+      eventPattern: {
+        source: [eventSource],
+        detailType: [eventDetailType],
+      },
+    });
+    goHandler.fn.addEnvironment("APPTHEORY_DEMO_EVENT_RULE_NAME", goEventRule.rule.ruleName);
 
     const tsQueue = new sqs.Queue(this, "TsQueue");
     tsHandler.fn.addEnvironment("APPTHEORY_DEMO_QUEUE_NAME", tsQueue.queueName);
@@ -177,6 +191,15 @@ export class MultiLangStack extends Stack {
       schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
     });
     tsHandler.fn.addEnvironment("APPTHEORY_DEMO_RULE_NAME", tsSchedule.rule.ruleName);
+    tsHandler.fn.addEnvironment("APPTHEORY_DEMO_SCHEDULE_RULE_NAME", tsSchedule.rule.ruleName);
+    const tsEventRule = new AppTheoryEventBridgeRuleTarget(this, "TsEventRule", {
+      handler: tsHandler.fn,
+      eventPattern: {
+        source: [eventSource],
+        detailType: [eventDetailType],
+      },
+    });
+    tsHandler.fn.addEnvironment("APPTHEORY_DEMO_EVENT_RULE_NAME", tsEventRule.rule.ruleName);
 
     const pyQueue = new sqs.Queue(this, "PyQueue");
     pyHandler.fn.addEnvironment("APPTHEORY_DEMO_QUEUE_NAME", pyQueue.queueName);
@@ -195,6 +218,15 @@ export class MultiLangStack extends Stack {
       schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
     });
     pyHandler.fn.addEnvironment("APPTHEORY_DEMO_RULE_NAME", pySchedule.rule.ruleName);
+    pyHandler.fn.addEnvironment("APPTHEORY_DEMO_SCHEDULE_RULE_NAME", pySchedule.rule.ruleName);
+    const pyEventRule = new AppTheoryEventBridgeRuleTarget(this, "PyEventRule", {
+      handler: pyHandler.fn,
+      eventPattern: {
+        source: [eventSource],
+        detailType: [eventDetailType],
+      },
+    });
+    pyHandler.fn.addEnvironment("APPTHEORY_DEMO_EVENT_RULE_NAME", pyEventRule.rule.ruleName);
 
     const goApi = new AppTheoryHttpApi(this, "GoApi", {
       apiName: `${name}-go`,
