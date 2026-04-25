@@ -6,14 +6,58 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambdacontext"
 
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
+const dynamoDBEventNameRemove = "REMOVE"
+
 func runFixtureM1(f Fixture) error {
-	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	now := time.Unix(0, 0).UTC()
+	effects := &fixtureM1Effects{}
+	app := apptheory.New(
+		apptheory.WithTier(apptheory.TierP0),
+		apptheory.WithClock(fixedClock{now: now}),
+		apptheory.WithIDGenerator(fixedIDGenerator{id: "req_test_123"}),
+		apptheory.WithObservability(apptheory.ObservabilityHooks{
+			Log: func(r apptheory.LogRecord) {
+				effects.logs = append(effects.logs, FixtureLogRecord{
+					Level:         r.Level,
+					Event:         r.Event,
+					RequestID:     r.RequestID,
+					TenantID:      r.TenantID,
+					Method:        r.Method,
+					Path:          r.Path,
+					Status:        r.Status,
+					ErrorCode:     r.ErrorCode,
+					Trigger:       r.Trigger,
+					CorrelationID: r.CorrelationID,
+					Source:        r.Source,
+					DetailType:    r.DetailType,
+					TableName:     r.TableName,
+					EventID:       r.EventID,
+					EventName:     r.EventName,
+				})
+			},
+			Metric: func(r apptheory.MetricRecord) {
+				effects.metrics = append(effects.metrics, FixtureMetricRecord{
+					Name:  r.Name,
+					Value: r.Value,
+					Tags:  r.Tags,
+				})
+			},
+			Span: func(r apptheory.SpanRecord) {
+				effects.spans = append(effects.spans, FixtureSpanRecord{
+					Name:       r.Name,
+					Attributes: r.Attributes,
+				})
+			},
+		}),
+	)
 
 	for _, name := range f.Setup.Middlewares {
 		mw := builtInM1EventMiddleware(name)
@@ -76,8 +120,13 @@ func runFixtureM1(f Fixture) error {
 		return errors.New("fixture missing input.aws_event")
 	}
 
-	out, err := app.HandleLambda(context.Background(), f.Input.AWSEvent.Event)
-	return compareFixtureM1Result(f, out, err)
+	ctx, cancel := fixtureM1LambdaContext(now, f.Input.Context)
+	if cancel != nil {
+		defer cancel()
+	}
+
+	out, err := app.HandleLambda(ctx, f.Input.AWSEvent.Event)
+	return compareFixtureM1Result(f, out, err, effects)
 }
 
 func builtInM1EventMiddleware(name string) apptheory.EventMiddleware {
@@ -135,7 +184,18 @@ func compareFixtureOutputJSON(f Fixture, out any) error {
 	return nil
 }
 
-func compareFixtureM1Result(f Fixture, out any, runErr error) error {
+type fixtureM1Effects struct {
+	logs    []FixtureLogRecord
+	metrics []FixtureMetricRecord
+	spans   []FixtureSpanRecord
+}
+
+func compareFixtureM1Result(f Fixture, out any, runErr error, effectInputs ...*fixtureM1Effects) error {
+	effects := &fixtureM1Effects{}
+	if len(effectInputs) > 0 && effectInputs[0] != nil {
+		effects = effectInputs[0]
+	}
+
 	if f.Expect.Error != nil {
 		if len(f.Expect.Output) != 0 {
 			return errors.New("fixture expect cannot set both error and output_json")
@@ -147,7 +207,7 @@ func compareFixtureM1Result(f Fixture, out any, runErr error) error {
 		if expected != "" && strings.TrimSpace(runErr.Error()) != expected {
 			return fmt.Errorf("error message mismatch: expected %q, got %q", expected, runErr.Error())
 		}
-		return nil
+		return compareFixtureM1SideEffectsIfExpected(f, effects)
 	}
 	if len(f.Expect.Output) == 0 {
 		return errors.New("fixture missing expect.output_json or expect.error")
@@ -155,7 +215,20 @@ func compareFixtureM1Result(f Fixture, out any, runErr error) error {
 	if runErr != nil {
 		return runErr
 	}
-	return compareFixtureOutputJSON(f, out)
+	if err := compareFixtureOutputJSON(f, out); err != nil {
+		return err
+	}
+	return compareFixtureM1SideEffectsIfExpected(f, effects)
+}
+
+func compareFixtureM1SideEffectsIfExpected(f Fixture, effects *fixtureM1Effects) error {
+	if f.Expect.Logs == nil && f.Expect.Metrics == nil && f.Expect.Spans == nil {
+		return nil
+	}
+	if effects == nil {
+		effects = &fixtureM1Effects{}
+	}
+	return compareFixtureSideEffects(f.Expect, effects.logs, effects.metrics, effects.spans)
 }
 
 func builtInRecordHandler[T any](
@@ -249,9 +322,28 @@ func builtInSNSHandler(name string) apptheory.SNSHandler {
 }
 
 func builtInDynamoDBStreamHandler(name string) apptheory.DynamoDBStreamHandler {
-	if strings.TrimSpace(name) == "ddb_requires_event_middleware" {
+	switch strings.TrimSpace(name) {
+	case "ddb_requires_event_middleware":
 		return func(ctx *apptheory.EventContext, _ events.DynamoDBEventRecord) error {
 			return requireEventMiddleware(ctx)
+		}
+	case "ddb_require_normalized_summary":
+		return func(_ *apptheory.EventContext, record events.DynamoDBEventRecord) error {
+			return requireDynamoDBSafeSummary(record, false)
+		}
+	case "ddb_require_normalized_summary_fail_on_remove":
+		return func(_ *apptheory.EventContext, record events.DynamoDBEventRecord) error {
+			return requireDynamoDBSafeSummary(record, true)
+		}
+	case "ddb_observed_fail_on_remove":
+		return func(_ *apptheory.EventContext, record events.DynamoDBEventRecord) error {
+			if err := requireDynamoDBSafeSummary(record, false); err != nil {
+				return err
+			}
+			if strings.TrimSpace(record.EventName) == dynamoDBEventNameRemove {
+				return errors.New("raw dynamodb remove failure: do-not-log")
+			}
+			return nil
 		}
 	}
 
@@ -260,7 +352,9 @@ func builtInDynamoDBStreamHandler(name string) apptheory.DynamoDBStreamHandler {
 		"ddb_noop",
 		"ddb_always_fail",
 		"ddb_fail_on_event_name_remove",
-		func(record events.DynamoDBEventRecord) bool { return strings.TrimSpace(record.EventName) == "REMOVE" },
+		func(record events.DynamoDBEventRecord) bool {
+			return strings.TrimSpace(record.EventName) == dynamoDBEventNameRemove
+		},
 	)
 	if handler == nil {
 		return nil
@@ -268,12 +362,101 @@ func builtInDynamoDBStreamHandler(name string) apptheory.DynamoDBStreamHandler {
 	return apptheory.DynamoDBStreamHandler(handler)
 }
 
-func builtInEventBridgeHandler(name string) apptheory.EventBridgeHandler {
-	handler := builtInOutputHandler[events.EventBridgeEvent](name, "eventbridge")
-	if handler == nil {
-		return nil
+func requireDynamoDBSafeSummary(record events.DynamoDBEventRecord, failOnRemove bool) error {
+	summary := dynamoDBSafeSummary(record)
+	for _, key := range []string{"table_name", "event_id", "event_name", "sequence_number", "stream_view_type"} {
+		if strings.TrimSpace(asString(summary[key])) == "" {
+			return fmt.Errorf("missing normalized dynamodb %s", key)
+		}
 	}
-	return apptheory.EventBridgeHandler(handler)
+	if rawLog := strings.TrimSpace(asString(summary["safe_log"])); rawLog == "" || containsAny(rawLog, []string{
+		"release#rel_123",
+		"do-not-log",
+		"previous-secret",
+	}) {
+		return errors.New("unsafe dynamodb stream summary")
+	}
+	if failOnRemove && strings.TrimSpace(record.EventName) == dynamoDBEventNameRemove {
+		return errors.New("fail")
+	}
+	return nil
+}
+
+func dynamoDBSafeSummary(record events.DynamoDBEventRecord) map[string]any {
+	summary := apptheory.NormalizeDynamoDBStreamRecord(record)
+	return map[string]any{
+		"aws_region":       summary.AWSRegion,
+		"event_id":         summary.EventID,
+		"event_name":       summary.EventName,
+		"safe_log":         summary.SafeLog,
+		"sequence_number":  summary.SequenceNumber,
+		"size_bytes":       int(summary.SizeBytes),
+		"stream_view_type": summary.StreamViewType,
+		"table_name":       summary.TableName,
+	}
+}
+
+func builtInEventBridgeHandler(name string) apptheory.EventBridgeHandler {
+	switch strings.TrimSpace(name) {
+	case "eventbridge_workload_envelope":
+		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
+			return apptheory.NormalizeEventBridgeWorkloadEnvelope(ctx, event), nil
+		}
+	case "eventbridge_scheduled_summary":
+		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
+			return apptheory.NormalizeEventBridgeScheduledWorkload(ctx, event), nil
+		}
+	case "eventbridge_observed_success":
+		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
+			return apptheory.NormalizeEventBridgeWorkloadEnvelope(ctx, event), nil
+		}
+	case "eventbridge_observed_panic":
+		return func(_ *apptheory.EventContext, _ events.EventBridgeEvent) (any, error) {
+			panic("raw eventbridge panic: do-not-log")
+		}
+	case "eventbridge_require_workload_envelope":
+		return func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
+			return apptheory.RequireEventBridgeWorkloadEnvelope(ctx, event)
+		}
+	default:
+		handler := builtInOutputHandler[events.EventBridgeEvent](name, "eventbridge")
+		if handler == nil {
+			return nil
+		}
+		return apptheory.EventBridgeHandler(handler)
+	}
+}
+
+func fixtureM1LambdaContext(now time.Time, input FixtureContext) (context.Context, context.CancelFunc) {
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if input.RemainingMS > 0 {
+		ctx, cancel = context.WithDeadline(ctx, now.Add(time.Duration(input.RemainingMS)*time.Millisecond))
+	}
+	if requestID := strings.TrimSpace(input.AWSRequestID); requestID != "" {
+		ctx = lambdacontext.NewContext(ctx, &lambdacontext.LambdaContext{AwsRequestID: requestID})
+	}
+	return ctx, cancel
+}
+
+func containsAny(value string, sentinels []string) bool {
+	for _, sentinel := range sentinels {
+		if sentinel != "" && strings.Contains(value, sentinel) {
+			return true
+		}
+	}
+	return false
+}
+
+func asString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	default:
+		return ""
+	}
 }
 
 func builtInOutputHandler[Event any](name string, prefix string) func(*apptheory.EventContext, Event) (any, error) {

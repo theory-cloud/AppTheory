@@ -11,9 +11,18 @@ Each language is deployed as its own Lambda + HTTP API so you can compare behavi
 It also wires up the same non-HTTP event sources to each Lambda:
 
 - SQS → Lambda (partial batch failure enabled)
-- EventBridge schedule → Lambda
+- EventBridge rule → Lambda for a product-neutral domain event
+- EventBridge schedule → Lambda for periodic work
 - DynamoDB Streams → Lambda (partial batch failure enabled)
 - WebSocket API → Lambda (`$connect`/`$disconnect`/`$default`, with management API send)
+
+The Go, Node, and Python handlers use the AppTheory event workload helpers for
+all non-HTTP examples:
+
+- EventBridge rule intake returns the normalized workload envelope.
+- EventBridge scheduled intake returns the scheduled workload summary.
+- DynamoDB Streams handling derives the safe stream record summary and does not
+  copy `Keys`, `NewImage`, or `OldImage` values into the handler result.
 
 ## Prerequisites
 
@@ -44,7 +53,10 @@ The CDK stack injects a shared configuration story across languages:
 - `APPTHEORY_TIER` (defaults to `p2`)
 - `APPTHEORY_DEMO_NAME` (defaults to `apptheory-multilang`)
 - `APPTHEORY_DEMO_QUEUE_NAME`
-- `APPTHEORY_DEMO_RULE_NAME`
+- `APPTHEORY_DEMO_EVENT_SOURCE` (defaults to `apptheory.example`)
+- `APPTHEORY_DEMO_EVENT_DETAIL_TYPE` (defaults to `example.item.changed`)
+- `APPTHEORY_DEMO_EVENT_RULE_NAME`
+- `APPTHEORY_DEMO_SCHEDULE_RULE_NAME`
 - `APPTHEORY_DEMO_TABLE_NAME`
 
 You can override these via CDK context:

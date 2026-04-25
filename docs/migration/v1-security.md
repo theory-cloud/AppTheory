@@ -157,7 +157,7 @@ Why this changed:
 - Force-killing goroutines, promises, or threads is not portable across the three runtimes; the contract needed to make
   the cooperative model explicit and deterministic.
 
-## Go rate-limit middleware now hashes credential-derived identifiers by default
+## Go rate-limit middleware now fingerprints credential-derived identifiers by default
 
 Affected surface:
 
@@ -166,8 +166,8 @@ Affected surface:
 What changed:
 
 - The Go runtime no longer stores raw credential material as the default limiter identifier.
-- Requests identified by `x-api-key` now use `api_key:sha256:<hex>`.
-- Requests identified by `Authorization: Bearer ...` now use `bearer:sha256:<hex>`.
+- Requests identified by `x-api-key` now use `api_key:hmac-sha256:<hex>`.
+- Requests identified by `Authorization: Bearer ...` now use `bearer:hmac-sha256:<hex>`.
 - `AuthIdentity`, `TenantID`, and explicit `ExtractIdentifier` overrides are unchanged.
 
 What you need to do:
@@ -181,7 +181,8 @@ What you need to do:
 Why this changed:
 
 - Raw API keys and Bearer tokens should not be stored in rate-limit tables by default.
-- Hashing keeps default limiter behavior deterministic while reducing credential exposure in storage and diagnostics.
+- HMAC fingerprinting keeps default limiter behavior deterministic while reducing credential exposure in storage and
+  diagnostics.
 
 ## Sanitization once again redacts token-like keys by default
 

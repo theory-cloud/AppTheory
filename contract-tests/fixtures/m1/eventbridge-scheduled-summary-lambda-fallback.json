@@ -1,0 +1,60 @@
+{
+  "id": "m1.eventbridge.scheduled_summary_lambda_fallback",
+  "tier": "m1",
+  "name": "EventBridge scheduled workload: Lambda request id fallback when event id is absent",
+  "setup": {
+    "eventbridge": [
+      {
+        "source": "aws.events",
+        "detail_type": "Scheduled Event",
+        "handler": "eventbridge_scheduled_summary"
+      }
+    ]
+  },
+  "input": {
+    "context": {
+      "aws_request_id": "aws-req-schedule-lambda",
+      "remaining_ms": 5000
+    },
+    "aws_event": {
+      "source": "eventbridge",
+      "event": {
+        "version": "0",
+        "id": "",
+        "detail-type": "Scheduled Event",
+        "source": "aws.events",
+        "account": "000000000000",
+        "time": "2026-04-24T12:00:00Z",
+        "region": "us-east-1",
+        "resources": [
+          "arn:aws:events:us-east-1:000000000000:rule/release-control-schedule"
+        ],
+        "detail": {
+          "result": {
+            "status": "noop"
+          }
+        }
+      }
+    }
+  },
+  "expect": {
+    "output_json": {
+      "correlation_id": "aws-req-schedule-lambda",
+      "correlation_source": "lambda.aws_request_id",
+      "deadline_unix_ms": 5000,
+      "detail_type": "Scheduled Event",
+      "event_id": "",
+      "idempotency_key": "lambda:aws-req-schedule-lambda",
+      "kind": "scheduled",
+      "remaining_ms": 5000,
+      "result": {
+        "status": "noop",
+        "processed": 0,
+        "failed": 0
+      },
+      "run_id": "aws-req-schedule-lambda",
+      "scheduled_time": "2026-04-24T12:00:00Z",
+      "source": "aws.events"
+    }
+  }
+}

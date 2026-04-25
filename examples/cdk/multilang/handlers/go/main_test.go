@@ -50,7 +50,9 @@ func TestBuildApp_StreamWebSocketAndEvents(t *testing.T) {
 	t.Setenv("APPTHEORY_DEMO_NAME", "demo")
 	t.Setenv("APPTHEORY_LANG", "go")
 	t.Setenv("APPTHEORY_DEMO_QUEUE_NAME", "queue1")
-	t.Setenv("APPTHEORY_DEMO_RULE_NAME", "rule1")
+	t.Setenv("APPTHEORY_DEMO_SCHEDULE_RULE_NAME", "schedule1")
+	t.Setenv("APPTHEORY_DEMO_EVENT_SOURCE", "apptheory.example")
+	t.Setenv("APPTHEORY_DEMO_EVENT_DETAIL_TYPE", "example.item.changed")
 	t.Setenv("APPTHEORY_DEMO_TABLE_NAME", "tbl")
 
 	app := buildApp()
@@ -98,16 +100,31 @@ func TestBuildApp_StreamWebSocketAndEvents(t *testing.T) {
 		t.Fatalf("unexpected sqs failures: %#v", sqs.BatchItemFailures)
 	}
 
-	out, err := env.InvokeEventBridge(context.Background(), app, testkit.EventBridgeEvent(testkit.EventBridgeEventOptions{
-		Resources:  []string{"arn:aws:events:us-east-1:123:rule/rule1"},
-		DetailType: "scheduled",
+	ruleOut, err := env.InvokeEventBridge(context.Background(), app, testkit.EventBridgeEvent(testkit.EventBridgeEventOptions{
+		ID:         "evt-rule",
+		Source:     "apptheory.example",
+		DetailType: "example.item.changed",
+		Detail:     map[string]any{"correlation_id": "corr-rule"},
 	}))
 	if err != nil {
-		t.Fatalf("InvokeEventBridge: %v", err)
+		t.Fatalf("InvokeEventBridge rule: %v", err)
 	}
-	got, ok := out.(map[string]any)
-	if !ok || got["trigger"] != "eventbridge" {
-		t.Fatalf("unexpected eventbridge output: %#v", out)
+	got, ok := ruleOut.(map[string]any)
+	if !ok || got["kind"] != "rule" || got["correlation_id"] != "corr-rule" {
+		t.Fatalf("unexpected eventbridge rule output: %#v", ruleOut)
+	}
+
+	scheduleOut, err := env.InvokeEventBridge(context.Background(), app, testkit.EventBridgeEvent(testkit.EventBridgeEventOptions{
+		Resources:  []string{"arn:aws:events:us-east-1:123:rule/schedule1"},
+		DetailType: "Scheduled Event",
+		Detail:     map[string]any{"run_id": "run-1"},
+	}))
+	if err != nil {
+		t.Fatalf("InvokeEventBridge schedule: %v", err)
+	}
+	got, ok = scheduleOut.(map[string]any)
+	if !ok || got["kind"] != "schedule" || got["run_id"] != "run-1" {
+		t.Fatalf("unexpected eventbridge schedule output: %#v", scheduleOut)
 	}
 
 	ddb := env.InvokeDynamoDBStream(context.Background(), app, testkit.DynamoDBStreamEvent(testkit.DynamoDBStreamEventOptions{

@@ -110,9 +110,11 @@ func TestDefaultRateLimitIdentifier_HashesCredentialHeaders(t *testing.T) {
 		},
 	}
 	if got := defaultRateLimitIdentifier(apiKeyCtx); got == "k_secret" {
-		t.Fatalf("expected api key identifier to be hashed, got raw value")
-	} else if want := hashRateLimitCredentialIdentifier("api_key", "k_secret"); got != want {
-		t.Fatalf("expected hashed api key identifier %q, got %q", want, got)
+		t.Fatalf("expected api key identifier to be fingerprinted, got raw value")
+	} else if want := fingerprintRateLimitCredentialIdentifier("api_key", "k_secret"); got != want {
+		t.Fatalf("expected fingerprinted api key identifier %q, got %q", want, got)
+	} else if !strings.Contains(got, ":hmac-sha256:") {
+		t.Fatalf("expected api key identifier to use an HMAC fingerprint, got %q", got)
 	}
 
 	bearerCtx := &Context{
@@ -123,9 +125,11 @@ func TestDefaultRateLimitIdentifier_HashesCredentialHeaders(t *testing.T) {
 		},
 	}
 	if got := defaultRateLimitIdentifier(bearerCtx); got == "tok_secret" {
-		t.Fatalf("expected bearer identifier to be hashed, got raw value")
-	} else if want := hashRateLimitCredentialIdentifier("bearer", "tok_secret"); got != want {
-		t.Fatalf("expected hashed bearer identifier %q, got %q", want, got)
+		t.Fatalf("expected bearer identifier to be fingerprinted, got raw value")
+	} else if want := fingerprintRateLimitCredentialIdentifier("bearer", "tok_secret"); got != want {
+		t.Fatalf("expected fingerprinted bearer identifier %q, got %q", want, got)
+	} else if !strings.Contains(got, ":hmac-sha256:") {
+		t.Fatalf("expected bearer identifier to use an HMAC fingerprint, got %q", got)
 	}
 }
 
@@ -170,9 +174,9 @@ func TestRateLimitMiddleware_DefaultIdentifierStoredInLimiterIsHashed(t *testing
 		t.Fatalf("expected limiter identifier to be recorded")
 	}
 	if strings.Contains(limiter.lastKey.Identifier, "k_secret") {
-		t.Fatalf("expected hashed limiter identifier, got %q", limiter.lastKey.Identifier)
+		t.Fatalf("expected fingerprinted limiter identifier, got %q", limiter.lastKey.Identifier)
 	}
-	if want := hashRateLimitCredentialIdentifier("api_key", "k_secret"); limiter.lastKey.Identifier != want {
-		t.Fatalf("expected hashed limiter identifier %q, got %q", want, limiter.lastKey.Identifier)
+	if want := fingerprintRateLimitCredentialIdentifier("api_key", "k_secret"); limiter.lastKey.Identifier != want {
+		t.Fatalf("expected fingerprinted limiter identifier %q, got %q", want, limiter.lastKey.Identifier)
 	}
 }

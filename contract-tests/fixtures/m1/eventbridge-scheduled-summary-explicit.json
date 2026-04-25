@@ -1,0 +1,67 @@
+{
+  "id": "m1.eventbridge.scheduled_summary_explicit",
+  "tier": "m1",
+  "name": "EventBridge scheduled workload: explicit run and result summary",
+  "setup": {
+    "eventbridge": [
+      {
+        "source": "aws.events",
+        "detail_type": "Scheduled Event",
+        "handler": "eventbridge_scheduled_summary"
+      }
+    ]
+  },
+  "input": {
+    "context": {
+      "aws_request_id": "aws-req-schedule",
+      "remaining_ms": 25000
+    },
+    "aws_event": {
+      "source": "eventbridge",
+      "event": {
+        "version": "0",
+        "id": "sched-evt-explicit",
+        "detail-type": "Scheduled Event",
+        "source": "aws.events",
+        "account": "000000000000",
+        "time": "2026-04-24T12:00:00Z",
+        "region": "us-east-1",
+        "resources": [
+          "arn:aws:events:us-east-1:000000000000:rule/release-control-schedule"
+        ],
+        "detail": {
+          "run_id": "run-20260424T120000Z",
+          "idempotency_key": "schedule/release-control/2026-04-24T12:00:00Z",
+          "result": {
+            "status": "ok",
+            "processed": 3,
+            "failed": 0
+          }
+        },
+        "metadata": {
+          "correlation_id": "corr-schedule"
+        }
+      }
+    }
+  },
+  "expect": {
+    "output_json": {
+      "correlation_id": "corr-schedule",
+      "correlation_source": "metadata.correlation_id",
+      "deadline_unix_ms": 25000,
+      "detail_type": "Scheduled Event",
+      "event_id": "sched-evt-explicit",
+      "idempotency_key": "schedule/release-control/2026-04-24T12:00:00Z",
+      "kind": "scheduled",
+      "remaining_ms": 25000,
+      "result": {
+        "status": "ok",
+        "processed": 3,
+        "failed": 0
+      },
+      "run_id": "run-20260424T120000Z",
+      "scheduled_time": "2026-04-24T12:00:00Z",
+      "source": "aws.events"
+    }
+  }
+}
