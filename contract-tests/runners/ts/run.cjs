@@ -1100,7 +1100,7 @@ function builtInSNSHandler(name) {
   }
 }
 
-function builtInDynamoDBStreamHandler(name, effects) {
+function builtInDynamoDBStreamHandler(runtime, name, effects) {
   switch (String(name ?? "").trim()) {
     case "ddb_noop":
       return async () => {};
@@ -1126,15 +1126,15 @@ function builtInDynamoDBStreamHandler(name, effects) {
       };
     case "ddb_require_normalized_summary":
       return async (_ctx, record) => {
-        requireDynamoDBSafeSummary(record, false);
+        requireDynamoDBSafeSummary(runtime, record, false);
       };
     case "ddb_require_normalized_summary_fail_on_remove":
       return async (_ctx, record) => {
-        requireDynamoDBSafeSummary(record, true);
+        requireDynamoDBSafeSummary(runtime, record, true);
       };
     case "ddb_observed_fail_on_remove":
       return async (ctx, record) => {
-        requireDynamoDBSafeSummary(record, false);
+        requireDynamoDBSafeSummary(runtime, record, false);
         if (String(record?.eventName ?? "").trim() === "REMOVE") {
           recordDynamoDBEffects(effects, ctx, record, "error", "error", "app.internal");
           throw new Error("fail");
@@ -1146,15 +1146,16 @@ function builtInDynamoDBStreamHandler(name, effects) {
   }
 }
 
-function requireDynamoDBSafeSummary(record, failOnRemove) {
-  const summary = dynamoDBSafeSummary(record);
+function requireDynamoDBSafeSummary(runtime, record, failOnRemove) {
+  const summary = runtime.normalizeDynamoDBStreamRecord(record);
   for (const key of ["table_name", "event_id", "event_name", "sequence_number", "stream_view_type"]) {
     if (!String(summary[key] ?? "").trim()) {
       throw new Error(`missing normalized dynamodb ${key}`);
     }
   }
   const safeLog = String(summary.safe_log ?? "").trim();
-  if (!safeLog || safeLog.includes("do-not-log")) {
+  const serialized = JSON.stringify(summary);
+  if (!safeLog || ["release#rel_123", "do-not-log", "previous-secret"].some((sentinel) => serialized.includes(sentinel))) {
     throw new Error("unsafe dynamodb stream summary");
   }
   if (failOnRemove && String(record?.eventName ?? "").trim() === "REMOVE") {
@@ -1506,7 +1507,7 @@ async function runFixtureM1(fixture) {
   }
 
   for (const route of fixture.setup?.dynamodb ?? []) {
-    const handler = builtInDynamoDBStreamHandler(route.handler, effects);
+    const handler = builtInDynamoDBStreamHandler(runtime, route.handler, effects);
     if (!handler) {
       throw new Error(`unknown dynamodb handler ${JSON.stringify(route.handler)}`);
     }

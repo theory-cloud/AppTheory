@@ -1,5 +1,16 @@
-import type { EventBridgeEvent } from "./aws-types.js";
+import type { DynamoDBStreamRecord, EventBridgeEvent } from "./aws-types.js";
 import type { EventContext } from "./context.js";
+/** Portable, safe summary for a DynamoDB Streams record. */
+export interface DynamoDBStreamRecordSummary {
+    aws_region: string;
+    event_id: string;
+    event_name: string;
+    safe_log: string;
+    sequence_number: string;
+    size_bytes: number;
+    stream_view_type: string;
+    table_name: string;
+}
 /** Portable, safe summary AppTheory exposes for EventBridge workloads. */
 export interface EventBridgeWorkloadEnvelope {
     account: string;
@@ -34,6 +45,14 @@ export interface EventBridgeScheduledWorkloadSummary {
     scheduled_time: string;
     source: string;
 }
+/**
+ * Return a portable, safe summary for a DynamoDB Streams record.
+ *
+ * Raw Keys, NewImage, and OldImage values are intentionally excluded so item
+ * material cannot be copied into logs, metrics, spans, or handler summaries
+ * through this helper.
+ */
+export declare function normalizeDynamoDBStreamRecord(record: DynamoDBStreamRecord): DynamoDBStreamRecordSummary;
 /**
  * Return the canonical EventBridge workload envelope.
  *

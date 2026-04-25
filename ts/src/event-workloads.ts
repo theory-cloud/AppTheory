@@ -1,5 +1,6 @@
-import type { EventBridgeEvent } from "./aws-types.js";
+import type { DynamoDBStreamRecord, EventBridgeEvent } from "./aws-types.js";
 import type { EventContext } from "./context.js";
+import { dynamoDBTableNameFromStreamArn } from "./internal/aws-names.js";
 
 const EVENTBRIDGE_ENVELOPE_INVALID =
   "apptheory: eventbridge workload envelope invalid";
@@ -9,6 +10,18 @@ const CORRELATION_SOURCE_HEADER = "headers.x-correlation-id";
 const CORRELATION_SOURCE_DETAIL = "detail.correlation_id";
 const CORRELATION_SOURCE_EVENT_ID = "event.id";
 const CORRELATION_SOURCE_AWS_REQUEST_ID = "lambda.aws_request_id";
+
+/** Portable, safe summary for a DynamoDB Streams record. */
+export interface DynamoDBStreamRecordSummary {
+  aws_region: string;
+  event_id: string;
+  event_name: string;
+  safe_log: string;
+  sequence_number: string;
+  size_bytes: number;
+  stream_view_type: string;
+  table_name: string;
+}
 
 /** Portable, safe summary AppTheory exposes for EventBridge workloads. */
 export interface EventBridgeWorkloadEnvelope {
@@ -54,6 +67,36 @@ class SafeEventError extends Error {
     super(message);
     this.name = "SafeEventError";
   }
+}
+
+/**
+ * Return a portable, safe summary for a DynamoDB Streams record.
+ *
+ * Raw Keys, NewImage, and OldImage values are intentionally excluded so item
+ * material cannot be copied into logs, metrics, spans, or handler summaries
+ * through this helper.
+ */
+export function normalizeDynamoDBStreamRecord(
+  record: DynamoDBStreamRecord,
+): DynamoDBStreamRecordSummary {
+  const change = objectFromValue(record?.dynamodb);
+  const tableName = dynamoDBTableNameFromStreamArn(
+    objectString(record, "eventSourceARN"),
+  );
+  const sequenceNumber = objectString(change, "SequenceNumber");
+  const eventId = objectString(record, "eventID");
+  const eventName = objectString(record, "eventName");
+
+  return {
+    aws_region: objectString(record, "awsRegion"),
+    event_id: eventId,
+    event_name: eventName,
+    safe_log: `table=${tableName} event_id=${eventId} event_name=${eventName} sequence_number=${sequenceNumber}`,
+    sequence_number: sequenceNumber,
+    size_bytes: objectInt(change, "SizeBytes"),
+    stream_view_type: objectString(change, "StreamViewType"),
+    table_name: tableName,
+  };
 }
 
 /**
