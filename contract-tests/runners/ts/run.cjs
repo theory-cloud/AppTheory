@@ -622,15 +622,15 @@ async function runFixture(fixture) {
       Object.prototype.hasOwnProperty.call(expect, "output_json") ||
       Object.prototype.hasOwnProperty.call(expect, "error")
     ) {
-      const { actualOutput, actualError } = await runFixtureP2Output(fixture);
-      return compareFixtureM1Result(fixture, { actualOutput, actualError });
+      const { actualOutput, actualError, effects } = await runFixtureP2Output(fixture);
+      return compareFixtureM1Result(fixture, { actualOutput, actualError, effects });
     }
     const { actual, effects } = await runFixtureP2(fixture);
     return compareFixture(fixture, actual, effects);
   }
   if (tier === "m1") {
-    const { actualOutput, actualError } = await runFixtureM1(fixture);
-    return compareFixtureM1Result(fixture, { actualOutput, actualError });
+    const { actualOutput, actualError, effects } = await runFixtureM1(fixture);
+    return compareFixtureM1Result(fixture, { actualOutput, actualError, effects });
   }
   if (tier === "m2") {
     const { actual, wsCalls } = await runFixtureM2(fixture);
@@ -894,7 +894,7 @@ function compareFixtureOutputJson(fixture, actualOutput) {
   return { ok: true };
 }
 
-function compareFixtureM1Result(fixture, { actualOutput, actualError }) {
+function compareFixtureM1Result(fixture, { actualOutput, actualError, effects }) {
   const expect = fixture.expect ?? {};
   const hasError = Object.prototype.hasOwnProperty.call(expect, "error");
   const hasOutputJson = Object.prototype.hasOwnProperty.call(expect, "output_json");
@@ -923,7 +923,7 @@ function compareFixtureM1Result(fixture, { actualOutput, actualError }) {
         actual_error: { message: actualMsg },
       };
     }
-    return { ok: true };
+    return compareM1SideEffectsIfExpected(fixture, effects);
   }
 
   if (!hasOutputJson) {
@@ -944,7 +944,36 @@ function compareFixtureM1Result(fixture, { actualOutput, actualError }) {
       actual_error: { message: String(actualError.message ?? actualError) },
     };
   }
-  return compareFixtureOutputJson(fixture, actualOutput);
+  const outputResult = compareFixtureOutputJson(fixture, actualOutput);
+  if (!outputResult.ok) return outputResult;
+  return compareM1SideEffectsIfExpected(fixture, effects);
+}
+
+function compareM1SideEffectsIfExpected(fixture, effects) {
+  const expect = fixture.expect ?? {};
+  const expectsEffects =
+    Object.prototype.hasOwnProperty.call(expect, "logs") ||
+    Object.prototype.hasOwnProperty.call(expect, "metrics") ||
+    Object.prototype.hasOwnProperty.call(expect, "spans");
+  if (!expectsEffects) return { ok: true };
+  const actualEffects = effects ?? { logs: [], metrics: [], spans: [] };
+  if (!deepEqual(expect.logs ?? [], actualEffects.logs ?? [])) {
+    return { ok: false, reason: "logs mismatch", expected_output_json: expect.output_json ?? null, actual_output_json: null, expected_logs: expect.logs ?? [], actual_logs: actualEffects.logs ?? [] };
+  }
+  if (!deepEqual(expect.metrics ?? [], actualEffects.metrics ?? [])) {
+    return {
+      ok: false,
+      reason: "metrics mismatch",
+      expected_output_json: expect.output_json ?? null,
+      actual_output_json: null,
+      expected_metrics: expect.metrics ?? [],
+      actual_metrics: actualEffects.metrics ?? [],
+    };
+  }
+  if (!deepEqual(expect.spans ?? [], actualEffects.spans ?? [])) {
+    return { ok: false, reason: "spans mismatch", expected_output_json: expect.output_json ?? null, actual_output_json: null, expected_spans: expect.spans ?? [], actual_spans: actualEffects.spans ?? [] };
+  }
+  return { ok: true };
 }
 
 function compareWebSocketCalls(fixture, wsCalls) {
@@ -1071,7 +1100,7 @@ function builtInSNSHandler(name) {
   }
 }
 
-function builtInDynamoDBStreamHandler(name) {
+function builtInDynamoDBStreamHandler(runtime, name, effects) {
   switch (String(name ?? "").trim()) {
     case "ddb_noop":
       return async () => {};
@@ -1095,12 +1124,75 @@ function builtInDynamoDBStreamHandler(name) {
           throw new Error("bad trace");
         }
       };
+    case "ddb_require_normalized_summary":
+      return async (_ctx, record) => {
+        requireDynamoDBSafeSummary(runtime, record, false);
+      };
+    case "ddb_require_normalized_summary_fail_on_remove":
+      return async (_ctx, record) => {
+        requireDynamoDBSafeSummary(runtime, record, true);
+      };
+    case "ddb_observed_fail_on_remove":
+      return async (_ctx, record) => {
+        requireDynamoDBSafeSummary(runtime, record, false);
+        if (String(record?.eventName ?? "").trim() === "REMOVE") {
+          throw new Error("raw dynamodb remove failure: do-not-log");
+        }
+      };
     default:
       return null;
   }
 }
 
-function builtInEventBridgeHandler(name) {
+function requireDynamoDBSafeSummary(runtime, record, failOnRemove) {
+  const summary = runtime.normalizeDynamoDBStreamRecord(record);
+  for (const key of ["table_name", "event_id", "event_name", "sequence_number", "stream_view_type"]) {
+    if (!String(summary[key] ?? "").trim()) {
+      throw new Error(`missing normalized dynamodb ${key}`);
+    }
+  }
+  const safeLog = String(summary.safe_log ?? "").trim();
+  const serialized = JSON.stringify(summary);
+  if (!safeLog || ["release#rel_123", "do-not-log", "previous-secret"].some((sentinel) => serialized.includes(sentinel))) {
+    throw new Error("unsafe dynamodb stream summary");
+  }
+  if (failOnRemove && String(record?.eventName ?? "").trim() === "REMOVE") {
+    throw new Error("fail");
+  }
+}
+
+function dynamoDBSafeSummary(record) {
+  const tableName = dynamoDBFixtureTableNameFromStreamArn(String(record?.eventSourceARN ?? ""));
+  const sequenceNumber = String(record?.dynamodb?.SequenceNumber ?? "").trim();
+  const eventId = String(record?.eventID ?? "").trim();
+  const eventName = String(record?.eventName ?? "").trim();
+  return {
+    aws_region: String(record?.awsRegion ?? "").trim(),
+    event_id: eventId,
+    event_name: eventName,
+    safe_log: `table=${tableName} event_id=${eventId} event_name=${eventName} sequence_number=${sequenceNumber}`,
+    sequence_number: sequenceNumber,
+    size_bytes: Number(record?.dynamodb?.SizeBytes ?? 0),
+    stream_view_type: String(record?.dynamodb?.StreamViewType ?? "").trim(),
+    table_name: tableName,
+  };
+}
+
+function dynamoDBFixtureTableNameFromStreamArn(arn) {
+  const value = String(arn ?? "").trim();
+  if (!value) return "";
+  const marker = ":table/";
+  const idx = value.indexOf(marker);
+  if (idx < 0) return "";
+  const after = value.slice(idx + marker.length);
+  const streamIdx = after.indexOf("/stream/");
+  if (streamIdx >= 0) return after.slice(0, streamIdx);
+  const slashIdx = after.indexOf("/");
+  if (slashIdx >= 0) return after.slice(0, slashIdx);
+  return after;
+}
+
+function builtInEventBridgeHandler(runtime, name, effects) {
   switch (String(name ?? "").trim()) {
     case "eventbridge_static_a":
       return async () => ({ handler: "a" });
@@ -1108,9 +1200,242 @@ function builtInEventBridgeHandler(name) {
       return async () => ({ handler: "b" });
     case "eventbridge_echo_event_middleware":
       return async (ctx) => ({ mw: ctx.get("mw"), trace: ctx.get("trace") });
+    case "eventbridge_workload_envelope":
+      return async (ctx, event) => runtime.normalizeEventBridgeWorkloadEnvelope(ctx, event);
+    case "eventbridge_scheduled_summary":
+      return async (ctx, event) => runtime.normalizeEventBridgeScheduledWorkload(ctx, event);
+    case "eventbridge_observed_success":
+      return async (ctx, event) => runtime.normalizeEventBridgeWorkloadEnvelope(ctx, event);
+    case "eventbridge_observed_panic":
+      return async () => {
+        throw new Error("raw eventbridge panic: do-not-log");
+      };
+    case "eventbridge_require_workload_envelope":
+      return async (ctx, event) => runtime.requireEventBridgeWorkloadEnvelope(ctx, event);
     default:
       return null;
   }
+}
+
+function eventBridgeWorkloadEnvelopeSummary(ctx, event) {
+  const detailType = String(event?.["detail-type"] ?? event?.detailType ?? "").trim();
+  const { correlationId, correlationSource } = eventBridgeCorrelationId(ctx, event);
+  return {
+    account: String(event?.account ?? "").trim(),
+    correlation_id: correlationId,
+    correlation_source: correlationSource,
+    detail_type: detailType,
+    event_id: String(event?.id ?? "").trim(),
+    region: String(event?.region ?? "").trim(),
+    request_id: String(ctx?.requestId ?? "").trim(),
+    resources: Array.isArray(event?.resources) ? event.resources.map((resource) => String(resource)) : [],
+    source: String(event?.source ?? "").trim(),
+    time: String(event?.time ?? "").trim(),
+  };
+}
+
+function eventBridgeScheduledSummary(ctx, event) {
+  const envelope = eventBridgeWorkloadEnvelopeSummary(ctx, event);
+  const detail = event && typeof event.detail === "object" && !Array.isArray(event.detail) ? event.detail : {};
+  const result = detail.result && typeof detail.result === "object" && !Array.isArray(detail.result) ? detail.result : {};
+
+  let runId = objectString(detail, "run_id");
+  if (!runId) runId = String(event?.id ?? "").trim();
+  if (!runId) runId = String(ctx?.ctx?.awsRequestId ?? "").trim();
+
+  let idempotencyKey = objectString(detail, "idempotency_key");
+  if (!idempotencyKey) {
+    const eventId = String(event?.id ?? "").trim();
+    const requestId = String(ctx?.ctx?.awsRequestId ?? "").trim();
+    if (eventId) idempotencyKey = `eventbridge:${eventId}`;
+    else if (requestId) idempotencyKey = `lambda:${requestId}`;
+  }
+
+  let status = objectString(result, "status") || objectString(detail, "status") || "ok";
+  status = String(status).trim() || "ok";
+  const remainingMs = Number(ctx?.remainingMs ?? 0) > 0 ? Math.floor(Number(ctx.remainingMs)) : 0;
+  const deadlineUnixMs = remainingMs > 0 ? ctx.now().getTime() + remainingMs : 0;
+
+  return {
+    correlation_id: envelope.correlation_id,
+    correlation_source: envelope.correlation_source,
+    deadline_unix_ms: deadlineUnixMs,
+    detail_type: envelope.detail_type,
+    event_id: envelope.event_id,
+    idempotency_key: idempotencyKey,
+    kind: "scheduled",
+    remaining_ms: remainingMs,
+    result: {
+      failed: objectInt(result, "failed"),
+      processed: objectInt(result, "processed"),
+      status,
+    },
+    run_id: runId,
+    scheduled_time: envelope.time,
+    source: envelope.source,
+  };
+}
+
+function eventBridgeCorrelationId(ctx, event) {
+  const metadataCorrelation = objectString(event?.metadata, "correlation_id");
+  if (metadataCorrelation) {
+    return { correlationId: metadataCorrelation, correlationSource: "metadata.correlation_id" };
+  }
+
+  const headerCorrelation = headerString(event?.headers, "x-correlation-id");
+  if (headerCorrelation) {
+    return { correlationId: headerCorrelation, correlationSource: "headers.x-correlation-id" };
+  }
+
+  const detailCorrelation = objectString(event?.detail, "correlation_id");
+  if (detailCorrelation) {
+    return { correlationId: detailCorrelation, correlationSource: "detail.correlation_id" };
+  }
+
+  const eventId = String(event?.id ?? "").trim();
+  if (eventId) {
+    return { correlationId: eventId, correlationSource: "event.id" };
+  }
+
+  const requestId = String(ctx?.ctx?.awsRequestId ?? "").trim();
+  if (requestId) {
+    return { correlationId: requestId, correlationSource: "lambda.aws_request_id" };
+  }
+
+  return { correlationId: "", correlationSource: "" };
+}
+
+function objectString(object, key) {
+  if (!object || typeof object !== "object" || Array.isArray(object)) return "";
+  return String(object[key] ?? "").trim();
+}
+
+
+function objectInt(object, key) {
+  if (!object || typeof object !== "object" || Array.isArray(object)) return 0;
+  const value = Number(object[key] ?? 0);
+  if (!Number.isFinite(value)) return 0;
+  return Math.trunc(value);
+}
+
+function headerString(headers, key) {
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) return "";
+  const wanted = String(key ?? "").trim().toLowerCase();
+  for (const [name, value] of Object.entries(headers)) {
+    if (String(name).trim().toLowerCase() !== wanted) continue;
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const candidate = String(entry ?? "").trim();
+        if (candidate) return candidate;
+      }
+      return "";
+    }
+    return String(value ?? "").trim();
+  }
+  return "";
+}
+
+
+function recordEventBridgeEffects(effects, ctx, summary, level, outcome, errorCode) {
+  if (!effects) return;
+  const correlationId = String(summary?.correlation_id ?? "").trim();
+  const source = String(summary?.source ?? "").trim();
+  const detailType = String(summary?.detail_type ?? "").trim();
+  effects.logs.push({
+    level,
+    event: "event.completed",
+    request_id: String(ctx?.requestId ?? "").trim(),
+    tenant_id: "",
+    method: "",
+    path: "",
+    status: 0,
+    error_code: errorCode,
+    trigger: "eventbridge",
+    correlation_id: correlationId,
+    source,
+    detail_type: detailType,
+  });
+  effects.metrics.push({
+    name: "apptheory.event",
+    value: 1,
+    tags: {
+      correlation_id: correlationId,
+      detail_type: detailType,
+      error_code: errorCode,
+      outcome,
+      source,
+      trigger: "eventbridge",
+    },
+  });
+  effects.spans.push({
+    name: `eventbridge ${source} ${detailType}`,
+    attributes: {
+      "correlation.id": correlationId,
+      "event.detail_type": detailType,
+      "event.source": source,
+      "error.code": errorCode,
+      outcome,
+      trigger: "eventbridge",
+    },
+  });
+}
+
+function recordDynamoDBEffects(effects, ctx, record, level, outcome, errorCode) {
+  if (!effects) return;
+  const summary = dynamoDBSafeSummary(record);
+  const tableName = String(summary.table_name ?? "").trim();
+  const eventId = String(summary.event_id ?? "").trim();
+  const eventName = String(summary.event_name ?? "").trim();
+  effects.logs.push({
+    level,
+    event: "event.completed",
+    request_id: String(ctx?.requestId ?? "").trim(),
+    tenant_id: "",
+    method: "",
+    path: "",
+    status: 0,
+    error_code: errorCode,
+    trigger: "dynamodb_stream",
+    correlation_id: eventId,
+    table_name: tableName,
+    event_id: eventId,
+    event_name: eventName,
+  });
+  effects.metrics.push({
+    name: "apptheory.event",
+    value: 1,
+    tags: {
+      correlation_id: eventId,
+      error_code: errorCode,
+      event_name: eventName,
+      outcome,
+      table_name: tableName,
+      trigger: "dynamodb_stream",
+    },
+  });
+  effects.spans.push({
+    name: `dynamodb_stream ${tableName} ${eventName}`,
+    attributes: {
+      "correlation.id": eventId,
+      "dynamodb.event_id": eventId,
+      "dynamodb.event_name": eventName,
+      "dynamodb.table_name": tableName,
+      "error.code": errorCode,
+      outcome,
+      trigger: "dynamodb_stream",
+    },
+  });
+}
+
+function fixtureLambdaContext(inputContext) {
+  const ctx = {};
+  const requestId = String(inputContext?.aws_request_id ?? "").trim();
+  const remainingMs = Number(inputContext?.remaining_ms ?? 0);
+  if (requestId) ctx.awsRequestId = requestId;
+  if (Number.isFinite(remainingMs) && remainingMs > 0) {
+    ctx.remaining_ms = Math.floor(remainingMs);
+  }
+  return ctx;
 }
 
 function builtInEventMiddleware(name) {
@@ -1136,7 +1461,42 @@ function builtInEventMiddleware(name) {
 
 async function runFixtureM1(fixture) {
   const runtime = await loadAppTheoryRuntime();
-  const app = runtime.createApp({ tier: "p0" });
+  const ids = new runtime.ManualIdGenerator();
+  ids.queue("req_test_123");
+  const effects = { logs: [], metrics: [], spans: [] };
+  const app = runtime.createApp({
+    tier: "p0",
+    clock: new runtime.ManualClock(new Date(0)),
+    ids,
+    observability: {
+      log: (r) => {
+        const record = {
+          level: r.level,
+          event: r.event,
+          request_id: r.requestId,
+          tenant_id: r.tenantId,
+          method: r.method,
+          path: r.path,
+          status: r.status,
+          error_code: r.errorCode,
+        };
+        if (r.trigger) record.trigger = r.trigger;
+        if (r.correlationId) record.correlation_id = r.correlationId;
+        if (r.source) record.source = r.source;
+        if (r.detailType) record.detail_type = r.detailType;
+        if (r.tableName) record.table_name = r.tableName;
+        if (r.eventId) record.event_id = r.eventId;
+        if (r.eventName) record.event_name = r.eventName;
+        effects.logs.push(record);
+      },
+      metric: (r) => {
+        effects.metrics.push({ name: r.name, value: r.value, tags: r.tags });
+      },
+      span: (r) => {
+        effects.spans.push({ name: r.name, attributes: r.attributes });
+      },
+    },
+  });
 
   for (const name of fixture.setup?.middlewares ?? []) {
     const mw = builtInEventMiddleware(name);
@@ -1171,7 +1531,7 @@ async function runFixtureM1(fixture) {
   }
 
   for (const route of fixture.setup?.dynamodb ?? []) {
-    const handler = builtInDynamoDBStreamHandler(route.handler);
+    const handler = builtInDynamoDBStreamHandler(runtime, route.handler, effects);
     if (!handler) {
       throw new Error(`unknown dynamodb handler ${JSON.stringify(route.handler)}`);
     }
@@ -1179,7 +1539,7 @@ async function runFixtureM1(fixture) {
   }
 
   for (const route of fixture.setup?.eventbridge ?? []) {
-    const handler = builtInEventBridgeHandler(route.handler);
+    const handler = builtInEventBridgeHandler(runtime, route.handler, effects);
     if (!handler) {
       throw new Error(`unknown eventbridge handler ${JSON.stringify(route.handler)}`);
     }
@@ -1194,11 +1554,11 @@ async function runFixtureM1(fixture) {
   let actualOutput = null;
   let actualError = null;
   try {
-    actualOutput = await app.handleLambda(awsEvent.event ?? {}, {});
+    actualOutput = await app.handleLambda(awsEvent.event ?? {}, fixtureLambdaContext(fixture.input?.context ?? {}));
   } catch (err) {
     actualError = err;
   }
-  return { actualOutput, actualError };
+  return { actualOutput, actualError, effects };
 }
 
 function builtInWebSocketHandler(runtime, name) {
@@ -1943,7 +2303,7 @@ async function runFixtureP2Output(fixture) {
   let actualOutput = null;
   let actualError = null;
   try {
-    actualOutput = await app.handleLambda(awsEvent.event ?? {}, {});
+    actualOutput = await app.handleLambda(awsEvent.event ?? {}, fixtureLambdaContext(fixture.input?.context ?? {}));
   } catch (err) {
     actualError = err;
   }

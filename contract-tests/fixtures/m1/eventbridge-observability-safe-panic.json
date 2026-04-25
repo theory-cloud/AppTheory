@@ -1,0 +1,86 @@
+{
+  "id": "m1.eventbridge.observability_safe_panic",
+  "tier": "m1",
+  "name": "EventBridge observability: panic posture emits safe error effects",
+  "setup": {
+    "eventbridge": [
+      {
+        "source": "apptheory.release",
+        "detail_type": "release.panic",
+        "handler": "eventbridge_observed_panic"
+      }
+    ]
+  },
+  "input": {
+    "context": {
+      "aws_request_id": "aws-req-panic"
+    },
+    "aws_event": {
+      "source": "eventbridge",
+      "event": {
+        "version": "0",
+        "id": "evt-panic",
+        "detail-type": "release.panic",
+        "source": "apptheory.release",
+        "account": "000000000000",
+        "time": "2026-04-24T12:00:00Z",
+        "region": "us-east-1",
+        "resources": [
+          "arn:aws:events:us-east-1:000000000000:rule/release-observed"
+        ],
+        "detail": {
+          "release_id": "rel_123",
+          "correlation_id": "corr-panic"
+        }
+      }
+    }
+  },
+  "expect": {
+    "error": {
+      "message": "apptheory: event workload failed"
+    },
+    "logs": [
+      {
+        "level": "error",
+        "event": "event.completed",
+        "request_id": "aws-req-panic",
+        "tenant_id": "",
+        "method": "",
+        "path": "",
+        "status": 0,
+        "error_code": "app.internal",
+        "trigger": "eventbridge",
+        "correlation_id": "corr-panic",
+        "source": "apptheory.release",
+        "detail_type": "release.panic"
+      }
+    ],
+    "metrics": [
+      {
+        "name": "apptheory.event",
+        "value": 1,
+        "tags": {
+          "correlation_id": "corr-panic",
+          "detail_type": "release.panic",
+          "error_code": "app.internal",
+          "outcome": "error",
+          "source": "apptheory.release",
+          "trigger": "eventbridge"
+        }
+      }
+    ],
+    "spans": [
+      {
+        "name": "eventbridge apptheory.release release.panic",
+        "attributes": {
+          "correlation.id": "corr-panic",
+          "event.detail_type": "release.panic",
+          "event.source": "apptheory.release",
+          "error.code": "app.internal",
+          "outcome": "error",
+          "trigger": "eventbridge"
+        }
+      }
+    ]
+  }
+}

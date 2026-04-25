@@ -42,6 +42,18 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - Use `AppTheorySsrSite` when you need the canonical FaceTheory-first SSR/SSG/ISR deployment story
 - Use `AppTheoryJobsTable`, `AppTheoryS3Ingest`, and `AppTheoryCodeBuildJobRunner` for import pipelines
 
+Event workload wiring:
+
+- use `AppTheoryEventBridgeRuleTarget` for scheduled workloads and EventBridge pattern intake
+- use `targetProps` on EventBridge targets for DLQ, retry, and maximum-event-age policy
+- use `AppTheoryDynamoDBStreamMapping` for DynamoDB Streams to Lambda wiring
+- use `AppTheoryJobsTable` when the workload needs durable run state, idempotency, leases, or record status
+- keep handlers on AppTheory runtime entrypoints so routing, retry posture, and observability stay fixture-backed
+
+Runtime guide:
+
+- [Event Workload Contracts](../features/event-workloads.md)
+
 Guide:
 
 - [FaceTheory-First SSR Site](./ssr-site.md)

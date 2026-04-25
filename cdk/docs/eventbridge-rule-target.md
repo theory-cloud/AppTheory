@@ -83,6 +83,21 @@ new AppTheoryEventBridgeRuleTarget(stack, "ComplianceIngress", {
 });
 ```
 
+
+## Runtime contract notes
+
+`AppTheoryEventBridgeRuleTarget` wires the transport. The Lambda handler should still delegate to AppTheory's universal
+runtime entrypoint so EventBridge and scheduled workload behavior remains covered by the shared contract fixtures.
+
+For scheduled workloads, configure retry policy, maximum event age, and DLQs through `targetProps`. Use handler-level
+idempotency keys from the event workload contract before committing side effects.
+
+Top-level EventBridge `headers` in AppTheory fixtures are a portable envelope convention, not AWS-native EventBridge
+fields. Native EventBridge producers should place business correlation in `detail.correlation_id` unless they deliberately
+wrap events in the AppTheory envelope.
+
+Canonical runtime guide: `docs/features/event-workloads.md`.
+
 ## Related
 
 - `AppTheoryEventBridgeBus` creates the custom bus and cross-account publish allowlist.

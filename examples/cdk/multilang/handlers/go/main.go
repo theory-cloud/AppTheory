@@ -13,6 +13,13 @@ import (
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
+func envOr(name string, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
+}
+
 func buildApp() *apptheory.App {
 	tier := apptheory.Tier(os.Getenv("APPTHEORY_TIER"))
 	name := os.Getenv("APPTHEORY_DEMO_NAME")
@@ -105,16 +112,41 @@ func buildApp() *apptheory.App {
 	})
 
 	queueName := os.Getenv("APPTHEORY_DEMO_QUEUE_NAME")
-	ruleName := os.Getenv("APPTHEORY_DEMO_RULE_NAME")
+	scheduleRuleName := envOr("APPTHEORY_DEMO_SCHEDULE_RULE_NAME", os.Getenv("APPTHEORY_DEMO_RULE_NAME"))
+	eventSource := envOr("APPTHEORY_DEMO_EVENT_SOURCE", "apptheory.example")
+	eventDetailType := envOr("APPTHEORY_DEMO_EVENT_DETAIL_TYPE", "example.item.changed")
 	tableName := os.Getenv("APPTHEORY_DEMO_TABLE_NAME")
 
 	app.SQS(queueName, func(_ *apptheory.EventContext, _ events.SQSMessage) error {
 		return nil
 	})
-	app.EventBridge(apptheory.EventBridgeRule(ruleName), func(_ *apptheory.EventContext, _ events.EventBridgeEvent) (any, error) {
-		return map[string]any{"ok": true, "trigger": "eventbridge", "lang": lang}, nil
+	app.EventBridge(apptheory.EventBridgePattern(eventSource, eventDetailType), func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
+		envelope := apptheory.NormalizeEventBridgeWorkloadEnvelope(ctx, event)
+		return map[string]any{
+			"ok":             true,
+			"trigger":        "eventbridge",
+			"kind":           "rule",
+			"lang":           lang,
+			"correlation_id": envelope.CorrelationID,
+			"source":         envelope.Source,
+			"detail_type":    envelope.DetailType,
+		}, nil
 	})
-	app.DynamoDB(tableName, func(_ *apptheory.EventContext, _ events.DynamoDBEventRecord) error {
+	app.EventBridge(apptheory.EventBridgeRule(scheduleRuleName), func(ctx *apptheory.EventContext, event events.EventBridgeEvent) (any, error) {
+		summary := apptheory.NormalizeEventBridgeScheduledWorkload(ctx, event)
+		return map[string]any{
+			"ok":             true,
+			"trigger":        "eventbridge",
+			"kind":           "schedule",
+			"lang":           lang,
+			"correlation_id": summary.CorrelationID,
+			"run_id":         summary.RunID,
+			"scheduled_time": summary.ScheduledTime,
+		}, nil
+	})
+	app.DynamoDB(tableName, func(_ *apptheory.EventContext, record events.DynamoDBEventRecord) error {
+		summary := apptheory.NormalizeDynamoDBStreamRecord(record)
+		_ = summary.SafeLog
 		return nil
 	})
 
