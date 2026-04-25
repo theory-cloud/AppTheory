@@ -1100,7 +1100,7 @@ function builtInSNSHandler(name) {
   }
 }
 
-function builtInDynamoDBStreamHandler(name, effects) {
+function builtInDynamoDBStreamHandler(runtime, name, effects) {
   switch (String(name ?? "").trim()) {
     case "ddb_noop":
       return async () => {};
@@ -1126,35 +1126,34 @@ function builtInDynamoDBStreamHandler(name, effects) {
       };
     case "ddb_require_normalized_summary":
       return async (_ctx, record) => {
-        requireDynamoDBSafeSummary(record, false);
+        requireDynamoDBSafeSummary(runtime, record, false);
       };
     case "ddb_require_normalized_summary_fail_on_remove":
       return async (_ctx, record) => {
-        requireDynamoDBSafeSummary(record, true);
+        requireDynamoDBSafeSummary(runtime, record, true);
       };
     case "ddb_observed_fail_on_remove":
-      return async (ctx, record) => {
-        requireDynamoDBSafeSummary(record, false);
+      return async (_ctx, record) => {
+        requireDynamoDBSafeSummary(runtime, record, false);
         if (String(record?.eventName ?? "").trim() === "REMOVE") {
-          recordDynamoDBEffects(effects, ctx, record, "error", "error", "app.internal");
-          throw new Error("fail");
+          throw new Error("raw dynamodb remove failure: do-not-log");
         }
-        recordDynamoDBEffects(effects, ctx, record, "info", "success", "");
       };
     default:
       return null;
   }
 }
 
-function requireDynamoDBSafeSummary(record, failOnRemove) {
-  const summary = dynamoDBSafeSummary(record);
+function requireDynamoDBSafeSummary(runtime, record, failOnRemove) {
+  const summary = runtime.normalizeDynamoDBStreamRecord(record);
   for (const key of ["table_name", "event_id", "event_name", "sequence_number", "stream_view_type"]) {
     if (!String(summary[key] ?? "").trim()) {
       throw new Error(`missing normalized dynamodb ${key}`);
     }
   }
   const safeLog = String(summary.safe_log ?? "").trim();
-  if (!safeLog || safeLog.includes("do-not-log")) {
+  const serialized = JSON.stringify(summary);
+  if (!safeLog || ["release#rel_123", "do-not-log", "previous-secret"].some((sentinel) => serialized.includes(sentinel))) {
     throw new Error("unsafe dynamodb stream summary");
   }
   if (failOnRemove && String(record?.eventName ?? "").trim() === "REMOVE") {
@@ -1193,7 +1192,7 @@ function dynamoDBFixtureTableNameFromStreamArn(arn) {
   return after;
 }
 
-function builtInEventBridgeHandler(name, effects) {
+function builtInEventBridgeHandler(runtime, name, effects) {
   switch (String(name ?? "").trim()) {
     case "eventbridge_static_a":
       return async () => ({ handler: "a" });
@@ -1202,29 +1201,17 @@ function builtInEventBridgeHandler(name, effects) {
     case "eventbridge_echo_event_middleware":
       return async (ctx) => ({ mw: ctx.get("mw"), trace: ctx.get("trace") });
     case "eventbridge_workload_envelope":
-      return async (ctx, event) => eventBridgeWorkloadEnvelopeSummary(ctx, event);
+      return async (ctx, event) => runtime.normalizeEventBridgeWorkloadEnvelope(ctx, event);
     case "eventbridge_scheduled_summary":
-      return async (ctx, event) => eventBridgeScheduledSummary(ctx, event);
+      return async (ctx, event) => runtime.normalizeEventBridgeScheduledWorkload(ctx, event);
     case "eventbridge_observed_success":
-      return async (ctx, event) => {
-        const summary = eventBridgeWorkloadEnvelopeSummary(ctx, event);
-        recordEventBridgeEffects(effects, ctx, summary, "info", "success", "");
-        return summary;
-      };
+      return async (ctx, event) => runtime.normalizeEventBridgeWorkloadEnvelope(ctx, event);
     case "eventbridge_observed_panic":
-      return async (ctx, event) => {
-        const summary = eventBridgeWorkloadEnvelopeSummary(ctx, event);
-        recordEventBridgeEffects(effects, ctx, summary, "error", "error", "app.internal");
-        throw new Error("apptheory: event workload failed");
+      return async () => {
+        throw new Error("raw eventbridge panic: do-not-log");
       };
     case "eventbridge_require_workload_envelope":
-      return async (ctx, event) => {
-        const summary = eventBridgeWorkloadEnvelopeSummary(ctx, event);
-        if (!summary.source || !summary.detail_type || !summary.correlation_id) {
-          throw new Error("apptheory: eventbridge workload envelope invalid");
-        }
-        return summary;
-      };
+      return async (ctx, event) => runtime.requireEventBridgeWorkloadEnvelope(ctx, event);
     default:
       return null;
   }
@@ -1476,8 +1463,40 @@ async function runFixtureM1(fixture) {
   const runtime = await loadAppTheoryRuntime();
   const ids = new runtime.ManualIdGenerator();
   ids.queue("req_test_123");
-  const app = runtime.createApp({ tier: "p0", clock: new runtime.ManualClock(new Date(0)), ids });
   const effects = { logs: [], metrics: [], spans: [] };
+  const app = runtime.createApp({
+    tier: "p0",
+    clock: new runtime.ManualClock(new Date(0)),
+    ids,
+    observability: {
+      log: (r) => {
+        const record = {
+          level: r.level,
+          event: r.event,
+          request_id: r.requestId,
+          tenant_id: r.tenantId,
+          method: r.method,
+          path: r.path,
+          status: r.status,
+          error_code: r.errorCode,
+        };
+        if (r.trigger) record.trigger = r.trigger;
+        if (r.correlationId) record.correlation_id = r.correlationId;
+        if (r.source) record.source = r.source;
+        if (r.detailType) record.detail_type = r.detailType;
+        if (r.tableName) record.table_name = r.tableName;
+        if (r.eventId) record.event_id = r.eventId;
+        if (r.eventName) record.event_name = r.eventName;
+        effects.logs.push(record);
+      },
+      metric: (r) => {
+        effects.metrics.push({ name: r.name, value: r.value, tags: r.tags });
+      },
+      span: (r) => {
+        effects.spans.push({ name: r.name, attributes: r.attributes });
+      },
+    },
+  });
 
   for (const name of fixture.setup?.middlewares ?? []) {
     const mw = builtInEventMiddleware(name);
@@ -1512,7 +1531,7 @@ async function runFixtureM1(fixture) {
   }
 
   for (const route of fixture.setup?.dynamodb ?? []) {
-    const handler = builtInDynamoDBStreamHandler(route.handler, effects);
+    const handler = builtInDynamoDBStreamHandler(runtime, route.handler, effects);
     if (!handler) {
       throw new Error(`unknown dynamodb handler ${JSON.stringify(route.handler)}`);
     }
@@ -1520,7 +1539,7 @@ async function runFixtureM1(fixture) {
   }
 
   for (const route of fixture.setup?.eventbridge ?? []) {
-    const handler = builtInEventBridgeHandler(route.handler, effects);
+    const handler = builtInEventBridgeHandler(runtime, route.handler, effects);
     if (!handler) {
       throw new Error(`unknown eventbridge handler ${JSON.stringify(route.handler)}`);
     }
