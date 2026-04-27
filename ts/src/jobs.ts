@@ -80,6 +80,49 @@ function isConditionalCheckFailed(err: unknown): boolean {
   return isTheorydbCode(err, "ErrConditionFailed");
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function transactionCanceledCause(
+  err: unknown,
+): Record<string, unknown> | null {
+  const rec = asRecord(err);
+  if (!rec) return null;
+
+  const name = String(rec["name"] ?? "").trim();
+  if (name === "TransactionCanceledException") return rec;
+  if (Array.isArray(rec["CancellationReasons"])) return rec;
+
+  const cause = asRecord(rec["cause"]);
+  if (!cause) return null;
+
+  const causeName = String(cause["name"] ?? "").trim();
+  if (causeName === "TransactionCanceledException") return cause;
+  if (Array.isArray(cause["CancellationReasons"])) return cause;
+  return null;
+}
+
+function cancellationReasonCode(reason: unknown): string {
+  const rec = asRecord(reason);
+  if (!rec) return "";
+  return String(rec["Code"] ?? rec["code"] ?? "").trim();
+}
+
+function isSingleActionConditionalTransactionMiss(err: unknown): boolean {
+  const tx = transactionCanceledCause(err);
+  if (!tx) return isConditionalCheckFailed(err);
+
+  const reasons = tx["CancellationReasons"];
+  return (
+    Array.isArray(reasons) &&
+    reasons.length === 1 &&
+    cancellationReasonCode(reasons[0]) === "ConditionalCheckFailed"
+  );
+}
+
 function isItemNotFound(err: unknown): boolean {
   return isTheorydbCode(err, "ErrItemNotFound");
 }
@@ -843,7 +886,7 @@ export class DynamoJobLedger {
       ]);
       return;
     } catch (err) {
-      if (!isConditionalCheckFailed(err)) {
+      if (!isSingleActionConditionalTransactionMiss(err)) {
         throw wrapJobLedgerError(
           err,
           "internal_error",
@@ -1022,7 +1065,7 @@ export class DynamoJobLedger {
       ]);
       return;
     } catch (err) {
-      if (!isConditionalCheckFailed(err)) {
+      if (!isSingleActionConditionalTransactionMiss(err)) {
         throw wrapJobLedgerError(
           err,
           "internal_error",
