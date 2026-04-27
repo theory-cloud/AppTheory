@@ -96,7 +96,7 @@ import gzip
 import os
 import shutil
 import tarfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
 sdist = Path(os.environ["TMP_SDIST_PATH"])
@@ -105,8 +105,21 @@ extract_dir = Path(os.environ.get("TMPDIR", "/tmp")) / f"apptheory-sdist-{os.get
 shutil.rmtree(extract_dir, ignore_errors=True)
 extract_dir.mkdir(parents=True, exist_ok=True)
 
+def safe_extract_sdist(tf: tarfile.TarFile, destination: Path) -> None:
+  destination_root = destination.resolve()
+  for member in tf.getmembers():
+    member_path = PurePosixPath(member.name)
+    if not member.name or member_path.is_absolute() or ".." in member_path.parts:
+      raise SystemExit(f"python-build: FAIL (unsafe sdist member path: {member.name!r})")
+    if member.issym() or member.islnk():
+      raise SystemExit(f"python-build: FAIL (unsafe sdist link member: {member.name!r})")
+    target = (destination / member.name).resolve()
+    if target != destination_root and destination_root not in target.parents:
+      raise SystemExit(f"python-build: FAIL (sdist member escapes extraction dir: {member.name!r})")
+  tf.extractall(destination)
+
 with tarfile.open(sdist, "r:gz") as tf:
-  tf.extractall(extract_dir)
+  safe_extract_sdist(tf, extract_dir)
 
 roots = [p for p in extract_dir.iterdir() if p.is_dir()]
 if len(roots) != 1:

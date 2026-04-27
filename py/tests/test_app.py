@@ -92,6 +92,19 @@ class TestApp(unittest.TestCase):
         resp = app.serve(Request(method="GET", path="/conflict", body=""))
         self.assertEqual(resp.status, 409)
 
+        def invalid_response(_ctx) -> Response:
+            return Response(
+                status=200,
+                headers={},
+                cookies=[],
+                body={"bad": True},  # type: ignore[arg-type]
+                is_base64=False,
+            )
+
+        app.get("/invalid-response", invalid_response)
+        invalid = app.serve(Request(method="GET", path="/invalid-response", body=""))
+        self.assertEqual(invalid.status, 500)
+
     def test_handle_strict_rejects_invalid_patterns(self) -> None:
         app: App = create_app(tier="p0")
         with self.assertRaises(ValueError):
@@ -230,7 +243,9 @@ class TestApp(unittest.TestCase):
         )
 
         def handler(ctx) -> Response:
-            return Response(status=200, headers={"x-remaining-ms": [str(ctx.remaining_ms)]}, cookies=[], body=b"ok", is_base64=False)
+            return Response(
+                status=200, headers={"x-remaining-ms": [str(ctx.remaining_ms)]}, cookies=[], body=b"ok", is_base64=False
+            )
 
         app = create_app(tier="p2", observability=hooks)
         app.get("/", handler)
@@ -282,6 +297,26 @@ class TestApp(unittest.TestCase):
         internal = app.serve(Request(method="GET", path="/", body=""))
         self.assertEqual(internal.status, 500)
 
+        invalid_app = create_app(tier="p2")
+
+        def invalid_response(_ctx) -> Response:
+            return Response(
+                status=200,
+                headers={},
+                cookies=[],
+                body={"bad": True},  # type: ignore[arg-type]
+                is_base64=False,
+            )
+
+        invalid_app.get(
+            "/",
+            invalid_response,
+        )
+        invalid = invalid_app.serve(Request(method="GET", path="/", headers={"x-request-id": "req_bad"}, body=""))
+        self.assertEqual(invalid.status, 500)
+        self.assertEqual(invalid.headers["x-request-id"], ["req_bad"])
+        self.assertEqual(json.loads(invalid.body)["error"]["code"], "app.internal")
+
     def test_http_entrypoints_return_error_responses_on_invalid_events(self) -> None:
         app = create_app(tier="p2")
         self.assertEqual(app.serve_apigw_v2(None)["statusCode"], 500)  # type: ignore[arg-type]
@@ -303,9 +338,7 @@ class TestApp(unittest.TestCase):
             )
 
         app.get("/portable", portable)
-        resp = app.serve(
-            Request(method="GET", path="/portable", headers={"x-request-id": "req_123"}, body="")
-        )
+        resp = app.serve(Request(method="GET", path="/portable", headers={"x-request-id": "req_123"}, body=""))
         self.assertEqual(resp.status, 422)
         self.assertEqual(resp.headers["x-request-id"], ["req_123"])
         self.assertEqual(
@@ -388,9 +421,7 @@ class TestApp(unittest.TestCase):
 
     def test_appsync_payload_projection_rejects_binary_and_streaming_bodies(self) -> None:
         with self.assertRaises(AppTheoryError) as binary_err:
-            _appsync_payload_from_response(
-                Response(status=200, headers={}, cookies=[], body=b"abc", is_base64=True)
-            )
+            _appsync_payload_from_response(Response(status=200, headers={}, cookies=[], body=b"abc", is_base64=True))
         self.assertEqual(binary_err.exception.code, "app.internal")
         self.assertEqual(binary_err.exception.message, "unsupported appsync response")
         self.assertEqual(binary_err.exception.details, {"reason": "binary_body_unsupported"})
@@ -635,7 +666,11 @@ class TestApp(unittest.TestCase):
 
         ddb = {
             "Records": [
-                {"eventSource": "aws:dynamodb", "eventSourceARN": "arn:aws:dynamodb:us-east-1:000000000000:table/t/stream/1", "eventID": "e1"},
+                {
+                    "eventSource": "aws:dynamodb",
+                    "eventSourceARN": "arn:aws:dynamodb:us-east-1:000000000000:table/t/stream/1",
+                    "eventID": "e1",
+                },
             ]
         }
         out2 = app.handle_lambda(ddb)
@@ -643,7 +678,11 @@ class TestApp(unittest.TestCase):
 
         kin = {
             "Records": [
-                {"eventSource": "aws:kinesis", "eventSourceARN": "arn:aws:kinesis:us-east-1:000000000000:stream/s", "eventID": "k1"},
+                {
+                    "eventSource": "aws:kinesis",
+                    "eventSourceARN": "arn:aws:kinesis:us-east-1:000000000000:stream/s",
+                    "eventID": "k1",
+                },
             ]
         }
         out3 = app.handle_lambda(kin)

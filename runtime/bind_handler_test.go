@@ -160,6 +160,34 @@ func TestBindRequest_StrictJSONRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestBindRequest_StrictJSONRejectsTrailingValues(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Name string `json:"name"`
+	}
+
+	_, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"name":"bob"}{"admin":true}`),
+		},
+	}, BindConfig[requestModel]{
+		Body:       true,
+		StrictJSON: true,
+	})
+	if err == nil {
+		t.Fatal("expected trailing json value error")
+	}
+
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 {
+		t.Fatalf("unexpected error payload: %#v", appErr)
+	}
+}
+
 func TestBindRequest_InvalidQueryBindingReturnsBadRequest(t *testing.T) {
 	t.Parallel()
 
