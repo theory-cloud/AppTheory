@@ -29,6 +29,45 @@ function isTheorydbCode(err, code) {
 function isConditionalCheckFailed(err) {
     return isTheorydbCode(err, "ErrConditionFailed");
 }
+function asRecord(value) {
+    return value && typeof value === "object"
+        ? value
+        : null;
+}
+function transactionCanceledCause(err) {
+    const rec = asRecord(err);
+    if (!rec)
+        return null;
+    const name = String(rec["name"] ?? "").trim();
+    if (name === "TransactionCanceledException")
+        return rec;
+    if (Array.isArray(rec["CancellationReasons"]))
+        return rec;
+    const cause = asRecord(rec["cause"]);
+    if (!cause)
+        return null;
+    const causeName = String(cause["name"] ?? "").trim();
+    if (causeName === "TransactionCanceledException")
+        return cause;
+    if (Array.isArray(cause["CancellationReasons"]))
+        return cause;
+    return null;
+}
+function cancellationReasonCode(reason) {
+    const rec = asRecord(reason);
+    if (!rec)
+        return "";
+    return String(rec["Code"] ?? rec["code"] ?? "").trim();
+}
+function isSingleActionConditionalTransactionMiss(err) {
+    const tx = transactionCanceledCause(err);
+    if (!tx)
+        return isConditionalCheckFailed(err);
+    const reasons = tx["CancellationReasons"];
+    return (Array.isArray(reasons) &&
+        reasons.length === 1 &&
+        cancellationReasonCode(reasons[0]) === "ConditionalCheckFailed");
+}
 function isItemNotFound(err) {
     return isTheorydbCode(err, "ErrItemNotFound");
 }
@@ -486,7 +525,7 @@ export class DynamoJobLedger {
             return;
         }
         catch (err) {
-            if (!isConditionalCheckFailed(err)) {
+            if (!isSingleActionConditionalTransactionMiss(err)) {
                 throw wrapJobLedgerError(err, "internal_error", "failed to release lease");
             }
         }
@@ -629,7 +668,7 @@ export class DynamoJobLedger {
             return;
         }
         catch (err) {
-            if (!isConditionalCheckFailed(err)) {
+            if (!isSingleActionConditionalTransactionMiss(err)) {
                 throw wrapJobLedgerError(err, "internal_error", "failed to release semaphore slot");
             }
         }

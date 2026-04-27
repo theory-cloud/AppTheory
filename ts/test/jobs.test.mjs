@@ -99,3 +99,75 @@ test("DynamoJobLedger releaseLease preserves owner conflicts", async () => {
     },
   );
 });
+
+test("DynamoJobLedger releaseLease rejects non-conditional transaction cancellation", async () => {
+  let getCalls = 0;
+  const ledger = new DynamoJobLedger({
+    theorydb: {
+      register() {},
+      async transactWrite() {
+        const err = new Error("transaction canceled");
+        err.code = "ErrConditionFailed";
+        err.cause = {
+          name: "TransactionCanceledException",
+          CancellationReasons: [{ Code: "TransactionConflict" }],
+        };
+        throw err;
+      },
+      async get() {
+        getCalls += 1;
+        return { lease_owner: "worker_a" };
+      },
+    },
+  });
+
+  await assert.rejects(
+    ledger.releaseLease({ jobId: "job_1", owner: "worker_a" }),
+    (err) => {
+      assert.equal(err?.type, "internal_error");
+      assert.match(String(err?.message ?? ""), /failed to release lease/);
+      return true;
+    },
+  );
+  assert.equal(getCalls, 0);
+});
+
+test("DynamoJobLedger releaseSemaphoreSlot rejects non-conditional transaction cancellation", async () => {
+  let getCalls = 0;
+  const ledger = new DynamoJobLedger({
+    theorydb: {
+      register() {},
+      async transactWrite() {
+        const err = new Error("transaction canceled");
+        err.code = "ErrConditionFailed";
+        err.cause = {
+          name: "TransactionCanceledException",
+          CancellationReasons: [{ Code: "ThrottlingError" }],
+        };
+        throw err;
+      },
+      async get() {
+        getCalls += 1;
+        return { lease_owner: "worker_a" };
+      },
+    },
+  });
+
+  await assert.rejects(
+    ledger.releaseSemaphoreSlot({
+      scope: "email",
+      subject: "customer_1",
+      slot: 2,
+      owner: "worker_a",
+    }),
+    (err) => {
+      assert.equal(err?.type, "internal_error");
+      assert.match(
+        String(err?.message ?? ""),
+        /failed to release semaphore slot/,
+      );
+      return true;
+    },
+  );
+  assert.equal(getCalls, 0);
+});
