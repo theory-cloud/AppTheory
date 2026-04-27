@@ -296,7 +296,7 @@ class AppTheoryPathRoutedFrontend extends constructs_1.Construct {
 }
 exports.AppTheoryPathRoutedFrontend = AppTheoryPathRoutedFrontend;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryPathRoutedFrontend[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontend", version: "1.1.0" };
+AppTheoryPathRoutedFrontend[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontend", version: "1.1.1" };
 function normalizeSpaRewriteMode(mode) {
     const value = String(mode ?? AppTheorySpaRewriteMode.SPA).trim().toLowerCase();
     return value === AppTheorySpaRewriteMode.NONE ? AppTheorySpaRewriteMode.NONE : AppTheorySpaRewriteMode.SPA;
