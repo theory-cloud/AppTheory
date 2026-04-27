@@ -29,6 +29,45 @@ function isTheorydbCode(err, code) {
 function isConditionalCheckFailed(err) {
     return isTheorydbCode(err, "ErrConditionFailed");
 }
+function asRecord(value) {
+    return value && typeof value === "object"
+        ? value
+        : null;
+}
+function transactionCanceledCause(err) {
+    const rec = asRecord(err);
+    if (!rec)
+        return null;
+    const name = String(rec["name"] ?? "").trim();
+    if (name === "TransactionCanceledException")
+        return rec;
+    if (Array.isArray(rec["CancellationReasons"]))
+        return rec;
+    const cause = asRecord(rec["cause"]);
+    if (!cause)
+        return null;
+    const causeName = String(cause["name"] ?? "").trim();
+    if (causeName === "TransactionCanceledException")
+        return cause;
+    if (Array.isArray(cause["CancellationReasons"]))
+        return cause;
+    return null;
+}
+function cancellationReasonCode(reason) {
+    const rec = asRecord(reason);
+    if (!rec)
+        return "";
+    return String(rec["Code"] ?? rec["code"] ?? "").trim();
+}
+function isSingleActionConditionalTransactionMiss(err) {
+    const tx = transactionCanceledCause(err);
+    if (!tx)
+        return isConditionalCheckFailed(err);
+    const reasons = tx["CancellationReasons"];
+    return (Array.isArray(reasons) &&
+        reasons.length === 1 &&
+        cancellationReasonCode(reasons[0]) === "ConditionalCheckFailed");
+}
 function isItemNotFound(err) {
     return isTheorydbCode(err, "ErrItemNotFound");
 }
@@ -472,41 +511,38 @@ export class DynamoJobLedger {
         const owner = requireNonEmpty(input?.owner, "owner");
         const pk = jobPartitionKey(jobId);
         const sk = jobLockSortKey();
-        const nowIso = this._clock.now().toISOString();
         try {
-            const builder = this._theorydb.updateBuilder(jobLedgerModelName, {
-                pk,
-                sk,
-            });
-            builder.set("lease_expires_at", 0);
-            builder.remove("lease_owner");
-            builder.set("updated_at", nowIso);
-            builder.condition("lease_owner", "=", owner);
-            await builder.execute();
-            try {
-                await this._theorydb.delete(jobLedgerModelName, { pk, sk });
-            }
-            catch (delErr) {
-                if (!isItemNotFound(delErr)) {
-                    throw delErr;
-                }
-            }
+            await this._theorydb.transactWrite([
+                {
+                    kind: "delete",
+                    model: jobLedgerModelName,
+                    key: { pk, sk },
+                    conditionExpression: "#lease_owner = :owner",
+                    expressionAttributeNames: { "#lease_owner": "lease_owner" },
+                    expressionAttributeValues: { ":owner": { S: owner } },
+                },
+            ]);
             return;
         }
         catch (err) {
-            if (!isConditionalCheckFailed(err)) {
+            if (!isSingleActionConditionalTransactionMiss(err)) {
                 throw wrapJobLedgerError(err, "internal_error", "failed to release lease");
             }
         }
         try {
             const existing = await this._theorydb.get(jobLedgerModelName, { pk, sk });
-            if (String(existing["lease_owner"] ?? "") !== owner) {
+            const existingOwner = String(existing["lease_owner"] ?? "");
+            if (!existingOwner)
+                return;
+            if (existingOwner !== owner) {
                 throw newJobLedgerError("conflict", "lease not owned");
             }
         }
         catch (err) {
             if (isItemNotFound(err))
                 return;
+            if (err instanceof JobLedgerError)
+                throw err;
             throw wrapJobLedgerError(err, "internal_error", "failed to load lease after release conflict");
         }
     }
@@ -618,41 +654,38 @@ export class DynamoJobLedger {
         const owner = requireNonEmpty(input?.owner, "owner");
         const pk = semaphorePartitionKey(scope, subject);
         const sk = semaphoreSlotSortKey(slot);
-        const nowIso = this._clock.now().toISOString();
         try {
-            const builder = this._theorydb.updateBuilder(jobLedgerModelName, {
-                pk,
-                sk,
-            });
-            builder.set("lease_expires_at", 0);
-            builder.remove("lease_owner");
-            builder.set("updated_at", nowIso);
-            builder.condition("lease_owner", "=", owner);
-            await builder.execute();
-            try {
-                await this._theorydb.delete(jobLedgerModelName, { pk, sk });
-            }
-            catch (delErr) {
-                if (!isItemNotFound(delErr)) {
-                    throw delErr;
-                }
-            }
+            await this._theorydb.transactWrite([
+                {
+                    kind: "delete",
+                    model: jobLedgerModelName,
+                    key: { pk, sk },
+                    conditionExpression: "#lease_owner = :owner",
+                    expressionAttributeNames: { "#lease_owner": "lease_owner" },
+                    expressionAttributeValues: { ":owner": { S: owner } },
+                },
+            ]);
             return;
         }
         catch (err) {
-            if (!isConditionalCheckFailed(err)) {
+            if (!isSingleActionConditionalTransactionMiss(err)) {
                 throw wrapJobLedgerError(err, "internal_error", "failed to release semaphore slot");
             }
         }
         try {
             const existing = await this._theorydb.get(jobLedgerModelName, { pk, sk });
-            if (String(existing["lease_owner"] ?? "") !== owner) {
+            const existingOwner = String(existing["lease_owner"] ?? "");
+            if (!existingOwner)
+                return;
+            if (existingOwner !== owner) {
                 throw newJobLedgerError("conflict", "semaphore slot not owned");
             }
         }
         catch (err) {
             if (isItemNotFound(err))
                 return;
+            if (err instanceof JobLedgerError)
+                throw err;
             throw wrapJobLedgerError(err, "internal_error", "failed to load semaphore slot after release conflict");
         }
     }
