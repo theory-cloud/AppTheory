@@ -237,7 +237,7 @@ function generateSpaRewriteFunctionCode(
         .map((spa) => {
             const cleanPrefix = spa.pathPattern.replace(/\/\*$/, "");
             const prefix = `${cleanPrefix}/`;
-            const rewriteMode = spa.rewriteMode ?? AppTheorySpaRewriteMode.SPA;
+            const rewriteMode = normalizeSpaRewriteMode(spa.rewriteMode);
             const stripPrefixBeforeOrigin = spa.stripPrefixBeforeOrigin === true;
             const indexPath = `${cleanPrefix}/index.html`;
             return {
@@ -403,7 +403,7 @@ export class AppTheoryPathRoutedFrontend extends Construct {
         const spaOrigins = props.spaOrigins ?? [];
         if (
             spaOrigins.some((spa) => {
-                const rewriteMode = spa.rewriteMode ?? AppTheorySpaRewriteMode.SPA;
+                const rewriteMode = normalizeSpaRewriteMode(spa.rewriteMode);
                 return rewriteMode !== AppTheorySpaRewriteMode.NONE || spa.stripPrefixBeforeOrigin === true;
             })
         ) {
@@ -445,7 +445,7 @@ export class AppTheoryPathRoutedFrontend extends Construct {
                 spaConfig.responseHeadersPolicy ??
                 props.spaResponseHeadersPolicy ??
                 props.responseHeadersPolicy;
-            const rewriteMode = spaConfig.rewriteMode ?? AppTheorySpaRewriteMode.SPA;
+            const rewriteMode = normalizeSpaRewriteMode(spaConfig.rewriteMode);
             const needsFunction =
                 this.spaRewriteFunction &&
                 (rewriteMode !== AppTheorySpaRewriteMode.NONE || spaConfig.stripPrefixBeforeOrigin === true);
@@ -556,4 +556,9 @@ export class AppTheoryPathRoutedFrontend extends Construct {
         const originPath = pathPart && pathPart !== "/" ? trimRepeatedCharEnd(pathPart, "/") : undefined;
         return { domainName: normalizedDomainPart, ...(originPath ? { originPath } : {}) };
     }
+}
+
+function normalizeSpaRewriteMode(mode: AppTheorySpaRewriteMode | string | undefined): AppTheorySpaRewriteMode {
+    const value = String(mode ?? AppTheorySpaRewriteMode.SPA).trim().toLowerCase();
+    return value === AppTheorySpaRewriteMode.NONE ? AppTheorySpaRewriteMode.NONE : AppTheorySpaRewriteMode.SPA;
 }

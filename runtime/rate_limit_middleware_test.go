@@ -133,6 +133,28 @@ func TestDefaultRateLimitIdentifier_HashesCredentialHeaders(t *testing.T) {
 	}
 }
 
+func TestDefaultRateLimitIdentifier_HashesWhitespaceAPIKey(t *testing.T) {
+	ctx := &Context{
+		Request: Request{
+			Headers: map[string][]string{
+				"x-api-key": {"   "},
+			},
+		},
+		TenantID: "tenant_123",
+	}
+
+	got := defaultRateLimitIdentifier(ctx)
+	if got == "" {
+		t.Fatalf("expected whitespace api key to produce a non-empty limiter identifier")
+	}
+	if got == "tenant_123" || got == anonymousRateLimitIdentifier {
+		t.Fatalf("expected whitespace api key to remain credential-scoped, got %q", got)
+	}
+	if want := fingerprintRateLimitCredentialIdentifier("api_key", "   "); got != want {
+		t.Fatalf("expected whitespace api key fingerprint %q, got %q", want, got)
+	}
+}
+
 func TestDefaultRateLimitIdentifier_FallbacksRemainStable(t *testing.T) {
 	authIdentityCtx := &Context{AuthIdentity: "user_123"}
 	if got := defaultRateLimitIdentifier(authIdentityCtx); got != "user_123" {

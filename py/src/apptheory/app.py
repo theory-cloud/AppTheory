@@ -473,7 +473,10 @@ class App:
                 fallback_request_id,
             )
 
-        return normalize_response(resp)
+        try:
+            return normalize_response(resp)
+        except Exception as exc:  # noqa: BLE001
+            return respond_to_error(exc, normalized, fallback_request_id)
 
     def _policy_check(
         self,
@@ -723,7 +726,12 @@ class App:
                 "app.internal",
             )
 
-        resp = normalize_response(resp)
+        try:
+            resp = normalize_response(resp)
+        except Exception as exc:  # noqa: BLE001
+            error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
+            return finish(respond_to_error(exc, normalized, request_id), error_code)
+
         if self._limits.max_response_bytes > 0 and len(resp.body) > self._limits.max_response_bytes:
             if error_responder is not None:
                 return finish(

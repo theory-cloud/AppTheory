@@ -20,7 +20,7 @@ Toolchains: Go `1.26.2` (see `go.mod`), Node `>=24`, Python `>=3.14`.
 - `make build`: produce release artifacts into `dist/`.
 - `make rubric`: run all repo gates (lint, build, API snapshots, contract tests, examples).
 
-Version bumps must keep `VERSION`, `ts/package.json`, `cdk/package.json`, and `py/pyproject.toml` aligned (lockfiles too); `make test` enforces this.
+Version bumps must keep `VERSION`, `ts/package.json`, `cdk/package.json`, `py/pyproject.toml`, `.release-please-manifest.json`, and `.release-please-manifest.premain.json` aligned (lockfiles too); `make test` enforces this.
 
 ## Coding Style & Naming Conventions
 - Go: `gofmt` + `golangci-lint` (`.golangci-v2.yml`); tests are `*_test.go`.
@@ -34,4 +34,5 @@ Version bumps must keep `VERSION`, `ts/package.json`, `cdk/package.json`, and `p
 ## Commit & Pull Request Guidelines
 - Prefer a short prefix and imperative subject (examples: `feat(cdk): ...`, `docs: ...`, `feat(M1): ...`, `m14(scope): ...`).
 - Release automation is driven by Conventional Commits; if a change must ship, use `feat:` / `fix:` (avoid milestone-only prefixes like `M1:`).
+- PRs to `staging` must verify version alignment across both release and release-candidate manifests: `.release-please-manifest.json` and `.release-please-manifest.premain.json`.
 - PRs should describe intent, list commands run (at least `make test`), and include any contract/snapshot/version updates.
