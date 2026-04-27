@@ -49,7 +49,7 @@ class AppTheoryEventBridgeBus extends constructs_1.Construct {
 }
 exports.AppTheoryEventBridgeBus = AppTheoryEventBridgeBus;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryEventBridgeBus[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBus", version: "1.1.0" };
+AppTheoryEventBridgeBus[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryEventBridgeBus", version: "1.1.1-rc" };
 function normalizeAccountId(raw) {
     return String(raw ?? "").trim();
 }
