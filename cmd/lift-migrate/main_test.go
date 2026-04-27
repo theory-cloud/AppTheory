@@ -118,6 +118,68 @@ func f() {}
 	}
 }
 
+func TestCollectChanges_SkipsSymlinkedGoFiles(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outside := t.TempDir()
+	target := filepath.Join(outside, "target.go")
+	srcWithOldImport := `package p
+import "github.com/pay-theory/limited/strategies"
+func f() {}
+`
+	if err := os.WriteFile(target, []byte(srcWithOldImport), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "link.go")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	changes, err := collectChanges(root)
+	if err != nil {
+		t.Fatalf("collectChanges: %v", err)
+	}
+	if len(changes) != 0 {
+		t.Fatalf("expected symlinked .go file to be skipped, got %#v", changes)
+	}
+
+	//nolint:gosec // reading from a temp dir controlled by the test
+	unchanged, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(unchanged) != srcWithOldImport {
+		t.Fatalf("expected symlink target to remain unchanged, got:\n%s", string(unchanged))
+	}
+}
+
+func TestApplyChanges_RejectsSymlinkedGoFiles(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	target := filepath.Join(root, "target.go")
+	if err := os.WriteFile(target, []byte("package p\n"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	link := filepath.Join(root, "link.go")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	if err := applyChanges([]change{{path: link, after: []byte("package q\n")}}); err == nil {
+		t.Fatalf("expected applyChanges to reject symlink path")
+	}
+
+	//nolint:gosec // reading from a temp dir controlled by the test
+	unchanged, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(unchanged) != "package p\n" {
+		t.Fatalf("expected symlink target to remain unchanged, got:\n%s", string(unchanged))
+	}
+}
+
 func runWithArgs(t *testing.T, args ...string) int {
 	t.Helper()
 
