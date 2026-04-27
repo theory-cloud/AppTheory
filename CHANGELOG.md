@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.1-rc](https://github.com/theory-cloud/AppTheory/compare/v1.1.0...v1.1.1-rc) (2026-04-27)
+
+
+### Bug Fixes
+
+* **jobs:** preserve transaction cancellation failures ([0f6ba0f](https://github.com/theory-cloud/AppTheory/commit/0f6ba0f247e8e699ec97972445e79eca20a5a8e6))
+* **release:** align prerelease manifest baseline ([cb94e07](https://github.com/theory-cloud/AppTheory/commit/cb94e071d42df184566aad087b11fae45777f69d))
+* **security:** address codex security findings ([87a1d7a](https://github.com/theory-cloud/AppTheory/commit/87a1d7aca008534f273d557607d4d2078bc7b0e5))
+* **security:** address codex security findings ([d54776c](https://github.com/theory-cloud/AppTheory/commit/d54776c6b440c6b940248829407bb2749f2898c8))
+
 ## [1.1.0](https://github.com/theory-cloud/AppTheory/compare/v1.0.0...v1.1.0) (2026-04-25)
 
 

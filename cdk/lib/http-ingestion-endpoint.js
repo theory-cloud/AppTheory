@@ -132,7 +132,7 @@ class AppTheoryHttpIngestionEndpoint extends constructs_1.Construct {
 }
 exports.AppTheoryHttpIngestionEndpoint = AppTheoryHttpIngestionEndpoint;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryHttpIngestionEndpoint[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpoint", version: "1.1.0" };
+AppTheoryHttpIngestionEndpoint[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpoint", version: "1.1.1-rc" };
 function normalizeEndpointPath(path) {
     const trimmed = String(path ?? "").trim();
     if (!trimmed) {
