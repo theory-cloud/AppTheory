@@ -89,7 +89,19 @@ func collectChanges(root string) ([]change, error) {
 			return nil
 		}
 
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+
 		if filepath.Ext(path) != ".go" {
+			return nil
+		}
+
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return infoErr
+		}
+		if !info.Mode().IsRegular() {
 			return nil
 		}
 
@@ -131,15 +143,58 @@ func printChangesDiff(root string, changes []change) error {
 
 func applyChanges(changes []change) error {
 	for _, ch := range changes {
-		info, err := os.Stat(ch.path)
+		info, err := os.Lstat(ch.path)
 		if err != nil {
 			return err
 		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("refusing to overwrite non-regular file: %s", ch.path)
+		}
+		if info.Mode().Perm()&0o222 == 0 {
+			return fmt.Errorf("refusing to overwrite read-only file: %s", ch.path)
+		}
 
-		if err := os.WriteFile(ch.path, ch.after, info.Mode().Perm()); err != nil {
+		if err := writeFileAtomically(ch.path, ch.after, info.Mode().Perm()); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+func writeFileAtomically(path string, data []byte, perm fs.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".lift-migrate-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			if err := os.Remove(tmpName); err != nil {
+				fmt.Fprintf(os.Stderr, "lift-migrate: warning: cleanup temp file: %v\n", err)
+			}
+		}
+	}()
+
+	if err := tmp.Chmod(perm); err != nil {
+		if closeErr := tmp.Close(); closeErr != nil {
+			return fmt.Errorf("close temp file after chmod failure: %w (chmod error: %v)", closeErr, err)
+		}
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		if closeErr := tmp.Close(); closeErr != nil {
+			return fmt.Errorf("close temp file after write failure: %w (write error: %v)", closeErr, err)
+		}
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	cleanup = false
 	return nil
 }
 

@@ -17,6 +17,8 @@ _CORRELATION_SOURCE_HEADER = "headers.x-correlation-id"
 _CORRELATION_SOURCE_DETAIL = "detail.correlation_id"
 _CORRELATION_SOURCE_EVENT_ID = "event.id"
 _CORRELATION_SOURCE_AWS_REQUEST_ID = "lambda.aws_request_id"
+_MAX_EVENT_COUNTER = 2**63 - 1
+_MIN_EVENT_COUNTER = -(2**63)
 
 
 class _SafeEventError(RuntimeError):
@@ -232,7 +234,15 @@ def _object_int(obj: dict[str, Any], key: str) -> int:
     if not isinstance(obj, dict):
         return 0
     value = obj.get(key)
-    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(float(value)):
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        if value < _MIN_EVENT_COUNTER or value > _MAX_EVENT_COUNTER:
+            return 0
+        return value
+    if not isinstance(value, float) or not math.isfinite(value):
+        return 0
+    if value < _MIN_EVENT_COUNTER or value > _MAX_EVENT_COUNTER:
         return 0
     return int(value)
 

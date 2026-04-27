@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"strconv"
 	"strings"
@@ -98,8 +99,12 @@ func bindBody(target any, ctx *Context, strict bool) error {
 		if err := decoder.Decode(target); err != nil {
 			return bindBadRequest(errorMessageInvalidJSON, err)
 		}
-		if decoder.More() {
-			return bindBadRequest(errorMessageInvalidJSON, fmt.Errorf("multiple json values"))
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			if err == nil {
+				err = fmt.Errorf("multiple json values")
+			}
+			return bindBadRequest(errorMessageInvalidJSON, err)
 		}
 		return nil
 	}
