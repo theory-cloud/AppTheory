@@ -2523,6 +2523,47 @@ test("AppTheoryPathRoutedFrontend (multi-SPA) synthesizes expected template", ()
   }
 });
 
+test("AppTheoryPathRoutedFrontend normalizes Go jsii SPA rewrite enum values", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const clientBucket = new s3.Bucket(stack, "ClientBucket");
+
+  new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+    apiOriginUrl: "https://api.example.com",
+    spaOrigins: [{ bucket: clientBucket, pathPattern: "/l/*", rewriteMode: "SPA" }],
+    enableLogging: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const functions = Object.values(template.Resources).filter(
+    (resource) => resource.Type === "AWS::CloudFront::Function",
+  );
+  assert.equal(functions.length, 1, "Should attach the SPA rewrite function for uppercase SPA");
+  const code = String(functions[0].Properties?.FunctionCode ?? "");
+  assert.match(code, /rewriteMode: 'spa'/);
+  assert.doesNotMatch(code, /rewriteMode: 'SPA'/);
+});
+
+test("AppTheoryPathRoutedFrontend normalizes Go jsii NONE rewrite enum values", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const clientBucket = new s3.Bucket(stack, "ClientBucket");
+
+  new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+    apiOriginUrl: "https://api.example.com",
+    spaOrigins: [{ bucket: clientBucket, pathPattern: "/l/*", rewriteMode: "NONE" }],
+    enableLogging: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const functions = Object.values(template.Resources).filter(
+    (resource) => resource.Type === "AWS::CloudFront::Function",
+  );
+  assert.equal(functions.length, 0, "Should not attach a rewrite function for uppercase NONE");
+});
+
 test("AppTheoryPathRoutedFrontend (domain + Route53) synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");

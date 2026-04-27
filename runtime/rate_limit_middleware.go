@@ -154,7 +154,9 @@ func defaultRateLimitIdentifier(ctx *Context) string {
 
 func fingerprintRateLimitCredentialIdentifier(kind, credentialValue string) string {
 	kind = strings.TrimSpace(kind)
-	credentialValue = strings.TrimSpace(credentialValue)
+	if kind == "" {
+		kind = "credential"
+	}
 	if credentialValue == "" {
 		return ""
 	}
