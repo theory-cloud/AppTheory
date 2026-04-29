@@ -50,6 +50,7 @@ export declare function buildAPIGatewayV2Request(method: string, path: string, o
     cookies?: string[];
     body?: Uint8Array | string;
     isBase64?: boolean;
+    sourceIp?: string;
 }): APIGatewayV2HTTPRequest;
 export declare function buildLambdaFunctionURLRequest(method: string, path: string, options?: {
     query?: Query;
@@ -57,6 +58,7 @@ export declare function buildLambdaFunctionURLRequest(method: string, path: stri
     cookies?: string[];
     body?: Uint8Array | string;
     isBase64?: boolean;
+    sourceIp?: string;
 }): LambdaFunctionURLRequest;
 export declare function buildALBTargetGroupRequest(method: string, path: string, options?: {
     query?: Query;

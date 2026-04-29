@@ -1170,6 +1170,24 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
 
         return handler
 
+    if name == "source_provenance":
+        def handler(ctx):
+            provenance = ctx.source_provenance()
+            return runtime.json(
+                200,
+                {
+                    "source_ip": ctx.source_ip(),
+                    "source_provenance": {
+                        "source_ip": provenance.source_ip,
+                        "provider": provenance.provider,
+                        "source": provenance.source,
+                        "valid": provenance.valid,
+                    },
+                },
+            )
+
+        return handler
+
     return None
 
 

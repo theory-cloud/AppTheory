@@ -8,6 +8,7 @@ from typing import Any
 from apptheory.errors import AppError
 from apptheory.request import Request
 from apptheory.response import Response
+from apptheory.source_provenance import source_provenance_from_provider_request_context
 from apptheory.util import normalize_path, to_bytes
 
 _REMOTE_MCP_APIGW_CANONICAL_RESOURCES = frozenset(
@@ -21,11 +22,21 @@ _REMOTE_MCP_APIGW_CANONICAL_RESOURCES = frozenset(
 
 
 def request_from_apigw_v2(event: dict[str, Any]) -> Request:
-    return _request_from_http_event(event)
+    req = _request_from_http_event(event)
+    req.source_provenance = source_provenance_from_provider_request_context(
+        "apigw-v2",
+        ((event.get("requestContext") or {}).get("http") or {}).get("sourceIp"),
+    )
+    return req
 
 
 def request_from_lambda_function_url(event: dict[str, Any]) -> Request:
-    return _request_from_http_event(event)
+    req = _request_from_http_event(event)
+    req.source_provenance = source_provenance_from_provider_request_context(
+        "lambda-url",
+        ((event.get("requestContext") or {}).get("http") or {}).get("sourceIp"),
+    )
+    return req
 
 
 def request_from_apigw_proxy(event: dict[str, Any]) -> Request:
@@ -46,6 +57,12 @@ def request_from_apigw_proxy(event: dict[str, Any]) -> Request:
         headers=headers,
         body=str(event.get("body") or ""),
         is_base64=bool(event.get("isBase64Encoded")),
+        source_provenance=source_provenance_from_provider_request_context(
+            "apigw-v1",
+            ((request_context.get("identity") or {}) if isinstance(request_context.get("identity"), dict) else {}).get(
+                "sourceIp"
+            ),
+        ),
     )
 
 
@@ -178,6 +195,7 @@ def build_apigw_v2_request(
     cookies: list[str] | None = None,
     body: Any = b"",
     is_base64: bool = False,
+    source_ip: str | None = None,
 ) -> dict[str, Any]:
     raw_path, raw_query_string = _split_path_and_query(path, query)
     body_bytes = to_bytes(body)
@@ -190,6 +208,13 @@ def build_apigw_v2_request(
         if values:
             query_string_parameters[str(key)] = str(values[0])
 
+    request_context_http = {
+        "method": str(method or "").strip().upper(),
+        "path": raw_path,
+    }
+    if source_ip is not None:
+        request_context_http["sourceIp"] = str(source_ip or "").strip()
+
     return {
         "version": "2.0",
         "routeKey": "$default",
@@ -198,12 +223,7 @@ def build_apigw_v2_request(
         "cookies": [str(c) for c in (cookies or [])],
         "headers": dict(headers or {}),
         "queryStringParameters": query_string_parameters or None,
-        "requestContext": {
-            "http": {
-                "method": str(method or "").strip().upper(),
-                "path": raw_path,
-            }
-        },
+        "requestContext": {"http": request_context_http},
         "body": body_str,
         "isBase64Encoded": bool(is_base64),
     }
@@ -218,6 +238,7 @@ def build_lambda_function_url_request(
     cookies: list[str] | None = None,
     body: Any = b"",
     is_base64: bool = False,
+    source_ip: str | None = None,
 ) -> dict[str, Any]:
     raw_path, raw_query_string = _split_path_and_query(path, query)
     body_bytes = to_bytes(body)
@@ -230,6 +251,13 @@ def build_lambda_function_url_request(
         if values:
             query_string_parameters[str(key)] = str(values[0])
 
+    request_context_http = {
+        "method": str(method or "").strip().upper(),
+        "path": raw_path,
+    }
+    if source_ip is not None:
+        request_context_http["sourceIp"] = str(source_ip or "").strip()
+
     return {
         "version": "2.0",
         "rawPath": raw_path,
@@ -237,12 +265,7 @@ def build_lambda_function_url_request(
         "cookies": [str(c) for c in (cookies or [])],
         "headers": dict(headers or {}),
         "queryStringParameters": query_string_parameters or None,
-        "requestContext": {
-            "http": {
-                "method": str(method or "").strip().upper(),
-                "path": raw_path,
-            }
-        },
+        "requestContext": {"http": request_context_http},
         "body": body_str,
         "isBase64Encoded": bool(is_base64),
     }

@@ -6,7 +6,9 @@ export interface APIGatewayV2HTTPRequest {
   cookies?: string[];
   headers?: Record<string, string>;
   queryStringParameters?: Record<string, string>;
-  requestContext: { http: { method: string; path?: string } };
+  requestContext: {
+    http: { method: string; path?: string; sourceIp?: string };
+  };
   body?: string;
   isBase64Encoded?: boolean;
 }
@@ -27,7 +29,9 @@ export interface LambdaFunctionURLRequest {
   cookies?: string[];
   headers?: Record<string, string>;
   queryStringParameters?: Record<string, string>;
-  requestContext: { http: { method: string; path?: string } };
+  requestContext: {
+    http: { method: string; path?: string; sourceIp?: string };
+  };
   body?: string;
   isBase64Encoded?: boolean;
 }

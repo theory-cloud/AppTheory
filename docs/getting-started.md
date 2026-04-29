@@ -139,6 +139,39 @@ single-Lambda entrypoint can continue to use `HandleLambda`, `handleLambda`, or 
 For the GraphQL front door itself, use native AppSync infrastructure such as `aws-cdk-lib/aws-appsync`; AppTheory owns
 the Lambda resolver adapter, not the GraphQL API construct.
 
+## Safe HTTP source IP access
+
+Use AppTheory source provenance when a handler or middleware needs the provider-observed client IP. Do not derive
+security decisions from `Forwarded` or `X-Forwarded-For`; those are viewer-controlled headers unless a product has its
+own separate trusted-proxy model.
+
+```go
+app.Get("/source", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+	return apptheory.JSON(200, map[string]string{"source_ip": ctx.SourceIP()})
+})
+
+event := testkit.APIGatewayV2Request("GET", "/source", testkit.HTTPEventOptions{
+	SourceIP: "2001:DB8::1",
+})
+```
+
+```ts
+app.get("/source", (ctx) => json(200, { source_ip: ctx.sourceIP() }));
+
+const event = buildAPIGatewayV2Request("GET", "/source", {
+  sourceIp: "2001:DB8::1",
+});
+```
+
+```py
+app.get("/source", lambda ctx: json(200, {"source_ip": ctx.source_ip()}))
+
+event = build_apigw_v2_request("GET", "/source", source_ip="2001:DB8::1")
+```
+
+The runtime canonicalizes valid provider IPs, so each example exposes `2001:db8::1`. Missing or malformed provider
+values return unknown/invalid provenance instead of falling back to forwarding headers.
+
 ## Next reads
 
 - [Documentation Index](./README.md)

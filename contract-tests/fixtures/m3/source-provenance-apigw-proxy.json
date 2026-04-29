@@ -1,0 +1,61 @@
+{
+  "id": "m3.source_provenance.apigw_proxy",
+  "tier": "m3",
+  "name": "Source provenance: API Gateway REST v1 provider source IP",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/source",
+        "handler": "source_provenance"
+      }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "apigw_proxy",
+      "event": {
+        "path": "/source",
+        "httpMethod": "GET",
+        "headers": {
+          "forwarded": "for=203.0.113.10;proto=https",
+          "x-forwarded-for": "203.0.113.10, 70.0.0.1"
+        },
+        "multiValueHeaders": {},
+        "queryStringParameters": {},
+        "multiValueQueryStringParameters": {},
+        "requestContext": {
+          "requestId": "req-source-provenance-1",
+          "path": "/source",
+          "httpMethod": "GET",
+          "identity": {
+            "sourceIp": "198.51.100.99"
+          }
+        },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "source_ip": "198.51.100.99",
+        "source_provenance": {
+          "source_ip": "198.51.100.99",
+          "provider": "apigw-v1",
+          "source": "provider_request_context",
+          "valid": true
+        }
+      },
+      "is_base64": false
+    }
+  }
+}
