@@ -152,6 +152,9 @@ export function buildAPIGatewayV2Request(method, path, options = {}) {
     if (queryStringParameters) {
         out.queryStringParameters = queryStringParameters;
     }
+    if (options.sourceIp !== undefined) {
+        out.requestContext.http.sourceIp = String(options.sourceIp ?? "").trim();
+    }
     return out;
 }
 export function buildLambdaFunctionURLRequest(method, path, options = {}) {
@@ -179,6 +182,9 @@ export function buildLambdaFunctionURLRequest(method, path, options = {}) {
     };
     if (queryStringParameters) {
         out.queryStringParameters = queryStringParameters;
+    }
+    if (options.sourceIp !== undefined) {
+        out.requestContext.http.sourceIp = String(options.sourceIp ?? "").trim();
     }
     return out;
 }

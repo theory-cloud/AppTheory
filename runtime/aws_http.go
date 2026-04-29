@@ -26,7 +26,7 @@ func (a *App) ServeLambdaFunctionURL(ctx context.Context, event events.LambdaFun
 }
 
 func requestFromAPIGatewayV2(event events.APIGatewayV2HTTPRequest) (Request, error) {
-	return requestFromHTTPEvent(
+	req, err := requestFromHTTPEvent(
 		event.RawQueryString,
 		event.QueryStringParameters,
 		event.Headers,
@@ -37,10 +37,18 @@ func requestFromAPIGatewayV2(event events.APIGatewayV2HTTPRequest) (Request, err
 		event.Body,
 		event.IsBase64Encoded,
 	)
+	if err != nil {
+		return Request{}, err
+	}
+	req.SourceProvenance = sourceProvenanceFromProviderRequestContext(
+		sourceProvenanceProviderAPIGatewayV2,
+		event.RequestContext.HTTP.SourceIP,
+	)
+	return req, nil
 }
 
 func requestFromLambdaFunctionURL(event events.LambdaFunctionURLRequest) (Request, error) {
-	return requestFromHTTPEvent(
+	req, err := requestFromHTTPEvent(
 		event.RawQueryString,
 		event.QueryStringParameters,
 		event.Headers,
@@ -51,6 +59,14 @@ func requestFromLambdaFunctionURL(event events.LambdaFunctionURLRequest) (Reques
 		event.Body,
 		event.IsBase64Encoded,
 	)
+	if err != nil {
+		return Request{}, err
+	}
+	req.SourceProvenance = sourceProvenanceFromProviderRequestContext(
+		sourceProvenanceProviderLambdaURL,
+		event.RequestContext.HTTP.SourceIP,
+	)
+	return req, nil
 }
 
 func requestFromHTTPEvent(
