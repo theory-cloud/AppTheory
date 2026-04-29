@@ -4,6 +4,7 @@ import { AppError } from "./errors.js";
 import { RandomIdGenerator } from "./ids.js";
 import { toBuffer } from "./internal/http.js";
 import { hasJSONContentType } from "./internal/response.js";
+import { normalizeSourceProvenance } from "./internal/source-provenance.js";
 export class AppSyncContext {
     fieldName;
     parentTypeName;
@@ -129,6 +130,12 @@ export class Context {
         if (!k)
             return undefined;
         return this._values.get(k);
+    }
+    sourceProvenance() {
+        return normalizeSourceProvenance(this.request.sourceProvenance);
+    }
+    sourceIP() {
+        return this.sourceProvenance().sourceIP;
     }
     jsonValue() {
         if (!hasJSONContentType(this.request.headers)) {

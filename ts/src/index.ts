@@ -1,4 +1,10 @@
-export type { Headers, Query, Request, Response } from "./types.js";
+export type {
+  Headers,
+  Query,
+  Request,
+  Response,
+  SourceProvenance,
+} from "./types.js";
 export type {
   AppSyncResolverEvent,
   AppSyncResolverInfo,

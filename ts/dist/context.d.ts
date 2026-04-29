@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import type { AppSyncResolverEvent } from "./aws-types.js";
 import { type Clock } from "./clock.js";
 import { type IdGenerator } from "./ids.js";
-import type { Headers, Query, Response } from "./types.js";
+import type { Headers, Query, Response, SourceProvenance } from "./types.js";
 export interface WebSocketManagementClientLike {
     postToConnection: (connectionId: string, data: Uint8Array) => void | Promise<void>;
     getConnection: (connectionId: string) => unknown | Promise<unknown>;
@@ -43,6 +43,7 @@ export declare class Context {
         cookies: Record<string, string>;
         body: Uint8Array;
         isBase64: boolean;
+        sourceProvenance: SourceProvenance;
     };
     readonly params: Record<string, string>;
     requestId: string;
@@ -74,6 +75,8 @@ export declare class Context {
     param(name: string): string;
     set(key: string, value: unknown): void;
     get(key: string): unknown;
+    sourceProvenance(): SourceProvenance;
+    sourceIP(): string;
     jsonValue(): unknown;
     asWebSocket(): WebSocketContext | null;
     asAppSync(): AppSyncContext | null;
