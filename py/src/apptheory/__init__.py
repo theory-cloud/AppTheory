@@ -155,6 +155,7 @@ from apptheory.sanitization import (
     sanitize_log_string,
     sanitize_xml,
 )
+from apptheory.source_provenance import SourceProvenance
 from apptheory.sse import SSEEvent, sse, sse_event_stream
 from apptheory.testkit import (
     FakeWebSocketClientFactory,
@@ -207,6 +208,7 @@ __all__ = [
     "Request",
     "Response",
     "SSEEvent",
+    "SourceProvenance",
     "StreamResult",
     "StructuredLogger",
     "TestEnv",
