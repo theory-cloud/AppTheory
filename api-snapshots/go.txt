@@ -2528,6 +2528,7 @@ type HTTPEventOptions struct {
 	Cookies      []string
 	Body         []byte
 	IsBase64     bool
+	SourceIP     string
 }
 
 type KinesisEventOptions struct {

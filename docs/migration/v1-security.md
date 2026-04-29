@@ -70,6 +70,48 @@ Why this changed:
 - Indefinitely open initial listeners and session resurrection both undermined the intended MCP transport and session
   boundaries.
 
+## HTTP source IP now uses provider provenance
+
+Affected surface:
+
+- Go / TypeScript / Python HTTP handlers and middleware that need the provider-observed source IP
+- Local tests that build API Gateway v2 or Lambda Function URL events
+- Product migration shims, including Lesser’s temporary bridge-header injection
+
+What changed:
+
+- HTTP requests now carry a portable `SourceProvenance` value and a convenience `SourceIP` / `sourceIP` /
+  `source_ip` accessor in every HTTP tier, including P0.
+- The value is derived only from AWS provider request context:
+  - API Gateway v2 HTTP API: `requestContext.http.sourceIp`
+  - Lambda Function URL: `requestContext.http.sourceIp`
+  - API Gateway v1 REST proxy: `requestContext.identity.sourceIp`
+- Valid IPs are canonicalized across runtimes before exposure. For example, `2001:DB8::1` becomes `2001:db8::1`.
+- Missing or malformed provider values return unknown/invalid provenance instead of failing the request or broadening
+  to forwarding headers.
+- ALB does not have source provenance in this pass; it returns unknown/invalid provenance.
+
+What you need to do:
+
+1. Replace any temporary bridge-header reads with the AppTheory context accessor:
+   - Go: `ctx.SourceIP()` or `ctx.SourceProvenance()`
+   - TypeScript: `ctx.sourceIP()` or `ctx.sourceProvenance()`
+   - Python: `ctx.source_ip()` or `ctx.source_provenance()`
+2. Update deterministic tests to set provider source metadata through the test builders:
+   - Go: `testkit.HTTPEventOptions{SourceIP: "..."}`
+   - TypeScript: `buildAPIGatewayV2Request(..., { sourceIp: "..." })`
+   - Python: `build_apigw_v2_request(..., source_ip="...")`
+3. Remove Lesser’s bridge-header injection after the application is upgraded to the source provenance API.
+4. Do not replace the bridge header with `Forwarded` or `X-Forwarded-For` parsing inside AppTheory handlers. Those
+   headers are viewer-controlled unless a product owns a separate trusted-proxy chain outside the AppTheory contract.
+
+Why this changed:
+
+- Public source-IP strings are a cross-language contract, so the runtime must expose the same canonical value in Go,
+  TypeScript, and Python.
+- Header-derived source IPs are not fail-closed without a trusted-proxy configuration. AppTheory’s portable contract
+  therefore uses provider context only.
+
 ## Credentialed CORS now requires an explicit allowlist
 
 Affected surface:
