@@ -48,9 +48,10 @@ Security migration note:
 
 Shared request model:
 
-- `Request`: method, path, headers, query, and body
+- `Request`: method, path, headers, query, body, and normalized source provenance
 - `Response`: status, headers, cookies, body, and streaming fields where supported
-- `Context`: request-scoped accessors for headers, params, request ID, tenant, clock, IDs, and middleware state
+- `Context`: request-scoped accessors for headers, params, request ID, tenant, source provenance, clock, IDs, and
+  middleware state
 
 Common helper exports:
 
@@ -69,6 +70,42 @@ HTTP error compatibility:
   - TypeScript: `createApp({ httpErrorFormat: HTTP_ERROR_FORMAT_FLAT_LEGACY })`
   - Python: `create_app(http_error_format=HTTP_ERROR_FORMAT_FLAT_LEGACY)`
 - This setting applies to HTTP serialization only. AppSync and WebSocket error payloads keep their existing shapes.
+
+## HTTP source provenance
+
+`SourceProvenance` is the portable, structured source-IP contract for HTTP requests. It is available in every HTTP
+tier, including P0, and is derived only from AWS provider request context fields.
+
+| Concern | Go | TypeScript | Python |
+| --- | --- | --- | --- |
+| Structured type | `SourceProvenance` | `SourceProvenance` | `SourceProvenance` |
+| Request field | `Request.SourceProvenance` | `Request.sourceProvenance` | `Request.source_provenance` |
+| Context accessor | `ctx.SourceProvenance()` | `ctx.sourceProvenance()` | `ctx.source_provenance()` |
+| Convenience IP accessor | `ctx.SourceIP()` | `ctx.sourceIP()` | `ctx.source_ip()` |
+| API Gateway v2 test builder option | `HTTPEventOptions.SourceIP` | `sourceIp` | `source_ip` |
+| Lambda Function URL test builder option | `HTTPEventOptions.SourceIP` | `sourceIp` | `source_ip` |
+
+The structured value has four fields:
+
+- `source_ip`: canonical parsed source IP string, or `""` when invalid/unknown
+- `provider`: `apigw-v2`, `lambda-url`, `apigw-v1`, or `unknown`
+- `source`: `provider_request_context` or `unknown`
+- `valid`: `true` only when the provider supplied a parseable source IP
+
+Provider mapping:
+
+- API Gateway v2 HTTP API: `requestContext.http.sourceIp` -> `provider = "apigw-v2"`
+- Lambda Function URL: `requestContext.http.sourceIp` -> `provider = "lambda-url"`
+- API Gateway v1 REST proxy: `requestContext.identity.sourceIp` -> `provider = "apigw-v1"`
+- Missing, malformed, unsupported, or ALB source values -> `provider = "unknown"`, `source = "unknown"`,
+  `valid = false`
+
+Valid IPs are parsed and re-emitted in canonical form before they become public response or handler strings. For
+example, `2001:DB8::1` becomes `2001:db8::1` in all three runtimes.
+
+AppTheory does not parse or trust `Forwarded`, `X-Forwarded-For`, or similar client-controlled forwarding headers for
+this contract. Those headers remain ordinary request headers if AWS forwards them, but they do not influence
+`SourceProvenance` or `SourceIP`.
 
 ## Universal Lambda entrypoint
 
