@@ -10,6 +10,7 @@ export interface APIGatewayV2HTTPRequest {
         http: {
             method: string;
             path?: string;
+            sourceIp?: string;
         };
     };
     body?: string;
@@ -34,6 +35,7 @@ export interface LambdaFunctionURLRequest {
         http: {
             method: string;
             path?: string;
+            sourceIp?: string;
         };
     };
     body?: string;

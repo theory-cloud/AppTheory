@@ -1563,6 +1563,8 @@ type Request struct {
 	Cookies  map[string]string
 	Body     []byte
 	IsBase64 bool
+
+	SourceProvenance SourceProvenance
 }
 
 type Response struct {
@@ -1587,6 +1589,13 @@ type SSEEvent struct {
 	ID    string
 	Event string
 	Data  any
+}
+
+type SourceProvenance struct {
+	SourceIP string `json:"source_ip"`
+	Provider string `json:"provider"`
+	Source   string `json:"source"`
+	Valid    bool   `json:"valid"`
 }
 
 type SpanRecord struct {
@@ -1881,6 +1890,10 @@ func (*Context) Query(string) string
 func (*Context) QueryAll(string) []string
 
 func (*Context) Set(string, any)
+
+func (*Context) SourceIP() string
+
+func (*Context) SourceProvenance() SourceProvenance
 
 func (*EventContext) Context() context.Context
 
