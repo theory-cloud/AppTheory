@@ -8,6 +8,7 @@ from typing import Any
 from apptheory.errors import AppError
 from apptheory.request import Request
 from apptheory.response import Response
+from apptheory.source_provenance import source_provenance_from_provider_request_context
 from apptheory.util import normalize_path, to_bytes
 
 _REMOTE_MCP_APIGW_CANONICAL_RESOURCES = frozenset(
@@ -21,11 +22,21 @@ _REMOTE_MCP_APIGW_CANONICAL_RESOURCES = frozenset(
 
 
 def request_from_apigw_v2(event: dict[str, Any]) -> Request:
-    return _request_from_http_event(event)
+    req = _request_from_http_event(event)
+    req.source_provenance = source_provenance_from_provider_request_context(
+        "apigw-v2",
+        ((event.get("requestContext") or {}).get("http") or {}).get("sourceIp"),
+    )
+    return req
 
 
 def request_from_lambda_function_url(event: dict[str, Any]) -> Request:
-    return _request_from_http_event(event)
+    req = _request_from_http_event(event)
+    req.source_provenance = source_provenance_from_provider_request_context(
+        "lambda-url",
+        ((event.get("requestContext") or {}).get("http") or {}).get("sourceIp"),
+    )
+    return req
 
 
 def request_from_apigw_proxy(event: dict[str, Any]) -> Request:
@@ -46,6 +57,12 @@ def request_from_apigw_proxy(event: dict[str, Any]) -> Request:
         headers=headers,
         body=str(event.get("body") or ""),
         is_base64=bool(event.get("isBase64Encoded")),
+        source_provenance=source_provenance_from_provider_request_context(
+            "apigw-v1",
+            ((request_context.get("identity") or {}) if isinstance(request_context.get("identity"), dict) else {}).get(
+                "sourceIp"
+            ),
+        ),
     )
 
 
