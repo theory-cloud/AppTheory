@@ -52,6 +52,42 @@ Each fixture is a single JSON object.
 - `expect.spans` (array, optional): expected trace span emissions (portable subset).
 
 
+## HTTP source provenance fixtures
+
+HTTP source provenance fixtures pin the portable, provider-derived source metadata exposed to handlers and middleware
+in every HTTP tier, including P0. The structured public API name is `SourceProvenance` and the convenience accessor
+name is `SourceIP` (both with language-idiomatic casing); `RequestSource` is not used for this capability. The
+runner-only handler `source_provenance` returns both the convenience source IP accessor and the structured provenance
+object:
+
+```json
+{
+  "source_ip": "198.51.100.77",
+  "source_provenance": {
+    "source_ip": "198.51.100.77",
+    "provider": "apigw-v2",
+    "source": "provider_request_context",
+    "valid": true
+  }
+}
+```
+
+The contract is provider-derived only. Runtimes must not parse, trust, or expose `Forwarded`, `X-Forwarded-For`,
+or any other forwarded-chain header through this provenance API. Those headers remain ordinary request headers for
+product-local policy code.
+
+Valid provider sources are:
+
+- API Gateway HTTP API v2: `requestContext.http.sourceIp`, with `provider = "apigw-v2"`.
+- Lambda Function URL: `requestContext.http.sourceIp`, with `provider = "lambda-url"`.
+- API Gateway REST API v1: `requestContext.identity.sourceIp`, with `provider = "apigw-v1"`.
+
+A valid provider source uses `source = "provider_request_context"` and `valid = true`. Direct/synthetic requests and
+missing or malformed provider source values return an empty source IP with `provider = "unknown"`, `source = "unknown"`,
+and `valid = false`; request normalization must continue rather than failing the request. ALB source provenance is
+intentionally out of scope for this contract pass.
+
+
 ## M1 EventBridge workload envelope fixtures
 
 EventBridge workload fixtures pin the portable non-HTTP envelope before runtime helpers are exported. Runners must preserve the existing AppTheory dispatch path: an unmatched EventBridge event returns JSON `null`, not an alternate error path. Matching workload fixtures use these built-in runner handlers only to express the contract:

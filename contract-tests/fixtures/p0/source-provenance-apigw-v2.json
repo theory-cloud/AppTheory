@@ -1,0 +1,79 @@
+{
+  "id": "p0.source_provenance.apigw_v2",
+  "tier": "p0",
+  "name": "Source provenance: API Gateway v2 provider source IP",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/source",
+        "handler": "source_provenance"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/source",
+      "query": {},
+      "headers": {
+        "forwarded": [
+          "for=203.0.113.10;proto=https"
+        ],
+        "x-forwarded-for": [
+          "203.0.113.10, 70.0.0.1"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    },
+    "aws_event": {
+      "source": "apigw_v2",
+      "event": {
+        "version": "2.0",
+        "routeKey": "$default",
+        "rawPath": "/source",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": {
+          "forwarded": "for=203.0.113.10;proto=https",
+          "x-forwarded-for": "203.0.113.10, 70.0.0.1"
+        },
+        "queryStringParameters": null,
+        "requestContext": {
+          "http": {
+            "method": "GET",
+            "path": "/source",
+            "sourceIp": "198.51.100.77"
+          }
+        },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "source_ip": "198.51.100.77",
+        "source_provenance": {
+          "source_ip": "198.51.100.77",
+          "provider": "apigw-v2",
+          "source": "provider_request_context",
+          "valid": true
+        }
+      },
+      "is_base64": false
+    }
+  }
+}
