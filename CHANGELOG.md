@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.0](https://github.com/theory-cloud/AppTheory/compare/v1.1.1...v1.2.0) (2026-04-29)
+
+
+### Features
+
+* **py:** expose HTTP source provenance ([49e6b6b](https://github.com/theory-cloud/AppTheory/commit/49e6b6b14638e63a5a56c0895803d7080ab8d2ac))
+* **runtime:** expose HTTP source provenance ([303cd68](https://github.com/theory-cloud/AppTheory/commit/303cd68d73d7c7e440a5a15e8b8deafa140e5277))
+* **runtime:** expose HTTP source provenance ([ad72cd7](https://github.com/theory-cloud/AppTheory/commit/ad72cd7ab400da00749605f00b4488808bc986b6))
+* **testkit:** support HTTP source IP events ([050e172](https://github.com/theory-cloud/AppTheory/commit/050e1723548e2b8670a0820e06f6045680a35556))
+* **testkit:** support HTTP source provenance migration ([e97efed](https://github.com/theory-cloud/AppTheory/commit/e97efedb567197d9f3ae2a6b60a0ab42afeeac4f))
+* **ts:** expose HTTP source provenance ([a680398](https://github.com/theory-cloud/AppTheory/commit/a6803982fa7ab6e9e4e58d0fc25e23e1fde282a2))
+
+
+### Bug Fixes
+
+* **ts:** canonicalize IPv6 source provenance ([66fab6f](https://github.com/theory-cloud/AppTheory/commit/66fab6f81d52d81cfb86c11e449ae71cd49f97b4))
+
 ## [1.2.0-rc](https://github.com/theory-cloud/AppTheory/compare/v1.1.1-rc...v1.2.0-rc) (2026-04-29)
 
 
