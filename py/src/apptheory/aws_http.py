@@ -195,6 +195,7 @@ def build_apigw_v2_request(
     cookies: list[str] | None = None,
     body: Any = b"",
     is_base64: bool = False,
+    source_ip: str | None = None,
 ) -> dict[str, Any]:
     raw_path, raw_query_string = _split_path_and_query(path, query)
     body_bytes = to_bytes(body)
@@ -207,6 +208,13 @@ def build_apigw_v2_request(
         if values:
             query_string_parameters[str(key)] = str(values[0])
 
+    request_context_http = {
+        "method": str(method or "").strip().upper(),
+        "path": raw_path,
+    }
+    if source_ip is not None:
+        request_context_http["sourceIp"] = str(source_ip or "").strip()
+
     return {
         "version": "2.0",
         "routeKey": "$default",
@@ -215,12 +223,7 @@ def build_apigw_v2_request(
         "cookies": [str(c) for c in (cookies or [])],
         "headers": dict(headers or {}),
         "queryStringParameters": query_string_parameters or None,
-        "requestContext": {
-            "http": {
-                "method": str(method or "").strip().upper(),
-                "path": raw_path,
-            }
-        },
+        "requestContext": {"http": request_context_http},
         "body": body_str,
         "isBase64Encoded": bool(is_base64),
     }
@@ -235,6 +238,7 @@ def build_lambda_function_url_request(
     cookies: list[str] | None = None,
     body: Any = b"",
     is_base64: bool = False,
+    source_ip: str | None = None,
 ) -> dict[str, Any]:
     raw_path, raw_query_string = _split_path_and_query(path, query)
     body_bytes = to_bytes(body)
@@ -247,6 +251,13 @@ def build_lambda_function_url_request(
         if values:
             query_string_parameters[str(key)] = str(values[0])
 
+    request_context_http = {
+        "method": str(method or "").strip().upper(),
+        "path": raw_path,
+    }
+    if source_ip is not None:
+        request_context_http["sourceIp"] = str(source_ip or "").strip()
+
     return {
         "version": "2.0",
         "rawPath": raw_path,
@@ -254,12 +265,7 @@ def build_lambda_function_url_request(
         "cookies": [str(c) for c in (cookies or [])],
         "headers": dict(headers or {}),
         "queryStringParameters": query_string_parameters or None,
-        "requestContext": {
-            "http": {
-                "method": str(method or "").strip().upper(),
-                "path": raw_path,
-            }
-        },
+        "requestContext": {"http": request_context_http},
         "body": body_str,
         "isBase64Encoded": bool(is_base64),
     }
