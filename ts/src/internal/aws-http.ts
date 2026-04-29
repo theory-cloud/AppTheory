@@ -22,6 +22,7 @@ import {
 } from "./http.js";
 import { normalizeRequest, type NormalizedRequest } from "./request.js";
 import { normalizeResponse } from "./response.js";
+import { sourceProvenanceFromProviderRequestContext } from "./source-provenance.js";
 
 export function requestFromWebSocketEvent(
   event: APIGatewayWebSocketProxyRequest,
@@ -100,7 +101,25 @@ function requestFromAPIGatewayProxyLike(
     headers,
     body: toBuffer(String(event.body ?? "")),
     isBase64: Boolean(event.isBase64Encoded),
+    sourceProvenance: sourceProvenanceFromProviderRequestContext(
+      "apigw-v1",
+      sourceIPFromAPIGatewayProxy(event),
+    ),
   };
+}
+
+function sourceIPFromAPIGatewayProxy(event: APIGatewayProxyRequest): unknown {
+  const requestContext =
+    event.requestContext && typeof event.requestContext === "object"
+      ? event.requestContext
+      : null;
+  const identity =
+    requestContext &&
+    requestContext["identity"] &&
+    typeof requestContext["identity"] === "object"
+      ? (requestContext["identity"] as Record<string, unknown>)
+      : null;
+  return identity?.["sourceIp"];
 }
 
 const REMOTE_MCP_APIGW_CANONICAL_RESOURCES = new Set<string>([
@@ -219,6 +238,10 @@ export function requestFromAPIGatewayV2(
     headers,
     body: toBuffer(String(event.body ?? "")),
     isBase64: Boolean(event.isBase64Encoded),
+    sourceProvenance: sourceProvenanceFromProviderRequestContext(
+      "apigw-v2",
+      event.requestContext?.http?.sourceIp,
+    ),
   };
 }
 
@@ -245,6 +268,10 @@ export function requestFromLambdaFunctionURL(
     headers,
     body: toBuffer(String(event.body ?? "")),
     isBase64: Boolean(event.isBase64Encoded),
+    sourceProvenance: sourceProvenanceFromProviderRequestContext(
+      "lambda-url",
+      event.requestContext?.http?.sourceIp,
+    ),
   };
 }
 

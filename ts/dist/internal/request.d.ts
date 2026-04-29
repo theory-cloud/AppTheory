@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import type { Request } from "../types.js";
+import type { Request, SourceProvenance } from "../types.js";
 export interface NormalizedRequest {
     method: string;
     path: string;
@@ -8,5 +8,6 @@ export interface NormalizedRequest {
     cookies: Record<string, string>;
     body: Buffer;
     isBase64: boolean;
+    sourceProvenance: SourceProvenance;
 }
 export declare function normalizeRequest(request: Request, maxRequestBytes?: number): NormalizedRequest;
