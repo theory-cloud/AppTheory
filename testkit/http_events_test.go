@@ -46,6 +46,37 @@ func TestInvokeLambdaFunctionURL(t *testing.T) {
 	}
 }
 
+func TestHTTPEventBuildersSourceIP(t *testing.T) {
+	env := testkit.New()
+	app := env.App()
+
+	app.Get("/source", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.Text(200, ctx.SourceIP()), nil
+	})
+
+	v2Event := testkit.APIGatewayV2Request("GET", "/source", testkit.HTTPEventOptions{
+		SourceIP: "2001:DB8::1",
+	})
+	if v2Event.RequestContext.HTTP.SourceIP != "2001:DB8::1" {
+		t.Fatalf("expected API Gateway v2 source IP to be set, got %q", v2Event.RequestContext.HTTP.SourceIP)
+	}
+	v2Resp := env.InvokeAPIGatewayV2(context.TODO(), app, v2Event)
+	if v2Resp.Body != "2001:db8::1" {
+		t.Fatalf("expected canonical API Gateway v2 source IP, got %q", v2Resp.Body)
+	}
+
+	urlEvent := testkit.LambdaFunctionURLRequest("GET", "/source", testkit.HTTPEventOptions{
+		SourceIP: "198.51.100.88",
+	})
+	if urlEvent.RequestContext.HTTP.SourceIP != "198.51.100.88" {
+		t.Fatalf("expected Lambda Function URL source IP to be set, got %q", urlEvent.RequestContext.HTTP.SourceIP)
+	}
+	urlResp := env.InvokeLambdaFunctionURL(context.TODO(), app, urlEvent)
+	if urlResp.Body != "198.51.100.88" {
+		t.Fatalf("expected Lambda Function URL source IP, got %q", urlResp.Body)
+	}
+}
+
 func TestInvokeALB(t *testing.T) {
 	env := testkit.New()
 	app := env.App()

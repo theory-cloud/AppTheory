@@ -261,6 +261,7 @@ export function buildAPIGatewayV2Request(
     cookies?: string[];
     body?: Uint8Array | string;
     isBase64?: boolean;
+    sourceIp?: string;
   } = {},
 ): APIGatewayV2HTTPRequest {
   const normalizedMethod = normalizeMethod(method);
@@ -290,6 +291,9 @@ export function buildAPIGatewayV2Request(
   if (queryStringParameters) {
     out.queryStringParameters = queryStringParameters;
   }
+  if (options.sourceIp !== undefined) {
+    out.requestContext.http.sourceIp = String(options.sourceIp ?? "").trim();
+  }
   return out;
 }
 
@@ -302,6 +306,7 @@ export function buildLambdaFunctionURLRequest(
     cookies?: string[];
     body?: Uint8Array | string;
     isBase64?: boolean;
+    sourceIp?: string;
   } = {},
 ): LambdaFunctionURLRequest {
   const normalizedMethod = normalizeMethod(method);
@@ -329,6 +334,9 @@ export function buildLambdaFunctionURLRequest(
   };
   if (queryStringParameters) {
     out.queryStringParameters = queryStringParameters;
+  }
+  if (options.sourceIp !== undefined) {
+    out.requestContext.http.sourceIp = String(options.sourceIp ?? "").trim();
   }
   return out;
 }

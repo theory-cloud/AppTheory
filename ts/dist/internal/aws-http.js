@@ -2,6 +2,7 @@ import { STATUS_CODES } from "node:http";
 import { headersFromSingle, normalizePath, parseRawQueryString, queryFromSingle, toBuffer, } from "./http.js";
 import { normalizeRequest } from "./request.js";
 import { normalizeResponse } from "./response.js";
+import { sourceProvenanceFromProviderRequestContext } from "./source-provenance.js";
 export function requestFromWebSocketEvent(event) {
     const headers = {};
     for (const [key, values] of Object.entries(event.multiValueHeaders ?? {})) {
@@ -61,7 +62,19 @@ function requestFromAPIGatewayProxyLike(event, pathOverride) {
         headers,
         body: toBuffer(String(event.body ?? "")),
         isBase64: Boolean(event.isBase64Encoded),
+        sourceProvenance: sourceProvenanceFromProviderRequestContext("apigw-v1", sourceIPFromAPIGatewayProxy(event)),
     };
+}
+function sourceIPFromAPIGatewayProxy(event) {
+    const requestContext = event.requestContext && typeof event.requestContext === "object"
+        ? event.requestContext
+        : null;
+    const identity = requestContext &&
+        requestContext["identity"] &&
+        typeof requestContext["identity"] === "object"
+        ? requestContext["identity"]
+        : null;
+    return identity?.["sourceIp"];
 }
 const REMOTE_MCP_APIGW_CANONICAL_RESOURCES = new Set([
     "/mcp",
@@ -150,6 +163,7 @@ export function requestFromAPIGatewayV2(event) {
         headers,
         body: toBuffer(String(event.body ?? "")),
         isBase64: Boolean(event.isBase64Encoded),
+        sourceProvenance: sourceProvenanceFromProviderRequestContext("apigw-v2", event.requestContext?.http?.sourceIp),
     };
 }
 export function requestFromLambdaFunctionURL(event) {
@@ -171,6 +185,7 @@ export function requestFromLambdaFunctionURL(event) {
         headers,
         body: toBuffer(String(event.body ?? "")),
         isBase64: Boolean(event.isBase64Encoded),
+        sourceProvenance: sourceProvenanceFromProviderRequestContext("lambda-url", event.requestContext?.http?.sourceIp),
     };
 }
 export function apigatewayV2ResponseFromResponse(resp) {

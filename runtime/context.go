@@ -100,6 +100,21 @@ func (c *Context) QueryAll(name string) []string {
 	return append([]string(nil), values...)
 }
 
+// SourceProvenance returns provider-derived HTTP source metadata for the request.
+//
+// Forwarded and X-Forwarded-For headers are not parsed or trusted by this API.
+func (c *Context) SourceProvenance() SourceProvenance {
+	if c == nil {
+		return unknownSourceProvenance()
+	}
+	return normalizeSourceProvenance(c.Request.SourceProvenance)
+}
+
+// SourceIP returns the provider-derived source IP convenience value.
+func (c *Context) SourceIP() string {
+	return c.SourceProvenance().SourceIP
+}
+
 func (c *Context) JSONValue() (any, error) {
 	if c == nil {
 		return nil, &AppError{Code: errorCodeBadRequest, Message: errorMessageInvalidJSON}

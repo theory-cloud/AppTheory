@@ -57,6 +57,10 @@ func requestFromAPIGatewayProxy(event events.APIGatewayProxyRequest) (Request, e
 		Headers:  headersFromProxyEvent(event.Headers, event.MultiValueHeaders),
 		Body:     []byte(event.Body),
 		IsBase64: event.IsBase64Encoded,
+		SourceProvenance: sourceProvenanceFromProviderRequestContext(
+			sourceProvenanceProviderAPIGatewayV1,
+			event.RequestContext.Identity.SourceIP,
+		),
 	}, nil
 }
 

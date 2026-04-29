@@ -17,6 +17,9 @@ type Request struct {
 	Cookies  map[string]string
 	Body     []byte
 	IsBase64 bool
+	// SourceProvenance is provider-derived HTTP source metadata.
+	// Forwarding headers are ordinary headers and are not used to populate this field.
+	SourceProvenance SourceProvenance
 }
 
 func normalizeRequest(in Request) (Request, error) {
@@ -28,6 +31,7 @@ func normalizeRequestWithMaxBytes(in Request, maxRequestBytes int) (Request, err
 	out.Method = strings.ToUpper(strings.TrimSpace(in.Method))
 	out.Path = normalizePath(in.Path)
 	out.Query = cloneQuery(in.Query)
+	out.SourceProvenance = normalizeSourceProvenance(in.SourceProvenance)
 
 	out.Headers = canonicalizeHeaders(in.Headers)
 
