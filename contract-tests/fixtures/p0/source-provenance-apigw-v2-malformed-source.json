@@ -1,0 +1,79 @@
+{
+  "id": "p0.source_provenance.apigw_v2_malformed_source",
+  "tier": "p0",
+  "name": "Source provenance: malformed provider source IP is invalid unknown",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/source",
+        "handler": "source_provenance"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/source",
+      "query": {},
+      "headers": {
+        "forwarded": [
+          "for=203.0.113.10;proto=https"
+        ],
+        "x-forwarded-for": [
+          "203.0.113.10, 70.0.0.1"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    },
+    "aws_event": {
+      "source": "apigw_v2",
+      "event": {
+        "version": "2.0",
+        "routeKey": "$default",
+        "rawPath": "/source",
+        "rawQueryString": "",
+        "cookies": [],
+        "headers": {
+          "forwarded": "for=203.0.113.10;proto=https",
+          "x-forwarded-for": "203.0.113.10, 70.0.0.1"
+        },
+        "queryStringParameters": null,
+        "requestContext": {
+          "http": {
+            "method": "GET",
+            "path": "/source",
+            "sourceIp": "not-an-ip"
+          }
+        },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "source_ip": "",
+        "source_provenance": {
+          "source_ip": "",
+          "provider": "unknown",
+          "source": "unknown",
+          "valid": false
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

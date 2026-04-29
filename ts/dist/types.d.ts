@@ -1,6 +1,12 @@
 export type Headers = Record<string, string[]>;
 export type Query = Record<string, string[]>;
 export type BodyStream = AsyncIterable<Uint8Array> | Iterable<Uint8Array>;
+export interface SourceProvenance {
+    sourceIP: string;
+    provider: string;
+    source: string;
+    valid: boolean;
+}
 export interface Request {
     method: string;
     path: string;
@@ -8,6 +14,7 @@ export interface Request {
     headers?: Headers;
     body?: Uint8Array;
     isBase64?: boolean;
+    sourceProvenance?: SourceProvenance;
 }
 export interface Response {
     status: number;

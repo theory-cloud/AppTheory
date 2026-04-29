@@ -480,6 +480,12 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 			"client_ip":  apptheory.ClientIP(ctx.Request.Headers),
 		})
 	},
+	"source_provenance": func(ctx *apptheory.Context) (*apptheory.Response, error) {
+		return apptheory.JSON(200, map[string]any{
+			"source_ip":         ctx.SourceIP(),
+			"source_provenance": ctx.SourceProvenance(),
+		})
+	},
 	"stepfunctions_task_token_helpers": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		built := testkit.StepFunctionsTaskTokenEvent(testkit.StepFunctionsTaskTokenEventOptions{
 			TaskToken: " tok-built ",

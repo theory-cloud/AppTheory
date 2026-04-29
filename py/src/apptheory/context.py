@@ -10,6 +10,7 @@ from apptheory.clock import Clock, RealClock
 from apptheory.errors import AppError
 from apptheory.ids import IdGenerator, RealIdGenerator
 from apptheory.request import Request
+from apptheory.source_provenance import SourceProvenance, normalize_source_provenance, unknown_source_provenance
 
 
 @dataclass(slots=True)
@@ -119,6 +120,14 @@ class Context:
         if not name:
             return default
         return self._values.get(name, default)
+
+    def source_provenance(self) -> SourceProvenance:
+        if self is None:
+            return unknown_source_provenance()
+        return normalize_source_provenance(self.request.source_provenance)
+
+    def source_ip(self) -> str:
+        return self.source_provenance().source_ip
 
     def as_websocket(self) -> WebSocketContext | None:
         return self.websocket

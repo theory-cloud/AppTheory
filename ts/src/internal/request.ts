@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 
 import { AppError } from "../errors.js";
-import type { Request } from "../types.js";
+import type { Request, SourceProvenance } from "../types.js";
 
 import {
   canonicalizeHeaders,
@@ -11,6 +11,7 @@ import {
   parseCookies,
   toBuffer,
 } from "./http.js";
+import { normalizeSourceProvenance } from "./source-provenance.js";
 
 export interface NormalizedRequest {
   method: string;
@@ -20,6 +21,7 @@ export interface NormalizedRequest {
   cookies: Record<string, string>;
   body: Buffer;
   isBase64: boolean;
+  sourceProvenance: SourceProvenance;
 }
 
 function decodedBase64Length(value: string): number {
@@ -65,5 +67,14 @@ export function normalizeRequest(
   }
 
   const cookies = parseCookies(headers["cookie"]);
-  return { method, path, query, headers, cookies, body, isBase64 };
+  return {
+    method,
+    path,
+    query,
+    headers,
+    cookies,
+    body,
+    isBase64,
+    sourceProvenance: normalizeSourceProvenance(request.sourceProvenance),
+  };
 }

@@ -105,6 +105,105 @@ class TestApp(unittest.TestCase):
         invalid = app.serve(Request(method="GET", path="/invalid-response", body=""))
         self.assertEqual(invalid.status, 500)
 
+    def test_source_provenance_context_accessors(self) -> None:
+        app: App = create_app(tier="p0")
+
+        def source_handler(ctx) -> Response:
+            provenance = ctx.source_provenance()
+            return Response(
+                status=200,
+                headers={"content-type": ["application/json; charset=utf-8"]},
+                cookies=[],
+                body=json.dumps(
+                    {
+                        "source_ip": ctx.source_ip(),
+                        "source_provenance": {
+                            "source_ip": provenance.source_ip,
+                            "provider": provenance.provider,
+                            "source": provenance.source,
+                            "valid": provenance.valid,
+                        },
+                    }
+                ).encode("utf-8"),
+                is_base64=False,
+            )
+
+        app.get("/source", source_handler)
+
+        direct = app.serve(Request(method="GET", path="/source", headers={"x-forwarded-for": ["203.0.113.10"]}))
+        self.assertEqual(
+            json.loads(direct.body.decode("utf-8")),
+            {
+                "source_ip": "",
+                "source_provenance": {
+                    "source_ip": "",
+                    "provider": "unknown",
+                    "source": "unknown",
+                    "valid": False,
+                },
+            },
+        )
+
+        apigw_v2 = app.serve_apigw_v2(
+            {
+                "version": "2.0",
+                "rawPath": "/source",
+                "rawQueryString": "",
+                "headers": {"x-forwarded-for": "203.0.113.10"},
+                "requestContext": {
+                    "http": {
+                        "method": "GET",
+                        "path": "/source",
+                        "sourceIp": "198.51.100.77",
+                    }
+                },
+                "body": "",
+                "isBase64Encoded": False,
+            }
+        )
+        self.assertEqual(
+            json.loads(apigw_v2["body"]),
+            {
+                "source_ip": "198.51.100.77",
+                "source_provenance": {
+                    "source_ip": "198.51.100.77",
+                    "provider": "apigw-v2",
+                    "source": "provider_request_context",
+                    "valid": True,
+                },
+            },
+        )
+
+        malformed = app.serve_apigw_v2(
+            {
+                "version": "2.0",
+                "rawPath": "/source",
+                "rawQueryString": "",
+                "headers": {},
+                "requestContext": {
+                    "http": {
+                        "method": "GET",
+                        "path": "/source",
+                        "sourceIp": "not-an-ip",
+                    }
+                },
+                "body": "",
+                "isBase64Encoded": False,
+            }
+        )
+        self.assertEqual(
+            json.loads(malformed["body"]),
+            {
+                "source_ip": "",
+                "source_provenance": {
+                    "source_ip": "",
+                    "provider": "unknown",
+                    "source": "unknown",
+                    "valid": False,
+                },
+            },
+        )
+
     def test_handle_strict_rejects_invalid_patterns(self) -> None:
         app: App = create_app(tier="p0")
         with self.assertRaises(ValueError):
