@@ -6,7 +6,8 @@ import { AppError } from "./errors.js";
 import { RandomIdGenerator, type IdGenerator } from "./ids.js";
 import { toBuffer } from "./internal/http.js";
 import { hasJSONContentType } from "./internal/response.js";
-import type { Headers, Query, Response } from "./types.js";
+import { normalizeSourceProvenance } from "./internal/source-provenance.js";
+import type { Headers, Query, Response, SourceProvenance } from "./types.js";
 
 export interface WebSocketManagementClientLike {
   postToConnection: (
@@ -123,6 +124,7 @@ export class Context {
     cookies: Record<string, string>;
     body: Uint8Array;
     isBase64: boolean;
+    sourceProvenance: SourceProvenance;
   };
   readonly params: Record<string, string>;
 
@@ -191,6 +193,14 @@ export class Context {
     const k = String(key ?? "").trim();
     if (!k) return undefined;
     return this._values.get(k);
+  }
+
+  sourceProvenance(): SourceProvenance {
+    return normalizeSourceProvenance(this.request.sourceProvenance);
+  }
+
+  sourceIP(): string {
+    return this.sourceProvenance().sourceIP;
   }
 
   jsonValue(): unknown {

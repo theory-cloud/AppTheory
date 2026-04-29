@@ -2554,6 +2554,19 @@ function builtInAppTheoryHandler(runtime, name, effects) {
           origin_url: runtime.originURL(ctx?.request?.headers ?? {}),
           client_ip: runtime.clientIP(ctx?.request?.headers ?? {}),
         });
+    case "source_provenance":
+      return (ctx) => {
+        const provenance = ctx.sourceProvenance();
+        return runtime.json(200, {
+          source_ip: ctx.sourceIP(),
+          source_provenance: {
+            source_ip: provenance.sourceIP,
+            provider: provenance.provider,
+            source: provenance.source,
+            valid: provenance.valid,
+          },
+        });
+      };
     default:
       return null;
   }

@@ -19,6 +19,7 @@ type HTTPEventOptions struct {
 	Cookies      []string
 	Body         []byte
 	IsBase64     bool
+	SourceIP     string
 }
 
 func APIGatewayV2Request(method, path string, opts HTTPEventOptions) events.APIGatewayV2HTTPRequest {
@@ -52,8 +53,9 @@ func APIGatewayV2Request(method, path string, opts HTTPEventOptions) events.APIG
 		}(),
 		RequestContext: events.APIGatewayV2HTTPRequestContext{
 			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
-				Method: strings.ToUpper(strings.TrimSpace(method)),
-				Path:   rawPath,
+				Method:   strings.ToUpper(strings.TrimSpace(method)),
+				Path:     rawPath,
+				SourceIP: opts.SourceIP,
 			},
 		},
 		Body:            body,
@@ -91,8 +93,9 @@ func LambdaFunctionURLRequest(method, path string, opts HTTPEventOptions) events
 		}(),
 		RequestContext: events.LambdaFunctionURLRequestContext{
 			HTTP: events.LambdaFunctionURLRequestContextHTTPDescription{
-				Method: strings.ToUpper(strings.TrimSpace(method)),
-				Path:   rawPath,
+				Method:   strings.ToUpper(strings.TrimSpace(method)),
+				Path:     rawPath,
+				SourceIP: opts.SourceIP,
 			},
 		},
 		Body:            body,

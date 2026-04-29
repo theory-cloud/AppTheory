@@ -19,6 +19,7 @@ from apptheory.aws_http import (  # noqa: E402
     request_from_alb_target_group,
     request_from_apigw_proxy,
     request_from_apigw_v2,
+    request_from_lambda_function_url,
 )
 from apptheory.response import Response  # noqa: E402
 
@@ -36,6 +37,17 @@ class TestAwsHttp(unittest.TestCase):
         self.assertEqual(evt["rawQueryString"], "a=1&b=2")
         self.assertEqual(evt["body"], base64.b64encode(b"\x01\x02").decode("ascii"))
         self.assertTrue(evt["isBase64Encoded"])
+
+    def test_http_request_builders_set_source_ip(self) -> None:
+        v2_evt = build_apigw_v2_request("get", "/source", source_ip="2001:DB8::1")
+        self.assertEqual(v2_evt["requestContext"]["http"]["sourceIp"], "2001:DB8::1")
+        v2_req = request_from_apigw_v2(v2_evt)
+        self.assertEqual(v2_req.source_provenance.source_ip, "2001:db8::1")
+
+        url_evt = build_lambda_function_url_request("get", "/source", source_ip="198.51.100.88")
+        self.assertEqual(url_evt["requestContext"]["http"]["sourceIp"], "198.51.100.88")
+        url_req = request_from_lambda_function_url(url_evt)
+        self.assertEqual(url_req.source_provenance.source_ip, "198.51.100.88")
 
     def test_request_from_apigw_v2_prefers_cookies_and_parses_raw_query(self) -> None:
         evt = build_apigw_v2_request(
