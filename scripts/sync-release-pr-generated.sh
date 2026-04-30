@@ -14,33 +14,66 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
-open_pr_count="$(
+pr_line="$(
   gh pr list \
     --state open \
     --head "${release_branch}" \
-    --json number \
-    --jq 'length'
+    --json number,isDraft \
+    --jq '.[] | "\(.number)	\(.isDraft)"' \
+    | head -n 1
 )"
 
-if [[ "${open_pr_count}" == "0" ]]; then
+if [[ -z "${pr_line}" ]]; then
   echo "sync-release-pr-generated: SKIP (no open PR for ${release_branch})"
   exit 0
 fi
+
+pr_number="${pr_line%%$'\t'*}"
+
+pr_state_line() {
+  gh pr view "${pr_number}" \
+    --json state,isDraft \
+    --jq '"\(.state)	\(.isDraft)"' \
+    2>/dev/null || true
+}
 
 git fetch origin "${release_branch}"
 git switch --detach FETCH_HEAD
 
 scripts/update-cdk-generated.sh >/dev/null
 
-if git diff --quiet -- cdk/.jsii cdk/lib cdk-go/apptheorycdk; then
-  echo "sync-release-pr-generated: PASS (${release_branch} already in sync)"
+changed=false
+if ! git diff --quiet -- cdk/.jsii cdk/lib cdk-go/apptheorycdk; then
+  changed=true
+
+  git config user.name "github-actions[bot]"
+  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+  git add cdk/.jsii cdk/lib cdk-go/apptheorycdk
+  git commit -m "chore(release): sync generated cdk artifacts"
+fi
+
+go test ./cdk-go/apptheorycdk
+
+current_pr_line="$(pr_state_line)"
+if [[ -z "${current_pr_line}" ]]; then
+  echo "sync-release-pr-generated: SKIP (PR #${pr_number} no longer exists or is inaccessible)"
   exit 0
 fi
 
-git config user.name "github-actions[bot]"
-git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-git add cdk/.jsii cdk/lib cdk-go/apptheorycdk
-git commit -m "chore(release): sync generated cdk artifacts"
-git push origin HEAD:"${release_branch}"
+current_pr_state="${current_pr_line%%$'\t'*}"
+current_pr_is_draft="${current_pr_line#*$'\t'}"
+
+if [[ "${current_pr_state}" != "OPEN" ]]; then
+  echo "sync-release-pr-generated: SKIP (PR #${pr_number} is ${current_pr_state})"
+  exit 0
+fi
+
+if [[ "${changed}" == "true" ]]; then
+  git push origin HEAD:"${release_branch}"
+fi
+
+if [[ "${current_pr_is_draft}" == "true" ]]; then
+  gh pr ready "${pr_number}"
+fi
 
 echo "sync-release-pr-generated: PASS (${release_branch} updated)"

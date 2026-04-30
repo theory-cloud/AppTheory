@@ -137,22 +137,40 @@ if [[ -f ".github/workflows/prerelease-pr.yml" ]]; then
     echo "branch-release: prerelease-pr workflow must target premain"
     failures=$((failures + 1))
   }
-  grep -Eq 'googleapis/release-please-action@[0-9a-fA-F]{40}.*\bv4\b' ".github/workflows/prerelease-pr.yml" || {
-    echo "branch-release: prerelease-pr workflow must pin release-please v4 by commit SHA"
+  if grep -Eq 'googleapis/release-please-action@[0-9a-fA-F]{40}.*\bv4\b' ".github/workflows/prerelease-pr.yml"; then
+    grep -Eq 'config-file:\s*release-please-config\.premain\.json' ".github/workflows/prerelease-pr.yml" || {
+      echo "branch-release: prerelease-pr workflow must reference release-please-config.premain.json"
+      failures=$((failures + 1))
+    }
+    grep -Eq 'manifest-file:\s*\.release-please-manifest\.premain\.json' ".github/workflows/prerelease-pr.yml" || {
+      echo "branch-release: prerelease-pr workflow must reference .release-please-manifest.premain.json"
+      failures=$((failures + 1))
+    }
+    grep -Eq 'skip-github-release:\s*true' ".github/workflows/prerelease-pr.yml" || {
+      echo "branch-release: prerelease-pr workflow must set skip-github-release: true"
+      failures=$((failures + 1))
+    }
+    grep -Eq 'draft-pull-request:\s*true' ".github/workflows/prerelease-pr.yml" || {
+      echo "branch-release: prerelease-pr workflow must create draft release PRs"
+      failures=$((failures + 1))
+    }
+  elif grep -Eq 'release-please@[0-9]+\.[0-9]+\.[0-9]+' ".github/workflows/prerelease-pr.yml"; then
+    grep -Eq -- '--config-file\s+release-please-config\.premain\.json' ".github/workflows/prerelease-pr.yml" || {
+      echo "branch-release: prerelease-pr workflow must pass --config-file release-please-config.premain.json"
+      failures=$((failures + 1))
+    }
+    grep -Eq -- '--manifest-file\s+\.release-please-manifest\.premain\.json' ".github/workflows/prerelease-pr.yml" || {
+      echo "branch-release: prerelease-pr workflow must pass --manifest-file .release-please-manifest.premain.json"
+      failures=$((failures + 1))
+    }
+    grep -Eq -- '--draft-pull-request' ".github/workflows/prerelease-pr.yml" || {
+      echo "branch-release: prerelease-pr workflow must create draft release PRs"
+      failures=$((failures + 1))
+    }
+  else
+    echo "branch-release: prerelease-pr workflow must pin release-please (action SHA or CLI version)"
     failures=$((failures + 1))
-  }
-  grep -Eq 'config-file:\s*release-please-config\.premain\.json' ".github/workflows/prerelease-pr.yml" || {
-    echo "branch-release: prerelease-pr workflow must reference release-please-config.premain.json"
-    failures=$((failures + 1))
-  }
-  grep -Eq 'manifest-file:\s*\.release-please-manifest\.premain\.json' ".github/workflows/prerelease-pr.yml" || {
-    echo "branch-release: prerelease-pr workflow must reference .release-please-manifest.premain.json"
-    failures=$((failures + 1))
-  }
-  grep -Eq 'skip-github-release:\s*true' ".github/workflows/prerelease-pr.yml" || {
-    echo "branch-release: prerelease-pr workflow must set skip-github-release: true"
-    failures=$((failures + 1))
-  }
+  fi
   grep -Fq "scripts/sync-release-pr-generated.sh" ".github/workflows/prerelease-pr.yml" || {
     echo "branch-release: prerelease-pr workflow must sync generated cdk artifacts onto the release PR branch"
     failures=$((failures + 1))
@@ -188,6 +206,10 @@ if [[ -f ".github/workflows/release-pr.yml" ]]; then
       echo "branch-release: release-pr workflow must pass --manifest-file .release-please-manifest.json"
       failures=$((failures + 1))
     }
+    grep -Eq -- '--draft-pull-request' ".github/workflows/release-pr.yml" || {
+      echo "branch-release: release-pr workflow must create draft release PRs"
+      failures=$((failures + 1))
+    }
   else
     echo "branch-release: release-pr workflow must pin release-please (action SHA or CLI version)"
     failures=$((failures + 1))
@@ -205,6 +227,18 @@ if [[ -f ".github/workflows/release-pr.yml" ]]; then
   }
   grep -Fq ".release-please-manifest.premain.json" ".github/workflows/release-pr.yml" || {
     echo "branch-release: release-pr workflow must read .release-please-manifest.premain.json to align versions"
+    failures=$((failures + 1))
+  }
+  grep -Fq "Guard unresolved stable release" ".github/workflows/release-pr.yml" || {
+    echo "branch-release: release-pr workflow must guard unresolved stable releases before opening the next release PR"
+    failures=$((failures + 1))
+  }
+  grep -Fq "git/ref/tags" ".github/workflows/release-pr.yml" || {
+    echo "branch-release: release-pr workflow must verify the current stable tag exists before opening the next release PR"
+    failures=$((failures + 1))
+  }
+  grep -Fq "steps.stable_release.outputs.blocked" ".github/workflows/release-pr.yml" || {
+    echo "branch-release: release-pr workflow must skip release PR generation while the current stable release is unresolved"
     failures=$((failures + 1))
   }
   grep -Fq "scripts/sync-release-pr-generated.sh" ".github/workflows/release-pr.yml" || {

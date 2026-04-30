@@ -31,7 +31,46 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Guard unresolved stable release
+        id: stable_release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          stable="$(
+            python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          version = json.loads(Path(".release-please-manifest.json").read_text(encoding="utf-8")).get(".", "")
+          if not version:
+              raise SystemExit("missing stable release version")
+          print(version)
+          PY
+          )"
+
+          tag="v${stable}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            echo "blocked=false" >> "${GITHUB_OUTPUT}"
+            echo "stable-release: PASS (${tag} tag exists)"
+            exit 0
+          fi
+
+          echo "blocked=true" >> "${GITHUB_OUTPUT}"
+          echo "stable-release: BLOCKED (${tag} tag is missing; recover the stable release before opening the next release PR)"
+          {
+            echo "### Stable release unresolved"
+            echo ""
+            echo "Release PR generation is blocked because \`${tag}\` is recorded in"
+            echo "\`.release-please-manifest.json\`, but \`refs/tags/${tag}\` does not exist."
+            echo "Recover and publish that stable release before opening the next release PR."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
       - name: Compute release-as (align to premain RC)
+        if: steps.stable_release.outputs.blocked != 'true'
         id: version
         run: |
           set -euo pipefail
@@ -73,7 +112,7 @@ jobs:
           echo "release-as: ${release_as:-}"
 
       - name: Release Please (PR only) (aligned)
-        if: steps.version.outputs.release_as != ''
+        if: steps.stable_release.outputs.blocked != 'true' && steps.version.outputs.release_as != ''
         id: release_aligned
         env:
           RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
@@ -90,10 +129,11 @@ jobs:
             --target-branch main \
             --config-file release-please-config.json \
             --manifest-file .release-please-manifest.json \
-            --release-as "${RELEASE_AS}"
+            --release-as "${RELEASE_AS}" \
+            --draft-pull-request
 
       - name: Release Please (PR only)
-        if: steps.version.outputs.release_as == ''
+        if: steps.stable_release.outputs.blocked != 'true' && steps.version.outputs.release_as == ''
         id: release_default
         env:
           RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
@@ -105,9 +145,11 @@ jobs:
             --repo-url "${GITHUB_REPOSITORY}" \
             --target-branch main \
             --config-file release-please-config.json \
-            --manifest-file .release-please-manifest.json
+            --manifest-file .release-please-manifest.json \
+            --draft-pull-request
 
       - name: Detect open release PR
+        if: steps.stable_release.outputs.blocked != 'true'
         id: release_pr
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
