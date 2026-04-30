@@ -29,7 +29,13 @@ if [[ -z "${pr_line}" ]]; then
 fi
 
 pr_number="${pr_line%%$'\t'*}"
-pr_is_draft="${pr_line#*$'\t'}"
+
+pr_state_line() {
+  gh pr view "${pr_number}" \
+    --json state,isDraft \
+    --jq '"\(.state)	\(.isDraft)"' \
+    2>/dev/null || true
+}
 
 git fetch origin "${release_branch}"
 git switch --detach FETCH_HEAD
@@ -48,11 +54,25 @@ fi
 
 go test ./cdk-go/apptheorycdk
 
+current_pr_line="$(pr_state_line)"
+if [[ -z "${current_pr_line}" ]]; then
+  echo "sync-release-pr-generated: SKIP (PR #${pr_number} no longer exists or is inaccessible)"
+  exit 0
+fi
+
+current_pr_state="${current_pr_line%%$'\t'*}"
+current_pr_is_draft="${current_pr_line#*$'\t'}"
+
+if [[ "${current_pr_state}" != "OPEN" ]]; then
+  echo "sync-release-pr-generated: SKIP (PR #${pr_number} is ${current_pr_state})"
+  exit 0
+fi
+
 if [[ "${changed}" == "true" ]]; then
   git push origin HEAD:"${release_branch}"
 fi
 
-if [[ "${pr_is_draft}" == "true" ]]; then
+if [[ "${current_pr_is_draft}" == "true" ]]; then
   gh pr ready "${pr_number}"
 fi
 
