@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.2.0-rc.2](https://github.com/theory-cloud/AppTheory/compare/v1.2.0-rc.1...v1.2.0-rc.2) (2026-04-30)
+## [1.2.2-rc.1](https://github.com/theory-cloud/AppTheory/compare/v1.2.0-rc.1...v1.2.2-rc.1) (2026-04-30)
 
 
 ### Features
