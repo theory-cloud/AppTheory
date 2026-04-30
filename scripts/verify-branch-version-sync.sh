@@ -96,6 +96,40 @@ if [[ -z "${main_stable}" ]]; then
   exit 1
 fi
 
+main_manifest_stable="${main_stable}"
+if ! git ls-remote --exit-code --tags origin "refs/tags/v${main_manifest_stable}" >/dev/null 2>&1; then
+  released_main_stable="$(
+    python3 - <<'PY'
+import re
+import subprocess
+import sys
+
+versions: list[tuple[tuple[int, int, int], str]] = []
+for line in subprocess.check_output(
+    ["git", "ls-remote", "--tags", "--refs", "origin", "v*"], text=True
+).splitlines():
+    ref = line.rstrip().split("\t")[-1]
+    tag = ref.rsplit("/", 1)[-1]
+    match = re.fullmatch(r"v?([0-9]+)\.([0-9]+)\.([0-9]+)", tag)
+    if not match:
+        continue
+    base = tuple(int(part) for part in match.groups())
+    versions.append((base, ".".join(match.groups())))
+
+if versions:
+    print(max(versions)[1])
+PY
+  )"
+
+  if [[ -z "${released_main_stable}" ]]; then
+    echo "branch-version-sync: FAIL (origin/main stable ${main_manifest_stable} has no tag and no released stable tag was found)"
+    exit 1
+  fi
+
+  echo "branch-version-sync: WARN (origin/main manifest ${main_manifest_stable} has no v${main_manifest_stable} tag; using latest released stable v${released_main_stable})"
+  main_stable="${released_main_stable}"
+fi
+
 subject_label="premain"
 premain_stable=""
 premain_version=""
