@@ -56,16 +56,16 @@ go test ./cdk-go/apptheorycdk
 
 current_pr_line="$(pr_state_line)"
 if [[ -z "${current_pr_line}" ]]; then
-  echo "sync-release-pr-generated: SKIP (PR #${pr_number} no longer exists or is inaccessible)"
-  exit 0
+  echo "sync-release-pr-generated: FAIL (PR #${pr_number} disappeared before generated artifacts could be synced)"
+  exit 1
 fi
 
 current_pr_state="${current_pr_line%%$'\t'*}"
 current_pr_is_draft="${current_pr_line#*$'\t'}"
 
 if [[ "${current_pr_state}" != "OPEN" ]]; then
-  echo "sync-release-pr-generated: SKIP (PR #${pr_number} is ${current_pr_state})"
-  exit 0
+  echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} before generated artifacts could be synced)"
+  exit 1
 fi
 
 if [[ "${changed}" == "true" ]]; then
