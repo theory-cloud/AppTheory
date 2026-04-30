@@ -90,7 +90,8 @@ jobs:
             --target-branch main \
             --config-file release-please-config.json \
             --manifest-file .release-please-manifest.json \
-            --release-as "${RELEASE_AS}"
+            --release-as "${RELEASE_AS}" \
+            --draft-pull-request
 
       - name: Release Please (PR only)
         if: steps.version.outputs.release_as == ''
@@ -105,7 +106,8 @@ jobs:
             --repo-url "${GITHUB_REPOSITORY}" \
             --target-branch main \
             --config-file release-please-config.json \
-            --manifest-file .release-please-manifest.json
+            --manifest-file .release-please-manifest.json \
+            --draft-pull-request
 
       - name: Detect open release PR
         id: release_pr
