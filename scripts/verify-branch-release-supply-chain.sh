@@ -229,6 +229,18 @@ if [[ -f ".github/workflows/release-pr.yml" ]]; then
     echo "branch-release: release-pr workflow must read .release-please-manifest.premain.json to align versions"
     failures=$((failures + 1))
   }
+  grep -Fq "Guard unresolved stable release" ".github/workflows/release-pr.yml" || {
+    echo "branch-release: release-pr workflow must guard unresolved stable releases before opening the next release PR"
+    failures=$((failures + 1))
+  }
+  grep -Fq "git/ref/tags" ".github/workflows/release-pr.yml" || {
+    echo "branch-release: release-pr workflow must verify the current stable tag exists before opening the next release PR"
+    failures=$((failures + 1))
+  }
+  grep -Fq "steps.stable_release.outputs.blocked" ".github/workflows/release-pr.yml" || {
+    echo "branch-release: release-pr workflow must skip release PR generation while the current stable release is unresolved"
+    failures=$((failures + 1))
+  }
   grep -Fq "scripts/sync-release-pr-generated.sh" ".github/workflows/release-pr.yml" || {
     echo "branch-release: release-pr workflow must sync generated cdk artifacts onto the release PR branch"
     failures=$((failures + 1))
