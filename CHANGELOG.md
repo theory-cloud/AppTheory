@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.0-rc.2](https://github.com/theory-cloud/AppTheory/compare/v1.2.0-rc.1...v1.2.0-rc.2) (2026-04-30)
+
+
+### Features
+
+* **release:** stage TableTheory v1.8 release train ([381ae00](https://github.com/theory-cloud/AppTheory/commit/381ae0053e55936016d35b66a00a6e706edc995d))
+* **release:** stage TableTheory v1.8 release train ([d979678](https://github.com/theory-cloud/AppTheory/commit/d979678c6168bfd29f3c4c4c84696325b6cc52df))
+
+
+### Bug Fixes
+
+* **release:** allow draft release PR CLI ([ba9d248](https://github.com/theory-cloud/AppTheory/commit/ba9d248b9a592dc0263bc2d2085fe196710017cd))
+* **release:** allow draft release PR CLI ([8dcac02](https://github.com/theory-cloud/AppTheory/commit/8dcac021928b59e4e4fcdd5a189f17fc119ab5ce))
+* **release:** gate generated artifact sync ([ea623bd](https://github.com/theory-cloud/AppTheory/commit/ea623bd910845b13beee26734611f619f2c6da1e))
+* **release:** gate generated artifact sync ([81bb91b](https://github.com/theory-cloud/AppTheory/commit/81bb91bcf8199c9a8776ae0911054cf798c6636b))
+* **release:** recover stable generated artifacts ([03d57e5](https://github.com/theory-cloud/AppTheory/commit/03d57e5976dac8e6fcdc7a30b0c013d179cf7dfd))
+* **release:** recover stable generated artifacts ([e4dfdb5](https://github.com/theory-cloud/AppTheory/commit/e4dfdb5885606774a124870d96222cdcb0a6dd74))
+
 ## [1.2.0](https://github.com/theory-cloud/AppTheory/compare/v1.1.1...v1.2.0) (2026-04-29)
 
 
