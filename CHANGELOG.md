@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0-rc.1](https://github.com/theory-cloud/AppTheory/compare/v1.2.0-rc...v1.2.0-rc.1) (2026-04-30)
+
+
+### Bug Fixes
+
+* **deps:** update TableTheory to v1.8.0 ([4511615](https://github.com/theory-cloud/AppTheory/commit/451161589f460bf7494347850ce6ad233d8ac9a9))
+* **deps:** update TableTheory to v1.8.0 ([b84df2d](https://github.com/theory-cloud/AppTheory/commit/b84df2de1fd0729c855d01e8873a3c047c8c531a))
+
 ## [1.2.0](https://github.com/theory-cloud/AppTheory/compare/v1.1.1...v1.2.0) (2026-04-29)
 
 
