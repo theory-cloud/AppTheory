@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.3.2-rc](https://github.com/theory-cloud/AppTheory/compare/v1.3.1...v1.3.2-rc) (2026-05-07)
+## [1.3.2](https://github.com/theory-cloud/AppTheory/compare/v1.3.1...v1.3.2) (2026-05-07)
 
 
 ### Bug Fixes
