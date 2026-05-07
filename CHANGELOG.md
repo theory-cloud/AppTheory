@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.1](https://github.com/theory-cloud/AppTheory/compare/v1.3.0...v1.3.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* **deps:** update TableTheory to v1.8.1 ([5634d7f](https://github.com/theory-cloud/AppTheory/commit/5634d7fa6027856632963c8d357278135f3f4d64))
+* **release:** align premain with staging ([8bec529](https://github.com/theory-cloud/AppTheory/commit/8bec529b5000405bfddb297912f35149b85f8e44))
+
 ## [1.3.0-rc.3](https://github.com/theory-cloud/AppTheory/compare/v1.3.0-rc.2...v1.3.0-rc.3) (2026-05-07)
 
 
