@@ -9,7 +9,6 @@
   "Resources": {
     "BucketNotificationsHandler050a0587b7544547bf325f094a3db8347ECC3691": {
       "DependsOn": [
-        "BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleDefaultPolicy2CF63D36",
         "BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleB6FB88EC"
       ],
       "Properties": {
@@ -60,32 +59,6 @@
       },
       "Type": "AWS::IAM::Role"
     },
-    "BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleDefaultPolicy2CF63D36": {
-      "Properties": {
-        "PolicyDocument": {
-          "Statement": [
-            {
-              "Action": "s3:PutBucketNotification",
-              "Effect": "Allow",
-              "Resource": {
-                "Fn::GetAtt": [
-                  "IngestBucketEDD8587D",
-                  "Arn"
-                ]
-              }
-            }
-          ],
-          "Version": "2012-10-17"
-        },
-        "PolicyName": "BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleDefaultPolicy2CF63D36",
-        "Roles": [
-          {
-            "Ref": "BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleB6FB88EC"
-          }
-        ]
-      },
-      "Type": "AWS::IAM::Policy"
-    },
     "IngestBucketEDD8587D": {
       "DeletionPolicy": "Retain",
       "Properties": {
@@ -117,6 +90,7 @@
     },
     "IngestBucketNotificationsC6EA9BAD": {
       "DependsOn": [
+        "IngestBucketNotificationsHandlerPolicyE9A8E88A",
         "IngestBucketPolicy550B1752"
       ],
       "Properties": {
@@ -136,6 +110,32 @@
         "SkipDestinationValidation": false
       },
       "Type": "Custom::S3BucketNotifications"
+    },
+    "IngestBucketNotificationsHandlerPolicyE9A8E88A": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "s3:PutBucketNotification",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "IngestBucketEDD8587D",
+                  "Arn"
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "PolicyName": "IngestBucketNotificationsHandlerPolicyE9A8E88A",
+        "Roles": [
+          {
+            "Ref": "BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleB6FB88EC"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Policy"
     },
     "IngestBucketPolicy550B1752": {
       "Properties": {
