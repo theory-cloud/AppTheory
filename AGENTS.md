@@ -37,4 +37,6 @@ Version bumps must keep `VERSION`, `ts/package.json`, `cdk/package.json`, `py/py
 - Staging PRs must *ALWAYS* contain current `main`. Before opening or merging any PR whose base is `staging`, verify `origin/main` is an ancestor of the PR head (for example, `git merge-base --is-ancestor origin/main HEAD`); if not, merge `origin/main` into the PR branch first.
 - PRs to `staging` must verify version alignment across both release and release-candidate manifests: `.release-please-manifest.json` and `.release-please-manifest.premain.json`.
 - After any stable release on `main`, the next `staging` PR must reset `.release-please-manifest.premain.json` to the latest stable version from `.release-please-manifest.json` before promoting `staging` to `premain`; stale prerelease tracks fail the release lane.
+- Broken or superseded release/promotion PRs must not remain mergeable. Once explicitly authorized for the incident, close them promptly instead of relying on humans to avoid a stale merge path.
+- Release Please PRs must not be merged until generated CDK artifact sync has completed and all required checks are green; merging before sync leaves `main` with stale release artifacts.
 - PRs should describe intent, list commands run (at least `make test`), and include any contract/snapshot/version updates.
