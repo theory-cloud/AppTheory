@@ -134,7 +134,7 @@ jobs:
 
           gh release edit "${TAG_NAME}" --draft=false --prerelease --notes-file dist/RELEASE_NOTES.md
 
-      - name: Cleanup failed draft prerelease (no remnants)
+      - name: Report failed draft prerelease (immutable)
         if: failure() && steps.release.outputs.release_created == 'true'
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
@@ -145,19 +145,8 @@ jobs:
             exit 0
           fi
 
-          # Only delete draft releases. If it's already published, do nothing.
+          # Releases and tags are immutable. Do not delete or mutate anything on
+          # failure; leave the draft/tag state visible for process recovery.
           is_draft="$(gh release view "${TAG_NAME}" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
-          if [[ "${is_draft}" != "true" ]]; then
-            echo "release-cleanup: SKIP (release not draft or not found)"
-            exit 0
-          fi
-
-          echo "release-cleanup: deleting draft release ${TAG_NAME}"
-          gh release delete "${TAG_NAME}" --yes
-
-          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG_NAME}" >/dev/null 2>&1; then
-            echo "release-cleanup: deleting tag ${TAG_NAME}"
-            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG_NAME}"
-          else
-            echo "release-cleanup: SKIP tag delete (tag not found)"
-          fi
+          echo "release-cleanup: PRESERVE ${TAG_NAME} (draft=${is_draft:-unknown})"
+          echo "release-cleanup: manual deletion is forbidden; recover through the branch release process"
