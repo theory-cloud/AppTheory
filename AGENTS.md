@@ -36,4 +36,5 @@ Version bumps must keep `VERSION`, `ts/package.json`, `cdk/package.json`, `py/py
 - Release automation is driven by Conventional Commits; if a change must ship, use `feat:` / `fix:` (avoid milestone-only prefixes like `M1:`).
 - Staging PRs must *ALWAYS* contain current `main`. Before opening or merging any PR whose base is `staging`, verify `origin/main` is an ancestor of the PR head (for example, `git merge-base --is-ancestor origin/main HEAD`); if not, merge `origin/main` into the PR branch first.
 - PRs to `staging` must verify version alignment across both release and release-candidate manifests: `.release-please-manifest.json` and `.release-please-manifest.premain.json`.
+- After any stable release on `main`, the next `staging` PR must reset `.release-please-manifest.premain.json` to the latest stable version from `.release-please-manifest.json` before promoting `staging` to `premain`; stale prerelease tracks fail the release lane.
 - PRs should describe intent, list commands run (at least `make test`), and include any contract/snapshot/version updates.
