@@ -6,7 +6,7 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.244.0",
+    "aws-cdk-lib": "2.253.0",
     "constructs": "10.6.0"
   },
   "dependencyClosure": {
@@ -588,6 +588,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_bcmpricingcalculator": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.BcmPricingCalculator"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.bcmpricingcalculator"
+            },
+            "python": {
+              "module": "aws_cdk.aws_bcmpricingcalculator"
+            }
+          }
+        },
         "aws-cdk-lib.aws_bedrock": {
           "targets": {
             "dotnet": {
@@ -637,6 +650,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_billingconductor"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_braket": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.Braket"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.braket"
+            },
+            "python": {
+              "module": "aws_cdk.aws_braket"
             }
           }
         },
@@ -715,6 +741,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_chatbot"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_chime": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.Chime"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.chime"
+            },
+            "python": {
+              "module": "aws_cdk.aws_chime"
             }
           }
         },
@@ -1596,6 +1635,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_elementalinference": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.ElementalInference"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.elementalinference"
+            },
+            "python": {
+              "module": "aws_cdk.aws_elementalinference"
+            }
+          }
+        },
         "aws-cdk-lib.aws_emr": {
           "targets": {
             "dotnet": {
@@ -2009,6 +2061,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_inspectorv2"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_interconnect": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.Interconnect"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.interconnect"
+            },
+            "python": {
+              "module": "aws_cdk.aws_interconnect"
             }
           }
         },
@@ -2792,6 +2857,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_novaact": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.NovaAct"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.novaact"
+            },
+            "python": {
+              "module": "aws_cdk.aws_novaact"
+            }
+          }
+        },
         "aws-cdk-lib.aws_oam": {
           "targets": {
             "dotnet": {
@@ -3286,6 +3364,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_route53globalresolver": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.Route53GlobalResolver"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.route53globalresolver"
+            },
+            "python": {
+              "module": "aws_cdk.aws_route53globalresolver"
+            }
+          }
+        },
         "aws-cdk-lib.aws_route53profiles": {
           "targets": {
             "dotnet": {
@@ -3445,6 +3536,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_s3files": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.S3Files"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.s3files"
+            },
+            "python": {
+              "module": "aws_cdk.aws_s3files"
+            }
+          }
+        },
         "aws-cdk-lib.aws_s3objectlambda": {
           "targets": {
             "dotnet": {
@@ -3572,6 +3676,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_secretsmanager"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_securityagent": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.SecurityAgent"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.securityagent"
+            },
+            "python": {
+              "module": "aws_cdk.aws_securityagent"
             }
           }
         },
@@ -3923,6 +4040,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_transfer"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_uxc": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.UXC"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.uxc"
+            },
+            "python": {
+              "module": "aws_cdk.aws_uxc"
             }
           }
         },
@@ -4650,6 +4780,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_bcmpricingcalculator": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.BcmPricingCalculator"
+            },
+            "go": {
+              "packageName": "interfacesawsbcmpricingcalculator"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.bcmpricingcalculator"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_bcmpricingcalculator"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_bedrock": {
           "targets": {
             "dotnet": {
@@ -4727,6 +4873,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_billingconductor"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_braket": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.Braket"
+            },
+            "go": {
+              "packageName": "interfacesawsbraket"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.braket"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_braket"
             }
           }
         },
@@ -4823,6 +4985,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_chatbot"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_chime": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.Chime"
+            },
+            "go": {
+              "packageName": "interfacesawschime"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.chime"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_chime"
             }
           }
         },
@@ -5722,6 +5900,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_elementalinference": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.ElementalInference"
+            },
+            "go": {
+              "packageName": "interfacesawselementalinference"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.elementalinference"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_elementalinference"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_emr": {
           "targets": {
             "dotnet": {
@@ -6199,6 +6393,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_inspectorv2"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_interconnect": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.Interconnect"
+            },
+            "go": {
+              "packageName": "interfacesawsinterconnect"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.interconnect"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_interconnect"
             }
           }
         },
@@ -7098,6 +7308,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_novaact": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.NovaAct"
+            },
+            "go": {
+              "packageName": "interfacesawsnovaact"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.novaact"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_novaact"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_oam": {
           "targets": {
             "dotnet": {
@@ -7674,6 +7900,22 @@
             }
           }
         },
+        "aws-cdk-lib.interfaces.aws_route53globalresolver": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.Route53GlobalResolver"
+            },
+            "go": {
+              "packageName": "interfacesawsroute53globalresolver"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.route53globalresolver"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_route53globalresolver"
+            }
+          }
+        },
         "aws-cdk-lib.interfaces.aws_route53profiles": {
           "targets": {
             "dotnet": {
@@ -7799,6 +8041,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_s3express"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_s3files": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.S3Files"
+            },
+            "go": {
+              "packageName": "interfacesawss3files"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.s3files"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_s3files"
             }
           }
         },
@@ -7943,6 +8201,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_secretsmanager"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_securityagent": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.SecurityAgent"
+            },
+            "go": {
+              "packageName": "interfacesawssecurityagent"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.securityagent"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_securityagent"
             }
           }
         },
@@ -8327,6 +8601,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_transfer"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_uxc": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.UXC"
+            },
+            "go": {
+              "packageName": "interfacesawsuxc"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.uxc"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_uxc"
             }
           }
         },
@@ -20311,6 +20601,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "1.3.0-rc.3",
-  "fingerprint": "Fx5UHgiZ/QWoZSLH5Jm9voHBXGqy+JFZ4VGYodKqOrs="
+  "version": "1.3.1",
+  "fingerprint": "84JhdzccLc+ZaLW95hnooEv2qaM+pk45ur7OafWr8RM="
 }

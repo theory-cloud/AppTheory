@@ -1,12 +1,15 @@
 # Third-party dependencies
 
 This directory contains **vendored third‑party tarballs** used to keep deterministic security gates green when an
-upstream release is not yet available.
+upstream release is not yet available. AppTheory no longer references these tarballs from the active CDK package
+lock; they remain here only as historical release inputs unless a future upstream gap requires a new vendored
+baseline.
 
 ## `aws-cdk-lib`
 
-`aws-cdk-lib-2.244.0+minimatch-10.2.4.tgz` is based on the upstream `aws-cdk-lib@2.244.0` npm tarball, with the
-bundled `minimatch` dependency updated to `10.2.4` to address OSV findings (SEC-2).
+`aws-cdk-lib-2.244.0+minimatch-10.2.4.tgz` was based on the upstream `aws-cdk-lib@2.244.0` npm tarball, with the
+bundled `minimatch` dependency updated to `10.2.4` to address OSV findings (SEC-2). It is retained for provenance
+only; active AppTheory CDK packages use the upstream `aws-cdk-lib@2.253.0` baseline.
 
 Regeneration (example):
 

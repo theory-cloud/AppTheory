@@ -1,24 +1,24 @@
 {
-    "name": "@theory-cloud/apptheory-cdk-lesser-parity-example",
-    "private": true,
-    "license": "UNLICENSED",
-    "scripts": {
-        "synth": "cdk synth",
-        "deploy": "cdk deploy --all"
-    },
-    "devDependencies": {
-        "@theory-cloud/apptheory-cdk": "file:../../../cdk",
-        "@types/node": "25.5.0",
-        "aws-cdk": "2.1113.0",
-        "aws-cdk-lib": "2.244.0",
-        "constructs": "10.6.0",
-        "ts-node": "10.9.2",
-        "typescript": "5.9.3"
-    },
-    "overrides": {
-        "diff": "4.0.4"
-    },
-    "engines": {
-        "node": ">=24"
-    }
+  "name": "@theory-cloud/apptheory-cdk-lesser-parity-example",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "synth": "cdk synth",
+    "deploy": "cdk deploy --all"
+  },
+  "devDependencies": {
+    "@theory-cloud/apptheory-cdk": "file:../../../cdk",
+    "@types/node": "25.5.0",
+    "aws-cdk": "2.1113.0",
+    "aws-cdk-lib": "2.253.0",
+    "constructs": "10.6.0",
+    "ts-node": "10.9.2",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "diff": "4.0.4"
+  },
+  "engines": {
+    "node": ">=24"
+  }
 }
