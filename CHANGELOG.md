@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.0-rc.4](https://github.com/theory-cloud/AppTheory/compare/v1.3.0-rc.3...v1.3.0-rc.4) (2026-05-07)
+
+
+### Bug Fixes
+
+* **cdk:** update AWS CDK baseline to 2.253.0 ([aa844c0](https://github.com/theory-cloud/AppTheory/commit/aa844c0d965867987fdbd20634f059e7f09b14f6))
+* **cdk:** update AWS CDK baseline to 2.253.0 ([d587000](https://github.com/theory-cloud/AppTheory/commit/d58700028033e879bdb663ef1a8ec671bdd1edf1))
+
 ## [1.3.1](https://github.com/theory-cloud/AppTheory/compare/v1.3.0...v1.3.1) (2026-05-07)
 
 
