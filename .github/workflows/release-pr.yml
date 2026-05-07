@@ -31,7 +31,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Guard unresolved stable release
+      - name: Check recorded stable release
         id: stable_release
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
@@ -59,14 +59,15 @@ jobs:
             exit 0
           fi
 
-          echo "blocked=true" >> "${GITHUB_OUTPUT}"
-          echo "stable-release: BLOCKED (${tag} tag is missing; recover the stable release before opening the next release PR)"
+          echo "blocked=false" >> "${GITHUB_OUTPUT}"
+          echo "stable-release: WARN (${tag} tag is missing; next Release PR must be forced from the premain RC baseline)"
           {
-            echo "### Stable release unresolved"
+            echo "### Stable release tag missing"
             echo ""
-            echo "Release PR generation is blocked because \`${tag}\` is recorded in"
-            echo "\`.release-please-manifest.json\`, but \`refs/tags/${tag}\` does not exist."
-            echo "Recover and publish that stable release before opening the next release PR."
+            echo "\`${tag}\` is recorded in \`.release-please-manifest.json\`,"
+            echo "but \`refs/tags/${tag}\` does not exist."
+            echo "Release PR generation will continue only through the premain RC"
+            echo "baseline so the next stable version stays on the patch line."
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Compute release-as (align to premain RC)
