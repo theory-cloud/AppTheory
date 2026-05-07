@@ -20601,6 +20601,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "1.3.1",
+  "version": "1.3.0-rc.4",
   "fingerprint": "84JhdzccLc+ZaLW95hnooEv2qaM+pk45ur7OafWr8RM="
 }
