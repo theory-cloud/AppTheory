@@ -62,7 +62,7 @@ Non-goals (near-term):
 
 ## Supported Runtimes
 
-- Go toolchain: `1.26.2`
+- Go toolchain: `1.26.3`
 - Node.js: `24`
 - Python: `3.14`
 
