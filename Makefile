@@ -21,7 +21,7 @@ test: test-unit
 	@./scripts/verify-version-alignment.sh
 
 test-unit:
-	@go test ./...
+	@go test $$(./scripts/list-go-packages.sh)
 
 lint:
 	@./scripts/verify-go-lint.sh
