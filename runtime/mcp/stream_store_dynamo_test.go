@@ -468,6 +468,65 @@ func TestDynamoStreamStore_SpillsLargeEventsToS3AndRehydrates(t *testing.T) {
 	requireStreamClosed(t, ch)
 }
 
+func TestDynamoStreamStore_SubscribeSkipsExpiredInlineEvents(t *testing.T) {
+	db := newFakeMCPTableDB()
+	store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	require.True(t, ok)
+
+	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+	store.idGen = staticIDGenerator{id: "stream-1"}
+	store.pollInterval = time.Millisecond
+
+	streamID, err := store.Create(context.Background(), "sess-1")
+	require.NoError(t, err)
+	eventID, err := store.Append(context.Background(), "sess-1", streamID, json.RawMessage(`{"seq":1}`))
+	require.NoError(t, err)
+	expireStreamRecord(t, db, "sess-1", eventID, now.Add(-time.Second).Unix())
+	require.NoError(t, store.Close(context.Background(), "sess-1", streamID))
+
+	_, err = store.StreamForEvent(context.Background(), "sess-1", eventID)
+	require.ErrorIs(t, err, ErrEventNotFound)
+
+	ch, err := store.Subscribe(context.Background(), "sess-1", streamID, "")
+	require.NoError(t, err)
+	requireStreamClosed(t, ch)
+}
+
+func TestDynamoStreamStore_SubscribeSkipsExpiredSpilledEventsWithoutRehydrate(t *testing.T) {
+	db := newFakeMCPTableDB()
+	spill := newFakeDynamoStreamSpillStore()
+	store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	require.True(t, ok)
+	store.spillStore = spill
+	store.inlineMaxBytes = 1
+	store.pollInterval = time.Millisecond
+
+	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+
+	streamID, err := store.Create(context.Background(), "sess-1")
+	require.NoError(t, err)
+	eventID, err := store.Append(context.Background(), "sess-1", streamID, json.RawMessage(`{"seq":1}`))
+	require.NoError(t, err)
+
+	record, ok := db.getStreamRecord("sess-1", eventID)
+	require.True(t, ok)
+	require.NotEmpty(t, record.DataRef)
+	require.True(t, spill.exists(record.DataRef))
+
+	expireStreamRecord(t, db, "sess-1", eventID, now.Add(-time.Second).Unix())
+	require.NoError(t, store.Close(context.Background(), "sess-1", streamID))
+
+	_, err = store.StreamForEvent(context.Background(), "sess-1", eventID)
+	require.ErrorIs(t, err, ErrEventNotFound)
+
+	ch, err := store.Subscribe(context.Background(), "sess-1", streamID, "")
+	require.NoError(t, err)
+	requireStreamClosed(t, ch)
+	require.Zero(t, spill.getCount())
+}
+
 func TestDynamoStreamStore_DeleteSessionDeletesSpilledObjects(t *testing.T) {
 	db := newFakeMCPTableDB()
 	spill := newFakeDynamoStreamSpillStore()
@@ -766,6 +825,7 @@ func requireStreamClosed(t *testing.T, ch <-chan StreamEvent) {
 type fakeDynamoStreamSpillStore struct {
 	mu        sync.Mutex
 	objects   map[string][]byte
+	gets      int
 	beforePut func(string)
 }
 
@@ -791,6 +851,7 @@ func (s *fakeDynamoStreamSpillStore) get(_ context.Context, key string) ([]byte,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.gets++
 	payload, ok := s.objects[key]
 	if !ok {
 		return nil, errors.New("missing spill object")
@@ -821,6 +882,13 @@ func (s *fakeDynamoStreamSpillStore) count() int {
 	defer s.mu.Unlock()
 
 	return len(s.objects)
+}
+
+func (s *fakeDynamoStreamSpillStore) getCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.gets
 }
 
 func (s *fakeDynamoStreamSpillStore) mustGet(t *testing.T, key string) []byte {
@@ -950,6 +1018,20 @@ func (db *fakeMCPTableDB) countNonSessionStreamRecords(sessionID string) int {
 		count++
 	}
 	return count
+}
+
+func expireStreamRecord(t *testing.T, db *fakeMCPTableDB, sessionID, eventID string, expiresAt int64) {
+	t.Helper()
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	session := db.streams[sessionID]
+	require.NotNil(t, session)
+	record, ok := session[eventID]
+	require.True(t, ok)
+	record.ExpiresAt = expiresAt
+	session[eventID] = record
 }
 
 type fakeMCPTransactionBuilder struct {

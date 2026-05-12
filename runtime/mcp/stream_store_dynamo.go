@@ -61,6 +61,8 @@ func (dynamoStreamRecord) TableName() string {
 //
 // Subscribe uses strongly consistent reads plus short polling so separate
 // server instances can replay and continue an active stream from shared state.
+// Replay is bounded by each event record's ExpiresAt value at runtime; DynamoDB
+// TTL and S3 lifecycle cleanup are backstops, not access checks.
 // The strongest DeleteSession/Append race protection is enabled when the
 // provided TableTheory DB implements TransactWrite, which is the production
 // TableTheory path.
@@ -411,6 +413,9 @@ func (d *DynamoStreamStore) StreamForEvent(ctx context.Context, sessionID, event
 	if record.Kind != dynamoStreamRecordKindEvent {
 		return "", ErrEventNotFound
 	}
+	if d.streamRecordExpired(record, d.now().UTC()) {
+		return "", ErrEventNotFound
+	}
 	return record.StreamID, nil
 }
 
@@ -529,14 +534,21 @@ func (d *DynamoStreamStore) forwardDynamoSubscriptionEvents(
 	out chan<- StreamEvent,
 ) (string, bool) {
 	cursor := startCursor
+	now := d.now().UTC()
 	for _, record := range records {
 		cursor = record.EventID
 		if record.StreamID != streamID {
 			continue
 		}
+		if d.streamRecordExpired(record, now) {
+			continue
+		}
 
 		payload, err := d.streamRecordData(ctx, record)
 		if err != nil {
+			if errors.Is(err, ErrEventNotFound) {
+				continue
+			}
 			return cursor, false
 		}
 
@@ -753,6 +765,9 @@ func (d *DynamoStreamStore) spillStreamData(
 }
 
 func (d *DynamoStreamStore) streamRecordData(ctx context.Context, record dynamoStreamRecord) (json.RawMessage, error) {
+	if d.streamRecordExpired(record, d.now().UTC()) {
+		return nil, ErrEventNotFound
+	}
 	if record.DataStorage == dynamoStreamDataStorageS3 || record.DataRef != "" {
 		if d.spillStore == nil {
 			return nil, errors.New("stream spill store not configured")
@@ -775,6 +790,13 @@ func (d *DynamoStreamStore) streamRecordData(ctx context.Context, record dynamoS
 	payload := make([]byte, len(record.Data))
 	copy(payload, record.Data)
 	return json.RawMessage(payload), nil
+}
+
+func (d *DynamoStreamStore) streamRecordExpired(record dynamoStreamRecord, now time.Time) bool {
+	if record.ExpiresAt <= 0 {
+		return false
+	}
+	return record.ExpiresAt <= now.UTC().Unix()
 }
 
 func (d *DynamoStreamStore) expiresAtUnix(now time.Time) int64 {

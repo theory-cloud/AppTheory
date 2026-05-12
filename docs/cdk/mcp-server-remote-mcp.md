@@ -126,6 +126,8 @@ Important caveat:
   shape provisioned by this construct
 - use the standard TableTheory DB with `mcp.NewDynamoStreamStore(db)` for production durable replay; its `TransactWrite`
   support is what gives `DynamoStreamStore` the strongest `DeleteSession`/`Append` race protection after spill writes
+- `MCP_STREAM_TTL_MINUTES` is the runtime replay window; expired event records are unreplayable before inline or spilled
+  data is read, even if DynamoDB TTL and S3 lifecycle have not physically cleaned up yet
 - the construct also provisions a private, encrypted S3 spill bucket for large logical stream event payloads; DynamoDB
   remains the replay index and stores the object pointer, byte count, and hash
 - `streamSpillInlineMaxBytes` defaults to `32768` and must not exceed the DynamoDB-safe inline ceiling of `358400`;

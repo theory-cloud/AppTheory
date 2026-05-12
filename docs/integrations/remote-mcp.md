@@ -109,6 +109,10 @@ oversized inline writes fail closed into S3 spill instead of DynamoDB item-size 
 SSE message per logical event, and resume/replay continues to use `Last-Event-ID`; there is no client-visible chunk or
 presigned URL protocol.
 
+`MCP_STREAM_TTL_MINUTES` is the runtime replay window. `DynamoStreamStore` rejects expired event records before
+resolving `Last-Event-ID` or reading inline/S3-spilled event data, even if DynamoDB TTL or S3 lifecycle cleanup has not
+physically removed the backing records or objects yet. S3 lifecycle remains a cleanup backstop, not access enforcement.
+
 For production durable replay, pass the standard TableTheory DB to `mcp.NewDynamoStreamStore(db)`. That DB implements
 `TransactWrite`, which AppTheory uses for the strongest `DeleteSession`/`Append` race protection after S3 spill writes.
 Custom `tablecore.DB` implementations without `TransactWrite` are suitable for tests only; they cannot make the final
