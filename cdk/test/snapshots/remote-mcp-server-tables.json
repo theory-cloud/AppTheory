@@ -35,6 +35,64 @@
     }
   },
   "Resources": {
+    "CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F": {
+      "DependsOn": [
+        "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092"
+      ],
+      "Properties": {
+        "Code": {
+          "S3Bucket": {
+            "Fn::Sub": "cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}"
+          },
+          "S3Key": "faa95a81ae7d7373f3e1f242268f904eb748d8d0fdd306e8a6fe515a1905a7d6.zip"
+        },
+        "Description": {
+          "Fn::Join": [
+            "",
+            [
+              "Lambda function for auto-deleting objects in ",
+              {
+                "Ref": "RemoteMcpStreamSpillBucket7B48A6DE"
+              },
+              " S3 bucket."
+            ]
+          ]
+        },
+        "Handler": "index.handler",
+        "MemorySize": 128,
+        "Role": {
+          "Fn::GetAtt": [
+            "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092",
+            "Arn"
+          ]
+        },
+        "Runtime": "nodejs22.x",
+        "Timeout": 900
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
     "Fn9270CBC0": {
       "DependsOn": [
         "FnServiceRoleDefaultPolicyC6A839BF",
@@ -70,6 +128,12 @@
               "Ref": "RemoteMcpSessionTable949CA67A"
             },
             "MCP_SESSION_TTL_MINUTES": "120",
+            "MCP_STREAM_MAX_EVENT_BYTES": "10485760",
+            "MCP_STREAM_SPILL_BUCKET": {
+              "Ref": "RemoteMcpStreamSpillBucket7B48A6DE"
+            },
+            "MCP_STREAM_SPILL_INLINE_MAX_BYTES": "32768",
+            "MCP_STREAM_SPILL_PREFIX": "mcp-stream-events",
             "MCP_STREAM_TABLE": {
               "Ref": "RemoteMcpStreamTable14FCF20C"
             },
@@ -194,6 +258,43 @@
                   "Fn::GetAtt": [
                     "RemoteMcpStreamTable14FCF20C",
                     "Arn"
+                  ]
+                }
+              ]
+            },
+            {
+              "Action": [
+                "s3:GetObject*",
+                "s3:GetBucket*",
+                "s3:List*",
+                "s3:DeleteObject*",
+                "s3:PutObject",
+                "s3:PutObjectLegalHold",
+                "s3:PutObjectRetention",
+                "s3:PutObjectTagging",
+                "s3:PutObjectVersionTagging",
+                "s3:Abort*"
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "RemoteMcpStreamSpillBucket7B48A6DE",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "RemoteMcpStreamSpillBucket7B48A6DE",
+                          "Arn"
+                        ]
+                      },
+                      "/*"
+                    ]
                   ]
                 }
               ]
@@ -711,6 +812,147 @@
       },
       "Type": "AWS::DynamoDB::Table",
       "UpdateReplacePolicy": "Delete"
+    },
+    "RemoteMcpStreamSpillBucket7B48A6DE": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "ExpirationInDays": 1,
+              "Status": "Enabled"
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "Tags": [
+          {
+            "Key": "aws-cdk:auto-delete-objects",
+            "Value": "true"
+          }
+        ]
+      },
+      "Type": "AWS::S3::Bucket",
+      "UpdateReplacePolicy": "Delete"
+    },
+    "RemoteMcpStreamSpillBucketAutoDeleteObjectsCustomResource779F86E8": {
+      "DeletionPolicy": "Delete",
+      "DependsOn": [
+        "RemoteMcpStreamSpillBucketPolicyC2C826D4"
+      ],
+      "Properties": {
+        "BucketName": {
+          "Ref": "RemoteMcpStreamSpillBucket7B48A6DE"
+        },
+        "ServiceToken": {
+          "Fn::GetAtt": [
+            "CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F",
+            "Arn"
+          ]
+        }
+      },
+      "Type": "Custom::S3AutoDeleteObjects",
+      "UpdateReplacePolicy": "Delete"
+    },
+    "RemoteMcpStreamSpillBucketPolicyC2C826D4": {
+      "Properties": {
+        "Bucket": {
+          "Ref": "RemoteMcpStreamSpillBucket7B48A6DE"
+        },
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "s3:*",
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              },
+              "Effect": "Deny",
+              "Principal": {
+                "AWS": "*"
+              },
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "RemoteMcpStreamSpillBucket7B48A6DE",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "RemoteMcpStreamSpillBucket7B48A6DE",
+                          "Arn"
+                        ]
+                      },
+                      "/*"
+                    ]
+                  ]
+                }
+              ]
+            },
+            {
+              "Action": [
+                "s3:PutBucketPolicy",
+                "s3:GetBucket*",
+                "s3:List*",
+                "s3:DeleteObject*"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::GetAtt": [
+                    "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092",
+                    "Arn"
+                  ]
+                }
+              },
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "RemoteMcpStreamSpillBucket7B48A6DE",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "RemoteMcpStreamSpillBucket7B48A6DE",
+                          "Arn"
+                        ]
+                      },
+                      "/*"
+                    ]
+                  ]
+                }
+              ]
+            }
+          ],
+          "Version": "2012-10-17"
+        }
+      },
+      "Type": "AWS::S3::BucketPolicy"
     },
     "RemoteMcpStreamTable14FCF20C": {
       "DeletionPolicy": "Delete",

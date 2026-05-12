@@ -102,6 +102,22 @@ If you enable the optional Remote MCP stream table, wire a concrete persistent `
 `mcp.NewDynamoStreamStore(db)` with `mcp.WithStreamStore(...)`. `enableStreamTable` alone still only provisions the
 storage and env vars.
 
+`AppTheoryRemoteMcpServer` also provisions the canonical private S3 spill bucket whenever `enableStreamTable` is true.
+The Dynamo stream store keeps small logical events inline in DynamoDB and spills larger events to S3 using the injected
+`MCP_STREAM_SPILL_BUCKET` configuration. The inline spill threshold is bounded to AppTheory's DynamoDB-safe ceiling so
+oversized inline writes fail closed into S3 spill instead of DynamoDB item-size errors. Clients still see one JSON-RPC
+SSE message per logical event, and resume/replay continues to use `Last-Event-ID`; there is no client-visible chunk or
+presigned URL protocol.
+
+`MCP_STREAM_TTL_MINUTES` is the runtime replay window. `DynamoStreamStore` rejects expired event records before
+resolving `Last-Event-ID` or reading inline/S3-spilled event data, even if DynamoDB TTL or S3 lifecycle cleanup has not
+physically removed the backing records or objects yet. S3 lifecycle remains a cleanup backstop, not access enforcement.
+
+For production durable replay, pass the standard TableTheory DB to `mcp.NewDynamoStreamStore(db)`. That DB implements
+`TransactWrite`, which AppTheory uses for the strongest `DeleteSession`/`Append` race protection after S3 spill writes.
+Custom `tablecore.DB` implementations without `TransactWrite` are suitable for tests only; they cannot make the final
+event create atomic with session deletion.
+
 For actor-scoped deployments on this sanctioned REST API v1 path, AppTheory now accepts both `/mcp/{actor}` and
 `/mcp/{actor}/`, plus the matching
 `/.well-known/oauth-protected-resource/mcp/{actor}` / `/.well-known/oauth-protected-resource/mcp/{actor}/` forms.
@@ -139,6 +155,8 @@ API Gateway REST response streaming connections are time-bounded and can disconn
 - keep sessions durable (`SessionStore` backed by DynamoDB)
 - keep tool output durable (event log + `Last-Event-ID` replay) by wiring `mcp.NewDynamoStreamStore(db)` or another
   persistent `StreamStore`
+- let AppTheory manage large stream payload storage through the Remote MCP S3 spill bucket; do not split tool responses
+  or return object links as a tool-specific workaround
 - execute long work asynchronously (worker Lambdas) and append progress/results into the event log
 
 If you want the initial `GET /mcp` keepalive path to stay open for a bounded window before the Lambda deadline, opt in
