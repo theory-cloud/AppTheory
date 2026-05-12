@@ -34,9 +34,12 @@ Version bumps must keep `VERSION`, `ts/package.json`, `cdk/package.json`, `py/py
 ## Commit & Pull Request Guidelines
 - Prefer a short prefix and imperative subject (examples: `feat(cdk): ...`, `docs: ...`, `feat(M1): ...`, `m14(scope): ...`).
 - Release automation is driven by Conventional Commits; if a change must ship, use `feat:` / `fix:` (avoid milestone-only prefixes like `M1:`).
+- Branch management is a strict release train: `staging` → `premain` (release candidate) → `main` (stable release) → `staging` (back-merge). Do not skip a leg, merge around a leg, or leave `staging` behind `main`; this order is critical to avoid release and generated-artifact conflicts.
+- Work lands in `staging` first. `premain` only receives promoted `staging` changes for RCs, `main` only receives promoted `premain` changes for stable releases, and every stable `main` release must be brought back into `staging` before the next staging PR or promotion.
 - Staging PRs must *ALWAYS* contain current `main`. Before opening or merging any PR whose base is `staging`, verify `origin/main` is an ancestor of the PR head (for example, `git merge-base --is-ancestor origin/main HEAD`); if not, merge `origin/main` into the PR branch first.
-- PRs to `staging` must verify version alignment across both release and release-candidate manifests: `.release-please-manifest.json` and `.release-please-manifest.premain.json`.
+- PRs to `staging` must verify version alignment across both release and release-candidate manifests: `.release-please-manifest.json` and `.release-please-manifest.premain.json`. The premain Release Please state must stay in sync with the stable manifest whenever `main` advances.
 - After any stable release on `main`, the next `staging` PR must reset `.release-please-manifest.premain.json` to the latest stable version from `.release-please-manifest.json` before promoting `staging` to `premain`; stale prerelease tracks fail the release lane.
+- Do not merge a stale premain Release Please PR after `main` has advanced. Sync or regenerate the premain Release Please state first so the next RC starts from the current stable release baseline.
 - Broken or superseded release/promotion PRs must not remain mergeable. Once explicitly authorized for the incident, close them promptly instead of relying on humans to avoid a stale merge path.
 - Release Please PRs must not be merged until generated CDK artifact sync has completed and all required checks are green; merging before sync leaves `main` with stale release artifacts.
 - PRs should describe intent, list commands run (at least `make test`), and include any contract/snapshot/version updates.

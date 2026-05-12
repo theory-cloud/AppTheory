@@ -16805,7 +16805,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/remote-mcp-server.ts",
-          "line": 179
+          "line": 212
         },
         "parameters": [
           {
@@ -16831,7 +16831,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/remote-mcp-server.ts",
-        "line": 158
+        "line": 186
       },
       "name": "AppTheoryRemoteMcpServer",
       "properties": [
@@ -16842,7 +16842,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 167
+            "line": 195
           },
           "name": "endpoint",
           "type": {
@@ -16856,7 +16856,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 162
+            "line": 190
           },
           "name": "router",
           "type": {
@@ -16870,7 +16870,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 172
+            "line": 200
           },
           "name": "sessionTable",
           "optional": true,
@@ -16880,12 +16880,27 @@
         },
         {
           "docs": {
+            "summary": "The S3 spill bucket for large stream event payloads (if stream storage is enabled)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/remote-mcp-server.ts",
+            "line": 210
+          },
+          "name": "streamSpillBucket",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_s3.IBucket"
+          }
+        },
+        {
+          "docs": {
             "summary": "The DynamoDB stream/event log table (if enabled)."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 177
+            "line": 205
           },
           "name": "streamTable",
           "optional": true,
@@ -16907,7 +16922,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/remote-mcp-server.ts",
-        "line": 21
+        "line": 26
       },
       "name": "AppTheoryRemoteMcpServerProps",
       "properties": [
@@ -16919,7 +16934,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 25
+            "line": 30
           },
           "name": "handler",
           "type": {
@@ -16936,7 +16951,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 95
+            "line": 100
           },
           "name": "actorPath",
           "optional": true,
@@ -16954,7 +16969,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 70
+            "line": 75
           },
           "name": "allowTestInvoke",
           "optional": true,
@@ -16971,7 +16986,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 31
+            "line": 36
           },
           "name": "apiName",
           "optional": true,
@@ -16989,7 +17004,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 53
+            "line": 58
           },
           "name": "cors",
           "optional": true,
@@ -17015,7 +17030,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 37
+            "line": 42
           },
           "name": "description",
           "optional": true,
@@ -17032,7 +17047,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 59
+            "line": 64
           },
           "name": "domain",
           "optional": true,
@@ -17049,7 +17064,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 112
+            "line": 117
           },
           "name": "enableSessionTable",
           "optional": true,
@@ -17067,7 +17082,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 134
+            "line": 139
           },
           "name": "enableStreamTable",
           "optional": true,
@@ -17085,7 +17100,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 106
+            "line": 111
           },
           "name": "enableWellKnownMcpDiscovery",
           "optional": true,
@@ -17103,7 +17118,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 81
+            "line": 86
           },
           "name": "scopePermissionToMethod",
           "optional": true,
@@ -17120,7 +17135,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 118
+            "line": 123
           },
           "name": "sessionTableName",
           "optional": true,
@@ -17137,7 +17152,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 124
+            "line": 129
           },
           "name": "sessionTtlMinutes",
           "optional": true,
@@ -17154,12 +17169,48 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 43
+            "line": 48
           },
           "name": "stage",
           "optional": true,
           "type": {
             "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRestApiRouterStageOptions"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "10485760",
+            "remarks": "Events over this size fail closed with a stable stream delivery error\nrather than timing out after a failed persistence append.",
+            "summary": "Hard maximum byte size for a single logical MCP stream event."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/remote-mcp-server.ts",
+            "line": 174
+          },
+          "name": "streamMaxEventBytes",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "32768",
+            "remarks": "This is a storage threshold only. MCP clients still receive one logical\nJSON-RPC response event and replay continues to use Last-Event-ID. The\nvalue must not exceed AppTheory's DynamoDB-safe inline ceiling of 358400\nbytes.",
+            "summary": "Inline byte threshold for MCP stream events before AppTheory spills the logical event payload to the managed S3 spill bucket."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/remote-mcp-server.ts",
+            "line": 164
+          },
+          "name": "streamSpillInlineMaxBytes",
+          "optional": true,
+          "type": {
+            "primitive": "number"
           }
         },
         {
@@ -17171,7 +17222,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 140
+            "line": 145
           },
           "name": "streamTableName",
           "optional": true,
@@ -17188,7 +17239,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 146
+            "line": 151
           },
           "name": "streamTtlMinutes",
           "optional": true,
@@ -20601,6 +20652,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "1.4.1",
-  "fingerprint": "U/uU0U34rgHk+YedpO1zeOXUV6FN1xUrMqx95mct2V4="
+  "version": "1.5.0-rc",
+  "fingerprint": "Es9XhKBmUcw/EG2PBHbMr4HzJgtQgiSuWS8VaNPW0pA="
 }
