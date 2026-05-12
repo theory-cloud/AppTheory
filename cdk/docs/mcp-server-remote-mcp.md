@@ -102,7 +102,9 @@ For SSE connections, expect disconnects (idle timeouts, client refresh, Lambda m
 - emitting periodic progress updates during long-running work
 
 When you provision the optional stream table, wire the Go runtime with `mcp.WithStreamStore(mcp.NewDynamoStreamStore(db))`
-to use the canonical `sessionId` / `eventId` / `expiresAt` schema this construct creates.
+to use the canonical `sessionId` / `eventId` / `expiresAt` schema this construct creates. Use the standard TableTheory
+DB for production durable replay; its `TransactWrite` support is what gives `DynamoStreamStore` the strongest
+`DeleteSession`/`Append` race protection after spill writes.
 
 Large tool responses stay inside the same logical stream contract. `AppTheoryRemoteMcpServer` injects
 `MCP_STREAM_SPILL_BUCKET` and related threshold variables so `mcp.NewDynamoStreamStore(db)` stores small events inline

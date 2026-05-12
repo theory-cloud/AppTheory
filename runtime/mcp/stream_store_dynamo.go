@@ -61,6 +61,9 @@ func (dynamoStreamRecord) TableName() string {
 //
 // Subscribe uses strongly consistent reads plus short polling so separate
 // server instances can replay and continue an active stream from shared state.
+// The strongest DeleteSession/Append race protection is enabled when the
+// provided TableTheory DB implements TransactWrite, which is the production
+// TableTheory path.
 type DynamoStreamStore struct {
 	db             tablecore.DB
 	idGen          apptheory.IDGenerator
