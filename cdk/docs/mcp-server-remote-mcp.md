@@ -109,8 +109,9 @@ DB for production durable replay; its `TransactWrite` support is what gives `Dyn
 Large tool responses stay inside the same logical stream contract. `AppTheoryRemoteMcpServer` injects
 `MCP_STREAM_SPILL_BUCKET` and related threshold variables so `mcp.NewDynamoStreamStore(db)` stores small events inline
 and spills larger payloads to private S3 objects. The inline threshold defaults to `32768` and is bounded to the
-DynamoDB-safe inline ceiling of `358400`. Clients still resume with `Last-Event-ID`; do not add tool-specific chunking
-or object-link workarounds.
+DynamoDB-safe inline ceiling of `358400`. `MCP_STREAM_TTL_MINUTES` remains the runtime replay window: expired event
+records are not resolved or emitted even if DynamoDB TTL or S3 lifecycle cleanup has not run yet. Clients still resume
+with `Last-Event-ID`; do not add tool-specific chunking or object-link workarounds.
 
 ## Related docs
 
