@@ -126,7 +126,9 @@ export interface AppTheoryRemoteMcpServerProps {
      * logical event payload to the managed S3 spill bucket.
      *
      * This is a storage threshold only. MCP clients still receive one logical
-     * JSON-RPC response event and replay continues to use Last-Event-ID.
+     * JSON-RPC response event and replay continues to use Last-Event-ID. The
+     * value must not exceed AppTheory's DynamoDB-safe inline ceiling of 358400
+     * bytes.
      *
      * @default 32768
      */

@@ -104,8 +104,10 @@ storage and env vars.
 
 `AppTheoryRemoteMcpServer` also provisions the canonical private S3 spill bucket whenever `enableStreamTable` is true.
 The Dynamo stream store keeps small logical events inline in DynamoDB and spills larger events to S3 using the injected
-`MCP_STREAM_SPILL_BUCKET` configuration. Clients still see one JSON-RPC SSE message per logical event, and resume/replay
-continues to use `Last-Event-ID`; there is no client-visible chunk or presigned URL protocol.
+`MCP_STREAM_SPILL_BUCKET` configuration. The inline spill threshold is bounded to AppTheory's DynamoDB-safe ceiling so
+oversized inline writes fail closed into S3 spill instead of DynamoDB item-size errors. Clients still see one JSON-RPC
+SSE message per logical event, and resume/replay continues to use `Last-Event-ID`; there is no client-visible chunk or
+presigned URL protocol.
 
 For actor-scoped deployments on this sanctioned REST API v1 path, AppTheory now accepts both `/mcp/{actor}` and
 `/mcp/{actor}/`, plus the matching

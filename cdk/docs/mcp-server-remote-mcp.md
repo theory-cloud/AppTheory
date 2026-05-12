@@ -106,8 +106,9 @@ to use the canonical `sessionId` / `eventId` / `expiresAt` schema this construct
 
 Large tool responses stay inside the same logical stream contract. `AppTheoryRemoteMcpServer` injects
 `MCP_STREAM_SPILL_BUCKET` and related threshold variables so `mcp.NewDynamoStreamStore(db)` stores small events inline
-and spills larger payloads to private S3 objects. Clients still resume with `Last-Event-ID`; do not add tool-specific
-chunking or object-link workarounds.
+and spills larger payloads to private S3 objects. The inline threshold defaults to `32768` and is bounded to the
+DynamoDB-safe inline ceiling of `358400`. Clients still resume with `Last-Event-ID`; do not add tool-specific chunking
+or object-link workarounds.
 
 ## Related docs
 

@@ -76,6 +76,10 @@ var _ StreamStore = (*DynamoStreamStore)(nil)
 
 var errDynamoStreamSessionDeleted = errors.New("stream session deleted")
 
+type dynamoStreamTransactWriter interface {
+	TransactWrite(context.Context, func(tablecore.TransactionBuilder) error) error
+}
+
 // NewDynamoStreamStore creates a DynamoDB-backed StreamStore.
 func NewDynamoStreamStore(db tablecore.DB) StreamStore {
 	return &DynamoStreamStore{
@@ -151,19 +155,15 @@ func (d *DynamoStreamStore) Append(ctx context.Context, sessionID, streamID stri
 		return "", activeErr
 	}
 
-	meta.ExpiresAt = d.expiresAtUnix(now)
-	if metaErr := d.db.Model(meta).WithContext(ctx).CreateOrUpdate(); metaErr != nil {
-		return "", metaErr
-	}
-
 	expiresAt := d.expiresAtUnix(now)
+	meta.ExpiresAt = expiresAt
 	record, spilled, err := d.newStreamEventRecord(ctx, sessionID, streamID, eventID, payload, now, expiresAt)
 	if err != nil {
 		return "", err
 	}
 
-	if err := d.db.Model(record).WithContext(ctx).Create(); err != nil {
-		return "", d.cleanupSpilledStreamEvent(ctx, record, spilled, err)
+	if err := d.createStreamEventRecord(ctx, sessionID, meta, record, spilled); err != nil {
+		return "", err
 	}
 	return eventID, nil
 }
@@ -246,6 +246,62 @@ func (d *DynamoStreamStore) newStreamEventRecord(
 	}
 
 	return record, spilled, nil
+}
+
+func (d *DynamoStreamStore) createStreamEventRecord(
+	ctx context.Context,
+	sessionID string,
+	meta *dynamoStreamRecord,
+	record *dynamoStreamRecord,
+	spilled bool,
+) error {
+	if err := d.createActiveSessionStreamEvent(ctx, sessionID, meta, record); err != nil {
+		return d.cleanupSpilledStreamEvent(ctx, record, spilled, err)
+	}
+	return nil
+}
+
+func (d *DynamoStreamStore) createActiveSessionStreamEvent(
+	ctx context.Context,
+	sessionID string,
+	meta *dynamoStreamRecord,
+	record *dynamoStreamRecord,
+) error {
+	if txDB, ok := d.db.(dynamoStreamTransactWriter); ok {
+		state := &dynamoStreamRecord{
+			SessionID: sessionID,
+			EventID:   dynamoStreamSessionStateEventID,
+		}
+		err := txDB.TransactWrite(ctx, func(tx tablecore.TransactionBuilder) error {
+			tx.ConditionCheck(state, tablecore.TransactCondition{
+				Kind:     tablecore.TransactConditionKindField,
+				Field:    "Deleted",
+				Operator: "=",
+				Value:    false,
+			})
+			tx.Put(meta)
+			tx.Create(record)
+			return nil
+		})
+		if err != nil {
+			if tableerrors.IsConditionFailed(err) {
+				return ErrStreamNotFound
+			}
+			return err
+		}
+		return nil
+	}
+
+	if activeErr := d.requireAppendSessionActive(ctx, sessionID); activeErr != nil {
+		return activeErr
+	}
+	if metaErr := d.db.Model(meta).WithContext(ctx).CreateOrUpdate(); metaErr != nil {
+		return metaErr
+	}
+	if activeErr := d.requireAppendSessionActive(ctx, sessionID); activeErr != nil {
+		return activeErr
+	}
+	return d.db.Model(record).WithContext(ctx).Create()
 }
 
 func (d *DynamoStreamStore) cleanupSpilledStreamEvent(
@@ -667,7 +723,7 @@ func (d *DynamoStreamStore) deleteRecord(ctx context.Context, record dynamoStrea
 }
 
 func (d *DynamoStreamStore) shouldSpillStreamData(size int) bool {
-	return d.spillStore != nil && d.inlineMaxBytes > 0 && size > d.inlineMaxBytes
+	return d.spillStore != nil && size > clampDynamoStreamSpillInlineMaxBytes(d.inlineMaxBytes)
 }
 
 func (d *DynamoStreamStore) spillStreamData(

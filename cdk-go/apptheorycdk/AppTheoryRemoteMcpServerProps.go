@@ -99,7 +99,9 @@ type AppTheoryRemoteMcpServerProps struct {
 	// Inline byte threshold for MCP stream events before AppTheory spills the logical event payload to the managed S3 spill bucket.
 	//
 	// This is a storage threshold only. MCP clients still receive one logical
-	// JSON-RPC response event and replay continues to use Last-Event-ID.
+	// JSON-RPC response event and replay continues to use Last-Event-ID. The
+	// value must not exceed AppTheory's DynamoDB-safe inline ceiling of 358400
+	// bytes.
 	// Default: 32768.
 	//
 	StreamSpillInlineMaxBytes *float64 `field:"optional" json:"streamSpillInlineMaxBytes" yaml:"streamSpillInlineMaxBytes"`

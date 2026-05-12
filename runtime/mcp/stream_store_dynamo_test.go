@@ -8,11 +8,13 @@ import (
 	"io"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/require"
 
 	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
@@ -146,7 +148,7 @@ func TestDynamoStreamStore_ReplayPreservesSessionSequenceAcrossStreams(t *testin
 	requireStreamClosed(t, replay)
 }
 
-func TestDynamoStreamStore_DeleteSessionDrainsLateAppend(t *testing.T) {
+func TestDynamoStreamStore_DeleteSessionRejectsLateAppend(t *testing.T) {
 	db := newFakeMCPTableDB()
 	store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
 	require.True(t, ok)
@@ -203,8 +205,8 @@ func TestDynamoStreamStore_DeleteSessionDrainsLateAppend(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for append to finish")
 	}
-	require.NoError(t, appendErr)
-	require.Equal(t, dynamoStreamEventIDForSeq(1), eventID)
+	require.ErrorIs(t, appendErr, ErrStreamNotFound)
+	require.Empty(t, eventID)
 
 	select {
 	case deleteErr := <-deleteDone:
@@ -222,7 +224,7 @@ func TestDynamoStreamStore_DeleteSessionDrainsLateAppend(t *testing.T) {
 	require.Equal(t, dynamoStreamSessionStateEventID, records[0].EventID)
 	require.True(t, records[0].Deleted)
 
-	_, err = store.StreamForEvent(context.Background(), "sess-1", eventID)
+	_, err = store.StreamForEvent(context.Background(), "sess-1", dynamoStreamEventIDForSeq(1))
 	require.ErrorIs(t, err, ErrEventNotFound)
 }
 
@@ -488,6 +490,71 @@ func TestDynamoStreamStore_DeleteSessionDeletesSpilledObjects(t *testing.T) {
 	require.False(t, spill.exists(record.DataRef))
 }
 
+func TestDynamoStreamStore_DeleteSessionRejectsInFlightSpilledAppend(t *testing.T) {
+	db := newFakeMCPTableDB()
+	spill := newFakeDynamoStreamSpillStore()
+	store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	require.True(t, ok)
+	store.spillStore = spill
+	store.inlineMaxBytes = 1
+	store.pollInterval = time.Millisecond
+
+	streamID, err := store.Create(context.Background(), "sess-1")
+	require.NoError(t, err)
+
+	putEntered := make(chan struct{})
+	releasePut := make(chan struct{})
+	spill.beforePut = func(_ string) {
+		select {
+		case <-putEntered:
+		default:
+			close(putEntered)
+		}
+		<-releasePut
+	}
+
+	appendDone := make(chan struct{})
+	var appendErr error
+	go func() {
+		defer close(appendDone)
+		_, appendErr = store.Append(context.Background(), "sess-1", streamID, json.RawMessage(`{"seq":1}`))
+	}()
+
+	select {
+	case <-putEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for append to reach spill put")
+	}
+
+	deleteDone := make(chan error, 1)
+	go func() {
+		deleteDone <- store.DeleteSession(context.Background(), "sess-1")
+	}()
+
+	select {
+	case deleteErr := <-deleteDone:
+		require.NoError(t, deleteErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for DeleteSession")
+	}
+
+	close(releasePut)
+
+	select {
+	case <-appendDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for append to finish")
+	}
+	require.ErrorIs(t, appendErr, ErrStreamNotFound)
+	require.Zero(t, spill.count())
+	require.Zero(t, db.countNonSessionStreamRecords("sess-1"))
+
+	records := db.sessionStreamRecords("sess-1")
+	require.Len(t, records, 1)
+	require.Equal(t, dynamoStreamSessionStateEventID, records[0].EventID)
+	require.True(t, records[0].Deleted)
+}
+
 func TestDynamoStreamStore_OversizeEventFailsBeforeAppend(t *testing.T) {
 	db := newFakeMCPTableDB()
 	store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
@@ -508,6 +575,58 @@ func TestDynamoStreamStore_OversizeEventFailsBeforeAppend(t *testing.T) {
 	state, ok := db.getStreamRecord("sess-1", dynamoStreamSessionStateEventID)
 	require.True(t, ok)
 	require.Zero(t, state.NextSeq)
+}
+
+func TestDynamoStreamStore_InlineSpillThresholdClampsToSafeDynamoSize(t *testing.T) {
+	t.Setenv(envStreamSpillInlineMaxBytes, strconv.Itoa(defaultDynamoStreamMaxInlineBytes+1))
+
+	db := newFakeMCPTableDB()
+	spill := newFakeDynamoStreamSpillStore()
+	store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	require.True(t, ok)
+	store.spillStore = spill
+	require.Equal(t, defaultDynamoStreamMaxInlineBytes, store.inlineMaxBytes)
+
+	streamID, err := store.Create(context.Background(), "sess-1")
+	require.NoError(t, err)
+
+	payload := json.RawMessage(strings.Repeat("x", defaultDynamoStreamMaxInlineBytes+1))
+	eventID, err := store.Append(context.Background(), "sess-1", streamID, payload)
+	require.NoError(t, err)
+
+	record, ok := db.getStreamRecord("sess-1", eventID)
+	require.True(t, ok)
+	require.Empty(t, record.Data)
+	require.NotEmpty(t, record.DataRef)
+	require.Equal(t, dynamoStreamDataStorageS3, record.DataStorage)
+	require.Equal(t, 1, spill.count())
+}
+
+func TestDynamoStreamS3SpillStore_RetriesClientInitAfterCanceledContext(t *testing.T) {
+	attempts := 0
+	store := &dynamoStreamS3SpillStore{
+		bucket: "bucket",
+		loadClient: func(ctx context.Context) (dynamoStreamS3Client, error) {
+			attempts++
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return fakeDynamoStreamS3Client{}, nil
+		},
+	}
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := store.s3Client(canceled)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, store.client)
+
+	client, err := store.s3Client(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	require.NotNil(t, store.client)
+	require.Equal(t, 2, attempts)
 }
 
 func TestDELETE_WithDynamoStreamStore_RemovesStreamState(t *testing.T) {
@@ -645,8 +764,9 @@ func requireStreamClosed(t *testing.T, ch <-chan StreamEvent) {
 }
 
 type fakeDynamoStreamSpillStore struct {
-	mu      sync.Mutex
-	objects map[string][]byte
+	mu        sync.Mutex
+	objects   map[string][]byte
+	beforePut func(string)
 }
 
 func newFakeDynamoStreamSpillStore() *fakeDynamoStreamSpillStore {
@@ -654,6 +774,10 @@ func newFakeDynamoStreamSpillStore() *fakeDynamoStreamSpillStore {
 }
 
 func (s *fakeDynamoStreamSpillStore) put(_ context.Context, key string, data []byte, _ int64, _ string) error {
+	if s.beforePut != nil {
+		s.beforePut(key)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -692,12 +816,45 @@ func (s *fakeDynamoStreamSpillStore) exists(key string) bool {
 	return ok
 }
 
+func (s *fakeDynamoStreamSpillStore) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return len(s.objects)
+}
+
 func (s *fakeDynamoStreamSpillStore) mustGet(t *testing.T, key string) []byte {
 	t.Helper()
 
 	payload, err := s.get(context.Background(), key)
 	require.NoError(t, err)
 	return payload
+}
+
+type fakeDynamoStreamS3Client struct{}
+
+func (fakeDynamoStreamS3Client) PutObject(
+	context.Context,
+	*s3.PutObjectInput,
+	...func(*s3.Options),
+) (*s3.PutObjectOutput, error) {
+	return &s3.PutObjectOutput{}, nil
+}
+
+func (fakeDynamoStreamS3Client) GetObject(
+	context.Context,
+	*s3.GetObjectInput,
+	...func(*s3.Options),
+) (*s3.GetObjectOutput, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (fakeDynamoStreamS3Client) DeleteObject(
+	context.Context,
+	*s3.DeleteObjectInput,
+	...func(*s3.Options),
+) (*s3.DeleteObjectOutput, error) {
+	return &s3.DeleteObjectOutput{}, nil
 }
 
 type fakeMCPTableDB struct {
@@ -727,6 +884,19 @@ func (db *fakeMCPTableDB) Transaction(fn func(*tablecore.Tx) error) error {
 		return nil
 	}
 	return fn(nil)
+}
+
+func (db *fakeMCPTableDB) TransactWrite(ctx context.Context, fn func(tablecore.TransactionBuilder) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	builder := &fakeMCPTransactionBuilder{db: db}
+	if fn != nil {
+		if err := fn(builder); err != nil {
+			return err
+		}
+	}
+	return builder.execute(ctx)
 }
 
 func (db *fakeMCPTableDB) Migrate() error { return nil }
@@ -780,6 +950,132 @@ func (db *fakeMCPTableDB) countNonSessionStreamRecords(sessionID string) int {
 		count++
 	}
 	return count
+}
+
+type fakeMCPTransactionBuilder struct {
+	db              *fakeMCPTableDB
+	conditionChecks []fakeMCPTransactionConditionCheck
+	puts            []dynamoStreamRecord
+	creates         []dynamoStreamRecord
+}
+
+type fakeMCPTransactionConditionCheck struct {
+	record     dynamoStreamRecord
+	conditions []tablecore.TransactCondition
+}
+
+func (b *fakeMCPTransactionBuilder) Put(model any, conditions ...tablecore.TransactCondition) tablecore.TransactionBuilder {
+	record, ok := extractStreamRecord(model)
+	if ok {
+		b.puts = append(b.puts, record)
+	}
+	return b
+}
+
+func (b *fakeMCPTransactionBuilder) Create(model any, _ ...tablecore.TransactCondition) tablecore.TransactionBuilder {
+	record, ok := extractStreamRecord(model)
+	if ok {
+		b.creates = append(b.creates, record)
+	}
+	return b
+}
+
+func (b *fakeMCPTransactionBuilder) Update(
+	_ any,
+	_ []string,
+	_ ...tablecore.TransactCondition,
+) tablecore.TransactionBuilder {
+	return b
+}
+
+func (b *fakeMCPTransactionBuilder) UpdateWithBuilder(
+	_ any,
+	_ func(tablecore.UpdateBuilder) error,
+	_ ...tablecore.TransactCondition,
+) tablecore.TransactionBuilder {
+	return b
+}
+
+func (b *fakeMCPTransactionBuilder) Delete(_ any, _ ...tablecore.TransactCondition) tablecore.TransactionBuilder {
+	return b
+}
+
+func (b *fakeMCPTransactionBuilder) ConditionCheck(
+	model any,
+	conditions ...tablecore.TransactCondition,
+) tablecore.TransactionBuilder {
+	record, ok := extractStreamRecord(model)
+	if ok {
+		b.conditionChecks = append(b.conditionChecks, fakeMCPTransactionConditionCheck{
+			record:     record,
+			conditions: append([]tablecore.TransactCondition(nil), conditions...),
+		})
+	}
+	return b
+}
+
+func (b *fakeMCPTransactionBuilder) WithContext(context.Context) tablecore.TransactionBuilder {
+	return b
+}
+
+func (b *fakeMCPTransactionBuilder) Execute() error {
+	return b.execute(context.Background())
+}
+
+func (b *fakeMCPTransactionBuilder) ExecuteWithContext(ctx context.Context) error {
+	return b.execute(ctx)
+}
+
+func (b *fakeMCPTransactionBuilder) execute(ctx context.Context) error {
+	for _, record := range append(append([]dynamoStreamRecord(nil), b.puts...), b.creates...) {
+		if record.Kind == dynamoStreamRecordKindEvent && b.db.beforeCreateStreamEvent != nil {
+			b.db.beforeCreateStreamEvent(record)
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	b.db.mu.Lock()
+	defer b.db.mu.Unlock()
+
+	for _, check := range b.conditionChecks {
+		existing, exists := b.db.lockedStreamRecord(check.record.SessionID, check.record.EventID)
+		for _, condition := range check.conditions {
+			if !fakeMCPTransactConditionMet(existing, exists, condition) {
+				return tableerrors.ErrConditionFailed
+			}
+		}
+	}
+
+	for _, record := range b.puts {
+		if b.db.streams[record.SessionID] == nil {
+			b.db.streams[record.SessionID] = make(map[string]dynamoStreamRecord)
+		}
+		b.db.streams[record.SessionID][record.EventID] = record
+	}
+
+	for _, record := range b.creates {
+		if _, exists := b.db.lockedStreamRecord(record.SessionID, record.EventID); exists {
+			return tableerrors.ErrConditionFailed
+		}
+		if b.db.streams[record.SessionID] == nil {
+			b.db.streams[record.SessionID] = make(map[string]dynamoStreamRecord)
+		}
+		b.db.streams[record.SessionID][record.EventID] = record
+	}
+
+	return nil
+}
+
+func (db *fakeMCPTableDB) lockedStreamRecord(sessionID, eventID string) (dynamoStreamRecord, bool) {
+	session := db.streams[sessionID]
+	if session == nil {
+		return dynamoStreamRecord{}, false
+	}
+	record, ok := session[eventID]
+	return record, ok
 }
 
 type fakeMCPTableQuery struct {
@@ -1315,6 +1611,28 @@ func fakeMCPMatchStreamCondition(record dynamoStreamRecord, exists bool, conditi
 			return false
 		}
 		return reflect.DeepEqual(value, condition.value)
+	default:
+		return false
+	}
+}
+
+func fakeMCPTransactConditionMet(record dynamoStreamRecord, exists bool, condition tablecore.TransactCondition) bool {
+	kind := condition.Kind
+	if kind == "" {
+		kind = tablecore.TransactConditionKindField
+	}
+
+	switch kind {
+	case tablecore.TransactConditionKindField:
+		return fakeMCPMatchStreamCondition(record, exists, fakeMCPUpdateCondition{
+			field:    condition.Field,
+			operator: condition.Operator,
+			value:    condition.Value,
+		})
+	case tablecore.TransactConditionKindPrimaryKeyExists:
+		return exists
+	case tablecore.TransactConditionKindPrimaryKeyNotExists:
+		return !exists
 	default:
 		return false
 	}
