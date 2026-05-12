@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.4.1](https://github.com/theory-cloud/AppTheory/compare/v1.4.0...v1.4.1) (2026-05-10)
+
+
+### Bug Fixes
+
+* **deps:** update TableTheory and Go security pins ([ffa7b46](https://github.com/theory-cloud/AppTheory/commit/ffa7b46613f44c7bf2964960fc1639b4964b7df7))
+* **deps:** update TableTheory and Go security pins ([44e07b8](https://github.com/theory-cloud/AppTheory/commit/44e07b84e30fafcf804b3bd64213471730114fad))
+
+## [1.4.1-rc](https://github.com/theory-cloud/AppTheory/compare/v1.4.0...v1.4.1-rc) (2026-05-10)
+
+
+### Bug Fixes
+
+* **deps:** update TableTheory and Go security pins ([ffa7b46](https://github.com/theory-cloud/AppTheory/commit/ffa7b46613f44c7bf2964960fc1639b4964b7df7))
+* **deps:** update TableTheory and Go security pins ([44e07b8](https://github.com/theory-cloud/AppTheory/commit/44e07b84e30fafcf804b3bd64213471730114fad))
+
 ## [1.4.0](https://github.com/theory-cloud/AppTheory/compare/v1.3.2...v1.4.0) (2026-05-07)
 
 

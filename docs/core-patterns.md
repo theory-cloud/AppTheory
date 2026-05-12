@@ -157,12 +157,16 @@ CORRECT:
 - use `AppTheoryRemoteMcpServer` plus `AppTheoryMcpProtectedResource` for Claude Remote MCP when you need
   `POST/GET/DELETE /mcp`, OAuth protected-resource discovery, and a REST API v1 streaming edge
 - wire `mcp.NewDynamoStreamStore(db)` or another persistent `StreamStore` in application code if replay must survive
-  reconnects and cold starts
+  reconnects and cold starts; for `DynamoStreamStore`, use a standard TableTheory DB with `TransactWrite` in production
+  so delete/append races are guarded atomically, and let `MCP_STREAM_TTL_MINUTES` define the runtime replay window
+- let the Remote MCP construct provide the stream table plus S3 spill bucket for durable large logical events; clients
+  still replay by logical `Last-Event-ID`
 
 INCORRECT:
 
 - assuming `AppTheoryMcpServer` is a drop-in deployment for resumable Remote MCP
 - assuming `enableStreamTable` alone makes replay durable without `mcp.WithStreamStore(...)`
+- splitting tool results or returning object links to work around stream-store storage limits
 
 ## Pattern: sanitize user payloads before logging
 

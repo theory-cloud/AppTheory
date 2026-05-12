@@ -622,6 +622,7 @@ func init() {
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
 			_jsii_.MemberProperty{JsiiProperty: "router", GoGetter: "Router"},
 			_jsii_.MemberProperty{JsiiProperty: "sessionTable", GoGetter: "SessionTable"},
+			_jsii_.MemberProperty{JsiiProperty: "streamSpillBucket", GoGetter: "StreamSpillBucket"},
 			_jsii_.MemberProperty{JsiiProperty: "streamTable", GoGetter: "StreamTable"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
 			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
