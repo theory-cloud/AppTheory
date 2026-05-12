@@ -113,6 +113,10 @@ Stream table behavior:
 - Lambda env vars:
   - `MCP_STREAM_TABLE`
   - `MCP_STREAM_TTL_MINUTES`
+  - `MCP_STREAM_SPILL_BUCKET`
+  - `MCP_STREAM_SPILL_PREFIX`
+  - `MCP_STREAM_SPILL_INLINE_MAX_BYTES`
+  - `MCP_STREAM_MAX_EVENT_BYTES`
 
 Important caveat:
 
@@ -120,6 +124,10 @@ Important caveat:
 - durable replay requires application code to wire a persistent `StreamStore` via `mcp.WithStreamStore(...)`
 - the Go runtime ships `mcp.NewDynamoStreamStore(db)` for the canonical `sessionId` / `eventId` / `expiresAt` table
   shape provisioned by this construct
+- the construct also provisions a private, encrypted S3 spill bucket for large logical stream event payloads; DynamoDB
+  remains the replay index and stores the object pointer, byte count, and hash
+- MCP clients still receive normal JSON-RPC SSE messages. The spill bucket is never exposed through presigned URLs or a
+  client-visible chunking protocol.
 
 ## Injected environment variables
 
@@ -128,6 +136,8 @@ Important caveat:
 - always: `MCP_ENDPOINT`
 - session table: `MCP_SESSION_TABLE`, `MCP_SESSION_TTL_MINUTES`
 - stream table: `MCP_STREAM_TABLE`, `MCP_STREAM_TTL_MINUTES`
+- stream spill: `MCP_STREAM_SPILL_BUCKET`, `MCP_STREAM_SPILL_PREFIX`, `MCP_STREAM_SPILL_INLINE_MAX_BYTES`,
+  `MCP_STREAM_MAX_EVENT_BYTES`
 
 `MCP_ENDPOINT` is the canonical deployed MCP resource URL or template:
 

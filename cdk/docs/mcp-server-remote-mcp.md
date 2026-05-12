@@ -28,6 +28,7 @@ Claude Remote MCP requires real incremental streaming for tool calls (SSE). On A
 - Optional DynamoDB tables:
   - session table (matches `runtime/mcp` Dynamo session store schema)
   - stream/event table (used by durable resumable SSE once the app wires a persistent `StreamStore`)
+  - encrypted private S3 spill bucket for large logical stream event payloads when stream storage is enabled
 
 If you are using OAuth for Claude connectors on the default `/mcp` route, also add:
 
@@ -57,7 +58,7 @@ const mcp = new AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
   scopePermissionToMethod: false,
   enableSessionTable: true,
   sessionTtlMinutes: 120,
-  // enableStreamTable: true, // optional; pair with mcp.NewDynamoStreamStore(db)
+  // enableStreamTable: true, // provisions stream table + S3 spill bucket; pair with mcp.NewDynamoStreamStore(db)
 });
 
 // Required for MCP auth `2025-06-18` discovery (Claude Remote MCP)
@@ -102,6 +103,11 @@ For SSE connections, expect disconnects (idle timeouts, client refresh, Lambda m
 
 When you provision the optional stream table, wire the Go runtime with `mcp.WithStreamStore(mcp.NewDynamoStreamStore(db))`
 to use the canonical `sessionId` / `eventId` / `expiresAt` schema this construct creates.
+
+Large tool responses stay inside the same logical stream contract. `AppTheoryRemoteMcpServer` injects
+`MCP_STREAM_SPILL_BUCKET` and related threshold variables so `mcp.NewDynamoStreamStore(db)` stores small events inline
+and spills larger payloads to private S3 objects. Clients still resume with `Last-Event-ID`; do not add tool-specific
+chunking or object-link workarounds.
 
 ## Related docs
 

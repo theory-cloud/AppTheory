@@ -158,11 +158,14 @@ CORRECT:
   `POST/GET/DELETE /mcp`, OAuth protected-resource discovery, and a REST API v1 streaming edge
 - wire `mcp.NewDynamoStreamStore(db)` or another persistent `StreamStore` in application code if replay must survive
   reconnects and cold starts
+- let the Remote MCP construct provide the stream table plus S3 spill bucket for durable large logical events; clients
+  still replay by logical `Last-Event-ID`
 
 INCORRECT:
 
 - assuming `AppTheoryMcpServer` is a drop-in deployment for resumable Remote MCP
 - assuming `enableStreamTable` alone makes replay durable without `mcp.WithStreamStore(...)`
+- splitting tool results or returning object links to work around stream-store storage limits
 
 ## Pattern: sanitize user payloads before logging
 

@@ -89,6 +89,20 @@ type AppTheoryRemoteMcpServerProps struct {
 	// Default: undefined (router defaults applied).
 	//
 	Stage *AppTheoryRestApiRouterStageOptions `field:"optional" json:"stage" yaml:"stage"`
+	// Hard maximum byte size for a single logical MCP stream event.
+	//
+	// Events over this size fail closed with a stable stream delivery error
+	// rather than timing out after a failed persistence append.
+	// Default: 10485760.
+	//
+	StreamMaxEventBytes *float64 `field:"optional" json:"streamMaxEventBytes" yaml:"streamMaxEventBytes"`
+	// Inline byte threshold for MCP stream events before AppTheory spills the logical event payload to the managed S3 spill bucket.
+	//
+	// This is a storage threshold only. MCP clients still receive one logical
+	// JSON-RPC response event and replay continues to use Last-Event-ID.
+	// Default: 32768.
+	//
+	StreamSpillInlineMaxBytes *float64 `field:"optional" json:"streamSpillInlineMaxBytes" yaml:"streamSpillInlineMaxBytes"`
 	// Stream DynamoDB table name (only used when enableStreamTable is true).
 	// Default: undefined (auto-generated).
 	//

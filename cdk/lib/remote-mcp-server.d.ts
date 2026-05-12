@@ -1,5 +1,6 @@
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
+import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 import { AppTheoryRestApiRouter, type AppTheoryRestApiRouterCorsOptions, type AppTheoryRestApiRouterDomainOptions, type AppTheoryRestApiRouterStageOptions } from "./rest-api-router";
 /**
@@ -120,6 +121,25 @@ export interface AppTheoryRemoteMcpServerProps {
      * @default 60
      */
     readonly streamTtlMinutes?: number;
+    /**
+     * Inline byte threshold for MCP stream events before AppTheory spills the
+     * logical event payload to the managed S3 spill bucket.
+     *
+     * This is a storage threshold only. MCP clients still receive one logical
+     * JSON-RPC response event and replay continues to use Last-Event-ID.
+     *
+     * @default 32768
+     */
+    readonly streamSpillInlineMaxBytes?: number;
+    /**
+     * Hard maximum byte size for a single logical MCP stream event.
+     *
+     * Events over this size fail closed with a stable stream delivery error
+     * rather than timing out after a failed persistence append.
+     *
+     * @default 10485760
+     */
+    readonly streamMaxEventBytes?: number;
 }
 /**
  * A Claude-first Remote MCP server construct that provisions:
@@ -147,10 +167,15 @@ export declare class AppTheoryRemoteMcpServer extends Construct {
      * The DynamoDB stream/event log table (if enabled).
      */
     readonly streamTable?: dynamodb.ITable;
+    /**
+     * The S3 spill bucket for large stream event payloads (if stream storage is enabled).
+     */
+    readonly streamSpillBucket?: s3.IBucket;
     constructor(scope: Construct, id: string, props: AppTheoryRemoteMcpServerProps);
     /**
      * Add an environment variable to the Lambda function.
      * Uses addEnvironment if available (Function), otherwise no-op for imported functions.
      */
     private addEnvironment;
+    private validateStreamSpillThresholds;
 }

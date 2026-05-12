@@ -3370,11 +3370,45 @@ test("AppTheoryRemoteMcpServer (with tables) synthesizes expected template", () 
     TimeToLiveSpecification: { AttributeName: "expiresAt", Enabled: true },
   });
 
+  // Verify: Stream spill bucket is private, encrypted, and expires objects.
+  assertions.Template.fromStack(stack).hasResourceProperties("AWS::S3::Bucket", {
+    PublicAccessBlockConfiguration: {
+      BlockPublicAcls: true,
+      BlockPublicPolicy: true,
+      IgnorePublicAcls: true,
+      RestrictPublicBuckets: true,
+    },
+    BucketEncryption: {
+      ServerSideEncryptionConfiguration: [
+        {
+          ServerSideEncryptionByDefault: {
+            SSEAlgorithm: "AES256",
+          },
+        },
+      ],
+    },
+    LifecycleConfiguration: {
+      Rules: [
+        {
+          ExpirationInDays: 1,
+          Status: "Enabled",
+        },
+      ],
+    },
+  });
+
   // Verify: Lambda has IAM policies for DynamoDB access
   const policies = Object.entries(template.Resources).filter(
     ([, resource]) => resource.Type === "AWS::IAM::Policy",
   );
   assert.ok(policies.length >= 1, "Should have IAM policy for DynamoDB access");
+
+  const functions = Object.values(template.Resources).filter((resource) => resource.Type === "AWS::Lambda::Function");
+  const env = functions[0].Properties?.Environment?.Variables ?? {};
+  assert.equal(env.MCP_STREAM_SPILL_PREFIX, "mcp-stream-events");
+  assert.equal(env.MCP_STREAM_SPILL_INLINE_MAX_BYTES, "32768");
+  assert.equal(env.MCP_STREAM_MAX_EVENT_BYTES, "10485760");
+  assert.ok(env.MCP_STREAM_SPILL_BUCKET, "Should set MCP_STREAM_SPILL_BUCKET");
 
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("remote-mcp-server-tables", template);

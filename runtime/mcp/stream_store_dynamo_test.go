@@ -332,6 +332,46 @@ func TestDynamoStreamStore_ServerReplayFromSecondInstance(t *testing.T) {
 	require.NotContains(t, all, `"progress":1`)
 }
 
+func TestHandleToolsCallStream_OversizeFinalResponseEmitsStableError(t *testing.T) {
+	db := newFakeMCPTableDB()
+	sessionStore := NewDynamoSessionStore(db)
+	streamStore, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	require.True(t, ok)
+	streamStore.maxEventBytes = 192
+	streamStore.pollInterval = time.Millisecond
+
+	s := NewServer("test-server", "1.0.0", WithSessionStore(sessionStore), WithStreamStore(streamStore))
+	err := s.Registry().RegisterStreamingTool(
+		ToolDef{
+			Name:        "large_tool",
+			Description: "Returns a payload larger than the stream event limit.",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+		},
+		func(context.Context, json.RawMessage, func(SSEEvent)) (*ToolResult, error) {
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: strings.Repeat("x", 256)}}}, nil
+		},
+	)
+	require.NoError(t, err)
+
+	sessionID := initializeSession(t, s)
+	params := toolsCallParams{Name: "large_tool", Arguments: json.RawMessage(`{}`)}
+	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 7, Method: methodToolsCall, Params: mustMarshal(t, params)})
+
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"text/event-stream"}
+
+	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
+	require.NoError(t, err)
+	require.NotNil(t, resp.BodyReader)
+
+	b, err := io.ReadAll(resp.BodyReader)
+	require.NoError(t, err)
+	all := string(b)
+	require.Contains(t, all, `"error"`)
+	require.Contains(t, all, `"stream event too large"`)
+	require.NotContains(t, all, strings.Repeat("x", 128))
+}
+
 func TestDynamoStreamStore_SubscribeDrainsTailEventsAfterClose(t *testing.T) {
 	db := newFakeMCPTableDB()
 	store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
@@ -385,6 +425,89 @@ func TestDynamoStreamStore_SubscribeDrainsTailEventsAfterClose(t *testing.T) {
 		require.NoError(t, hookErr)
 	default:
 	}
+}
+
+func TestDynamoStreamStore_SpillsLargeEventsToS3AndRehydrates(t *testing.T) {
+	db := newFakeMCPTableDB()
+	spill := newFakeDynamoStreamSpillStore()
+	store1, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	require.True(t, ok)
+	store2, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	require.True(t, ok)
+	store1.spillStore = spill
+	store2.spillStore = spill
+	store1.inlineMaxBytes = 8
+	store2.inlineMaxBytes = 8
+	store1.idGen = staticIDGenerator{id: "stream-1"}
+
+	streamID, err := store1.Create(context.Background(), "sess-1")
+	require.NoError(t, err)
+
+	payload := json.RawMessage(`{"large":"payload"}`)
+	eventID, err := store1.Append(context.Background(), "sess-1", streamID, payload)
+	require.NoError(t, err)
+
+	record, ok := db.getStreamRecord("sess-1", eventID)
+	require.True(t, ok)
+	require.Empty(t, record.Data)
+	require.Equal(t, dynamoStreamDataStorageS3, record.DataStorage)
+	require.NotEmpty(t, record.DataRef)
+	require.Equal(t, int64(len(payload)), record.DataBytes)
+	require.Equal(t, dynamoStreamPayloadSHA256(payload), record.DataSHA256)
+	require.Equal(t, []byte(payload), spill.mustGet(t, record.DataRef))
+
+	ch, err := store2.Subscribe(context.Background(), "sess-1", streamID, "")
+	require.NoError(t, err)
+	ev := requireStreamEvent(t, ch)
+	require.Equal(t, eventID, ev.ID)
+	require.JSONEq(t, string(payload), string(ev.Data))
+
+	require.NoError(t, store1.Close(context.Background(), "sess-1", streamID))
+	requireStreamClosed(t, ch)
+}
+
+func TestDynamoStreamStore_DeleteSessionDeletesSpilledObjects(t *testing.T) {
+	db := newFakeMCPTableDB()
+	spill := newFakeDynamoStreamSpillStore()
+	store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	require.True(t, ok)
+	store.spillStore = spill
+	store.inlineMaxBytes = 1
+
+	streamID, err := store.Create(context.Background(), "sess-1")
+	require.NoError(t, err)
+	eventID, err := store.Append(context.Background(), "sess-1", streamID, json.RawMessage(`{"seq":1}`))
+	require.NoError(t, err)
+
+	record, ok := db.getStreamRecord("sess-1", eventID)
+	require.True(t, ok)
+	require.NotEmpty(t, record.DataRef)
+	require.True(t, spill.exists(record.DataRef))
+
+	require.NoError(t, store.DeleteSession(context.Background(), "sess-1"))
+	require.False(t, spill.exists(record.DataRef))
+}
+
+func TestDynamoStreamStore_OversizeEventFailsBeforeAppend(t *testing.T) {
+	db := newFakeMCPTableDB()
+	store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	require.True(t, ok)
+	store.maxEventBytes = 8
+
+	streamID, err := store.Create(context.Background(), "sess-1")
+	require.NoError(t, err)
+
+	_, err = store.Append(context.Background(), "sess-1", streamID, json.RawMessage(`{"too":"large"}`))
+	require.ErrorIs(t, err, ErrStreamEventTooLarge)
+
+	records := db.sessionStreamRecords("sess-1")
+	require.Len(t, records, 2)
+	for _, record := range records {
+		require.NotEqual(t, dynamoStreamRecordKindEvent, record.Kind)
+	}
+	state, ok := db.getStreamRecord("sess-1", dynamoStreamSessionStateEventID)
+	require.True(t, ok)
+	require.Zero(t, state.NextSeq)
 }
 
 func TestDELETE_WithDynamoStreamStore_RemovesStreamState(t *testing.T) {
@@ -482,6 +605,14 @@ func TestDynamoStreamRecord_TheoryDBTagsMatchCanonicalStreamTableSchema(t *testi
 	expiresAt, ok := tp.FieldByName("ExpiresAt")
 	require.True(t, ok)
 	require.Equal(t, "ttl,attr:expiresAt", expiresAt.Tag.Get("theorydb"))
+
+	dataRef, ok := tp.FieldByName("DataRef")
+	require.True(t, ok)
+	require.Equal(t, "attr:dataRef,omitempty", dataRef.Tag.Get("theorydb"))
+
+	dataStorage, ok := tp.FieldByName("DataStorage")
+	require.True(t, ok)
+	require.Equal(t, "attr:dataStorage,omitempty", dataStorage.Tag.Get("theorydb"))
 }
 
 func requireStreamEvent(t *testing.T, ch <-chan StreamEvent) StreamEvent {
@@ -511,6 +642,62 @@ func requireStreamClosed(t *testing.T, ch <-chan StreamEvent) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for stream close")
 	}
+}
+
+type fakeDynamoStreamSpillStore struct {
+	mu      sync.Mutex
+	objects map[string][]byte
+}
+
+func newFakeDynamoStreamSpillStore() *fakeDynamoStreamSpillStore {
+	return &fakeDynamoStreamSpillStore{objects: make(map[string][]byte)}
+}
+
+func (s *fakeDynamoStreamSpillStore) put(_ context.Context, key string, data []byte, _ int64, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	payload := make([]byte, len(data))
+	copy(payload, data)
+	s.objects[key] = payload
+	return nil
+}
+
+func (s *fakeDynamoStreamSpillStore) get(_ context.Context, key string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	payload, ok := s.objects[key]
+	if !ok {
+		return nil, errors.New("missing spill object")
+	}
+	out := make([]byte, len(payload))
+	copy(out, payload)
+	return out, nil
+}
+
+func (s *fakeDynamoStreamSpillStore) delete(_ context.Context, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.objects, key)
+	return nil
+}
+
+func (s *fakeDynamoStreamSpillStore) exists(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, ok := s.objects[key]
+	return ok
+}
+
+func (s *fakeDynamoStreamSpillStore) mustGet(t *testing.T, key string) []byte {
+	t.Helper()
+
+	payload, err := s.get(context.Background(), key)
+	require.NoError(t, err)
+	return payload
 }
 
 type fakeMCPTableDB struct {
@@ -1149,6 +1336,14 @@ func fakeMCPStreamFieldExists(record dynamoStreamRecord, exists bool, field stri
 		return !record.CreatedAt.IsZero()
 	case "ExpiresAt":
 		return record.ExpiresAt != 0
+	case "DataBytes":
+		return record.DataBytes != 0
+	case "DataSHA256":
+		return record.DataSHA256 != ""
+	case "DataRef":
+		return record.DataRef != ""
+	case "DataStorage":
+		return record.DataStorage != ""
 	case "NextSeq":
 		return record.Kind == dynamoStreamRecordKindSession
 	case "Closed":
@@ -1180,6 +1375,14 @@ func fakeMCPStreamFieldValue(record dynamoStreamRecord, exists bool, field strin
 		return record.CreatedAt, true
 	case "ExpiresAt":
 		return record.ExpiresAt, true
+	case "DataBytes":
+		return record.DataBytes, true
+	case "DataSHA256":
+		return record.DataSHA256, true
+	case "DataRef":
+		return record.DataRef, true
+	case "DataStorage":
+		return record.DataStorage, true
 	case "NextSeq":
 		return record.NextSeq, true
 	case "Closed":
@@ -1235,6 +1438,30 @@ func fakeMCPSetStreamField(record *dynamoStreamRecord, field string, value any) 
 			return errors.New("expected ExpiresAt to be numeric")
 		}
 		record.ExpiresAt = v
+	case "DataBytes":
+		v, ok := fakeMCPInt64(value)
+		if !ok {
+			return errors.New("expected DataBytes to be numeric")
+		}
+		record.DataBytes = v
+	case "DataSHA256":
+		v, ok := value.(string)
+		if !ok {
+			return errors.New("expected DataSHA256 to be a string")
+		}
+		record.DataSHA256 = v
+	case "DataRef":
+		v, ok := value.(string)
+		if !ok {
+			return errors.New("expected DataRef to be a string")
+		}
+		record.DataRef = v
+	case "DataStorage":
+		v, ok := value.(string)
+		if !ok {
+			return errors.New("expected DataStorage to be a string")
+		}
+		record.DataStorage = v
 	case "NextSeq":
 		v, ok := fakeMCPInt64(value)
 		if !ok {

@@ -340,6 +340,12 @@ Stream persistence note:
 - stream/event retention is controlled by `MCP_STREAM_TTL_MINUTES` (default `60`); event records get per-append TTLs
   and stream metadata is refreshed on create, append, and close so replay state survives reconnects within the
   configured retention window
+- large logical stream events use the same MCP client contract: when `MCP_STREAM_SPILL_BUCKET` is set, events larger
+  than `MCP_STREAM_SPILL_INLINE_MAX_BYTES` (default `32768`) are stored as encrypted private S3 objects while DynamoDB
+  keeps the logical event id, stream id, object pointer, byte count, and SHA-256 hash; replay rehydrates the payload
+  before emitting the same JSON-RPC SSE message
+- `MCP_STREAM_MAX_EVENT_BYTES` (default `10485760`) is the hard maximum for one logical stream event. Events over that
+  limit fail closed with a stable JSON-RPC stream delivery error instead of timing out after a failed append.
 - the CDK Remote MCP stream table only provisions storage and env vars; the application still must wire
   `mcp.WithStreamStore(...)`
 
