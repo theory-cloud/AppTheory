@@ -1053,24 +1053,18 @@ func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID strin
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.ErrorContext(ctx, "streaming tool panic", "sessionId", sessionID, "streamId", streamID, "panic", r)
-			if err := s.appendStreamResponse(ctx, sessionID, streamID, NewErrorResponse(req.ID, CodeInternalError, "internal error")); err != nil {
-				s.logger.ErrorContext(ctx, "stream store append error", "sessionId", sessionID, "streamId", streamID, "error", err)
-			}
+			s.appendStreamResponseOrDeliveryError(ctx, sessionID, streamID, req.ID, NewErrorResponse(req.ID, CodeInternalError, "internal error"))
 		}
 	}()
 
 	var params toolsCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		resp := NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: "+err.Error())
-		if appendErr := s.appendStreamResponse(ctx, sessionID, streamID, resp); appendErr != nil {
-			s.logger.ErrorContext(ctx, "stream store append error", "sessionId", sessionID, "streamId", streamID, "error", appendErr)
-		}
+		s.appendStreamResponseOrDeliveryError(ctx, sessionID, streamID, req.ID, resp)
 		return
 	}
 	if params.Name == "" {
-		if err := s.appendStreamResponse(ctx, sessionID, streamID, NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name")); err != nil {
-			s.logger.ErrorContext(ctx, "stream store append error", "sessionId", sessionID, "streamId", streamID, "error", err)
-		}
+		s.appendStreamResponseOrDeliveryError(ctx, sessionID, streamID, req.ID, NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name"))
 		return
 	}
 
@@ -1109,9 +1103,7 @@ func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID strin
 		finalResp = NewResultResponse(req.ID, result)
 	}
 
-	if err := s.appendStreamResponse(ctx, sessionID, streamID, finalResp); err != nil {
-		s.logger.ErrorContext(ctx, "stream store append error", "sessionId", sessionID, "streamId", streamID, "error", err)
-	}
+	s.appendStreamResponseOrDeliveryError(ctx, sessionID, streamID, req.ID, finalResp)
 }
 
 func progressFromSSEEvent(ev SSEEvent, fallbackProgress float64) (progress float64, total any, message string) {
@@ -1176,6 +1168,25 @@ func (s *Server) appendStreamResponse(ctx context.Context, sessionID, streamID s
 	}
 	_, err = s.streamStore.Append(ctx, sessionID, streamID, b)
 	return err
+}
+
+func (s *Server) appendStreamResponseOrDeliveryError(
+	ctx context.Context,
+	sessionID string,
+	streamID string,
+	requestID any,
+	resp *Response,
+) {
+	if err := s.appendStreamResponse(ctx, sessionID, streamID, resp); err != nil {
+		s.logger.ErrorContext(ctx, "stream store append error", "sessionId", sessionID, "streamId", streamID, "error", err)
+		message := "stream delivery failed"
+		if errors.Is(err, ErrStreamEventTooLarge) {
+			message = "stream event too large"
+		}
+		if appendErr := s.appendStreamResponse(ctx, sessionID, streamID, NewErrorResponse(requestID, CodeInternalError, message)); appendErr != nil {
+			s.logger.ErrorContext(ctx, "stream store delivery error append failed", "sessionId", sessionID, "streamId", streamID, "error", appendErr)
+		}
+	}
 }
 
 func (s *Server) streamToSSE(ctx context.Context, sessionID string, events <-chan StreamEvent) (*apptheory.Response, error) {

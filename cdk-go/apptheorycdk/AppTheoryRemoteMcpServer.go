@@ -5,6 +5,7 @@ import (
 	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/jsii"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
@@ -22,6 +23,8 @@ type AppTheoryRemoteMcpServer interface {
 	Router() AppTheoryRestApiRouter
 	// The DynamoDB session table (if enabled).
 	SessionTable() awsdynamodb.ITable
+	// The S3 spill bucket for large stream event payloads (if stream storage is enabled).
+	StreamSpillBucket() awss3.IBucket
 	// The DynamoDB stream/event log table (if enabled).
 	StreamTable() awsdynamodb.ITable
 	// Returns a string representation of this construct.
@@ -77,6 +80,16 @@ func (j *jsiiProxy_AppTheoryRemoteMcpServer) SessionTable() awsdynamodb.ITable {
 	_jsii_.Get(
 		j,
 		"sessionTable",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryRemoteMcpServer) StreamSpillBucket() awss3.IBucket {
+	var returns awss3.IBucket
+	_jsii_.Get(
+		j,
+		"streamSpillBucket",
 		&returns,
 	)
 	return returns

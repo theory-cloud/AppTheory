@@ -34,16 +34,20 @@ const (
 )
 
 type dynamoStreamRecord struct {
-	SessionID string          `theorydb:"pk,attr:sessionId" json:"sessionId"`
-	EventID   string          `theorydb:"sk,attr:eventId" json:"eventId"`
-	StreamID  string          `theorydb:"attr:streamId" json:"streamId"`
-	Kind      string          `theorydb:"attr:kind" json:"kind"`
-	CreatedAt time.Time       `theorydb:"attr:createdAt" json:"createdAt"`
-	ExpiresAt int64           `theorydb:"ttl,attr:expiresAt" json:"expiresAt"`
-	NextSeq   int64           `theorydb:"attr:nextSeq,omitempty" json:"nextSeq,omitempty"`
-	Closed    bool            `theorydb:"attr:closed,omitempty" json:"closed,omitempty"`
-	Deleted   bool            `theorydb:"attr:deleted,omitempty" json:"deleted,omitempty"`
-	Data      json.RawMessage `theorydb:"attr:data,omitempty" json:"data,omitempty"`
+	SessionID   string          `theorydb:"pk,attr:sessionId" json:"sessionId"`
+	EventID     string          `theorydb:"sk,attr:eventId" json:"eventId"`
+	StreamID    string          `theorydb:"attr:streamId" json:"streamId"`
+	Kind        string          `theorydb:"attr:kind" json:"kind"`
+	CreatedAt   time.Time       `theorydb:"attr:createdAt" json:"createdAt"`
+	ExpiresAt   int64           `theorydb:"ttl,attr:expiresAt" json:"expiresAt"`
+	DataBytes   int64           `theorydb:"attr:dataBytes,omitempty" json:"dataBytes,omitempty"`
+	DataSHA256  string          `theorydb:"attr:dataSha256,omitempty" json:"dataSha256,omitempty"`
+	DataRef     string          `theorydb:"attr:dataRef,omitempty" json:"dataRef,omitempty"`
+	DataStorage string          `theorydb:"attr:dataStorage,omitempty" json:"dataStorage,omitempty"`
+	NextSeq     int64           `theorydb:"attr:nextSeq,omitempty" json:"nextSeq,omitempty"`
+	Closed      bool            `theorydb:"attr:closed,omitempty" json:"closed,omitempty"`
+	Deleted     bool            `theorydb:"attr:deleted,omitempty" json:"deleted,omitempty"`
+	Data        json.RawMessage `theorydb:"attr:data,omitempty" json:"data,omitempty"`
 }
 
 func (dynamoStreamRecord) TableName() string {
@@ -57,26 +61,41 @@ func (dynamoStreamRecord) TableName() string {
 //
 // Subscribe uses strongly consistent reads plus short polling so separate
 // server instances can replay and continue an active stream from shared state.
+// Replay is bounded by each event record's ExpiresAt value at runtime; DynamoDB
+// TTL and S3 lifecycle cleanup are backstops, not access checks.
+// The strongest DeleteSession/Append race protection is enabled when the
+// provided TableTheory DB implements TransactWrite, which is the production
+// TableTheory path.
 type DynamoStreamStore struct {
-	db           tablecore.DB
-	idGen        apptheory.IDGenerator
-	now          func() time.Time
-	pollInterval time.Duration
-	batchSize    int
+	db             tablecore.DB
+	idGen          apptheory.IDGenerator
+	now            func() time.Time
+	pollInterval   time.Duration
+	batchSize      int
+	spillStore     dynamoStreamSpillStore
+	inlineMaxBytes int
+	maxEventBytes  int
 }
 
 var _ StreamStore = (*DynamoStreamStore)(nil)
 
 var errDynamoStreamSessionDeleted = errors.New("stream session deleted")
 
+type dynamoStreamTransactWriter interface {
+	TransactWrite(context.Context, func(tablecore.TransactionBuilder) error) error
+}
+
 // NewDynamoStreamStore creates a DynamoDB-backed StreamStore.
 func NewDynamoStreamStore(db tablecore.DB) StreamStore {
 	return &DynamoStreamStore{
-		db:           db,
-		idGen:        apptheory.RandomIDGenerator{},
-		now:          func() time.Time { return time.Now().UTC() },
-		pollInterval: defaultDynamoStreamPollInterval,
-		batchSize:    defaultDynamoStreamBatchSize,
+		db:             db,
+		idGen:          apptheory.RandomIDGenerator{},
+		now:            func() time.Time { return time.Now().UTC() },
+		pollInterval:   defaultDynamoStreamPollInterval,
+		batchSize:      defaultDynamoStreamBatchSize,
+		spillStore:     newDynamoStreamSpillStoreFromEnv(),
+		inlineMaxBytes: dynamoStreamSpillInlineMaxBytes(),
+		maxEventBytes:  dynamoStreamMaxEventBytes(),
 	}
 }
 
@@ -117,21 +136,12 @@ func (d *DynamoStreamStore) Create(ctx context.Context, sessionID string) (strin
 
 func (d *DynamoStreamStore) Append(ctx context.Context, sessionID, streamID string, data json.RawMessage) (string, error) {
 	ctx = normalizeStreamContext(ctx)
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return "", errors.New("missing session id")
-	}
-	streamID = strings.TrimSpace(streamID)
-	if streamID == "" {
-		return "", errors.New("missing stream id")
-	}
-
-	meta, err := d.getStreamMetadata(ctx, sessionID, streamID)
+	sessionID, streamID, meta, err := d.appendTarget(ctx, sessionID, streamID)
 	if err != nil {
-		if errors.Is(err, errDynamoStreamSessionDeleted) {
-			return "", ErrStreamNotFound
-		}
 		return "", err
+	}
+	if preflightErr := d.preflightStreamPayloadSize(data); preflightErr != nil {
+		return "", preflightErr
 	}
 
 	now := d.now().UTC()
@@ -146,32 +156,171 @@ func (d *DynamoStreamStore) Append(ctx context.Context, sessionID, streamID stri
 	payload := make([]byte, len(data))
 	copy(payload, data)
 
-	if err := d.assertSessionActive(ctx, sessionID); err != nil {
-		if errors.Is(err, errDynamoStreamSessionDeleted) {
-			return "", ErrStreamNotFound
-		}
+	if activeErr := d.requireAppendSessionActive(ctx, sessionID); activeErr != nil {
+		return "", activeErr
+	}
+
+	expiresAt := d.expiresAtUnix(now)
+	meta.ExpiresAt = expiresAt
+	record, spilled, err := d.newStreamEventRecord(ctx, sessionID, streamID, eventID, payload, now, expiresAt)
+	if err != nil {
 		return "", err
 	}
 
-	meta.ExpiresAt = d.expiresAtUnix(now)
-	if err := d.db.Model(meta).WithContext(ctx).CreateOrUpdate(); err != nil {
-		return "", err
-	}
-
-	record := &dynamoStreamRecord{
-		SessionID: sessionID,
-		EventID:   eventID,
-		StreamID:  streamID,
-		Kind:      dynamoStreamRecordKindEvent,
-		CreatedAt: now,
-		ExpiresAt: d.expiresAtUnix(now),
-		Data:      payload,
-	}
-
-	if err := d.db.Model(record).WithContext(ctx).Create(); err != nil {
+	if err := d.createStreamEventRecord(ctx, sessionID, meta, record, spilled); err != nil {
 		return "", err
 	}
 	return eventID, nil
+}
+
+func (d *DynamoStreamStore) appendTarget(
+	ctx context.Context,
+	sessionID string,
+	streamID string,
+) (string, string, *dynamoStreamRecord, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return "", "", nil, errors.New("missing session id")
+	}
+	streamID = strings.TrimSpace(streamID)
+	if streamID == "" {
+		return "", "", nil, errors.New("missing stream id")
+	}
+
+	meta, err := d.getStreamMetadata(ctx, sessionID, streamID)
+	if err != nil {
+		if errors.Is(err, errDynamoStreamSessionDeleted) {
+			return "", "", nil, ErrStreamNotFound
+		}
+		return "", "", nil, err
+	}
+	return sessionID, streamID, meta, nil
+}
+
+func (d *DynamoStreamStore) preflightStreamPayloadSize(data json.RawMessage) error {
+	if d.maxEventBytes > 0 && len(data) > d.maxEventBytes {
+		return ErrStreamEventTooLarge
+	}
+	if d.spillStore == nil && len(data) > defaultDynamoStreamMaxInlineBytes {
+		return ErrStreamEventTooLarge
+	}
+	return nil
+}
+
+func (d *DynamoStreamStore) requireAppendSessionActive(ctx context.Context, sessionID string) error {
+	if err := d.assertSessionActive(ctx, sessionID); err != nil {
+		if errors.Is(err, errDynamoStreamSessionDeleted) {
+			return ErrStreamNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+func (d *DynamoStreamStore) newStreamEventRecord(
+	ctx context.Context,
+	sessionID string,
+	streamID string,
+	eventID string,
+	payload []byte,
+	now time.Time,
+	expiresAt int64,
+) (*dynamoStreamRecord, bool, error) {
+	record := &dynamoStreamRecord{
+		SessionID:  sessionID,
+		EventID:    eventID,
+		StreamID:   streamID,
+		Kind:       dynamoStreamRecordKindEvent,
+		CreatedAt:  now,
+		ExpiresAt:  expiresAt,
+		DataBytes:  int64(len(payload)),
+		DataSHA256: dynamoStreamPayloadSHA256(payload),
+	}
+
+	spilled := false
+	if d.shouldSpillStreamData(len(payload)) {
+		ref, err := d.spillStreamData(ctx, sessionID, eventID, payload, expiresAt, record.DataSHA256)
+		if err != nil {
+			return nil, false, err
+		}
+		spilled = true
+		record.DataStorage = dynamoStreamDataStorageS3
+		record.DataRef = ref
+	} else {
+		record.Data = payload
+	}
+
+	return record, spilled, nil
+}
+
+func (d *DynamoStreamStore) createStreamEventRecord(
+	ctx context.Context,
+	sessionID string,
+	meta *dynamoStreamRecord,
+	record *dynamoStreamRecord,
+	spilled bool,
+) error {
+	if err := d.createActiveSessionStreamEvent(ctx, sessionID, meta, record); err != nil {
+		return d.cleanupSpilledStreamEvent(ctx, record, spilled, err)
+	}
+	return nil
+}
+
+func (d *DynamoStreamStore) createActiveSessionStreamEvent(
+	ctx context.Context,
+	sessionID string,
+	meta *dynamoStreamRecord,
+	record *dynamoStreamRecord,
+) error {
+	if txDB, ok := d.db.(dynamoStreamTransactWriter); ok {
+		state := &dynamoStreamRecord{
+			SessionID: sessionID,
+			EventID:   dynamoStreamSessionStateEventID,
+		}
+		err := txDB.TransactWrite(ctx, func(tx tablecore.TransactionBuilder) error {
+			tx.ConditionCheck(state, tablecore.TransactCondition{
+				Kind:     tablecore.TransactConditionKindField,
+				Field:    "Deleted",
+				Operator: "=",
+				Value:    false,
+			})
+			tx.Put(meta)
+			tx.Create(record)
+			return nil
+		})
+		if err != nil {
+			if tableerrors.IsConditionFailed(err) {
+				return ErrStreamNotFound
+			}
+			return err
+		}
+		return nil
+	}
+
+	if activeErr := d.requireAppendSessionActive(ctx, sessionID); activeErr != nil {
+		return activeErr
+	}
+	if metaErr := d.db.Model(meta).WithContext(ctx).CreateOrUpdate(); metaErr != nil {
+		return metaErr
+	}
+	if activeErr := d.requireAppendSessionActive(ctx, sessionID); activeErr != nil {
+		return activeErr
+	}
+	return d.db.Model(record).WithContext(ctx).Create()
+}
+
+func (d *DynamoStreamStore) cleanupSpilledStreamEvent(
+	ctx context.Context,
+	record *dynamoStreamRecord,
+	spilled bool,
+	appendErr error,
+) error {
+	if spilled && record != nil {
+		if cleanupErr := d.spillStore.delete(ctx, record.DataRef); cleanupErr != nil {
+			return errors.Join(appendErr, cleanupErr)
+		}
+	}
+	return appendErr
 }
 
 func (d *DynamoStreamStore) Close(ctx context.Context, sessionID, streamID string) error {
@@ -264,6 +413,9 @@ func (d *DynamoStreamStore) StreamForEvent(ctx context.Context, sessionID, event
 	if record.Kind != dynamoStreamRecordKindEvent {
 		return "", ErrEventNotFound
 	}
+	if d.streamRecordExpired(record, d.now().UTC()) {
+		return "", ErrEventNotFound
+	}
 	return record.StreamID, nil
 }
 
@@ -294,7 +446,7 @@ func (d *DynamoStreamStore) DeleteSession(ctx context.Context, sessionID string)
 			if record.EventID == dynamoStreamSessionStateEventID {
 				continue
 			}
-			if err := d.deleteRecord(ctx, sessionID, record.EventID); err != nil {
+			if err := d.deleteRecord(ctx, record); err != nil {
 				return err
 			}
 			deletedAny = true
@@ -336,7 +488,7 @@ func (d *DynamoStreamStore) pumpSubscription(ctx context.Context, sessionID, str
 		}
 
 		var ok bool
-		cursor, ok = forwardDynamoSubscriptionEvents(ctx, streamID, cursor, records, out)
+		cursor, ok = d.forwardDynamoSubscriptionEvents(ctx, streamID, cursor, records, out)
 		if !ok {
 			return
 		}
@@ -374,7 +526,7 @@ func (d *DynamoStreamStore) pumpSubscription(ctx context.Context, sessionID, str
 	}
 }
 
-func forwardDynamoSubscriptionEvents(
+func (d *DynamoStreamStore) forwardDynamoSubscriptionEvents(
 	ctx context.Context,
 	streamID string,
 	startCursor string,
@@ -382,14 +534,23 @@ func forwardDynamoSubscriptionEvents(
 	out chan<- StreamEvent,
 ) (string, bool) {
 	cursor := startCursor
+	now := d.now().UTC()
 	for _, record := range records {
 		cursor = record.EventID
 		if record.StreamID != streamID {
 			continue
 		}
+		if d.streamRecordExpired(record, now) {
+			continue
+		}
 
-		payload := make([]byte, len(record.Data))
-		copy(payload, record.Data)
+		payload, err := d.streamRecordData(ctx, record)
+		if err != nil {
+			if errors.Is(err, ErrEventNotFound) {
+				continue
+			}
+			return cursor, false
+		}
 
 		select {
 		case <-ctx.Done():
@@ -559,12 +720,83 @@ func (d *DynamoStreamStore) listSessionRecords(ctx context.Context, sessionID st
 	return records, nil
 }
 
-func (d *DynamoStreamStore) deleteRecord(ctx context.Context, sessionID, eventID string) error {
+func (d *DynamoStreamStore) deleteRecord(ctx context.Context, record dynamoStreamRecord) error {
+	if record.DataRef != "" {
+		if d.spillStore == nil {
+			return errors.New("stream spill store not configured")
+		}
+		if err := d.spillStore.delete(ctx, record.DataRef); err != nil {
+			return err
+		}
+	}
+
 	return d.db.Model(&dynamoStreamRecord{}).
 		WithContext(ctx).
-		Where("SessionID", "=", sessionID).
-		Where("EventID", "=", eventID).
+		Where("SessionID", "=", record.SessionID).
+		Where("EventID", "=", record.EventID).
 		Delete()
+}
+
+func (d *DynamoStreamStore) shouldSpillStreamData(size int) bool {
+	return d.spillStore != nil && size > clampDynamoStreamSpillInlineMaxBytes(d.inlineMaxBytes)
+}
+
+func (d *DynamoStreamStore) spillStreamData(
+	ctx context.Context,
+	sessionID string,
+	eventID string,
+	payload []byte,
+	expiresAt int64,
+	sha256Hex string,
+) (string, error) {
+	if s3Store, ok := d.spillStore.(*dynamoStreamS3SpillStore); ok {
+		key := s3Store.objectKey(sessionID, eventID)
+		if err := s3Store.put(ctx, key, payload, expiresAt, sha256Hex); err != nil {
+			return "", err
+		}
+		return key, nil
+	}
+
+	key := "sessions/" + dynamoStreamPayloadSHA256([]byte(sessionID)) + "/events/" + eventID + ".json"
+	if err := d.spillStore.put(ctx, key, payload, expiresAt, sha256Hex); err != nil {
+		return "", err
+	}
+	return key, nil
+}
+
+func (d *DynamoStreamStore) streamRecordData(ctx context.Context, record dynamoStreamRecord) (json.RawMessage, error) {
+	if d.streamRecordExpired(record, d.now().UTC()) {
+		return nil, ErrEventNotFound
+	}
+	if record.DataStorage == dynamoStreamDataStorageS3 || record.DataRef != "" {
+		if d.spillStore == nil {
+			return nil, errors.New("stream spill store not configured")
+		}
+		payload, err := d.spillStore.get(ctx, record.DataRef)
+		if err != nil {
+			return nil, err
+		}
+		if record.DataBytes > 0 && int64(len(payload)) != record.DataBytes {
+			return nil, errors.New("stream spill payload size mismatch")
+		}
+		if record.DataSHA256 != "" && dynamoStreamPayloadSHA256(payload) != record.DataSHA256 {
+			return nil, errors.New("stream spill payload hash mismatch")
+		}
+		out := make([]byte, len(payload))
+		copy(out, payload)
+		return json.RawMessage(out), nil
+	}
+
+	payload := make([]byte, len(record.Data))
+	copy(payload, record.Data)
+	return json.RawMessage(payload), nil
+}
+
+func (d *DynamoStreamStore) streamRecordExpired(record dynamoStreamRecord, now time.Time) bool {
+	if record.ExpiresAt <= 0 {
+		return false
+	}
+	return record.ExpiresAt <= now.UTC().Unix()
 }
 
 func (d *DynamoStreamStore) expiresAtUnix(now time.Time) int64 {
