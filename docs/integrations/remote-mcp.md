@@ -109,6 +109,11 @@ oversized inline writes fail closed into S3 spill instead of DynamoDB item-size 
 SSE message per logical event, and resume/replay continues to use `Last-Event-ID`; there is no client-visible chunk or
 presigned URL protocol.
 
+For production durable replay, pass the standard TableTheory DB to `mcp.NewDynamoStreamStore(db)`. That DB implements
+`TransactWrite`, which AppTheory uses for the strongest `DeleteSession`/`Append` race protection after S3 spill writes.
+Custom `tablecore.DB` implementations without `TransactWrite` are suitable for tests only; they cannot make the final
+event create atomic with session deletion.
+
 For actor-scoped deployments on this sanctioned REST API v1 path, AppTheory now accepts both `/mcp/{actor}` and
 `/mcp/{actor}/`, plus the matching
 `/.well-known/oauth-protected-resource/mcp/{actor}` / `/.well-known/oauth-protected-resource/mcp/{actor}/` forms.
