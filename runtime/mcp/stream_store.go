@@ -39,8 +39,9 @@ type StreamStore interface {
 }
 
 var (
-	ErrStreamNotFound = errors.New("stream not found")
-	ErrEventNotFound  = errors.New("event not found")
+	ErrStreamNotFound      = errors.New("stream not found")
+	ErrEventNotFound       = errors.New("event not found")
+	ErrStreamEventTooLarge = errors.New("stream event too large")
 )
 
 type MemoryStreamStoreOption func(*MemoryStreamStore)

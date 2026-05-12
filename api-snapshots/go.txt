@@ -1941,6 +1941,8 @@ var ErrEventNotFound = errors.New("event not found")
 
 var ErrSessionNotFound = errors.New("session not found")
 
+var ErrStreamEventTooLarge = errors.New("stream event too large")
+
 var ErrStreamNotFound = errors.New("stream not found")
 
 type ContentBlock struct {
@@ -1965,11 +1967,14 @@ type DynamoSessionStore struct {
 }
 
 type DynamoStreamStore struct {
-	db           tablecore.DB
-	idGen        apptheory.IDGenerator
-	now          func() time.Time
-	pollInterval time.Duration
-	batchSize    int
+	db             tablecore.DB
+	idGen          apptheory.IDGenerator
+	now            func() time.Time
+	pollInterval   time.Duration
+	batchSize      int
+	spillStore     dynamoStreamSpillStore
+	inlineMaxBytes int
+	maxEventBytes  int
 }
 
 type Icon struct {
