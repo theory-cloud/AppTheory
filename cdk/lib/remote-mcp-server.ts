@@ -1,6 +1,7 @@
-import { RemovalPolicy, Stack } from "aws-cdk-lib";
+import { Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
+import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 
 import {
@@ -144,6 +145,27 @@ export interface AppTheoryRemoteMcpServerProps {
    * @default 60
    */
   readonly streamTtlMinutes?: number;
+
+  /**
+   * Inline byte threshold for MCP stream events before AppTheory spills the
+   * logical event payload to the managed S3 spill bucket.
+   *
+   * This is a storage threshold only. MCP clients still receive one logical
+   * JSON-RPC response event and replay continues to use Last-Event-ID.
+   *
+   * @default 32768
+   */
+  readonly streamSpillInlineMaxBytes?: number;
+
+  /**
+   * Hard maximum byte size for a single logical MCP stream event.
+   *
+   * Events over this size fail closed with a stable stream delivery error
+   * rather than timing out after a failed persistence append.
+   *
+   * @default 10485760
+   */
+  readonly streamMaxEventBytes?: number;
 }
 
 /**
@@ -175,6 +197,11 @@ export class AppTheoryRemoteMcpServer extends Construct {
    * The DynamoDB stream/event log table (if enabled).
    */
   public readonly streamTable?: dynamodb.ITable;
+
+  /**
+   * The S3 spill bucket for large stream event payloads (if stream storage is enabled).
+   */
+  public readonly streamSpillBucket?: s3.IBucket;
 
   constructor(scope: Construct, id: string, props: AppTheoryRemoteMcpServerProps) {
     super(scope, id);
@@ -230,6 +257,8 @@ export class AppTheoryRemoteMcpServer extends Construct {
       this.addEnvironment(props.handler, "MCP_SESSION_TTL_MINUTES", String(props.sessionTtlMinutes ?? 60));
     }
 
+    this.validateStreamSpillThresholds(props);
+
     // Optional stream/event log table (schema is opinionated but intentionally flexible)
     if (props.enableStreamTable) {
       const table = new dynamodb.Table(this, "StreamTable", {
@@ -247,11 +276,33 @@ export class AppTheoryRemoteMcpServer extends Construct {
 
       table.grantReadWriteData(props.handler);
       this.streamTable = table;
+
+      const spillBucket = new s3.Bucket(this, "StreamSpillBucket", {
+        blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+        encryption: s3.BucketEncryption.S3_MANAGED,
+        enforceSSL: true,
+        lifecycleRules: [
+          {
+            enabled: true,
+            expiration: Duration.days(streamSpillExpirationDays(props.streamTtlMinutes ?? 60)),
+          },
+        ],
+        removalPolicy: RemovalPolicy.DESTROY,
+        autoDeleteObjects: true,
+      });
+      spillBucket.grantReadWrite(props.handler);
+      this.streamSpillBucket = spillBucket;
     }
 
     if (this.streamTable) {
       this.addEnvironment(props.handler, "MCP_STREAM_TABLE", this.streamTable.tableName);
       this.addEnvironment(props.handler, "MCP_STREAM_TTL_MINUTES", String(props.streamTtlMinutes ?? 60));
+      if (this.streamSpillBucket) {
+        this.addEnvironment(props.handler, "MCP_STREAM_SPILL_BUCKET", this.streamSpillBucket.bucketName);
+        this.addEnvironment(props.handler, "MCP_STREAM_SPILL_PREFIX", "mcp-stream-events");
+        this.addEnvironment(props.handler, "MCP_STREAM_SPILL_INLINE_MAX_BYTES", String(props.streamSpillInlineMaxBytes ?? 32768));
+        this.addEnvironment(props.handler, "MCP_STREAM_MAX_EVENT_BYTES", String(props.streamMaxEventBytes ?? 10485760));
+      }
     }
 
     const stageName = props.stage?.stageName ?? "prod";
@@ -268,6 +319,28 @@ export class AppTheoryRemoteMcpServer extends Construct {
       handler.addEnvironment(key, value);
     }
   }
+
+  private validateStreamSpillThresholds(props: AppTheoryRemoteMcpServerProps): void {
+    const inlineMax = props.streamSpillInlineMaxBytes ?? 32768;
+    const eventMax = props.streamMaxEventBytes ?? 10485760;
+
+    if (!Number.isInteger(inlineMax) || inlineMax <= 0) {
+      throw new Error("AppTheoryRemoteMcpServer: streamSpillInlineMaxBytes must be a positive integer");
+    }
+    if (!Number.isInteger(eventMax) || eventMax <= 0) {
+      throw new Error("AppTheoryRemoteMcpServer: streamMaxEventBytes must be a positive integer");
+    }
+    if (eventMax < inlineMax) {
+      throw new Error("AppTheoryRemoteMcpServer: streamMaxEventBytes must be greater than or equal to streamSpillInlineMaxBytes");
+    }
+  }
+}
+
+function streamSpillExpirationDays(ttlMinutes: number): number {
+  if (!Number.isFinite(ttlMinutes) || ttlMinutes <= 0) {
+    return 1;
+  }
+  return Math.max(1, Math.ceil(ttlMinutes / (24 * 60)));
 }
 
 function computeMcpEndpoint(
