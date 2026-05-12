@@ -16805,7 +16805,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/remote-mcp-server.ts",
-          "line": 206
+          "line": 212
         },
         "parameters": [
           {
@@ -16831,7 +16831,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/remote-mcp-server.ts",
-        "line": 180
+        "line": 186
       },
       "name": "AppTheoryRemoteMcpServer",
       "properties": [
@@ -16842,7 +16842,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 189
+            "line": 195
           },
           "name": "endpoint",
           "type": {
@@ -16856,7 +16856,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 184
+            "line": 190
           },
           "name": "router",
           "type": {
@@ -16870,7 +16870,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 194
+            "line": 200
           },
           "name": "sessionTable",
           "optional": true,
@@ -16885,7 +16885,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 204
+            "line": 210
           },
           "name": "streamSpillBucket",
           "optional": true,
@@ -16900,7 +16900,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 199
+            "line": 205
           },
           "name": "streamTable",
           "optional": true,
@@ -16922,7 +16922,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/remote-mcp-server.ts",
-        "line": 22
+        "line": 26
       },
       "name": "AppTheoryRemoteMcpServerProps",
       "properties": [
@@ -16934,7 +16934,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 26
+            "line": 30
           },
           "name": "handler",
           "type": {
@@ -16951,7 +16951,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 96
+            "line": 100
           },
           "name": "actorPath",
           "optional": true,
@@ -16969,7 +16969,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 71
+            "line": 75
           },
           "name": "allowTestInvoke",
           "optional": true,
@@ -16986,7 +16986,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 32
+            "line": 36
           },
           "name": "apiName",
           "optional": true,
@@ -17004,7 +17004,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 54
+            "line": 58
           },
           "name": "cors",
           "optional": true,
@@ -17030,7 +17030,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 38
+            "line": 42
           },
           "name": "description",
           "optional": true,
@@ -17047,7 +17047,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 60
+            "line": 64
           },
           "name": "domain",
           "optional": true,
@@ -17064,7 +17064,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 113
+            "line": 117
           },
           "name": "enableSessionTable",
           "optional": true,
@@ -17082,7 +17082,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 135
+            "line": 139
           },
           "name": "enableStreamTable",
           "optional": true,
@@ -17100,7 +17100,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 107
+            "line": 111
           },
           "name": "enableWellKnownMcpDiscovery",
           "optional": true,
@@ -17118,7 +17118,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 82
+            "line": 86
           },
           "name": "scopePermissionToMethod",
           "optional": true,
@@ -17135,7 +17135,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 119
+            "line": 123
           },
           "name": "sessionTableName",
           "optional": true,
@@ -17152,7 +17152,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 125
+            "line": 129
           },
           "name": "sessionTtlMinutes",
           "optional": true,
@@ -17169,7 +17169,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 44
+            "line": 48
           },
           "name": "stage",
           "optional": true,
@@ -17187,7 +17187,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 168
+            "line": 174
           },
           "name": "streamMaxEventBytes",
           "optional": true,
@@ -17199,13 +17199,13 @@
           "abstract": true,
           "docs": {
             "default": "32768",
-            "remarks": "This is a storage threshold only. MCP clients still receive one logical\nJSON-RPC response event and replay continues to use Last-Event-ID.",
+            "remarks": "This is a storage threshold only. MCP clients still receive one logical\nJSON-RPC response event and replay continues to use Last-Event-ID. The\nvalue must not exceed AppTheory's DynamoDB-safe inline ceiling of 358400\nbytes.",
             "summary": "Inline byte threshold for MCP stream events before AppTheory spills the logical event payload to the managed S3 spill bucket."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 158
+            "line": 164
           },
           "name": "streamSpillInlineMaxBytes",
           "optional": true,
@@ -17222,7 +17222,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 141
+            "line": 145
           },
           "name": "streamTableName",
           "optional": true,
@@ -17239,7 +17239,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 147
+            "line": 151
           },
           "name": "streamTtlMinutes",
           "optional": true,
@@ -20653,5 +20653,5 @@
     }
   },
   "version": "1.4.1",
-  "fingerprint": "iiON9oqJIfq0n8XSLzxtRjHA5r4PlihPcp3ydPbm5yo="
+  "fingerprint": "+xcoS4Y0Jq8EobyFoBO7B74FpsNGbZtnQmAMbxVv/tM="
 }

@@ -3417,6 +3417,38 @@ test("AppTheoryRemoteMcpServer (with tables) synthesizes expected template", () 
   }
 });
 
+test("AppTheoryRemoteMcpServer validates stream spill thresholds", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcpInlineTooLarge", {
+        handler: fn,
+        enableStreamTable: true,
+        streamSpillInlineMaxBytes: 350 * 1024 + 1,
+      }),
+    /streamSpillInlineMaxBytes must be less than or equal to 358400/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryRemoteMcpServer(stack, "RemoteMcpMaxBelowInline", {
+        handler: fn,
+        enableStreamTable: true,
+        streamSpillInlineMaxBytes: 4096,
+        streamMaxEventBytes: 1024,
+      }),
+    /streamMaxEventBytes must be greater than or equal to streamSpillInlineMaxBytes/,
+  );
+});
+
 test("AppTheoryRemoteMcpServer (with custom domain) synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");

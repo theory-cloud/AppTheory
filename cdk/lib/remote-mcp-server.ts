@@ -12,6 +12,10 @@ import {
 } from "./rest-api-router";
 import { trimRepeatedChar } from "./private/string-utils";
 
+const STREAM_SPILL_INLINE_DEFAULT_BYTES = 32 * 1024;
+const STREAM_SPILL_INLINE_SAFE_MAX_BYTES = 350 * 1024;
+const STREAM_MAX_EVENT_DEFAULT_BYTES = 10 * 1024 * 1024;
+
 /**
  * Props for the AppTheoryRemoteMcpServer construct.
  *
@@ -151,7 +155,9 @@ export interface AppTheoryRemoteMcpServerProps {
    * logical event payload to the managed S3 spill bucket.
    *
    * This is a storage threshold only. MCP clients still receive one logical
-   * JSON-RPC response event and replay continues to use Last-Event-ID.
+   * JSON-RPC response event and replay continues to use Last-Event-ID. The
+   * value must not exceed AppTheory's DynamoDB-safe inline ceiling of 358400
+   * bytes.
    *
    * @default 32768
    */
@@ -300,8 +306,16 @@ export class AppTheoryRemoteMcpServer extends Construct {
       if (this.streamSpillBucket) {
         this.addEnvironment(props.handler, "MCP_STREAM_SPILL_BUCKET", this.streamSpillBucket.bucketName);
         this.addEnvironment(props.handler, "MCP_STREAM_SPILL_PREFIX", "mcp-stream-events");
-        this.addEnvironment(props.handler, "MCP_STREAM_SPILL_INLINE_MAX_BYTES", String(props.streamSpillInlineMaxBytes ?? 32768));
-        this.addEnvironment(props.handler, "MCP_STREAM_MAX_EVENT_BYTES", String(props.streamMaxEventBytes ?? 10485760));
+        this.addEnvironment(
+          props.handler,
+          "MCP_STREAM_SPILL_INLINE_MAX_BYTES",
+          String(props.streamSpillInlineMaxBytes ?? STREAM_SPILL_INLINE_DEFAULT_BYTES),
+        );
+        this.addEnvironment(
+          props.handler,
+          "MCP_STREAM_MAX_EVENT_BYTES",
+          String(props.streamMaxEventBytes ?? STREAM_MAX_EVENT_DEFAULT_BYTES),
+        );
       }
     }
 
@@ -321,11 +335,16 @@ export class AppTheoryRemoteMcpServer extends Construct {
   }
 
   private validateStreamSpillThresholds(props: AppTheoryRemoteMcpServerProps): void {
-    const inlineMax = props.streamSpillInlineMaxBytes ?? 32768;
-    const eventMax = props.streamMaxEventBytes ?? 10485760;
+    const inlineMax = props.streamSpillInlineMaxBytes ?? STREAM_SPILL_INLINE_DEFAULT_BYTES;
+    const eventMax = props.streamMaxEventBytes ?? STREAM_MAX_EVENT_DEFAULT_BYTES;
 
     if (!Number.isInteger(inlineMax) || inlineMax <= 0) {
       throw new Error("AppTheoryRemoteMcpServer: streamSpillInlineMaxBytes must be a positive integer");
+    }
+    if (inlineMax > STREAM_SPILL_INLINE_SAFE_MAX_BYTES) {
+      throw new Error(
+        `AppTheoryRemoteMcpServer: streamSpillInlineMaxBytes must be less than or equal to ${STREAM_SPILL_INLINE_SAFE_MAX_BYTES}`,
+      );
     }
     if (!Number.isInteger(eventMax) || eventMax <= 0) {
       throw new Error("AppTheoryRemoteMcpServer: streamMaxEventBytes must be a positive integer");

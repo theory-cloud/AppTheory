@@ -40,9 +40,9 @@ type dynamoStreamS3SpillStore struct {
 	bucket string
 	prefix string
 
-	mu      sync.Mutex
-	client  dynamoStreamS3Client
-	initErr error
+	mu         sync.Mutex
+	client     dynamoStreamS3Client
+	loadClient func(context.Context) (dynamoStreamS3Client, error)
 }
 
 type dynamoStreamS3Client interface {
@@ -140,18 +140,26 @@ func (s *dynamoStreamS3SpillStore) s3Client(ctx context.Context) (dynamoStreamS3
 	if s.client != nil {
 		return s.client, nil
 	}
-	if s.initErr != nil {
-		return nil, s.initErr
-	}
 
-	cfg, err := config.LoadDefaultConfig(ctx)
+	loadClient := s.loadClient
+	if loadClient == nil {
+		loadClient = newDynamoStreamS3Client
+	}
+	client, err := loadClient(ctx)
 	if err != nil {
-		s.initErr = err
 		return nil, err
 	}
 
-	s.client = s3.NewFromConfig(cfg)
+	s.client = client
 	return s.client, nil
+}
+
+func newDynamoStreamS3Client(ctx context.Context) (dynamoStreamS3Client, error) {
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s3.NewFromConfig(cfg), nil
 }
 
 func (s *dynamoStreamS3SpillStore) objectKey(sessionID, eventID string) string {
@@ -170,11 +178,23 @@ func dynamoStreamPayloadSHA256(data []byte) string {
 }
 
 func dynamoStreamSpillInlineMaxBytes() int {
-	return envPositiveInt(envStreamSpillInlineMaxBytes, defaultDynamoStreamSpillInlineMaxBytes)
+	return clampDynamoStreamSpillInlineMaxBytes(
+		envPositiveInt(envStreamSpillInlineMaxBytes, defaultDynamoStreamSpillInlineMaxBytes),
+	)
 }
 
 func dynamoStreamMaxEventBytes() int {
 	return envPositiveInt(envStreamMaxEventBytes, defaultDynamoStreamMaxEventBytes)
+}
+
+func clampDynamoStreamSpillInlineMaxBytes(n int) int {
+	if n <= 0 {
+		return defaultDynamoStreamSpillInlineMaxBytes
+	}
+	if n > defaultDynamoStreamMaxInlineBytes {
+		return defaultDynamoStreamMaxInlineBytes
+	}
+	return n
 }
 
 func envPositiveInt(name string, fallback int) int {
