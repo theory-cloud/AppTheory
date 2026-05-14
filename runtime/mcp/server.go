@@ -66,6 +66,7 @@ type Server struct {
 	promptRegistry   *PromptRegistry
 	sessionStore     SessionStore
 	streamStore      StreamStore
+	cancellations    *cancellationTracker
 	idGen            apptheory.IDGenerator
 	logger           *slog.Logger
 	originValidator  OriginValidator
@@ -194,6 +195,7 @@ func NewServer(name, version string, opts ...ServerOption) *Server {
 		promptRegistry:   NewPromptRegistry(),
 		sessionStore:     NewMemorySessionStore(),
 		streamStore:      NewMemoryStreamStore(),
+		cancellations:    newCancellationTracker(),
 		idGen:            apptheory.RandomIDGenerator{},
 		logger:           slog.Default(),
 		originValidator:  AllowOrigins("https://claude.ai", "https://claude.com"),
@@ -853,7 +855,9 @@ func (s *Server) runBatchRequests(
 			}
 		}
 
-		responses = append(responses, s.dispatchForProtocol(ctx, req, sessionProtocolVersion(sess), sessionID))
+		requestCtx, finish := s.trackRequest(ctx, sessionID, req.ID)
+		responses = append(responses, s.dispatchForProtocol(requestCtx, req, sessionProtocolVersion(sess), sessionID))
+		finish()
 	}
 
 	return createdSessionID, responses
@@ -1230,8 +1234,7 @@ func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Req
 			s.logger.ErrorContext(ctx, "failed to persist session", "sessionId", sess.ID, "error", err)
 		}
 	case methodNotificationsCancelled:
-		// Accepted for spec compliance; cancellation wiring is handled by higher-level
-		// async implementations (e.g. theory-mcp).
+		s.handleCancellationNotification(ctx, sess, req)
 	default:
 	}
 }
@@ -1248,7 +1251,10 @@ func (s *Server) handleRequestHTTP(
 		return s.handleToolsCallStream(ctx, sessionID, req)
 	}
 
-	resp := s.dispatchForProtocol(ctx, req, requestPV, sessionID)
+	requestCtx, finish := s.trackRequest(ctx, sessionID, req.ID)
+	defer finish()
+
+	resp := s.dispatchForProtocol(requestCtx, req, requestPV, sessionID)
 	return s.marshalSingleResponse(resp, sessionID, false)
 }
 
@@ -1273,8 +1279,10 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 		return s.marshalSingleResponse(resp, sessionID, false)
 	}
 
+	toolCtx, finish := s.trackRequest(context.WithoutCancel(ctx), sessionID, req.ID)
 	streamID, err := s.streamStore.Create(ctx, sessionID)
 	if err != nil {
+		finish()
 		s.logger.ErrorContext(ctx, "stream store error", "error", err)
 		return internalServerError(), nil
 	}
@@ -1282,6 +1290,7 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 	// Persist an empty-data priming event before any tool output so a client
 	// that disconnects immediately can resume this stream with Last-Event-ID.
 	if _, primeErr := s.streamStore.Append(ctx, sessionID, streamID, nil); primeErr != nil {
+		finish()
 		s.logger.ErrorContext(ctx, "stream prime error", "sessionId", sessionID, "streamId", streamID, "error", primeErr)
 		if closeErr := s.streamStore.Close(context.WithoutCancel(ctx), sessionID, streamID); closeErr != nil {
 			s.logger.WarnContext(ctx, "stream prime cleanup error", "sessionId", sessionID, "streamId", streamID, "error", closeErr)
@@ -1290,8 +1299,7 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 	}
 
 	// Run the tool out-of-band so disconnects do not cancel execution.
-	toolCtx := context.WithoutCancel(ctx)
-	go s.runStreamingTool(toolCtx, sessionID, streamID, req)
+	go s.runStreamingTool(toolCtx, sessionID, streamID, req, finish)
 
 	events, err := s.streamStore.Subscribe(ctx, sessionID, streamID, "")
 	if err != nil {
@@ -1302,7 +1310,8 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 	return s.streamToSSE(ctx, sessionID, events)
 }
 
-func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID string, req *Request) {
+func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID string, req *Request, finish func()) {
+	defer finish()
 	defer func() {
 		if err := s.streamStore.Close(ctx, sessionID, streamID); err != nil {
 			s.logger.ErrorContext(ctx, "stream store close error", "sessionId", sessionID, "streamId", streamID, "error", err)
