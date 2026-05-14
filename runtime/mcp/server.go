@@ -591,7 +591,7 @@ func normalizeProgressToken(raw json.RawMessage) json.RawMessage {
 }
 
 // handleToolsCall invokes a registered tool by name (buffered JSON mode).
-func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
+func (s *Server) handleToolsCall(ctx context.Context, req *Request) (resp *Response) {
 	var params toolsCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: "+err.Error())
@@ -600,6 +600,13 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
 	if params.Name == "" {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name")
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.ErrorContext(ctx, "tool panic", "tool", params.Name, "panic", r)
+			resp = NewErrorResponse(req.ID, CodeInternalError, "internal error")
+		}
+	}()
 
 	result, err := s.registry.Call(ctx, params.Name, params.Arguments)
 	if err != nil {
