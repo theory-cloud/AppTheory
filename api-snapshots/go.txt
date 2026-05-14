@@ -1965,7 +1965,6 @@ type CapabilityConfig struct {
 	Tools       bool
 	Resources   bool
 	Prompts     bool
-	Logging     bool
 	Completions bool
 }
 

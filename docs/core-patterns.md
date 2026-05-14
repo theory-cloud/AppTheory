@@ -165,9 +165,10 @@ CORRECT:
   still replay by logical `Last-Event-ID`, and AppTheory bounds S3 spill reads before byte-count/hash validation
 - treat tool panics as server faults: AppTheory recovers them into sanitized JSON-RPC internal errors, not client-visible
   panic strings
-- keep optional MCP utility capabilities hook-gated: resource subscriptions, logging, and completions are advertised
-  only by AppTheory after the matching hook is configured, and cancellation notifications only cancel tracked
-  in-flight requests for the same session
+- keep optional MCP utility capabilities fail-closed: completions are advertised only by AppTheory after a matching hook
+  is configured, resource subscription and logging methods are hook-gated but their capabilities remain omitted until
+  outbound notification contracts exist, and cancellation notifications only cancel tracked in-flight requests for the
+  same session
 
 INCORRECT:
 

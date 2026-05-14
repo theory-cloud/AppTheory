@@ -145,7 +145,6 @@ on the server:
 - if `srv.Registry().Len() > 0` and tools are enabled -> `"tools": {}`
 - if `srv.Resources().Len() > 0` and resources are enabled -> `"resources": {}`
 - if `srv.Prompts().Len() > 0` and prompts are enabled -> `"prompts": {}`
-- if `mcp.WithLoggingLevelHook(...)` is configured and logging is enabled -> `"logging": {}`
 - if `mcp.WithCompletionHooks(...)` has at least one hook and completions are enabled -> `"completions": {}`
 
 The default capability policy enables the implemented surfaces, but registration is still required before they are
@@ -153,9 +152,11 @@ advertised. Use `mcp.WithCapabilityConfig(...)` to withhold an implemented surfa
 
 Optional MCP utility capabilities are fail-closed:
 
-- resource subscription support is advertised as `"resources": {"subscribe": true}` only when resources are registered
-  and both hooks are configured with `mcp.WithResourceSubscriptionHooks(...)`
-- `logging` is advertised only when `mcp.WithLoggingLevelHook(...)` is configured
+- resource subscription hooks are accepted only when both hooks are configured with
+  `mcp.WithResourceSubscriptionHooks(...)`, but `resources.subscribe` is not advertised until AppTheory has a
+  first-class outbound `notifications/resources/updated` contract
+- `logging/setLevel` is accepted only when `mcp.WithLoggingLevelHook(...)` is configured, but `logging` is not
+  advertised until AppTheory has a first-class outbound `notifications/message` contract
 - `completions` is advertised only when `mcp.WithCompletionHooks(...)` has at least one prompt or resource hook
 - `notifications/cancelled` is accepted for every initialized session, but it only cancels AppTheory-tracked in-flight
   requests for that session and safely ignores unknown or completed request ids
@@ -167,8 +168,8 @@ AppTheory omits that capability for sessions negotiated to that version.
 
 Products should not advertise these optional utility capabilities outside AppTheory's initialize response and should not
 enable the hooks for downstream services until product authorization, tenant policy, audit logging, and abuse controls
-are wired. The single path is: configure the AppTheory hook, let AppTheory advertise the capability, and handle the
-request through the hook. Do not hard-code capabilities in a product-specific wrapper.
+are wired. The single path is: configure the AppTheory hook, let AppTheory advertise only capabilities it can deliver
+end-to-end, and handle the request through the hook. Do not hard-code capabilities in a product-specific wrapper.
 
 ### Optional utility hooks
 
