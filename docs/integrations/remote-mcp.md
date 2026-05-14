@@ -65,6 +65,11 @@ Important behaviors for Claude compatibility:
   `https://claude.com`); use `mcp.WithOriginValidator(...)` for other browser origins.
 - Tool handler panics are recovered as sanitized JSON-RPC internal errors. Do not rely on panic text reaching the
   client; AppTheory logs it server-side and keeps the MCP server reusable.
+- Optional utility capabilities are hook-gated. Resource subscriptions require
+  `mcp.WithResourceSubscriptionHooks(...)`, logging requires `mcp.WithLoggingLevelHook(...)`, and completions require
+  `mcp.WithCompletionHooks(...)`; AppTheory advertises only the hooks you configure.
+- `notifications/cancelled` cancels matching in-flight AppTheory requests for the same session and safely ignores
+  unknown or already-completed request ids.
 
 Strict transport rollout checklist:
 
@@ -76,6 +81,9 @@ Strict transport rollout checklist:
 - Confirm reconnect uses `GET /mcp` with the latest `Last-Event-ID` for the same session and stream.
 - Treat HTTP `400` responses during canary as compatibility failures to fix in the client, not as server fallbacks to
   loosen.
+- Do not hard-code `resources.subscribe`, `logging`, or `completions` capabilities in a Remote MCP product wrapper.
+  Configure the AppTheory hook, let AppTheory emit the initialize capability, and keep the capability absent until
+  product authorization and tenant policy are ready.
 
 ## 2) Add OAuth protection (Remote MCP auth `2025-06-18`)
 

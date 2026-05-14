@@ -107,6 +107,10 @@ AppTheory currently dispatches these MCP request methods:
 - `tools/call`
 - `resources/list`
 - `resources/read`
+- `resources/subscribe`
+- `resources/unsubscribe`
+- `logging/setLevel`
+- `completion/complete`
 - `prompts/list`
 - `prompts/get`
 
@@ -141,14 +145,85 @@ on the server:
 - if `srv.Registry().Len() > 0` and tools are enabled -> `"tools": {}`
 - if `srv.Resources().Len() > 0` and resources are enabled -> `"resources": {}`
 - if `srv.Prompts().Len() > 0` and prompts are enabled -> `"prompts": {}`
+- if `mcp.WithLoggingLevelHook(...)` is configured and logging is enabled -> `"logging": {}`
+- if `mcp.WithCompletionHooks(...)` has at least one hook and completions are enabled -> `"completions": {}`
 
 The default capability policy enables the implemented surfaces, but registration is still required before they are
 advertised. Use `mcp.WithCapabilityConfig(...)` to withhold an implemented surface for a product rollout.
 
-Unsupported optional MCP capabilities are fail-closed: AppTheory does not advertise `listChanged`, resource
-subscriptions, `logging`, `completions`, or `tasks` until the corresponding framework hook exists and is configured.
+Optional MCP utility capabilities are fail-closed:
+
+- resource subscription support is advertised as `"resources": {"subscribe": true}` only when resources are registered
+  and both hooks are configured with `mcp.WithResourceSubscriptionHooks(...)`
+- `logging` is advertised only when `mcp.WithLoggingLevelHook(...)` is configured
+- `completions` is advertised only when `mcp.WithCompletionHooks(...)` has at least one prompt or resource hook
+- `notifications/cancelled` is accepted for every initialized session, but it only cancels AppTheory-tracked in-flight
+  requests for that session and safely ignores unknown or completed request ids
+- unsupported utility surfaces such as `listChanged` and `tasks` remain omitted until their concrete AppTheory contract
+  exists
+
 Capability construction is also protocol-aware; if a future supported protocol version removes or changes a capability,
 AppTheory omits that capability for sessions negotiated to that version.
+
+Products should not advertise these optional utility capabilities outside AppTheory's initialize response and should not
+enable the hooks for downstream services until product authorization, tenant policy, audit logging, and abuse controls
+are wired. The single path is: configure the AppTheory hook, let AppTheory advertise the capability, and handle the
+request through the hook. Do not hard-code capabilities in a product-specific wrapper.
+
+### Optional utility hooks
+
+Resource subscription hooks:
+
+```go
+srv := mcp.NewServer("my-mcp-server", "dev",
+  mcp.WithResourceSubscriptionHooks(
+    func(ctx context.Context, sub mcp.ResourceSubscription) error {
+      // Persist session-scoped interest in sub.URI.
+      return nil
+    },
+    func(ctx context.Context, sub mcp.ResourceSubscription) error {
+      // Remove session-scoped interest in sub.URI.
+      return nil
+    },
+  ),
+)
+```
+
+`resources/subscribe` and `resources/unsubscribe` fail closed with JSON-RPC `method not found` unless both hooks are
+configured. The hook receives the negotiated MCP session id and the target resource URI.
+
+Logging hooks:
+
+```go
+srv := mcp.NewServer("my-mcp-server", "dev",
+  mcp.WithLoggingLevelHook(func(ctx context.Context, req mcp.LoggingLevelRequest) error {
+    // Store the per-session logging threshold.
+    return nil
+  }),
+)
+```
+
+`logging/setLevel` validates MCP logging levels (`debug`, `info`, `notice`, `warning`, `error`, `critical`, `alert`,
+`emergency`) before invoking the hook.
+
+Completion hooks:
+
+```go
+srv := mcp.NewServer("my-mcp-server", "dev",
+  mcp.WithCompletionHooks(
+    func(ctx context.Context, req mcp.CompletionRequest) (*mcp.CompletionResult, error) {
+      return &mcp.CompletionResult{
+        Completion: mcp.Completion{Values: []string{"python"}},
+      }, nil
+    },
+    nil,
+  ),
+)
+```
+
+`completion/complete` routes prompt references to the first hook and resource references to the second hook. If a
+specific reference type has no configured hook, AppTheory returns JSON-RPC invalid params instead of broadening to a
+fallback hook.
 
 ---
 
