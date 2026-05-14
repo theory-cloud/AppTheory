@@ -104,6 +104,30 @@ func TestInitializeCapabilities_ExplicitConfigCanDisableSurface(t *testing.T) {
 	}
 }
 
+func TestInitializeCapabilities_AdvertisesResourceSubscribeOnlyWithHooks(t *testing.T) {
+	s := NewServer("test", "dev", WithResourceSubscriptionHooks(
+		func(context.Context, ResourceSubscription) error { return nil },
+		func(context.Context, ResourceSubscription) error { return nil },
+	))
+	if err := s.Resources().RegisterResource(ResourceDef{URI: "file://x", Name: "x"}, func(context.Context) ([]ResourceContent, error) {
+		return []ResourceContent{{URI: "file://x", Text: "x"}}, nil
+	}); err != nil {
+		t.Fatalf("register resource: %v", err)
+	}
+
+	caps := initializeCapabilityMap(t, s)
+	resources, ok := caps["resources"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected resources capability object: %+v", caps)
+	}
+	if resources["subscribe"] != true {
+		t.Fatalf("expected resources.subscribe capability with hooks: %+v", resources)
+	}
+	if _, ok := resources["listChanged"]; ok {
+		t.Fatalf("did not expect resources.listChanged overclaim: %+v", resources)
+	}
+}
+
 func assertNoUnsupportedSubCapabilities(t *testing.T, name string, raw any) {
 	t.Helper()
 	obj, ok := raw.(map[string]any)

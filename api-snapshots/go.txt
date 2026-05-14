@@ -2082,6 +2082,13 @@ type ResourceRegistry struct {
 	index     map[string]int
 }
 
+type ResourceSubscription struct {
+	SessionID string `json:"sessionId"`
+	URI       string `json:"uri"`
+}
+
+type ResourceSubscriptionHook func(context.Context, ResourceSubscription) error
+
 type Response struct {
 	JSONRPC string    `json:"jsonrpc"`
 	ID      any       `json:"id"`
@@ -2105,6 +2112,9 @@ type Server struct {
 	logger           *slog.Logger
 	originValidator  OriginValidator
 	capabilities     CapabilityConfig
+
+	resourceSubscribeHook   ResourceSubscriptionHook
+	resourceUnsubscribeHook ResourceSubscriptionHook
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -2222,6 +2232,8 @@ func WithInitialSessionListenerBudget(InitialSessionListenerBudgetOptions) Serve
 func WithLogger(*slog.Logger) ServerOption
 
 func WithOriginValidator(OriginValidator) ServerOption
+
+func WithResourceSubscriptionHooks(ResourceSubscriptionHook, ResourceSubscriptionHook) ServerOption
 
 func WithServerIDGenerator(apptheory.IDGenerator) ServerOption
 

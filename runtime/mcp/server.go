@@ -37,6 +37,8 @@ const (
 	methodToolsCall                = "tools/call"
 	methodResourcesList            = "resources/list"
 	methodResourcesRead            = "resources/read"
+	methodResourcesSubscribe       = "resources/subscribe"
+	methodResourcesUnsubscribe     = "resources/unsubscribe"
 	methodPromptsList              = "prompts/list"
 	methodPromptsGet               = "prompts/get"
 )
@@ -66,6 +68,9 @@ type Server struct {
 	logger           *slog.Logger
 	originValidator  OriginValidator
 	capabilities     CapabilityConfig
+
+	resourceSubscribeHook   ResourceSubscriptionHook
+	resourceUnsubscribeHook ResourceSubscriptionHook
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -128,6 +133,18 @@ func WithLogger(logger *slog.Logger) ServerOption {
 func WithOriginValidator(v OriginValidator) ServerOption {
 	return func(s *Server) {
 		s.originValidator = v
+	}
+}
+
+// WithResourceSubscriptionHooks enables resources/subscribe and
+// resources/unsubscribe support through explicit hooks.
+//
+// Both hooks must be non-nil before the resource subscribe sub-capability is
+// advertised. The methods still fail closed if either hook is absent.
+func WithResourceSubscriptionHooks(subscribe, unsubscribe ResourceSubscriptionHook) ServerOption {
+	return func(s *Server) {
+		s.resourceSubscribeHook = subscribe
+		s.resourceUnsubscribeHook = unsubscribe
 	}
 }
 
@@ -501,10 +518,10 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 
 // dispatch routes a parsed JSON-RPC request to the appropriate MCP method handler.
 func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
-	return s.dispatchForProtocol(ctx, req, protocolVersion)
+	return s.dispatchForProtocol(ctx, req, protocolVersion, "")
 }
 
-func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocolVersion string) *Response {
+func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocolVersion string, sessionID string) *Response {
 	if !methodAllowedForProtocol(protocolVersion, req.Method) {
 		s.logger.ErrorContext(ctx, "method not found", "method", req.Method, "protocolVersion", protocolVersion)
 		return NewErrorResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("Method not found: %s", req.Method))
@@ -527,6 +544,10 @@ func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocol
 		return s.handleResourcesList(req)
 	case methodResourcesRead:
 		return s.handleResourcesRead(ctx, req)
+	case methodResourcesSubscribe:
+		return s.handleResourcesSubscribe(ctx, req, sessionID)
+	case methodResourcesUnsubscribe:
+		return s.handleResourcesUnsubscribe(ctx, req, sessionID)
 	case methodPromptsList:
 		return s.handlePromptsList(req)
 	case methodPromptsGet:
@@ -551,6 +572,8 @@ func methodAllowedForProtocol(pv string, method string) bool {
 		methodToolsCall,
 		methodResourcesList,
 		methodResourcesRead,
+		methodResourcesSubscribe,
+		methodResourcesUnsubscribe,
 		methodPromptsList,
 		methodPromptsGet:
 		return true
@@ -801,7 +824,7 @@ func (s *Server) runBatchRequests(
 			}
 		}
 
-		responses = append(responses, s.dispatchForProtocol(ctx, req, sessionProtocolVersion(sess)))
+		responses = append(responses, s.dispatchForProtocol(ctx, req, sessionProtocolVersion(sess), sessionID))
 	}
 
 	return createdSessionID, responses
@@ -1196,7 +1219,7 @@ func (s *Server) handleRequestHTTP(
 		return s.handleToolsCallStream(ctx, sessionID, req)
 	}
 
-	resp := s.dispatchForProtocol(ctx, req, requestPV)
+	resp := s.dispatchForProtocol(ctx, req, requestPV, sessionID)
 	return s.marshalSingleResponse(resp, sessionID, false)
 }
 
