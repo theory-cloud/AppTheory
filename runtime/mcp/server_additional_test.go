@@ -277,6 +277,66 @@ func TestRequireProtocolVersion_RejectsUnsupportedAndMismatch(t *testing.T) {
 	}
 }
 
+func TestBatchProtocol_RespectsNegotiatedSessionVersion(t *testing.T) {
+	t.Run("latest session cannot use legacy batch without explicit legacy negotiation", func(t *testing.T) {
+		s := newTestServer()
+		sessionID := initializeSession(t, s)
+
+		resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", []byte(`[{"jsonrpc":"2.0","id":1,"method":"`+methodToolsList+`"}]`), map[string][]string{
+			"content-type":   {"application/json"},
+			"mcp-session-id": {sessionID},
+		})
+		if err != nil {
+			t.Fatalf("invoke batch: %v", err)
+		}
+		if resp.Status != 400 {
+			t.Fatalf("status: got %d want 400 (body=%s)", resp.Status, string(resp.Body))
+		}
+	})
+
+	t.Run("legacy session can use batch without protocol header", func(t *testing.T) {
+		s := newTestServer()
+		sessionID := initializeSessionWithProtocol(t, s, protocolVersionLegacy)
+
+		resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", []byte(`[{"jsonrpc":"2.0","id":1,"method":"`+methodToolsList+`"}]`), map[string][]string{
+			"content-type":   {"application/json"},
+			"mcp-session-id": {sessionID},
+		})
+		if err != nil {
+			t.Fatalf("invoke legacy batch: %v", err)
+		}
+		if resp.Status != 200 {
+			t.Fatalf("status: got %d want 200 (body=%s)", resp.Status, string(resp.Body))
+		}
+	})
+
+	t.Run("batch initialize defaults to legacy protocol", func(t *testing.T) {
+		s := newTestServer()
+		resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", []byte(`[{"jsonrpc":"2.0","id":1,"method":"initialize"}]`), nil)
+		if err != nil {
+			t.Fatalf("invoke batch initialize: %v", err)
+		}
+		if resp.Status != 200 {
+			t.Fatalf("status: got %d want 200 (body=%s)", resp.Status, string(resp.Body))
+		}
+
+		var responses []Response
+		if err := json.Unmarshal(resp.Body, &responses); err != nil {
+			t.Fatalf("unmarshal batch response: %v", err)
+		}
+		if len(responses) != 1 {
+			t.Fatalf("expected one batch response, got %d", len(responses))
+		}
+		result, ok := responses[0].Result.(map[string]any)
+		if !ok {
+			t.Fatalf("expected initialize result object, got %T", responses[0].Result)
+		}
+		if got := result["protocolVersion"]; got != protocolVersionLegacy {
+			t.Fatalf("protocolVersion: got %v want %s", got, protocolVersionLegacy)
+		}
+	})
+}
+
 func TestHandleNotification_Initialized_PersistsSessionFlag(t *testing.T) {
 	s := NewServer("test", "dev")
 	sessionID := initializeSession(t, s)
@@ -303,7 +363,7 @@ func TestHandleNotification_Initialized_PersistsSessionFlag(t *testing.T) {
 
 func TestHandleNotification_NilSession_DoesNotPanic(t *testing.T) {
 	s := NewServer("test", "dev")
-	s.handleNotification(context.Background(), nil, &Request{Method: methodNotificationsInitialized})
+	s.handleNotification(context.Background(), nil, &Request{Method: methodNotificationsInitialized}, protocolVersion)
 }
 
 func TestSessionTTL_EnvOverride_AndFallbacks(t *testing.T) {

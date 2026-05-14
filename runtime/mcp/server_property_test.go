@@ -83,11 +83,24 @@ type tbFatalf interface {
 }
 
 func initializeSession(t tbFatalf, s *Server) string {
+	return initializeSessionWithProtocol(t, s, "")
+}
+
+func initializeSessionWithProtocol(t tbFatalf, s *Server, requestedProtocolVersion string) string {
 	if h, ok := any(t).(interface{ Helper() }); ok {
 		h.Helper()
 	}
 
-	body, err := json.Marshal(Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	var params json.RawMessage
+	if requestedProtocolVersion != "" {
+		paramsBytes, err := json.Marshal(map[string]any{"protocolVersion": requestedProtocolVersion})
+		if err != nil {
+			t.Fatalf("marshal initialize params: %v", err)
+		}
+		params = paramsBytes
+	}
+
+	body, err := json.Marshal(Request{JSONRPC: "2.0", ID: 1, Method: "initialize", Params: params})
 	if err != nil {
 		t.Fatalf("marshal initialize: %v", err)
 	}

@@ -380,7 +380,7 @@ func TestRunBatchRequests_EdgeCases(t *testing.T) {
 	t.Run("missing session yields error response", func(t *testing.T) {
 		_, responses := s.runBatchRequests(context.Background(), []*Request{
 			{JSONRPC: "2.0", ID: 1, Method: methodToolsList},
-		}, "", nil)
+		}, "", nil, protocolVersionLegacy)
 		if len(responses) != 1 || responses[0].Error == nil || responses[0].Error.Code != CodeInvalidRequest {
 			t.Fatalf("expected invalid request error for missing session, got: %+v", responses)
 		}
@@ -389,7 +389,7 @@ func TestRunBatchRequests_EdgeCases(t *testing.T) {
 	t.Run("initialize invalid params yields JSON-RPC error", func(t *testing.T) {
 		_, responses := s.runBatchRequests(context.Background(), []*Request{
 			{JSONRPC: "2.0", ID: 1, Method: methodInitialize, Params: json.RawMessage("{")},
-		}, "", nil)
+		}, "", nil, protocolVersionLegacy)
 		if len(responses) != 1 || responses[0].Error == nil || responses[0].Error.Code != CodeInvalidParams {
 			t.Fatalf("expected invalid params error for initialize, got: %+v", responses)
 		}
@@ -399,7 +399,7 @@ func TestRunBatchRequests_EdgeCases(t *testing.T) {
 		created, responses := s.runBatchRequests(context.Background(), []*Request{
 			{JSONRPC: "2.0", ID: nil, Method: methodInitialize},
 			{JSONRPC: "2.0", ID: 2, Method: methodToolsList},
-		}, "", nil)
+		}, "", nil, protocolVersionLegacy)
 		if created == "" {
 			t.Fatalf("expected initialize notification to create a session id")
 		}
@@ -416,7 +416,7 @@ func TestRunBatchRequests_EdgeCases(t *testing.T) {
 		}))
 		_, responses := s2.runBatchRequests(context.Background(), []*Request{
 			{JSONRPC: "2.0", ID: 1, Method: methodToolsList},
-		}, "sess-1", nil)
+		}, "sess-1", nil, protocolVersionLegacy)
 		if len(responses) != 1 || responses[0].Error == nil || responses[0].Error.Code != CodeInternalError {
 			t.Fatalf("expected internal error response, got: %+v", responses)
 		}
