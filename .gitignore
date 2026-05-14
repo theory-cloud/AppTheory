@@ -15,6 +15,7 @@ node_modules/
 __pycache__/
 *.pyc
 *.egg-info/
+.coverage
 py/.venv/
 
 # OS/editor temp

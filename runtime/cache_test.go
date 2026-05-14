@@ -2,6 +2,15 @@ package apptheory
 
 import "testing"
 
+func TestCacheControlStaticValues(t *testing.T) {
+	if got := CacheControlSSR(); got != "private, no-store" {
+		t.Fatalf("unexpected SSR cache control: %q", got)
+	}
+	if got := CacheControlSSG(); got != "public, max-age=0, s-maxage=31536000" {
+		t.Fatalf("unexpected SSG cache control: %q", got)
+	}
+}
+
 func TestCacheControlISR_NormalizesNegativeValues(t *testing.T) {
 	got := CacheControlISR(-1, -2)
 	if got != "public, max-age=0, s-maxage=0" {

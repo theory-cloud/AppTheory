@@ -57,6 +57,8 @@ Important behaviors for Claude compatibility:
   `mcp.WithInitialSessionListenerBudget(...)`.
 - If the request includes an `Origin` header, the default runtime allowlist is Claude-oriented (`https://claude.ai`,
   `https://claude.com`); use `mcp.WithOriginValidator(...)` for other browser origins.
+- Tool handler panics are recovered as sanitized JSON-RPC internal errors. Do not rely on panic text reaching the
+  client; AppTheory logs it server-side and keeps the MCP server reusable.
 
 ## 2) Add OAuth protection (Remote MCP auth `2025-06-18`)
 
@@ -102,12 +104,19 @@ If you enable the optional Remote MCP stream table, wire a concrete persistent `
 `mcp.NewDynamoStreamStore(db)` with `mcp.WithStreamStore(...)`. `enableStreamTable` alone still only provisions the
 storage and env vars.
 
+If you enable the optional Remote MCP session table, wire `mcp.WithSessionStore(mcp.NewDynamoSessionStore(db))`.
+`DynamoSessionStore.Put` upserts sessions so sliding-session access refreshes TTL/data on the existing item.
+
 `AppTheoryRemoteMcpServer` also provisions the canonical private S3 spill bucket whenever `enableStreamTable` is true.
 The Dynamo stream store keeps small logical events inline in DynamoDB and spills larger events to S3 using the injected
 `MCP_STREAM_SPILL_BUCKET` configuration. The inline spill threshold is bounded to AppTheory's DynamoDB-safe ceiling so
 oversized inline writes fail closed into S3 spill instead of DynamoDB item-size errors. Clients still see one JSON-RPC
 SSE message per logical event, and resume/replay continues to use `Last-Event-ID`; there is no client-visible chunk or
 presigned URL protocol.
+
+Replay reads for S3-spilled events are bounded before validation: AppTheory caps the S3 body read by the recorded event
+byte count and `MCP_STREAM_MAX_EVENT_BYTES`, then verifies the recorded byte count and SHA-256 hash. Oversized,
+truncated, or tampered spill objects fail closed instead of being streamed to the client.
 
 `MCP_STREAM_TTL_MINUTES` is the runtime replay window. `DynamoStreamStore` rejects expired event records before
 resolving `Last-Event-ID` or reading inline/S3-spilled event data, even if DynamoDB TTL or S3 lifecycle cleanup has not

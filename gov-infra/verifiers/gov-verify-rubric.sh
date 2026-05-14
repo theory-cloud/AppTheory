@@ -77,6 +77,10 @@ FAIL_COUNT=0
 BLOCKED_COUNT=0
 
 declare -a RESULTS=()
+declare -a NONPASS_IDS=()
+declare -a NONPASS_STATUSES=()
+declare -a NONPASS_MESSAGES=()
+declare -a NONPASS_EVIDENCE_PATHS=()
 
 json_escape() {
   local s="$1"
@@ -104,6 +108,13 @@ record_result() {
   RESULTS+=(
     "{\"id\":\"$(json_escape "$id")\",\"category\":\"$(json_escape "$category")\",\"status\":\"$(json_escape "$status")\",\"message\":\"$(json_escape "$message")\",\"evidencePath\":\"$(json_escape "$evidence_path")\"}"
   )
+
+  if [[ "$status" != "PASS" ]]; then
+    NONPASS_IDS+=("$id")
+    NONPASS_STATUSES+=("$status")
+    NONPASS_MESSAGES+=("$message")
+    NONPASS_EVIDENCE_PATHS+=("$evidence_path")
+  fi
 }
 
 is_unset_token() {
@@ -275,6 +286,53 @@ ensure_cdk_dist_go_bindings_generated() {
   return 0
 }
 
+file_sha256() {
+  local file_path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${file_path}" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "${file_path}" | awk '{print $1}'
+  else
+    echo "BLOCKED: sha256 tool missing (need sha256sum or shasum)" >&2
+    return 2
+  fi
+}
+
+ensure_ts_runtime_deps_installed() {
+  require_cmd_or_blocked node || return $?
+  require_cmd_or_blocked npm || return $?
+
+  if [[ ! -d "ts" ]]; then
+    echo "FAIL: expected TypeScript project missing: ts/" >&2
+    return 1
+  fi
+  if [[ ! -f "ts/package.json" ]]; then
+    echo "FAIL: expected TypeScript package missing: ts/package.json" >&2
+    return 1
+  fi
+  if [[ ! -f "ts/package-lock.json" ]]; then
+    echo "FAIL: expected TypeScript lockfile missing: ts/package-lock.json" >&2
+    return 1
+  fi
+
+  local lock_hash
+  lock_hash="$(file_sha256 "ts/package-lock.json")" || return $?
+
+  local stamp="ts/node_modules/.gov-ts-runtime-deps.sha256"
+  if [[ -d "ts/node_modules" && -f "${stamp}" ]] && grep -Fxq "${lock_hash}" "${stamp}" 2>/dev/null; then
+    return 0
+  fi
+
+  echo "Installing TypeScript runtime deps into ts/node_modules..." >&2
+  if ! (cd ts && npm ci --no-audit --no-fund >/dev/null); then
+    echo "BLOCKED: failed to install TypeScript runtime dependencies (check network/toolchain)" >&2
+    return 2
+  fi
+
+  printf '%s\n' "${lock_hash}" > "${stamp}"
+  return 0
+}
+
 read_py_runtime_deps() {
   # Reads Python runtime dependencies from py/pyproject.toml (one requirement per line).
   if [[ ! -f "${REPO_ROOT}/py/pyproject.toml" ]]; then
@@ -383,7 +441,9 @@ gov_cmd_unit() {
 
   make test-unit
 
+  ensure_ts_runtime_deps_installed || return $?
   node --test contract-tests/runners/ts/fixtures.test.cjs
+  scripts/verify-ts-tests.sh
   ensure_py_runtime_deps_installed || return $?
   "${GOV_TOOLS_PY_RUNTIME_BIN}/python" contract-tests/runners/py/run.py
   PYTHONPATH="${REPO_ROOT}/py/src" "${GOV_TOOLS_PY_RUNTIME_BIN}/python" -m unittest discover -s py/tests -p "test_*.py"
@@ -393,6 +453,7 @@ gov_cmd_integration() {
   require_cmd_or_blocked node || return $?
   require_cmd_or_blocked npm || return $?
   require_cmd_or_blocked python3 || return $?
+  ensure_ts_runtime_deps_installed || return $?
   scripts/verify-testkit-examples.sh
 }
 
@@ -417,6 +478,7 @@ gov_cmd_contract() {
   require_cmd_or_blocked go || return $?
   require_cmd_or_blocked node || return $?
   require_cmd_or_blocked python3 || return $?
+  ensure_ts_runtime_deps_installed || return $?
   scripts/verify-contract-tests.sh
 }
 
@@ -451,7 +513,17 @@ gov_cmd_vuln() {
     fi
 
     echo "==> govulncheck: ${d}"
-    (cd "${d}" && govulncheck ./...)
+    if [[ "${d}" == "." ]]; then
+      local -a vuln_pkgs=()
+      mapfile -t vuln_pkgs < <(./scripts/list-go-packages.sh)
+      if [[ "${#vuln_pkgs[@]}" -eq 0 ]]; then
+        echo "FAIL: no root Go packages selected for govulncheck" >&2
+        return 1
+      fi
+      govulncheck "${vuln_pkgs[@]}"
+    else
+      (cd "${d}" && govulncheck ./...)
+    fi
   done
 
   local -a node_lockfiles=(
@@ -511,8 +583,8 @@ check_multi_module_health() {
   require_cmd_or_blocked node || return $?
   require_cmd_or_blocked npm || return $?
 
-  echo "Multi-module health: root module (go test ./...)"
-  go test -buildvcs=false ./...
+  echo "Multi-module health: root module (tracked Go packages)"
+  scripts/verify-go.sh
 
   ensure_cdk_dist_go_bindings_generated || return $?
 
@@ -550,15 +622,28 @@ check_toolchain_pins() {
 
   local go_toolchain
   go_toolchain="$(awk '/^toolchain[[:space:]]+/{print $2; exit}' go.mod 2>/dev/null || true)"
-  if [[ -z "${go_toolchain}" ]]; then
-    echo "FAIL: go.mod missing toolchain directive" >&2
+  local go_directive
+  go_directive="$(awk '/^go[[:space:]]+/{print $2; exit}' go.mod 2>/dev/null || true)"
+
+  local go_version
+  local go_pin_source
+  if [[ -n "${go_toolchain}" ]]; then
+    go_version="${go_toolchain#go}"
+    go_pin_source="toolchain ${go_toolchain}"
+  elif [[ -n "${go_directive}" ]]; then
+    # Go removes a redundant `toolchain goX.Y.Z` line when it equals the
+    # active `go X.Y.Z` directive. Treat the go directive as the canonical
+    # pin in that case rather than requiring a line the Go tool immediately
+    # tidies away.
+    go_version="${go_directive}"
+    go_pin_source="go ${go_directive}"
+  else
+    echo "FAIL: go.mod missing go/toolchain directive" >&2
     return 1
   fi
 
-  local go_version="${go_toolchain#go}"
-
   echo "Expected pins (from repo):"
-  echo "- Go toolchain: ${go_toolchain}"
+  echo "- Go: ${go_version} (${go_pin_source})"
   echo "- Node: 24"
   echo "- Python: 3.14"
   echo "- golangci-lint: ${PIN_GOLANGCI_LINT_VERSION}"
@@ -648,9 +733,12 @@ check_go_coverage() {
   rm -f "${cover_out}" "${summary}"
 
   echo "Generating Go coverage profile..."
-  # We exclude generated CDK Go bindings from coverage math to avoid diluting runtime coverage.
-  # These bindings are compile-checked elsewhere (COM-1) but are not meaningful to unit test.
-  mapfile -t pkgs < <(go list ./... | grep -v '/cdk-go/')
+  # We exclude generated bindings, examples, CLI/tooling entrypoints, and contract-test
+  # harnesses from coverage math so the gate measures shipped AppTheory libraries
+  # rather than diluting runtime coverage with non-runtime command packages. Those
+  # excluded surfaces are compile/test-checked by QUA-1, QUA-2, COM-1, SEC-4, and
+  # the release gate.
+  mapfile -t pkgs < <(./scripts/list-go-packages.sh | grep -Ev '^./(cdk-go|examples|contract-tests|scripts|cmd)(/|$)')
   if [[ "${#pkgs[@]}" -eq 0 ]]; then
     echo "FAIL: no Go packages selected for coverage run" >&2
     return 1
@@ -724,6 +812,7 @@ check_ts_coverage() {
   # Enforces TypeScript runtime coverage >= COV_THRESHOLD for the shipped JS under ts/dist/.
   # Primary driver: contract fixtures (same semantics as CON-3), but measured against ts/dist/**.
   require_cmd_or_blocked node || return $?
+  ensure_ts_runtime_deps_installed || return $?
 
   local summary="${EVIDENCE_DIR}/ts-coverage-summary.txt"
   rm -f "${summary}"
@@ -733,11 +822,17 @@ check_ts_coverage() {
     return 1
   fi
 
-  local test_file="contract-tests/runners/ts/fixtures.test.cjs"
-  if [[ ! -f "${test_file}" ]]; then
-    echo "FAIL: missing TS coverage test driver: ${test_file}" >&2
-    return 1
-  fi
+  local -a test_files=(
+    "contract-tests/runners/ts/fixtures.test.cjs"
+    ts/test/*.test.mjs
+  )
+  local test_file
+  for test_file in "${test_files[@]}"; do
+    if [[ ! -f "${test_file}" ]]; then
+      echo "FAIL: missing TS coverage test driver: ${test_file}" >&2
+      return 1
+    fi
+  done
 
   local tmp
   tmp="$(mktemp)"
@@ -745,10 +840,12 @@ check_ts_coverage() {
   # Notes:
   # - Coverage thresholds are enforced by Node itself (no external coverage toolchain).
   # - We include only shipped runtime output under ts/dist/** to prevent denominator games.
+  # - We run both contract fixtures and package unit tests so coverage evidence matches
+  #   the TypeScript test surface enforced elsewhere in the release gate.
   if ! NO_COLOR=1 node --test --experimental-test-coverage \
     --test-coverage-lines="${COV_THRESHOLD}" \
     --test-coverage-include="ts/dist/**/*.js" \
-    "${test_file}" >"${tmp}" 2>&1; then
+    "${test_files[@]}" >"${tmp}" 2>&1; then
     cat "${tmp}"
     if grep -i -F "all files" "${tmp}" > "${summary}"; then :; else tail -n 80 "${tmp}" > "${summary}"; fi
     rm -f "${tmp}"
@@ -1148,7 +1245,13 @@ check_duplicate_semantics() {
   # under cdk-go/ are jsii-generated and contain large, mechanical duplication
   # that would drown out meaningful signal for this gate.
   echo "==> dupl scan: ."
-  golangci-lint run --timeout=5m --config "${cfg}" --enable-only=dupl ./...
+  local -a dupl_pkgs=()
+  mapfile -t dupl_pkgs < <(./scripts/list-go-packages.sh | grep -Ev '^./cdk-go(/|$)')
+  if [[ "${#dupl_pkgs[@]}" -eq 0 ]]; then
+    echo "FAIL: no root Go packages selected for dupl scan" >&2
+    return 1
+  fi
+  golangci-lint run --timeout=5m --config "${cfg}" --enable-only=dupl "${dupl_pkgs[@]}"
 
   echo "duplicate-semantics: PASS"
   return 0
@@ -2084,6 +2187,26 @@ echo "Status: ${OVERALL_STATUS}"
 echo "Pass: ${PASS_COUNT}"
 echo "Fail: ${FAIL_COUNT}"
 echo "Blocked: ${BLOCKED_COUNT}"
+
+if [[ "${OVERALL_STATUS}" != "PASS" ]]; then
+  echo ""
+  echo "=== Failed/Blocked Checks ==="
+
+  failure_tail_lines="${GOV_FAILURE_TAIL_LINES:-80}"
+  if ! [[ "${failure_tail_lines}" =~ ^[0-9]+$ ]]; then
+    failure_tail_lines=80
+  fi
+
+  for i in "${!NONPASS_IDS[@]}"; do
+    echo "${NONPASS_IDS[$i]} ${NONPASS_STATUSES[$i]}: ${NONPASS_MESSAGES[$i]}"
+    echo "Evidence: ${NONPASS_EVIDENCE_PATHS[$i]}"
+    if [[ -f "${NONPASS_EVIDENCE_PATHS[$i]}" ]]; then
+      echo "--- evidence tail (${failure_tail_lines} lines) ---"
+      tail -n "${failure_tail_lines}" "${NONPASS_EVIDENCE_PATHS[$i]}" || true
+      echo "--- end evidence tail ---"
+    fi
+  done
+fi
 
 if [[ "${OVERALL_STATUS}" == "PASS" ]]; then
   exit 0
