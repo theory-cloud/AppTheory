@@ -1945,6 +1945,12 @@ var ErrStreamEventTooLarge = errors.New("stream event too large")
 
 var ErrStreamNotFound = errors.New("stream not found")
 
+type CapabilityConfig struct {
+	Tools     bool
+	Resources bool
+	Prompts   bool
+}
+
 type ContentBlock struct {
 	Type string `json:"type"`
 
@@ -2098,6 +2104,7 @@ type Server struct {
 	idGen            apptheory.IDGenerator
 	logger           *slog.Logger
 	originValidator  OriginValidator
+	capabilities     CapabilityConfig
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -2176,6 +2183,8 @@ type ToolResult struct {
 
 func AllowOrigins(...string) OriginValidator
 
+func DefaultCapabilityConfig() CapabilityConfig
+
 func MarshalResponse(*Response) ([]byte, error)
 
 func NewDynamoSessionStore(tablecore.DB) SessionStore
@@ -2203,6 +2212,8 @@ func ParseBatchRequest([]byte) ([]*Request, error)
 func ParseRequest([]byte) (*Request, error)
 
 func ParseResponse([]byte) (*Response, error)
+
+func WithCapabilityConfig(CapabilityConfig) ServerOption
 
 func WithClock(apptheory.Clock) MemorySessionStoreOption
 
@@ -2283,6 +2294,8 @@ func (*Server) Resources() *ResourceRegistry
 func (*ToolRegistry) Call(context.Context, string, json.RawMessage) (*ToolResult, error)
 
 func (*ToolRegistry) CallStreaming(context.Context, string, json.RawMessage, func(SSEEvent)) (*ToolResult, error)
+
+func (*ToolRegistry) Len() int
 
 func (*ToolRegistry) List() []ToolDef
 
