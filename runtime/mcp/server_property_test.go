@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"pgregory.net/rapid"
@@ -113,6 +114,65 @@ func sessionHeaders(sessionID string) map[string][]string {
 		"content-type":         {"application/json"},
 		"mcp-session-id":       {sessionID},
 		"mcp-protocol-version": {protocolVersion},
+	}
+}
+
+func TestToolsCallBuffered_PanicReturnsInternalError(t *testing.T) {
+	s := NewServer("test-server", "1.0.0")
+	sessionID := initializeSession(t, s)
+
+	if err := s.registry.RegisterTool(
+		ToolDef{
+			Name:        "panic_tool",
+			Description: "Panics during buffered execution",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+		},
+		func(context.Context, json.RawMessage) (*ToolResult, error) {
+			panic("boom")
+		},
+	); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+
+	body := mustMarshal(t, Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  methodToolsCall,
+		Params:  mustMarshal(t, toolsCallParams{Name: "panic_tool", Arguments: json.RawMessage(`{}`)}),
+	})
+
+	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, sessionHeaders(sessionID))
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if resp.Status != 200 {
+		t.Fatalf("status: got %d want 200", resp.Status)
+	}
+	if strings.Contains(string(resp.Body), "boom") {
+		t.Fatalf("panic text leaked into response: %s", string(resp.Body))
+	}
+	rpcResp, parseErr := parseJSONRPCResponse(resp)
+	if parseErr != nil {
+		t.Fatalf("parse: %v", parseErr)
+	}
+	if rpcResp.Error == nil || rpcResp.Error.Code != CodeInternalError || rpcResp.Error.Message != "internal error" {
+		t.Fatalf("expected sanitized internal error, got: %+v", rpcResp.Error)
+	}
+
+	listBody := mustMarshal(t, Request{JSONRPC: "2.0", ID: 2, Method: methodToolsList})
+	resp, err = invokeHandlerWithMethod(context.Background(), s, "POST", listBody, sessionHeaders(sessionID))
+	if err != nil {
+		t.Fatalf("invoke after panic: %v", err)
+	}
+	if resp.Status != 200 {
+		t.Fatalf("status after panic: got %d want 200", resp.Status)
+	}
+	rpcResp, parseErr = parseJSONRPCResponse(resp)
+	if parseErr != nil {
+		t.Fatalf("parse after panic: %v", parseErr)
+	}
+	if rpcResp.Error != nil {
+		t.Fatalf("expected server to remain reusable, got error: %+v", rpcResp.Error)
 	}
 }
 

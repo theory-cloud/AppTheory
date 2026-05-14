@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.5.0](https://github.com/theory-cloud/AppTheory/compare/v1.4.1...v1.5.0) (2026-05-12)
+
+
+### Features
+
+* **mcp:** spill large stream events to s3 ([54bfb05](https://github.com/theory-cloud/AppTheory/commit/54bfb05becc1dd9fdd853b06dfff085bc6f965c2))
+* **mcp:** spill large stream events to s3 ([9d772c7](https://github.com/theory-cloud/AppTheory/commit/9d772c709204aac23c50a6782edc17e8fde88259))
+
+
+### Bug Fixes
+
+* **mcp:** enforce stream replay ttl ([6b7166d](https://github.com/theory-cloud/AppTheory/commit/6b7166d5ed728807c61cdfc94b154f7b9de1dcc9))
+* **mcp:** guard spilled stream appends during delete ([13c0c57](https://github.com/theory-cloud/AppTheory/commit/13c0c57b967d80b7697c7f172910f9a7256fc50f))
+
+## [1.5.0-rc](https://github.com/theory-cloud/AppTheory/compare/v1.4.1...v1.5.0-rc) (2026-05-12)
+
+
+### Features
+
+* **mcp:** spill large stream events to s3 ([54bfb05](https://github.com/theory-cloud/AppTheory/commit/54bfb05becc1dd9fdd853b06dfff085bc6f965c2))
+* **mcp:** spill large stream events to s3 ([9d772c7](https://github.com/theory-cloud/AppTheory/commit/9d772c709204aac23c50a6782edc17e8fde88259))
+
+
+### Bug Fixes
+
+* **mcp:** enforce stream replay ttl ([6b7166d](https://github.com/theory-cloud/AppTheory/commit/6b7166d5ed728807c61cdfc94b154f7b9de1dcc9))
+* **mcp:** guard spilled stream appends during delete ([13c0c57](https://github.com/theory-cloud/AppTheory/commit/13c0c57b967d80b7697c7f172910f9a7256fc50f))
+
 ## [1.4.1](https://github.com/theory-cloud/AppTheory/compare/v1.4.0...v1.4.1) (2026-05-10)
 
 

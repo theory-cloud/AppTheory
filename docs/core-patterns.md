@@ -159,14 +159,19 @@ CORRECT:
 - wire `mcp.NewDynamoStreamStore(db)` or another persistent `StreamStore` in application code if replay must survive
   reconnects and cold starts; for `DynamoStreamStore`, use a standard TableTheory DB with `TransactWrite` in production
   so delete/append races are guarded atomically, and let `MCP_STREAM_TTL_MINUTES` define the runtime replay window
+- wire `mcp.NewDynamoSessionStore(db)` when sessions must survive cold starts; session writes are upserts so TTL refresh
+  does not depend on a delete/recreate cycle
 - let the Remote MCP construct provide the stream table plus S3 spill bucket for durable large logical events; clients
-  still replay by logical `Last-Event-ID`
+  still replay by logical `Last-Event-ID`, and AppTheory bounds S3 spill reads before byte-count/hash validation
+- treat tool panics as server faults: AppTheory recovers them into sanitized JSON-RPC internal errors, not client-visible
+  panic strings
 
 INCORRECT:
 
 - assuming `AppTheoryMcpServer` is a drop-in deployment for resumable Remote MCP
 - assuming `enableStreamTable` alone makes replay durable without `mcp.WithStreamStore(...)`
 - splitting tool results or returning object links to work around stream-store storage limits
+- depending on panic text or duplicate session-create failures as part of product behavior
 
 ## Pattern: sanitize user payloads before logging
 
