@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 )
 
@@ -73,4 +74,80 @@ func TestServePortable_MaxResponseBytesTerminatesBodyReaderLate(t *testing.T) {
 	if string(body) != "abcde" {
 		t.Fatalf("unexpected limited reader body: %q", string(body))
 	}
+}
+
+func TestResponseSizeLimiterDirectBranches(t *testing.T) {
+	limiter := &responseSizeLimiter{max: 5, emitted: 2}
+	if !limiter.allowChunk(0) {
+		t.Fatal("zero-size chunks should be allowed")
+	}
+	if limiter.allowChunk(4) {
+		t.Fatal("expected oversized chunk to trip limiter")
+	}
+	if limiter.allowChunk(1) {
+		t.Fatal("tripped limiter must reject later chunks")
+	}
+
+	limiter = &responseSizeLimiter{max: 5, emitted: 3}
+	emit, overflow := limiter.consumeReader(10)
+	if emit != 2 || !overflow {
+		t.Fatalf("expected partial reader emit with overflow, got emit=%d overflow=%v", emit, overflow)
+	}
+	emit, overflow = limiter.consumeReader(1)
+	if emit != 0 || !overflow {
+		t.Fatalf("expected tripped reader to report overflow, got emit=%d overflow=%v", emit, overflow)
+	}
+
+	limiter = &responseSizeLimiter{max: 1, emitted: 1}
+	emit, overflow = limiter.consumeReader(1)
+	if emit != 0 || !overflow {
+		t.Fatalf("expected no remaining budget, got emit=%d overflow=%v", emit, overflow)
+	}
+}
+
+func TestLimitBodyStreamPassesEmptyAndUpstreamError(t *testing.T) {
+	stream := make(chan StreamChunk, 2)
+	stream <- StreamChunk{Bytes: []byte{}}
+	stream <- StreamChunk{Err: errors.New("upstream")}
+	close(stream)
+
+	limited := limitBodyStream(stream, &responseSizeLimiter{max: 10})
+	first := <-limited
+	if len(first.Bytes) != 0 || first.Err != nil {
+		t.Fatalf("expected empty chunk to pass through, got %#v", first)
+	}
+	second := <-limited
+	if second.Err == nil || second.Err.Error() != "upstream" {
+		t.Fatalf("expected upstream error to pass through, got %#v", second)
+	}
+	if _, ok := <-limited; ok {
+		t.Fatal("expected limited stream to close after upstream error")
+	}
+
+	if limitBodyStream(nil, &responseSizeLimiter{max: 1}) != nil {
+		t.Fatal("nil stream should remain nil")
+	}
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("read failed") }
+
+func TestLimitBodyReaderPassesReadErrorsAndNilInputs(t *testing.T) {
+	if limitBodyReader(nil, &responseSizeLimiter{max: 1}) != nil {
+		t.Fatal("nil reader should remain nil")
+	}
+	reader := strings.NewReader("ok")
+	if limitBodyReader(reader, nil) != reader {
+		t.Fatal("nil limiter should return original reader")
+	}
+
+	limited := limitBodyReader(failingReader{}, &responseSizeLimiter{max: 10})
+	body, err := io.ReadAll(limited)
+	if len(body) != 0 || err == nil || err.Error() != "read failed" {
+		t.Fatalf("expected read failure to propagate, body=%q err=%v", body, err)
+	}
+
+	closeResponseLimitPipeWriter(nil)
+	closeResponseLimitPipeWriterWithError(nil, errors.New("ignored"))
 }
