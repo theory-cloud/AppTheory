@@ -175,6 +175,18 @@ For SSE connections, expect disconnects. Prefer:
 - periodic progress updates during long-running work
 - `GET /mcp` without `Last-Event-ID` as a keepalive listener path
 
+Strict Streamable HTTP compatibility:
+
+- `POST /mcp` clients must send `Content-Type: application/json` and
+  `Accept: application/json, text/event-stream`
+- `GET /mcp` clients must send `Accept: text/event-stream`
+- clients should omit `Mcp-Protocol-Version` after `initialize` or send the exact negotiated session version
+- streaming responses start with an empty-data priming event; clients should store that `id` for reconnect before
+  progress or result messages arrive
+- `Last-Event-ID` replay is stream-bound; AppTheory fails closed if the cursor belongs to another stream
+- canary older clients before rollout, especially clients that previously sent JSON-only `Accept` headers or assumed the
+  first SSE frame was JSON-RPC
+
 If your clients send an `Origin` header, remember that the default runtime allowlist is Claude-oriented:
 
 - `https://claude.ai`

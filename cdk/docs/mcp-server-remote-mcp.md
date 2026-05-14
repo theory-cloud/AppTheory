@@ -101,6 +101,18 @@ For SSE connections, expect disconnects (idle timeouts, client refresh, Lambda m
 - **resumable streams** (`Last-Event-ID`) + replay from an event log
 - emitting periodic progress updates during long-running work
 
+Strict Streamable HTTP compatibility:
+
+- `POST /mcp` clients must send `Content-Type: application/json` and
+  `Accept: application/json, text/event-stream`
+- `GET /mcp` clients must send `Accept: text/event-stream`
+- clients should omit `Mcp-Protocol-Version` after `initialize` or send the exact negotiated session version
+- streaming responses start with an empty-data priming event; clients should store that `id` for reconnect before
+  progress or result messages arrive
+- `Last-Event-ID` replay is stream-bound; AppTheory fails closed if the cursor belongs to another stream
+- canary older clients before rollout, especially clients that previously sent JSON-only `Accept` headers or assumed the
+  first SSE frame was JSON-RPC
+
 When you provision the optional stream table, wire the Go runtime with `mcp.WithStreamStore(mcp.NewDynamoStreamStore(db))`
 to use the canonical `sessionId` / `eventId` / `expiresAt` schema this construct creates. Use the standard TableTheory
 DB for production durable replay; its `TransactWrite` support is what gives `DynamoStreamStore` the strongest
