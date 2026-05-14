@@ -65,9 +65,11 @@ Important behaviors for Claude compatibility:
   `https://claude.com`); use `mcp.WithOriginValidator(...)` for other browser origins.
 - Tool handler panics are recovered as sanitized JSON-RPC internal errors. Do not rely on panic text reaching the
   client; AppTheory logs it server-side and keeps the MCP server reusable.
-- Optional utility capabilities are hook-gated. Resource subscriptions require
-  `mcp.WithResourceSubscriptionHooks(...)`, logging requires `mcp.WithLoggingLevelHook(...)`, and completions require
-  `mcp.WithCompletionHooks(...)`; AppTheory advertises only the hooks you configure.
+- Optional utility methods are hook-gated. Resource subscription requests require
+  `mcp.WithResourceSubscriptionHooks(...)`, logging level requests require `mcp.WithLoggingLevelHook(...)`, and
+  completions require `mcp.WithCompletionHooks(...)`. AppTheory advertises only capabilities it can deliver
+  end-to-end: completions can be advertised with hooks today, while `resources.subscribe` and `logging` remain omitted
+  until the outbound notification contracts for resource updates and log messages exist.
 - `notifications/cancelled` cancels matching in-flight AppTheory requests for the same session and safely ignores
   unknown or already-completed request ids.
 

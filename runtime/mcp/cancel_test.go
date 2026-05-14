@@ -116,6 +116,54 @@ func TestCancellationNotification_IgnoresUnknownAndCompletedRequests(t *testing.
 	}
 }
 
+func TestStreamingCancellation_PersistsTerminalResponseAfterContextCancelled(t *testing.T) {
+	s := NewServer("test", "1.0.0")
+	store := &contextSensitiveStreamStore{}
+	s.streamStore = store
+
+	if err := s.Registry().RegisterStreamingTool(ToolDef{
+		Name:        "canceled",
+		Description: "returns when its context is canceled",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(ctx context.Context, _ json.RawMessage, _ func(SSEEvent)) (*ToolResult, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}); err != nil {
+		t.Fatalf("register streaming tool: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	req := &Request{
+		JSONRPC: jsonrpcVersion,
+		ID:      "stream-req",
+		Method:  methodToolsCall,
+		Params:  mustMarshal(t, toolsCallParams{Name: "canceled", Arguments: json.RawMessage(`{}`)}),
+	}
+
+	finished := false
+	s.runStreamingTool(ctx, "sess-1", "stream-1", req, func() { finished = true })
+
+	if !finished {
+		t.Fatal("expected cancellation tracker finish callback to run")
+	}
+	if !store.closed {
+		t.Fatal("expected canceled stream to be closed with a non-canceled storage context")
+	}
+	if len(store.appends) == 0 {
+		t.Fatal("expected terminal JSON-RPC response to be appended after cancellation")
+	}
+
+	var terminal Response
+	if err := json.Unmarshal(store.appends[len(store.appends)-1], &terminal); err != nil {
+		t.Fatalf("unmarshal terminal response: %v", err)
+	}
+	if terminal.Error == nil || terminal.Error.Code != CodeServerError {
+		t.Fatalf("expected canceled streaming tool to append server error, got %+v", terminal.Error)
+	}
+}
+
 func TestRequestIDKey_CanonicalizesJSONIDs(t *testing.T) {
 	tracker := newCancellationTracker()
 	ctx, finish := tracker.track(context.Background(), "sess-1", float64(1))
@@ -133,4 +181,46 @@ func TestRequestIDKey_CanonicalizesJSONIDs(t *testing.T) {
 	if tracker.cancel("sess-1", json.RawMessage(`null`)) {
 		t.Fatalf("expected null request id to be ignored")
 	}
+}
+
+type contextSensitiveStreamStore struct {
+	appends []json.RawMessage
+	closed  bool
+}
+
+func (s *contextSensitiveStreamStore) Create(ctx context.Context, _ string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return "stream-1", nil
+}
+
+func (s *contextSensitiveStreamStore) Append(ctx context.Context, _, _ string, data json.RawMessage) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	s.appends = append(s.appends, append(json.RawMessage(nil), data...))
+	return "event-1", nil
+}
+
+func (s *contextSensitiveStreamStore) Close(ctx context.Context, _, _ string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.closed = true
+	return nil
+}
+
+func (s *contextSensitiveStreamStore) Subscribe(context.Context, string, string, string) (<-chan StreamEvent, error) {
+	ch := make(chan StreamEvent)
+	close(ch)
+	return ch, nil
+}
+
+func (s *contextSensitiveStreamStore) StreamForEvent(context.Context, string, string) (string, error) {
+	return "", ErrEventNotFound
+}
+
+func (s *contextSensitiveStreamStore) DeleteSession(context.Context, string) error {
+	return nil
 }

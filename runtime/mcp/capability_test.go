@@ -104,7 +104,7 @@ func TestInitializeCapabilities_ExplicitConfigCanDisableSurface(t *testing.T) {
 	}
 }
 
-func TestInitializeCapabilities_AdvertisesResourceSubscribeOnlyWithHooks(t *testing.T) {
+func TestInitializeCapabilities_OmitsResourceSubscribeUntilOutboundNotificationsExist(t *testing.T) {
 	s := NewServer("test", "dev", WithResourceSubscriptionHooks(
 		func(context.Context, ResourceSubscription) error { return nil },
 		func(context.Context, ResourceSubscription) error { return nil },
@@ -120,41 +120,20 @@ func TestInitializeCapabilities_AdvertisesResourceSubscribeOnlyWithHooks(t *test
 	if !ok {
 		t.Fatalf("expected resources capability object: %+v", caps)
 	}
-	if resources["subscribe"] != true {
-		t.Fatalf("expected resources.subscribe capability with hooks: %+v", resources)
+	if _, ok := resources["subscribe"]; ok {
+		t.Fatalf("did not expect resources.subscribe without outbound notification contract: %+v", resources)
 	}
 	if _, ok := resources["listChanged"]; ok {
 		t.Fatalf("did not expect resources.listChanged overclaim: %+v", resources)
 	}
 }
 
-func TestInitializeCapabilities_AdvertisesLoggingOnlyWithHook(t *testing.T) {
+func TestInitializeCapabilities_OmitsLoggingUntilOutboundNotificationsExist(t *testing.T) {
 	s := NewServer("test", "dev", WithLoggingLevelHook(func(context.Context, LoggingLevelRequest) error { return nil }))
 
 	caps := initializeCapabilityMap(t, s)
-	logging, ok := caps["logging"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected logging capability object: %+v", caps)
-	}
-	if len(logging) != 0 {
-		t.Fatalf("expected empty logging capability object: %+v", logging)
-	}
-}
-
-func TestInitializeCapabilities_ExplicitConfigCanDisableLogging(t *testing.T) {
-	s := NewServer("test", "dev",
-		WithCapabilityConfig(CapabilityConfig{
-			Tools:     true,
-			Resources: true,
-			Prompts:   true,
-			Logging:   false,
-		}),
-		WithLoggingLevelHook(func(context.Context, LoggingLevelRequest) error { return nil }),
-	)
-
-	caps := initializeCapabilityMap(t, s)
 	if _, ok := caps["logging"]; ok {
-		t.Fatalf("expected explicitly disabled logging capability to be omitted: %+v", caps)
+		t.Fatalf("did not expect logging without outbound notification contract: %+v", caps)
 	}
 }
 
@@ -182,7 +161,6 @@ func TestInitializeCapabilities_ExplicitConfigCanDisableCompletions(t *testing.T
 			Tools:       true,
 			Resources:   true,
 			Prompts:     true,
-			Logging:     true,
 			Completions: false,
 		}),
 		WithCompletionHooks(
