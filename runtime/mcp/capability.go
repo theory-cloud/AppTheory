@@ -13,6 +13,7 @@ type CapabilityConfig struct {
 	Tools     bool
 	Resources bool
 	Prompts   bool
+	Logging   bool
 }
 
 type capabilitySurface string
@@ -21,6 +22,7 @@ const (
 	capabilitySurfaceTools     capabilitySurface = "tools"
 	capabilitySurfaceResources capabilitySurface = "resources"
 	capabilitySurfacePrompts   capabilitySurface = "prompts"
+	capabilitySurfaceLogging   capabilitySurface = "logging"
 )
 
 // DefaultCapabilityConfig returns the default MCP capability policy.
@@ -33,6 +35,7 @@ func DefaultCapabilityConfig() CapabilityConfig {
 		Tools:     true,
 		Resources: true,
 		Prompts:   true,
+		Logging:   true,
 	}
 }
 
@@ -59,6 +62,9 @@ func (s *Server) initializeCapabilities(protocolVersion string) map[string]any {
 	}
 	if s.capabilities.Prompts && protocolSupportsCapability(protocolVersion, capabilitySurfacePrompts) && s.promptRegistry.Len() > 0 {
 		capabilities["prompts"] = map[string]any{}
+	}
+	if s.capabilities.Logging && protocolSupportsCapability(protocolVersion, capabilitySurfaceLogging) && s.loggingLevelHook != nil {
+		capabilities["logging"] = map[string]any{}
 	}
 
 	return capabilities

@@ -39,6 +39,7 @@ const (
 	methodResourcesRead            = "resources/read"
 	methodResourcesSubscribe       = "resources/subscribe"
 	methodResourcesUnsubscribe     = "resources/unsubscribe"
+	methodLoggingSetLevel          = "logging/setLevel"
 	methodPromptsList              = "prompts/list"
 	methodPromptsGet               = "prompts/get"
 )
@@ -71,6 +72,7 @@ type Server struct {
 
 	resourceSubscribeHook   ResourceSubscriptionHook
 	resourceUnsubscribeHook ResourceSubscriptionHook
+	loggingLevelHook        LoggingLevelHook
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -145,6 +147,14 @@ func WithResourceSubscriptionHooks(subscribe, unsubscribe ResourceSubscriptionHo
 	return func(s *Server) {
 		s.resourceSubscribeHook = subscribe
 		s.resourceUnsubscribeHook = unsubscribe
+	}
+}
+
+// WithLoggingLevelHook enables logging/setLevel support through an explicit
+// hook.
+func WithLoggingLevelHook(hook LoggingLevelHook) ServerOption {
+	return func(s *Server) {
+		s.loggingLevelHook = hook
 	}
 }
 
@@ -548,6 +558,8 @@ func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocol
 		return s.handleResourcesSubscribe(ctx, req, sessionID)
 	case methodResourcesUnsubscribe:
 		return s.handleResourcesUnsubscribe(ctx, req, sessionID)
+	case methodLoggingSetLevel:
+		return s.handleLoggingSetLevel(ctx, req, sessionID)
 	case methodPromptsList:
 		return s.handlePromptsList(req)
 	case methodPromptsGet:
@@ -574,6 +586,7 @@ func methodAllowedForProtocol(pv string, method string) bool {
 		methodResourcesRead,
 		methodResourcesSubscribe,
 		methodResourcesUnsubscribe,
+		methodLoggingSetLevel,
 		methodPromptsList,
 		methodPromptsGet:
 		return true
