@@ -128,6 +128,36 @@ func TestInitializeCapabilities_AdvertisesResourceSubscribeOnlyWithHooks(t *test
 	}
 }
 
+func TestInitializeCapabilities_AdvertisesLoggingOnlyWithHook(t *testing.T) {
+	s := NewServer("test", "dev", WithLoggingLevelHook(func(context.Context, LoggingLevelRequest) error { return nil }))
+
+	caps := initializeCapabilityMap(t, s)
+	logging, ok := caps["logging"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected logging capability object: %+v", caps)
+	}
+	if len(logging) != 0 {
+		t.Fatalf("expected empty logging capability object: %+v", logging)
+	}
+}
+
+func TestInitializeCapabilities_ExplicitConfigCanDisableLogging(t *testing.T) {
+	s := NewServer("test", "dev",
+		WithCapabilityConfig(CapabilityConfig{
+			Tools:     true,
+			Resources: true,
+			Prompts:   true,
+			Logging:   false,
+		}),
+		WithLoggingLevelHook(func(context.Context, LoggingLevelRequest) error { return nil }),
+	)
+
+	caps := initializeCapabilityMap(t, s)
+	if _, ok := caps["logging"]; ok {
+		t.Fatalf("expected explicitly disabled logging capability to be omitted: %+v", caps)
+	}
+}
+
 func assertNoUnsupportedSubCapabilities(t *testing.T, name string, raw any) {
 	t.Helper()
 	obj, ok := raw.(map[string]any)

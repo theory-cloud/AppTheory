@@ -1937,6 +1937,22 @@ const CodeParseError = -32700
 
 const CodeServerError = -32000
 
+const LoggingLevelAlert LoggingLevel = "alert"
+
+const LoggingLevelCritical LoggingLevel = "critical"
+
+const LoggingLevelDebug LoggingLevel = "debug"
+
+const LoggingLevelEmergency LoggingLevel = "emergency"
+
+const LoggingLevelError LoggingLevel = "error"
+
+const LoggingLevelInfo LoggingLevel = "info"
+
+const LoggingLevelNotice LoggingLevel = "notice"
+
+const LoggingLevelWarning LoggingLevel = "warning"
+
 var ErrEventNotFound = errors.New("event not found")
 
 var ErrSessionNotFound = errors.New("session not found")
@@ -1949,6 +1965,7 @@ type CapabilityConfig struct {
 	Tools     bool
 	Resources bool
 	Prompts   bool
+	Logging   bool
 }
 
 type ContentBlock struct {
@@ -1993,6 +2010,15 @@ type Icon struct {
 type InitialSessionListenerBudgetOptions struct {
 	SafetyBuffer time.Duration
 	MaxDuration  time.Duration
+}
+
+type LoggingLevel string
+
+type LoggingLevelHook func(context.Context, LoggingLevelRequest) error
+
+type LoggingLevelRequest struct {
+	SessionID string       `json:"sessionId"`
+	Level     LoggingLevel `json:"level"`
 }
 
 type MemorySessionStore struct {
@@ -2115,6 +2141,7 @@ type Server struct {
 
 	resourceSubscribeHook   ResourceSubscriptionHook
 	resourceUnsubscribeHook ResourceSubscriptionHook
+	loggingLevelHook        LoggingLevelHook
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -2230,6 +2257,8 @@ func WithClock(apptheory.Clock) MemorySessionStoreOption
 func WithInitialSessionListenerBudget(InitialSessionListenerBudgetOptions) ServerOption
 
 func WithLogger(*slog.Logger) ServerOption
+
+func WithLoggingLevelHook(LoggingLevelHook) ServerOption
 
 func WithOriginValidator(OriginValidator) ServerOption
 
