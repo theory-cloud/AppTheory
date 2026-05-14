@@ -165,6 +165,9 @@ CORRECT:
   still replay by logical `Last-Event-ID`, and AppTheory bounds S3 spill reads before byte-count/hash validation
 - treat tool panics as server faults: AppTheory recovers them into sanitized JSON-RPC internal errors, not client-visible
   panic strings
+- keep optional MCP utility capabilities hook-gated: resource subscriptions, logging, and completions are advertised
+  only by AppTheory after the matching hook is configured, and cancellation notifications only cancel tracked
+  in-flight requests for the same session
 
 INCORRECT:
 
@@ -172,6 +175,8 @@ INCORRECT:
 - assuming `enableStreamTable` alone makes replay durable without `mcp.WithStreamStore(...)`
 - splitting tool results or returning object links to work around stream-store storage limits
 - depending on panic text or duplicate session-create failures as part of product behavior
+- hard-coding `resources.subscribe`, `logging`, or `completions` in a product wrapper before product authorization,
+  tenant policy, and abuse controls are wired
 
 ## Pattern: sanitize user payloads before logging
 
