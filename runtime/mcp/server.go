@@ -273,11 +273,11 @@ func (s *Server) handlePOSTRequest(ctx context.Context, body []byte, headers map
 
 	// Notifications return 202 Accepted with no body.
 	if req.ID == nil {
-		s.handleNotification(ctx, sess, req)
+		s.handleNotification(ctx, sess, req, sessionProtocolVersion(sess))
 		return &apptheory.Response{Status: 202}, nil
 	}
 
-	return s.handleRequestHTTP(ctx, sessionID, req, headers)
+	return s.handleRequestHTTP(ctx, sessionID, sess, req, headers)
 }
 
 func (s *Server) handlePOSTResponse(ctx context.Context, body []byte, headers map[string][]string) (*apptheory.Response, error) {
@@ -492,6 +492,15 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 
 // dispatch routes a parsed JSON-RPC request to the appropriate MCP method handler.
 func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
+	return s.dispatchForProtocol(ctx, req, protocolVersion)
+}
+
+func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocolVersion string) *Response {
+	if !methodAllowedForProtocol(protocolVersion, req.Method) {
+		s.logger.ErrorContext(ctx, "method not found", "method", req.Method, "protocolVersion", protocolVersion)
+		return NewErrorResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("Method not found: %s", req.Method))
+	}
+
 	switch req.Method {
 	case methodInitialize:
 		selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
@@ -516,6 +525,28 @@ func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
 	default:
 		s.logger.ErrorContext(ctx, "method not found", "method", req.Method)
 		return NewErrorResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("Method not found: %s", req.Method))
+	}
+}
+
+func methodAllowedForProtocol(pv string, method string) bool {
+	if !isSupportedProtocolVersion(pv) {
+		return false
+	}
+
+	switch method {
+	case methodInitialize,
+		methodNotificationsInitialized,
+		methodNotificationsCancelled,
+		methodPing,
+		methodToolsList,
+		methodToolsCall,
+		methodResourcesList,
+		methodResourcesRead,
+		methodPromptsList,
+		methodPromptsGet:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -651,7 +682,15 @@ func (s *Server) handleBatch(ctx context.Context, body []byte, headers map[strin
 		return sessErrResp, nil
 	}
 
-	createdSessionID, responses := s.runBatchRequests(ctx, requests, sessionID, sess)
+	batchPV, pvResp := batchProtocolVersion(headers, sess)
+	if pvResp != nil {
+		return pvResp, nil
+	}
+	if batchPV != protocolVersionLegacy {
+		return badRequest("batch requests are only supported for MCP-Protocol-Version 2025-03-26"), nil
+	}
+
+	createdSessionID, responses := s.runBatchRequests(ctx, requests, sessionID, sess, batchPV)
 
 	if len(responses) == 0 {
 		return &apptheory.Response{Status: 202}, nil
@@ -706,12 +745,18 @@ func (s *Server) loadBatchSession(ctx context.Context, sessionID string) (*Sessi
 	}
 }
 
-func (s *Server) runBatchRequests(ctx context.Context, requests []*Request, sessionID string, sess *Session) (createdSessionID string, responses []*Response) {
+func (s *Server) runBatchRequests(
+	ctx context.Context,
+	requests []*Request,
+	sessionID string,
+	sess *Session,
+	batchProtocolVersion string,
+) (createdSessionID string, responses []*Response) {
 	responses = make([]*Response, 0, len(requests))
 
 	for _, req := range requests {
 		if req.Method == methodInitialize {
-			initResp, newSess, initErr := s.handleInitializeBatch(ctx, req)
+			initResp, newSess, initErr := s.handleInitializeBatch(ctx, req, batchProtocolVersion)
 			if initErr != nil {
 				// Return initialize error as a normal JSON-RPC error response.
 				if req.ID != nil {
@@ -747,7 +792,7 @@ func (s *Server) runBatchRequests(ctx context.Context, requests []*Request, sess
 			}
 		}
 
-		responses = append(responses, s.dispatch(ctx, req))
+		responses = append(responses, s.dispatchForProtocol(ctx, req, sessionProtocolVersion(sess)))
 	}
 
 	return createdSessionID, responses
@@ -853,21 +898,39 @@ func isSupportedProtocolVersion(v string) bool {
 }
 
 func (s *Server) requireProtocolVersion(headers map[string][]string, sess *Session) *apptheory.Response {
+	_, resp := requestProtocolVersion(headers, sess)
+	return resp
+}
+
+func requestProtocolVersion(headers map[string][]string, sess *Session) (string, *apptheory.Response) {
 	v := firstHeader(headers, headerMcpProtocolVersion)
 	if v == "" {
 		// Header is optional. When absent, behavior defaults to the session's
 		// negotiated protocol (if any) and otherwise the legacy default.
-		return nil
+		return sessionProtocolVersion(sess), nil
 	}
 	if !isSupportedProtocolVersion(v) {
-		return badRequest("unsupported MCP-Protocol-Version")
+		return "", badRequest("unsupported MCP-Protocol-Version")
 	}
 	if sess != nil && sess.Data != nil {
 		if expected := sess.Data["protocolVersion"]; expected != "" && expected != v {
-			return badRequest("MCP-Protocol-Version mismatch")
+			return "", badRequest("MCP-Protocol-Version mismatch")
 		}
 	}
-	return nil
+	return v, nil
+}
+
+func batchProtocolVersion(headers map[string][]string, sess *Session) (string, *apptheory.Response) {
+	return requestProtocolVersion(headers, sess)
+}
+
+func sessionProtocolVersion(sess *Session) string {
+	if sess != nil && sess.Data != nil {
+		if pv := strings.TrimSpace(sess.Data["protocolVersion"]); isSupportedProtocolVersion(pv) {
+			return pv
+		}
+	}
+	return protocolVersionLegacy
 }
 
 func (s *Server) requireSession(ctx context.Context, headers map[string][]string) (string, *Session, *apptheory.Response) {
@@ -932,7 +995,14 @@ func (s *Server) handleInitializeHTTP(ctx context.Context, req *Request) (*appth
 }
 
 func (s *Server) negotiateInitializeProtocolVersion(req *Request) (string, *Response) {
-	selected := protocolVersion
+	return s.negotiateInitializeProtocolVersionDefault(req, protocolVersion)
+}
+
+func (s *Server) negotiateInitializeProtocolVersionDefault(req *Request, defaultProtocolVersion string) (string, *Response) {
+	selected := defaultProtocolVersion
+	if !isSupportedProtocolVersion(selected) {
+		selected = protocolVersion
+	}
 	if len(req.Params) == 0 {
 		return selected, nil
 	}
@@ -977,10 +1047,13 @@ func (s *Server) createSession(ctx context.Context, selectedPV string) (*Session
 	return sess, nil
 }
 
-func (s *Server) handleInitializeBatch(ctx context.Context, req *Request) (*Response, *Session, *Response) {
-	selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
+func (s *Server) handleInitializeBatch(ctx context.Context, req *Request, batchProtocolVersion string) (*Response, *Session, *Response) {
+	selectedPV, errResp := s.negotiateInitializeProtocolVersionDefault(req, batchProtocolVersion)
 	if errResp != nil {
 		return nil, nil, errResp
+	}
+	if selectedPV != batchProtocolVersion {
+		return nil, nil, NewErrorResponse(req.ID, CodeInvalidParams, "batch initialize requires protocolVersion "+batchProtocolVersion)
 	}
 	sess, err := s.createSession(ctx, selectedPV)
 	if err != nil {
@@ -989,7 +1062,11 @@ func (s *Server) handleInitializeBatch(ctx context.Context, req *Request) (*Resp
 	return s.handleInitialize(req, selectedPV), sess, nil
 }
 
-func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Request) {
+func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Request, protocolVersion string) {
+	if !methodAllowedForProtocol(protocolVersion, req.Method) {
+		return
+	}
+
 	switch req.Method {
 	case methodNotificationsInitialized:
 		if sess == nil {
@@ -1009,12 +1086,19 @@ func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Req
 	}
 }
 
-func (s *Server) handleRequestHTTP(ctx context.Context, sessionID string, req *Request, headers map[string][]string) (*apptheory.Response, error) {
+func (s *Server) handleRequestHTTP(
+	ctx context.Context,
+	sessionID string,
+	sess *Session,
+	req *Request,
+	headers map[string][]string,
+) (*apptheory.Response, error) {
+	requestPV := sessionProtocolVersion(sess)
 	if req.Method == methodToolsCall && acceptsEventStream(headers) {
 		return s.handleToolsCallStream(ctx, sessionID, req)
 	}
 
-	resp := s.dispatch(ctx, req)
+	resp := s.dispatchForProtocol(ctx, req, requestPV)
 	return s.marshalSingleResponse(resp, sessionID, false)
 }
 

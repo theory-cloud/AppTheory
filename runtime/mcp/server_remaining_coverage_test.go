@@ -329,7 +329,7 @@ func TestServerHelpersAndInternalBranches(t *testing.T) {
 			},
 		}))
 
-		_, sess, errResp := s.handleInitializeBatch(context.Background(), &Request{JSONRPC: "2.0", ID: 1, Method: methodInitialize})
+		_, sess, errResp := s.handleInitializeBatch(context.Background(), &Request{JSONRPC: "2.0", ID: 1, Method: methodInitialize}, protocolVersionLegacy)
 		if sess != nil {
 			t.Fatalf("expected nil session on failure")
 		}
@@ -345,7 +345,7 @@ func TestServerHelpersAndInternalBranches(t *testing.T) {
 			},
 		}))
 		sess := &Session{ID: "s1"}
-		s.handleNotification(context.Background(), sess, &Request{Method: methodNotificationsInitialized})
+		s.handleNotification(context.Background(), sess, &Request{Method: methodNotificationsInitialized}, protocolVersion)
 		if sess.Data == nil || sess.Data["initialized"] != sessionInitializedValue {
 			t.Fatalf("expected initialized flag to be set, got: %+v", sess.Data)
 		}

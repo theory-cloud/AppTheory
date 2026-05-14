@@ -97,7 +97,8 @@ Other transport notes:
 
 - posted client responses are accepted for Streamable HTTP compliance and return `202 Accepted` with no body
 - notifications also return `202 Accepted` with no body
-- JSON-RPC batch requests are only supported for legacy `2025-03-26` callers
+- JSON-RPC batch requests are only supported for legacy `2025-03-26` callers; after a session is established, batch
+  dispatch uses the session's negotiated protocol version when the request omits `mcp-protocol-version`
 
 ### Runtime hardening guarantees
 
@@ -112,14 +113,20 @@ The MCP runtime fails closed around tool execution and durable replay:
 
 ### Capabilities advertisement (`initialize`)
 
-The `initialize` result always advertises `tools`.
+The `initialize` result advertises only surfaces that are both enabled in `mcp.CapabilityConfig` and actually registered
+on the server:
 
-It advertises `resources` and `prompts` only when something is registered:
+- if `srv.Registry().Len() > 0` and tools are enabled -> `"tools": {}`
+- if `srv.Resources().Len() > 0` and resources are enabled -> `"resources": {}`
+- if `srv.Prompts().Len() > 0` and prompts are enabled -> `"prompts": {}`
 
-- if `srv.Resources().Len() > 0` -> `"resources": {}`
-- if `srv.Prompts().Len() > 0` -> `"prompts": {}`
+The default capability policy enables the implemented surfaces, but registration is still required before they are
+advertised. Use `mcp.WithCapabilityConfig(...)` to withhold an implemented surface for a product rollout.
 
-This keeps tools-only clients stable while still exposing the broader MCP surface when you opt in.
+Unsupported optional MCP capabilities are fail-closed: AppTheory does not advertise `listChanged`, resource
+subscriptions, `logging`, `completions`, or `tasks` until the corresponding framework hook exists and is configured.
+Capability construction is also protocol-aware; if a future supported protocol version removes or changes a capability,
+AppTheory omits that capability for sessions negotiated to that version.
 
 ---
 
