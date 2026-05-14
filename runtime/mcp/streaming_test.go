@@ -24,6 +24,32 @@ func readSSEFrame(r *bufio.Reader) (string, error) {
 	}
 }
 
+func sseFrameID(t *testing.T, frame string) string {
+	t.Helper()
+	for _, line := range strings.Split(frame, "\n") {
+		if strings.HasPrefix(line, "id: ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "id: "))
+		}
+	}
+	t.Fatalf("expected SSE frame to include an id line, got:\n%s", frame)
+	return ""
+}
+
+func requirePrimingSSEFrame(t *testing.T, frame string) string {
+	t.Helper()
+	id := sseFrameID(t, frame)
+	if strings.Contains(frame, "event: message\n") {
+		t.Fatalf("expected priming frame to omit message event name, got:\n%s", frame)
+	}
+	if !strings.Contains(frame, "data: \n") {
+		t.Fatalf("expected priming frame to contain an empty data field, got:\n%s", frame)
+	}
+	if strings.Contains(frame, `"jsonrpc"`) {
+		t.Fatalf("expected priming frame to omit JSON-RPC payload, got:\n%s", frame)
+	}
+	return id
+}
+
 func TestToolsCallStreaming_StreamsProgressIncrementally(t *testing.T) {
 	s := NewServer("test-server", "1.0.0")
 
@@ -78,18 +104,12 @@ func TestToolsCallStreaming_StreamsProgressIncrementally(t *testing.T) {
 
 	reader := bufio.NewReader(resp.BodyReader)
 
-	select {
-	case <-firstEmitted:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("timed out waiting for first progress emission")
-	}
-
 	firstFrameCh := make(chan string, 1)
 	firstFrameErrCh := make(chan error, 1)
 	go func() {
-		frame, err := readSSEFrame(reader)
-		if err != nil {
-			firstFrameErrCh <- err
+		frame, readErr := readSSEFrame(reader)
+		if readErr != nil {
+			firstFrameErrCh <- readErr
 			return
 		}
 		firstFrameCh <- frame
@@ -98,20 +118,32 @@ func TestToolsCallStreaming_StreamsProgressIncrementally(t *testing.T) {
 	var firstFrame string
 	select {
 	case firstFrame = <-firstFrameCh:
-	case err := <-firstFrameErrCh:
-		t.Fatalf("read first SSE frame: %v", err)
+	case frameErr := <-firstFrameErrCh:
+		t.Fatalf("read first SSE frame: %v", frameErr)
 	case <-time.After(2 * time.Second):
 		t.Fatalf("timed out waiting for first SSE frame")
 	}
+	requirePrimingSSEFrame(t, firstFrame)
 
-	if !strings.Contains(firstFrame, "event: message\n") {
-		t.Fatalf("expected first frame to be message event, got:\n%s", firstFrame)
+	select {
+	case <-firstEmitted:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for first progress emission")
 	}
-	if !strings.Contains(firstFrame, `"method":"notifications/progress"`) {
-		t.Fatalf("expected first frame to be progress notification, got:\n%s", firstFrame)
+
+	progressFrame, err := readSSEFrame(reader)
+	if err != nil {
+		t.Fatalf("read progress SSE frame: %v", err)
 	}
-	if !strings.Contains(firstFrame, `"progressToken":"pt-123"`) {
-		t.Fatalf("expected first frame to contain progressToken, got:\n%s", firstFrame)
+
+	if !strings.Contains(progressFrame, "event: message\n") {
+		t.Fatalf("expected progress frame to be message event, got:\n%s", progressFrame)
+	}
+	if !strings.Contains(progressFrame, `"method":"notifications/progress"`) {
+		t.Fatalf("expected progress frame to be progress notification, got:\n%s", progressFrame)
+	}
+	if !strings.Contains(progressFrame, `"progressToken":"pt-123"`) {
+		t.Fatalf("expected progress frame to contain progressToken, got:\n%s", progressFrame)
 	}
 
 	close(continueTool)
@@ -136,7 +168,7 @@ func TestToolsCallStreaming_StreamsProgressIncrementally(t *testing.T) {
 		t.Fatalf("timed out reading rest of SSE stream")
 	}
 
-	all := firstFrame + string(rest)
+	all := firstFrame + progressFrame + string(rest)
 	if !strings.Contains(all, `"method":"notifications/progress"`) {
 		t.Fatalf("expected SSE stream to contain progress notification, got:\n%s", all)
 	}
@@ -200,15 +232,21 @@ func TestToolsCallStreaming_ProgressToken_NumberIsPreserved(t *testing.T) {
 		t.Fatalf("timed out waiting for first progress emission")
 	}
 
+	primingFrame, err := readSSEFrame(reader)
+	if err != nil {
+		t.Fatalf("read priming SSE frame: %v", err)
+	}
+	requirePrimingSSEFrame(t, primingFrame)
+
 	firstFrame, err := readSSEFrame(reader)
 	if err != nil {
-		t.Fatalf("read first SSE frame: %v", err)
+		t.Fatalf("read first progress SSE frame: %v", err)
 	}
 	if !strings.Contains(firstFrame, `"method":"notifications/progress"`) {
-		t.Fatalf("expected first frame to be progress notification, got:\n%s", firstFrame)
+		t.Fatalf("expected first progress frame to be progress notification, got:\n%s", firstFrame)
 	}
 	if !strings.Contains(firstFrame, `"progressToken":123`) {
-		t.Fatalf("expected first frame to contain numeric progressToken, got:\n%s", firstFrame)
+		t.Fatalf("expected first progress frame to contain numeric progressToken, got:\n%s", firstFrame)
 	}
 
 	close(continueTool)
@@ -273,29 +311,26 @@ func TestToolsCallStreaming_CanResumeViaGETWithLastEventID(t *testing.T) {
 		t.Fatalf("timed out waiting for first progress emission")
 	}
 
+	primingFrame, err := readSSEFrame(reader)
+	if err != nil {
+		t.Fatalf("read priming SSE frame: %v", err)
+	}
+	requirePrimingSSEFrame(t, primingFrame)
+
 	firstFrame, err := readSSEFrame(reader)
 	if err != nil {
-		t.Fatalf("read first SSE frame: %v", err)
+		t.Fatalf("read first progress SSE frame: %v", err)
 	}
 
 	if !strings.Contains(firstFrame, "event: message\n") {
-		t.Fatalf("expected first frame to be message event, got:\n%s", firstFrame)
+		t.Fatalf("expected first progress frame to be message event, got:\n%s", firstFrame)
 	}
 	if !strings.Contains(firstFrame, `"method":"notifications/progress"`) {
-		t.Fatalf("expected first frame to be progress notification, got:\n%s", firstFrame)
+		t.Fatalf("expected first progress frame to be progress notification, got:\n%s", firstFrame)
 	}
 
 	// Capture the SSE id to use as Last-Event-ID.
-	lastID := ""
-	for _, line := range strings.Split(firstFrame, "\n") {
-		if strings.HasPrefix(line, "id: ") {
-			lastID = strings.TrimSpace(strings.TrimPrefix(line, "id: "))
-			break
-		}
-	}
-	if lastID == "" {
-		t.Fatalf("expected first frame to include an id line, got:\n%s", firstFrame)
-	}
+	lastID := sseFrameID(t, firstFrame)
 
 	// Simulate disconnect: stop the POST stream.
 	cancel()
@@ -334,6 +369,99 @@ func TestToolsCallStreaming_CanResumeViaGETWithLastEventID(t *testing.T) {
 	}
 	if !strings.Contains(all, `"result"`) {
 		t.Fatalf("expected resumed stream to contain final result, got:\n%s", all)
+	}
+}
+
+func TestToolsCallStreaming_PrimingEventAllowsResumeBeforeMessages(t *testing.T) {
+	s := NewServer("test-server", "1.0.0")
+	sessionID := initializeSession(t, s)
+
+	toolEntered := make(chan struct{})
+	continueTool := make(chan struct{})
+	toolDone := make(chan struct{})
+
+	if err := s.registry.RegisterStreamingTool(
+		ToolDef{
+			Name:        "delayed_tool",
+			Description: "Waits before emitting progress",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+		},
+		func(ctx context.Context, _ json.RawMessage, emit func(SSEEvent)) (*ToolResult, error) {
+			defer close(toolDone)
+			close(toolEntered)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-continueTool:
+			}
+			emit(SSEEvent{Data: map[string]any{"seq": 1}})
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
+		},
+	); err != nil {
+		t.Fatalf("register streaming tool: %v", err)
+	}
+
+	params := toolsCallParams{Name: "delayed_tool", Arguments: json.RawMessage(`{}`)}
+	params.Meta.ProgressToken = json.RawMessage(`"pt-primed"`)
+	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: mustMarshal(t, params)})
+
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"application/json, text/event-stream"}
+
+	reqCtx, cancel := context.WithCancel(context.Background())
+	resp, err := invokeHandlerWithMethod(reqCtx, s, "POST", body, headers)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if resp.BodyReader == nil {
+		t.Fatalf("expected streaming response BodyReader to be set")
+	}
+
+	reader := bufio.NewReader(resp.BodyReader)
+	primingFrame, err := readSSEFrame(reader)
+	if err != nil {
+		t.Fatalf("read priming frame: %v", err)
+	}
+	primingID := requirePrimingSSEFrame(t, primingFrame)
+
+	select {
+	case <-toolEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for tool to enter")
+	}
+
+	cancel()
+	close(continueTool)
+	select {
+	case <-toolDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for tool completion")
+	}
+
+	getHeaders := sseSessionHeaders(sessionID)
+	getHeaders["last-event-id"] = []string{primingID}
+
+	getResp, err := invokeHandlerWithMethod(context.Background(), s, "GET", nil, getHeaders)
+	if err != nil {
+		t.Fatalf("invoke GET: %v", err)
+	}
+	if getResp.BodyReader == nil {
+		t.Fatalf("expected GET response BodyReader to be set")
+	}
+
+	b, err := io.ReadAll(getResp.BodyReader)
+	if err != nil {
+		t.Fatalf("read GET SSE: %v", err)
+	}
+	all := string(b)
+	if !strings.Contains(all, `"method":"notifications/progress"`) {
+		t.Fatalf("expected replay after priming id to include progress notification, got:\n%s", all)
+	}
+	if !strings.Contains(all, `"progressToken":"pt-primed"`) {
+		t.Fatalf("expected replay after priming id to include progress token, got:\n%s", all)
+	}
+	if !strings.Contains(all, `"result"`) {
+		t.Fatalf("expected replay after priming id to include final result, got:\n%s", all)
 	}
 }
 

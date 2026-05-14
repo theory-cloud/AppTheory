@@ -191,8 +191,9 @@ ordinary tools return buffered JSON even though the client advertises SSE suppor
 
 For streaming tools, AppTheory responds as SSE:
 
-- every SSE frame is `event: message`
-- the frame `data:` is always a single JSON-RPC message
+- the first frame is a replay priming event with an `id` and an empty `data:` field
+- after the priming event, each application frame is `event: message`
+- application frame `data:` values are always a single JSON-RPC message
 - progress is emitted as JSON-RPC `notifications/progress`
 - the progress notification is correlated with `params._meta.progressToken` from the original `tools/call`
 - `progressToken` may be a string or an integer
@@ -223,8 +224,15 @@ Important deployment note:
 
 For streaming tool calls, AppTheory assigns SSE event ids and persists them in the active `StreamStore`.
 
+- each SSE stream starts with a persisted empty-data priming event so a client can reconnect before any JSON-RPC
+  progress or result message has been produced
 - `GET /mcp` with `last-event-id: <id>` resumes or replays that stream
+- `last-event-id` must belong to the stream being resumed; AppTheory fails closed instead of replaying events from a
+  different stream
 - clients must reuse the same `mcp-session-id`
+- clients should store the latest SSE `id`, reconnect with `GET /mcp` and `last-event-id` after any disconnect, and
+  treat disconnect as transport loss rather than tool cancellation
+- cancellation remains explicit: send `notifications/cancelled` instead of relying on a dropped connection
 - `GET /mcp` without `last-event-id` emits one keepalive comment and closes by default so idle callers do not hold
   Lambda concurrency indefinitely
 - if you want that path to stay open for a bounded window before EOF, opt in with

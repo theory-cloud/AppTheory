@@ -83,6 +83,43 @@ func TestResourcesListAndRead_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestResourceAndPromptRegistryValidation(t *testing.T) {
+	resources := NewResourceRegistry()
+	if err := resources.RegisterResource(ResourceDef{}, func(context.Context) ([]ResourceContent, error) { return nil, nil }); err == nil {
+		t.Fatalf("expected missing resource uri to fail")
+	}
+	if err := resources.RegisterResource(ResourceDef{URI: "file://x"}, func(context.Context) ([]ResourceContent, error) { return nil, nil }); err == nil {
+		t.Fatalf("expected missing resource name to fail")
+	}
+	if err := resources.RegisterResource(ResourceDef{URI: "file://x", Name: "x"}, nil); err == nil {
+		t.Fatalf("expected nil resource handler to fail")
+	}
+	if err := resources.RegisterResource(ResourceDef{URI: "file://x", Name: "x"}, func(context.Context) ([]ResourceContent, error) {
+		return []ResourceContent{{URI: "file://x", Text: "x"}}, nil
+	}); err != nil {
+		t.Fatalf("register resource: %v", err)
+	}
+	if err := resources.RegisterResource(ResourceDef{URI: "file://x", Name: "x"}, func(context.Context) ([]ResourceContent, error) { return nil, nil }); err == nil {
+		t.Fatalf("expected duplicate resource to fail")
+	}
+
+	prompts := NewPromptRegistry()
+	if err := prompts.RegisterPrompt(PromptDef{}, func(context.Context, json.RawMessage) (*PromptResult, error) { return nil, nil }); err == nil {
+		t.Fatalf("expected missing prompt name to fail")
+	}
+	if err := prompts.RegisterPrompt(PromptDef{Name: "p"}, nil); err == nil {
+		t.Fatalf("expected nil prompt handler to fail")
+	}
+	if err := prompts.RegisterPrompt(PromptDef{Name: "p"}, func(context.Context, json.RawMessage) (*PromptResult, error) {
+		return &PromptResult{Messages: []PromptMessage{{Role: "user", Content: ContentBlock{Type: "text", Text: "p"}}}}, nil
+	}); err != nil {
+		t.Fatalf("register prompt: %v", err)
+	}
+	if err := prompts.RegisterPrompt(PromptDef{Name: "p"}, func(context.Context, json.RawMessage) (*PromptResult, error) { return nil, nil }); err == nil {
+		t.Fatalf("expected duplicate prompt to fail")
+	}
+}
+
 func TestPromptsListAndGet_RoundTrip(t *testing.T) {
 	s := NewServer("test", "1.0.0")
 

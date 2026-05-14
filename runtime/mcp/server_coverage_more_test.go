@@ -326,6 +326,33 @@ func TestHandleToolsCallStream_StreamingNotSupported_AndStreamStoreErrors(t *tes
 		t.Fatalf("status: got %d want %d", resp.Status, 500)
 	}
 
+	// Prime append error should close the newly created stream and return 500.
+	sPrime := NewServer("test", "dev")
+	registerAnyStreamingTool(t, sPrime)
+	sPrime.sessionStore = NewMemorySessionStore()
+	requirePut(t, sPrime.sessionStore, &Session{ID: sessionID, ExpiresAt: time.Now().Add(time.Minute), Data: map[string]string{"protocolVersion": protocolVersion}})
+	closeCalled := false
+	sPrime.streamStore = configurableStreamStore{
+		create: func(context.Context, string) (string, error) { return "stream-1", nil },
+		append: func(context.Context, string, string, json.RawMessage) (string, error) {
+			return "", errors.New("prime failed")
+		},
+		close: func(context.Context, string, string) error {
+			closeCalled = true
+			return nil
+		},
+	}
+	resp, err = invokeHandlerWithMethod(context.Background(), sPrime, "POST", body, headers)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if resp.Status != 500 {
+		t.Fatalf("status: got %d want %d", resp.Status, 500)
+	}
+	if !closeCalled {
+		t.Fatalf("expected stream cleanup close to run after prime failure")
+	}
+
 	// Subscribe error should map to internalServerError (500).
 	s3 := NewServer("test", "dev")
 	registerAnyStreamingTool(t, s3)
