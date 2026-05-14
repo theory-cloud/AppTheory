@@ -77,6 +77,10 @@ FAIL_COUNT=0
 BLOCKED_COUNT=0
 
 declare -a RESULTS=()
+declare -a NONPASS_IDS=()
+declare -a NONPASS_STATUSES=()
+declare -a NONPASS_MESSAGES=()
+declare -a NONPASS_EVIDENCE_PATHS=()
 
 json_escape() {
   local s="$1"
@@ -104,6 +108,13 @@ record_result() {
   RESULTS+=(
     "{\"id\":\"$(json_escape "$id")\",\"category\":\"$(json_escape "$category")\",\"status\":\"$(json_escape "$status")\",\"message\":\"$(json_escape "$message")\",\"evidencePath\":\"$(json_escape "$evidence_path")\"}"
   )
+
+  if [[ "$status" != "PASS" ]]; then
+    NONPASS_IDS+=("$id")
+    NONPASS_STATUSES+=("$status")
+    NONPASS_MESSAGES+=("$message")
+    NONPASS_EVIDENCE_PATHS+=("$evidence_path")
+  fi
 }
 
 is_unset_token() {
@@ -275,6 +286,53 @@ ensure_cdk_dist_go_bindings_generated() {
   return 0
 }
 
+file_sha256() {
+  local file_path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${file_path}" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "${file_path}" | awk '{print $1}'
+  else
+    echo "BLOCKED: sha256 tool missing (need sha256sum or shasum)" >&2
+    return 2
+  fi
+}
+
+ensure_ts_runtime_deps_installed() {
+  require_cmd_or_blocked node || return $?
+  require_cmd_or_blocked npm || return $?
+
+  if [[ ! -d "ts" ]]; then
+    echo "FAIL: expected TypeScript project missing: ts/" >&2
+    return 1
+  fi
+  if [[ ! -f "ts/package.json" ]]; then
+    echo "FAIL: expected TypeScript package missing: ts/package.json" >&2
+    return 1
+  fi
+  if [[ ! -f "ts/package-lock.json" ]]; then
+    echo "FAIL: expected TypeScript lockfile missing: ts/package-lock.json" >&2
+    return 1
+  fi
+
+  local lock_hash
+  lock_hash="$(file_sha256 "ts/package-lock.json")" || return $?
+
+  local stamp="ts/node_modules/.gov-ts-runtime-deps.sha256"
+  if [[ -d "ts/node_modules" && -f "${stamp}" ]] && grep -Fxq "${lock_hash}" "${stamp}" 2>/dev/null; then
+    return 0
+  fi
+
+  echo "Installing TypeScript runtime deps into ts/node_modules..." >&2
+  if ! (cd ts && npm ci --no-audit --no-fund >/dev/null); then
+    echo "BLOCKED: failed to install TypeScript runtime dependencies (check network/toolchain)" >&2
+    return 2
+  fi
+
+  printf '%s\n' "${lock_hash}" > "${stamp}"
+  return 0
+}
+
 read_py_runtime_deps() {
   # Reads Python runtime dependencies from py/pyproject.toml (one requirement per line).
   if [[ ! -f "${REPO_ROOT}/py/pyproject.toml" ]]; then
@@ -383,6 +441,7 @@ gov_cmd_unit() {
 
   make test-unit
 
+  ensure_ts_runtime_deps_installed || return $?
   node --test contract-tests/runners/ts/fixtures.test.cjs
   scripts/verify-ts-tests.sh
   ensure_py_runtime_deps_installed || return $?
@@ -394,6 +453,7 @@ gov_cmd_integration() {
   require_cmd_or_blocked node || return $?
   require_cmd_or_blocked npm || return $?
   require_cmd_or_blocked python3 || return $?
+  ensure_ts_runtime_deps_installed || return $?
   scripts/verify-testkit-examples.sh
 }
 
@@ -418,6 +478,7 @@ gov_cmd_contract() {
   require_cmd_or_blocked go || return $?
   require_cmd_or_blocked node || return $?
   require_cmd_or_blocked python3 || return $?
+  ensure_ts_runtime_deps_installed || return $?
   scripts/verify-contract-tests.sh
 }
 
@@ -751,6 +812,7 @@ check_ts_coverage() {
   # Enforces TypeScript runtime coverage >= COV_THRESHOLD for the shipped JS under ts/dist/.
   # Primary driver: contract fixtures (same semantics as CON-3), but measured against ts/dist/**.
   require_cmd_or_blocked node || return $?
+  ensure_ts_runtime_deps_installed || return $?
 
   local summary="${EVIDENCE_DIR}/ts-coverage-summary.txt"
   rm -f "${summary}"
@@ -2125,6 +2187,26 @@ echo "Status: ${OVERALL_STATUS}"
 echo "Pass: ${PASS_COUNT}"
 echo "Fail: ${FAIL_COUNT}"
 echo "Blocked: ${BLOCKED_COUNT}"
+
+if [[ "${OVERALL_STATUS}" != "PASS" ]]; then
+  echo ""
+  echo "=== Failed/Blocked Checks ==="
+
+  failure_tail_lines="${GOV_FAILURE_TAIL_LINES:-80}"
+  if ! [[ "${failure_tail_lines}" =~ ^[0-9]+$ ]]; then
+    failure_tail_lines=80
+  fi
+
+  for i in "${!NONPASS_IDS[@]}"; do
+    echo "${NONPASS_IDS[$i]} ${NONPASS_STATUSES[$i]}: ${NONPASS_MESSAGES[$i]}"
+    echo "Evidence: ${NONPASS_EVIDENCE_PATHS[$i]}"
+    if [[ -f "${NONPASS_EVIDENCE_PATHS[$i]}" ]]; then
+      echo "--- evidence tail (${failure_tail_lines} lines) ---"
+      tail -n "${failure_tail_lines}" "${NONPASS_EVIDENCE_PATHS[$i]}" || true
+      echo "--- end evidence tail ---"
+    fi
+  done
+fi
 
 if [[ "${OVERALL_STATUS}" == "PASS" ]]; then
   exit 0
