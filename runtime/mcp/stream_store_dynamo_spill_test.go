@@ -57,7 +57,7 @@ func TestDynamoStreamS3SpillStorePutGetDelete(t *testing.T) {
 	require.Equal(t, "123", client.putInput.Metadata["expires-at"])
 	require.NotEmpty(t, client.putInput.Metadata["sha256"])
 
-	got, err := store.get(context.Background(), "key-1")
+	got, err := store.get(context.Background(), "key-1", 0)
 	require.NoError(t, err)
 	require.Equal(t, []byte(`{"ok":true}`), got)
 	require.True(t, client.bodyClosed)
@@ -80,15 +80,24 @@ func TestDynamoStreamS3SpillStoreGetBoundsPayload(t *testing.T) {
 		},
 	}
 
-	got, err := store.get(context.Background(), "key-1")
+	got, err := store.get(context.Background(), "key-1", 4)
 	require.Nil(t, got)
 	require.ErrorContains(t, err, "exceeds max event bytes")
 	require.True(t, client.bodyClosed)
 }
 
+func TestDynamoStreamStoreSpillReadLimitUsesRecordMetadata(t *testing.T) {
+	store, ok := NewDynamoStreamStore(newFakeMCPTableDB()).(*DynamoStreamStore)
+	require.True(t, ok)
+	store.maxEventBytes = 1024
+
+	require.Equal(t, 5, store.spillReadLimitBytes(dynamoStreamRecord{DataBytes: 5}))
+	require.Equal(t, 1024, store.spillReadLimitBytes(dynamoStreamRecord{DataBytes: 2048}))
+}
+
 func TestDynamoStreamS3SpillStoreNilAndLoadErrors(t *testing.T) {
 	var nilStore *dynamoStreamS3SpillStore
-	_, err := nilStore.get(context.Background(), "key")
+	_, err := nilStore.get(context.Background(), "key", 0)
 	require.ErrorContains(t, err, "not configured")
 	require.ErrorContains(t, nilStore.put(context.Background(), "key", []byte("{}"), 0, ""), "not configured")
 	require.ErrorContains(t, nilStore.delete(context.Background(), "key"), "not configured")
@@ -100,7 +109,7 @@ func TestDynamoStreamS3SpillStoreNilAndLoadErrors(t *testing.T) {
 			return nil, loadErr
 		},
 	}
-	_, err = store.get(context.Background(), "key")
+	_, err = store.get(context.Background(), "key", 0)
 	require.ErrorIs(t, err, loadErr)
 	require.ErrorIs(t, store.put(context.Background(), "key", []byte("{}"), 0, ""), loadErr)
 	require.ErrorIs(t, store.delete(context.Background(), "key"), loadErr)
