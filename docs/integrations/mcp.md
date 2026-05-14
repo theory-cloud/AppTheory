@@ -64,6 +64,25 @@ If a request includes an `Origin` header, AppTheory validates it fail-closed. Th
 
 Use `mcp.WithOriginValidator(...)` to replace that policy for other browser-based callers.
 
+### Strict transport compatibility rollout
+
+Roll strict Streamable HTTP behavior out with a client canary before making it the only production path:
+
+1. Canary clients must send `content-type: application/json` on every `POST /mcp`.
+2. Canary clients must send `accept: application/json, text/event-stream` on every `POST /mcp`.
+3. Canary clients must send `accept: text/event-stream` on every `GET /mcp`.
+4. After initialization, clients should either omit `mcp-protocol-version` or send the exact negotiated version.
+5. Streaming clients must tolerate the initial empty-data priming SSE event and store its `id` for reconnect.
+6. Reconnect with `GET /mcp` plus the latest `last-event-id`; do not assume dropped TCP connections cancel work.
+
+Compatibility risks to check during canary:
+
+- older clients that send `Accept: application/json` only on `POST /mcp` now receive HTTP `400`
+- clients that omit `Content-Type` or send non-JSON content types now receive HTTP `400`
+- clients that pin a protocol header different from the negotiated session version now receive HTTP `400`
+- SSE parsers that assume the first frame is JSON-RPC must skip or record the empty priming frame
+- replay clients that reuse a `Last-Event-ID` from another stream now fail closed instead of receiving unrelated events
+
 Mounting the handler is still just normal AppTheory routing:
 
 ```go
