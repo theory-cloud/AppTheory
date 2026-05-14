@@ -1224,6 +1224,16 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 		return internalServerError(), nil
 	}
 
+	// Persist an empty-data priming event before any tool output so a client
+	// that disconnects immediately can resume this stream with Last-Event-ID.
+	if _, primeErr := s.streamStore.Append(ctx, sessionID, streamID, nil); primeErr != nil {
+		s.logger.ErrorContext(ctx, "stream prime error", "sessionId", sessionID, "streamId", streamID, "error", primeErr)
+		if closeErr := s.streamStore.Close(context.WithoutCancel(ctx), sessionID, streamID); closeErr != nil {
+			s.logger.WarnContext(ctx, "stream prime cleanup error", "sessionId", sessionID, "streamId", streamID, "error", closeErr)
+		}
+		return internalServerError(), nil
+	}
+
 	// Run the tool out-of-band so disconnects do not cancel execution.
 	toolCtx := context.WithoutCancel(ctx)
 	go s.runStreamingTool(toolCtx, sessionID, streamID, req)
@@ -1400,8 +1410,8 @@ func (s *Server) streamToSSE(ctx context.Context, sessionID string, events <-cha
 					return
 				case out <- apptheory.SSEEvent{
 					ID:    ev.ID,
-					Event: "message",
-					Data:  ev.Data,
+					Event: streamEventName(ev),
+					Data:  streamEventData(ev),
 				}:
 				}
 			}
@@ -1417,6 +1427,20 @@ func (s *Server) streamToSSE(ctx context.Context, sessionID string, events <-cha
 	}
 	resp.Headers[headerMcpSessionID] = []string{sessionID}
 	return resp, nil
+}
+
+func streamEventName(ev StreamEvent) string {
+	if len(ev.Data) == 0 {
+		return ""
+	}
+	return "message"
+}
+
+func streamEventData(ev StreamEvent) any {
+	if len(ev.Data) == 0 {
+		return ""
+	}
+	return ev.Data
 }
 
 func badRequest(msg string) *apptheory.Response {

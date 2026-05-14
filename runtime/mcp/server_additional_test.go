@@ -261,6 +261,22 @@ func TestValidateOrigin_FailClosedWhenOriginPresent(t *testing.T) {
 	}
 }
 
+func TestAllowOrigins_TrimsAndFailsClosed(t *testing.T) {
+	validator := AllowOrigins(" https://ok.example ", "", "https://other.example")
+	if !validator(" https://ok.example ") {
+		t.Fatalf("expected trimmed allowed origin to pass")
+	}
+	if !validator("https://other.example") {
+		t.Fatalf("expected second allowed origin to pass")
+	}
+	if validator("") {
+		t.Fatalf("expected empty origin to fail")
+	}
+	if validator("https://evil.example") {
+		t.Fatalf("expected unknown origin to fail")
+	}
+}
+
 func TestRequireProtocolVersion_RejectsUnsupportedAndMismatch(t *testing.T) {
 	s := NewServer("test", "dev")
 

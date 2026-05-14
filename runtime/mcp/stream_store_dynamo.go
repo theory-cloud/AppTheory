@@ -373,10 +373,38 @@ func (d *DynamoStreamStore) Subscribe(ctx context.Context, sessionID, streamID, 
 		}
 		return nil, err
 	}
+	if afterEventID != "" {
+		if err := d.requireEventBelongsToStream(ctx, sessionID, streamID, afterEventID); err != nil {
+			return nil, err
+		}
+	}
 
 	out := make(chan StreamEvent)
 	go d.pumpSubscription(ctx, sessionID, streamID, afterEventID, out)
 	return out, nil
+}
+
+func (d *DynamoStreamStore) requireEventBelongsToStream(ctx context.Context, sessionID, streamID, eventID string) error {
+	var record dynamoStreamRecord
+	err := d.db.Model(&dynamoStreamRecord{}).
+		WithContext(ctx).
+		ConsistentRead().
+		Where("SessionID", "=", sessionID).
+		Where("EventID", "=", eventID).
+		First(&record)
+	if err != nil {
+		if tableerrors.IsNotFound(err) {
+			return ErrEventNotFound
+		}
+		return err
+	}
+	if record.Kind != dynamoStreamRecordKindEvent || record.StreamID != streamID {
+		return ErrEventNotFound
+	}
+	if d.streamRecordExpired(record, d.now().UTC()) {
+		return ErrEventNotFound
+	}
+	return nil
 }
 
 func (d *DynamoStreamStore) StreamForEvent(ctx context.Context, sessionID, eventID string) (string, error) {

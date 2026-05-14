@@ -35,9 +35,20 @@ func TestResumableSSEExample(t *testing.T) {
 		t.Fatalf("RawStream: %v", err)
 	}
 
+	priming, err := stream.Next()
+	if err != nil {
+		t.Fatalf("read priming event: %v", err)
+	}
+	if strings.TrimSpace(priming.ID) == "" {
+		t.Fatalf("expected priming SSE id to be set")
+	}
+	if got := strings.TrimSpace(string(priming.Data)); got != "" {
+		t.Fatalf("expected priming SSE data to be empty, got %q", got)
+	}
+
 	first, err := stream.Next()
 	if err != nil {
-		t.Fatalf("read first event: %v", err)
+		t.Fatalf("read first progress event: %v", err)
 	}
 	if strings.TrimSpace(first.ID) == "" {
 		t.Fatalf("expected SSE id to be set")
