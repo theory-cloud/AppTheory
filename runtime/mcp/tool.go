@@ -125,6 +125,13 @@ func (r *ToolRegistry) List() []ToolDef {
 	return defs
 }
 
+// Len returns the number of registered tools.
+func (r *ToolRegistry) Len() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.tools)
+}
+
 // Call looks up a tool by name and invokes its handler with the given arguments.
 // It returns an error if the tool is not found.
 func (r *ToolRegistry) Call(ctx context.Context, name string, args json.RawMessage) (*ToolResult, error) {

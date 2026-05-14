@@ -65,6 +65,7 @@ type Server struct {
 	idGen            apptheory.IDGenerator
 	logger           *slog.Logger
 	originValidator  OriginValidator
+	capabilities     CapabilityConfig
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -156,6 +157,7 @@ func NewServer(name, version string, opts ...ServerOption) *Server {
 		idGen:            apptheory.RandomIDGenerator{},
 		logger:           slog.Default(),
 		originValidator:  AllowOrigins("https://claude.ai", "https://claude.com"),
+		capabilities:     DefaultCapabilityConfig(),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -519,19 +521,9 @@ func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
 
 // handleInitialize responds to the MCP initialize request with server capabilities.
 func (s *Server) handleInitialize(req *Request, selectedProtocolVersion string) *Response {
-	capabilities := map[string]any{
-		"tools": map[string]any{},
-	}
-	if s.resourceRegistry.Len() > 0 {
-		capabilities["resources"] = map[string]any{}
-	}
-	if s.promptRegistry.Len() > 0 {
-		capabilities["prompts"] = map[string]any{}
-	}
-
 	result := map[string]any{
 		"protocolVersion": selectedProtocolVersion,
-		"capabilities":    capabilities,
+		"capabilities":    s.initializeCapabilities(selectedProtocolVersion),
 		"serverInfo": map[string]any{
 			"name":    s.name,
 			"version": s.version,
