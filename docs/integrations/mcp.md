@@ -99,6 +99,17 @@ Other transport notes:
 - notifications also return `202 Accepted` with no body
 - JSON-RPC batch requests are only supported for legacy `2025-03-26` callers
 
+### Runtime hardening guarantees
+
+The MCP runtime fails closed around tool execution and durable replay:
+
+- buffered and streaming `tools/call` panics are recovered as sanitized JSON-RPC internal errors; panic values are logged
+  server-side and are not returned to clients
+- `DynamoSessionStore.Put` is an upsert, so sliding-session refreshes update the existing session data and TTL instead
+  of failing when a session row already exists
+- S3-spilled stream events are read through bounded readers before replay validation; the read cap uses the recorded
+  event byte count and the configured maximum event size before size/hash validation
+
 ### Capabilities advertisement (`initialize`)
 
 The `initialize` result always advertises `tools`.
