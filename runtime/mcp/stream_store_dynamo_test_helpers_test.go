@@ -43,7 +43,7 @@ func (s *fakeDynamoStreamSpillStore) put(_ context.Context, key string, data []b
 	return nil
 }
 
-func (s *fakeDynamoStreamSpillStore) get(_ context.Context, key string) ([]byte, error) {
+func (s *fakeDynamoStreamSpillStore) get(_ context.Context, key string, maxBytes int) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -51,6 +51,9 @@ func (s *fakeDynamoStreamSpillStore) get(_ context.Context, key string) ([]byte,
 	payload, ok := s.objects[key]
 	if !ok {
 		return nil, errors.New("missing spill object")
+	}
+	if maxBytes > 0 && len(payload) > maxBytes {
+		return nil, errors.New("stream spill object exceeds max event bytes")
 	}
 	out := make([]byte, len(payload))
 	copy(out, payload)
@@ -90,7 +93,7 @@ func (s *fakeDynamoStreamSpillStore) getCount() int {
 func (s *fakeDynamoStreamSpillStore) mustGet(t *testing.T, key string) []byte {
 	t.Helper()
 
-	payload, err := s.get(context.Background(), key)
+	payload, err := s.get(context.Background(), key, 0)
 	require.NoError(t, err)
 	return payload
 }

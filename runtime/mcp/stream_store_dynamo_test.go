@@ -870,6 +870,8 @@ func TestDynamoStreamStore_StreamRecordDataValidationBranches(t *testing.T) {
 	store.spillStore = spill
 	require.NoError(t, spill.put(context.Background(), "key", []byte(`{"ok":true}`), 0, dynamoStreamPayloadSHA256([]byte(`{"ok":true}`))))
 	_, err = store.streamRecordData(context.Background(), dynamoStreamRecord{DataRef: "key", DataBytes: 1})
+	require.ErrorContains(t, err, "exceeds max event bytes")
+	_, err = store.streamRecordData(context.Background(), dynamoStreamRecord{DataRef: "key", DataBytes: int64(len(`{"ok":true}`) + 1)})
 	require.ErrorContains(t, err, "size mismatch")
 	_, err = store.streamRecordData(context.Background(), dynamoStreamRecord{DataRef: "key", DataBytes: int64(len(`{"ok":true}`)), DataSHA256: "bad"})
 	require.ErrorContains(t, err, "hash mismatch")

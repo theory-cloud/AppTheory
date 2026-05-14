@@ -772,7 +772,7 @@ func (d *DynamoStreamStore) streamRecordData(ctx context.Context, record dynamoS
 		if d.spillStore == nil {
 			return nil, errors.New("stream spill store not configured")
 		}
-		payload, err := d.spillStore.get(ctx, record.DataRef)
+		payload, err := d.spillStore.get(ctx, record.DataRef, d.spillReadLimitBytes(record))
 		if err != nil {
 			return nil, err
 		}
@@ -790,6 +790,17 @@ func (d *DynamoStreamStore) streamRecordData(ctx context.Context, record dynamoS
 	payload := make([]byte, len(record.Data))
 	copy(payload, record.Data)
 	return json.RawMessage(payload), nil
+}
+
+func (d *DynamoStreamStore) spillReadLimitBytes(record dynamoStreamRecord) int {
+	limit := d.maxEventBytes
+	if limit <= 0 {
+		limit = dynamoStreamMaxEventBytes()
+	}
+	if record.DataBytes > 0 && record.DataBytes < int64(limit) {
+		return int(record.DataBytes)
+	}
+	return limit
 }
 
 func (d *DynamoStreamStore) streamRecordExpired(record dynamoStreamRecord, now time.Time) bool {
