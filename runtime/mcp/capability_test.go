@@ -158,6 +158,47 @@ func TestInitializeCapabilities_ExplicitConfigCanDisableLogging(t *testing.T) {
 	}
 }
 
+func TestInitializeCapabilities_AdvertisesCompletionsOnlyWithHook(t *testing.T) {
+	s := NewServer("test", "dev", WithCompletionHooks(
+		func(context.Context, CompletionRequest) (*CompletionResult, error) {
+			return &CompletionResult{Completion: Completion{Values: []string{}}}, nil
+		},
+		nil,
+	))
+
+	caps := initializeCapabilityMap(t, s)
+	completions, ok := caps["completions"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected completions capability object: %+v", caps)
+	}
+	if len(completions) != 0 {
+		t.Fatalf("expected empty completions capability object: %+v", completions)
+	}
+}
+
+func TestInitializeCapabilities_ExplicitConfigCanDisableCompletions(t *testing.T) {
+	s := NewServer("test", "dev",
+		WithCapabilityConfig(CapabilityConfig{
+			Tools:       true,
+			Resources:   true,
+			Prompts:     true,
+			Logging:     true,
+			Completions: false,
+		}),
+		WithCompletionHooks(
+			func(context.Context, CompletionRequest) (*CompletionResult, error) {
+				return &CompletionResult{Completion: Completion{Values: []string{}}}, nil
+			},
+			nil,
+		),
+	)
+
+	caps := initializeCapabilityMap(t, s)
+	if _, ok := caps["completions"]; ok {
+		t.Fatalf("expected explicitly disabled completions capability to be omitted: %+v", caps)
+	}
+}
+
 func assertNoUnsupportedSubCapabilities(t *testing.T, name string, raw any) {
 	t.Helper()
 	obj, ok := raw.(map[string]any)

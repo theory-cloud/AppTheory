@@ -4,16 +4,17 @@ package mcp
 // advertised during initialize.
 //
 // The config is intentionally limited to surfaces that AppTheory currently
-// implements. Optional MCP sub-capabilities such as listChanged, logging,
-// completions, and tasks are omitted until their concrete hooks exist. Resource
-// subscription support is advertised only when both subscription hooks are
+// implements. Unsupported MCP sub-capabilities such as listChanged and tasks
+// are omitted until their concrete hooks exist. Resource subscription, logging,
+// and completion support are advertised only when their explicit hooks are
 // configured. That keeps capability negotiation fail-closed instead of allowing
 // callers to overclaim unsupported behavior.
 type CapabilityConfig struct {
-	Tools     bool
-	Resources bool
-	Prompts   bool
-	Logging   bool
+	Tools       bool
+	Resources   bool
+	Prompts     bool
+	Logging     bool
+	Completions bool
 }
 
 type capabilitySurface string
@@ -23,6 +24,7 @@ const (
 	capabilitySurfaceResources capabilitySurface = "resources"
 	capabilitySurfacePrompts   capabilitySurface = "prompts"
 	capabilitySurfaceLogging   capabilitySurface = "logging"
+	capabilitySurfaceComplete  capabilitySurface = "completions"
 )
 
 // DefaultCapabilityConfig returns the default MCP capability policy.
@@ -32,10 +34,11 @@ const (
 // registered resource, and prompts require at least one registered prompt.
 func DefaultCapabilityConfig() CapabilityConfig {
 	return CapabilityConfig{
-		Tools:     true,
-		Resources: true,
-		Prompts:   true,
-		Logging:   true,
+		Tools:       true,
+		Resources:   true,
+		Prompts:     true,
+		Logging:     true,
+		Completions: true,
 	}
 }
 
@@ -50,9 +53,22 @@ func WithCapabilityConfig(config CapabilityConfig) ServerOption {
 func (s *Server) initializeCapabilities(protocolVersion string) map[string]any {
 	capabilities := map[string]any{}
 
+	s.addToolsCapability(protocolVersion, capabilities)
+	s.addResourcesCapability(protocolVersion, capabilities)
+	s.addPromptsCapability(protocolVersion, capabilities)
+	s.addLoggingCapability(protocolVersion, capabilities)
+	s.addCompletionsCapability(protocolVersion, capabilities)
+
+	return capabilities
+}
+
+func (s *Server) addToolsCapability(protocolVersion string, capabilities map[string]any) {
 	if s.capabilities.Tools && protocolSupportsCapability(protocolVersion, capabilitySurfaceTools) && s.registry.Len() > 0 {
 		capabilities["tools"] = map[string]any{}
 	}
+}
+
+func (s *Server) addResourcesCapability(protocolVersion string, capabilities map[string]any) {
 	if s.capabilities.Resources && protocolSupportsCapability(protocolVersion, capabilitySurfaceResources) && s.resourceRegistry.Len() > 0 {
 		resourceCaps := map[string]any{}
 		if s.hasResourceSubscriptionHooks() {
@@ -60,18 +76,32 @@ func (s *Server) initializeCapabilities(protocolVersion string) map[string]any {
 		}
 		capabilities["resources"] = resourceCaps
 	}
+}
+
+func (s *Server) addPromptsCapability(protocolVersion string, capabilities map[string]any) {
 	if s.capabilities.Prompts && protocolSupportsCapability(protocolVersion, capabilitySurfacePrompts) && s.promptRegistry.Len() > 0 {
 		capabilities["prompts"] = map[string]any{}
 	}
+}
+
+func (s *Server) addLoggingCapability(protocolVersion string, capabilities map[string]any) {
 	if s.capabilities.Logging && protocolSupportsCapability(protocolVersion, capabilitySurfaceLogging) && s.loggingLevelHook != nil {
 		capabilities["logging"] = map[string]any{}
 	}
+}
 
-	return capabilities
+func (s *Server) addCompletionsCapability(protocolVersion string, capabilities map[string]any) {
+	if s.capabilities.Completions && protocolSupportsCapability(protocolVersion, capabilitySurfaceComplete) && s.hasCompletionHooks() {
+		capabilities["completions"] = map[string]any{}
+	}
 }
 
 func (s *Server) hasResourceSubscriptionHooks() bool {
 	return s.resourceSubscribeHook != nil && s.resourceUnsubscribeHook != nil
+}
+
+func (s *Server) hasCompletionHooks() bool {
+	return s.promptCompletionHook != nil || s.resourceCompletionHook != nil
 }
 
 func protocolSupportsCapability(pv string, _ capabilitySurface) bool {

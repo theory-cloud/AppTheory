@@ -40,6 +40,7 @@ const (
 	methodResourcesSubscribe       = "resources/subscribe"
 	methodResourcesUnsubscribe     = "resources/unsubscribe"
 	methodLoggingSetLevel          = "logging/setLevel"
+	methodCompletionComplete       = "completion/complete"
 	methodPromptsList              = "prompts/list"
 	methodPromptsGet               = "prompts/get"
 )
@@ -73,6 +74,8 @@ type Server struct {
 	resourceSubscribeHook   ResourceSubscriptionHook
 	resourceUnsubscribeHook ResourceSubscriptionHook
 	loggingLevelHook        LoggingLevelHook
+	promptCompletionHook    CompletionHook
+	resourceCompletionHook  CompletionHook
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -155,6 +158,16 @@ func WithResourceSubscriptionHooks(subscribe, unsubscribe ResourceSubscriptionHo
 func WithLoggingLevelHook(hook LoggingLevelHook) ServerOption {
 	return func(s *Server) {
 		s.loggingLevelHook = hook
+	}
+}
+
+// WithCompletionHooks enables completion/complete support through explicit
+// prompt and resource hooks. At least one hook must be non-nil before the
+// completions capability is advertised.
+func WithCompletionHooks(promptHook, resourceHook CompletionHook) ServerOption {
+	return func(s *Server) {
+		s.promptCompletionHook = promptHook
+		s.resourceCompletionHook = resourceHook
 	}
 }
 
@@ -560,6 +573,8 @@ func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocol
 		return s.handleResourcesUnsubscribe(ctx, req, sessionID)
 	case methodLoggingSetLevel:
 		return s.handleLoggingSetLevel(ctx, req, sessionID)
+	case methodCompletionComplete:
+		return s.handleCompletionComplete(ctx, req, sessionID)
 	case methodPromptsList:
 		return s.handlePromptsList(req)
 	case methodPromptsGet:
@@ -587,6 +602,7 @@ func methodAllowedForProtocol(pv string, method string) bool {
 		methodResourcesSubscribe,
 		methodResourcesUnsubscribe,
 		methodLoggingSetLevel,
+		methodCompletionComplete,
 		methodPromptsList,
 		methodPromptsGet:
 		return true

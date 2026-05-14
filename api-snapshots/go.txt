@@ -1962,10 +1962,45 @@ var ErrStreamEventTooLarge = errors.New("stream event too large")
 var ErrStreamNotFound = errors.New("stream not found")
 
 type CapabilityConfig struct {
-	Tools     bool
-	Resources bool
-	Prompts   bool
-	Logging   bool
+	Tools       bool
+	Resources   bool
+	Prompts     bool
+	Logging     bool
+	Completions bool
+}
+
+type Completion struct {
+	Values  []string `json:"values"`
+	Total   *int     `json:"total,omitempty"`
+	HasMore *bool    `json:"hasMore,omitempty"`
+}
+
+type CompletionArgument struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type CompletionContext struct {
+	Arguments map[string]string `json:"arguments,omitempty"`
+}
+
+type CompletionHook func(context.Context, CompletionRequest) (*CompletionResult, error)
+
+type CompletionRef struct {
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
+	URI  string `json:"uri,omitempty"`
+}
+
+type CompletionRequest struct {
+	SessionID string             `json:"sessionId"`
+	Ref       CompletionRef      `json:"ref"`
+	Argument  CompletionArgument `json:"argument"`
+	Context   CompletionContext  `json:"context,omitempty"`
+}
+
+type CompletionResult struct {
+	Completion Completion `json:"completion"`
 }
 
 type ContentBlock struct {
@@ -2142,6 +2177,8 @@ type Server struct {
 	resourceSubscribeHook   ResourceSubscriptionHook
 	resourceUnsubscribeHook ResourceSubscriptionHook
 	loggingLevelHook        LoggingLevelHook
+	promptCompletionHook    CompletionHook
+	resourceCompletionHook  CompletionHook
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -2253,6 +2290,8 @@ func ParseResponse([]byte) (*Response, error)
 func WithCapabilityConfig(CapabilityConfig) ServerOption
 
 func WithClock(apptheory.Clock) MemorySessionStoreOption
+
+func WithCompletionHooks(CompletionHook, CompletionHook) ServerOption
 
 func WithInitialSessionListenerBudget(InitialSessionListenerBudgetOptions) ServerOption
 
