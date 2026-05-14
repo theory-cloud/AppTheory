@@ -251,6 +251,61 @@ func TestDELETE_DeletesSession_AndStreamDeleteErrorsAreIgnored(t *testing.T) {
 	}
 }
 
+func TestDELETE_ValidatesProtocolVersion_BeforeDelete(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers map[string][]string
+		wantErr string
+	}{
+		{
+			name: "unsupported protocol",
+			headers: map[string][]string{
+				"mcp-protocol-version": {"1900-01-01"},
+			},
+			wantErr: "unsupported MCP-Protocol-Version",
+		},
+		{
+			name: "mismatched negotiated protocol",
+			headers: map[string][]string{
+				"mcp-protocol-version": {protocolVersionPrior},
+			},
+			wantErr: "MCP-Protocol-Version mismatch",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewServer("test", "dev")
+			sessionID := initializeSession(t, s)
+			headers := map[string][]string{
+				"mcp-session-id": {sessionID},
+			}
+			for k, v := range tt.headers {
+				headers[k] = v
+			}
+
+			resp, err := invokeHandlerWithMethod(context.Background(), s, "DELETE", nil, headers)
+			if err != nil {
+				t.Fatalf("invoke invalid delete: %v", err)
+			}
+			if resp.Status != 400 {
+				t.Fatalf("invalid delete status: got %d want %d (body=%s)", resp.Status, 400, string(resp.Body))
+			}
+			if !strings.Contains(string(resp.Body), tt.wantErr) {
+				t.Fatalf("invalid delete body: got %s want error containing %q", string(resp.Body), tt.wantErr)
+			}
+
+			resp, err = invokeHandlerWithMethod(context.Background(), s, "DELETE", nil, sessionHeaders(sessionID))
+			if err != nil {
+				t.Fatalf("invoke valid delete: %v", err)
+			}
+			if resp.Status != 202 {
+				t.Fatalf("valid delete status after rejected delete: got %d want %d (body=%s)", resp.Status, 202, string(resp.Body))
+			}
+		})
+	}
+}
+
 func TestValidateOrigin_FailClosedWhenOriginPresent(t *testing.T) {
 	s := NewServer("test", "dev", WithOriginValidator(nil))
 	resp := s.validateOrigin(map[string][]string{

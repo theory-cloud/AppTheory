@@ -472,7 +472,7 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 		return badRequest("missing Mcp-Session-Id"), nil
 	}
 
-	_, err := s.sessionStore.Get(ctx, sessionID)
+	sess, err := s.sessionStore.Get(ctx, sessionID)
 	switch {
 	case err == nil:
 		// ok
@@ -481,6 +481,9 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 	default:
 		s.logger.ErrorContext(ctx, "session store error", "error", err)
 		return internalServerError(), nil
+	}
+	if pvResp := s.requireProtocolVersion(c.Request.Headers, sess); pvResp != nil {
+		return pvResp, nil
 	}
 
 	if err := s.sessionStore.Delete(ctx, sessionID); err != nil {
