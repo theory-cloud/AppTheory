@@ -114,7 +114,16 @@ func (s *dynamoStreamS3SpillStore) get(ctx context.Context, key string) ([]byte,
 		}
 	}()
 
-	return io.ReadAll(out.Body)
+	maxBytes := dynamoStreamMaxEventBytes()
+	payload, err := io.ReadAll(io.LimitReader(out.Body, int64(maxBytes)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(payload) > maxBytes {
+		return nil, fmt.Errorf("stream spill object exceeds max event bytes")
+	}
+
+	return payload, nil
 }
 
 func (s *dynamoStreamS3SpillStore) delete(ctx context.Context, key string) error {

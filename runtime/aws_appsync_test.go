@@ -446,3 +446,31 @@ func TestServeAppSync_FormatsUnexpectedErrors(t *testing.T) {
 		t.Fatalf("expected empty error_info for unexpected errors, got %#v", payload["error_info"])
 	}
 }
+
+func TestAppSyncDirectErrorHelpers(t *testing.T) {
+	resp := Response{Headers: map[string][]string{"x-request-id": {" resp-req "}}}
+	if got := appSyncRequestIDFromResponse(resp, "fallback"); got != "resp-req" {
+		t.Fatalf("expected response request id, got %q", got)
+	}
+	if got := appSyncRequestIDFromResponse(Response{}, " fallback "); got != "fallback" {
+		t.Fatalf("expected fallback request id, got %q", got)
+	}
+	if got := appSyncStatusForPortableError(nil); got != 0 {
+		t.Fatalf("expected nil portable status 0, got %d", got)
+	}
+	if got := appSyncStatusForPortableError(NewAppTheoryError(errorCodeNotFound, "missing")); got != 404 {
+		t.Fatalf("expected code-derived status 404, got %d", got)
+	}
+	if got := resolveAppSyncRequestID(" primary ", "fallback"); got != "primary" {
+		t.Fatalf("expected primary request id, got %q", got)
+	}
+	if got := resolveAppSyncRequestID(" ", " fallback "); got != "fallback" {
+		t.Fatalf("expected fallback request id, got %q", got)
+	}
+
+	payload := appSyncErrorPayloadForResponse(NewAppTheoryError(errorCodeBadRequest, "bad"), Request{Method: "POST", Path: "/x"}, "req_1")
+	m, ok := payload.(map[string]any)
+	if !ok || m["pay_theory_error"] != true || m["error_type"] != appSyncErrorTypeClient {
+		t.Fatalf("unexpected error payload for response: %#v", payload)
+	}
+}

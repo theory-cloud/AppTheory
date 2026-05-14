@@ -229,3 +229,80 @@ func TestServeDynamoDBStream_RecordsPerRecordObservability(t *testing.T) {
 		t.Fatalf("unexpected error log: %#v", logs[1])
 	}
 }
+
+type eventStringer string
+
+func (s eventStringer) String() string { return string(s) }
+
+func TestEventBridgeScheduledWorkloadFallbacksAndRawHelpers(t *testing.T) {
+	t.Parallel()
+
+	base := lambdacontext.NewContext(context.Background(), &lambdacontext.LambdaContext{AwsRequestID: "aws-fallback"})
+	ctx := &EventContext{
+		ctx:         base,
+		clock:       fixedClock{now: time.Unix(100, 0).UTC()},
+		RemainingMS: 500,
+		rawEvent: json.RawMessage(`{
+			"detail": {
+				"status": "fallback-status",
+				"processed": 7,
+				"failed": 2,
+				"correlation_id": "detail-corr"
+			},
+			"headers": {"X-Correlation-ID": ["", "header-corr"]}
+		}`),
+	}
+
+	summary := NormalizeEventBridgeScheduledWorkload(ctx, events.EventBridgeEvent{
+		DetailType: "Scheduled Event",
+		Source:     "aws.events",
+		Detail:     json.RawMessage(`{"processed":1}`),
+	})
+	if summary.RunID != "aws-fallback" || summary.IdempotencyKey != "lambda:aws-fallback" {
+		t.Fatalf("expected lambda fallbacks, got %#v", summary)
+	}
+	if summary.CorrelationID != "header-corr" || summary.CorrelationSource != eventBridgeCorrelationSourceHeader {
+		t.Fatalf("expected header correlation, got %#v", summary)
+	}
+	if summary.Result.Status != "fallback-status" || summary.Result.Processed != 0 || summary.Result.Failed != 0 {
+		t.Fatalf("expected detail result fallback, got %#v", summary.Result)
+	}
+	if summary.DeadlineUnixMS != time.Unix(100, 0).UTC().UnixMilli()+500 {
+		t.Fatalf("unexpected deadline: %d", summary.DeadlineUnixMS)
+	}
+
+	if rawHeaderString(map[string]any{"x-correlation-id": " single "}, "x-correlation-id") != "single" {
+		t.Fatal("expected single string header to resolve")
+	}
+	if rawHeaderString(map[string]any{"x-correlation-id": []any{"", eventStringer(" stringer ")}}, "x-correlation-id") != "stringer" {
+		t.Fatal("expected stringer header entry to resolve")
+	}
+	if rawInt(map[string]any{"n": int64(9)}, "n") != 9 || rawInt(map[string]any{"n": json.Number("10")}, "n") != 10 {
+		t.Fatal("expected integer coercions to resolve")
+	}
+	if rawInt(map[string]any{"n": json.Number("bad")}, "n") != 0 {
+		t.Fatal("bad json.Number should fall back to zero")
+	}
+}
+
+func TestEventWorkloadErrorSanitizationBranches(t *testing.T) {
+	t.Parallel()
+
+	if sanitizeEventWorkloadError(nil) != nil {
+		t.Fatal("nil workload error should remain nil")
+	}
+	safe := safeEventError{message: "safe"}
+	if sanitizeEventWorkloadError(safe) != safe {
+		t.Fatal("safe workload error should be preserved")
+	}
+	if got := sanitizeEventWorkloadError(errors.New("secret")); got == nil || got.Error() != eventWorkloadFailedMessage {
+		t.Fatalf("unsafe error should be replaced, got %v", got)
+	}
+
+	if eventContextRequestID(nil) != "" || eventContextLambdaAWSRequestID(nil) != "" || eventContextRemainingMS(nil) != 0 {
+		t.Fatal("nil event context helpers should return zero values")
+	}
+	if len(eventContextRawJSONObject(&EventContext{rawEvent: json.RawMessage(`{`)})) != 0 {
+		t.Fatal("malformed raw event should return empty object")
+	}
+}

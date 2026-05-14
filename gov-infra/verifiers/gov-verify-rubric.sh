@@ -384,6 +384,7 @@ gov_cmd_unit() {
   make test-unit
 
   node --test contract-tests/runners/ts/fixtures.test.cjs
+  scripts/verify-ts-tests.sh
   ensure_py_runtime_deps_installed || return $?
   "${GOV_TOOLS_PY_RUNTIME_BIN}/python" contract-tests/runners/py/run.py
   PYTHONPATH="${REPO_ROOT}/py/src" "${GOV_TOOLS_PY_RUNTIME_BIN}/python" -m unittest discover -s py/tests -p "test_*.py"
@@ -451,7 +452,17 @@ gov_cmd_vuln() {
     fi
 
     echo "==> govulncheck: ${d}"
-    (cd "${d}" && govulncheck ./...)
+    if [[ "${d}" == "." ]]; then
+      local -a vuln_pkgs=()
+      mapfile -t vuln_pkgs < <(./scripts/list-go-packages.sh)
+      if [[ "${#vuln_pkgs[@]}" -eq 0 ]]; then
+        echo "FAIL: no root Go packages selected for govulncheck" >&2
+        return 1
+      fi
+      govulncheck "${vuln_pkgs[@]}"
+    else
+      (cd "${d}" && govulncheck ./...)
+    fi
   done
 
   local -a node_lockfiles=(
@@ -511,8 +522,8 @@ check_multi_module_health() {
   require_cmd_or_blocked node || return $?
   require_cmd_or_blocked npm || return $?
 
-  echo "Multi-module health: root module (go test ./...)"
-  go test -buildvcs=false ./...
+  echo "Multi-module health: root module (tracked Go packages)"
+  scripts/verify-go.sh
 
   ensure_cdk_dist_go_bindings_generated || return $?
 
@@ -550,15 +561,28 @@ check_toolchain_pins() {
 
   local go_toolchain
   go_toolchain="$(awk '/^toolchain[[:space:]]+/{print $2; exit}' go.mod 2>/dev/null || true)"
-  if [[ -z "${go_toolchain}" ]]; then
-    echo "FAIL: go.mod missing toolchain directive" >&2
+  local go_directive
+  go_directive="$(awk '/^go[[:space:]]+/{print $2; exit}' go.mod 2>/dev/null || true)"
+
+  local go_version
+  local go_pin_source
+  if [[ -n "${go_toolchain}" ]]; then
+    go_version="${go_toolchain#go}"
+    go_pin_source="toolchain ${go_toolchain}"
+  elif [[ -n "${go_directive}" ]]; then
+    # Go removes a redundant `toolchain goX.Y.Z` line when it equals the
+    # active `go X.Y.Z` directive. Treat the go directive as the canonical
+    # pin in that case rather than requiring a line the Go tool immediately
+    # tidies away.
+    go_version="${go_directive}"
+    go_pin_source="go ${go_directive}"
+  else
+    echo "FAIL: go.mod missing go/toolchain directive" >&2
     return 1
   fi
 
-  local go_version="${go_toolchain#go}"
-
   echo "Expected pins (from repo):"
-  echo "- Go toolchain: ${go_toolchain}"
+  echo "- Go: ${go_version} (${go_pin_source})"
   echo "- Node: 24"
   echo "- Python: 3.14"
   echo "- golangci-lint: ${PIN_GOLANGCI_LINT_VERSION}"
@@ -648,9 +672,12 @@ check_go_coverage() {
   rm -f "${cover_out}" "${summary}"
 
   echo "Generating Go coverage profile..."
-  # We exclude generated CDK Go bindings from coverage math to avoid diluting runtime coverage.
-  # These bindings are compile-checked elsewhere (COM-1) but are not meaningful to unit test.
-  mapfile -t pkgs < <(go list ./... | grep -v '/cdk-go/')
+  # We exclude generated bindings, examples, CLI/tooling entrypoints, and contract-test
+  # harnesses from coverage math so the gate measures shipped AppTheory libraries
+  # rather than diluting runtime coverage with non-runtime command packages. Those
+  # excluded surfaces are compile/test-checked by QUA-1, QUA-2, COM-1, SEC-4, and
+  # the release gate.
+  mapfile -t pkgs < <(./scripts/list-go-packages.sh | grep -Ev '^./(cdk-go|examples|contract-tests|scripts|cmd)(/|$)')
   if [[ "${#pkgs[@]}" -eq 0 ]]; then
     echo "FAIL: no Go packages selected for coverage run" >&2
     return 1
@@ -733,11 +760,17 @@ check_ts_coverage() {
     return 1
   fi
 
-  local test_file="contract-tests/runners/ts/fixtures.test.cjs"
-  if [[ ! -f "${test_file}" ]]; then
-    echo "FAIL: missing TS coverage test driver: ${test_file}" >&2
-    return 1
-  fi
+  local -a test_files=(
+    "contract-tests/runners/ts/fixtures.test.cjs"
+    ts/test/*.test.mjs
+  )
+  local test_file
+  for test_file in "${test_files[@]}"; do
+    if [[ ! -f "${test_file}" ]]; then
+      echo "FAIL: missing TS coverage test driver: ${test_file}" >&2
+      return 1
+    fi
+  done
 
   local tmp
   tmp="$(mktemp)"
@@ -745,10 +778,12 @@ check_ts_coverage() {
   # Notes:
   # - Coverage thresholds are enforced by Node itself (no external coverage toolchain).
   # - We include only shipped runtime output under ts/dist/** to prevent denominator games.
+  # - We run both contract fixtures and package unit tests so coverage evidence matches
+  #   the TypeScript test surface enforced elsewhere in the release gate.
   if ! NO_COLOR=1 node --test --experimental-test-coverage \
     --test-coverage-lines="${COV_THRESHOLD}" \
     --test-coverage-include="ts/dist/**/*.js" \
-    "${test_file}" >"${tmp}" 2>&1; then
+    "${test_files[@]}" >"${tmp}" 2>&1; then
     cat "${tmp}"
     if grep -i -F "all files" "${tmp}" > "${summary}"; then :; else tail -n 80 "${tmp}" > "${summary}"; fi
     rm -f "${tmp}"
@@ -1148,7 +1183,13 @@ check_duplicate_semantics() {
   # under cdk-go/ are jsii-generated and contain large, mechanical duplication
   # that would drown out meaningful signal for this gate.
   echo "==> dupl scan: ."
-  golangci-lint run --timeout=5m --config "${cfg}" --enable-only=dupl ./...
+  local -a dupl_pkgs=()
+  mapfile -t dupl_pkgs < <(./scripts/list-go-packages.sh | grep -Ev '^./cdk-go(/|$)')
+  if [[ "${#dupl_pkgs[@]}" -eq 0 ]]; then
+    echo "FAIL: no root Go packages selected for dupl scan" >&2
+    return 1
+  fi
+  golangci-lint run --timeout=5m --config "${cfg}" --enable-only=dupl "${dupl_pkgs[@]}"
 
   echo "duplicate-semantics: PASS"
   return 0
