@@ -65,6 +65,7 @@ type Server struct {
 	idGen            apptheory.IDGenerator
 	logger           *slog.Logger
 	originValidator  OriginValidator
+	capabilities     CapabilityConfig
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -156,6 +157,7 @@ func NewServer(name, version string, opts ...ServerOption) *Server {
 		idGen:            apptheory.RandomIDGenerator{},
 		logger:           slog.Default(),
 		originValidator:  AllowOrigins("https://claude.ai", "https://claude.com"),
+		capabilities:     DefaultCapabilityConfig(),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -219,6 +221,9 @@ func (s *Server) handlePOST(c *apptheory.Context) (*apptheory.Response, error) {
 	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
 		return resp, nil
 	}
+	if resp := validatePOSTHeaders(c.Request.Headers); resp != nil {
+		return resp, nil
+	}
 
 	body := c.Request.Body
 
@@ -271,11 +276,11 @@ func (s *Server) handlePOSTRequest(ctx context.Context, body []byte, headers map
 
 	// Notifications return 202 Accepted with no body.
 	if req.ID == nil {
-		s.handleNotification(ctx, sess, req)
+		s.handleNotification(ctx, sess, req, sessionProtocolVersion(sess))
 		return &apptheory.Response{Status: 202}, nil
 	}
 
-	return s.handleRequestHTTP(ctx, sessionID, req, headers)
+	return s.handleRequestHTTP(ctx, sessionID, sess, req, headers)
 }
 
 func (s *Server) handlePOSTResponse(ctx context.Context, body []byte, headers map[string][]string) (*apptheory.Response, error) {
@@ -301,6 +306,9 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 	ctx := c.Context()
 
 	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
+		return resp, nil
+	}
+	if resp := validateGETHeaders(c.Request.Headers); resp != nil {
 		return resp, nil
 	}
 
@@ -464,7 +472,7 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 		return badRequest("missing Mcp-Session-Id"), nil
 	}
 
-	_, err := s.sessionStore.Get(ctx, sessionID)
+	sess, err := s.sessionStore.Get(ctx, sessionID)
 	switch {
 	case err == nil:
 		// ok
@@ -473,6 +481,9 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 	default:
 		s.logger.ErrorContext(ctx, "session store error", "error", err)
 		return internalServerError(), nil
+	}
+	if pvResp := s.requireProtocolVersion(c.Request.Headers, sess); pvResp != nil {
+		return pvResp, nil
 	}
 
 	if err := s.sessionStore.Delete(ctx, sessionID); err != nil {
@@ -490,6 +501,15 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 
 // dispatch routes a parsed JSON-RPC request to the appropriate MCP method handler.
 func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
+	return s.dispatchForProtocol(ctx, req, protocolVersion)
+}
+
+func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocolVersion string) *Response {
+	if !methodAllowedForProtocol(protocolVersion, req.Method) {
+		s.logger.ErrorContext(ctx, "method not found", "method", req.Method, "protocolVersion", protocolVersion)
+		return NewErrorResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("Method not found: %s", req.Method))
+	}
+
 	switch req.Method {
 	case methodInitialize:
 		selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
@@ -517,21 +537,33 @@ func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
 	}
 }
 
-// handleInitialize responds to the MCP initialize request with server capabilities.
-func (s *Server) handleInitialize(req *Request, selectedProtocolVersion string) *Response {
-	capabilities := map[string]any{
-		"tools": map[string]any{},
-	}
-	if s.resourceRegistry.Len() > 0 {
-		capabilities["resources"] = map[string]any{}
-	}
-	if s.promptRegistry.Len() > 0 {
-		capabilities["prompts"] = map[string]any{}
+func methodAllowedForProtocol(pv string, method string) bool {
+	if !isSupportedProtocolVersion(pv) {
+		return false
 	}
 
+	switch method {
+	case methodInitialize,
+		methodNotificationsInitialized,
+		methodNotificationsCancelled,
+		methodPing,
+		methodToolsList,
+		methodToolsCall,
+		methodResourcesList,
+		methodResourcesRead,
+		methodPromptsList,
+		methodPromptsGet:
+		return true
+	default:
+		return false
+	}
+}
+
+// handleInitialize responds to the MCP initialize request with server capabilities.
+func (s *Server) handleInitialize(req *Request, selectedProtocolVersion string) *Response {
 	result := map[string]any{
 		"protocolVersion": selectedProtocolVersion,
-		"capabilities":    capabilities,
+		"capabilities":    s.initializeCapabilities(selectedProtocolVersion),
 		"serverInfo": map[string]any{
 			"name":    s.name,
 			"version": s.version,
@@ -659,7 +691,15 @@ func (s *Server) handleBatch(ctx context.Context, body []byte, headers map[strin
 		return sessErrResp, nil
 	}
 
-	createdSessionID, responses := s.runBatchRequests(ctx, requests, sessionID, sess)
+	batchPV, pvResp := batchProtocolVersion(headers, sess)
+	if pvResp != nil {
+		return pvResp, nil
+	}
+	if batchPV != protocolVersionLegacy {
+		return badRequest("batch requests are only supported for MCP-Protocol-Version 2025-03-26"), nil
+	}
+
+	createdSessionID, responses := s.runBatchRequests(ctx, requests, sessionID, sess, batchPV)
 
 	if len(responses) == 0 {
 		return &apptheory.Response{Status: 202}, nil
@@ -714,12 +754,18 @@ func (s *Server) loadBatchSession(ctx context.Context, sessionID string) (*Sessi
 	}
 }
 
-func (s *Server) runBatchRequests(ctx context.Context, requests []*Request, sessionID string, sess *Session) (createdSessionID string, responses []*Response) {
+func (s *Server) runBatchRequests(
+	ctx context.Context,
+	requests []*Request,
+	sessionID string,
+	sess *Session,
+	batchProtocolVersion string,
+) (createdSessionID string, responses []*Response) {
 	responses = make([]*Response, 0, len(requests))
 
 	for _, req := range requests {
 		if req.Method == methodInitialize {
-			initResp, newSess, initErr := s.handleInitializeBatch(ctx, req)
+			initResp, newSess, initErr := s.handleInitializeBatch(ctx, req, batchProtocolVersion)
 			if initErr != nil {
 				// Return initialize error as a normal JSON-RPC error response.
 				if req.ID != nil {
@@ -755,7 +801,7 @@ func (s *Server) runBatchRequests(ctx context.Context, requests []*Request, sess
 			}
 		}
 
-		responses = append(responses, s.dispatch(ctx, req))
+		responses = append(responses, s.dispatchForProtocol(ctx, req, sessionProtocolVersion(sess)))
 	}
 
 	return createdSessionID, responses
@@ -809,23 +855,112 @@ func jsonRPCErrorResponse(id any, code int, message string) *apptheory.Response 
 	}
 }
 
-// firstHeader returns the first value for a header key (case-insensitive lookup
-// on already-canonicalized headers).
+// firstHeader returns the first value for a header key using case-insensitive
+// lookup.
 func firstHeader(headers map[string][]string, key string) string {
-	values := headers[strings.ToLower(key)]
+	values := headerValues(headers, key)
 	if len(values) == 0 {
 		return ""
 	}
 	return values[0]
 }
 
+func headerValues(headers map[string][]string, key string) []string {
+	if len(headers) == 0 {
+		return nil
+	}
+	lowerKey := strings.ToLower(key)
+	if values, ok := headers[lowerKey]; ok {
+		return values
+	}
+	for k, values := range headers {
+		if strings.EqualFold(k, key) {
+			return values
+		}
+	}
+	return nil
+}
+
+func validatePOSTHeaders(headers map[string][]string) *apptheory.Response {
+	if !contentTypeIsJSON(headers) {
+		return badRequest("POST /mcp requires Content-Type: application/json")
+	}
+	if !acceptsJSON(headers) || !acceptsEventStream(headers) {
+		return badRequest("POST /mcp requires Accept: application/json and text/event-stream")
+	}
+	return nil
+}
+
+func validateGETHeaders(headers map[string][]string) *apptheory.Response {
+	if !acceptsEventStream(headers) {
+		return badRequest("GET /mcp requires Accept: text/event-stream")
+	}
+	return nil
+}
+
+func contentTypeIsJSON(headers map[string][]string) bool {
+	typ, subtype, ok := parseMediaRange(firstHeader(headers, "content-type"))
+	return ok && typ == "application" && subtype == "json"
+}
+
+func acceptsJSON(headers map[string][]string) bool {
+	return headerIncludesMediaType(headers, "accept", "application/json")
+}
+
 func acceptsEventStream(headers map[string][]string) bool {
-	for _, v := range headers["accept"] {
-		if strings.Contains(strings.ToLower(v), "text/event-stream") {
-			return true
+	return headerIncludesMediaType(headers, "accept", "text/event-stream")
+}
+
+func headerIncludesMediaType(headers map[string][]string, key string, want string) bool {
+	wantType, wantSubtype, ok := parseMediaRange(want)
+	if !ok {
+		return false
+	}
+	for _, value := range headerValues(headers, key) {
+		for _, part := range strings.Split(value, ",") {
+			typ, subtype, ok := parseMediaRange(part)
+			if !ok {
+				continue
+			}
+			typeMatches := typ == "*" || typ == wantType
+			subtypeMatches := subtype == "*" || subtype == wantSubtype
+			if typeMatches && subtypeMatches {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func parseMediaRange(raw string) (string, string, bool) {
+	parts := strings.Split(raw, ";")
+	mediaType := strings.ToLower(strings.TrimSpace(parts[0]))
+	if mediaType == "" {
+		return "", "", false
+	}
+
+	slash := strings.IndexByte(mediaType, '/')
+	if slash <= 0 || slash == len(mediaType)-1 {
+		return "", "", false
+	}
+	typ := strings.TrimSpace(mediaType[:slash])
+	subtype := strings.TrimSpace(mediaType[slash+1:])
+	if typ == "" || subtype == "" {
+		return "", "", false
+	}
+
+	for _, param := range parts[1:] {
+		name, value, ok := strings.Cut(param, "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(name), "q") {
+			continue
+		}
+		q, err := strconv.ParseFloat(strings.Trim(strings.TrimSpace(value), `"`), 64)
+		if err == nil && q <= 0 {
+			return "", "", false
+		}
+	}
+
+	return typ, subtype, true
 }
 
 func parseJSONObject(data []byte) (map[string]json.RawMessage, error) {
@@ -861,21 +996,39 @@ func isSupportedProtocolVersion(v string) bool {
 }
 
 func (s *Server) requireProtocolVersion(headers map[string][]string, sess *Session) *apptheory.Response {
+	_, resp := requestProtocolVersion(headers, sess)
+	return resp
+}
+
+func requestProtocolVersion(headers map[string][]string, sess *Session) (string, *apptheory.Response) {
 	v := firstHeader(headers, headerMcpProtocolVersion)
 	if v == "" {
 		// Header is optional. When absent, behavior defaults to the session's
 		// negotiated protocol (if any) and otherwise the legacy default.
-		return nil
+		return sessionProtocolVersion(sess), nil
 	}
 	if !isSupportedProtocolVersion(v) {
-		return badRequest("unsupported MCP-Protocol-Version")
+		return "", badRequest("unsupported MCP-Protocol-Version")
 	}
 	if sess != nil && sess.Data != nil {
 		if expected := sess.Data["protocolVersion"]; expected != "" && expected != v {
-			return badRequest("MCP-Protocol-Version mismatch")
+			return "", badRequest("MCP-Protocol-Version mismatch")
 		}
 	}
-	return nil
+	return v, nil
+}
+
+func batchProtocolVersion(headers map[string][]string, sess *Session) (string, *apptheory.Response) {
+	return requestProtocolVersion(headers, sess)
+}
+
+func sessionProtocolVersion(sess *Session) string {
+	if sess != nil && sess.Data != nil {
+		if pv := strings.TrimSpace(sess.Data["protocolVersion"]); isSupportedProtocolVersion(pv) {
+			return pv
+		}
+	}
+	return protocolVersionLegacy
 }
 
 func (s *Server) requireSession(ctx context.Context, headers map[string][]string) (string, *Session, *apptheory.Response) {
@@ -940,7 +1093,14 @@ func (s *Server) handleInitializeHTTP(ctx context.Context, req *Request) (*appth
 }
 
 func (s *Server) negotiateInitializeProtocolVersion(req *Request) (string, *Response) {
-	selected := protocolVersion
+	return s.negotiateInitializeProtocolVersionDefault(req, protocolVersion)
+}
+
+func (s *Server) negotiateInitializeProtocolVersionDefault(req *Request, defaultProtocolVersion string) (string, *Response) {
+	selected := defaultProtocolVersion
+	if !isSupportedProtocolVersion(selected) {
+		selected = protocolVersion
+	}
 	if len(req.Params) == 0 {
 		return selected, nil
 	}
@@ -985,10 +1145,13 @@ func (s *Server) createSession(ctx context.Context, selectedPV string) (*Session
 	return sess, nil
 }
 
-func (s *Server) handleInitializeBatch(ctx context.Context, req *Request) (*Response, *Session, *Response) {
-	selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
+func (s *Server) handleInitializeBatch(ctx context.Context, req *Request, batchProtocolVersion string) (*Response, *Session, *Response) {
+	selectedPV, errResp := s.negotiateInitializeProtocolVersionDefault(req, batchProtocolVersion)
 	if errResp != nil {
 		return nil, nil, errResp
+	}
+	if selectedPV != batchProtocolVersion {
+		return nil, nil, NewErrorResponse(req.ID, CodeInvalidParams, "batch initialize requires protocolVersion "+batchProtocolVersion)
 	}
 	sess, err := s.createSession(ctx, selectedPV)
 	if err != nil {
@@ -997,7 +1160,11 @@ func (s *Server) handleInitializeBatch(ctx context.Context, req *Request) (*Resp
 	return s.handleInitialize(req, selectedPV), sess, nil
 }
 
-func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Request) {
+func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Request, protocolVersion string) {
+	if !methodAllowedForProtocol(protocolVersion, req.Method) {
+		return
+	}
+
 	switch req.Method {
 	case methodNotificationsInitialized:
 		if sess == nil {
@@ -1017,13 +1184,35 @@ func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Req
 	}
 }
 
-func (s *Server) handleRequestHTTP(ctx context.Context, sessionID string, req *Request, headers map[string][]string) (*apptheory.Response, error) {
-	if req.Method == methodToolsCall && acceptsEventStream(headers) {
+func (s *Server) handleRequestHTTP(
+	ctx context.Context,
+	sessionID string,
+	sess *Session,
+	req *Request,
+	headers map[string][]string,
+) (*apptheory.Response, error) {
+	requestPV := sessionProtocolVersion(sess)
+	if req.Method == methodToolsCall && acceptsEventStream(headers) && s.shouldStreamToolsCall(req) {
 		return s.handleToolsCallStream(ctx, sessionID, req)
 	}
 
-	resp := s.dispatch(ctx, req)
+	resp := s.dispatchForProtocol(ctx, req, requestPV)
 	return s.marshalSingleResponse(resp, sessionID, false)
+}
+
+func (s *Server) shouldStreamToolsCall(req *Request) bool {
+	if s == nil || s.registry == nil || req == nil {
+		return false
+	}
+
+	var params toolsCallParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return false
+	}
+	if params.Name == "" {
+		return false
+	}
+	return s.registry.supportsStreaming(params.Name)
 }
 
 func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, req *Request) (*apptheory.Response, error) {
@@ -1035,6 +1224,16 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 	streamID, err := s.streamStore.Create(ctx, sessionID)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "stream store error", "error", err)
+		return internalServerError(), nil
+	}
+
+	// Persist an empty-data priming event before any tool output so a client
+	// that disconnects immediately can resume this stream with Last-Event-ID.
+	if _, primeErr := s.streamStore.Append(ctx, sessionID, streamID, nil); primeErr != nil {
+		s.logger.ErrorContext(ctx, "stream prime error", "sessionId", sessionID, "streamId", streamID, "error", primeErr)
+		if closeErr := s.streamStore.Close(context.WithoutCancel(ctx), sessionID, streamID); closeErr != nil {
+			s.logger.WarnContext(ctx, "stream prime cleanup error", "sessionId", sessionID, "streamId", streamID, "error", closeErr)
+		}
 		return internalServerError(), nil
 	}
 
@@ -1214,8 +1413,8 @@ func (s *Server) streamToSSE(ctx context.Context, sessionID string, events <-cha
 					return
 				case out <- apptheory.SSEEvent{
 					ID:    ev.ID,
-					Event: "message",
-					Data:  ev.Data,
+					Event: streamEventName(ev),
+					Data:  streamEventData(ev),
 				}:
 				}
 			}
@@ -1231,6 +1430,20 @@ func (s *Server) streamToSSE(ctx context.Context, sessionID string, events <-cha
 	}
 	resp.Headers[headerMcpSessionID] = []string{sessionID}
 	return resp, nil
+}
+
+func streamEventName(ev StreamEvent) string {
+	if len(ev.Data) == 0 {
+		return ""
+	}
+	return "message"
+}
+
+func streamEventData(ev StreamEvent) any {
+	if len(ev.Data) == 0 {
+		return ""
+	}
+	return ev.Data
 }
 
 func badRequest(msg string) *apptheory.Response {

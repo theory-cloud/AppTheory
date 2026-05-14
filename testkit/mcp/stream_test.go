@@ -75,9 +75,23 @@ func TestClient_RawStream_AndResumeStream(t *testing.T) {
 		t.Fatalf("timed out waiting for first progress emission")
 	}
 
+	priming, err := stream.Next()
+	if err != nil {
+		t.Fatalf("read priming SSE message: %v", err)
+	}
+	if strings.TrimSpace(priming.ID) == "" {
+		t.Fatalf("expected priming SSE id to be set")
+	}
+	if got := strings.TrimSpace(priming.Event); got != "" {
+		t.Fatalf("expected priming SSE event to be empty, got %q", got)
+	}
+	if got := strings.TrimSpace(string(priming.Data)); got != "" {
+		t.Fatalf("expected priming SSE data to be empty, got %q", got)
+	}
+
 	first, err := stream.Next()
 	if err != nil {
-		t.Fatalf("read first SSE message: %v", err)
+		t.Fatalf("read first progress SSE message: %v", err)
 	}
 	if strings.TrimSpace(first.ID) == "" {
 		t.Fatalf("expected SSE id to be set")

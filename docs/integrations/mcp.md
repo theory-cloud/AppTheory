@@ -36,6 +36,9 @@ Header names are case-insensitive on the wire. The examples in this doc use lowe
 
 Important transport behavior:
 
+- `POST /mcp` requires `content-type: application/json`
+- `POST /mcp` requires `accept` support for both `application/json` and `text/event-stream`
+- `GET /mcp` requires `accept` support for `text/event-stream`
 - `initialize` is the only request that creates a session and returns `mcp-session-id`
 - subsequent `POST /mcp`, `GET /mcp`, and `DELETE /mcp` calls require `mcp-session-id`
 - missing session header returns `400`
@@ -60,6 +63,25 @@ If a request includes an `Origin` header, AppTheory validates it fail-closed. Th
 - `https://claude.com`
 
 Use `mcp.WithOriginValidator(...)` to replace that policy for other browser-based callers.
+
+### Strict transport compatibility rollout
+
+Roll strict Streamable HTTP behavior out with a client canary before making it the only production path:
+
+1. Canary clients must send `content-type: application/json` on every `POST /mcp`.
+2. Canary clients must send `accept: application/json, text/event-stream` on every `POST /mcp`.
+3. Canary clients must send `accept: text/event-stream` on every `GET /mcp`.
+4. After initialization, clients should either omit `mcp-protocol-version` or send the exact negotiated version.
+5. Streaming clients must tolerate the initial empty-data priming SSE event and store its `id` for reconnect.
+6. Reconnect with `GET /mcp` plus the latest `last-event-id`; do not assume dropped TCP connections cancel work.
+
+Compatibility risks to check during canary:
+
+- older clients that send `Accept: application/json` only on `POST /mcp` now receive HTTP `400`
+- clients that omit `Content-Type` or send non-JSON content types now receive HTTP `400`
+- clients that pin a protocol header different from the negotiated session version now receive HTTP `400`
+- SSE parsers that assume the first frame is JSON-RPC must skip or record the empty priming frame
+- replay clients that reuse a `Last-Event-ID` from another stream now fail closed instead of receiving unrelated events
 
 Mounting the handler is still just normal AppTheory routing:
 
@@ -97,7 +119,8 @@ Other transport notes:
 
 - posted client responses are accepted for Streamable HTTP compliance and return `202 Accepted` with no body
 - notifications also return `202 Accepted` with no body
-- JSON-RPC batch requests are only supported for legacy `2025-03-26` callers
+- JSON-RPC batch requests are only supported for legacy `2025-03-26` callers; after a session is established, batch
+  dispatch uses the session's negotiated protocol version when the request omits `mcp-protocol-version`
 
 ### Runtime hardening guarantees
 
@@ -112,14 +135,20 @@ The MCP runtime fails closed around tool execution and durable replay:
 
 ### Capabilities advertisement (`initialize`)
 
-The `initialize` result always advertises `tools`.
+The `initialize` result advertises only surfaces that are both enabled in `mcp.CapabilityConfig` and actually registered
+on the server:
 
-It advertises `resources` and `prompts` only when something is registered:
+- if `srv.Registry().Len() > 0` and tools are enabled -> `"tools": {}`
+- if `srv.Resources().Len() > 0` and resources are enabled -> `"resources": {}`
+- if `srv.Prompts().Len() > 0` and prompts are enabled -> `"prompts": {}`
 
-- if `srv.Resources().Len() > 0` -> `"resources": {}`
-- if `srv.Prompts().Len() > 0` -> `"prompts": {}`
+The default capability policy enables the implemented surfaces, but registration is still required before they are
+advertised. Use `mcp.WithCapabilityConfig(...)` to withhold an implemented surface for a product rollout.
 
-This keeps tools-only clients stable while still exposing the broader MCP surface when you opt in.
+Unsupported optional MCP capabilities are fail-closed: AppTheory does not advertise `listChanged`, resource
+subscriptions, `logging`, `completions`, or `tasks` until the corresponding framework hook exists and is configured.
+Capability construction is also protocol-aware; if a future supported protocol version removes or changes a capability,
+AppTheory omits that capability for sessions negotiated to that version.
 
 ---
 
@@ -175,10 +204,15 @@ _ = srv.Registry().RegisterTool(mcp.ToolDef{
 
 ### Streaming tool progress (SSE)
 
-If the client includes `Accept: text/event-stream` on `tools/call`, AppTheory may respond as SSE:
+Strict Streamable HTTP clients send `Accept: application/json, text/event-stream` on every `POST /mcp`.
+AppTheory still returns SSE only for a `tools/call` targeting a tool registered with `RegisterStreamingTool`;
+ordinary tools return buffered JSON even though the client advertises SSE support.
 
-- every SSE frame is `event: message`
-- the frame `data:` is always a single JSON-RPC message
+For streaming tools, AppTheory responds as SSE:
+
+- the first frame is a replay priming event with an `id` and an empty `data:` field
+- after the priming event, each application frame is `event: message`
+- application frame `data:` values are always a single JSON-RPC message
 - progress is emitted as JSON-RPC `notifications/progress`
 - the progress notification is correlated with `params._meta.progressToken` from the original `tools/call`
 - `progressToken` may be a string or an integer
@@ -209,8 +243,15 @@ Important deployment note:
 
 For streaming tool calls, AppTheory assigns SSE event ids and persists them in the active `StreamStore`.
 
+- each SSE stream starts with a persisted empty-data priming event so a client can reconnect before any JSON-RPC
+  progress or result message has been produced
 - `GET /mcp` with `last-event-id: <id>` resumes or replays that stream
+- `last-event-id` must belong to the stream being resumed; AppTheory fails closed instead of replaying events from a
+  different stream
 - clients must reuse the same `mcp-session-id`
+- clients should store the latest SSE `id`, reconnect with `GET /mcp` and `last-event-id` after any disconnect, and
+  treat disconnect as transport loss rather than tool cancellation
+- cancellation remains explicit: send `notifications/cancelled` instead of relying on a dropped connection
 - `GET /mcp` without `last-event-id` emits one keepalive comment and closes by default so idle callers do not hold
   Lambda concurrency indefinitely
 - if you want that path to stay open for a bounded window before EOF, opt in with

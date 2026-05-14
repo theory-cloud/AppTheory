@@ -280,12 +280,26 @@ func TestClaudeRemoteMcp_Lifecycle_AndStreamingResume_WithBearerAuth(t *testing.
 		t.Fatalf("timed out waiting for first progress emission")
 	}
 
+	primingMsg, err := stream.Next()
+	if err != nil {
+		t.Fatalf("read priming SSE message: %v", err)
+	}
+	if strings.TrimSpace(primingMsg.ID) == "" {
+		t.Fatalf("expected priming SSE message to include id")
+	}
+	if got := strings.TrimSpace(primingMsg.Event); got != "" {
+		t.Fatalf("expected priming SSE event to be empty, got %q", got)
+	}
+	if got := strings.TrimSpace(string(primingMsg.Data)); got != "" {
+		t.Fatalf("expected priming SSE data to be empty, got %q", got)
+	}
+
 	firstMsg, err := stream.Next()
 	if err != nil {
-		t.Fatalf("read first SSE message: %v", err)
+		t.Fatalf("read first progress SSE message: %v", err)
 	}
 	if strings.TrimSpace(firstMsg.ID) == "" {
-		t.Fatalf("expected first SSE message to include id")
+		t.Fatalf("expected first progress SSE message to include id")
 	}
 	if !strings.Contains(string(firstMsg.Data), `"method":"notifications/progress"`) {
 		t.Fatalf("expected progress notification in first event, got: %s", string(firstMsg.Data))

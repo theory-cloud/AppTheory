@@ -141,6 +141,9 @@ func TestDynamoStreamStore_ReplayPreservesSessionSequenceAcrossStreams(t *testin
 	require.Equal(t, eventA2, replayed.ID)
 	require.JSONEq(t, `{"stream":"A","seq":2}`, string(replayed.Data))
 	requireStreamClosed(t, replay)
+
+	_, err = store.Subscribe(context.Background(), "sess-1", streamA, eventB1)
+	require.ErrorIs(t, err, ErrEventNotFound)
 }
 
 func TestDynamoStreamStore_DeleteSessionRejectsLateAppend(t *testing.T) {
@@ -249,6 +252,7 @@ func TestDynamoStreamStore_ServerReplayFromSecondInstance(t *testing.T) {
 			InputSchema: json.RawMessage(`{"type":"object"}`),
 		},
 		func(ctx context.Context, _ json.RawMessage, emit func(SSEEvent)) (*ToolResult, error) {
+			defer close(toolDone)
 			emit(SSEEvent{Data: map[string]any{"seq": 1}})
 			close(firstEmitted)
 
@@ -269,7 +273,7 @@ func TestDynamoStreamStore_ServerReplayFromSecondInstance(t *testing.T) {
 	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: mustMarshal(t, params)})
 
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"text/event-stream"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	reqCtx, cancel := context.WithCancel(context.Background())
 	resp, err := invokeHandlerWithMethod(reqCtx, s1, "POST", body, headers)
@@ -284,26 +288,20 @@ func TestDynamoStreamStore_ServerReplayFromSecondInstance(t *testing.T) {
 		t.Fatal("timed out waiting for first progress emission")
 	}
 
+	primingFrame, err := readSSEFrame(reader)
+	require.NoError(t, err)
+	requirePrimingSSEFrame(t, primingFrame)
+
 	firstFrame, err := readSSEFrame(reader)
 	require.NoError(t, err)
 	require.Contains(t, firstFrame, `"method":"notifications/progress"`)
 	require.Contains(t, firstFrame, `"progress":1`)
 
-	lastID := ""
-	for _, line := range strings.Split(firstFrame, "\n") {
-		if strings.HasPrefix(line, "id: ") {
-			lastID = strings.TrimSpace(strings.TrimPrefix(line, "id: "))
-			break
-		}
-	}
-	require.NotEmpty(t, lastID)
+	lastID := sseFrameID(t, firstFrame)
 
 	cancel()
 
-	go func() {
-		defer close(toolDone)
-		close(continueTool)
-	}()
+	close(continueTool)
 
 	select {
 	case <-toolDone:
@@ -355,7 +353,7 @@ func TestHandleToolsCallStream_OversizeFinalResponseEmitsStableError(t *testing.
 	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 7, Method: methodToolsCall, Params: mustMarshal(t, params)})
 
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"text/event-stream"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 	require.NoError(t, err)

@@ -202,7 +202,7 @@ func TestHandleGET_EventNotFound_AndStoreErrors(t *testing.T) {
 	s := NewServer("test", "dev")
 	sessionID := initializeSession(t, s)
 
-	headers := sessionHeaders(sessionID)
+	headers := sseSessionHeaders(sessionID)
 	headers["last-event-id"] = []string{"9999"}
 
 	resp, err := invokeHandlerWithMethod(context.Background(), s, "GET", nil, headers)
@@ -275,9 +275,25 @@ func TestHandleToolsCallStream_StreamingNotSupported_AndStreamStoreErrors(t *tes
 
 	params := mustMarshal(t, map[string]any{"name": "any", "arguments": json.RawMessage(`{}`)})
 	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: params})
+	registerAnyStreamingTool := func(t *testing.T, srv *Server) {
+		t.Helper()
+		if err := srv.Registry().RegisterStreamingTool(
+			ToolDef{
+				Name:        "any",
+				Description: "Streaming test tool",
+				InputSchema: json.RawMessage(`{"type":"object"}`),
+			},
+			func(context.Context, json.RawMessage, func(SSEEvent)) (*ToolResult, error) {
+				return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
+			},
+		); err != nil {
+			t.Fatalf("register streaming tool: %v", err)
+		}
+	}
+	registerAnyStreamingTool(t, s)
 
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"text/event-stream"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 	if err != nil {
@@ -296,6 +312,7 @@ func TestHandleToolsCallStream_StreamingNotSupported_AndStreamStoreErrors(t *tes
 
 	// Create error should map to internalServerError (500).
 	s2 := NewServer("test", "dev")
+	registerAnyStreamingTool(t, s2)
 	s2.sessionStore = NewMemorySessionStore()
 	requirePut(t, s2.sessionStore, &Session{ID: sessionID, ExpiresAt: time.Now().Add(time.Minute), Data: map[string]string{"protocolVersion": protocolVersion}})
 	s2.streamStore = configurableStreamStore{
@@ -309,8 +326,36 @@ func TestHandleToolsCallStream_StreamingNotSupported_AndStreamStoreErrors(t *tes
 		t.Fatalf("status: got %d want %d", resp.Status, 500)
 	}
 
+	// Prime append error should close the newly created stream and return 500.
+	sPrime := NewServer("test", "dev")
+	registerAnyStreamingTool(t, sPrime)
+	sPrime.sessionStore = NewMemorySessionStore()
+	requirePut(t, sPrime.sessionStore, &Session{ID: sessionID, ExpiresAt: time.Now().Add(time.Minute), Data: map[string]string{"protocolVersion": protocolVersion}})
+	closeCalled := false
+	sPrime.streamStore = configurableStreamStore{
+		create: func(context.Context, string) (string, error) { return "stream-1", nil },
+		append: func(context.Context, string, string, json.RawMessage) (string, error) {
+			return "", errors.New("prime failed")
+		},
+		close: func(context.Context, string, string) error {
+			closeCalled = true
+			return nil
+		},
+	}
+	resp, err = invokeHandlerWithMethod(context.Background(), sPrime, "POST", body, headers)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if resp.Status != 500 {
+		t.Fatalf("status: got %d want %d", resp.Status, 500)
+	}
+	if !closeCalled {
+		t.Fatalf("expected stream cleanup close to run after prime failure")
+	}
+
 	// Subscribe error should map to internalServerError (500).
 	s3 := NewServer("test", "dev")
+	registerAnyStreamingTool(t, s3)
 	s3.sessionStore = NewMemorySessionStore()
 	requirePut(t, s3.sessionStore, &Session{ID: sessionID, ExpiresAt: time.Now().Add(time.Minute), Data: map[string]string{"protocolVersion": protocolVersion}})
 	s3.streamStore = configurableStreamStore{
@@ -380,7 +425,7 @@ func TestRunBatchRequests_EdgeCases(t *testing.T) {
 	t.Run("missing session yields error response", func(t *testing.T) {
 		_, responses := s.runBatchRequests(context.Background(), []*Request{
 			{JSONRPC: "2.0", ID: 1, Method: methodToolsList},
-		}, "", nil)
+		}, "", nil, protocolVersionLegacy)
 		if len(responses) != 1 || responses[0].Error == nil || responses[0].Error.Code != CodeInvalidRequest {
 			t.Fatalf("expected invalid request error for missing session, got: %+v", responses)
 		}
@@ -389,7 +434,7 @@ func TestRunBatchRequests_EdgeCases(t *testing.T) {
 	t.Run("initialize invalid params yields JSON-RPC error", func(t *testing.T) {
 		_, responses := s.runBatchRequests(context.Background(), []*Request{
 			{JSONRPC: "2.0", ID: 1, Method: methodInitialize, Params: json.RawMessage("{")},
-		}, "", nil)
+		}, "", nil, protocolVersionLegacy)
 		if len(responses) != 1 || responses[0].Error == nil || responses[0].Error.Code != CodeInvalidParams {
 			t.Fatalf("expected invalid params error for initialize, got: %+v", responses)
 		}
@@ -399,7 +444,7 @@ func TestRunBatchRequests_EdgeCases(t *testing.T) {
 		created, responses := s.runBatchRequests(context.Background(), []*Request{
 			{JSONRPC: "2.0", ID: nil, Method: methodInitialize},
 			{JSONRPC: "2.0", ID: 2, Method: methodToolsList},
-		}, "", nil)
+		}, "", nil, protocolVersionLegacy)
 		if created == "" {
 			t.Fatalf("expected initialize notification to create a session id")
 		}
@@ -416,7 +461,7 @@ func TestRunBatchRequests_EdgeCases(t *testing.T) {
 		}))
 		_, responses := s2.runBatchRequests(context.Background(), []*Request{
 			{JSONRPC: "2.0", ID: 1, Method: methodToolsList},
-		}, "sess-1", nil)
+		}, "sess-1", nil, protocolVersionLegacy)
 		if len(responses) != 1 || responses[0].Error == nil || responses[0].Error.Code != CodeInternalError {
 			t.Fatalf("expected internal error response, got: %+v", responses)
 		}
