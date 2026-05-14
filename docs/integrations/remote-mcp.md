@@ -49,9 +49,15 @@ func buildApp() *apptheory.App {
 Important behaviors for Claude compatibility:
 - `initialize` returns `Mcp-Session-Id` and must negotiate `protocolVersion` (`2025-11-25`).
 - `notifications/initialized` must return `202 Accepted` with no body.
-- `tools/call` may stream with SSE when the client includes `Accept: text/event-stream`.
-- SSE frames stay on `event: message`; progress is emitted as JSON-RPC `notifications/progress`, not custom SSE event names.
+- `POST /mcp` requires `Content-Type: application/json` and `Accept: application/json, text/event-stream`.
+- `GET /mcp` requires `Accept: text/event-stream`.
+- `tools/call` may stream with SSE when the target tool is registered for streaming and the client advertises SSE.
+- SSE streams start with an empty-data priming event carrying a replay-safe `id`.
+- Application SSE frames stay on `event: message`; progress is emitted as JSON-RPC `notifications/progress`, not custom
+  SSE event names.
 - Disconnections are not cancellation; resumability uses `GET /mcp` + `Last-Event-ID`.
+- `Last-Event-ID` replay is stream-bound. A cursor from another stream fails closed instead of replaying unrelated
+  events.
 - `GET /mcp` without `Last-Event-ID` emits a short-lived keepalive SSE response by default.
 - If you want that path to stay open for a bounded window on Lambda, use
   `mcp.WithInitialSessionListenerBudget(...)`.
@@ -59,6 +65,17 @@ Important behaviors for Claude compatibility:
   `https://claude.com`); use `mcp.WithOriginValidator(...)` for other browser origins.
 - Tool handler panics are recovered as sanitized JSON-RPC internal errors. Do not rely on panic text reaching the
   client; AppTheory logs it server-side and keeps the MCP server reusable.
+
+Strict transport rollout checklist:
+
+- Canary one connector/client population first and confirm it sends the strict `Accept` and `Content-Type` headers.
+- Confirm the client carries forward the negotiated protocol version, or omits `Mcp-Protocol-Version` after
+  initialization so AppTheory uses the session value.
+- Confirm the client records the first SSE `id`, even when its `data:` field is empty, before long-running work emits
+  progress.
+- Confirm reconnect uses `GET /mcp` with the latest `Last-Event-ID` for the same session and stream.
+- Treat HTTP `400` responses during canary as compatibility failures to fix in the client, not as server fallbacks to
+  loosen.
 
 ## 2) Add OAuth protection (Remote MCP auth `2025-06-18`)
 
