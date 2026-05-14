@@ -20,7 +20,7 @@ func TestResourcesListAndRead_RoundTrip(t *testing.T) {
 
 	sessionID := initializeSession(t, s)
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"application/json"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	if err := s.Resources().RegisterResource(ResourceDef{
 		URI:         "file://hello.txt",
@@ -88,7 +88,7 @@ func TestPromptsListAndGet_RoundTrip(t *testing.T) {
 
 	sessionID := initializeSession(t, s)
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"application/json"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	if err := s.Prompts().RegisterPrompt(PromptDef{
 		Name:        "greet",
@@ -156,7 +156,7 @@ func TestResourcesRead_NotFoundIsInvalidParams(t *testing.T) {
 
 	sessionID := initializeSession(t, s)
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"application/json"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	readParams := mustMarshal(t, map[string]any{"uri": "file://missing.txt"})
 	readReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodResourcesRead, Params: readParams})
@@ -178,7 +178,7 @@ func TestPromptsGet_NotFoundIsInvalidParams(t *testing.T) {
 
 	sessionID := initializeSession(t, s)
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"application/json"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	getParams := mustMarshal(t, map[string]any{"name": "missing", "arguments": json.RawMessage(`{}`)})
 	getReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodPromptsGet, Params: getParams})

@@ -202,7 +202,7 @@ func TestHandleGET_EventNotFound_AndStoreErrors(t *testing.T) {
 	s := NewServer("test", "dev")
 	sessionID := initializeSession(t, s)
 
-	headers := sessionHeaders(sessionID)
+	headers := sseSessionHeaders(sessionID)
 	headers["last-event-id"] = []string{"9999"}
 
 	resp, err := invokeHandlerWithMethod(context.Background(), s, "GET", nil, headers)
@@ -275,9 +275,25 @@ func TestHandleToolsCallStream_StreamingNotSupported_AndStreamStoreErrors(t *tes
 
 	params := mustMarshal(t, map[string]any{"name": "any", "arguments": json.RawMessage(`{}`)})
 	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: params})
+	registerAnyStreamingTool := func(t *testing.T, srv *Server) {
+		t.Helper()
+		if err := srv.Registry().RegisterStreamingTool(
+			ToolDef{
+				Name:        "any",
+				Description: "Streaming test tool",
+				InputSchema: json.RawMessage(`{"type":"object"}`),
+			},
+			func(context.Context, json.RawMessage, func(SSEEvent)) (*ToolResult, error) {
+				return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
+			},
+		); err != nil {
+			t.Fatalf("register streaming tool: %v", err)
+		}
+	}
+	registerAnyStreamingTool(t, s)
 
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"text/event-stream"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 	if err != nil {
@@ -296,6 +312,7 @@ func TestHandleToolsCallStream_StreamingNotSupported_AndStreamStoreErrors(t *tes
 
 	// Create error should map to internalServerError (500).
 	s2 := NewServer("test", "dev")
+	registerAnyStreamingTool(t, s2)
 	s2.sessionStore = NewMemorySessionStore()
 	requirePut(t, s2.sessionStore, &Session{ID: sessionID, ExpiresAt: time.Now().Add(time.Minute), Data: map[string]string{"protocolVersion": protocolVersion}})
 	s2.streamStore = configurableStreamStore{
@@ -311,6 +328,7 @@ func TestHandleToolsCallStream_StreamingNotSupported_AndStreamStoreErrors(t *tes
 
 	// Subscribe error should map to internalServerError (500).
 	s3 := NewServer("test", "dev")
+	registerAnyStreamingTool(t, s3)
 	s3.sessionStore = NewMemorySessionStore()
 	requirePut(t, s3.sessionStore, &Session{ID: sessionID, ExpiresAt: time.Now().Add(time.Minute), Data: map[string]string{"protocolVersion": protocolVersion}})
 	s3.streamStore = configurableStreamStore{

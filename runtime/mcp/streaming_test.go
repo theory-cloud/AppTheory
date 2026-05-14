@@ -61,7 +61,7 @@ func TestToolsCallStreaming_StreamsProgressIncrementally(t *testing.T) {
 	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: mustMarshal(t, params)})
 
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"text/event-stream"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 	if err != nil {
@@ -182,7 +182,7 @@ func TestToolsCallStreaming_ProgressToken_NumberIsPreserved(t *testing.T) {
 	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: mustMarshal(t, params)})
 
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"text/event-stream"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 	if err != nil {
@@ -254,7 +254,7 @@ func TestToolsCallStreaming_CanResumeViaGETWithLastEventID(t *testing.T) {
 	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: mustMarshal(t, params)})
 
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"text/event-stream"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	reqCtx, cancel := context.WithCancel(context.Background())
 	resp, err := invokeHandlerWithMethod(reqCtx, s, "POST", body, headers)
@@ -421,7 +421,7 @@ func TestToolsCallStreaming_PanicReturnsInternalError(t *testing.T) {
 	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: mustMarshal(t, params)})
 
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"text/event-stream"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 	if err != nil {

@@ -14,9 +14,10 @@ type SSEEvent struct {
 type StreamingToolHandler func(ctx context.Context, args json.RawMessage, emit func(SSEEvent)) (*ToolResult, error)
 
 // RegisterStreamingTool registers a tool that supports SSE streaming.
-// When invoked with Accept: text/event-stream, progress events are streamed.
-// When invoked with Accept: application/json (or absent), the handler runs
-// to completion and returns a buffered JSON response.
+// When invoked by a strict Streamable HTTP POST with an Accept header that
+// supports both application/json and text/event-stream, progress events are
+// streamed. Buffered calls to the same tool still run to completion and return a
+// JSON response when the server does not select the SSE path.
 func (r *ToolRegistry) RegisterStreamingTool(def ToolDef, handler StreamingToolHandler) error {
 	// Wrap the streaming handler as a regular ToolHandler that buffers results.
 	// The actual SSE streaming is handled at the server level by checking the
