@@ -36,6 +36,9 @@ Header names are case-insensitive on the wire. The examples in this doc use lowe
 
 Important transport behavior:
 
+- `POST /mcp` requires `content-type: application/json`
+- `POST /mcp` requires `accept` support for both `application/json` and `text/event-stream`
+- `GET /mcp` requires `accept` support for `text/event-stream`
 - `initialize` is the only request that creates a session and returns `mcp-session-id`
 - subsequent `POST /mcp`, `GET /mcp`, and `DELETE /mcp` calls require `mcp-session-id`
 - missing session header returns `400`
@@ -182,7 +185,11 @@ _ = srv.Registry().RegisterTool(mcp.ToolDef{
 
 ### Streaming tool progress (SSE)
 
-If the client includes `Accept: text/event-stream` on `tools/call`, AppTheory may respond as SSE:
+Strict Streamable HTTP clients send `Accept: application/json, text/event-stream` on every `POST /mcp`.
+AppTheory still returns SSE only for a `tools/call` targeting a tool registered with `RegisterStreamingTool`;
+ordinary tools return buffered JSON even though the client advertises SSE support.
+
+For streaming tools, AppTheory responds as SSE:
 
 - every SSE frame is `event: message`
 - the frame `data:` is always a single JSON-RPC message

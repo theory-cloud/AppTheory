@@ -132,6 +132,17 @@ func (r *ToolRegistry) Len() int {
 	return len(r.tools)
 }
 
+func (r *ToolRegistry) supportsStreaming(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	idx, ok := r.index[name]
+	if !ok {
+		return false
+	}
+	return r.tools[idx].streamingHandler != nil
+}
+
 // Call looks up a tool by name and invokes its handler with the given arguments.
 // It returns an error if the tool is not found.
 func (r *ToolRegistry) Call(ctx context.Context, name string, args json.RawMessage) (*ToolResult, error) {

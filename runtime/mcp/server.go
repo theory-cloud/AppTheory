@@ -221,6 +221,9 @@ func (s *Server) handlePOST(c *apptheory.Context) (*apptheory.Response, error) {
 	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
 		return resp, nil
 	}
+	if resp := validatePOSTHeaders(c.Request.Headers); resp != nil {
+		return resp, nil
+	}
 
 	body := c.Request.Body
 
@@ -303,6 +306,9 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 	ctx := c.Context()
 
 	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
+		return resp, nil
+	}
+	if resp := validateGETHeaders(c.Request.Headers); resp != nil {
 		return resp, nil
 	}
 
@@ -846,23 +852,112 @@ func jsonRPCErrorResponse(id any, code int, message string) *apptheory.Response 
 	}
 }
 
-// firstHeader returns the first value for a header key (case-insensitive lookup
-// on already-canonicalized headers).
+// firstHeader returns the first value for a header key using case-insensitive
+// lookup.
 func firstHeader(headers map[string][]string, key string) string {
-	values := headers[strings.ToLower(key)]
+	values := headerValues(headers, key)
 	if len(values) == 0 {
 		return ""
 	}
 	return values[0]
 }
 
+func headerValues(headers map[string][]string, key string) []string {
+	if len(headers) == 0 {
+		return nil
+	}
+	lowerKey := strings.ToLower(key)
+	if values, ok := headers[lowerKey]; ok {
+		return values
+	}
+	for k, values := range headers {
+		if strings.EqualFold(k, key) {
+			return values
+		}
+	}
+	return nil
+}
+
+func validatePOSTHeaders(headers map[string][]string) *apptheory.Response {
+	if !contentTypeIsJSON(headers) {
+		return badRequest("POST /mcp requires Content-Type: application/json")
+	}
+	if !acceptsJSON(headers) || !acceptsEventStream(headers) {
+		return badRequest("POST /mcp requires Accept: application/json and text/event-stream")
+	}
+	return nil
+}
+
+func validateGETHeaders(headers map[string][]string) *apptheory.Response {
+	if !acceptsEventStream(headers) {
+		return badRequest("GET /mcp requires Accept: text/event-stream")
+	}
+	return nil
+}
+
+func contentTypeIsJSON(headers map[string][]string) bool {
+	typ, subtype, ok := parseMediaRange(firstHeader(headers, "content-type"))
+	return ok && typ == "application" && subtype == "json"
+}
+
+func acceptsJSON(headers map[string][]string) bool {
+	return headerIncludesMediaType(headers, "accept", "application/json")
+}
+
 func acceptsEventStream(headers map[string][]string) bool {
-	for _, v := range headers["accept"] {
-		if strings.Contains(strings.ToLower(v), "text/event-stream") {
-			return true
+	return headerIncludesMediaType(headers, "accept", "text/event-stream")
+}
+
+func headerIncludesMediaType(headers map[string][]string, key string, want string) bool {
+	wantType, wantSubtype, ok := parseMediaRange(want)
+	if !ok {
+		return false
+	}
+	for _, value := range headerValues(headers, key) {
+		for _, part := range strings.Split(value, ",") {
+			typ, subtype, ok := parseMediaRange(part)
+			if !ok {
+				continue
+			}
+			typeMatches := typ == "*" || typ == wantType
+			subtypeMatches := subtype == "*" || subtype == wantSubtype
+			if typeMatches && subtypeMatches {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func parseMediaRange(raw string) (string, string, bool) {
+	parts := strings.Split(raw, ";")
+	mediaType := strings.ToLower(strings.TrimSpace(parts[0]))
+	if mediaType == "" {
+		return "", "", false
+	}
+
+	slash := strings.IndexByte(mediaType, '/')
+	if slash <= 0 || slash == len(mediaType)-1 {
+		return "", "", false
+	}
+	typ := strings.TrimSpace(mediaType[:slash])
+	subtype := strings.TrimSpace(mediaType[slash+1:])
+	if typ == "" || subtype == "" {
+		return "", "", false
+	}
+
+	for _, param := range parts[1:] {
+		name, value, ok := strings.Cut(param, "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(name), "q") {
+			continue
+		}
+		q, err := strconv.ParseFloat(strings.Trim(strings.TrimSpace(value), `"`), 64)
+		if err == nil && q <= 0 {
+			return "", "", false
+		}
+	}
+
+	return typ, subtype, true
 }
 
 func parseJSONObject(data []byte) (map[string]json.RawMessage, error) {
@@ -1094,12 +1189,27 @@ func (s *Server) handleRequestHTTP(
 	headers map[string][]string,
 ) (*apptheory.Response, error) {
 	requestPV := sessionProtocolVersion(sess)
-	if req.Method == methodToolsCall && acceptsEventStream(headers) {
+	if req.Method == methodToolsCall && acceptsEventStream(headers) && s.shouldStreamToolsCall(req) {
 		return s.handleToolsCallStream(ctx, sessionID, req)
 	}
 
 	resp := s.dispatchForProtocol(ctx, req, requestPV)
 	return s.marshalSingleResponse(resp, sessionID, false)
+}
+
+func (s *Server) shouldStreamToolsCall(req *Request) bool {
+	if s == nil || s.registry == nil || req == nil {
+		return false
+	}
+
+	var params toolsCallParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return false
+	}
+	if params.Name == "" {
+		return false
+	}
+	return s.registry.supportsStreaming(params.Name)
 }
 
 func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, req *Request) (*apptheory.Response, error) {

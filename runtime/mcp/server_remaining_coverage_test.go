@@ -142,7 +142,7 @@ func TestServerHTTPHandlers_CoverageBranches(t *testing.T) {
 		s := NewServer("test", "dev")
 		sessionID := initializeSession(t, s)
 
-		headers := sessionHeaders(sessionID)
+		headers := sseSessionHeaders(sessionID)
 		headers[headerMcpProtocolVersion] = []string{"not-a-real-version"}
 
 		resp, err := invokeHandlerWithMethod(context.Background(), s, "GET", nil, headers)
@@ -167,7 +167,7 @@ func TestServerHTTPHandlers_CoverageBranches(t *testing.T) {
 			},
 		}
 
-		headers := sessionHeaders(sessionID)
+		headers := sseSessionHeaders(sessionID)
 		headers[headerLastEventID] = []string{"1"}
 
 		resp, err := invokeHandlerWithMethod(context.Background(), s, "GET", nil, headers)
