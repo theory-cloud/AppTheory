@@ -39,6 +39,19 @@ require_order(
     "Release Please (Stable)",
     "stable release must pass rubric before release-please can create a draft release",
 )
+for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.yml"):
+    require_order(
+        workflow,
+        "Build + verify\n        if: steps.release.outputs.release_created == 'true'",
+        "Build release assets",
+        "release workflows must run rubric before building release assets",
+    )
+    require_order(
+        workflow,
+        "Build release assets",
+        "Generate SHA-256 checksums",
+        "release workflows must build dist artifacts before generating checksums",
+    )
 require_contains(
     ".github/workflows/ci.yml",
     "ready_for_review",
