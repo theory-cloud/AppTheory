@@ -2060,6 +2060,11 @@ type DynamoStreamStore struct {
 	maxEventBytes  int
 }
 
+type DynamoTaskStore struct {
+	db  tablecore.DB
+	now func() time.Time
+}
+
 type Icon struct {
 	Src      string   `json:"src"`
 	MimeType string   `json:"mimeType,omitempty"`
@@ -2363,6 +2368,8 @@ func NewDynamoSessionStore(tablecore.DB) SessionStore
 
 func NewDynamoStreamStore(tablecore.DB) StreamStore
 
+func NewDynamoTaskStore(tablecore.DB) TaskStore
+
 func NewErrorResponse(any, int, string) *Response
 
 func NewMemorySessionStore(...MemorySessionStoreOption) *MemorySessionStore
@@ -2431,6 +2438,18 @@ func (*DynamoStreamStore) StreamForEvent(context.Context, string, string) (strin
 
 func (*DynamoStreamStore) Subscribe(context.Context, string, string, string) (<-chan StreamEvent, error)
 
+func (*DynamoTaskStore) Cancel(context.Context, TaskLookup) (*TaskRecord, error)
+
+func (*DynamoTaskStore) Create(context.Context, TaskRecord) (*TaskRecord, error)
+
+func (*DynamoTaskStore) DeleteSession(context.Context, string) error
+
+func (*DynamoTaskStore) Get(context.Context, TaskLookup) (*TaskRecord, error)
+
+func (*DynamoTaskStore) List(context.Context, TaskListRequest) (*TaskListResult, error)
+
+func (*DynamoTaskStore) Update(context.Context, TaskRecord) (*TaskRecord, error)
+
 func (*MemorySessionStore) Delete(context.Context, string) error
 
 func (*MemorySessionStore) Get(context.Context, string) (*Session, error)
@@ -2498,6 +2517,8 @@ func (*ToolRegistry) RegisterStreamingTool(ToolDef, StreamingToolHandler) error
 func (*ToolRegistry) RegisterTool(ToolDef, ToolHandler) error
 
 func (dynamoStreamRecord) TableName() string
+
+func (dynamoTaskRecord) TableName() string
 
 func (sessionRecord) TableName() string
 

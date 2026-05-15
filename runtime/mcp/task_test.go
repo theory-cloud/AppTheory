@@ -257,6 +257,18 @@ func TestTaskRuntimeContract_NormalizesOptions(t *testing.T) {
 	if cfg.listLimit != maxTaskListLimit {
 		t.Fatalf("expected list limit clamp, got %d", cfg.listLimit)
 	}
+
+	t.Setenv(envTaskTTLMinutes, "7")
+	cfg = normalizeTaskRuntimeOptions(TaskRuntimeOptions{Store: noopTaskStore{}})
+	if cfg.defaultTTL != 7*time.Minute {
+		t.Fatalf("expected default ttl from env, got %s", cfg.defaultTTL)
+	}
+
+	t.Setenv(envTaskTTLMinutes, "-1")
+	cfg = normalizeTaskRuntimeOptions(TaskRuntimeOptions{Store: noopTaskStore{}})
+	if cfg.defaultTTL != defaultTaskTTL {
+		t.Fatalf("expected invalid env ttl to fall back, got %s", cfg.defaultTTL)
+	}
 }
 
 func taskRequest(id int, method, taskID string) *Request {
@@ -473,6 +485,64 @@ func TestTaskRuntimeToolsCall_EnforcesToolSupport(t *testing.T) {
 	}
 }
 
+func TestTaskRuntimeToolsCall_FailsClosedOnRuntimeErrors(t *testing.T) {
+	s := NewServer("test", "dev")
+	if err := s.Registry().RegisterTool(taskCapableToolDef(), func(context.Context, json.RawMessage) (*ToolResult, error) {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
+	}); err != nil {
+		t.Fatalf("register task tool: %v", err)
+	}
+	resp := s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(1, "slow"), protocolVersion, "sess-1")
+	if resp.Error == nil || resp.Error.Code != CodeInvalidParams {
+		t.Fatalf("expected task call without runtime to fail closed, got %+v", resp.Error)
+	}
+
+	s = NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: NewMemoryTaskStore()}))
+	if err := s.Registry().RegisterTool(taskCapableToolDef(), func(context.Context, json.RawMessage) (*ToolResult, error) {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
+	}); err != nil {
+		t.Fatalf("register task tool with runtime: %v", err)
+	}
+	resp = s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(2, "slow"), protocolVersion, "")
+	if resp.Error == nil || resp.Error.Code != CodeInvalidParams {
+		t.Fatalf("expected task call without session to fail closed, got %+v", resp.Error)
+	}
+
+	s = NewServer("test", "dev",
+		WithServerIDGenerator(staticIDGenerator{id: ""}),
+		WithTaskRuntime(TaskRuntimeOptions{Store: NewMemoryTaskStore()}),
+	)
+	if err := s.Registry().RegisterTool(taskCapableToolDef(), func(context.Context, json.RawMessage) (*ToolResult, error) {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
+	}); err != nil {
+		t.Fatalf("register task tool with empty id generator: %v", err)
+	}
+	resp = s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(3, "slow"), protocolVersion, "sess-1")
+	if resp.Error == nil || resp.Error.Code != CodeInternalError {
+		t.Fatalf("expected empty task id to fail closed, got %+v", resp.Error)
+	}
+
+	s = NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: createFailTaskStore{err: errors.New("create failed")}}))
+	if err := s.Registry().RegisterTool(taskCapableToolDef(), func(context.Context, json.RawMessage) (*ToolResult, error) {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
+	}); err != nil {
+		t.Fatalf("register task tool with failing store: %v", err)
+	}
+	resp = s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(4, "slow"), protocolVersion, "sess-1")
+	if resp.Error == nil || resp.Error.Code != CodeServerError {
+		t.Fatalf("expected task store create failure to be server error, got %+v", resp.Error)
+	}
+}
+
+type createFailTaskStore struct {
+	noopTaskStore
+	err error
+}
+
+func (s createFailTaskStore) Create(context.Context, TaskRecord) (*TaskRecord, error) {
+	return nil, s.err
+}
+
 func TestMemoryTaskStore_ListPaginationAndTerminalUpdates(t *testing.T) {
 	store := NewMemoryTaskStore()
 	record1 := taskTestRecord("sess-1", "task-1", TaskStatusWorking)
@@ -636,11 +706,55 @@ func TestTaskRuntimeMethods_ErrorPaths(t *testing.T) {
 		t.Fatalf("expected invalid tasks/list params, got %+v", badJSON.Error)
 	}
 
+	badLookup := s.dispatchForProtocol(context.Background(), &Request{JSONRPC: jsonrpcVersion, ID: 22, Method: methodTasksGet, Params: json.RawMessage(`{"taskId":`)}, protocolVersion, "sess-1")
+	if badLookup.Error == nil || badLookup.Error.Code != CodeInvalidParams {
+		t.Fatalf("expected invalid task lookup params, got %+v", badLookup.Error)
+	}
+
+	nilListStore := &nilListTaskStore{}
+	s = NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: nilListStore}))
+	nilList := s.dispatchForProtocol(context.Background(), &Request{JSONRPC: jsonrpcVersion, ID: 23, Method: methodTasksList}, protocolVersion, "sess-1")
+	if nilList.Error != nil {
+		t.Fatalf("expected nil task list to normalize, got %+v", nilList.Error)
+	}
+	nilListResult, ok := nilList.Result.(*TaskListResult)
+	if !ok || len(nilListResult.Tasks) != 0 {
+		t.Fatalf("expected empty normalized task list, got %#v", nilList.Result)
+	}
+
 	mem := NewMemoryTaskStore()
 	s = NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: mem}))
 	badCursor := s.dispatchForProtocol(context.Background(), &Request{JSONRPC: jsonrpcVersion, ID: 3, Method: methodTasksList, Params: json.RawMessage(`{"cursor":"nope"}`)}, protocolVersion, "sess-1")
 	if badCursor.Error == nil || badCursor.Error.Code != CodeServerError {
 		t.Fatalf("expected invalid cursor server error, got %+v", badCursor.Error)
+	}
+}
+
+type nilListTaskStore struct {
+	noopTaskStore
+}
+
+func (s *nilListTaskStore) List(context.Context, TaskListRequest) (*TaskListResult, error) {
+	return &TaskListResult{}, nil
+}
+
+func TestTaskRuntimeHelpers_ErrorBranches(t *testing.T) {
+	if durationMilliseconds(0) != 0 {
+		t.Fatal("expected non-positive duration to return zero milliseconds")
+	}
+
+	finish := (*taskExecutionTracker)(nil).track("sess", "task", func() {})
+	finish()
+	if (*taskExecutionTracker)(nil).cancel("sess", "task") {
+		t.Fatal("expected nil task execution tracker cancel to return false")
+	}
+	tracker := newTaskExecutionTracker()
+	if tracker.cancel("sess", "missing") {
+		t.Fatal("expected missing task execution cancel to return false")
+	}
+
+	if _, err := taskResultWithRelatedMetadata(json.RawMessage(`[]`), "task-1"); err == nil {
+		t.Fatal("expected non-object task result to fail")
 	}
 }
 
