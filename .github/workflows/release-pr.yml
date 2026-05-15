@@ -22,6 +22,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  statuses: write
 
 jobs:
   release-please:
@@ -198,6 +199,11 @@ jobs:
         if: steps.release_pr.outputs.exists == 'true'
         with:
           node-version: "24.13.1"
+
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        if: steps.release_pr.outputs.exists == 'true'
+        with:
+          python-version: "3.14"
 
       - name: Sync generated CDK artifacts on release PR
         if: steps.release_pr.outputs.exists == 'true'
