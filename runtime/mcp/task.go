@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +21,10 @@ const (
 	maxTaskListLimit        = 500
 )
 
-const relatedTaskMetadataKey = "io.modelcontextprotocol/related-task"
+const (
+	envTaskTTLMinutes      = "MCP_TASK_TTL_MINUTES"
+	relatedTaskMetadataKey = "io.modelcontextprotocol/related-task"
+)
 
 // TaskSupport declares whether a tool can be invoked through MCP task
 // augmentation.
@@ -142,7 +147,7 @@ type taskRuntimeConfig struct {
 func normalizeTaskRuntimeOptions(opts TaskRuntimeOptions) taskRuntimeConfig {
 	defaultTTL := opts.DefaultTTL
 	if defaultTTL <= 0 {
-		defaultTTL = defaultTaskTTL
+		defaultTTL = taskDefaultTTL()
 	}
 
 	maxTTL := opts.MaxTTL
@@ -174,6 +179,16 @@ func normalizeTaskRuntimeOptions(opts TaskRuntimeOptions) taskRuntimeConfig {
 		listLimit:              listLimit,
 		modelImmediateResponse: strings.TrimSpace(opts.ModelImmediateResponse),
 	}
+}
+
+func taskDefaultTTL() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(envTaskTTLMinutes))
+	if raw != "" {
+		if minutes, err := strconv.Atoi(raw); err == nil && minutes > 0 {
+			return time.Duration(minutes) * time.Minute
+		}
+	}
+	return defaultTaskTTL
 }
 
 func (s *Server) hasTaskRuntime() bool {
