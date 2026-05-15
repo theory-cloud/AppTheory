@@ -224,6 +224,20 @@ wait_for_pr_head() {
   done
 }
 
+trigger_release_pr_checks() {
+  # Release PRs stay draft while generated artifacts are being rewritten so they
+  # cannot be merged in an incomplete state. CI still needs a pull_request event
+  # after the generated-artifact commit is visible, so briefly move the PR to
+  # ready_for_review, then immediately draft-lock it again before waiting for
+  # the required checks to complete.
+  ensure_release_pr_is_draft "before triggering generated-artifact checks"
+
+  echo "sync-release-pr-generated: triggering checks for PR #${pr_number}"
+  gh pr ready "${pr_number}"
+
+  ensure_release_pr_is_draft "after triggering generated-artifact checks"
+}
+
 # The release PR must not be mergeable while generated artifacts are still being
 # rewritten. This is the release-lane invariant: release-please version files and
 # generated CDK/jsii artifacts land in the same release PR before it becomes
@@ -254,6 +268,9 @@ if [[ "${changed}" == "true" ]]; then
 fi
 
 wait_for_pr_head "$(git rev-parse HEAD)"
+# After the generated-artifact head is visible, trigger PR checks while
+# preserving the draft-lock before waiting on them.
+trigger_release_pr_checks
 wait_for_required_checks
 
 ensure_release_pr_is_draft "before marking generated-artifact-synced PR ready"
