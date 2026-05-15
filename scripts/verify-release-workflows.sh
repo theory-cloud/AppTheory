@@ -44,6 +44,19 @@ require_contains(
     'gh pr ready "${pr_number}" --undo',
     "release PR sync must force the release PR back to draft before generated artifact work",
 )
+for workflow in (".github/workflows/prerelease-pr.yml", ".github/workflows/release-pr.yml"):
+    require_order(
+        workflow,
+        "Draft-lock release PR before artifact setup",
+        "actions/setup-go",
+        "release PR workflow must draft-lock release PRs before installing artifact-generation toolchains",
+    )
+    require_order(
+        workflow,
+        "Draft-lock release PR before artifact setup",
+        "Sync generated CDK artifacts on release PR",
+        "release PR workflow must draft-lock release PRs before artifact sync",
+    )
 require_order(
     "scripts/sync-release-pr-generated.sh",
     'ensure_release_pr_is_draft "before generated artifacts are synced"',
