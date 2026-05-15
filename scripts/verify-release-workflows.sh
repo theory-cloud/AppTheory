@@ -39,6 +39,24 @@ require_order(
     "Release Please (Stable)",
     "stable release must pass rubric before release-please can create a draft release",
 )
+for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.yml"):
+    require_order(
+        workflow,
+        "Build + verify\n        if: steps.release.outputs.release_created == 'true'",
+        "Build release assets",
+        "release workflows must run rubric before building release assets",
+    )
+    require_order(
+        workflow,
+        "Build release assets",
+        "Generate SHA-256 checksums",
+        "release workflows must build dist artifacts before generating checksums",
+    )
+require_contains(
+    ".github/workflows/ci.yml",
+    "ready_for_review",
+    "CI must run when release PR sync briefly marks draft release PRs ready to trigger checks",
+)
 require_contains(
     "scripts/sync-release-pr-generated.sh",
     'gh pr ready "${pr_number}" --undo',
@@ -66,8 +84,14 @@ require_order(
 require_order(
     "scripts/sync-release-pr-generated.sh",
     'wait_for_pr_head "$(git rev-parse HEAD)"',
+    "After the generated-artifact head is visible",
+    "release PR sync must wait for the pushed artifact commit before triggering checks",
+)
+require_order(
+    "scripts/sync-release-pr-generated.sh",
+    "After the generated-artifact head is visible",
     "wait_for_required_checks\n\n",
-    "release PR sync must wait for the pushed artifact commit before reading checks",
+    "release PR sync must trigger checks before waiting on them",
 )
 require_order(
     "scripts/sync-release-pr-generated.sh",

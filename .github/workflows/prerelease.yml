@@ -96,6 +96,10 @@ jobs:
         if: steps.release.outputs.release_created == 'true'
         run: make rubric
 
+      - name: Build release assets
+        if: steps.release.outputs.release_created == 'true'
+        run: make build
+
       - name: Generate SHA-256 checksums
         if: steps.release.outputs.release_created == 'true'
         run: scripts/generate-checksums.sh
