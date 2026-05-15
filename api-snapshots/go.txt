@@ -2097,6 +2097,11 @@ type MemoryStreamStore struct {
 
 type MemoryStreamStoreOption func(*MemoryStreamStore)
 
+type MemoryTaskStore struct {
+	mu       sync.RWMutex
+	sessions map[string]map[string]*TaskRecord
+}
+
 type OriginValidator func(string) bool
 
 type PromptArgument struct {
@@ -2210,6 +2215,7 @@ type Server struct {
 	promptCompletionHook    CompletionHook
 	resourceCompletionHook  CompletionHook
 	taskRuntime             taskRuntimeConfig
+	taskExecutions          *taskExecutionTracker
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -2363,6 +2369,8 @@ func NewMemorySessionStore(...MemorySessionStoreOption) *MemorySessionStore
 
 func NewMemoryStreamStore(...MemoryStreamStoreOption) *MemoryStreamStore
 
+func NewMemoryTaskStore() *MemoryTaskStore
+
 func NewPromptRegistry() *PromptRegistry
 
 func NewResourceRegistry() *ResourceRegistry
@@ -2440,6 +2448,18 @@ func (*MemoryStreamStore) DeleteSession(context.Context, string) error
 func (*MemoryStreamStore) StreamForEvent(context.Context, string, string) (string, error)
 
 func (*MemoryStreamStore) Subscribe(context.Context, string, string, string) (<-chan StreamEvent, error)
+
+func (*MemoryTaskStore) Cancel(context.Context, TaskLookup) (*TaskRecord, error)
+
+func (*MemoryTaskStore) Create(context.Context, TaskRecord) (*TaskRecord, error)
+
+func (*MemoryTaskStore) DeleteSession(context.Context, string) error
+
+func (*MemoryTaskStore) Get(context.Context, TaskLookup) (*TaskRecord, error)
+
+func (*MemoryTaskStore) List(context.Context, TaskListRequest) (*TaskListResult, error)
+
+func (*MemoryTaskStore) Update(context.Context, TaskRecord) (*TaskRecord, error)
 
 func (*PromptRegistry) Get(context.Context, string, json.RawMessage) (*PromptResult, error)
 

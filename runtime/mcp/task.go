@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -179,6 +180,128 @@ func (s *Server) hasTaskRuntime() bool {
 	return s != nil && s.taskRuntime.store != nil
 }
 
+func (s *Server) handleTaskToolsCall(ctx context.Context, req *Request, sessionID string, params toolsCallParams) *Response {
+	if !s.hasTaskRuntime() {
+		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: task runtime not configured")
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing session id")
+	}
+
+	switch s.registry.taskSupport(params.Name) {
+	case TaskSupportOptional, TaskSupportRequired:
+		// ok
+	default:
+		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: tool does not support task execution")
+	}
+
+	ttl, errResp := s.taskTTL(req.ID, params.Task)
+	if errResp != nil {
+		return errResp
+	}
+	pollInterval := durationMilliseconds(s.taskRuntime.pollInterval)
+	now := time.Now().UTC()
+	taskID := strings.TrimSpace(s.idGen.NewID())
+	if taskID == "" {
+		return NewErrorResponse(req.ID, CodeInternalError, "task id generator returned empty id")
+	}
+
+	record := TaskRecord{
+		SessionID: sessionID,
+		Method:    methodToolsCall,
+		ToolName:  params.Name,
+		Task: Task{
+			TaskID:        taskID,
+			Status:        TaskStatusWorking,
+			CreatedAt:     now,
+			LastUpdatedAt: now,
+			TTL:           &ttl,
+			PollInterval:  &pollInterval,
+		},
+	}
+	created, err := s.taskRuntime.store.Create(ctx, record)
+	if err != nil {
+		return NewErrorResponse(req.ID, CodeServerError, err.Error())
+	}
+	if created == nil {
+		return NewErrorResponse(req.ID, CodeServerError, "task store returned nil task")
+	}
+
+	taskCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	finish := s.taskExecutions.track(sessionID, created.Task.TaskID, cancel)
+	go s.runTaskTool(taskCtx, *created, params.Arguments, finish)
+
+	return NewResultResponse(req.ID, CreateTaskResult{
+		Meta: map[string]any{relatedTaskMetadataKey: RelatedTaskMetadata{TaskID: created.Task.TaskID}},
+		Task: created.Task,
+	})
+}
+
+func (s *Server) taskTTL(reqID any, meta *TaskMetadata) (int64, *Response) {
+	ttl := s.taskRuntime.defaultTTL
+	if meta != nil && meta.TTL != nil {
+		if *meta.TTL <= 0 {
+			return 0, NewErrorResponse(reqID, CodeInvalidParams, "Invalid params: task.ttl must be positive")
+		}
+		ttl = time.Duration(*meta.TTL) * time.Millisecond
+	}
+	if ttl > s.taskRuntime.maxTTL {
+		return 0, NewErrorResponse(reqID, CodeInvalidParams, "Invalid params: task.ttl exceeds maximum")
+	}
+	return durationMilliseconds(ttl), nil
+}
+
+func durationMilliseconds(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	return int64(d / time.Millisecond)
+}
+
+func (s *Server) runTaskTool(ctx context.Context, record TaskRecord, args json.RawMessage, finish func()) {
+	defer finish()
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.ErrorContext(ctx, "task tool panic", "taskId", record.Task.TaskID, "tool", record.ToolName, "panic", r)
+			s.finishTask(ctx, record, nil, &RPCError{Code: CodeInternalError, Message: "internal error"})
+		}
+	}()
+
+	result, err := s.registry.Call(ctx, record.ToolName, args)
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: err.Error()})
+		return
+	}
+
+	resultBytes, err := json.Marshal(result)
+	if err != nil {
+		s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: "task result marshal failed"})
+		return
+	}
+	s.finishTask(ctx, record, resultBytes, nil)
+}
+
+func (s *Server) finishTask(ctx context.Context, record TaskRecord, result json.RawMessage, rpcErr *RPCError) {
+	now := time.Now().UTC()
+	record.Task.LastUpdatedAt = now
+	record.Result = append(json.RawMessage(nil), result...)
+	record.Error = rpcErr
+	if rpcErr != nil {
+		record.Task.Status = TaskStatusFailed
+		if record.Task.StatusMessage == "" {
+			record.Task.StatusMessage = rpcErr.Message
+		}
+	} else {
+		record.Task.Status = TaskStatusCompleted
+	}
+	if _, err := s.taskRuntime.store.Update(context.WithoutCancel(ctx), record); err != nil && !errors.Is(err, ErrTaskTerminal) {
+		s.logger.ErrorContext(ctx, "task store update error", "taskId", record.Task.TaskID, "tool", record.ToolName, "error", err)
+	}
+}
+
 func (s *Server) handleTasksGet(ctx context.Context, req *Request, sessionID string) *Response {
 	lookup, errResp := taskLookupFromRequest(req)
 	if errResp != nil {
@@ -206,6 +329,9 @@ func (s *Server) handleTasksResult(ctx context.Context, req *Request, sessionID 
 	}
 	if !taskStatusTerminal(record.Task.Status) && record.Task.Status != TaskStatusInputRequired {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: task result not ready")
+	}
+	if record.Error != nil {
+		return &Response{JSONRPC: jsonrpcVersion, ID: req.ID, Error: record.Error}
 	}
 	if len(bytes.TrimSpace(record.Result)) == 0 {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: task result not available")
@@ -254,6 +380,9 @@ func (s *Server) handleTasksCancel(ctx context.Context, req *Request, sessionID 
 	if err != nil {
 		return taskStoreError(req.ID, err)
 	}
+	if s.taskExecutions != nil {
+		s.taskExecutions.cancel(sessionID, lookup.TaskID)
+	}
 	return NewResultResponse(req.ID, record.Task)
 }
 
@@ -268,6 +397,49 @@ func taskLookupFromRequest(req *Request) (TaskLookup, *Response) {
 		return TaskLookup{}, NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing taskId")
 	}
 	return TaskLookup{TaskID: strings.TrimSpace(params.TaskID)}, nil
+}
+
+type taskExecutionTracker struct {
+	mu      sync.Mutex
+	cancels map[string]context.CancelFunc
+}
+
+func newTaskExecutionTracker() *taskExecutionTracker {
+	return &taskExecutionTracker{cancels: map[string]context.CancelFunc{}}
+}
+
+func (t *taskExecutionTracker) track(sessionID, taskID string, cancel context.CancelFunc) func() {
+	if t == nil || cancel == nil {
+		return func() {}
+	}
+	key := taskExecutionKey(sessionID, taskID)
+	t.mu.Lock()
+	t.cancels[key] = cancel
+	t.mu.Unlock()
+	return func() {
+		t.mu.Lock()
+		delete(t.cancels, key)
+		t.mu.Unlock()
+	}
+}
+
+func (t *taskExecutionTracker) cancel(sessionID, taskID string) bool {
+	if t == nil {
+		return false
+	}
+	key := taskExecutionKey(sessionID, taskID)
+	t.mu.Lock()
+	cancel := t.cancels[key]
+	t.mu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	return true
+}
+
+func taskExecutionKey(sessionID, taskID string) string {
+	return sessionID + "\x00" + taskID
 }
 
 func taskStoreError(reqID any, err error) *Response {

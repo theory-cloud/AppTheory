@@ -159,6 +159,22 @@ func (r *ToolRegistry) supportsTasks() bool {
 	return false
 }
 
+func (r *ToolRegistry) taskSupport(name string) TaskSupport {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	idx, ok := r.index[name]
+	if !ok || r.tools[idx].def.Execution == nil {
+		return TaskSupportForbidden
+	}
+	switch r.tools[idx].def.Execution.TaskSupport {
+	case TaskSupportOptional, TaskSupportRequired:
+		return r.tools[idx].def.Execution.TaskSupport
+	default:
+		return TaskSupportForbidden
+	}
+}
+
 // Call looks up a tool by name and invokes its handler with the given arguments.
 // It returns an error if the tool is not found.
 func (r *ToolRegistry) Call(ctx context.Context, name string, args json.RawMessage) (*ToolResult, error) {
