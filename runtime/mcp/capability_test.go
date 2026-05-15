@@ -104,6 +104,79 @@ func TestInitializeCapabilities_ExplicitConfigCanDisableSurface(t *testing.T) {
 	}
 }
 
+func TestInitializeCapabilities_OmitsResourceSubscribeUntilOutboundNotificationsExist(t *testing.T) {
+	s := NewServer("test", "dev", WithResourceSubscriptionHooks(
+		func(context.Context, ResourceSubscription) error { return nil },
+		func(context.Context, ResourceSubscription) error { return nil },
+	))
+	if err := s.Resources().RegisterResource(ResourceDef{URI: "file://x", Name: "x"}, func(context.Context) ([]ResourceContent, error) {
+		return []ResourceContent{{URI: "file://x", Text: "x"}}, nil
+	}); err != nil {
+		t.Fatalf("register resource: %v", err)
+	}
+
+	caps := initializeCapabilityMap(t, s)
+	resources, ok := caps["resources"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected resources capability object: %+v", caps)
+	}
+	if _, ok := resources["subscribe"]; ok {
+		t.Fatalf("did not expect resources.subscribe without outbound notification contract: %+v", resources)
+	}
+	if _, ok := resources["listChanged"]; ok {
+		t.Fatalf("did not expect resources.listChanged overclaim: %+v", resources)
+	}
+}
+
+func TestInitializeCapabilities_OmitsLoggingUntilOutboundNotificationsExist(t *testing.T) {
+	s := NewServer("test", "dev", WithLoggingLevelHook(func(context.Context, LoggingLevelRequest) error { return nil }))
+
+	caps := initializeCapabilityMap(t, s)
+	if _, ok := caps["logging"]; ok {
+		t.Fatalf("did not expect logging without outbound notification contract: %+v", caps)
+	}
+}
+
+func TestInitializeCapabilities_AdvertisesCompletionsOnlyWithHook(t *testing.T) {
+	s := NewServer("test", "dev", WithCompletionHooks(
+		func(context.Context, CompletionRequest) (*CompletionResult, error) {
+			return &CompletionResult{Completion: Completion{Values: []string{}}}, nil
+		},
+		nil,
+	))
+
+	caps := initializeCapabilityMap(t, s)
+	completions, ok := caps["completions"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected completions capability object: %+v", caps)
+	}
+	if len(completions) != 0 {
+		t.Fatalf("expected empty completions capability object: %+v", completions)
+	}
+}
+
+func TestInitializeCapabilities_ExplicitConfigCanDisableCompletions(t *testing.T) {
+	s := NewServer("test", "dev",
+		WithCapabilityConfig(CapabilityConfig{
+			Tools:       true,
+			Resources:   true,
+			Prompts:     true,
+			Completions: false,
+		}),
+		WithCompletionHooks(
+			func(context.Context, CompletionRequest) (*CompletionResult, error) {
+				return &CompletionResult{Completion: Completion{Values: []string{}}}, nil
+			},
+			nil,
+		),
+	)
+
+	caps := initializeCapabilityMap(t, s)
+	if _, ok := caps["completions"]; ok {
+		t.Fatalf("expected explicitly disabled completions capability to be omitted: %+v", caps)
+	}
+}
+
 func assertNoUnsupportedSubCapabilities(t *testing.T, name string, raw any) {
 	t.Helper()
 	obj, ok := raw.(map[string]any)
