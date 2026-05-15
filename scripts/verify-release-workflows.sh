@@ -95,6 +95,18 @@ require_order(
 )
 require_order(
     "scripts/sync-release-pr-generated.sh",
+    "sync-release-pr-generated: triggering checks",
+    "Keep the PR ready only until the required check contexts exist",
+    "release PR sync must trigger checks before waiting for required check contexts",
+)
+require_order(
+    "scripts/sync-release-pr-generated.sh",
+    "Keep the PR ready only until the required check contexts exist",
+    'ensure_release_pr_is_draft "after triggering generated-artifact checks"',
+    "release PR sync must wait for required check contexts before draft-locking again",
+)
+require_order(
+    "scripts/sync-release-pr-generated.sh",
     "wait_for_required_checks",
     'gh pr ready "${pr_number}"\n\n',
     "release PR must wait for required checks before becoming ready",
