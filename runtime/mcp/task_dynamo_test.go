@@ -51,6 +51,12 @@ func assertTheoryDBTag(t *testing.T, tp reflect.Type, fieldName, want string) {
 	require.Equal(t, want, field.Tag.Get("theorydb"))
 }
 
+func expectTaskNonTerminalWriteGuard(q *tablemocks.MockQuery) {
+	q.On("WithCondition", "Status", "<>", TaskStatusCompleted).Return(q).Once()
+	q.On("WithCondition", "Status", "<>", TaskStatusFailed).Return(q).Once()
+	q.On("WithCondition", "Status", "<>", TaskStatusCanceled).Return(q).Once()
+}
+
 func TestDynamoTaskStore_CreatePersistsTaskRecord(t *testing.T) {
 	db := new(tablemocks.MockDB)
 	q := new(tablemocks.MockQuery)
@@ -265,7 +271,8 @@ func TestDynamoTaskStore_UpdatePersistsNonTerminalTask(t *testing.T) {
 		return in.Status == TaskStatusCompleted && string(in.Result) == `{"content":[]}`
 	})).Return(updateQ).Once()
 	updateQ.On("WithContext", mock.Anything).Return(updateQ)
-	updateQ.On("CreateOrUpdate").Return(nil)
+	expectTaskNonTerminalWriteGuard(updateQ)
+	updateQ.On("Update", []string(nil)).Return(nil)
 
 	task := taskTestRecord("sess-1", "task-1", TaskStatusCompleted)
 	task.Result = json.RawMessage(`{"content":[]}`)
@@ -301,7 +308,8 @@ func TestDynamoTaskStore_UpdatePropagatesWriteAndValidationErrors(t *testing.T) 
 		return in.TaskID == "task-1"
 	})).Return(updateQ).Once()
 	updateQ.On("WithContext", mock.Anything).Return(updateQ)
-	updateQ.On("CreateOrUpdate").Return(expected)
+	expectTaskNonTerminalWriteGuard(updateQ)
+	updateQ.On("Update", []string(nil)).Return(expected)
 
 	store := NewDynamoTaskStore(db)
 	_, err := store.Update(context.Background(), taskTestRecord("sess-1", "task-1", TaskStatusCompleted))
@@ -354,10 +362,15 @@ func TestDynamoTaskStore_CancelMarksTaskTerminal(t *testing.T) {
 	}).Return(nil)
 
 	db.On("Model", mock.MatchedBy(func(in *dynamoTaskRecord) bool {
-		return in.Status == TaskStatusCanceled && in.LastUpdatedAt.Equal(updated)
+		return in.Status == TaskStatusCanceled &&
+			in.StatusMessage == taskCanceledMessage &&
+			in.ErrorCode == CodeServerError &&
+			in.ErrorMessage == taskCanceledMessage &&
+			in.LastUpdatedAt.Equal(updated)
 	})).Return(updateQ).Once()
 	updateQ.On("WithContext", mock.Anything).Return(updateQ)
-	updateQ.On("CreateOrUpdate").Return(nil)
+	expectTaskNonTerminalWriteGuard(updateQ)
+	updateQ.On("Update", []string(nil)).Return(nil)
 
 	store, ok := NewDynamoTaskStore(db).(*DynamoTaskStore)
 	require.True(t, ok)
@@ -367,6 +380,7 @@ func TestDynamoTaskStore_CancelMarksTaskTerminal(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, TaskStatusCanceled, canceled.Task.Status)
 	require.True(t, canceled.Task.LastUpdatedAt.Equal(updated))
+	require.Equal(t, CodeServerError, canceled.Error.Code)
 }
 
 func TestDynamoTaskStore_CancelRejectsTerminalAndPropagatesWriteError(t *testing.T) {
@@ -413,7 +427,8 @@ func TestDynamoTaskStore_CancelRejectsTerminalAndPropagatesWriteError(t *testing
 		return in.Status == TaskStatusCanceled
 	})).Return(updateQ).Once()
 	updateQ.On("WithContext", mock.Anything).Return(updateQ)
-	updateQ.On("CreateOrUpdate").Return(expected)
+	expectTaskNonTerminalWriteGuard(updateQ)
+	updateQ.On("Update", []string(nil)).Return(expected)
 
 	_, err = NewDynamoTaskStore(db).Cancel(context.Background(), TaskLookup{SessionID: "sess-2", TaskID: "task-2"})
 	require.ErrorIs(t, err, expected)
