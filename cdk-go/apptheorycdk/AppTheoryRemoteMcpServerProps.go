@@ -61,6 +61,14 @@ type AppTheoryRemoteMcpServerProps struct {
 	// Default: false.
 	//
 	EnableStreamTable *bool `field:"optional" json:"enableStreamTable" yaml:"enableStreamTable"`
+	// Create a DynamoDB table for MCP task runtime state.
+	//
+	// Task state is session-scoped and durable so task-augmented tool execution
+	// can survive Lambda container recycling while preserving AppTheory's
+	// fail-closed session boundary.
+	// Default: false.
+	//
+	EnableTaskTable *bool `field:"optional" json:"enableTaskTable" yaml:"enableTaskTable"`
 	// Register `GET /.well-known/mcp.json` and route it to the handler.
 	//
 	// This lets the construct own the final MCP discovery route alongside the
@@ -113,4 +121,12 @@ type AppTheoryRemoteMcpServerProps struct {
 	// Default: 60.
 	//
 	StreamTtlMinutes *float64 `field:"optional" json:"streamTtlMinutes" yaml:"streamTtlMinutes"`
+	// Task DynamoDB table name (only used when enableTaskTable is true).
+	// Default: undefined (auto-generated).
+	//
+	TaskTableName *string `field:"optional" json:"taskTableName" yaml:"taskTableName"`
+	// Task TTL in minutes (exposed to the handler as MCP_TASK_TTL_MINUTES).
+	// Default: 10.
+	//
+	TaskTtlMinutes *float64 `field:"optional" json:"taskTtlMinutes" yaml:"taskTtlMinutes"`
 }

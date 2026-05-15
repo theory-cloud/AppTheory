@@ -137,7 +137,11 @@
             "MCP_STREAM_TABLE": {
               "Ref": "RemoteMcpStreamTable14FCF20C"
             },
-            "MCP_STREAM_TTL_MINUTES": "240"
+            "MCP_STREAM_TTL_MINUTES": "240",
+            "MCP_TASK_TABLE": {
+              "Ref": "RemoteMcpTaskTable72DDFBBB"
+            },
+            "MCP_TASK_TTL_MINUTES": "180"
           }
         },
         "Handler": "index.handler",
@@ -295,6 +299,44 @@
                       },
                       "/*"
                     ]
+                  ]
+                }
+              ]
+            },
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable"
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "RemoteMcpTaskTable72DDFBBB",
+                    "Arn"
+                  ]
+                }
+              ]
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator"
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "RemoteMcpTaskTable72DDFBBB",
+                    "Arn"
                   ]
                 }
               ]
@@ -985,6 +1027,45 @@
           "SSEEnabled": true
         },
         "TableName": "mcp-streams",
+        "TimeToLiveSpecification": {
+          "AttributeName": "expiresAt",
+          "Enabled": true
+        }
+      },
+      "Type": "AWS::DynamoDB::Table",
+      "UpdateReplacePolicy": "Delete"
+    },
+    "RemoteMcpTaskTable72DDFBBB": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "sessionId",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "taskId",
+            "AttributeType": "S"
+          }
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [
+          {
+            "AttributeName": "sessionId",
+            "KeyType": "HASH"
+          },
+          {
+            "AttributeName": "taskId",
+            "KeyType": "RANGE"
+          }
+        ],
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "SSESpecification": {
+          "SSEEnabled": true
+        },
+        "TableName": "mcp-tasks",
         "TimeToLiveSpecification": {
           "AttributeName": "expiresAt",
           "Enabled": true

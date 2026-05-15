@@ -36,6 +36,9 @@ Header names are case-insensitive on the wire. The examples in this doc use lowe
 
 Important transport behavior:
 
+- `POST /mcp` requires `content-type: application/json`
+- `POST /mcp` requires `accept` support for both `application/json` and `text/event-stream`
+- `GET /mcp` requires `accept` support for `text/event-stream`
 - `initialize` is the only request that creates a session and returns `mcp-session-id`
 - subsequent `POST /mcp`, `GET /mcp`, and `DELETE /mcp` calls require `mcp-session-id`
 - missing session header returns `400`
@@ -61,6 +64,25 @@ If a request includes an `Origin` header, AppTheory validates it fail-closed. Th
 
 Use `mcp.WithOriginValidator(...)` to replace that policy for other browser-based callers.
 
+### Strict transport compatibility rollout
+
+Roll strict Streamable HTTP behavior out with a client canary before making it the only production path:
+
+1. Canary clients must send `content-type: application/json` on every `POST /mcp`.
+2. Canary clients must send `accept: application/json, text/event-stream` on every `POST /mcp`.
+3. Canary clients must send `accept: text/event-stream` on every `GET /mcp`.
+4. After initialization, clients should either omit `mcp-protocol-version` or send the exact negotiated version.
+5. Streaming clients must tolerate the initial empty-data priming SSE event and store its `id` for reconnect.
+6. Reconnect with `GET /mcp` plus the latest `last-event-id`; do not assume dropped TCP connections cancel work.
+
+Compatibility risks to check during canary:
+
+- older clients that send `Accept: application/json` only on `POST /mcp` now receive HTTP `400`
+- clients that omit `Content-Type` or send non-JSON content types now receive HTTP `400`
+- clients that pin a protocol header different from the negotiated session version now receive HTTP `400`
+- SSE parsers that assume the first frame is JSON-RPC must skip or record the empty priming frame
+- replay clients that reuse a `Last-Event-ID` from another stream now fail closed instead of receiving unrelated events
+
 Mounting the handler is still just normal AppTheory routing:
 
 ```go
@@ -85,6 +107,14 @@ AppTheory currently dispatches these MCP request methods:
 - `tools/call`
 - `resources/list`
 - `resources/read`
+- `resources/subscribe`
+- `resources/unsubscribe`
+- `logging/setLevel`
+- `completion/complete`
+- `tasks/get`
+- `tasks/result`
+- `tasks/list`
+- `tasks/cancel`
 - `prompts/list`
 - `prompts/get`
 
@@ -97,18 +127,186 @@ Other transport notes:
 
 - posted client responses are accepted for Streamable HTTP compliance and return `202 Accepted` with no body
 - notifications also return `202 Accepted` with no body
-- JSON-RPC batch requests are only supported for legacy `2025-03-26` callers
+- JSON-RPC batch requests are only supported for legacy `2025-03-26` callers; after a session is established, batch
+  dispatch uses the session's negotiated protocol version when the request omits `mcp-protocol-version`
+
+### Runtime hardening guarantees
+
+The MCP runtime fails closed around tool execution and durable replay:
+
+- buffered and streaming `tools/call` panics are recovered as sanitized JSON-RPC internal errors; panic values are logged
+  server-side and are not returned to clients
+- `DynamoSessionStore.Put` is an upsert, so sliding-session refreshes update the existing session data and TTL instead
+  of failing when a session row already exists
+- S3-spilled stream events are read through bounded readers before replay validation; the read cap uses the recorded
+  event byte count and the configured maximum event size before size/hash validation
 
 ### Capabilities advertisement (`initialize`)
 
-The `initialize` result always advertises `tools`.
+The `initialize` result advertises only surfaces that are both enabled in `mcp.CapabilityConfig` and actually registered
+on the server:
 
-It advertises `resources` and `prompts` only when something is registered:
+- if `srv.Registry().Len() > 0` and tools are enabled -> `"tools": {}`
+- if `srv.Resources().Len() > 0` and resources are enabled -> `"resources": {}`
+- if `srv.Prompts().Len() > 0` and prompts are enabled -> `"prompts": {}`
+- if `mcp.WithCompletionHooks(...)` has at least one hook and completions are enabled -> `"completions": {}`
+- if `mcp.WithTaskRuntime(...)` supplies a store, at least one registered tool declares task support, and tasks are
+  enabled -> `"tasks": {...}` for protocol `2025-11-25` sessions
 
-- if `srv.Resources().Len() > 0` -> `"resources": {}`
-- if `srv.Prompts().Len() > 0` -> `"prompts": {}`
+The default capability policy enables the implemented surfaces, but registration is still required before they are
+advertised. Use `mcp.WithCapabilityConfig(...)` to withhold an implemented surface for a product rollout.
 
-This keeps tools-only clients stable while still exposing the broader MCP surface when you opt in.
+Optional MCP utility capabilities are fail-closed:
+
+- resource subscription hooks are accepted only when both hooks are configured with
+  `mcp.WithResourceSubscriptionHooks(...)`, but `resources.subscribe` is not advertised until AppTheory has a
+  first-class outbound `notifications/resources/updated` contract
+- `logging/setLevel` is accepted only when `mcp.WithLoggingLevelHook(...)` is configured, but `logging` is not
+  advertised until AppTheory has a first-class outbound `notifications/message` contract
+- `completions` is advertised only when `mcp.WithCompletionHooks(...)` has at least one prompt or resource hook
+- `tasks` is advertised only when `mcp.WithTaskRuntime(...)` supplies a store and a tool explicitly opts into task
+  execution
+- `notifications/cancelled` is accepted for every initialized session, but it only cancels AppTheory-tracked in-flight
+  requests for that session and safely ignores unknown or completed request ids
+- unsupported utility surfaces such as `listChanged` remain omitted until their concrete AppTheory contract exists
+
+Capability construction is also protocol-aware; if a future supported protocol version removes or changes a capability,
+AppTheory omits that capability for sessions negotiated to that version.
+
+Products should not advertise these optional utility capabilities outside AppTheory's initialize response and should not
+enable the hooks for downstream services until product authorization, tenant policy, audit logging, and abuse controls
+are wired. The single path is: configure the AppTheory hook, let AppTheory advertise only capabilities it can deliver
+end-to-end, and handle the request through the hook. Do not hard-code capabilities in a product-specific wrapper.
+
+### Task runtime
+
+MCP task support is explicit opt-in. AppTheory does not advertise `tasks` just because a product has long-running tools.
+All three conditions must hold:
+
+1. the session negotiates protocol `2025-11-25`
+2. the server is created with `mcp.WithTaskRuntime(...)` and a concrete `TaskStore`
+3. at least one registered tool declares `ToolExecution.TaskSupport` as `optional` or `required`
+
+Example:
+
+```go
+srv := mcp.NewServer("my-mcp-server", "dev",
+  mcp.WithTaskRuntime(mcp.TaskRuntimeOptions{
+    Store: mcp.NewDynamoTaskStore(db),
+  }),
+)
+
+_ = srv.Registry().RegisterTool(mcp.ToolDef{
+  Name:        "slow-report",
+  Description: "Generate a report asynchronously.",
+  Execution:   &mcp.ToolExecution{TaskSupport: mcp.TaskSupportOptional},
+  InputSchema: json.RawMessage(`{"type":"object"}`),
+}, runSlowReport)
+```
+
+Tool support is fail-closed:
+
+- `TaskSupportForbidden` (or omitted) rejects task-augmented `tools/call`
+- `TaskSupportOptional` allows both synchronous and task-augmented `tools/call`
+- `TaskSupportRequired` rejects synchronous `tools/call` and requires task augmentation
+
+When a task-capable `tools/call` includes a `task` parameter, AppTheory creates a session-scoped task record, returns a
+`CreateTaskResult`, and runs the tool on a background context detached from the request connection. The final tool
+result or JSON-RPC error is stored in the configured `TaskStore`. Clients then use:
+
+- `tasks/get` to inspect status
+- `tasks/list` to list tasks for the current MCP session
+- `tasks/result` to retrieve terminal results, with related-task metadata injected into `_meta`
+- `tasks/cancel` to mark the task canceled and cancel the in-flight tool context when it is still running
+
+Task state is always bound to the active MCP session id. A store must never broaden lookup, list, cancel, or delete
+operations outside the supplied session scope. Product deployments should bind that session to the same principal,
+tenant, route bundle, and entitlement policy used by their OAuth/token validation layer; missing or ambiguous policy
+must withhold task capability rather than falling back to broader access.
+
+TTL is part of the task contract. `TaskRuntimeOptions.DefaultTTL` defaults to `MCP_TASK_TTL_MINUTES` when that
+environment variable is set, otherwise 10 minutes. `TaskRuntimeOptions.MaxTTL` defaults to 1 hour. Client-supplied
+`task.ttl` values are milliseconds, must be positive, and fail closed when they exceed the configured maximum. DynamoDB
+TTL and table cleanup are storage backstops; the runtime checks task expiry before returning stored task state.
+
+Products should not enable or advertise task support until authorization, tenant policy, quota/rate limits, audit
+logging, and abuse controls are wired for asynchronous work. If a rollout needs to provision storage before exposing
+tasks, keep `WithTaskRuntime` unset or disable the `Tasks` capability in `mcp.WithCapabilityConfig(...)` until the
+policy path is ready. Do not hard-code `tasks` in a wrapper around AppTheory's initialize response.
+
+### Rate limiting stance
+
+MCP rate limiting is product wiring over AppTheory's existing HTTP middleware and `pkg/limited` primitives. AppTheory
+does not expose a separate `mcp.WithRateLimiter(...)`, task-rate limiter, or Remote MCP construct flag, because that
+would create a second rate-limit path outside the normal middleware contract.
+
+The single path is:
+
+- validate auth and tenant/actor policy first when the limiter key depends on those claims
+- mount `runtime.RateLimitMiddleware(...)` in the normal `app.Use(...)` chain that protects `POST /mcp`, `GET /mcp`,
+  and `DELETE /mcp`
+- back the middleware with `pkg/limited` when rate-limit state must survive Lambda concurrency and cold starts
+- use `RateLimitConfig.ExtractIdentifier`, `ExtractResource`, and `ExtractOperation` to build product-specific buckets
+  such as principal, tenant, actor route, JSON-RPC method, or tool name
+
+If a product cannot derive the required principal, tenant, actor, method, or tool bucket, it should reject the request or
+withhold the affected tool/task capability rather than broaden to a shared bucket. AppTheory does not advertise rate
+limits in `initialize`; rate-limit policy is enforced by the HTTP middleware around the MCP handler.
+
+### Optional utility hooks
+
+Resource subscription hooks:
+
+```go
+srv := mcp.NewServer("my-mcp-server", "dev",
+  mcp.WithResourceSubscriptionHooks(
+    func(ctx context.Context, sub mcp.ResourceSubscription) error {
+      // Persist session-scoped interest in sub.URI.
+      return nil
+    },
+    func(ctx context.Context, sub mcp.ResourceSubscription) error {
+      // Remove session-scoped interest in sub.URI.
+      return nil
+    },
+  ),
+)
+```
+
+`resources/subscribe` and `resources/unsubscribe` fail closed with JSON-RPC `method not found` unless both hooks are
+configured. The hook receives the negotiated MCP session id and the target resource URI.
+
+Logging hooks:
+
+```go
+srv := mcp.NewServer("my-mcp-server", "dev",
+  mcp.WithLoggingLevelHook(func(ctx context.Context, req mcp.LoggingLevelRequest) error {
+    // Store the per-session logging threshold.
+    return nil
+  }),
+)
+```
+
+`logging/setLevel` validates MCP logging levels (`debug`, `info`, `notice`, `warning`, `error`, `critical`, `alert`,
+`emergency`) before invoking the hook.
+
+Completion hooks:
+
+```go
+srv := mcp.NewServer("my-mcp-server", "dev",
+  mcp.WithCompletionHooks(
+    func(ctx context.Context, req mcp.CompletionRequest) (*mcp.CompletionResult, error) {
+      return &mcp.CompletionResult{
+        Completion: mcp.Completion{Values: []string{"python"}},
+      }, nil
+    },
+    nil,
+  ),
+)
+```
+
+`completion/complete` routes prompt references to the first hook and resource references to the second hook. If a
+specific reference type has no configured hook, AppTheory returns JSON-RPC invalid params instead of broadening to a
+fallback hook.
 
 ---
 
@@ -164,10 +362,15 @@ _ = srv.Registry().RegisterTool(mcp.ToolDef{
 
 ### Streaming tool progress (SSE)
 
-If the client includes `Accept: text/event-stream` on `tools/call`, AppTheory may respond as SSE:
+Strict Streamable HTTP clients send `Accept: application/json, text/event-stream` on every `POST /mcp`.
+AppTheory still returns SSE only for a `tools/call` targeting a tool registered with `RegisterStreamingTool`;
+ordinary tools return buffered JSON even though the client advertises SSE support.
 
-- every SSE frame is `event: message`
-- the frame `data:` is always a single JSON-RPC message
+For streaming tools, AppTheory responds as SSE:
+
+- the first frame is a replay priming event with an `id` and an empty `data:` field
+- after the priming event, each application frame is `event: message`
+- application frame `data:` values are always a single JSON-RPC message
 - progress is emitted as JSON-RPC `notifications/progress`
 - the progress notification is correlated with `params._meta.progressToken` from the original `tools/call`
 - `progressToken` may be a string or an integer
@@ -198,8 +401,15 @@ Important deployment note:
 
 For streaming tool calls, AppTheory assigns SSE event ids and persists them in the active `StreamStore`.
 
+- each SSE stream starts with a persisted empty-data priming event so a client can reconnect before any JSON-RPC
+  progress or result message has been produced
 - `GET /mcp` with `last-event-id: <id>` resumes or replays that stream
+- `last-event-id` must belong to the stream being resumed; AppTheory fails closed instead of replaying events from a
+  different stream
 - clients must reuse the same `mcp-session-id`
+- clients should store the latest SSE `id`, reconnect with `GET /mcp` and `last-event-id` after any disconnect, and
+  treat disconnect as transport loss rather than tool cancellation
+- cancellation remains explicit: send `notifications/cancelled` instead of relying on a dropped connection
 - `GET /mcp` without `last-event-id` emits one keepalive comment and closes by default so idle callers do not hold
   Lambda concurrency indefinitely
 - if you want that path to stay open for a bounded window before EOF, opt in with

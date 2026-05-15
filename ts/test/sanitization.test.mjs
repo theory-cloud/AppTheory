@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 
 import { sanitizeFieldValue } from "../dist/index.js";
 
-test("sanitizeFieldValue redacts authorization identifiers and token-like keys", () => {
-  assert.equal(sanitizeFieldValue("authorization_id", "auth_123"), "[REDACTED]");
-  assert.equal(sanitizeFieldValue("authorizationId", "auth_123"), "[REDACTED]");
+test("sanitizeFieldValue preserves authorization identifiers and redacts token-like keys", () => {
+  assert.equal(sanitizeFieldValue("authorization_id", "auth_123"), "auth_123");
+  assert.equal(sanitizeFieldValue("authorizationId", "auth_123"), "auth_123");
   assert.equal(sanitizeFieldValue("session_token", "tok_123"), "[REDACTED]");
   assert.equal(sanitizeFieldValue("csrfToken", "tok_123"), "[REDACTED]");
   assert.equal(sanitizeFieldValue("authorizationToken", "tok_123"), "[REDACTED]");

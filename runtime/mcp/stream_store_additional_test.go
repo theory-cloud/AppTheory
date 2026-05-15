@@ -36,6 +36,34 @@ func TestMemoryStreamStore_IDGeneratorAndDeleteSession(t *testing.T) {
 	}
 }
 
+func TestMemoryStreamStore_SubscribeRejectsLastEventIDFromDifferentStream(t *testing.T) {
+	store := NewMemoryStreamStore()
+
+	streamA, err := store.Create(context.Background(), "sess-1")
+	if err != nil {
+		t.Fatalf("Create streamA: %v", err)
+	}
+	streamB, err := store.Create(context.Background(), "sess-1")
+	if err != nil {
+		t.Fatalf("Create streamB: %v", err)
+	}
+
+	if _, appendErr := store.Append(context.Background(), "sess-1", streamA, json.RawMessage(`{"stream":"A","seq":1}`)); appendErr != nil {
+		t.Fatalf("Append streamA: %v", appendErr)
+	}
+	eventB, err := store.Append(context.Background(), "sess-1", streamB, json.RawMessage(`{"stream":"B","seq":1}`))
+	if err != nil {
+		t.Fatalf("Append streamB: %v", err)
+	}
+	if _, appendErr := store.Append(context.Background(), "sess-1", streamA, json.RawMessage(`{"stream":"A","seq":2}`)); appendErr != nil {
+		t.Fatalf("Append streamA second: %v", appendErr)
+	}
+
+	if _, err := store.Subscribe(context.Background(), "sess-1", streamA, eventB); !errors.Is(err, ErrEventNotFound) {
+		t.Fatalf("Subscribe with cross-stream Last-Event-ID: got %v want %v", err, ErrEventNotFound)
+	}
+}
+
 func TestMemoryStreamStore_Errors(t *testing.T) {
 	store := NewMemoryStreamStore()
 

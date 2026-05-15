@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"strings"
 	"testing"
 
 	"pgregory.net/rapid"
@@ -51,6 +53,9 @@ func invokeHandlerWithMethod(ctx context.Context, s *Server, method string, body
 		if _, ok := headers["content-type"]; !ok {
 			headers["content-type"] = []string{"application/json"}
 		}
+		if _, ok := headers["accept"]; !ok {
+			headers["accept"] = []string{"application/json, text/event-stream"}
+		}
 	}
 
 	req := apptheory.Request{
@@ -82,11 +87,24 @@ type tbFatalf interface {
 }
 
 func initializeSession(t tbFatalf, s *Server) string {
+	return initializeSessionWithProtocol(t, s, "")
+}
+
+func initializeSessionWithProtocol(t tbFatalf, s *Server, requestedProtocolVersion string) string {
 	if h, ok := any(t).(interface{ Helper() }); ok {
 		h.Helper()
 	}
 
-	body, err := json.Marshal(Request{JSONRPC: "2.0", ID: 1, Method: "initialize"})
+	var params json.RawMessage
+	if requestedProtocolVersion != "" {
+		paramsBytes, err := json.Marshal(map[string]any{"protocolVersion": requestedProtocolVersion})
+		if err != nil {
+			t.Fatalf("marshal initialize params: %v", err)
+		}
+		params = paramsBytes
+	}
+
+	body, err := json.Marshal(Request{JSONRPC: "2.0", ID: 1, Method: "initialize", Params: params})
 	if err != nil {
 		t.Fatalf("marshal initialize: %v", err)
 	}
@@ -113,6 +131,71 @@ func sessionHeaders(sessionID string) map[string][]string {
 		"content-type":         {"application/json"},
 		"mcp-session-id":       {sessionID},
 		"mcp-protocol-version": {protocolVersion},
+	}
+}
+
+func sseSessionHeaders(sessionID string) map[string][]string {
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"text/event-stream"}
+	return headers
+}
+
+func TestToolsCallBuffered_PanicReturnsInternalError(t *testing.T) {
+	s := NewServer("test-server", "1.0.0")
+	sessionID := initializeSession(t, s)
+
+	if err := s.registry.RegisterTool(
+		ToolDef{
+			Name:        "panic_tool",
+			Description: "Panics during buffered execution",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+		},
+		func(context.Context, json.RawMessage) (*ToolResult, error) {
+			panic("boom")
+		},
+	); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+
+	body := mustMarshal(t, Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  methodToolsCall,
+		Params:  mustMarshal(t, toolsCallParams{Name: "panic_tool", Arguments: json.RawMessage(`{}`)}),
+	})
+
+	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, sessionHeaders(sessionID))
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if resp.Status != 200 {
+		t.Fatalf("status: got %d want 200", resp.Status)
+	}
+	if strings.Contains(string(resp.Body), "boom") {
+		t.Fatalf("panic text leaked into response: %s", string(resp.Body))
+	}
+	rpcResp, parseErr := parseJSONRPCResponse(resp)
+	if parseErr != nil {
+		t.Fatalf("parse: %v", parseErr)
+	}
+	if rpcResp.Error == nil || rpcResp.Error.Code != CodeInternalError || rpcResp.Error.Message != "internal error" {
+		t.Fatalf("expected sanitized internal error, got: %+v", rpcResp.Error)
+	}
+
+	listBody := mustMarshal(t, Request{JSONRPC: "2.0", ID: 2, Method: methodToolsList})
+	resp, err = invokeHandlerWithMethod(context.Background(), s, "POST", listBody, sessionHeaders(sessionID))
+	if err != nil {
+		t.Fatalf("invoke after panic: %v", err)
+	}
+	if resp.Status != 200 {
+		t.Fatalf("status after panic: got %d want 200", resp.Status)
+	}
+	rpcResp, parseErr = parseJSONRPCResponse(resp)
+	if parseErr != nil {
+		t.Fatalf("parse after panic: %v", parseErr)
+	}
+	if rpcResp.Error != nil {
+		t.Fatalf("expected server to remain reusable, got error: %+v", rpcResp.Error)
 	}
 }
 
@@ -167,7 +250,7 @@ func TestProperty6_ProtocolErrorCodeCorrectness(t *testing.T) {
 			}
 
 			headers := sessionHeaders(sessionID)
-			headers["accept"] = []string{"application/json"}
+			headers["accept"] = []string{"application/json, text/event-stream"}
 
 			resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 			if err != nil {
@@ -201,7 +284,7 @@ func TestProperty6_ProtocolErrorCodeCorrectness(t *testing.T) {
 			}
 
 			headers := sessionHeaders(sessionID)
-			headers["accept"] = []string{"application/json"}
+			headers["accept"] = []string{"application/json, text/event-stream"}
 
 			resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 			if err != nil {
@@ -265,7 +348,7 @@ func TestProperty7_ToolHandlerErrorWrapping(t *testing.T) {
 
 		sessionID := initializeSession(t, s)
 		headers := sessionHeaders(sessionID)
-		headers["accept"] = []string{"application/json"}
+		headers["accept"] = []string{"application/json, text/event-stream"}
 
 		resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 		if err != nil {
@@ -289,28 +372,46 @@ func TestProperty7_ToolHandlerErrorWrapping(t *testing.T) {
 	})
 }
 
-// Feature: cloud-mcp-gateway, Property 10: Response Format Matches Accept Header
+// Feature: cloud-mcp-gateway, Property 10: Response Format Matches Streaming Support
 // Validates: Requirements 5.1, 5.4
 //
-// For any valid tools/call request, when the Accept header is text/event-stream
-// the response content type SHALL be text/event-stream, and when the Accept
-// header is application/json (or absent) the response content type SHALL be
-// application/json.
-func TestProperty10_ResponseFormatMatchesAcceptHeader(t *testing.T) {
+// For any valid tools/call request with the strict Streamable HTTP Accept
+// header, AppTheory SHALL return SSE only for tools registered with streaming
+// support. Non-streaming tools return buffered JSON even though the client also
+// advertises text/event-stream support.
+func TestProperty10_ResponseFormatMatchesStreamingSupport(t *testing.T) {
 	s := newTestServer()
+	if err := s.registry.RegisterStreamingTool(
+		ToolDef{
+			Name:        "stream_echo",
+			Description: "Streams echo input back",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"message":{"type":"string"}},"required":["message"]}`),
+		},
+		func(_ context.Context, args json.RawMessage, _ func(SSEEvent)) (*ToolResult, error) {
+			var p struct {
+				Message string `json:"message"`
+			}
+			if err := json.Unmarshal(args, &p); err != nil {
+				return nil, err
+			}
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: p.Message}}}, nil
+		},
+	); err != nil {
+		t.Fatalf("failed to register streaming tool: %v", err)
+	}
 
 	rapid.Check(t, func(t *rapid.T) {
 		sessionID := initializeSession(t, s)
 
 		reqID := genRequestID().Draw(t, "id")
-		acceptType := rapid.SampledFrom([]string{
-			"text/event-stream",
-			"application/json",
-			"", // absent
-		}).Draw(t, "accept")
+		streaming := rapid.Bool().Draw(t, "streaming")
+		toolName := "echo"
+		if streaming {
+			toolName = "stream_echo"
+		}
 
 		params, err := json.Marshal(toolsCallParams{
-			Name:      "echo",
+			Name:      toolName,
 			Arguments: json.RawMessage(`{"message":"hello"}`),
 		})
 		if err != nil {
@@ -327,13 +428,16 @@ func TestProperty10_ResponseFormatMatchesAcceptHeader(t *testing.T) {
 		}
 
 		headers := sessionHeaders(sessionID)
-		if acceptType != "" {
-			headers["accept"] = []string{acceptType}
-		}
+		headers["accept"] = []string{"application/json, text/event-stream"}
 
 		resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 		if err != nil {
 			t.Fatalf("handler error: %v", err)
+		}
+		if resp.BodyReader != nil {
+			if _, readErr := io.ReadAll(resp.BodyReader); readErr != nil {
+				t.Fatalf("read streaming response: %v", readErr)
+			}
 		}
 
 		ct := ""
@@ -341,12 +445,11 @@ func TestProperty10_ResponseFormatMatchesAcceptHeader(t *testing.T) {
 			ct = vals[0]
 		}
 
-		if acceptType == "text/event-stream" {
+		if streaming {
 			if ct != "text/event-stream" {
 				t.Fatalf("expected content-type text/event-stream, got %q", ct)
 			}
 		} else {
-			// application/json or absent → expect JSON
 			if ct != "application/json" && ct != "application/json; charset=utf-8" {
 				t.Fatalf("expected content-type application/json, got %q", ct)
 			}
@@ -360,7 +463,7 @@ func TestToolsCall_AcceptsNumericProgressToken(t *testing.T) {
 
 	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"message":"hello"},"_meta":{"progressToken":123}}}`)
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"application/json"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
 	if err != nil {

@@ -37,6 +37,14 @@ const (
 	methodToolsCall                = "tools/call"
 	methodResourcesList            = "resources/list"
 	methodResourcesRead            = "resources/read"
+	methodResourcesSubscribe       = "resources/subscribe"
+	methodResourcesUnsubscribe     = "resources/unsubscribe"
+	methodLoggingSetLevel          = "logging/setLevel"
+	methodCompletionComplete       = "completion/complete"
+	methodTasksGet                 = "tasks/get"
+	methodTasksResult              = "tasks/result"
+	methodTasksList                = "tasks/list"
+	methodTasksCancel              = "tasks/cancel"
 	methodPromptsList              = "prompts/list"
 	methodPromptsGet               = "prompts/get"
 )
@@ -62,9 +70,19 @@ type Server struct {
 	promptRegistry   *PromptRegistry
 	sessionStore     SessionStore
 	streamStore      StreamStore
+	cancellations    *cancellationTracker
 	idGen            apptheory.IDGenerator
 	logger           *slog.Logger
 	originValidator  OriginValidator
+	capabilities     CapabilityConfig
+
+	resourceSubscribeHook   ResourceSubscriptionHook
+	resourceUnsubscribeHook ResourceSubscriptionHook
+	loggingLevelHook        LoggingLevelHook
+	promptCompletionHook    CompletionHook
+	resourceCompletionHook  CompletionHook
+	taskRuntime             taskRuntimeConfig
+	taskExecutions          *taskExecutionTracker
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -130,6 +148,49 @@ func WithOriginValidator(v OriginValidator) ServerOption {
 	}
 }
 
+// WithResourceSubscriptionHooks enables resources/subscribe and
+// resources/unsubscribe support through explicit hooks.
+//
+// The methods fail closed if either hook is absent. The resource subscribe
+// sub-capability remains omitted until AppTheory has an outbound resource
+// update notification contract.
+func WithResourceSubscriptionHooks(subscribe, unsubscribe ResourceSubscriptionHook) ServerOption {
+	return func(s *Server) {
+		s.resourceSubscribeHook = subscribe
+		s.resourceUnsubscribeHook = unsubscribe
+	}
+}
+
+// WithLoggingLevelHook enables logging/setLevel support through an explicit
+// hook.
+func WithLoggingLevelHook(hook LoggingLevelHook) ServerOption {
+	return func(s *Server) {
+		s.loggingLevelHook = hook
+	}
+}
+
+// WithCompletionHooks enables completion/complete support through explicit
+// prompt and resource hooks. At least one hook must be non-nil before the
+// completions capability is advertised.
+func WithCompletionHooks(promptHook, resourceHook CompletionHook) ServerOption {
+	return func(s *Server) {
+		s.promptCompletionHook = promptHook
+		s.resourceCompletionHook = resourceHook
+	}
+}
+
+// WithTaskRuntime enables MCP task operations through an explicit TaskStore.
+//
+// Tasks are experimental in MCP 2025-11-25 and remain opt-in. AppTheory only
+// advertises task capabilities when this option supplies a store and at least
+// one registered tool declares task support.
+func WithTaskRuntime(opts TaskRuntimeOptions) ServerOption {
+	cfg := normalizeTaskRuntimeOptions(opts)
+	return func(s *Server) {
+		s.taskRuntime = cfg
+	}
+}
+
 // WithInitialSessionListenerBudget caps the initial GET /mcp keepalive listener
 // against the Lambda remaining-time budget when RemainingMS is available.
 //
@@ -153,9 +214,12 @@ func NewServer(name, version string, opts ...ServerOption) *Server {
 		promptRegistry:   NewPromptRegistry(),
 		sessionStore:     NewMemorySessionStore(),
 		streamStore:      NewMemoryStreamStore(),
+		cancellations:    newCancellationTracker(),
 		idGen:            apptheory.RandomIDGenerator{},
 		logger:           slog.Default(),
 		originValidator:  AllowOrigins("https://claude.ai", "https://claude.com"),
+		capabilities:     DefaultCapabilityConfig(),
+		taskExecutions:   newTaskExecutionTracker(),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -219,6 +283,9 @@ func (s *Server) handlePOST(c *apptheory.Context) (*apptheory.Response, error) {
 	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
 		return resp, nil
 	}
+	if resp := validatePOSTHeaders(c.Request.Headers); resp != nil {
+		return resp, nil
+	}
 
 	body := c.Request.Body
 
@@ -271,11 +338,11 @@ func (s *Server) handlePOSTRequest(ctx context.Context, body []byte, headers map
 
 	// Notifications return 202 Accepted with no body.
 	if req.ID == nil {
-		s.handleNotification(ctx, sess, req)
+		s.handleNotification(ctx, sess, req, sessionProtocolVersion(sess))
 		return &apptheory.Response{Status: 202}, nil
 	}
 
-	return s.handleRequestHTTP(ctx, sessionID, req, headers)
+	return s.handleRequestHTTP(ctx, sessionID, sess, req, headers)
 }
 
 func (s *Server) handlePOSTResponse(ctx context.Context, body []byte, headers map[string][]string) (*apptheory.Response, error) {
@@ -301,6 +368,9 @@ func (s *Server) handleGET(c *apptheory.Context) (*apptheory.Response, error) {
 	ctx := c.Context()
 
 	if resp := s.validateOrigin(c.Request.Headers); resp != nil {
+		return resp, nil
+	}
+	if resp := validateGETHeaders(c.Request.Headers); resp != nil {
 		return resp, nil
 	}
 
@@ -464,7 +534,7 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 		return badRequest("missing Mcp-Session-Id"), nil
 	}
 
-	_, err := s.sessionStore.Get(ctx, sessionID)
+	sess, err := s.sessionStore.Get(ctx, sessionID)
 	switch {
 	case err == nil:
 		// ok
@@ -473,6 +543,9 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 	default:
 		s.logger.ErrorContext(ctx, "session store error", "error", err)
 		return internalServerError(), nil
+	}
+	if pvResp := s.requireProtocolVersion(c.Request.Headers, sess); pvResp != nil {
+		return pvResp, nil
 	}
 
 	if err := s.sessionStore.Delete(ctx, sessionID); err != nil {
@@ -484,12 +557,33 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 			s.logger.ErrorContext(ctx, "failed to delete stream session", "sessionId", sessionID, "error", err)
 		}
 	}
+	if s.taskRuntime.store != nil {
+		if err := s.taskRuntime.store.DeleteSession(ctx, sessionID); err != nil {
+			s.logger.ErrorContext(ctx, "failed to delete task session", "sessionId", sessionID, "error", err)
+		}
+	}
 
 	return &apptheory.Response{Status: 202}, nil
 }
 
 // dispatch routes a parsed JSON-RPC request to the appropriate MCP method handler.
 func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
+	return s.dispatchForProtocol(ctx, req, protocolVersion, "")
+}
+
+func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocolVersion string, sessionID string) *Response {
+	if !methodAllowedForProtocol(protocolVersion, req.Method) {
+		s.logger.ErrorContext(ctx, "method not found", "method", req.Method, "protocolVersion", protocolVersion)
+		return NewErrorResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("Method not found: %s", req.Method))
+	}
+	if isTaskMethod(req.Method) {
+		return s.dispatchTaskMethod(ctx, req, sessionID)
+	}
+
+	return s.dispatchNonTaskMethod(ctx, req, sessionID)
+}
+
+func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessionID string) *Response {
 	switch req.Method {
 	case methodInitialize:
 		selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
@@ -502,11 +596,19 @@ func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
 	case methodToolsList:
 		return s.handleToolsList(req)
 	case methodToolsCall:
-		return s.handleToolsCall(ctx, req)
+		return s.handleToolsCall(ctx, req, sessionID)
 	case methodResourcesList:
 		return s.handleResourcesList(req)
 	case methodResourcesRead:
 		return s.handleResourcesRead(ctx, req)
+	case methodResourcesSubscribe:
+		return s.handleResourcesSubscribe(ctx, req, sessionID)
+	case methodResourcesUnsubscribe:
+		return s.handleResourcesUnsubscribe(ctx, req, sessionID)
+	case methodLoggingSetLevel:
+		return s.handleLoggingSetLevel(ctx, req, sessionID)
+	case methodCompletionComplete:
+		return s.handleCompletionComplete(ctx, req, sessionID)
 	case methodPromptsList:
 		return s.handlePromptsList(req)
 	case methodPromptsGet:
@@ -517,21 +619,71 @@ func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
 	}
 }
 
-// handleInitialize responds to the MCP initialize request with server capabilities.
-func (s *Server) handleInitialize(req *Request, selectedProtocolVersion string) *Response {
-	capabilities := map[string]any{
-		"tools": map[string]any{},
-	}
-	if s.resourceRegistry.Len() > 0 {
-		capabilities["resources"] = map[string]any{}
-	}
-	if s.promptRegistry.Len() > 0 {
-		capabilities["prompts"] = map[string]any{}
+func (s *Server) dispatchTaskMethod(ctx context.Context, req *Request, sessionID string) *Response {
+	if !s.hasTaskRuntime() {
+		return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: "+req.Method)
 	}
 
+	switch req.Method {
+	case methodTasksGet:
+		return s.handleTasksGet(ctx, req, sessionID)
+	case methodTasksResult:
+		return s.handleTasksResult(ctx, req, sessionID)
+	case methodTasksList:
+		return s.handleTasksList(ctx, req, sessionID)
+	case methodTasksCancel:
+		return s.handleTasksCancel(ctx, req, sessionID)
+	default:
+		return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: "+req.Method)
+	}
+}
+
+func methodAllowedForProtocol(pv string, method string) bool {
+	if !isSupportedProtocolVersion(pv) {
+		return false
+	}
+	if isTaskMethod(method) {
+		return pv == protocolVersion
+	}
+
+	switch method {
+	case methodInitialize,
+		methodNotificationsInitialized,
+		methodNotificationsCancelled,
+		methodPing,
+		methodToolsList,
+		methodToolsCall,
+		methodResourcesList,
+		methodResourcesRead,
+		methodResourcesSubscribe,
+		methodResourcesUnsubscribe,
+		methodLoggingSetLevel,
+		methodCompletionComplete,
+		methodPromptsList,
+		methodPromptsGet:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTaskMethod(method string) bool {
+	switch method {
+	case methodTasksGet,
+		methodTasksResult,
+		methodTasksList,
+		methodTasksCancel:
+		return true
+	default:
+		return false
+	}
+}
+
+// handleInitialize responds to the MCP initialize request with server capabilities.
+func (s *Server) handleInitialize(req *Request, selectedProtocolVersion string) *Response {
 	result := map[string]any{
 		"protocolVersion": selectedProtocolVersion,
-		"capabilities":    capabilities,
+		"capabilities":    s.initializeCapabilities(selectedProtocolVersion),
 		"serverInfo": map[string]any{
 			"name":    s.name,
 			"version": s.version,
@@ -553,6 +705,7 @@ func (s *Server) handleToolsList(req *Request) *Response {
 type toolsCallParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
+	Task      *TaskMetadata   `json:"task,omitempty"`
 	Meta      struct {
 		ProgressToken json.RawMessage `json:"progressToken,omitempty"`
 	} `json:"_meta,omitempty"`
@@ -591,7 +744,7 @@ func normalizeProgressToken(raw json.RawMessage) json.RawMessage {
 }
 
 // handleToolsCall invokes a registered tool by name (buffered JSON mode).
-func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
+func (s *Server) handleToolsCall(ctx context.Context, req *Request, sessionID string) (resp *Response) {
 	var params toolsCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: "+err.Error())
@@ -600,6 +753,19 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
 	if params.Name == "" {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name")
 	}
+	if params.Task != nil && s.hasTaskRuntime() {
+		return s.handleTaskToolsCall(ctx, req, sessionID, params)
+	}
+	if s.hasTaskRuntime() && s.registry.taskSupport(params.Name) == TaskSupportRequired {
+		return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: tool requires task execution")
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.ErrorContext(ctx, "tool panic", "tool", params.Name, "panic", r)
+			resp = NewErrorResponse(req.ID, CodeInternalError, "internal error")
+		}
+	}()
 
 	result, err := s.registry.Call(ctx, params.Name, params.Arguments)
 	if err != nil {
@@ -652,7 +818,15 @@ func (s *Server) handleBatch(ctx context.Context, body []byte, headers map[strin
 		return sessErrResp, nil
 	}
 
-	createdSessionID, responses := s.runBatchRequests(ctx, requests, sessionID, sess)
+	batchPV, pvResp := batchProtocolVersion(headers, sess)
+	if pvResp != nil {
+		return pvResp, nil
+	}
+	if batchPV != protocolVersionLegacy {
+		return badRequest("batch requests are only supported for MCP-Protocol-Version 2025-03-26"), nil
+	}
+
+	createdSessionID, responses := s.runBatchRequests(ctx, requests, sessionID, sess, batchPV)
 
 	if len(responses) == 0 {
 		return &apptheory.Response{Status: 202}, nil
@@ -707,12 +881,18 @@ func (s *Server) loadBatchSession(ctx context.Context, sessionID string) (*Sessi
 	}
 }
 
-func (s *Server) runBatchRequests(ctx context.Context, requests []*Request, sessionID string, sess *Session) (createdSessionID string, responses []*Response) {
+func (s *Server) runBatchRequests(
+	ctx context.Context,
+	requests []*Request,
+	sessionID string,
+	sess *Session,
+	batchProtocolVersion string,
+) (createdSessionID string, responses []*Response) {
 	responses = make([]*Response, 0, len(requests))
 
 	for _, req := range requests {
 		if req.Method == methodInitialize {
-			initResp, newSess, initErr := s.handleInitializeBatch(ctx, req)
+			initResp, newSess, initErr := s.handleInitializeBatch(ctx, req, batchProtocolVersion)
 			if initErr != nil {
 				// Return initialize error as a normal JSON-RPC error response.
 				if req.ID != nil {
@@ -748,7 +928,9 @@ func (s *Server) runBatchRequests(ctx context.Context, requests []*Request, sess
 			}
 		}
 
-		responses = append(responses, s.dispatch(ctx, req))
+		requestCtx, finish := s.trackRequest(ctx, sessionID, req.ID)
+		responses = append(responses, s.dispatchForProtocol(requestCtx, req, sessionProtocolVersion(sess), sessionID))
+		finish()
 	}
 
 	return createdSessionID, responses
@@ -802,23 +984,112 @@ func jsonRPCErrorResponse(id any, code int, message string) *apptheory.Response 
 	}
 }
 
-// firstHeader returns the first value for a header key (case-insensitive lookup
-// on already-canonicalized headers).
+// firstHeader returns the first value for a header key using case-insensitive
+// lookup.
 func firstHeader(headers map[string][]string, key string) string {
-	values := headers[strings.ToLower(key)]
+	values := headerValues(headers, key)
 	if len(values) == 0 {
 		return ""
 	}
 	return values[0]
 }
 
+func headerValues(headers map[string][]string, key string) []string {
+	if len(headers) == 0 {
+		return nil
+	}
+	lowerKey := strings.ToLower(key)
+	if values, ok := headers[lowerKey]; ok {
+		return values
+	}
+	for k, values := range headers {
+		if strings.EqualFold(k, key) {
+			return values
+		}
+	}
+	return nil
+}
+
+func validatePOSTHeaders(headers map[string][]string) *apptheory.Response {
+	if !contentTypeIsJSON(headers) {
+		return badRequest("POST /mcp requires Content-Type: application/json")
+	}
+	if !acceptsJSON(headers) || !acceptsEventStream(headers) {
+		return badRequest("POST /mcp requires Accept: application/json and text/event-stream")
+	}
+	return nil
+}
+
+func validateGETHeaders(headers map[string][]string) *apptheory.Response {
+	if !acceptsEventStream(headers) {
+		return badRequest("GET /mcp requires Accept: text/event-stream")
+	}
+	return nil
+}
+
+func contentTypeIsJSON(headers map[string][]string) bool {
+	typ, subtype, ok := parseMediaRange(firstHeader(headers, "content-type"))
+	return ok && typ == "application" && subtype == "json"
+}
+
+func acceptsJSON(headers map[string][]string) bool {
+	return headerIncludesMediaType(headers, "accept", "application/json")
+}
+
 func acceptsEventStream(headers map[string][]string) bool {
-	for _, v := range headers["accept"] {
-		if strings.Contains(strings.ToLower(v), "text/event-stream") {
-			return true
+	return headerIncludesMediaType(headers, "accept", "text/event-stream")
+}
+
+func headerIncludesMediaType(headers map[string][]string, key string, want string) bool {
+	wantType, wantSubtype, ok := parseMediaRange(want)
+	if !ok {
+		return false
+	}
+	for _, value := range headerValues(headers, key) {
+		for _, part := range strings.Split(value, ",") {
+			typ, subtype, ok := parseMediaRange(part)
+			if !ok {
+				continue
+			}
+			typeMatches := typ == "*" || typ == wantType
+			subtypeMatches := subtype == "*" || subtype == wantSubtype
+			if typeMatches && subtypeMatches {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func parseMediaRange(raw string) (string, string, bool) {
+	parts := strings.Split(raw, ";")
+	mediaType := strings.ToLower(strings.TrimSpace(parts[0]))
+	if mediaType == "" {
+		return "", "", false
+	}
+
+	slash := strings.IndexByte(mediaType, '/')
+	if slash <= 0 || slash == len(mediaType)-1 {
+		return "", "", false
+	}
+	typ := strings.TrimSpace(mediaType[:slash])
+	subtype := strings.TrimSpace(mediaType[slash+1:])
+	if typ == "" || subtype == "" {
+		return "", "", false
+	}
+
+	for _, param := range parts[1:] {
+		name, value, ok := strings.Cut(param, "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(name), "q") {
+			continue
+		}
+		q, err := strconv.ParseFloat(strings.Trim(strings.TrimSpace(value), `"`), 64)
+		if err == nil && q <= 0 {
+			return "", "", false
+		}
+	}
+
+	return typ, subtype, true
 }
 
 func parseJSONObject(data []byte) (map[string]json.RawMessage, error) {
@@ -854,21 +1125,39 @@ func isSupportedProtocolVersion(v string) bool {
 }
 
 func (s *Server) requireProtocolVersion(headers map[string][]string, sess *Session) *apptheory.Response {
+	_, resp := requestProtocolVersion(headers, sess)
+	return resp
+}
+
+func requestProtocolVersion(headers map[string][]string, sess *Session) (string, *apptheory.Response) {
 	v := firstHeader(headers, headerMcpProtocolVersion)
 	if v == "" {
 		// Header is optional. When absent, behavior defaults to the session's
 		// negotiated protocol (if any) and otherwise the legacy default.
-		return nil
+		return sessionProtocolVersion(sess), nil
 	}
 	if !isSupportedProtocolVersion(v) {
-		return badRequest("unsupported MCP-Protocol-Version")
+		return "", badRequest("unsupported MCP-Protocol-Version")
 	}
 	if sess != nil && sess.Data != nil {
 		if expected := sess.Data["protocolVersion"]; expected != "" && expected != v {
-			return badRequest("MCP-Protocol-Version mismatch")
+			return "", badRequest("MCP-Protocol-Version mismatch")
 		}
 	}
-	return nil
+	return v, nil
+}
+
+func batchProtocolVersion(headers map[string][]string, sess *Session) (string, *apptheory.Response) {
+	return requestProtocolVersion(headers, sess)
+}
+
+func sessionProtocolVersion(sess *Session) string {
+	if sess != nil && sess.Data != nil {
+		if pv := strings.TrimSpace(sess.Data["protocolVersion"]); isSupportedProtocolVersion(pv) {
+			return pv
+		}
+	}
+	return protocolVersionLegacy
 }
 
 func (s *Server) requireSession(ctx context.Context, headers map[string][]string) (string, *Session, *apptheory.Response) {
@@ -933,7 +1222,14 @@ func (s *Server) handleInitializeHTTP(ctx context.Context, req *Request) (*appth
 }
 
 func (s *Server) negotiateInitializeProtocolVersion(req *Request) (string, *Response) {
-	selected := protocolVersion
+	return s.negotiateInitializeProtocolVersionDefault(req, protocolVersion)
+}
+
+func (s *Server) negotiateInitializeProtocolVersionDefault(req *Request, defaultProtocolVersion string) (string, *Response) {
+	selected := defaultProtocolVersion
+	if !isSupportedProtocolVersion(selected) {
+		selected = protocolVersion
+	}
 	if len(req.Params) == 0 {
 		return selected, nil
 	}
@@ -978,10 +1274,13 @@ func (s *Server) createSession(ctx context.Context, selectedPV string) (*Session
 	return sess, nil
 }
 
-func (s *Server) handleInitializeBatch(ctx context.Context, req *Request) (*Response, *Session, *Response) {
-	selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
+func (s *Server) handleInitializeBatch(ctx context.Context, req *Request, batchProtocolVersion string) (*Response, *Session, *Response) {
+	selectedPV, errResp := s.negotiateInitializeProtocolVersionDefault(req, batchProtocolVersion)
 	if errResp != nil {
 		return nil, nil, errResp
+	}
+	if selectedPV != batchProtocolVersion {
+		return nil, nil, NewErrorResponse(req.ID, CodeInvalidParams, "batch initialize requires protocolVersion "+batchProtocolVersion)
 	}
 	sess, err := s.createSession(ctx, selectedPV)
 	if err != nil {
@@ -990,7 +1289,11 @@ func (s *Server) handleInitializeBatch(ctx context.Context, req *Request) (*Resp
 	return s.handleInitialize(req, selectedPV), sess, nil
 }
 
-func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Request) {
+func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Request, protocolVersion string) {
+	if !methodAllowedForProtocol(protocolVersion, req.Method) {
+		return
+	}
+
 	switch req.Method {
 	case methodNotificationsInitialized:
 		if sess == nil {
@@ -1004,19 +1307,46 @@ func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Req
 			s.logger.ErrorContext(ctx, "failed to persist session", "sessionId", sess.ID, "error", err)
 		}
 	case methodNotificationsCancelled:
-		// Accepted for spec compliance; cancellation wiring is handled by higher-level
-		// async implementations (e.g. theory-mcp).
+		s.handleCancellationNotification(ctx, sess, req)
 	default:
 	}
 }
 
-func (s *Server) handleRequestHTTP(ctx context.Context, sessionID string, req *Request, headers map[string][]string) (*apptheory.Response, error) {
-	if req.Method == methodToolsCall && acceptsEventStream(headers) {
+func (s *Server) handleRequestHTTP(
+	ctx context.Context,
+	sessionID string,
+	sess *Session,
+	req *Request,
+	headers map[string][]string,
+) (*apptheory.Response, error) {
+	requestPV := sessionProtocolVersion(sess)
+	if req.Method == methodToolsCall && acceptsEventStream(headers) && s.shouldStreamToolsCall(req) {
 		return s.handleToolsCallStream(ctx, sessionID, req)
 	}
 
-	resp := s.dispatch(ctx, req)
+	requestCtx, finish := s.trackRequest(ctx, sessionID, req.ID)
+	defer finish()
+
+	resp := s.dispatchForProtocol(requestCtx, req, requestPV, sessionID)
 	return s.marshalSingleResponse(resp, sessionID, false)
+}
+
+func (s *Server) shouldStreamToolsCall(req *Request) bool {
+	if s == nil || s.registry == nil || req == nil {
+		return false
+	}
+
+	var params toolsCallParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return false
+	}
+	if params.Name == "" {
+		return false
+	}
+	if params.Task != nil {
+		return false
+	}
+	return s.registry.supportsStreaming(params.Name)
 }
 
 func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, req *Request) (*apptheory.Response, error) {
@@ -1025,15 +1355,27 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 		return s.marshalSingleResponse(resp, sessionID, false)
 	}
 
+	toolCtx, finish := s.trackRequest(context.WithoutCancel(ctx), sessionID, req.ID)
 	streamID, err := s.streamStore.Create(ctx, sessionID)
 	if err != nil {
+		finish()
 		s.logger.ErrorContext(ctx, "stream store error", "error", err)
 		return internalServerError(), nil
 	}
 
+	// Persist an empty-data priming event before any tool output so a client
+	// that disconnects immediately can resume this stream with Last-Event-ID.
+	if _, primeErr := s.streamStore.Append(ctx, sessionID, streamID, nil); primeErr != nil {
+		finish()
+		s.logger.ErrorContext(ctx, "stream prime error", "sessionId", sessionID, "streamId", streamID, "error", primeErr)
+		if closeErr := s.streamStore.Close(context.WithoutCancel(ctx), sessionID, streamID); closeErr != nil {
+			s.logger.WarnContext(ctx, "stream prime cleanup error", "sessionId", sessionID, "streamId", streamID, "error", closeErr)
+		}
+		return internalServerError(), nil
+	}
+
 	// Run the tool out-of-band so disconnects do not cancel execution.
-	toolCtx := context.WithoutCancel(ctx)
-	go s.runStreamingTool(toolCtx, sessionID, streamID, req)
+	go s.runStreamingTool(toolCtx, sessionID, streamID, req, finish)
 
 	events, err := s.streamStore.Subscribe(ctx, sessionID, streamID, "")
 	if err != nil {
@@ -1044,27 +1386,29 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 	return s.streamToSSE(ctx, sessionID, events)
 }
 
-func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID string, req *Request) {
+func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID string, req *Request, finish func()) {
+	storeCtx := context.WithoutCancel(ctx)
+	defer finish()
 	defer func() {
-		if err := s.streamStore.Close(ctx, sessionID, streamID); err != nil {
+		if err := s.streamStore.Close(storeCtx, sessionID, streamID); err != nil {
 			s.logger.ErrorContext(ctx, "stream store close error", "sessionId", sessionID, "streamId", streamID, "error", err)
 		}
 	}()
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.ErrorContext(ctx, "streaming tool panic", "sessionId", sessionID, "streamId", streamID, "panic", r)
-			s.appendStreamResponseOrDeliveryError(ctx, sessionID, streamID, req.ID, NewErrorResponse(req.ID, CodeInternalError, "internal error"))
+			s.appendStreamResponseOrDeliveryError(storeCtx, sessionID, streamID, req.ID, NewErrorResponse(req.ID, CodeInternalError, "internal error"))
 		}
 	}()
 
 	var params toolsCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		resp := NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: "+err.Error())
-		s.appendStreamResponseOrDeliveryError(ctx, sessionID, streamID, req.ID, resp)
+		s.appendStreamResponseOrDeliveryError(storeCtx, sessionID, streamID, req.ID, resp)
 		return
 	}
 	if params.Name == "" {
-		s.appendStreamResponseOrDeliveryError(ctx, sessionID, streamID, req.ID, NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name"))
+		s.appendStreamResponseOrDeliveryError(storeCtx, sessionID, streamID, req.ID, NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name"))
 		return
 	}
 
@@ -1089,7 +1433,7 @@ func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID strin
 		if err != nil {
 			return
 		}
-		if _, err := s.streamStore.Append(ctx, sessionID, streamID, notificationBytes); err != nil {
+		if _, err := s.streamStore.Append(storeCtx, sessionID, streamID, notificationBytes); err != nil {
 			s.logger.ErrorContext(ctx, "stream store append error", "sessionId", sessionID, "streamId", streamID, "error", err)
 		}
 	}
@@ -1103,7 +1447,7 @@ func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID strin
 		finalResp = NewResultResponse(req.ID, result)
 	}
 
-	s.appendStreamResponseOrDeliveryError(ctx, sessionID, streamID, req.ID, finalResp)
+	s.appendStreamResponseOrDeliveryError(storeCtx, sessionID, streamID, req.ID, finalResp)
 }
 
 func progressFromSSEEvent(ev SSEEvent, fallbackProgress float64) (progress float64, total any, message string) {
@@ -1207,8 +1551,8 @@ func (s *Server) streamToSSE(ctx context.Context, sessionID string, events <-cha
 					return
 				case out <- apptheory.SSEEvent{
 					ID:    ev.ID,
-					Event: "message",
-					Data:  ev.Data,
+					Event: streamEventName(ev),
+					Data:  streamEventData(ev),
 				}:
 				}
 			}
@@ -1224,6 +1568,20 @@ func (s *Server) streamToSSE(ctx context.Context, sessionID string, events <-cha
 	}
 	resp.Headers[headerMcpSessionID] = []string{sessionID}
 	return resp, nil
+}
+
+func streamEventName(ev StreamEvent) string {
+	if len(ev.Data) == 0 {
+		return ""
+	}
+	return "message"
+}
+
+func streamEventData(ev StreamEvent) any {
+	if len(ev.Data) == 0 {
+		return ""
+	}
+	return ev.Data
 }
 
 func badRequest(msg string) *apptheory.Response {

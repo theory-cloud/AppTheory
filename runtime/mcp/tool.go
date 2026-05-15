@@ -31,7 +31,7 @@ type ToolAnnotations struct {
 type ToolExecution struct {
 	// TaskSupport indicates if the tool supports task-augmented execution.
 	// Values: "forbidden", "optional", "required".
-	TaskSupport string `json:"taskSupport,omitempty"`
+	TaskSupport TaskSupport `json:"taskSupport,omitempty"`
 }
 
 type Icon struct {
@@ -123,6 +123,56 @@ func (r *ToolRegistry) List() []ToolDef {
 		defs[i] = t.def
 	}
 	return defs
+}
+
+// Len returns the number of registered tools.
+func (r *ToolRegistry) Len() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.tools)
+}
+
+func (r *ToolRegistry) supportsStreaming(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	idx, ok := r.index[name]
+	if !ok {
+		return false
+	}
+	return r.tools[idx].streamingHandler != nil
+}
+
+func (r *ToolRegistry) supportsTasks() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, tool := range r.tools {
+		if tool.def.Execution == nil {
+			continue
+		}
+		switch tool.def.Execution.TaskSupport {
+		case TaskSupportOptional, TaskSupportRequired:
+			return true
+		}
+	}
+	return false
+}
+
+func (r *ToolRegistry) taskSupport(name string) TaskSupport {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	idx, ok := r.index[name]
+	if !ok || r.tools[idx].def.Execution == nil {
+		return TaskSupportForbidden
+	}
+	switch r.tools[idx].def.Execution.TaskSupport {
+	case TaskSupportOptional, TaskSupportRequired:
+		return r.tools[idx].def.Execution.TaskSupport
+	default:
+		return TaskSupportForbidden
+	}
 }
 
 // Call looks up a tool by name and invokes its handler with the given arguments.

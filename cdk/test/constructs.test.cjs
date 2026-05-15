@@ -3349,6 +3349,9 @@ test("AppTheoryRemoteMcpServer (with tables) synthesizes expected template", () 
     enableStreamTable: true,
     streamTableName: "mcp-streams",
     streamTtlMinutes: 240,
+    enableTaskTable: true,
+    taskTableName: "mcp-tasks",
+    taskTtlMinutes: 180,
   });
 
   const template = assertions.Template.fromStack(stack).toJSON();
@@ -3366,6 +3369,16 @@ test("AppTheoryRemoteMcpServer (with tables) synthesizes expected template", () 
     KeySchema: [
       { AttributeName: "sessionId", KeyType: "HASH" },
       { AttributeName: "eventId", KeyType: "RANGE" },
+    ],
+    TimeToLiveSpecification: { AttributeName: "expiresAt", Enabled: true },
+  });
+
+  // Verify: Task table exists (pk/sk + TTL)
+  assertions.Template.fromStack(stack).hasResourceProperties("AWS::DynamoDB::Table", {
+    TableName: "mcp-tasks",
+    KeySchema: [
+      { AttributeName: "sessionId", KeyType: "HASH" },
+      { AttributeName: "taskId", KeyType: "RANGE" },
     ],
     TimeToLiveSpecification: { AttributeName: "expiresAt", Enabled: true },
   });
@@ -3409,6 +3422,8 @@ test("AppTheoryRemoteMcpServer (with tables) synthesizes expected template", () 
   assert.equal(env.MCP_STREAM_SPILL_INLINE_MAX_BYTES, "32768");
   assert.equal(env.MCP_STREAM_MAX_EVENT_BYTES, "10485760");
   assert.ok(env.MCP_STREAM_SPILL_BUCKET, "Should set MCP_STREAM_SPILL_BUCKET");
+  assert.equal(env.MCP_TASK_TTL_MINUTES, "180");
+  assert.ok(env.MCP_TASK_TABLE, "Should set MCP_TASK_TABLE");
 
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("remote-mcp-server-tables", template);

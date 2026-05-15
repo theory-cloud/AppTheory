@@ -624,6 +624,7 @@ func init() {
 			_jsii_.MemberProperty{JsiiProperty: "sessionTable", GoGetter: "SessionTable"},
 			_jsii_.MemberProperty{JsiiProperty: "streamSpillBucket", GoGetter: "StreamSpillBucket"},
 			_jsii_.MemberProperty{JsiiProperty: "streamTable", GoGetter: "StreamTable"},
+			_jsii_.MemberProperty{JsiiProperty: "taskTable", GoGetter: "TaskTable"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
 			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
 		},

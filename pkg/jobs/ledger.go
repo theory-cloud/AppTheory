@@ -664,7 +664,7 @@ func sanitizeErrorEnvelope(env *ErrorEnvelope) *ErrorEnvelope {
 		Fields:    SanitizeFields(env.Fields),
 	}
 	if strings.TrimSpace(out.Message) == "" {
-		out.Message = "unknown error"
+		out.Message = unknownErrorMessage
 	}
 	return out
 }
