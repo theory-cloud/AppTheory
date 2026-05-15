@@ -185,6 +185,81 @@ PY
   done
 }
 
+wait_for_required_checks_to_start() {
+  local timeout_seconds="${RELEASE_PR_CHECK_START_TIMEOUT_SECONDS:-300}"
+  local interval_seconds="${RELEASE_PR_CHECK_INTERVAL_SECONDS:-15}"
+  local required_checks="${RELEASE_PR_READY_CHECKS:-}"
+  if [[ -z "${required_checks}" ]]; then
+    required_checks=$'Version alignment\nGo (test + vet)\nTypeScript (npm pack)\nPython (build wheel + sdist)\nVerify deterministic builds\nContract tests (fixtures)\nRubric (full gate set)'
+  fi
+
+  local deadline=$((SECONDS + timeout_seconds))
+
+  while true; do
+    local checks_json
+    local checks_file
+    checks_file="$(mktemp)"
+    if ! gh pr checks "${pr_number}" --json name,bucket,startedAt,completedAt,workflow >"${checks_file}" 2>/dev/null; then
+      # `gh pr checks` exits 8 while checks are pending, but still prints the
+      # JSON payload. Only synthesize an empty payload when no JSON was emitted.
+      if [[ ! -s "${checks_file}" ]]; then
+        printf '[]' >"${checks_file}"
+      fi
+    fi
+    checks_json="$(cat "${checks_file}")"
+    rm -f "${checks_file}"
+
+    local status_file
+    status_file="$(mktemp)"
+    CHECKS_JSON="${checks_json}" REQUIRED_CHECKS="${required_checks}" python3 - >"${status_file}" <<'PY'
+import json
+import os
+
+checks = json.loads(os.environ.get("CHECKS_JSON") or "[]")
+required = [line for line in os.environ["REQUIRED_CHECKS"].splitlines() if line]
+seen = {check.get("name", "") for check in checks}
+missing = [name for name in required if name not in seen]
+
+if missing:
+    print("pending")
+    print("missing: " + ", ".join(missing))
+else:
+    print("pass")
+PY
+
+    local status
+    status="$(head -n 1 "${status_file}")"
+    local details
+    details="$(tail -n +2 "${status_file}")"
+    rm -f "${status_file}"
+
+    case "${status}" in
+      pass)
+        echo "sync-release-pr-generated: required checks queued for PR #${pr_number}"
+        return 0
+        ;;
+      pending)
+        if (( SECONDS >= deadline )); then
+          echo "sync-release-pr-generated: FAIL (timed out waiting for required checks to queue on PR #${pr_number})"
+          if [[ -n "${details}" ]]; then
+            echo "${details}"
+          fi
+          return 1
+        fi
+        echo "sync-release-pr-generated: waiting for required checks to queue on PR #${pr_number}"
+        if [[ -n "${details}" ]]; then
+          echo "${details}"
+        fi
+        sleep "${interval_seconds}"
+        ;;
+      *)
+        echo "sync-release-pr-generated: FAIL (could not read required check queue status for PR #${pr_number})"
+        return 1
+        ;;
+    esac
+  done
+}
+
 wait_for_pr_head() {
   local expected_head="$1"
   local timeout_seconds="${RELEASE_PR_HEAD_TIMEOUT_SECONDS:-300}"
@@ -235,6 +310,9 @@ trigger_release_pr_checks() {
   echo "sync-release-pr-generated: triggering checks for PR #${pr_number}"
   gh pr ready "${pr_number}"
 
+  # Keep the PR ready only until the required check contexts exist, then
+  # immediately draft-lock it again while those checks run.
+  wait_for_required_checks_to_start
   ensure_release_pr_is_draft "after triggering generated-artifact checks"
 }
 
