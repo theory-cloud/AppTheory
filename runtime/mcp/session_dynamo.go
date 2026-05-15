@@ -57,14 +57,15 @@ func (d *DynamoSessionStore) Get(ctx context.Context, id string) (*Session, erro
 	return sess, nil
 }
 
-// Put stores a session. Overwrites any existing session with the same ID.
+// Put stores a session. Upserts any existing session with the same ID so sliding
+// session refreshes update the TTL instead of failing on duplicate keys.
 func (d *DynamoSessionStore) Put(ctx context.Context, session *Session) error {
 	if session == nil {
 		return ErrSessionNotFound
 	}
 
 	record := sessionToRecord(session)
-	return d.db.Model(record).WithContext(ctx).Create()
+	return d.db.Model(record).WithContext(ctx).CreateOrUpdate()
 }
 
 // Delete removes a session by ID.

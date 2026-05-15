@@ -28,6 +28,9 @@ func TestNewNoOpLogger(t *testing.T) {
 	if !logger.IsHealthy() {
 		t.Fatal("expected noop logger to be healthy")
 	}
+	if stats := logger.GetStats(); stats != (LoggerStats{}) {
+		t.Fatalf("expected empty noop stats, got %#v", stats)
+	}
 	if err := logger.Flush(context.Background()); err != nil {
 		t.Fatalf("Flush returned error: %v", err)
 	}
@@ -43,25 +46,27 @@ func TestTestLogger_Basics(t *testing.T) {
 	}
 
 	logger2 := logger.WithRequestID("req_1").WithTenantID("tenant_1").WithField("k", "v")
+	logger2.Debug("preflight")
 	logger2.Info("hello", map[string]any{"x": "y"})
+	logger2.Error("boom")
 
 	entries := logger.Entries()
-	if len(entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(entries))
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(entries))
 	}
-	if entries[0].Level != "info" || entries[0].Message != "hello" {
-		t.Fatalf("unexpected entry: %#v", entries[0])
+	if entries[1].Level != "info" || entries[1].Message != "hello" {
+		t.Fatalf("unexpected entry: %#v", entries[1])
 	}
-	if entries[0].RequestID != "req_1" || entries[0].TenantID != "tenant_1" {
-		t.Fatalf("unexpected request/tenant ids: %#v", entries[0])
+	if entries[1].RequestID != "req_1" || entries[1].TenantID != "tenant_1" {
+		t.Fatalf("unexpected request/tenant ids: %#v", entries[1])
 	}
-	if entries[0].Fields["k"] == nil || entries[0].Fields["x"] == nil {
-		t.Fatalf("expected fields to be present, got %#v", entries[0].Fields)
+	if entries[1].Fields["k"] == nil || entries[1].Fields["x"] == nil {
+		t.Fatalf("expected fields to be present, got %#v", entries[1].Fields)
 	}
 
 	stats := logger.GetStats()
-	if stats.EntriesLogged != 1 {
-		t.Fatalf("expected EntriesLogged=1, got %d", stats.EntriesLogged)
+	if stats.EntriesLogged != 3 {
+		t.Fatalf("expected EntriesLogged=3, got %d", stats.EntriesLogged)
 	}
 	if err := logger.Flush(context.Background()); err != nil {
 		t.Fatalf("Flush returned error: %v", err)

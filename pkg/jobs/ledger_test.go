@@ -750,3 +750,149 @@ func TestSanitizeFields_MasksPAN(t *testing.T) {
 	})
 	require.Equal(t, "411111******1111", out["pan"])
 }
+
+func TestDynamoJobLedger_ValidationErrorsAndDefaults(t *testing.T) {
+	ledger := NewDynamoJobLedger(nil, nil)
+	ledger.SetClock(nil)
+
+	_, err := ledger.CreateJob(context.TODO(), CreateJobInput{})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, err = ledger.CreateJob(context.Background(), CreateJobInput{JobID: "job_123"})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+
+	_, err = ledger.TransitionJobStatus(context.Background(), TransitionJobStatusInput{})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, err = ledger.TransitionJobStatus(context.Background(), TransitionJobStatusInput{JobID: "job_123"})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, err = ledger.TransitionJobStatus(context.Background(), TransitionJobStatusInput{JobID: "job_123", ToStatus: JobStatusRunning})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+
+	_, err = ledger.UpsertRecordStatus(context.Background(), UpsertRecordStatusInput{})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, err = ledger.UpsertRecordStatus(context.Background(), UpsertRecordStatusInput{JobID: "job_123"})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, err = ledger.UpsertRecordStatus(context.Background(), UpsertRecordStatusInput{JobID: "job_123", RecordID: "rec_1"})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+
+	_, err = ledger.AcquireLease(context.Background(), AcquireLeaseInput{JobID: "job_123"})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, err = NewDynamoJobLedger(nil, &Config{}).AcquireLease(context.Background(), AcquireLeaseInput{JobID: "job_123", Owner: "worker_a"})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+
+	_, err = ledger.RefreshLease(context.Background(), RefreshLeaseInput{JobID: "job_123"})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, err = NewDynamoJobLedger(nil, &Config{}).RefreshLease(context.Background(), RefreshLeaseInput{JobID: "job_123", Owner: "worker_a"})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+
+	err = ledger.ReleaseLease(context.Background(), ReleaseLeaseInput{JobID: "job_123"})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+
+	_, err = ledger.AcquireSemaphoreSlot(context.Background(), AcquireSemaphoreSlotInput{})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, err = ledger.AcquireSemaphoreSlot(context.Background(), AcquireSemaphoreSlotInput{Scope: "email"})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, err = ledger.AcquireSemaphoreSlot(context.Background(), AcquireSemaphoreSlotInput{Scope: "email", Subject: "customer_1"})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, err = ledger.AcquireSemaphoreSlot(context.Background(), AcquireSemaphoreSlotInput{Scope: "email", Subject: "customer_1", Limit: 1})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, err = NewDynamoJobLedger(nil, &Config{}).AcquireSemaphoreSlot(context.Background(), AcquireSemaphoreSlotInput{Scope: "email", Subject: "customer_1", Limit: 1, Owner: "worker_a"})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+
+	_, err = ledger.RefreshSemaphoreSlot(context.Background(), RefreshSemaphoreSlotInput{Scope: "email", Subject: "customer_1", Slot: -1})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, err = ledger.RefreshSemaphoreSlot(context.Background(), RefreshSemaphoreSlotInput{Scope: "email", Subject: "customer_1", Slot: 0})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, err = NewDynamoJobLedger(nil, &Config{}).RefreshSemaphoreSlot(context.Background(), RefreshSemaphoreSlotInput{Scope: "email", Subject: "customer_1", Slot: 0, Owner: "worker_a"})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+
+	err = ledger.ReleaseSemaphoreSlot(context.Background(), ReleaseSemaphoreSlotInput{Scope: "email", Subject: "customer_1", Slot: -1})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	err = ledger.ReleaseSemaphoreSlot(context.Background(), ReleaseSemaphoreSlotInput{Scope: "email", Subject: "customer_1", Slot: 0})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+
+	_, err = ledger.InspectSemaphore(context.Background(), InspectSemaphoreInput{})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, _, err = ledger.CreateIdempotencyRecord(context.Background(), CreateIdempotencyRecordInput{})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, _, err = ledger.CreateIdempotencyRecord(context.Background(), CreateIdempotencyRecordInput{JobID: "job_123"})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, err = ledger.CompleteIdempotencyRecord(context.Background(), CompleteIdempotencyRecordInput{})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+	_, err = ledger.CompleteIdempotencyRecord(context.Background(), CompleteIdempotencyRecordInput{JobID: "job_123"})
+	requireErrorType(t, err, ErrorTypeInvalidInput)
+}
+
+func requireErrorType(t *testing.T, err error, want ErrorType) {
+	t.Helper()
+	var typed *Error
+	require.ErrorAs(t, err, &typed)
+	require.Equal(t, want, typed.Type)
+}
+
+func TestDynamoJobLedger_ReleaseSemaphoreSlot_DeleteSuccess(t *testing.T) {
+	db := new(tablemocks.MockDB)
+	q := new(tablemocks.MockQuery)
+	db.On("Model", mock.Anything).Return(q)
+	q.On("WithContext", mock.Anything).Return(q)
+	q.On("Where", "PK", "=", SemaphorePartitionKey("email", "customer_1")).Return(q).Once()
+	q.On("Where", "SK", "=", SemaphoreSlotSortKey(0)).Return(q).Once()
+	q.On("WithCondition", "LeaseOwner", "=", "worker_a").Return(q)
+	q.On("Delete").Return(nil)
+
+	ledger := NewDynamoJobLedger(db, DefaultConfig())
+	require.NoError(t, ledger.ReleaseSemaphoreSlot(context.Background(), ReleaseSemaphoreSlotInput{
+		Scope:   "email",
+		Subject: "customer_1",
+		Slot:    0,
+		Owner:   "worker_a",
+	}))
+}
+
+func TestDynamoJobLedger_CompleteIdempotencyRecord_SetsErrorAndTTL(t *testing.T) {
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	db := new(tablemocks.MockDB)
+	q := new(tablemocks.MockQuery)
+	ub := new(tablemocks.MockUpdateBuilder)
+
+	db.On("Model", mock.Anything).Return(q)
+	q.On("WithContext", mock.Anything).Return(q)
+	q.On("Where", mock.Anything, mock.Anything, mock.Anything).Return(q)
+	q.On("IfExists").Return(q)
+	q.On("UpdateBuilder").Return(ub)
+
+	ttlUnix := now.Add(time.Hour).Unix()
+	ub.On("Set", "Status", IdempotencyStatusCompleted).Return(ub)
+	ub.On("SetIfNotExists", "CompletedAt", nil, now).Return(ub)
+	ub.On("Set", "UpdatedAt", now).Return(ub)
+	ub.On("SetIfNotExists", "JobID", nil, "job_123").Return(ub)
+	ub.On("SetIfNotExists", "IdempotencyKey", nil, "k1").Return(ub)
+	ub.On("SetIfNotExists", "Error", nil, mock.MatchedBy(func(env *ErrorEnvelope) bool {
+		return env != nil && env.Message == unknownErrorMessage
+	})).Return(ub)
+	ub.On("SetIfNotExists", "TTL", nil, ttlUnix).Return(ub)
+	ub.On("ExecuteWithResult", mock.Anything).Return(nil)
+
+	ledger := NewDynamoJobLedger(db, DefaultConfig())
+	ledger.SetClock(fixedClock{now: now})
+	_, err := ledger.CompleteIdempotencyRecord(context.Background(), CompleteIdempotencyRecordInput{
+		JobID:          "job_123",
+		IdempotencyKey: "k1",
+		Error:          &ErrorEnvelope{Message: "\n"},
+		TTL:            time.Hour,
+	})
+	require.NoError(t, err)
+}
+
+func TestDynamoJobLedger_ReleaseLease_DeleteSuccess(t *testing.T) {
+	db := new(tablemocks.MockDB)
+	q := new(tablemocks.MockQuery)
+	db.On("Model", mock.Anything).Return(q)
+	q.On("WithContext", mock.Anything).Return(q)
+	q.On("Where", "PK", "=", JobPartitionKey("job_123")).Return(q).Once()
+	q.On("Where", "SK", "=", JobLockSortKey()).Return(q).Once()
+	q.On("WithCondition", "LeaseOwner", "=", "worker_a").Return(q)
+	q.On("Delete").Return(nil)
+
+	ledger := NewDynamoJobLedger(db, DefaultConfig())
+	require.NoError(t, ledger.ReleaseLease(context.Background(), ReleaseLeaseInput{JobID: "job_123", Owner: "worker_a"}))
+}

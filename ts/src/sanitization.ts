@@ -21,6 +21,7 @@ const allowedSanitizeFields = new Set([
   "acceptor_id",
   "tid",
   "terminal_id",
+  "authorization_id",
 ]);
 
 const sensitiveSanitizeFields = new Map<string, "fully" | "partial">([
@@ -59,7 +60,6 @@ const sensitiveSanitizeFields = new Map<string, "fully" | "partial">([
   ["api_key", "fully"],
   ["api_token", "fully"],
   ["api_key_id", "partial"],
-  ["authorization_id", "fully"],
   ["authorization", "fully"],
   ["authorization_header", "fully"],
 ]);

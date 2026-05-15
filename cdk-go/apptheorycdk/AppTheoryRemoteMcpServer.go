@@ -10,7 +10,7 @@ import (
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
 
-// A Claude-first Remote MCP server construct that provisions: - API Gateway REST API v1 - Streaming-enabled Lambda proxy integrations for `/mcp` (POST/GET) using   Lambda response streaming (`/response-streaming-invocations`) - Optional DynamoDB tables for sessions and stream/event log state.
+// A Claude-first Remote MCP server construct that provisions: - API Gateway REST API v1 - Streaming-enabled Lambda proxy integrations for `/mcp` (POST/GET) using   Lambda response streaming (`/response-streaming-invocations`) - Optional DynamoDB tables for sessions, streams, and task runtime state.
 //
 // This construct is designed for MCP Streamable HTTP (2025-06-18).
 type AppTheoryRemoteMcpServer interface {
@@ -27,6 +27,8 @@ type AppTheoryRemoteMcpServer interface {
 	StreamSpillBucket() awss3.IBucket
 	// The DynamoDB stream/event log table (if enabled).
 	StreamTable() awsdynamodb.ITable
+	// The DynamoDB task runtime table (if enabled).
+	TaskTable() awsdynamodb.ITable
 	// Returns a string representation of this construct.
 	ToString() *string
 	// Applies one or more mixins to this construct.
@@ -100,6 +102,16 @@ func (j *jsiiProxy_AppTheoryRemoteMcpServer) StreamTable() awsdynamodb.ITable {
 	_jsii_.Get(
 		j,
 		"streamTable",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryRemoteMcpServer) TaskTable() awsdynamodb.ITable {
+	var returns awsdynamodb.ITable
+	_jsii_.Get(
+		j,
+		"taskTable",
 		&returns,
 	)
 	return returns

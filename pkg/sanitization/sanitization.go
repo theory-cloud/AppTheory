@@ -24,11 +24,12 @@ var AllowedFields = map[string]bool{
 	"merchant_uid":   true,
 
 	// External system identifiers (MIDs, acceptor IDs, terminal IDs, etc.).
-	"mid":         true,
-	"merchant_id": true,
-	"acceptor_id": true,
-	"tid":         true,
-	"terminal_id": true,
+	"mid":              true,
+	"merchant_id":      true,
+	"acceptor_id":      true,
+	"tid":              true,
+	"terminal_id":      true,
+	"authorization_id": true,
 }
 
 // SanitizationType defines how to sanitize a field.
@@ -78,7 +79,6 @@ var SensitiveFields = map[string]SanitizationType{
 	"api_key":              FullyRedact,
 	"api_token":            FullyRedact,
 	"api_key_id":           PartialMask,
-	"authorization_id":     FullyRedact,
 	"authorization":        FullyRedact,
 	"authorization_header": FullyRedact,
 }

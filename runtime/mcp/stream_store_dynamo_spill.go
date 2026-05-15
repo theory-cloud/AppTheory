@@ -32,7 +32,7 @@ const (
 
 type dynamoStreamSpillStore interface {
 	put(ctx context.Context, key string, data []byte, expiresAt int64, sha256Hex string) error
-	get(ctx context.Context, key string) ([]byte, error)
+	get(ctx context.Context, key string, maxBytes int) ([]byte, error)
 	delete(ctx context.Context, key string) error
 }
 
@@ -90,7 +90,7 @@ func (s *dynamoStreamS3SpillStore) put(ctx context.Context, key string, data []b
 	return err
 }
 
-func (s *dynamoStreamS3SpillStore) get(ctx context.Context, key string) ([]byte, error) {
+func (s *dynamoStreamS3SpillStore) get(ctx context.Context, key string, maxBytes int) ([]byte, error) {
 	if s == nil {
 		return nil, errors.New("stream spill store not configured")
 	}
@@ -114,7 +114,18 @@ func (s *dynamoStreamS3SpillStore) get(ctx context.Context, key string) ([]byte,
 		}
 	}()
 
-	return io.ReadAll(out.Body)
+	if maxBytes <= 0 {
+		maxBytes = dynamoStreamMaxEventBytes()
+	}
+	payload, err := io.ReadAll(io.LimitReader(out.Body, int64(maxBytes)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(payload) > maxBytes {
+		return nil, fmt.Errorf("stream spill object exceeds max event bytes")
+	}
+
+	return payload, nil
 }
 
 func (s *dynamoStreamS3SpillStore) delete(ctx context.Context, key string) error {

@@ -70,13 +70,13 @@ func TestDynamoSessionStore_Get_Expired(t *testing.T) {
 	require.ErrorIs(t, err, ErrSessionNotFound)
 }
 
-func TestDynamoSessionStore_Put_Success(t *testing.T) {
+func TestDynamoSessionStore_Put_UpsertsSession(t *testing.T) {
 	db := new(tablemocks.MockDB)
 	q := new(tablemocks.MockQuery)
 
 	db.On("Model", mock.Anything).Return(q)
 	q.On("WithContext", mock.Anything).Return(q)
-	q.On("Create").Return(nil)
+	q.On("CreateOrUpdate").Return(nil)
 
 	store := NewDynamoSessionStore(db)
 	err := store.Put(context.Background(), &Session{
@@ -86,6 +86,8 @@ func TestDynamoSessionStore_Put_Success(t *testing.T) {
 		Data:      map[string]string{"foo": "bar"},
 	})
 	require.NoError(t, err)
+	q.AssertNotCalled(t, "Create")
+	q.AssertCalled(t, "CreateOrUpdate")
 }
 
 func TestDynamoSessionStore_Put_NilSession(t *testing.T) {
