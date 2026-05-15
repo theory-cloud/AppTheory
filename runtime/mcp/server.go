@@ -41,6 +41,10 @@ const (
 	methodResourcesUnsubscribe     = "resources/unsubscribe"
 	methodLoggingSetLevel          = "logging/setLevel"
 	methodCompletionComplete       = "completion/complete"
+	methodTasksGet                 = "tasks/get"
+	methodTasksResult              = "tasks/result"
+	methodTasksList                = "tasks/list"
+	methodTasksCancel              = "tasks/cancel"
 	methodPromptsList              = "prompts/list"
 	methodPromptsGet               = "prompts/get"
 )
@@ -77,6 +81,7 @@ type Server struct {
 	loggingLevelHook        LoggingLevelHook
 	promptCompletionHook    CompletionHook
 	resourceCompletionHook  CompletionHook
+	taskRuntime             taskRuntimeConfig
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -145,8 +150,9 @@ func WithOriginValidator(v OriginValidator) ServerOption {
 // WithResourceSubscriptionHooks enables resources/subscribe and
 // resources/unsubscribe support through explicit hooks.
 //
-// Both hooks must be non-nil before the resource subscribe sub-capability is
-// advertised. The methods still fail closed if either hook is absent.
+// The methods fail closed if either hook is absent. The resource subscribe
+// sub-capability remains omitted until AppTheory has an outbound resource
+// update notification contract.
 func WithResourceSubscriptionHooks(subscribe, unsubscribe ResourceSubscriptionHook) ServerOption {
 	return func(s *Server) {
 		s.resourceSubscribeHook = subscribe
@@ -169,6 +175,18 @@ func WithCompletionHooks(promptHook, resourceHook CompletionHook) ServerOption {
 	return func(s *Server) {
 		s.promptCompletionHook = promptHook
 		s.resourceCompletionHook = resourceHook
+	}
+}
+
+// WithTaskRuntime enables MCP task operations through an explicit TaskStore.
+//
+// Tasks are experimental in MCP 2025-11-25 and remain opt-in. AppTheory only
+// advertises task capabilities when this option supplies a store and at least
+// one registered tool declares task support.
+func WithTaskRuntime(opts TaskRuntimeOptions) ServerOption {
+	cfg := normalizeTaskRuntimeOptions(opts)
+	return func(s *Server) {
+		s.taskRuntime = cfg
 	}
 }
 
@@ -537,6 +555,11 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 			s.logger.ErrorContext(ctx, "failed to delete stream session", "sessionId", sessionID, "error", err)
 		}
 	}
+	if s.taskRuntime.store != nil {
+		if err := s.taskRuntime.store.DeleteSession(ctx, sessionID); err != nil {
+			s.logger.ErrorContext(ctx, "failed to delete task session", "sessionId", sessionID, "error", err)
+		}
+	}
 
 	return &apptheory.Response{Status: 202}, nil
 }
@@ -551,7 +574,14 @@ func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocol
 		s.logger.ErrorContext(ctx, "method not found", "method", req.Method, "protocolVersion", protocolVersion)
 		return NewErrorResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("Method not found: %s", req.Method))
 	}
+	if isTaskMethod(req.Method) {
+		return s.dispatchTaskMethod(ctx, req, sessionID)
+	}
 
+	return s.dispatchNonTaskMethod(ctx, req, sessionID)
+}
+
+func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessionID string) *Response {
 	switch req.Method {
 	case methodInitialize:
 		selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
@@ -587,9 +617,31 @@ func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocol
 	}
 }
 
+func (s *Server) dispatchTaskMethod(ctx context.Context, req *Request, sessionID string) *Response {
+	if !s.hasTaskRuntime() {
+		return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: "+req.Method)
+	}
+
+	switch req.Method {
+	case methodTasksGet:
+		return s.handleTasksGet(ctx, req, sessionID)
+	case methodTasksResult:
+		return s.handleTasksResult(ctx, req, sessionID)
+	case methodTasksList:
+		return s.handleTasksList(ctx, req, sessionID)
+	case methodTasksCancel:
+		return s.handleTasksCancel(ctx, req, sessionID)
+	default:
+		return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: "+req.Method)
+	}
+}
+
 func methodAllowedForProtocol(pv string, method string) bool {
 	if !isSupportedProtocolVersion(pv) {
 		return false
+	}
+	if isTaskMethod(method) {
+		return pv == protocolVersion
 	}
 
 	switch method {
@@ -607,6 +659,18 @@ func methodAllowedForProtocol(pv string, method string) bool {
 		methodCompletionComplete,
 		methodPromptsList,
 		methodPromptsGet:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTaskMethod(method string) bool {
+	switch method {
+	case methodTasksGet,
+		methodTasksResult,
+		methodTasksList,
+		methodTasksCancel:
 		return true
 	default:
 		return false
@@ -639,6 +703,7 @@ func (s *Server) handleToolsList(req *Request) *Response {
 type toolsCallParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
+	Task      *TaskMetadata   `json:"task,omitempty"`
 	Meta      struct {
 		ProgressToken json.RawMessage `json:"progressToken,omitempty"`
 	} `json:"_meta,omitempty"`
