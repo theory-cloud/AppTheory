@@ -49,14 +49,58 @@ func buildApp() *apptheory.App {
 Important behaviors for Claude compatibility:
 - `initialize` returns `Mcp-Session-Id` and must negotiate `protocolVersion` (`2025-11-25`).
 - `notifications/initialized` must return `202 Accepted` with no body.
-- `tools/call` may stream with SSE when the client includes `Accept: text/event-stream`.
-- SSE frames stay on `event: message`; progress is emitted as JSON-RPC `notifications/progress`, not custom SSE event names.
+- `POST /mcp` requires `Content-Type: application/json` and `Accept: application/json, text/event-stream`.
+- `GET /mcp` requires `Accept: text/event-stream`.
+- `tools/call` may stream with SSE when the target tool is registered for streaming and the client advertises SSE.
+- SSE streams start with an empty-data priming event carrying a replay-safe `id`.
+- Application SSE frames stay on `event: message`; progress is emitted as JSON-RPC `notifications/progress`, not custom
+  SSE event names.
 - Disconnections are not cancellation; resumability uses `GET /mcp` + `Last-Event-ID`.
+- `Last-Event-ID` replay is stream-bound. A cursor from another stream fails closed instead of replaying unrelated
+  events.
 - `GET /mcp` without `Last-Event-ID` emits a short-lived keepalive SSE response by default.
 - If you want that path to stay open for a bounded window on Lambda, use
   `mcp.WithInitialSessionListenerBudget(...)`.
 - If the request includes an `Origin` header, the default runtime allowlist is Claude-oriented (`https://claude.ai`,
   `https://claude.com`); use `mcp.WithOriginValidator(...)` for other browser origins.
+- Tool handler panics are recovered as sanitized JSON-RPC internal errors. Do not rely on panic text reaching the
+  client; AppTheory logs it server-side and keeps the MCP server reusable.
+- Optional utility methods are hook-gated. Resource subscription requests require
+  `mcp.WithResourceSubscriptionHooks(...)`, logging level requests require `mcp.WithLoggingLevelHook(...)`, and
+  completions require `mcp.WithCompletionHooks(...)`. AppTheory advertises only capabilities it can deliver
+  end-to-end: completions can be advertised with hooks today, while `resources.subscribe` and `logging` remain omitted
+  until the outbound notification contracts for resource updates and log messages exist.
+- `notifications/cancelled` cancels matching in-flight AppTheory requests for the same session and safely ignores
+  unknown or already-completed request ids.
+- MCP tasks are opt-in. AppTheory advertises `tasks` only for protocol `2025-11-25` sessions when
+  `mcp.WithTaskRuntime(...)` supplies a store and at least one registered tool declares task support.
+- Task records are session-scoped. Products must bind the MCP session to the same principal, tenant, actor route, and
+  entitlement policy used by OAuth validation before exposing task-capable tools.
+
+Rate-limit integration is not a Remote MCP-specific feature. Route-, principal-, and tool-aware throttling should use the
+normal AppTheory middleware path: validate OAuth/tenant policy, then mount `runtime.RateLimitMiddleware(...)` around the
+`/mcp` routes with `pkg/limited` as the durable backend when shared counters are required. Product extractors may map the
+normalized route, authenticated principal, actor path segment, JSON-RPC method, or tool name into the limiter key. Do not
+add a second MCP wrapper or hard-code rate-limit capability metadata in `initialize`.
+
+Strict transport rollout checklist:
+
+- Canary one connector/client population first and confirm it sends the strict `Accept` and `Content-Type` headers.
+- Confirm the client carries forward the negotiated protocol version, or omits `Mcp-Protocol-Version` after
+  initialization so AppTheory uses the session value.
+- Confirm the client records the first SSE `id`, even when its `data:` field is empty, before long-running work emits
+  progress.
+- Confirm reconnect uses `GET /mcp` with the latest `Last-Event-ID` for the same session and stream.
+- Treat HTTP `400` responses during canary as compatibility failures to fix in the client, not as server fallbacks to
+  loosen.
+- Do not hard-code `resources.subscribe`, `logging`, or `completions` capabilities in a Remote MCP product wrapper.
+  Configure the AppTheory hook, let AppTheory emit the initialize capability, and keep the capability absent until
+  product authorization and tenant policy are ready.
+- Do not hard-code `tasks` in a Remote MCP product wrapper. Keep task runtime disabled until asynchronous-work policy,
+  audit logging, quotas, and abuse controls are wired.
+
+- Do not introduce a Remote MCP-specific rate limiter. Use `RateLimitMiddleware` plus `pkg/limited` in the AppTheory
+  middleware chain, and fail closed or withhold a tool/task when the product cannot derive the scoped limiter bucket.
 
 ## 2) Add OAuth protection (Remote MCP auth `2025-06-18`)
 
@@ -102,12 +146,34 @@ If you enable the optional Remote MCP stream table, wire a concrete persistent `
 `mcp.NewDynamoStreamStore(db)` with `mcp.WithStreamStore(...)`. `enableStreamTable` alone still only provisions the
 storage and env vars.
 
+If you enable the optional Remote MCP session table, wire `mcp.WithSessionStore(mcp.NewDynamoSessionStore(db))`.
+`DynamoSessionStore.Put` upserts sessions so sliding-session access refreshes TTL/data on the existing item.
+
+If you enable the optional Remote MCP task table, wire
+`mcp.WithTaskRuntime(mcp.TaskRuntimeOptions{Store: mcp.NewDynamoTaskStore(db)})`. `enableTaskTable` only provisions
+storage and injects `MCP_TASK_TABLE` / `MCP_TASK_TTL_MINUTES`; it does not advertise task capability by itself. The
+runtime still requires a configured task store and a tool with `ToolExecution.TaskSupport` set to `optional` or
+`required`.
+
+`MCP_TASK_TTL_MINUTES` is the default task lifetime used when the app does not set `TaskRuntimeOptions.DefaultTTL`.
+Client-supplied `task.ttl` values are milliseconds and fail closed when they are non-positive or exceed the configured
+maximum. `DynamoTaskStore` checks expiry before returning task state, so DynamoDB TTL cleanup is a storage backstop, not
+the access-control boundary.
+
+Task cancellation is cooperative. `tasks/cancel` marks the session-scoped task canceled and cancels AppTheory's
+in-flight tool context when that task is still running. If the work has already completed, the terminal task state is not
+rewritten.
+
 `AppTheoryRemoteMcpServer` also provisions the canonical private S3 spill bucket whenever `enableStreamTable` is true.
 The Dynamo stream store keeps small logical events inline in DynamoDB and spills larger events to S3 using the injected
 `MCP_STREAM_SPILL_BUCKET` configuration. The inline spill threshold is bounded to AppTheory's DynamoDB-safe ceiling so
 oversized inline writes fail closed into S3 spill instead of DynamoDB item-size errors. Clients still see one JSON-RPC
 SSE message per logical event, and resume/replay continues to use `Last-Event-ID`; there is no client-visible chunk or
 presigned URL protocol.
+
+Replay reads for S3-spilled events are bounded before validation: AppTheory caps the S3 body read by the recorded event
+byte count and `MCP_STREAM_MAX_EVENT_BYTES`, then verifies the recorded byte count and SHA-256 hash. Oversized,
+truncated, or tampered spill objects fail closed instead of being streamed to the client.
 
 `MCP_STREAM_TTL_MINUTES` is the runtime replay window. `DynamoStreamStore` rejects expired event records before
 resolving `Last-Event-ID` or reading inline/S3-spilled event data, even if DynamoDB TTL or S3 lifecycle cleanup has not
@@ -155,6 +221,8 @@ API Gateway REST response streaming connections are time-bounded and can disconn
 - keep sessions durable (`SessionStore` backed by DynamoDB)
 - keep tool output durable (event log + `Last-Event-ID` replay) by wiring `mcp.NewDynamoStreamStore(db)` or another
   persistent `StreamStore`
+- keep asynchronous tool task state durable by wiring `mcp.NewDynamoTaskStore(db)` through `mcp.WithTaskRuntime(...)`
+  only after principal/tenant/actor policy is ready
 - let AppTheory manage large stream payload storage through the Remote MCP S3 spill bucket; do not split tool responses
   or return object links as a tool-specific workaround
 - execute long work asynchronously (worker Lambdas) and append progress/results into the event log

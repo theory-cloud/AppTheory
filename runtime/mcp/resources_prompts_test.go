@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -20,7 +21,7 @@ func TestResourcesListAndRead_RoundTrip(t *testing.T) {
 
 	sessionID := initializeSession(t, s)
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"application/json"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	if err := s.Resources().RegisterResource(ResourceDef{
 		URI:         "file://hello.txt",
@@ -83,12 +84,49 @@ func TestResourcesListAndRead_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestResourceAndPromptRegistryValidation(t *testing.T) {
+	resources := NewResourceRegistry()
+	if err := resources.RegisterResource(ResourceDef{}, func(context.Context) ([]ResourceContent, error) { return nil, nil }); err == nil {
+		t.Fatalf("expected missing resource uri to fail")
+	}
+	if err := resources.RegisterResource(ResourceDef{URI: "file://x"}, func(context.Context) ([]ResourceContent, error) { return nil, nil }); err == nil {
+		t.Fatalf("expected missing resource name to fail")
+	}
+	if err := resources.RegisterResource(ResourceDef{URI: "file://x", Name: "x"}, nil); err == nil {
+		t.Fatalf("expected nil resource handler to fail")
+	}
+	if err := resources.RegisterResource(ResourceDef{URI: "file://x", Name: "x"}, func(context.Context) ([]ResourceContent, error) {
+		return []ResourceContent{{URI: "file://x", Text: "x"}}, nil
+	}); err != nil {
+		t.Fatalf("register resource: %v", err)
+	}
+	if err := resources.RegisterResource(ResourceDef{URI: "file://x", Name: "x"}, func(context.Context) ([]ResourceContent, error) { return nil, nil }); err == nil {
+		t.Fatalf("expected duplicate resource to fail")
+	}
+
+	prompts := NewPromptRegistry()
+	if err := prompts.RegisterPrompt(PromptDef{}, func(context.Context, json.RawMessage) (*PromptResult, error) { return nil, nil }); err == nil {
+		t.Fatalf("expected missing prompt name to fail")
+	}
+	if err := prompts.RegisterPrompt(PromptDef{Name: "p"}, nil); err == nil {
+		t.Fatalf("expected nil prompt handler to fail")
+	}
+	if err := prompts.RegisterPrompt(PromptDef{Name: "p"}, func(context.Context, json.RawMessage) (*PromptResult, error) {
+		return &PromptResult{Messages: []PromptMessage{{Role: "user", Content: ContentBlock{Type: "text", Text: "p"}}}}, nil
+	}); err != nil {
+		t.Fatalf("register prompt: %v", err)
+	}
+	if err := prompts.RegisterPrompt(PromptDef{Name: "p"}, func(context.Context, json.RawMessage) (*PromptResult, error) { return nil, nil }); err == nil {
+		t.Fatalf("expected duplicate prompt to fail")
+	}
+}
+
 func TestPromptsListAndGet_RoundTrip(t *testing.T) {
 	s := NewServer("test", "1.0.0")
 
 	sessionID := initializeSession(t, s)
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"application/json"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	if err := s.Prompts().RegisterPrompt(PromptDef{
 		Name:        "greet",
@@ -156,7 +194,7 @@ func TestResourcesRead_NotFoundIsInvalidParams(t *testing.T) {
 
 	sessionID := initializeSession(t, s)
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"application/json"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	readParams := mustMarshal(t, map[string]any{"uri": "file://missing.txt"})
 	readReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodResourcesRead, Params: readParams})
@@ -173,12 +211,151 @@ func TestResourcesRead_NotFoundIsInvalidParams(t *testing.T) {
 	}
 }
 
+func TestResourceSubscriptionHooks_RoundTrip(t *testing.T) {
+	var subscribed ResourceSubscription
+	var unsubscribed ResourceSubscription
+	s := NewServer("test", "1.0.0", WithResourceSubscriptionHooks(
+		func(_ context.Context, sub ResourceSubscription) error {
+			subscribed = sub
+			return nil
+		},
+		func(_ context.Context, sub ResourceSubscription) error {
+			unsubscribed = sub
+			return nil
+		},
+	))
+	sessionID := initializeSession(t, s)
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"application/json, text/event-stream"}
+
+	params := mustMarshal(t, map[string]any{"uri": "file://hello.txt"})
+	subscribeReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodResourcesSubscribe, Params: params})
+	subscribeResp, err := invokeHandlerWithMethod(context.Background(), s, "POST", subscribeReq, headers)
+	if err != nil {
+		t.Fatalf("invoke resources/subscribe: %v", err)
+	}
+	rpcSubscribe, err := parseJSONRPCResponse(subscribeResp)
+	if err != nil {
+		t.Fatalf("parse resources/subscribe: %v", err)
+	}
+	if rpcSubscribe.Error != nil {
+		t.Fatalf("unexpected subscribe error: %+v", rpcSubscribe.Error)
+	}
+	if subscribed.SessionID != sessionID || subscribed.URI != "file://hello.txt" {
+		t.Fatalf("unexpected subscribe hook request: %+v", subscribed)
+	}
+
+	unsubscribeReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 2, Method: methodResourcesUnsubscribe, Params: params})
+	unsubscribeResp, err := invokeHandlerWithMethod(context.Background(), s, "POST", unsubscribeReq, headers)
+	if err != nil {
+		t.Fatalf("invoke resources/unsubscribe: %v", err)
+	}
+	rpcUnsubscribe, err := parseJSONRPCResponse(unsubscribeResp)
+	if err != nil {
+		t.Fatalf("parse resources/unsubscribe: %v", err)
+	}
+	if rpcUnsubscribe.Error != nil {
+		t.Fatalf("unexpected unsubscribe error: %+v", rpcUnsubscribe.Error)
+	}
+	if unsubscribed.SessionID != sessionID || unsubscribed.URI != "file://hello.txt" {
+		t.Fatalf("unexpected unsubscribe hook request: %+v", unsubscribed)
+	}
+}
+
+func TestResourceSubscriptionHooks_FailClosedWhenUnconfigured(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []ServerOption
+	}{
+		{name: "no hooks"},
+		{
+			name: "partial hooks",
+			opts: []ServerOption{WithResourceSubscriptionHooks(
+				func(context.Context, ResourceSubscription) error { return nil },
+				nil,
+			)},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewServer("test", "1.0.0", tt.opts...)
+			sessionID := initializeSession(t, s)
+			headers := sessionHeaders(sessionID)
+			headers["accept"] = []string{"application/json, text/event-stream"}
+
+			params := mustMarshal(t, map[string]any{"uri": "file://hello.txt"})
+			req := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodResourcesSubscribe, Params: params})
+			resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", req, headers)
+			if err != nil {
+				t.Fatalf("invoke resources/subscribe: %v", err)
+			}
+			rpcResp, err := parseJSONRPCResponse(resp)
+			if err != nil {
+				t.Fatalf("parse resources/subscribe: %v", err)
+			}
+			if rpcResp.Error == nil || rpcResp.Error.Code != CodeMethodNotFound {
+				t.Fatalf("expected method-not-found for unconfigured subscribe, got: %+v", rpcResp.Error)
+			}
+		})
+	}
+}
+
+func TestResourceSubscriptionHooks_ValidateParamsAndErrors(t *testing.T) {
+	t.Run("missing uri", func(t *testing.T) {
+		s := NewServer("test", "1.0.0", WithResourceSubscriptionHooks(
+			func(context.Context, ResourceSubscription) error { return nil },
+			func(context.Context, ResourceSubscription) error { return nil },
+		))
+		sessionID := initializeSession(t, s)
+		headers := sessionHeaders(sessionID)
+		headers["accept"] = []string{"application/json, text/event-stream"}
+
+		req := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodResourcesSubscribe, Params: json.RawMessage(`{}`)})
+		resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", req, headers)
+		if err != nil {
+			t.Fatalf("invoke resources/subscribe: %v", err)
+		}
+		rpcResp, err := parseJSONRPCResponse(resp)
+		if err != nil {
+			t.Fatalf("parse resources/subscribe: %v", err)
+		}
+		if rpcResp.Error == nil || rpcResp.Error.Code != CodeInvalidParams {
+			t.Fatalf("expected invalid params for missing uri, got: %+v", rpcResp.Error)
+		}
+	})
+
+	t.Run("hook error", func(t *testing.T) {
+		s := NewServer("test", "1.0.0", WithResourceSubscriptionHooks(
+			func(context.Context, ResourceSubscription) error { return errors.New("subscribe denied") },
+			func(context.Context, ResourceSubscription) error { return nil },
+		))
+		sessionID := initializeSession(t, s)
+		headers := sessionHeaders(sessionID)
+		headers["accept"] = []string{"application/json, text/event-stream"}
+
+		params := mustMarshal(t, map[string]any{"uri": "file://hello.txt"})
+		req := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodResourcesSubscribe, Params: params})
+		resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", req, headers)
+		if err != nil {
+			t.Fatalf("invoke resources/subscribe: %v", err)
+		}
+		rpcResp, err := parseJSONRPCResponse(resp)
+		if err != nil {
+			t.Fatalf("parse resources/subscribe: %v", err)
+		}
+		if rpcResp.Error == nil || rpcResp.Error.Code != CodeServerError {
+			t.Fatalf("expected server error for hook error, got: %+v", rpcResp.Error)
+		}
+	})
+}
+
 func TestPromptsGet_NotFoundIsInvalidParams(t *testing.T) {
 	s := NewServer("test", "1.0.0")
 
 	sessionID := initializeSession(t, s)
 	headers := sessionHeaders(sessionID)
-	headers["accept"] = []string{"application/json"}
+	headers["accept"] = []string{"application/json, text/event-stream"}
 
 	getParams := mustMarshal(t, map[string]any{"name": "missing", "arguments": json.RawMessage(`{}`)})
 	getReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodPromptsGet, Params: getParams})

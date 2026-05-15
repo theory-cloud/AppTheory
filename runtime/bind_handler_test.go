@@ -274,3 +274,82 @@ func TestBindRequest_QueryBindingRequiresStructTarget(t *testing.T) {
 		t.Fatalf("unexpected error payload: %#v", appErr)
 	}
 }
+
+type bindTextValue string
+
+func (v *bindTextValue) UnmarshalText(raw []byte) error {
+	*v = bindTextValue("text:" + string(raw))
+	return nil
+}
+
+func TestBindRequest_BindsPointerEmbeddedAndScalarTypes(t *testing.T) {
+	t.Parallel()
+
+	type EmbeddedModel struct {
+		Enabled bool `query:"enabled"`
+	}
+	type requestModel struct {
+		*EmbeddedModel
+		Name   *string       `query:"name"`
+		Count  uint16        `query:"count"`
+		Ratio  float64       `query:"ratio"`
+		Custom bindTextValue `query:"custom"`
+	}
+
+	out, err := BindRequest(&Context{
+		Request: Request{
+			Query: map[string][]string{
+				"enabled": {"true"},
+				"name":    {"alice"},
+				"count":   {"42"},
+				"ratio":   {"1.5"},
+				"custom":  {"value"},
+			},
+		},
+	}, BindConfig[requestModel]{Query: true})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if out.EmbeddedModel == nil || !out.Enabled {
+		t.Fatalf("expected embedded pointer to be allocated and bound, got %#v", out.EmbeddedModel)
+	}
+	if out.Name == nil || *out.Name != "alice" {
+		t.Fatalf("expected pointer string to bind, got %#v", out.Name)
+	}
+	if out.Count != 42 || out.Ratio != 1.5 || out.Custom != "text:value" {
+		t.Fatalf("unexpected scalar bindings: %#v", out)
+	}
+}
+
+func TestBindRequest_ValidationPreservesAppTheoryAndAppErrors(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Name string `json:"name"`
+	}
+
+	appTheoryCause := NewAppTheoryError(errorCodeForbidden, "denied").WithStatusCode(403)
+	_, err := BindRequest(&Context{Request: Request{Body: []byte(`{"name":"bob"}`)}}, BindConfig[requestModel]{
+		Body: true,
+		Validate: func(_ *Context, _ requestModel) error {
+			return appTheoryCause
+		},
+	})
+	if err != appTheoryCause {
+		t.Fatalf("expected AppTheoryError to be returned as-is, got %#v", err)
+	}
+
+	_, err = BindRequest(&Context{Request: Request{Body: []byte(`{"name":"bob"}`)}}, BindConfig[requestModel]{
+		Body: true,
+		Validate: func(_ *Context, _ requestModel) error {
+			return &AppError{Code: errorCodeConflict, Message: "conflict"}
+		},
+	})
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Code != errorCodeConflict || appErr.StatusCode != 409 {
+		t.Fatalf("unexpected mapped AppError: %#v", appErr)
+	}
+}

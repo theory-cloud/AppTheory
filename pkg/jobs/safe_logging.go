@@ -6,6 +6,8 @@ import (
 	"github.com/theory-cloud/apptheory/pkg/sanitization"
 )
 
+const unknownErrorMessage = "unknown error"
+
 // SanitizeLogString removes control characters that could enable log forging.
 func SanitizeLogString(value string) string {
 	return sanitization.SanitizeLogString(value)
@@ -37,7 +39,7 @@ type ErrorEnvelope struct {
 func NewErrorEnvelope(message string, fields map[string]any) *ErrorEnvelope {
 	message = SanitizeLogString(message)
 	if message == "" {
-		message = "unknown error"
+		message = unknownErrorMessage
 	}
 	return &ErrorEnvelope{
 		Message: message,

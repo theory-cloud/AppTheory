@@ -44,6 +44,10 @@ func TestJobsModels_SetKeys_AndString(t *testing.T) {
 	require.Equal(t, "REQ#k1", req.SK)
 	require.Equal(t, `jobs.JobRequest{job_id:"j1",key:"k1",status:""}`, req.String())
 
+	lease := NewSemaphoreLease("scope", "subject", 7)
+	require.Equal(t, "SEM#scope#subject", lease.PK)
+	require.Equal(t, "SLOT#000000007", lease.SK)
+
 	var nilReq *JobRequest
 	require.Equal(t, "jobs.JobRequest<nil>", nilReq.String())
 }
@@ -77,7 +81,7 @@ func TestJobsSafeLogging(t *testing.T) {
 	require.Equal(t, "411111******1111", env.Fields["pan"])
 
 	unknown := NewErrorEnvelope("\n", nil)
-	require.Equal(t, "unknown error", unknown.Message)
+	require.Equal(t, unknownErrorMessage, unknown.Message)
 
 	require.Nil(t, ErrorEnvelopeFromError(nil, nil))
 	typed := ErrorEnvelopeFromError(NewError(ErrorTypeConflict, "boom\n"), map[string]any{"pan": "4111111111111111"})

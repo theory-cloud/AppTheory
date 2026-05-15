@@ -129,7 +129,7 @@ func ReadSSEMessage(r *bufio.Reader) (*SSEMessage, error) {
 	}, nil
 }
 
-// RawStream sends a JSON-RPC request to POST /mcp with `Accept: text/event-stream` and
+// RawStream sends a strict Streamable HTTP JSON-RPC request to POST /mcp and
 // returns a Stream for reading incremental SSE messages.
 func (c *Client) RawStream(ctx context.Context, req *mcpruntime.Request, extraHeaders map[string][]string) (*Stream, error) {
 	if c == nil {

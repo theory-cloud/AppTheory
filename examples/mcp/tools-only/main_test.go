@@ -40,8 +40,11 @@ func TestToolsOnlyBuildApp(t *testing.T) {
 	}
 
 	event := testkit.APIGatewayV2Request("POST", "/mcp", testkit.HTTPEventOptions{
-		Headers: map[string]string{"content-type": "application/json"},
-		Body:    []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`),
+		Headers: map[string]string{
+			"accept":       "application/json, text/event-stream",
+			"content-type": "application/json",
+		},
+		Body: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`),
 	})
 	resp := env.InvokeAPIGatewayV2(context.Background(), app, event)
 	if resp.StatusCode != 200 {

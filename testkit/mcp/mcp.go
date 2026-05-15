@@ -273,7 +273,7 @@ func (c *Client) Raw(ctx context.Context, req *mcpruntime.Request) (*mcpruntime.
 
 	headers := map[string][]string{
 		"content-type": {"application/json"},
-		"accept":       {"application/json"},
+		"accept":       {"application/json, text/event-stream"},
 	}
 	if c.sessionID != "" {
 		headers["mcp-session-id"] = []string{c.sessionID}

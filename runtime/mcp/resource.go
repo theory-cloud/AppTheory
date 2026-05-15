@@ -30,6 +30,17 @@ type ResourceContent struct {
 // ResourceHandler resolves and returns the content for a resource.
 type ResourceHandler func(ctx context.Context) ([]ResourceContent, error)
 
+// ResourceSubscription identifies a resource subscription request for a
+// session.
+type ResourceSubscription struct {
+	SessionID string `json:"sessionId"`
+	URI       string `json:"uri"`
+}
+
+// ResourceSubscriptionHook handles a resources/subscribe or
+// resources/unsubscribe request.
+type ResourceSubscriptionHook func(ctx context.Context, sub ResourceSubscription) error
+
 type registeredResource struct {
 	def     ResourceDef
 	handler ResourceHandler
