@@ -17,13 +17,16 @@ const (
 	defaultTaskTTL          = 10 * time.Minute
 	defaultTaskMaxTTL       = time.Hour
 	defaultTaskPollInterval = 5 * time.Second
+	defaultTaskResultWait   = 100 * time.Millisecond
 	defaultTaskListLimit    = 100
 	maxTaskListLimit        = 500
 )
 
 const (
-	envTaskTTLMinutes      = "MCP_TASK_TTL_MINUTES"
-	relatedTaskMetadataKey = "io.modelcontextprotocol/related-task"
+	envTaskTTLMinutes                 = "MCP_TASK_TTL_MINUTES"
+	relatedTaskMetadataKey            = "io.modelcontextprotocol/related-task"
+	modelImmediateResponseMetadataKey = "io.modelcontextprotocol/model-immediate-response"
+	taskCanceledMessage               = "task canceled"
 )
 
 // TaskSupport declares whether a tool can be invoked through MCP task
@@ -125,6 +128,8 @@ var ErrTaskNotFound = errors.New("task not found")
 // a terminal state.
 var ErrTaskTerminal = errors.New("task already terminal")
 
+var errTaskInvalidCursor = errors.New("invalid task list cursor")
+
 // TaskRuntimeOptions configures task-augmented MCP execution.
 type TaskRuntimeOptions struct {
 	Store                  TaskStore
@@ -207,7 +212,7 @@ func (s *Server) handleTaskToolsCall(ctx context.Context, req *Request, sessionI
 	case TaskSupportOptional, TaskSupportRequired:
 		// ok
 	default:
-		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: tool does not support task execution")
+		return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: tool does not support task execution")
 	}
 
 	ttl, errResp := s.taskTTL(req.ID, params.Task)
@@ -246,8 +251,12 @@ func (s *Server) handleTaskToolsCall(ctx context.Context, req *Request, sessionI
 	finish := s.taskExecutions.track(sessionID, created.Task.TaskID, cancel)
 	go s.runTaskTool(taskCtx, *created, params.Arguments, finish)
 
+	meta := map[string]any{relatedTaskMetadataKey: RelatedTaskMetadata{TaskID: created.Task.TaskID}}
+	if s.taskRuntime.modelImmediateResponse != "" {
+		meta[modelImmediateResponseMetadataKey] = s.taskRuntime.modelImmediateResponse
+	}
 	return NewResultResponse(req.ID, CreateTaskResult{
-		Meta: map[string]any{relatedTaskMetadataKey: RelatedTaskMetadata{TaskID: created.Task.TaskID}},
+		Meta: meta,
 		Task: created.Task,
 	})
 }
@@ -304,12 +313,18 @@ func (s *Server) finishTask(ctx context.Context, record TaskRecord, result json.
 	record.Task.LastUpdatedAt = now
 	record.Result = append(json.RawMessage(nil), result...)
 	record.Error = rpcErr
-	if rpcErr != nil {
+	switch {
+	case rpcErr != nil:
 		record.Task.Status = TaskStatusFailed
 		if record.Task.StatusMessage == "" {
 			record.Task.StatusMessage = rpcErr.Message
 		}
-	} else {
+	case taskToolResultIsError(result):
+		record.Task.Status = TaskStatusFailed
+		if record.Task.StatusMessage == "" {
+			record.Task.StatusMessage = "tool returned isError result"
+		}
+	default:
 		record.Task.Status = TaskStatusCompleted
 	}
 	if _, err := s.taskRuntime.store.Update(context.WithoutCancel(ctx), record); err != nil && !errors.Is(err, ErrTaskTerminal) {
@@ -338,18 +353,18 @@ func (s *Server) handleTasksResult(ctx context.Context, req *Request, sessionID 
 	}
 	lookup.SessionID = sessionID
 
-	record, err := s.taskRuntime.store.Get(ctx, lookup)
+	record, err := s.waitForTaskTerminal(ctx, lookup)
 	if err != nil {
 		return taskStoreError(req.ID, err)
-	}
-	if !taskStatusTerminal(record.Task.Status) && record.Task.Status != TaskStatusInputRequired {
-		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: task result not ready")
 	}
 	if record.Error != nil {
 		return &Response{JSONRPC: jsonrpcVersion, ID: req.ID, Error: record.Error}
 	}
+	if record.Task.Status == TaskStatusCanceled && len(bytes.TrimSpace(record.Result)) == 0 {
+		return NewErrorResponse(req.ID, CodeServerError, taskCanceledMessage)
+	}
 	if len(bytes.TrimSpace(record.Result)) == 0 {
-		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: task result not available")
+		return NewErrorResponse(req.ID, CodeInternalError, "task result not available")
 	}
 
 	result, err := taskResultWithRelatedMetadata(record.Result, record.Task.TaskID)
@@ -357,6 +372,49 @@ func (s *Server) handleTasksResult(ctx context.Context, req *Request, sessionID 
 		return NewErrorResponse(req.ID, CodeServerError, err.Error())
 	}
 	return NewResultResponse(req.ID, result)
+}
+
+func (s *Server) waitForTaskTerminal(ctx context.Context, lookup TaskLookup) (*TaskRecord, error) {
+	for {
+		record, err := s.taskRuntime.store.Get(ctx, lookup)
+		if err != nil {
+			return nil, err
+		}
+		if taskStatusTerminal(record.Task.Status) {
+			return record, nil
+		}
+
+		interval := s.taskResultWaitInterval(record)
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (s *Server) taskResultWaitInterval(record *TaskRecord) time.Duration {
+	interval := defaultTaskResultWait
+	if s != nil && s.taskRuntime.pollInterval > 0 && s.taskRuntime.pollInterval < interval {
+		interval = s.taskRuntime.pollInterval
+	}
+	if record != nil && record.Task.PollInterval != nil && *record.Task.PollInterval > 0 {
+		taskInterval := time.Duration(*record.Task.PollInterval) * time.Millisecond
+		if taskInterval < interval {
+			interval = taskInterval
+		}
+	}
+	if interval <= 0 {
+		return defaultTaskResultWait
+	}
+	return interval
 }
 
 func (s *Server) handleTasksList(ctx context.Context, req *Request, sessionID string) *Response {
@@ -463,6 +521,8 @@ func taskStoreError(reqID any, err error) *Response {
 		return NewErrorResponse(reqID, CodeInvalidParams, err.Error())
 	case errors.Is(err, ErrTaskTerminal):
 		return NewErrorResponse(reqID, CodeInvalidParams, err.Error())
+	case errors.Is(err, errTaskInvalidCursor):
+		return NewErrorResponse(reqID, CodeInvalidParams, err.Error())
 	default:
 		return NewErrorResponse(reqID, CodeServerError, err.Error())
 	}
@@ -475,6 +535,13 @@ func taskStatusTerminal(status TaskStatus) bool {
 	default:
 		return false
 	}
+}
+
+func taskToolResultIsError(raw json.RawMessage) bool {
+	var result struct {
+		IsError bool `json:"isError"`
+	}
+	return json.Unmarshal(raw, &result) == nil && result.IsError
 }
 
 func taskResultWithRelatedMetadata(raw json.RawMessage, taskID string) (json.RawMessage, error) {

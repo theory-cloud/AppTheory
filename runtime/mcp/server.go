@@ -753,11 +753,11 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request, sessionID st
 	if params.Name == "" {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name")
 	}
-	if params.Task != nil {
+	if params.Task != nil && s.hasTaskRuntime() {
 		return s.handleTaskToolsCall(ctx, req, sessionID, params)
 	}
-	if s.registry.taskSupport(params.Name) == TaskSupportRequired {
-		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: tool requires task execution")
+	if s.hasTaskRuntime() && s.registry.taskSupport(params.Name) == TaskSupportRequired {
+		return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: tool requires task execution")
 	}
 
 	defer func() {

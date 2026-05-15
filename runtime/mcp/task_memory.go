@@ -104,7 +104,7 @@ func (m *MemoryTaskStore) List(_ context.Context, req TaskListRequest) (*TaskLis
 	if cursor := strings.TrimSpace(req.Cursor); cursor != "" {
 		idx, err := strconv.Atoi(cursor)
 		if err != nil || idx < 0 {
-			return nil, errors.New("invalid task list cursor")
+			return nil, errTaskInvalidCursor
 		}
 		start = idx
 	}
@@ -162,7 +162,9 @@ func (m *MemoryTaskStore) Cancel(_ context.Context, lookup TaskLookup) (*TaskRec
 		return nil, ErrTaskTerminal
 	}
 	record.Task.Status = TaskStatusCanceled
+	record.Task.StatusMessage = taskCanceledMessage
 	record.Task.LastUpdatedAt = time.Now().UTC()
+	record.Error = &RPCError{Code: CodeServerError, Message: taskCanceledMessage}
 	return cloneTaskRecord(record), nil
 }
 

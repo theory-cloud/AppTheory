@@ -233,10 +233,12 @@ func TestTaskRuntimeContract_TaskMethodsFailClosed(t *testing.T) {
 	}
 
 	store := &recordingTaskStore{record: taskTestRecord("sess-1", "task-2", TaskStatusWorking)}
-	s = NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: store}))
-	notReady := s.dispatchForProtocol(context.Background(), taskRequest(4, methodTasksResult, "task-2"), protocolVersion, "sess-1")
-	if notReady.Error == nil || notReady.Error.Code != CodeInvalidParams {
-		t.Fatalf("expected not-ready task result invalid params, got %+v", notReady.Error)
+	s = NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: store, PollInterval: time.Millisecond}))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	notReady := s.dispatchForProtocol(ctx, taskRequest(4, methodTasksResult, "task-2"), protocolVersion, "sess-1")
+	if notReady.Error == nil || notReady.Error.Code != CodeServerError {
+		t.Fatalf("expected not-ready task result to block until context closes, got %+v", notReady.Error)
 	}
 }
 
@@ -268,6 +270,33 @@ func TestTaskRuntimeContract_NormalizesOptions(t *testing.T) {
 	cfg = normalizeTaskRuntimeOptions(TaskRuntimeOptions{Store: noopTaskStore{}})
 	if cfg.defaultTTL != defaultTaskTTL {
 		t.Fatalf("expected invalid env ttl to fall back, got %s", cfg.defaultTTL)
+	}
+}
+
+func TestTaskRuntimeContract_ModelImmediateResponseMetadata(t *testing.T) {
+	s := NewServer("test", "dev",
+		WithServerIDGenerator(staticIDGenerator{id: "task-immediate"}),
+		WithTaskRuntime(TaskRuntimeOptions{
+			Store:                  NewMemoryTaskStore(),
+			ModelImmediateResponse: "Task accepted; check back for the result.",
+		}),
+	)
+	if err := s.Registry().RegisterTool(taskCapableToolDef(), func(context.Context, json.RawMessage) (*ToolResult, error) {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "done"}}}, nil
+	}); err != nil {
+		t.Fatalf("register task tool: %v", err)
+	}
+
+	resp := s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(1, "slow"), protocolVersion, "sess-1")
+	if resp.Error != nil {
+		t.Fatalf("tools/call task create error: %+v", resp.Error)
+	}
+	created, ok := resp.Result.(CreateTaskResult)
+	if !ok {
+		t.Fatalf("expected create task result, got %#v", resp.Result)
+	}
+	if got := created.Meta[modelImmediateResponseMetadataKey]; got != "Task accepted; check back for the result." {
+		t.Fatalf("expected model immediate response metadata, got %+v", created.Meta)
 	}
 }
 
@@ -400,6 +429,92 @@ func TestTaskRuntimeToolsCall_CompletesAndReturnsResult(t *testing.T) {
 	}
 }
 
+func TestTaskRuntimeToolsCall_ResultBlocksUntilTerminal(t *testing.T) {
+	store := NewMemoryTaskStore()
+	record := taskTestRecord("sess-1", "task-blocking-result", TaskStatusWorking)
+	record.Result = nil
+	if _, err := store.Create(context.Background(), record); err != nil {
+		t.Fatalf("create working task: %v", err)
+	}
+
+	s := NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: store, PollInterval: 5 * time.Millisecond}))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	done := make(chan *Response, 1)
+	go func() {
+		done <- s.dispatchForProtocol(ctx, taskRequest(1, methodTasksResult, "task-blocking-result"), protocolVersion, "sess-1")
+	}()
+
+	select {
+	case resp := <-done:
+		t.Fatalf("tasks/result returned before task reached terminal status: %+v", resp)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	completed := taskTestRecord("sess-1", "task-blocking-result", TaskStatusCompleted)
+	completed.Result = json.RawMessage(`{"content":[{"type":"text","text":"later"}]}`)
+	if _, err := store.Update(context.Background(), completed); err != nil {
+		t.Fatalf("complete task: %v", err)
+	}
+
+	select {
+	case resp := <-done:
+		if resp.Error != nil {
+			t.Fatalf("tasks/result error after completion: %+v", resp.Error)
+		}
+		resultBytes, err := json.Marshal(resp.Result)
+		if err != nil {
+			t.Fatalf("marshal result: %v", err)
+		}
+		if !bytes.Contains(resultBytes, []byte(`"later"`)) || !bytes.Contains(resultBytes, []byte(relatedTaskMetadataKey)) {
+			t.Fatalf("expected completed result with related task metadata, got %s", string(resultBytes))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("tasks/result did not return after task completion")
+	}
+}
+
+func TestTaskRuntimeToolsCall_ErrorResultFailsTaskButReturnsToolResult(t *testing.T) {
+	store := NewMemoryTaskStore()
+	s := NewServer("test", "dev",
+		WithServerIDGenerator(staticIDGenerator{id: "task-tool-error-result"}),
+		WithTaskRuntime(TaskRuntimeOptions{Store: store}),
+	)
+	if err := s.Registry().RegisterTool(taskCapableToolDef(), func(context.Context, json.RawMessage) (*ToolResult, error) {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: "tool failed"}},
+			IsError: true,
+		}, nil
+	}); err != nil {
+		t.Fatalf("register task tool: %v", err)
+	}
+
+	createResp := s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(1, "slow"), protocolVersion, "sess-1")
+	if createResp.Error != nil {
+		t.Fatalf("tools/call task create error: %+v", createResp.Error)
+	}
+	record := waitForTaskStatus(t, store, "sess-1", "task-tool-error-result", TaskStatusFailed)
+	if record.Error != nil {
+		t.Fatalf("expected isError tool result to fail task status without JSON-RPC error, got %+v", record.Error)
+	}
+	if record.Task.StatusMessage == "" {
+		t.Fatal("expected failed task status message")
+	}
+
+	resultResp := s.dispatchForProtocol(context.Background(), taskRequest(2, methodTasksResult, "task-tool-error-result"), protocolVersion, "sess-1")
+	if resultResp.Error != nil {
+		t.Fatalf("expected tasks/result to return successful tool result, got %+v", resultResp.Error)
+	}
+	resultBytes, err := json.Marshal(resultResp.Result)
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
+	if !bytes.Contains(resultBytes, []byte(`"isError":true`)) || !bytes.Contains(resultBytes, []byte(`"tool failed"`)) {
+		t.Fatalf("expected original isError tool result, got %s", string(resultBytes))
+	}
+}
+
 func TestTaskRuntimeToolsCall_CancelStopsInFlightTool(t *testing.T) {
 	store := NewMemoryTaskStore()
 	s := NewServer("test", "dev",
@@ -446,8 +561,8 @@ func TestTaskRuntimeToolsCall_CancelStopsInFlightTool(t *testing.T) {
 	}
 
 	resultResp := s.dispatchForProtocol(context.Background(), taskRequest(3, methodTasksResult, "task-cancel"), protocolVersion, "sess-1")
-	if resultResp.Error == nil || resultResp.Error.Code != CodeInvalidParams {
-		t.Fatalf("expected canceled task result to be unavailable, got %+v", resultResp.Error)
+	if resultResp.Error == nil || resultResp.Error.Code != CodeServerError {
+		t.Fatalf("expected canceled task result to return cancellation error, got %+v", resultResp.Error)
 	}
 }
 
@@ -470,12 +585,12 @@ func TestTaskRuntimeToolsCall_EnforcesToolSupport(t *testing.T) {
 	}
 
 	requiredSync := s.dispatchForProtocol(context.Background(), toolsCallRequest(1, "required"), protocolVersion, "sess-1")
-	if requiredSync.Error == nil || requiredSync.Error.Code != CodeInvalidParams {
+	if requiredSync.Error == nil || requiredSync.Error.Code != CodeMethodNotFound {
 		t.Fatalf("expected required task tool to reject sync call, got %+v", requiredSync.Error)
 	}
 
 	plainTask := s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(2, "plain"), protocolVersion, "sess-1")
-	if plainTask.Error == nil || plainTask.Error.Code != CodeInvalidParams {
+	if plainTask.Error == nil || plainTask.Error.Code != CodeMethodNotFound {
 		t.Fatalf("expected plain tool to reject task call, got %+v", plainTask.Error)
 	}
 
@@ -493,8 +608,8 @@ func TestTaskRuntimeToolsCall_FailsClosedOnRuntimeErrors(t *testing.T) {
 		t.Fatalf("register task tool: %v", err)
 	}
 	resp := s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(1, "slow"), protocolVersion, "sess-1")
-	if resp.Error == nil || resp.Error.Code != CodeInvalidParams {
-		t.Fatalf("expected task call without runtime to fail closed, got %+v", resp.Error)
+	if resp.Error != nil {
+		t.Fatalf("expected task metadata to be ignored without advertised task runtime, got %+v", resp.Error)
 	}
 
 	s = NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: NewMemoryTaskStore()}))
@@ -725,8 +840,8 @@ func TestTaskRuntimeMethods_ErrorPaths(t *testing.T) {
 	mem := NewMemoryTaskStore()
 	s = NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: mem}))
 	badCursor := s.dispatchForProtocol(context.Background(), &Request{JSONRPC: jsonrpcVersion, ID: 3, Method: methodTasksList, Params: json.RawMessage(`{"cursor":"nope"}`)}, protocolVersion, "sess-1")
-	if badCursor.Error == nil || badCursor.Error.Code != CodeServerError {
-		t.Fatalf("expected invalid cursor server error, got %+v", badCursor.Error)
+	if badCursor.Error == nil || badCursor.Error.Code != CodeInvalidParams {
+		t.Fatalf("expected invalid cursor invalid params, got %+v", badCursor.Error)
 	}
 }
 

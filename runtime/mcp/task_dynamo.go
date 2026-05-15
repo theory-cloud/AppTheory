@@ -100,7 +100,10 @@ func (d *DynamoTaskStore) Update(ctx context.Context, task TaskRecord) (*TaskRec
 	if err != nil {
 		return nil, err
 	}
-	if err := d.db.Model(record).WithContext(ctx).CreateOrUpdate(); err != nil {
+	if err := taskNonTerminalWriteGuard(d.db.Model(record).WithContext(ctx)).Update(); err != nil {
+		if errors.Is(err, tableerrors.ErrConditionFailed) {
+			return nil, ErrTaskTerminal
+		}
 		return nil, err
 	}
 	return d.dynamoToTaskRecord(record)
@@ -143,11 +146,24 @@ func (d *DynamoTaskStore) Cancel(ctx context.Context, lookup TaskLookup) (*TaskR
 	}
 
 	record.Status = TaskStatusCanceled
+	record.StatusMessage = taskCanceledMessage
 	record.LastUpdatedAt = d.nowUTC()
-	if err := d.db.Model(record).WithContext(ctx).CreateOrUpdate(); err != nil {
+	record.ErrorCode = CodeServerError
+	record.ErrorMessage = taskCanceledMessage
+	if err := taskNonTerminalWriteGuard(d.db.Model(record).WithContext(ctx)).Update(); err != nil {
+		if errors.Is(err, tableerrors.ErrConditionFailed) {
+			return nil, ErrTaskTerminal
+		}
 		return nil, err
 	}
 	return d.dynamoToTaskRecord(record)
+}
+
+func taskNonTerminalWriteGuard(q tablecore.Query) tablecore.Query {
+	return q.
+		WithCondition("Status", "<>", TaskStatusCompleted).
+		WithCondition("Status", "<>", TaskStatusFailed).
+		WithCondition("Status", "<>", TaskStatusCanceled)
 }
 
 func (d *DynamoTaskStore) DeleteSession(ctx context.Context, sessionID string) error {
@@ -255,7 +271,7 @@ func taskListCursor(cursor string) (int, error) {
 	}
 	start, err := strconv.Atoi(cursor)
 	if err != nil || start < 0 {
-		return 0, errors.New("invalid task list cursor")
+		return 0, errTaskInvalidCursor
 	}
 	return start, nil
 }
