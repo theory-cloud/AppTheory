@@ -37,6 +37,10 @@ const (
 	methodToolsCall                = "tools/call"
 	methodResourcesList            = "resources/list"
 	methodResourcesRead            = "resources/read"
+	methodResourcesSubscribe       = "resources/subscribe"
+	methodResourcesUnsubscribe     = "resources/unsubscribe"
+	methodLoggingSetLevel          = "logging/setLevel"
+	methodCompletionComplete       = "completion/complete"
 	methodPromptsList              = "prompts/list"
 	methodPromptsGet               = "prompts/get"
 )
@@ -62,10 +66,17 @@ type Server struct {
 	promptRegistry   *PromptRegistry
 	sessionStore     SessionStore
 	streamStore      StreamStore
+	cancellations    *cancellationTracker
 	idGen            apptheory.IDGenerator
 	logger           *slog.Logger
 	originValidator  OriginValidator
 	capabilities     CapabilityConfig
+
+	resourceSubscribeHook   ResourceSubscriptionHook
+	resourceUnsubscribeHook ResourceSubscriptionHook
+	loggingLevelHook        LoggingLevelHook
+	promptCompletionHook    CompletionHook
+	resourceCompletionHook  CompletionHook
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -131,6 +142,36 @@ func WithOriginValidator(v OriginValidator) ServerOption {
 	}
 }
 
+// WithResourceSubscriptionHooks enables resources/subscribe and
+// resources/unsubscribe support through explicit hooks.
+//
+// Both hooks must be non-nil before the resource subscribe sub-capability is
+// advertised. The methods still fail closed if either hook is absent.
+func WithResourceSubscriptionHooks(subscribe, unsubscribe ResourceSubscriptionHook) ServerOption {
+	return func(s *Server) {
+		s.resourceSubscribeHook = subscribe
+		s.resourceUnsubscribeHook = unsubscribe
+	}
+}
+
+// WithLoggingLevelHook enables logging/setLevel support through an explicit
+// hook.
+func WithLoggingLevelHook(hook LoggingLevelHook) ServerOption {
+	return func(s *Server) {
+		s.loggingLevelHook = hook
+	}
+}
+
+// WithCompletionHooks enables completion/complete support through explicit
+// prompt and resource hooks. At least one hook must be non-nil before the
+// completions capability is advertised.
+func WithCompletionHooks(promptHook, resourceHook CompletionHook) ServerOption {
+	return func(s *Server) {
+		s.promptCompletionHook = promptHook
+		s.resourceCompletionHook = resourceHook
+	}
+}
+
 // WithInitialSessionListenerBudget caps the initial GET /mcp keepalive listener
 // against the Lambda remaining-time budget when RemainingMS is available.
 //
@@ -154,6 +195,7 @@ func NewServer(name, version string, opts ...ServerOption) *Server {
 		promptRegistry:   NewPromptRegistry(),
 		sessionStore:     NewMemorySessionStore(),
 		streamStore:      NewMemoryStreamStore(),
+		cancellations:    newCancellationTracker(),
 		idGen:            apptheory.RandomIDGenerator{},
 		logger:           slog.Default(),
 		originValidator:  AllowOrigins("https://claude.ai", "https://claude.com"),
@@ -501,10 +543,10 @@ func (s *Server) handleDELETE(c *apptheory.Context) (*apptheory.Response, error)
 
 // dispatch routes a parsed JSON-RPC request to the appropriate MCP method handler.
 func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
-	return s.dispatchForProtocol(ctx, req, protocolVersion)
+	return s.dispatchForProtocol(ctx, req, protocolVersion, "")
 }
 
-func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocolVersion string) *Response {
+func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocolVersion string, sessionID string) *Response {
 	if !methodAllowedForProtocol(protocolVersion, req.Method) {
 		s.logger.ErrorContext(ctx, "method not found", "method", req.Method, "protocolVersion", protocolVersion)
 		return NewErrorResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("Method not found: %s", req.Method))
@@ -527,6 +569,14 @@ func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocol
 		return s.handleResourcesList(req)
 	case methodResourcesRead:
 		return s.handleResourcesRead(ctx, req)
+	case methodResourcesSubscribe:
+		return s.handleResourcesSubscribe(ctx, req, sessionID)
+	case methodResourcesUnsubscribe:
+		return s.handleResourcesUnsubscribe(ctx, req, sessionID)
+	case methodLoggingSetLevel:
+		return s.handleLoggingSetLevel(ctx, req, sessionID)
+	case methodCompletionComplete:
+		return s.handleCompletionComplete(ctx, req, sessionID)
 	case methodPromptsList:
 		return s.handlePromptsList(req)
 	case methodPromptsGet:
@@ -551,6 +601,10 @@ func methodAllowedForProtocol(pv string, method string) bool {
 		methodToolsCall,
 		methodResourcesList,
 		methodResourcesRead,
+		methodResourcesSubscribe,
+		methodResourcesUnsubscribe,
+		methodLoggingSetLevel,
+		methodCompletionComplete,
 		methodPromptsList,
 		methodPromptsGet:
 		return true
@@ -801,7 +855,9 @@ func (s *Server) runBatchRequests(
 			}
 		}
 
-		responses = append(responses, s.dispatchForProtocol(ctx, req, sessionProtocolVersion(sess)))
+		requestCtx, finish := s.trackRequest(ctx, sessionID, req.ID)
+		responses = append(responses, s.dispatchForProtocol(requestCtx, req, sessionProtocolVersion(sess), sessionID))
+		finish()
 	}
 
 	return createdSessionID, responses
@@ -1178,8 +1234,7 @@ func (s *Server) handleNotification(ctx context.Context, sess *Session, req *Req
 			s.logger.ErrorContext(ctx, "failed to persist session", "sessionId", sess.ID, "error", err)
 		}
 	case methodNotificationsCancelled:
-		// Accepted for spec compliance; cancellation wiring is handled by higher-level
-		// async implementations (e.g. theory-mcp).
+		s.handleCancellationNotification(ctx, sess, req)
 	default:
 	}
 }
@@ -1196,7 +1251,10 @@ func (s *Server) handleRequestHTTP(
 		return s.handleToolsCallStream(ctx, sessionID, req)
 	}
 
-	resp := s.dispatchForProtocol(ctx, req, requestPV)
+	requestCtx, finish := s.trackRequest(ctx, sessionID, req.ID)
+	defer finish()
+
+	resp := s.dispatchForProtocol(requestCtx, req, requestPV, sessionID)
 	return s.marshalSingleResponse(resp, sessionID, false)
 }
 
@@ -1221,8 +1279,10 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 		return s.marshalSingleResponse(resp, sessionID, false)
 	}
 
+	toolCtx, finish := s.trackRequest(context.WithoutCancel(ctx), sessionID, req.ID)
 	streamID, err := s.streamStore.Create(ctx, sessionID)
 	if err != nil {
+		finish()
 		s.logger.ErrorContext(ctx, "stream store error", "error", err)
 		return internalServerError(), nil
 	}
@@ -1230,6 +1290,7 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 	// Persist an empty-data priming event before any tool output so a client
 	// that disconnects immediately can resume this stream with Last-Event-ID.
 	if _, primeErr := s.streamStore.Append(ctx, sessionID, streamID, nil); primeErr != nil {
+		finish()
 		s.logger.ErrorContext(ctx, "stream prime error", "sessionId", sessionID, "streamId", streamID, "error", primeErr)
 		if closeErr := s.streamStore.Close(context.WithoutCancel(ctx), sessionID, streamID); closeErr != nil {
 			s.logger.WarnContext(ctx, "stream prime cleanup error", "sessionId", sessionID, "streamId", streamID, "error", closeErr)
@@ -1238,8 +1299,7 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 	}
 
 	// Run the tool out-of-band so disconnects do not cancel execution.
-	toolCtx := context.WithoutCancel(ctx)
-	go s.runStreamingTool(toolCtx, sessionID, streamID, req)
+	go s.runStreamingTool(toolCtx, sessionID, streamID, req, finish)
 
 	events, err := s.streamStore.Subscribe(ctx, sessionID, streamID, "")
 	if err != nil {
@@ -1250,27 +1310,29 @@ func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, re
 	return s.streamToSSE(ctx, sessionID, events)
 }
 
-func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID string, req *Request) {
+func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID string, req *Request, finish func()) {
+	storeCtx := context.WithoutCancel(ctx)
+	defer finish()
 	defer func() {
-		if err := s.streamStore.Close(ctx, sessionID, streamID); err != nil {
+		if err := s.streamStore.Close(storeCtx, sessionID, streamID); err != nil {
 			s.logger.ErrorContext(ctx, "stream store close error", "sessionId", sessionID, "streamId", streamID, "error", err)
 		}
 	}()
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.ErrorContext(ctx, "streaming tool panic", "sessionId", sessionID, "streamId", streamID, "panic", r)
-			s.appendStreamResponseOrDeliveryError(ctx, sessionID, streamID, req.ID, NewErrorResponse(req.ID, CodeInternalError, "internal error"))
+			s.appendStreamResponseOrDeliveryError(storeCtx, sessionID, streamID, req.ID, NewErrorResponse(req.ID, CodeInternalError, "internal error"))
 		}
 	}()
 
 	var params toolsCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		resp := NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: "+err.Error())
-		s.appendStreamResponseOrDeliveryError(ctx, sessionID, streamID, req.ID, resp)
+		s.appendStreamResponseOrDeliveryError(storeCtx, sessionID, streamID, req.ID, resp)
 		return
 	}
 	if params.Name == "" {
-		s.appendStreamResponseOrDeliveryError(ctx, sessionID, streamID, req.ID, NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name"))
+		s.appendStreamResponseOrDeliveryError(storeCtx, sessionID, streamID, req.ID, NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name"))
 		return
 	}
 
@@ -1295,7 +1357,7 @@ func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID strin
 		if err != nil {
 			return
 		}
-		if _, err := s.streamStore.Append(ctx, sessionID, streamID, notificationBytes); err != nil {
+		if _, err := s.streamStore.Append(storeCtx, sessionID, streamID, notificationBytes); err != nil {
 			s.logger.ErrorContext(ctx, "stream store append error", "sessionId", sessionID, "streamId", streamID, "error", err)
 		}
 	}
@@ -1309,7 +1371,7 @@ func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID strin
 		finalResp = NewResultResponse(req.ID, result)
 	}
 
-	s.appendStreamResponseOrDeliveryError(ctx, sessionID, streamID, req.ID, finalResp)
+	s.appendStreamResponseOrDeliveryError(storeCtx, sessionID, streamID, req.ID, finalResp)
 }
 
 func progressFromSSEEvent(ev SSEEvent, fallbackProgress float64) (progress float64, total any, message string) {

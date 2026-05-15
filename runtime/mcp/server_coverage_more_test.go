@@ -388,7 +388,7 @@ func TestRunStreamingTool_InvalidParamsAndMissingName_AppendErrorResponse(t *tes
 		ID:      1,
 		Method:  methodToolsCall,
 		Params:  json.RawMessage("{"),
-	})
+	}, func() {})
 
 	ch, err := s.streamStore.Subscribe(context.Background(), sessionID, streamID, "")
 	if err != nil {
@@ -408,7 +408,7 @@ func TestRunStreamingTool_InvalidParamsAndMissingName_AppendErrorResponse(t *tes
 		ID:      2,
 		Method:  methodToolsCall,
 		Params:  mustMarshal(t, map[string]any{"name": ""}),
-	})
+	}, func() {})
 	ch2, err := s.streamStore.Subscribe(context.Background(), sessionID, streamID2, "")
 	if err != nil {
 		t.Fatalf("subscribe2: %v", err)

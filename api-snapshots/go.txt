@@ -1937,6 +1937,22 @@ const CodeParseError = -32700
 
 const CodeServerError = -32000
 
+const LoggingLevelAlert LoggingLevel = "alert"
+
+const LoggingLevelCritical LoggingLevel = "critical"
+
+const LoggingLevelDebug LoggingLevel = "debug"
+
+const LoggingLevelEmergency LoggingLevel = "emergency"
+
+const LoggingLevelError LoggingLevel = "error"
+
+const LoggingLevelInfo LoggingLevel = "info"
+
+const LoggingLevelNotice LoggingLevel = "notice"
+
+const LoggingLevelWarning LoggingLevel = "warning"
+
 var ErrEventNotFound = errors.New("event not found")
 
 var ErrSessionNotFound = errors.New("session not found")
@@ -1946,9 +1962,44 @@ var ErrStreamEventTooLarge = errors.New("stream event too large")
 var ErrStreamNotFound = errors.New("stream not found")
 
 type CapabilityConfig struct {
-	Tools     bool
-	Resources bool
-	Prompts   bool
+	Tools       bool
+	Resources   bool
+	Prompts     bool
+	Completions bool
+}
+
+type Completion struct {
+	Values  []string `json:"values"`
+	Total   *int     `json:"total,omitempty"`
+	HasMore *bool    `json:"hasMore,omitempty"`
+}
+
+type CompletionArgument struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type CompletionContext struct {
+	Arguments map[string]string `json:"arguments,omitempty"`
+}
+
+type CompletionHook func(context.Context, CompletionRequest) (*CompletionResult, error)
+
+type CompletionRef struct {
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
+	URI  string `json:"uri,omitempty"`
+}
+
+type CompletionRequest struct {
+	SessionID string             `json:"sessionId"`
+	Ref       CompletionRef      `json:"ref"`
+	Argument  CompletionArgument `json:"argument"`
+	Context   CompletionContext  `json:"context,omitempty"`
+}
+
+type CompletionResult struct {
+	Completion Completion `json:"completion"`
 }
 
 type ContentBlock struct {
@@ -1993,6 +2044,15 @@ type Icon struct {
 type InitialSessionListenerBudgetOptions struct {
 	SafetyBuffer time.Duration
 	MaxDuration  time.Duration
+}
+
+type LoggingLevel string
+
+type LoggingLevelHook func(context.Context, LoggingLevelRequest) error
+
+type LoggingLevelRequest struct {
+	SessionID string       `json:"sessionId"`
+	Level     LoggingLevel `json:"level"`
 }
 
 type MemorySessionStore struct {
@@ -2082,6 +2142,13 @@ type ResourceRegistry struct {
 	index     map[string]int
 }
 
+type ResourceSubscription struct {
+	SessionID string `json:"sessionId"`
+	URI       string `json:"uri"`
+}
+
+type ResourceSubscriptionHook func(context.Context, ResourceSubscription) error
+
 type Response struct {
 	JSONRPC string    `json:"jsonrpc"`
 	ID      any       `json:"id"`
@@ -2101,10 +2168,17 @@ type Server struct {
 	promptRegistry   *PromptRegistry
 	sessionStore     SessionStore
 	streamStore      StreamStore
+	cancellations    *cancellationTracker
 	idGen            apptheory.IDGenerator
 	logger           *slog.Logger
 	originValidator  OriginValidator
 	capabilities     CapabilityConfig
+
+	resourceSubscribeHook   ResourceSubscriptionHook
+	resourceUnsubscribeHook ResourceSubscriptionHook
+	loggingLevelHook        LoggingLevelHook
+	promptCompletionHook    CompletionHook
+	resourceCompletionHook  CompletionHook
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -2217,11 +2291,17 @@ func WithCapabilityConfig(CapabilityConfig) ServerOption
 
 func WithClock(apptheory.Clock) MemorySessionStoreOption
 
+func WithCompletionHooks(CompletionHook, CompletionHook) ServerOption
+
 func WithInitialSessionListenerBudget(InitialSessionListenerBudgetOptions) ServerOption
 
 func WithLogger(*slog.Logger) ServerOption
 
+func WithLoggingLevelHook(LoggingLevelHook) ServerOption
+
 func WithOriginValidator(OriginValidator) ServerOption
+
+func WithResourceSubscriptionHooks(ResourceSubscriptionHook, ResourceSubscriptionHook) ServerOption
 
 func WithServerIDGenerator(apptheory.IDGenerator) ServerOption
 
