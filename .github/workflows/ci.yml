@@ -28,7 +28,11 @@ jobs:
           range="origin/premain..origin/staging"
 
           echo "Checking commits in ${range}..."
-          if git log --format=%s "${range}" | grep -Eq '^(feat|fix|perf)(\([^)]+\))?(!)?: '; then
+          # Do not pipe directly into grep -q under pipefail: grep exits as soon
+          # as it finds a match, which can SIGPIPE git log and make a matching
+          # commit look like a failed readiness check.
+          commit_subjects="$(git log --format=%s "${range}")"
+          if grep -Eq '^(feat|fix|perf)(\([^)]+\))?(!)?: ' <<<"${commit_subjects}"; then
             echo "prerelease-ready: OK"
             exit 0
           fi
@@ -38,7 +42,7 @@ jobs:
           echo "release-please will skip, so no new vX.Y.Z-rc tag will be cut."
           echo
           echo "Commit subjects:"
-          git log --format=%s "${range}" || true
+          printf '%s\n' "${commit_subjects}" || true
           exit 1
 
   version-alignment:
