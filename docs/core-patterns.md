@@ -164,6 +164,9 @@ CORRECT:
 - wire `mcp.NewDynamoTaskStore(db)` through `mcp.WithTaskRuntime(...)` only when asynchronous tool work needs durable
   task state and product policy is ready; task state is session-scoped and must remain bound to the same principal,
   tenant, actor route, and entitlement policy as the MCP session
+- enforce route-, principal-, and tool-aware MCP rate limits through `runtime.RateLimitMiddleware(...)` and
+  `pkg/limited` in the normal AppTheory middleware chain; this is product wiring around the MCP handler, not a separate
+  MCP framework feature
 - let the Remote MCP construct provide the stream table plus S3 spill bucket for durable large logical events; clients
   still replay by logical `Last-Event-ID`, and AppTheory bounds S3 spill reads before byte-count/hash validation
 - treat tool panics as server faults: AppTheory recovers them into sanitized JSON-RPC internal errors, not client-visible
@@ -182,6 +185,8 @@ INCORRECT:
 - depending on panic text or duplicate session-create failures as part of product behavior
 - hard-coding `resources.subscribe`, `logging`, `completions`, or `tasks` in a product wrapper before product
   authorization, tenant policy, quotas, audit logging, and abuse controls are wired
+- creating an MCP-specific rate-limit wrapper or construct flag instead of using `RateLimitMiddleware` with scoped
+  `pkg/limited` buckets
 
 ## Pattern: sanitize user payloads before logging
 

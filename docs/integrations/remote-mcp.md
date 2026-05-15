@@ -77,6 +77,12 @@ Important behaviors for Claude compatibility:
 - Task records are session-scoped. Products must bind the MCP session to the same principal, tenant, actor route, and
   entitlement policy used by OAuth validation before exposing task-capable tools.
 
+Rate-limit integration is not a Remote MCP-specific feature. Route-, principal-, and tool-aware throttling should use the
+normal AppTheory middleware path: validate OAuth/tenant policy, then mount `runtime.RateLimitMiddleware(...)` around the
+`/mcp` routes with `pkg/limited` as the durable backend when shared counters are required. Product extractors may map the
+normalized route, authenticated principal, actor path segment, JSON-RPC method, or tool name into the limiter key. Do not
+add a second MCP wrapper or hard-code rate-limit capability metadata in `initialize`.
+
 Strict transport rollout checklist:
 
 - Canary one connector/client population first and confirm it sends the strict `Accept` and `Content-Type` headers.
@@ -92,6 +98,9 @@ Strict transport rollout checklist:
   product authorization and tenant policy are ready.
 - Do not hard-code `tasks` in a Remote MCP product wrapper. Keep task runtime disabled until asynchronous-work policy,
   audit logging, quotas, and abuse controls are wired.
+
+- Do not introduce a Remote MCP-specific rate limiter. Use `RateLimitMiddleware` plus `pkg/limited` in the AppTheory
+  middleware chain, and fail closed or withhold a tool/task when the product cannot derive the scoped limiter bucket.
 
 ## 2) Add OAuth protection (Remote MCP auth `2025-06-18`)
 
