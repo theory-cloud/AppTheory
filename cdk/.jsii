@@ -6,7 +6,7 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.253.0",
+    "aws-cdk-lib": "2.254.0",
     "constructs": "10.6.0"
   },
   "dependencyClosure": {
@@ -16799,13 +16799,13 @@
       "base": "constructs.Construct",
       "docs": {
         "remarks": "This construct is designed for MCP Streamable HTTP (2025-06-18).",
-        "summary": "A Claude-first Remote MCP server construct that provisions: - API Gateway REST API v1 - Streaming-enabled Lambda proxy integrations for `/mcp` (POST/GET) using   Lambda response streaming (`/response-streaming-invocations`) - Optional DynamoDB tables for sessions and stream/event log state."
+        "summary": "A Claude-first Remote MCP server construct that provisions: - API Gateway REST API v1 - Streaming-enabled Lambda proxy integrations for `/mcp` (POST/GET) using   Lambda response streaming (`/response-streaming-invocations`) - Optional DynamoDB tables for sessions, streams, and task runtime state."
       },
       "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServer",
       "initializer": {
         "locationInModule": {
           "filename": "lib/remote-mcp-server.ts",
-          "line": 212
+          "line": 240
         },
         "parameters": [
           {
@@ -16831,7 +16831,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/remote-mcp-server.ts",
-        "line": 186
+        "line": 209
       },
       "name": "AppTheoryRemoteMcpServer",
       "properties": [
@@ -16842,7 +16842,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 195
+            "line": 218
           },
           "name": "endpoint",
           "type": {
@@ -16856,7 +16856,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 190
+            "line": 213
           },
           "name": "router",
           "type": {
@@ -16870,7 +16870,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 200
+            "line": 223
           },
           "name": "sessionTable",
           "optional": true,
@@ -16885,7 +16885,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 210
+            "line": 238
           },
           "name": "streamSpillBucket",
           "optional": true,
@@ -16900,9 +16900,24 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 205
+            "line": 228
           },
           "name": "streamTable",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.ITable"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The DynamoDB task runtime table (if enabled)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/remote-mcp-server.ts",
+            "line": 233
+          },
+          "name": "taskTable",
           "optional": true,
           "type": {
             "fqn": "aws-cdk-lib.aws_dynamodb.ITable"
@@ -17094,6 +17109,24 @@
           "abstract": true,
           "docs": {
             "default": "false",
+            "remarks": "Task state is session-scoped and durable so task-augmented tool execution\ncan survive Lambda container recycling while preserving AppTheory's\nfail-closed session boundary.",
+            "summary": "Create a DynamoDB table for MCP task runtime state."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/remote-mcp-server.ts",
+            "line": 162
+          },
+          "name": "enableTaskTable",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
             "remarks": "This lets the construct own the final MCP discovery route alongside the\ntransport and protected-resource metadata routes. The handler remains\nresponsible for serving the discovery document content.",
             "summary": "Register `GET /.well-known/mcp.json` and route it to the handler."
           },
@@ -17187,7 +17220,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 174
+            "line": 197
           },
           "name": "streamMaxEventBytes",
           "optional": true,
@@ -17205,7 +17238,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/remote-mcp-server.ts",
-            "line": 164
+            "line": 187
           },
           "name": "streamSpillInlineMaxBytes",
           "optional": true,
@@ -17242,6 +17275,40 @@
             "line": 151
           },
           "name": "streamTtlMinutes",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (auto-generated)",
+            "summary": "Task DynamoDB table name (only used when enableTaskTable is true)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/remote-mcp-server.ts",
+            "line": 168
+          },
+          "name": "taskTableName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "10",
+            "summary": "Task TTL in minutes (exposed to the handler as MCP_TASK_TTL_MINUTES)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/remote-mcp-server.ts",
+            "line": 174
+          },
+          "name": "taskTtlMinutes",
           "optional": true,
           "type": {
             "primitive": "number"
@@ -20652,6 +20719,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "1.5.0",
-  "fingerprint": "/V2k+NONgH5TCW+aYPb2uo+H8gXgHgc2Oqy/C284XCk="
+  "version": "1.5.0-rc.3",
+  "fingerprint": "6Pec18UpA9Q2Qkd8jlr1Zs1zjueVzAFPyQqHD0QKnBc="
 }

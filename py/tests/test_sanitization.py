@@ -101,8 +101,8 @@ class TestSanitization(unittest.TestCase):
         self.assertEqual(sanitize_field_value("api_key", "x"), "[REDACTED]")
         self.assertEqual(sanitize_field_value("root", b"a\nb"), "ab")
 
-        self.assertEqual(sanitize_field_value("authorization_id", "auth_123"), "[REDACTED]")
-        self.assertEqual(sanitize_field_value("authorizationId", "auth_123"), "[REDACTED]")
+        self.assertEqual(sanitize_field_value("authorization_id", "auth_123"), "auth_123")
+        self.assertEqual(sanitize_field_value("authorizationId", "auth_123"), "auth_123")
         self.assertEqual(sanitize_field_value("session_token", "tok_123"), "[REDACTED]")
         self.assertEqual(sanitize_field_value("csrfToken", "tok_123"), "[REDACTED]")
         self.assertEqual(sanitize_field_value("authorizationToken", "tok_123"), "[REDACTED]")
@@ -162,7 +162,7 @@ class TestSanitization(unittest.TestCase):
                 }
             },
         )
-        self.assertEqual(out["data"]["transaction"]["authorizationId"], "[REDACTED]")
+        self.assertEqual(out["data"]["transaction"]["authorizationId"], "auth_123")
         self.assertEqual(out["data"]["transaction"]["authorizationCode"], "ok_1")
         self.assertEqual(out["data"]["transaction"]["tokenization_method"], "apple_pay")
         self.assertEqual(out["data"]["transaction"]["accessToken"], "[REDACTED]")

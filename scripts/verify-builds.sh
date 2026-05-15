@@ -22,13 +22,14 @@ build_once() {
   # excludes new (but non-ignored) files. Using `git ls-files` keeps the snapshot
   # scoped to the repo surface area while still reflecting the current state.
   git ls-files -z --cached --others --exclude-standard \
+    | grep -zvx 'gov-infra/evidence/gov-rubric-report.json' \
     | tar --ignore-failed-read --null -T - -cf - \
     | tar -xf - -C "${tmp_dir}"
 
   (
     cd "${tmp_dir}"
     export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
-    make rubric >/dev/null
+    scripts/verify-release-gates.sh >/dev/null
     scripts/generate-checksums.sh >/dev/null
     cat dist/SHA256SUMS.txt > "${out_file}"
   )

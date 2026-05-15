@@ -28,6 +28,7 @@ Claude Remote MCP requires real incremental streaming for tool calls (SSE). On A
 - Optional DynamoDB tables:
   - session table (matches `runtime/mcp` Dynamo session store schema)
   - stream/event table (used by durable resumable SSE once the app wires a persistent `StreamStore`)
+  - task table (used by the MCP task runtime once the app wires a persistent `TaskStore`)
   - encrypted private S3 spill bucket for large logical stream event payloads when stream storage is enabled
 
 If you are using OAuth for Claude connectors on the default `/mcp` route, also add:
@@ -59,6 +60,7 @@ const mcp = new AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
   enableSessionTable: true,
   sessionTtlMinutes: 120,
   // enableStreamTable: true, // provisions stream table + S3 spill bucket; pair with mcp.NewDynamoStreamStore(db)
+  // enableTaskTable: true, // provisions task table; pair with mcp.NewDynamoTaskStore(db)
 });
 
 // Required for MCP auth `2025-06-18` discovery (Claude Remote MCP)
@@ -101,17 +103,50 @@ For SSE connections, expect disconnects (idle timeouts, client refresh, Lambda m
 - **resumable streams** (`Last-Event-ID`) + replay from an event log
 - emitting periodic progress updates during long-running work
 
+Strict Streamable HTTP compatibility:
+
+- `POST /mcp` clients must send `Content-Type: application/json` and
+  `Accept: application/json, text/event-stream`
+- `GET /mcp` clients must send `Accept: text/event-stream`
+- clients should omit `Mcp-Protocol-Version` after `initialize` or send the exact negotiated session version
+- streaming responses start with an empty-data priming event; clients should store that `id` for reconnect before
+  progress or result messages arrive
+- `Last-Event-ID` replay is stream-bound; AppTheory fails closed if the cursor belongs to another stream
+- canary older clients before rollout, especially clients that previously sent JSON-only `Accept` headers or assumed the
+  first SSE frame was JSON-RPC
+
 When you provision the optional stream table, wire the Go runtime with `mcp.WithStreamStore(mcp.NewDynamoStreamStore(db))`
 to use the canonical `sessionId` / `eventId` / `expiresAt` schema this construct creates. Use the standard TableTheory
 DB for production durable replay; its `TransactWrite` support is what gives `DynamoStreamStore` the strongest
 `DeleteSession`/`Append` race protection after spill writes.
+
+When you provision the optional session table, wire the Go runtime with
+`mcp.WithSessionStore(mcp.NewDynamoSessionStore(db))`. Session writes are upserts, so repeated sliding-session refreshes
+update TTL/data on the existing row rather than relying on delete/recreate behavior.
+
+When you provision the optional task table, wire the Go runtime with
+`mcp.WithTaskRuntime(mcp.TaskRuntimeOptions{Store: mcp.NewDynamoTaskStore(db)})`. `enableTaskTable` only provisions the
+canonical `sessionId` / `taskId` / `expiresAt` table and injects `MCP_TASK_TABLE` plus `MCP_TASK_TTL_MINUTES`; it does
+not advertise tasks by itself. AppTheory advertises `tasks` only for protocol `2025-11-25` sessions when a task store is
+configured and at least one tool declares `ToolExecution.TaskSupport` as `optional` or `required`.
+
+Task state is scoped to the active MCP session id. Products must bind the session to the same principal, tenant, actor
+route, and entitlement policy used by OAuth validation before enabling task-capable tools. `MCP_TASK_TTL_MINUTES` is the
+default runtime task lifetime, while client-supplied `task.ttl` values are milliseconds and fail closed when they are
+non-positive or exceed `TaskRuntimeOptions.MaxTTL`. `tasks/cancel` marks the task canceled and cancels AppTheory's
+in-flight tool context when still running; terminal task state is not rewritten.
 
 Large tool responses stay inside the same logical stream contract. `AppTheoryRemoteMcpServer` injects
 `MCP_STREAM_SPILL_BUCKET` and related threshold variables so `mcp.NewDynamoStreamStore(db)` stores small events inline
 and spills larger payloads to private S3 objects. The inline threshold defaults to `32768` and is bounded to the
 DynamoDB-safe inline ceiling of `358400`. `MCP_STREAM_TTL_MINUTES` remains the runtime replay window: expired event
 records are not resolved or emitted even if DynamoDB TTL or S3 lifecycle cleanup has not run yet. Clients still resume
-with `Last-Event-ID`; do not add tool-specific chunking or object-link workarounds.
+with `Last-Event-ID`; do not add tool-specific chunking or object-link workarounds. Replay reads for spilled events are
+bounded by the recorded event byte count and `MCP_STREAM_MAX_EVENT_BYTES` before AppTheory verifies the byte count and
+SHA-256 hash.
+
+Tool execution is hardened the same way in local and deployed Remote MCP: buffered and streaming tool panics become
+sanitized JSON-RPC internal errors. Panic text is server-log material, not part of the client contract.
 
 ## Related docs
 

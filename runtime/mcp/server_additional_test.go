@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -250,6 +251,61 @@ func TestDELETE_DeletesSession_AndStreamDeleteErrorsAreIgnored(t *testing.T) {
 	}
 }
 
+func TestDELETE_ValidatesProtocolVersion_BeforeDelete(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers map[string][]string
+		wantErr string
+	}{
+		{
+			name: "unsupported protocol",
+			headers: map[string][]string{
+				"mcp-protocol-version": {"1900-01-01"},
+			},
+			wantErr: "unsupported MCP-Protocol-Version",
+		},
+		{
+			name: "mismatched negotiated protocol",
+			headers: map[string][]string{
+				"mcp-protocol-version": {protocolVersionPrior},
+			},
+			wantErr: "MCP-Protocol-Version mismatch",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewServer("test", "dev")
+			sessionID := initializeSession(t, s)
+			headers := map[string][]string{
+				"mcp-session-id": {sessionID},
+			}
+			for k, v := range tt.headers {
+				headers[k] = v
+			}
+
+			resp, err := invokeHandlerWithMethod(context.Background(), s, "DELETE", nil, headers)
+			if err != nil {
+				t.Fatalf("invoke invalid delete: %v", err)
+			}
+			if resp.Status != 400 {
+				t.Fatalf("invalid delete status: got %d want %d (body=%s)", resp.Status, 400, string(resp.Body))
+			}
+			if !strings.Contains(string(resp.Body), tt.wantErr) {
+				t.Fatalf("invalid delete body: got %s want error containing %q", string(resp.Body), tt.wantErr)
+			}
+
+			resp, err = invokeHandlerWithMethod(context.Background(), s, "DELETE", nil, sessionHeaders(sessionID))
+			if err != nil {
+				t.Fatalf("invoke valid delete: %v", err)
+			}
+			if resp.Status != 202 {
+				t.Fatalf("valid delete status after rejected delete: got %d want %d (body=%s)", resp.Status, 202, string(resp.Body))
+			}
+		})
+	}
+}
+
 func TestValidateOrigin_FailClosedWhenOriginPresent(t *testing.T) {
 	s := NewServer("test", "dev", WithOriginValidator(nil))
 	resp := s.validateOrigin(map[string][]string{
@@ -257,6 +313,22 @@ func TestValidateOrigin_FailClosedWhenOriginPresent(t *testing.T) {
 	})
 	if resp == nil || resp.Status != 403 {
 		t.Fatalf("expected origin validation to fail closed with 403")
+	}
+}
+
+func TestAllowOrigins_TrimsAndFailsClosed(t *testing.T) {
+	validator := AllowOrigins(" https://ok.example ", "", "https://other.example")
+	if !validator(" https://ok.example ") {
+		t.Fatalf("expected trimmed allowed origin to pass")
+	}
+	if !validator("https://other.example") {
+		t.Fatalf("expected second allowed origin to pass")
+	}
+	if validator("") {
+		t.Fatalf("expected empty origin to fail")
+	}
+	if validator("https://evil.example") {
+		t.Fatalf("expected unknown origin to fail")
 	}
 }
 
@@ -275,6 +347,198 @@ func TestRequireProtocolVersion_RejectsUnsupportedAndMismatch(t *testing.T) {
 	}, sess); resp == nil || resp.Status != 400 {
 		t.Fatalf("expected negotiated protocol mismatch to return 400")
 	}
+}
+
+func TestPOST_RequiresJSONContentTypeAndStrictAccept(t *testing.T) {
+	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodInitialize})
+
+	tests := []struct {
+		name       string
+		headers    map[string][]string
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name: "missing content type",
+			headers: map[string][]string{
+				"content-type": {},
+				"accept":       {"application/json, text/event-stream"},
+			},
+			wantStatus: 400,
+			wantBody:   "Content-Type: application/json",
+		},
+		{
+			name: "non json content type",
+			headers: map[string][]string{
+				"content-type": {"text/plain"},
+				"accept":       {"application/json, text/event-stream"},
+			},
+			wantStatus: 400,
+			wantBody:   "Content-Type: application/json",
+		},
+		{
+			name: "missing accept",
+			headers: map[string][]string{
+				"content-type": {"application/json"},
+				"accept":       {},
+			},
+			wantStatus: 400,
+			wantBody:   "Accept: application/json and text/event-stream",
+		},
+		{
+			name: "json only accept",
+			headers: map[string][]string{
+				"content-type": {"application/json"},
+				"accept":       {"application/json"},
+			},
+			wantStatus: 400,
+			wantBody:   "Accept: application/json and text/event-stream",
+		},
+		{
+			name: "sse only accept",
+			headers: map[string][]string{
+				"content-type": {"application/json"},
+				"accept":       {"text/event-stream"},
+			},
+			wantStatus: 400,
+			wantBody:   "Accept: application/json and text/event-stream",
+		},
+		{
+			name: "strict headers with params",
+			headers: map[string][]string{
+				"Content-Type": {"Application/JSON; charset=utf-8"},
+				"Accept":       {"application/json; q=1, text/event-stream; q=1"},
+			},
+			wantStatus: 200,
+		},
+		{
+			name: "q zero disables required media",
+			headers: map[string][]string{
+				"content-type": {"application/json"},
+				"accept":       {"application/json, text/event-stream; q=0"},
+			},
+			wantStatus: 400,
+			wantBody:   "Accept: application/json and text/event-stream",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewServer("test", "dev")
+			resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, tt.headers)
+			if err != nil {
+				t.Fatalf("invoke: %v", err)
+			}
+			if resp.Status != tt.wantStatus {
+				t.Fatalf("status: got %d want %d (body=%s)", resp.Status, tt.wantStatus, string(resp.Body))
+			}
+			if tt.wantBody != "" && !strings.Contains(string(resp.Body), tt.wantBody) {
+				t.Fatalf("body: got %s want substring %q", string(resp.Body), tt.wantBody)
+			}
+		})
+	}
+}
+
+func TestGET_RequiresEventStreamAccept(t *testing.T) {
+	s := NewServer("test", "dev")
+	sessionID := initializeSession(t, s)
+
+	tests := []struct {
+		name       string
+		accept     []string
+		wantStatus int
+		wantBody   string
+	}{
+		{name: "missing accept", accept: nil, wantStatus: 400, wantBody: "Accept: text/event-stream"},
+		{name: "json only accept", accept: []string{"application/json"}, wantStatus: 400, wantBody: "Accept: text/event-stream"},
+		{name: "q zero disables sse", accept: []string{"text/event-stream; q=0"}, wantStatus: 400, wantBody: "Accept: text/event-stream"},
+		{name: "event stream accept", accept: []string{"text/event-stream"}, wantStatus: 200},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			headers := sessionHeaders(sessionID)
+			if tt.accept != nil {
+				headers["accept"] = tt.accept
+			}
+
+			resp, err := invokeHandlerWithMethod(context.Background(), s, "GET", nil, headers)
+			if err != nil {
+				t.Fatalf("invoke: %v", err)
+			}
+			if resp.Status != tt.wantStatus {
+				t.Fatalf("status: got %d want %d (body=%s)", resp.Status, tt.wantStatus, string(resp.Body))
+			}
+			if tt.wantBody != "" && !strings.Contains(string(resp.Body), tt.wantBody) {
+				t.Fatalf("body: got %s want substring %q", string(resp.Body), tt.wantBody)
+			}
+			if resp.BodyReader != nil {
+				if _, readErr := io.ReadAll(resp.BodyReader); readErr != nil {
+					t.Fatalf("read SSE body: %v", readErr)
+				}
+			}
+		})
+	}
+}
+
+func TestBatchProtocol_RespectsNegotiatedSessionVersion(t *testing.T) {
+	t.Run("latest session cannot use legacy batch without explicit legacy negotiation", func(t *testing.T) {
+		s := newTestServer()
+		sessionID := initializeSession(t, s)
+
+		resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", []byte(`[{"jsonrpc":"2.0","id":1,"method":"`+methodToolsList+`"}]`), map[string][]string{
+			"content-type":   {"application/json"},
+			"mcp-session-id": {sessionID},
+		})
+		if err != nil {
+			t.Fatalf("invoke batch: %v", err)
+		}
+		if resp.Status != 400 {
+			t.Fatalf("status: got %d want 400 (body=%s)", resp.Status, string(resp.Body))
+		}
+	})
+
+	t.Run("legacy session can use batch without protocol header", func(t *testing.T) {
+		s := newTestServer()
+		sessionID := initializeSessionWithProtocol(t, s, protocolVersionLegacy)
+
+		resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", []byte(`[{"jsonrpc":"2.0","id":1,"method":"`+methodToolsList+`"}]`), map[string][]string{
+			"content-type":   {"application/json"},
+			"mcp-session-id": {sessionID},
+		})
+		if err != nil {
+			t.Fatalf("invoke legacy batch: %v", err)
+		}
+		if resp.Status != 200 {
+			t.Fatalf("status: got %d want 200 (body=%s)", resp.Status, string(resp.Body))
+		}
+	})
+
+	t.Run("batch initialize defaults to legacy protocol", func(t *testing.T) {
+		s := newTestServer()
+		resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", []byte(`[{"jsonrpc":"2.0","id":1,"method":"initialize"}]`), nil)
+		if err != nil {
+			t.Fatalf("invoke batch initialize: %v", err)
+		}
+		if resp.Status != 200 {
+			t.Fatalf("status: got %d want 200 (body=%s)", resp.Status, string(resp.Body))
+		}
+
+		var responses []Response
+		if err := json.Unmarshal(resp.Body, &responses); err != nil {
+			t.Fatalf("unmarshal batch response: %v", err)
+		}
+		if len(responses) != 1 {
+			t.Fatalf("expected one batch response, got %d", len(responses))
+		}
+		result, ok := responses[0].Result.(map[string]any)
+		if !ok {
+			t.Fatalf("expected initialize result object, got %T", responses[0].Result)
+		}
+		if got := result["protocolVersion"]; got != protocolVersionLegacy {
+			t.Fatalf("protocolVersion: got %v want %s", got, protocolVersionLegacy)
+		}
+	})
 }
 
 func TestHandleNotification_Initialized_PersistsSessionFlag(t *testing.T) {
@@ -303,7 +567,7 @@ func TestHandleNotification_Initialized_PersistsSessionFlag(t *testing.T) {
 
 func TestHandleNotification_NilSession_DoesNotPanic(t *testing.T) {
 	s := NewServer("test", "dev")
-	s.handleNotification(context.Background(), nil, &Request{Method: methodNotificationsInitialized})
+	s.handleNotification(context.Background(), nil, &Request{Method: methodNotificationsInitialized}, protocolVersion)
 }
 
 func TestSessionTTL_EnvOverride_AndFallbacks(t *testing.T) {
@@ -331,7 +595,7 @@ func TestInitialize_SessionStorePutError_ReturnsJSONRPCErrorResponse(t *testing.
 	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodInitialize})
 	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, map[string][]string{
 		"content-type": {"application/json"},
-		"accept":       {"application/json"},
+		"accept":       {"application/json, text/event-stream"},
 	})
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
@@ -415,7 +679,7 @@ func TestGET_NoLastEventID_ReturnsEmptySSE(t *testing.T) {
 	s := NewServer("test", "dev")
 	sessionID := initializeSession(t, s)
 
-	resp, err := invokeHandlerWithMethod(context.Background(), s, "GET", nil, sessionHeaders(sessionID))
+	resp, err := invokeHandlerWithMethod(context.Background(), s, "GET", nil, sseSessionHeaders(sessionID))
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
 	}

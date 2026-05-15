@@ -159,14 +159,34 @@ CORRECT:
 - wire `mcp.NewDynamoStreamStore(db)` or another persistent `StreamStore` in application code if replay must survive
   reconnects and cold starts; for `DynamoStreamStore`, use a standard TableTheory DB with `TransactWrite` in production
   so delete/append races are guarded atomically, and let `MCP_STREAM_TTL_MINUTES` define the runtime replay window
+- wire `mcp.NewDynamoSessionStore(db)` when sessions must survive cold starts; session writes are upserts so TTL refresh
+  does not depend on a delete/recreate cycle
+- wire `mcp.NewDynamoTaskStore(db)` through `mcp.WithTaskRuntime(...)` only when asynchronous tool work needs durable
+  task state and product policy is ready; task state is session-scoped and must remain bound to the same principal,
+  tenant, actor route, and entitlement policy as the MCP session
+- enforce route-, principal-, and tool-aware MCP rate limits through `runtime.RateLimitMiddleware(...)` and
+  `pkg/limited` in the normal AppTheory middleware chain; this is product wiring around the MCP handler, not a separate
+  MCP framework feature
 - let the Remote MCP construct provide the stream table plus S3 spill bucket for durable large logical events; clients
-  still replay by logical `Last-Event-ID`
+  still replay by logical `Last-Event-ID`, and AppTheory bounds S3 spill reads before byte-count/hash validation
+- treat tool panics as server faults: AppTheory recovers them into sanitized JSON-RPC internal errors, not client-visible
+  panic strings
+- keep optional MCP utility capabilities fail-closed: completions are advertised only by AppTheory after a matching hook
+  is configured, resource subscription and logging methods are hook-gated but their capabilities remain omitted until
+  outbound notification contracts exist, task capability is advertised only after a task store and task-capable tool are
+  configured, and cancellation notifications only cancel tracked in-flight requests for the same session
 
 INCORRECT:
 
 - assuming `AppTheoryMcpServer` is a drop-in deployment for resumable Remote MCP
 - assuming `enableStreamTable` alone makes replay durable without `mcp.WithStreamStore(...)`
+- assuming `enableTaskTable` alone advertises MCP tasks without `mcp.WithTaskRuntime(...)` and a task-capable tool
 - splitting tool results or returning object links to work around stream-store storage limits
+- depending on panic text or duplicate session-create failures as part of product behavior
+- hard-coding `resources.subscribe`, `logging`, `completions`, or `tasks` in a product wrapper before product
+  authorization, tenant policy, quotas, audit logging, and abuse controls are wired
+- creating an MCP-specific rate-limit wrapper or construct flag instead of using `RateLimitMiddleware` with scoped
+  `pkg/limited` buckets
 
 ## Pattern: sanitize user payloads before logging
 

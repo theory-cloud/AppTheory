@@ -28,7 +28,8 @@ type StreamStore interface {
 	Close(ctx context.Context, sessionID, streamID string) error
 
 	// Subscribe streams events after afterEventID. If afterEventID is empty,
-	// it streams from the beginning.
+	// it streams from the beginning. If afterEventID is present, it must belong
+	// to the requested stream.
 	Subscribe(ctx context.Context, sessionID, streamID, afterEventID string) (<-chan StreamEvent, error)
 
 	// StreamForEvent returns the stream id that the given event id belongs to.
@@ -207,6 +208,13 @@ func (m *MemoryStreamStore) Subscribe(ctx context.Context, sessionID, streamID, 
 	if stream == nil {
 		m.mu.Unlock()
 		return nil, ErrStreamNotFound
+	}
+	if afterSeq > 0 {
+		eventStreamID, ok := sess.seqToStream[afterSeq]
+		if !ok || eventStreamID != streamID {
+			m.mu.Unlock()
+			return nil, ErrEventNotFound
+		}
 	}
 
 	nextIndex := startIndexAfterSeq(stream.events, afterSeq)
