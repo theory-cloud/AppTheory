@@ -155,18 +155,38 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          count="$(
+          pr_number="$(
             gh pr list \
               --state open \
               --base main \
               --head release-please--branches--main \
               --json number \
-              --jq 'length'
+              --jq '.[0].number // ""'
           )"
-          if [[ "${count}" != "0" ]]; then
+          if [[ -n "${pr_number}" ]]; then
             echo "exists=true" >> "${GITHUB_OUTPUT}"
+            echo "number=${pr_number}" >> "${GITHUB_OUTPUT}"
           else
             echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Draft-lock release PR before artifact setup
+        if: steps.release_pr.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_PR_NUMBER: ${{ steps.release_pr.outputs.number }}
+        run: |
+          set -euo pipefail
+
+          is_draft="$(gh pr view "${RELEASE_PR_NUMBER}" --json isDraft --jq '.isDraft')"
+          if [[ "${is_draft}" != "true" ]]; then
+            gh pr ready "${RELEASE_PR_NUMBER}" --undo
+          fi
+
+          is_draft="$(gh pr view "${RELEASE_PR_NUMBER}" --json isDraft --jq '.isDraft')"
+          if [[ "${is_draft}" != "true" ]]; then
+            echo "release-pr: FAIL (PR #${RELEASE_PR_NUMBER} could not be draft-locked before artifact setup)" >&2
+            exit 1
           fi
 
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
