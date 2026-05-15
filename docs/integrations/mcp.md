@@ -234,6 +234,25 @@ logging, and abuse controls are wired for asynchronous work. If a rollout needs 
 tasks, keep `WithTaskRuntime` unset or disable the `Tasks` capability in `mcp.WithCapabilityConfig(...)` until the
 policy path is ready. Do not hard-code `tasks` in a wrapper around AppTheory's initialize response.
 
+### Rate limiting stance
+
+MCP rate limiting is product wiring over AppTheory's existing HTTP middleware and `pkg/limited` primitives. AppTheory
+does not expose a separate `mcp.WithRateLimiter(...)`, task-rate limiter, or Remote MCP construct flag, because that
+would create a second rate-limit path outside the normal middleware contract.
+
+The single path is:
+
+- validate auth and tenant/actor policy first when the limiter key depends on those claims
+- mount `runtime.RateLimitMiddleware(...)` in the normal `app.Use(...)` chain that protects `POST /mcp`, `GET /mcp`,
+  and `DELETE /mcp`
+- back the middleware with `pkg/limited` when rate-limit state must survive Lambda concurrency and cold starts
+- use `RateLimitConfig.ExtractIdentifier`, `ExtractResource`, and `ExtractOperation` to build product-specific buckets
+  such as principal, tenant, actor route, JSON-RPC method, or tool name
+
+If a product cannot derive the required principal, tenant, actor, method, or tool bucket, it should reject the request or
+withhold the affected tool/task capability rather than broaden to a shared bucket. AppTheory does not advertise rate
+limits in `initialize`; rate-limit policy is enforced by the HTTP middleware around the MCP handler.
+
 ### Optional utility hooks
 
 Resource subscription hooks:
