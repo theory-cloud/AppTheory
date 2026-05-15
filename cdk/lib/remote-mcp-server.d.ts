@@ -122,6 +122,26 @@ export interface AppTheoryRemoteMcpServerProps {
      */
     readonly streamTtlMinutes?: number;
     /**
+     * Create a DynamoDB table for MCP task runtime state.
+     *
+     * Task state is session-scoped and durable so task-augmented tool execution
+     * can survive Lambda container recycling while preserving AppTheory's
+     * fail-closed session boundary.
+     *
+     * @default false
+     */
+    readonly enableTaskTable?: boolean;
+    /**
+     * Task DynamoDB table name (only used when enableTaskTable is true).
+     * @default undefined (auto-generated)
+     */
+    readonly taskTableName?: string;
+    /**
+     * Task TTL in minutes (exposed to the handler as MCP_TASK_TTL_MINUTES).
+     * @default 10
+     */
+    readonly taskTtlMinutes?: number;
+    /**
      * Inline byte threshold for MCP stream events before AppTheory spills the
      * logical event payload to the managed S3 spill bucket.
      *
@@ -148,7 +168,7 @@ export interface AppTheoryRemoteMcpServerProps {
  * - API Gateway REST API v1
  * - Streaming-enabled Lambda proxy integrations for `/mcp` (POST/GET) using
  *   Lambda response streaming (`/response-streaming-invocations`)
- * - Optional DynamoDB tables for sessions and stream/event log state
+ * - Optional DynamoDB tables for sessions, streams, and task runtime state
  *
  * This construct is designed for MCP Streamable HTTP (2025-06-18).
  */
@@ -169,6 +189,10 @@ export declare class AppTheoryRemoteMcpServer extends Construct {
      * The DynamoDB stream/event log table (if enabled).
      */
     readonly streamTable?: dynamodb.ITable;
+    /**
+     * The DynamoDB task runtime table (if enabled).
+     */
+    readonly taskTable?: dynamodb.ITable;
     /**
      * The S3 spill bucket for large stream event payloads (if stream storage is enabled).
      */
