@@ -299,21 +299,59 @@ wait_for_pr_head() {
   done
 }
 
-trigger_release_pr_checks() {
-  # Release PRs stay draft while generated artifacts are being rewritten so they
-  # cannot be merged in an incomplete state. CI still needs a pull_request event
-  # after the generated-artifact commit is visible, so briefly move the PR to
-  # ready_for_review, then immediately draft-lock it again before waiting for
-  # the required checks to complete.
-  ensure_release_pr_is_draft "before triggering generated-artifact checks"
+set_release_pr_status() {
+  local state="$1"
+  local context="$2"
+  local description="$3"
+  local head_sha
+  head_sha="$(git rev-parse HEAD)"
 
-  echo "sync-release-pr-generated: triggering checks for PR #${pr_number}"
-  gh pr ready "${pr_number}"
+  gh api \
+    --method POST \
+    "repos/${GITHUB_REPOSITORY}/statuses/${head_sha}" \
+    -f "state=${state}" \
+    -f "context=${context}" \
+    -f "description=${description:0:140}" \
+    -f "target_url=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+    >/dev/null
+}
 
-  # Keep the PR ready only until the required check contexts exist, then
-  # immediately draft-lock it again while those checks run.
+run_release_pr_status_check() {
+  local context="$1"
+  shift
+  local command="$*"
+
+  echo "sync-release-pr-generated: running ${context}"
+  set_release_pr_status pending "${context}" "Running release PR gate"
+  if bash -c "${command}"; then
+    set_release_pr_status success "${context}" "Release PR gate passed"
+    echo "sync-release-pr-generated: ${context}: PASS"
+    return 0
+  fi
+
+  set_release_pr_status failure "${context}" "Release PR gate failed"
+  echo "sync-release-pr-generated: FAIL (${context})" >&2
+  return 1
+}
+
+run_release_pr_required_checks() {
+  # Events caused by GITHUB_TOKEN/Release Please token mutations do not
+  # reliably create pull_request CI runs for the generated release branch.
+  # Keep the PR draft, run the same gate scripts here, and publish commit
+  # statuses with the exact protected check names before the PR can become
+  # ready. This fails closed: any gate failure leaves the release PR draft.
+  ensure_release_pr_is_draft "before running generated-artifact checks"
+
+  run_release_pr_status_check "Version alignment" "scripts/verify-version-alignment.sh"
+  run_release_pr_status_check "Go (test + vet)" "scripts/verify-go.sh"
+  run_release_pr_status_check "TypeScript (npm pack)" "scripts/verify-ts-pack.sh"
+  run_release_pr_status_check "Python (build wheel + sdist)" "scripts/verify-python-build.sh"
+  run_release_pr_status_check "Verify deterministic builds" "scripts/verify-builds.sh"
+  run_release_pr_status_check "Contract tests (fixtures)" "scripts/verify-api-snapshots.sh && scripts/verify-contract-tests.sh"
+  run_release_pr_status_check "Rubric (full gate set)" "make rubric"
+
   wait_for_required_checks_to_start
-  ensure_release_pr_is_draft "after triggering generated-artifact checks"
+  ensure_release_pr_is_draft "after running generated-artifact checks"
 }
 
 # The release PR must not be mergeable while generated artifacts are still being
@@ -346,9 +384,9 @@ if [[ "${changed}" == "true" ]]; then
 fi
 
 wait_for_pr_head "$(git rev-parse HEAD)"
-# After the generated-artifact head is visible, trigger PR checks while
-# preserving the draft-lock before waiting on them.
-trigger_release_pr_checks
+# After the generated-artifact head is visible, run and publish the required
+# release PR gate statuses while preserving the draft lock.
+run_release_pr_required_checks
 wait_for_required_checks
 
 ensure_release_pr_is_draft "before marking generated-artifact-synced PR ready"
