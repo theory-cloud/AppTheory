@@ -31,7 +31,7 @@ type ToolAnnotations struct {
 type ToolExecution struct {
 	// TaskSupport indicates if the tool supports task-augmented execution.
 	// Values: "forbidden", "optional", "required".
-	TaskSupport string `json:"taskSupport,omitempty"`
+	TaskSupport TaskSupport `json:"taskSupport,omitempty"`
 }
 
 type Icon struct {
@@ -141,6 +141,22 @@ func (r *ToolRegistry) supportsStreaming(name string) bool {
 		return false
 	}
 	return r.tools[idx].streamingHandler != nil
+}
+
+func (r *ToolRegistry) supportsTasks() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, tool := range r.tools {
+		if tool.def.Execution == nil {
+			continue
+		}
+		switch tool.def.Execution.TaskSupport {
+		case TaskSupportOptional, TaskSupportRequired:
+			return true
+		}
+	}
+	return false
 }
 
 // Call looks up a tool by name and invokes its handler with the given arguments.

@@ -8,14 +8,16 @@ package mcp
 // are omitted until their concrete hooks exist. Resource subscription and
 // logging are also omitted until AppTheory has a first-class outbound
 // notification contract for notifications/resources/updated and
-// notifications/message. Completion support is advertised only when its
-// explicit hooks are configured. That keeps capability negotiation fail-closed
-// instead of allowing callers to overclaim unsupported behavior.
+// notifications/message. Completion and task support are advertised only when
+// their explicit hooks or stores are configured. That keeps capability
+// negotiation fail-closed instead of allowing callers to overclaim unsupported
+// behavior.
 type CapabilityConfig struct {
 	Tools       bool
 	Resources   bool
 	Prompts     bool
 	Completions bool
+	Tasks       bool
 }
 
 type capabilitySurface string
@@ -25,6 +27,7 @@ const (
 	capabilitySurfaceResources capabilitySurface = "resources"
 	capabilitySurfacePrompts   capabilitySurface = "prompts"
 	capabilitySurfaceComplete  capabilitySurface = "completions"
+	capabilitySurfaceTasks     capabilitySurface = "tasks"
 )
 
 // DefaultCapabilityConfig returns the default MCP capability policy.
@@ -38,6 +41,7 @@ func DefaultCapabilityConfig() CapabilityConfig {
 		Resources:   true,
 		Prompts:     true,
 		Completions: true,
+		Tasks:       true,
 	}
 }
 
@@ -56,6 +60,7 @@ func (s *Server) initializeCapabilities(protocolVersion string) map[string]any {
 	s.addResourcesCapability(protocolVersion, capabilities)
 	s.addPromptsCapability(protocolVersion, capabilities)
 	s.addCompletionsCapability(protocolVersion, capabilities)
+	s.addTasksCapability(protocolVersion, capabilities)
 
 	return capabilities
 }
@@ -84,6 +89,25 @@ func (s *Server) addCompletionsCapability(protocolVersion string, capabilities m
 	}
 }
 
+func (s *Server) addTasksCapability(protocolVersion string, capabilities map[string]any) {
+	if !s.capabilities.Tasks || !protocolSupportsCapability(protocolVersion, capabilitySurfaceTasks) || !s.hasTaskRuntime() {
+		return
+	}
+
+	tasks := map[string]any{
+		"list":   map[string]any{},
+		"cancel": map[string]any{},
+	}
+	if s.registry.supportsTasks() {
+		tasks["requests"] = map[string]any{
+			"tools": map[string]any{
+				"call": map[string]any{},
+			},
+		}
+	}
+	capabilities["tasks"] = tasks
+}
+
 func (s *Server) hasResourceSubscriptionHooks() bool {
 	return s.resourceSubscribeHook != nil && s.resourceUnsubscribeHook != nil
 }
@@ -92,6 +116,9 @@ func (s *Server) hasCompletionHooks() bool {
 	return s.promptCompletionHook != nil || s.resourceCompletionHook != nil
 }
 
-func protocolSupportsCapability(pv string, _ capabilitySurface) bool {
+func protocolSupportsCapability(pv string, surface capabilitySurface) bool {
+	if surface == capabilitySurfaceTasks {
+		return pv == protocolVersion
+	}
 	return isSupportedProtocolVersion(pv)
 }
