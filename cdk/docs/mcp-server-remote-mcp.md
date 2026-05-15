@@ -28,6 +28,7 @@ Claude Remote MCP requires real incremental streaming for tool calls (SSE). On A
 - Optional DynamoDB tables:
   - session table (matches `runtime/mcp` Dynamo session store schema)
   - stream/event table (used by durable resumable SSE once the app wires a persistent `StreamStore`)
+  - task table (used by the MCP task runtime once the app wires a persistent `TaskStore`)
   - encrypted private S3 spill bucket for large logical stream event payloads when stream storage is enabled
 
 If you are using OAuth for Claude connectors on the default `/mcp` route, also add:
@@ -59,6 +60,7 @@ const mcp = new AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
   enableSessionTable: true,
   sessionTtlMinutes: 120,
   // enableStreamTable: true, // provisions stream table + S3 spill bucket; pair with mcp.NewDynamoStreamStore(db)
+  // enableTaskTable: true, // provisions task table; pair with mcp.NewDynamoTaskStore(db)
 });
 
 // Required for MCP auth `2025-06-18` discovery (Claude Remote MCP)
@@ -121,6 +123,18 @@ DB for production durable replay; its `TransactWrite` support is what gives `Dyn
 When you provision the optional session table, wire the Go runtime with
 `mcp.WithSessionStore(mcp.NewDynamoSessionStore(db))`. Session writes are upserts, so repeated sliding-session refreshes
 update TTL/data on the existing row rather than relying on delete/recreate behavior.
+
+When you provision the optional task table, wire the Go runtime with
+`mcp.WithTaskRuntime(mcp.TaskRuntimeOptions{Store: mcp.NewDynamoTaskStore(db)})`. `enableTaskTable` only provisions the
+canonical `sessionId` / `taskId` / `expiresAt` table and injects `MCP_TASK_TABLE` plus `MCP_TASK_TTL_MINUTES`; it does
+not advertise tasks by itself. AppTheory advertises `tasks` only for protocol `2025-11-25` sessions when a task store is
+configured and at least one tool declares `ToolExecution.TaskSupport` as `optional` or `required`.
+
+Task state is scoped to the active MCP session id. Products must bind the session to the same principal, tenant, actor
+route, and entitlement policy used by OAuth validation before enabling task-capable tools. `MCP_TASK_TTL_MINUTES` is the
+default runtime task lifetime, while client-supplied `task.ttl` values are milliseconds and fail closed when they are
+non-positive or exceed `TaskRuntimeOptions.MaxTTL`. `tasks/cancel` marks the task canceled and cancels AppTheory's
+in-flight tool context when still running; terminal task state is not rewritten.
 
 Large tool responses stay inside the same logical stream contract. `AppTheoryRemoteMcpServer` injects
 `MCP_STREAM_SPILL_BUCKET` and related threshold variables so `mcp.NewDynamoStreamStore(db)` stores small events inline

@@ -111,6 +111,10 @@ AppTheory currently dispatches these MCP request methods:
 - `resources/unsubscribe`
 - `logging/setLevel`
 - `completion/complete`
+- `tasks/get`
+- `tasks/result`
+- `tasks/list`
+- `tasks/cancel`
 - `prompts/list`
 - `prompts/get`
 
@@ -146,6 +150,8 @@ on the server:
 - if `srv.Resources().Len() > 0` and resources are enabled -> `"resources": {}`
 - if `srv.Prompts().Len() > 0` and prompts are enabled -> `"prompts": {}`
 - if `mcp.WithCompletionHooks(...)` has at least one hook and completions are enabled -> `"completions": {}`
+- if `mcp.WithTaskRuntime(...)` supplies a store, at least one registered tool declares task support, and tasks are
+  enabled -> `"tasks": {...}` for protocol `2025-11-25` sessions
 
 The default capability policy enables the implemented surfaces, but registration is still required before they are
 advertised. Use `mcp.WithCapabilityConfig(...)` to withhold an implemented surface for a product rollout.
@@ -158,10 +164,11 @@ Optional MCP utility capabilities are fail-closed:
 - `logging/setLevel` is accepted only when `mcp.WithLoggingLevelHook(...)` is configured, but `logging` is not
   advertised until AppTheory has a first-class outbound `notifications/message` contract
 - `completions` is advertised only when `mcp.WithCompletionHooks(...)` has at least one prompt or resource hook
+- `tasks` is advertised only when `mcp.WithTaskRuntime(...)` supplies a store and a tool explicitly opts into task
+  execution
 - `notifications/cancelled` is accepted for every initialized session, but it only cancels AppTheory-tracked in-flight
   requests for that session and safely ignores unknown or completed request ids
-- unsupported utility surfaces such as `listChanged` and `tasks` remain omitted until their concrete AppTheory contract
-  exists
+- unsupported utility surfaces such as `listChanged` remain omitted until their concrete AppTheory contract exists
 
 Capability construction is also protocol-aware; if a future supported protocol version removes or changes a capability,
 AppTheory omits that capability for sessions negotiated to that version.
@@ -170,6 +177,62 @@ Products should not advertise these optional utility capabilities outside AppThe
 enable the hooks for downstream services until product authorization, tenant policy, audit logging, and abuse controls
 are wired. The single path is: configure the AppTheory hook, let AppTheory advertise only capabilities it can deliver
 end-to-end, and handle the request through the hook. Do not hard-code capabilities in a product-specific wrapper.
+
+### Task runtime
+
+MCP task support is explicit opt-in. AppTheory does not advertise `tasks` just because a product has long-running tools.
+All three conditions must hold:
+
+1. the session negotiates protocol `2025-11-25`
+2. the server is created with `mcp.WithTaskRuntime(...)` and a concrete `TaskStore`
+3. at least one registered tool declares `ToolExecution.TaskSupport` as `optional` or `required`
+
+Example:
+
+```go
+srv := mcp.NewServer("my-mcp-server", "dev",
+  mcp.WithTaskRuntime(mcp.TaskRuntimeOptions{
+    Store: mcp.NewDynamoTaskStore(db),
+  }),
+)
+
+_ = srv.Registry().RegisterTool(mcp.ToolDef{
+  Name:        "slow-report",
+  Description: "Generate a report asynchronously.",
+  Execution:   &mcp.ToolExecution{TaskSupport: mcp.TaskSupportOptional},
+  InputSchema: json.RawMessage(`{"type":"object"}`),
+}, runSlowReport)
+```
+
+Tool support is fail-closed:
+
+- `TaskSupportForbidden` (or omitted) rejects task-augmented `tools/call`
+- `TaskSupportOptional` allows both synchronous and task-augmented `tools/call`
+- `TaskSupportRequired` rejects synchronous `tools/call` and requires task augmentation
+
+When a task-capable `tools/call` includes a `task` parameter, AppTheory creates a session-scoped task record, returns a
+`CreateTaskResult`, and runs the tool on a background context detached from the request connection. The final tool
+result or JSON-RPC error is stored in the configured `TaskStore`. Clients then use:
+
+- `tasks/get` to inspect status
+- `tasks/list` to list tasks for the current MCP session
+- `tasks/result` to retrieve terminal results, with related-task metadata injected into `_meta`
+- `tasks/cancel` to mark the task canceled and cancel the in-flight tool context when it is still running
+
+Task state is always bound to the active MCP session id. A store must never broaden lookup, list, cancel, or delete
+operations outside the supplied session scope. Product deployments should bind that session to the same principal,
+tenant, route bundle, and entitlement policy used by their OAuth/token validation layer; missing or ambiguous policy
+must withhold task capability rather than falling back to broader access.
+
+TTL is part of the task contract. `TaskRuntimeOptions.DefaultTTL` defaults to `MCP_TASK_TTL_MINUTES` when that
+environment variable is set, otherwise 10 minutes. `TaskRuntimeOptions.MaxTTL` defaults to 1 hour. Client-supplied
+`task.ttl` values are milliseconds, must be positive, and fail closed when they exceed the configured maximum. DynamoDB
+TTL and table cleanup are storage backstops; the runtime checks task expiry before returning stored task state.
+
+Products should not enable or advertise task support until authorization, tenant policy, quota/rate limits, audit
+logging, and abuse controls are wired for asynchronous work. If a rollout needs to provision storage before exposing
+tasks, keep `WithTaskRuntime` unset or disable the `Tasks` capability in `mcp.WithCapabilityConfig(...)` until the
+policy path is ready. Do not hard-code `tasks` in a wrapper around AppTheory's initialize response.
 
 ### Optional utility hooks
 

@@ -72,6 +72,10 @@ Important behaviors for Claude compatibility:
   until the outbound notification contracts for resource updates and log messages exist.
 - `notifications/cancelled` cancels matching in-flight AppTheory requests for the same session and safely ignores
   unknown or already-completed request ids.
+- MCP tasks are opt-in. AppTheory advertises `tasks` only for protocol `2025-11-25` sessions when
+  `mcp.WithTaskRuntime(...)` supplies a store and at least one registered tool declares task support.
+- Task records are session-scoped. Products must bind the MCP session to the same principal, tenant, actor route, and
+  entitlement policy used by OAuth validation before exposing task-capable tools.
 
 Strict transport rollout checklist:
 
@@ -86,6 +90,8 @@ Strict transport rollout checklist:
 - Do not hard-code `resources.subscribe`, `logging`, or `completions` capabilities in a Remote MCP product wrapper.
   Configure the AppTheory hook, let AppTheory emit the initialize capability, and keep the capability absent until
   product authorization and tenant policy are ready.
+- Do not hard-code `tasks` in a Remote MCP product wrapper. Keep task runtime disabled until asynchronous-work policy,
+  audit logging, quotas, and abuse controls are wired.
 
 ## 2) Add OAuth protection (Remote MCP auth `2025-06-18`)
 
@@ -133,6 +139,21 @@ storage and env vars.
 
 If you enable the optional Remote MCP session table, wire `mcp.WithSessionStore(mcp.NewDynamoSessionStore(db))`.
 `DynamoSessionStore.Put` upserts sessions so sliding-session access refreshes TTL/data on the existing item.
+
+If you enable the optional Remote MCP task table, wire
+`mcp.WithTaskRuntime(mcp.TaskRuntimeOptions{Store: mcp.NewDynamoTaskStore(db)})`. `enableTaskTable` only provisions
+storage and injects `MCP_TASK_TABLE` / `MCP_TASK_TTL_MINUTES`; it does not advertise task capability by itself. The
+runtime still requires a configured task store and a tool with `ToolExecution.TaskSupport` set to `optional` or
+`required`.
+
+`MCP_TASK_TTL_MINUTES` is the default task lifetime used when the app does not set `TaskRuntimeOptions.DefaultTTL`.
+Client-supplied `task.ttl` values are milliseconds and fail closed when they are non-positive or exceed the configured
+maximum. `DynamoTaskStore` checks expiry before returning task state, so DynamoDB TTL cleanup is a storage backstop, not
+the access-control boundary.
+
+Task cancellation is cooperative. `tasks/cancel` marks the session-scoped task canceled and cancels AppTheory's
+in-flight tool context when that task is still running. If the work has already completed, the terminal task state is not
+rewritten.
 
 `AppTheoryRemoteMcpServer` also provisions the canonical private S3 spill bucket whenever `enableStreamTable` is true.
 The Dynamo stream store keeps small logical events inline in DynamoDB and spills larger events to S3 using the injected
@@ -191,6 +212,8 @@ API Gateway REST response streaming connections are time-bounded and can disconn
 - keep sessions durable (`SessionStore` backed by DynamoDB)
 - keep tool output durable (event log + `Last-Event-ID` replay) by wiring `mcp.NewDynamoStreamStore(db)` or another
   persistent `StreamStore`
+- keep asynchronous tool task state durable by wiring `mcp.NewDynamoTaskStore(db)` through `mcp.WithTaskRuntime(...)`
+  only after principal/tenant/actor policy is ready
 - let AppTheory manage large stream payload storage through the Remote MCP S3 spill bucket; do not split tool responses
   or return object links as a tool-specific workaround
 - execute long work asynchronously (worker Lambdas) and append progress/results into the event log

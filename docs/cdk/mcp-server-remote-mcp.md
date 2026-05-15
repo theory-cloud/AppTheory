@@ -28,6 +28,7 @@ Claude Remote MCP requires real incremental streaming for tool calls. On AWS tha
 - optional DynamoDB tables:
   - session table (matches `runtime/mcp/session_dynamo.go` schema)
   - stream/event table (used by durable replay once the app wires a concrete `StreamStore`)
+  - task table (used by the MCP task runtime once the app wires a concrete `TaskStore`)
 
 If you are using OAuth for Claude connectors on the default `/mcp` route, also add:
 
@@ -59,6 +60,8 @@ const mcp = new AppTheoryRemoteMcpServer(stack, "RemoteMcp", {
   sessionTtlMinutes: 120,
   // enableStreamTable: true,
   // streamTtlMinutes: 120,
+  // enableTaskTable: true,
+  // taskTtlMinutes: 10,
 });
 
 new AppTheoryMcpProtectedResource(stack, "ProtectedResource", {
@@ -95,7 +98,7 @@ Important caveat:
 - your Lambda still needs to emit `Access-Control-Allow-Origin` on actual `/mcp` responses
 - runtime origin validation is separate and still controlled by `mcp.WithOriginValidator(...)`
 
-## Session and stream tables
+## Session, stream, and task tables
 
 Session table behavior:
 
@@ -135,6 +138,31 @@ Important caveat:
 - MCP clients still receive normal JSON-RPC SSE messages. The spill bucket is never exposed through presigned URLs or a
   client-visible chunking protocol.
 
+Task table behavior:
+
+- partition key: `sessionId`
+- sort key: `taskId`
+- TTL attribute: `expiresAt`
+- Lambda env vars:
+  - `MCP_TASK_TABLE`
+  - `MCP_TASK_TTL_MINUTES`
+
+Important caveat:
+
+- `enableTaskTable` only provisions storage and injects env vars
+- task capability advertisement still requires application code to wire `mcp.WithTaskRuntime(...)` with a concrete
+  `TaskStore`
+- the Go runtime ships `mcp.NewDynamoTaskStore(db)` for the canonical `sessionId` / `taskId` / `expiresAt` table shape
+  provisioned by this construct
+- at least one tool must declare `ToolExecution.TaskSupport` as `optional` or `required` before AppTheory advertises
+  `tasks`
+- `MCP_TASK_TTL_MINUTES` is the default runtime task lifetime; client-supplied `task.ttl` values are milliseconds and
+  fail closed when they are non-positive or exceed `TaskRuntimeOptions.MaxTTL`
+- task lookups, lists, results, cancellation, and session deletion stay scoped to the active MCP session id; products
+  must bind that session to their principal, tenant, route, and entitlement policy before exposing task-capable tools
+- `tasks/cancel` marks the session-scoped task canceled and cancels AppTheory's in-flight tool context when the work is
+  still running; completed or otherwise terminal task state is not rewritten
+
 ## Injected environment variables
 
 `AppTheoryRemoteMcpServer` injects these environment variables when the corresponding features are enabled:
@@ -144,6 +172,7 @@ Important caveat:
 - stream table: `MCP_STREAM_TABLE`, `MCP_STREAM_TTL_MINUTES`
 - stream spill: `MCP_STREAM_SPILL_BUCKET`, `MCP_STREAM_SPILL_PREFIX`, `MCP_STREAM_SPILL_INLINE_MAX_BYTES`,
   `MCP_STREAM_MAX_EVENT_BYTES`
+- task table: `MCP_TASK_TABLE`, `MCP_TASK_TTL_MINUTES`
 
 `MCP_ENDPOINT` is the canonical deployed MCP resource URL or template:
 
