@@ -82,6 +82,7 @@ type Server struct {
 	promptCompletionHook    CompletionHook
 	resourceCompletionHook  CompletionHook
 	taskRuntime             taskRuntimeConfig
+	taskExecutions          *taskExecutionTracker
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -218,6 +219,7 @@ func NewServer(name, version string, opts ...ServerOption) *Server {
 		logger:           slog.Default(),
 		originValidator:  AllowOrigins("https://claude.ai", "https://claude.com"),
 		capabilities:     DefaultCapabilityConfig(),
+		taskExecutions:   newTaskExecutionTracker(),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -594,7 +596,7 @@ func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessio
 	case methodToolsList:
 		return s.handleToolsList(req)
 	case methodToolsCall:
-		return s.handleToolsCall(ctx, req)
+		return s.handleToolsCall(ctx, req, sessionID)
 	case methodResourcesList:
 		return s.handleResourcesList(req)
 	case methodResourcesRead:
@@ -742,7 +744,7 @@ func normalizeProgressToken(raw json.RawMessage) json.RawMessage {
 }
 
 // handleToolsCall invokes a registered tool by name (buffered JSON mode).
-func (s *Server) handleToolsCall(ctx context.Context, req *Request) (resp *Response) {
+func (s *Server) handleToolsCall(ctx context.Context, req *Request, sessionID string) (resp *Response) {
 	var params toolsCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: "+err.Error())
@@ -750,6 +752,12 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) (resp *Respo
 
 	if params.Name == "" {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name")
+	}
+	if params.Task != nil {
+		return s.handleTaskToolsCall(ctx, req, sessionID, params)
+	}
+	if s.registry.taskSupport(params.Name) == TaskSupportRequired {
+		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: tool requires task execution")
 	}
 
 	defer func() {
@@ -1333,6 +1341,9 @@ func (s *Server) shouldStreamToolsCall(req *Request) bool {
 		return false
 	}
 	if params.Name == "" {
+		return false
+	}
+	if params.Task != nil {
 		return false
 	}
 	return s.registry.supportsStreaming(params.Name)
