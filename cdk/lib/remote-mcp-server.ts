@@ -151,6 +151,29 @@ export interface AppTheoryRemoteMcpServerProps {
   readonly streamTtlMinutes?: number;
 
   /**
+   * Create a DynamoDB table for MCP task runtime state.
+   *
+   * Task state is session-scoped and durable so task-augmented tool execution
+   * can survive Lambda container recycling while preserving AppTheory's
+   * fail-closed session boundary.
+   *
+   * @default false
+   */
+  readonly enableTaskTable?: boolean;
+
+  /**
+   * Task DynamoDB table name (only used when enableTaskTable is true).
+   * @default undefined (auto-generated)
+   */
+  readonly taskTableName?: string;
+
+  /**
+   * Task TTL in minutes (exposed to the handler as MCP_TASK_TTL_MINUTES).
+   * @default 10
+   */
+  readonly taskTtlMinutes?: number;
+
+  /**
    * Inline byte threshold for MCP stream events before AppTheory spills the
    * logical event payload to the managed S3 spill bucket.
    *
@@ -179,7 +202,7 @@ export interface AppTheoryRemoteMcpServerProps {
  * - API Gateway REST API v1
  * - Streaming-enabled Lambda proxy integrations for `/mcp` (POST/GET) using
  *   Lambda response streaming (`/response-streaming-invocations`)
- * - Optional DynamoDB tables for sessions and stream/event log state
+ * - Optional DynamoDB tables for sessions, streams, and task runtime state
  *
  * This construct is designed for MCP Streamable HTTP (2025-06-18).
  */
@@ -203,6 +226,11 @@ export class AppTheoryRemoteMcpServer extends Construct {
    * The DynamoDB stream/event log table (if enabled).
    */
   public readonly streamTable?: dynamodb.ITable;
+
+  /**
+   * The DynamoDB task runtime table (if enabled).
+   */
+  public readonly taskTable?: dynamodb.ITable;
 
   /**
    * The S3 spill bucket for large stream event payloads (if stream storage is enabled).
@@ -317,6 +345,30 @@ export class AppTheoryRemoteMcpServer extends Construct {
           String(props.streamMaxEventBytes ?? STREAM_MAX_EVENT_DEFAULT_BYTES),
         );
       }
+    }
+
+    // Optional task table (matches runtime/mcp/task_dynamo.go schema)
+    if (props.enableTaskTable) {
+      const table = new dynamodb.Table(this, "TaskTable", {
+        tableName: props.taskTableName,
+        billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+        partitionKey: { name: "sessionId", type: dynamodb.AttributeType.STRING },
+        sortKey: { name: "taskId", type: dynamodb.AttributeType.STRING },
+        timeToLiveAttribute: "expiresAt",
+        removalPolicy: RemovalPolicy.DESTROY,
+        pointInTimeRecoverySpecification: {
+          pointInTimeRecoveryEnabled: true,
+        },
+        encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      });
+
+      table.grantReadWriteData(props.handler);
+      this.taskTable = table;
+    }
+
+    if (this.taskTable) {
+      this.addEnvironment(props.handler, "MCP_TASK_TABLE", this.taskTable.tableName);
+      this.addEnvironment(props.handler, "MCP_TASK_TTL_MINUTES", String(props.taskTtlMinutes ?? 10));
     }
 
     const stageName = props.stage?.stageName ?? "prod";

@@ -1953,6 +1953,22 @@ const LoggingLevelNotice LoggingLevel = "notice"
 
 const LoggingLevelWarning LoggingLevel = "warning"
 
+const TaskStatusCanceled TaskStatus = "cancel" + "led"
+
+const TaskStatusCompleted TaskStatus = "completed"
+
+const TaskStatusFailed TaskStatus = "failed"
+
+const TaskStatusInputRequired TaskStatus = "input_required"
+
+const TaskStatusWorking TaskStatus = "working"
+
+const TaskSupportForbidden TaskSupport = "forbidden"
+
+const TaskSupportOptional TaskSupport = "optional"
+
+const TaskSupportRequired TaskSupport = "required"
+
 var ErrEventNotFound = errors.New("event not found")
 
 var ErrSessionNotFound = errors.New("session not found")
@@ -1961,11 +1977,16 @@ var ErrStreamEventTooLarge = errors.New("stream event too large")
 
 var ErrStreamNotFound = errors.New("stream not found")
 
+var ErrTaskNotFound = errors.New("task not found")
+
+var ErrTaskTerminal = errors.New("task already terminal")
+
 type CapabilityConfig struct {
 	Tools       bool
 	Resources   bool
 	Prompts     bool
 	Completions bool
+	Tasks       bool
 }
 
 type Completion struct {
@@ -2019,6 +2040,11 @@ type ContentBlock struct {
 	Resource *ResourceContent `json:"resource,omitempty"`
 }
 
+type CreateTaskResult struct {
+	Meta map[string]any `json:"_meta,omitempty"`
+	Task Task           `json:"task"`
+}
+
 type DynamoSessionStore struct {
 	db tablecore.DB
 }
@@ -2032,6 +2058,11 @@ type DynamoStreamStore struct {
 	spillStore     dynamoStreamSpillStore
 	inlineMaxBytes int
 	maxEventBytes  int
+}
+
+type DynamoTaskStore struct {
+	db  tablecore.DB
+	now func() time.Time
 }
 
 type Icon struct {
@@ -2071,6 +2102,11 @@ type MemoryStreamStore struct {
 
 type MemoryStreamStoreOption func(*MemoryStreamStore)
 
+type MemoryTaskStore struct {
+	mu       sync.RWMutex
+	sessions map[string]map[string]*TaskRecord
+}
+
 type OriginValidator func(string) bool
 
 type PromptArgument struct {
@@ -2109,6 +2145,10 @@ type RPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    any    `json:"data,omitempty"`
+}
+
+type RelatedTaskMetadata struct {
+	TaskID string `json:"taskId"`
 }
 
 type Request struct {
@@ -2179,6 +2219,8 @@ type Server struct {
 	loggingLevelHook        LoggingLevelHook
 	promptCompletionHook    CompletionHook
 	resourceCompletionHook  CompletionHook
+	taskRuntime             taskRuntimeConfig
+	taskExecutions          *taskExecutionTracker
 
 	initialSessionListenerBudget *initialSessionListenerBudgetConfig
 }
@@ -2217,6 +2259,67 @@ type StreamStore interface {
 
 type StreamingToolHandler func(context.Context, json.RawMessage, func(SSEEvent)) (*ToolResult, error)
 
+type Task struct {
+	TaskID        string     `json:"taskId"`
+	Status        TaskStatus `json:"status"`
+	StatusMessage string     `json:"statusMessage,omitempty"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	LastUpdatedAt time.Time  `json:"lastUpdatedAt"`
+	TTL           *int64     `json:"ttl"`
+	PollInterval  *int64     `json:"pollInterval,omitempty"`
+}
+
+type TaskListRequest struct {
+	SessionID string `json:"sessionId"`
+	Cursor    string `json:"cursor,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+}
+
+type TaskListResult struct {
+	Tasks      []Task `json:"tasks"`
+	NextCursor string `json:"nextCursor,omitempty"`
+}
+
+type TaskLookup struct {
+	SessionID string `json:"sessionId"`
+	TaskID    string `json:"taskId"`
+}
+
+type TaskMetadata struct {
+	TTL *int64 `json:"ttl,omitempty"`
+}
+
+type TaskRecord struct {
+	SessionID string          `json:"sessionId"`
+	Method    string          `json:"method"`
+	ToolName  string          `json:"toolName,omitempty"`
+	Task      Task            `json:"task"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Error     *RPCError       `json:"error,omitempty"`
+}
+
+type TaskRuntimeOptions struct {
+	Store                  TaskStore
+	DefaultTTL             time.Duration
+	MaxTTL                 time.Duration
+	PollInterval           time.Duration
+	ListLimit              int
+	ModelImmediateResponse string
+}
+
+type TaskStatus string
+
+type TaskStore interface {
+	Create(context.Context, TaskRecord) (*TaskRecord, error)
+	Get(context.Context, TaskLookup) (*TaskRecord, error)
+	Update(context.Context, TaskRecord) (*TaskRecord, error)
+	List(context.Context, TaskListRequest) (*TaskListResult, error)
+	Cancel(context.Context, TaskLookup) (*TaskRecord, error)
+	DeleteSession(context.Context, string) error
+}
+
+type TaskSupport string
+
 type ToolAnnotations struct {
 	Title           string `json:"title,omitempty"`
 	ReadOnlyHint    *bool  `json:"readOnlyHint,omitempty"`
@@ -2238,7 +2341,7 @@ type ToolDef struct {
 }
 
 type ToolExecution struct {
-	TaskSupport string `json:"taskSupport,omitempty"`
+	TaskSupport TaskSupport `json:"taskSupport,omitempty"`
 }
 
 type ToolHandler func(context.Context, json.RawMessage) (*ToolResult, error)
@@ -2265,11 +2368,15 @@ func NewDynamoSessionStore(tablecore.DB) SessionStore
 
 func NewDynamoStreamStore(tablecore.DB) StreamStore
 
+func NewDynamoTaskStore(tablecore.DB) TaskStore
+
 func NewErrorResponse(any, int, string) *Response
 
 func NewMemorySessionStore(...MemorySessionStoreOption) *MemorySessionStore
 
 func NewMemoryStreamStore(...MemoryStreamStoreOption) *MemoryStreamStore
+
+func NewMemoryTaskStore() *MemoryTaskStore
 
 func NewPromptRegistry() *PromptRegistry
 
@@ -2311,6 +2418,8 @@ func WithStreamIDGenerator(apptheory.IDGenerator) MemoryStreamStoreOption
 
 func WithStreamStore(StreamStore) ServerOption
 
+func WithTaskRuntime(TaskRuntimeOptions) ServerOption
+
 func (*DynamoSessionStore) Delete(context.Context, string) error
 
 func (*DynamoSessionStore) Get(context.Context, string) (*Session, error)
@@ -2329,6 +2438,18 @@ func (*DynamoStreamStore) StreamForEvent(context.Context, string, string) (strin
 
 func (*DynamoStreamStore) Subscribe(context.Context, string, string, string) (<-chan StreamEvent, error)
 
+func (*DynamoTaskStore) Cancel(context.Context, TaskLookup) (*TaskRecord, error)
+
+func (*DynamoTaskStore) Create(context.Context, TaskRecord) (*TaskRecord, error)
+
+func (*DynamoTaskStore) DeleteSession(context.Context, string) error
+
+func (*DynamoTaskStore) Get(context.Context, TaskLookup) (*TaskRecord, error)
+
+func (*DynamoTaskStore) List(context.Context, TaskListRequest) (*TaskListResult, error)
+
+func (*DynamoTaskStore) Update(context.Context, TaskRecord) (*TaskRecord, error)
+
 func (*MemorySessionStore) Delete(context.Context, string) error
 
 func (*MemorySessionStore) Get(context.Context, string) (*Session, error)
@@ -2346,6 +2467,18 @@ func (*MemoryStreamStore) DeleteSession(context.Context, string) error
 func (*MemoryStreamStore) StreamForEvent(context.Context, string, string) (string, error)
 
 func (*MemoryStreamStore) Subscribe(context.Context, string, string, string) (<-chan StreamEvent, error)
+
+func (*MemoryTaskStore) Cancel(context.Context, TaskLookup) (*TaskRecord, error)
+
+func (*MemoryTaskStore) Create(context.Context, TaskRecord) (*TaskRecord, error)
+
+func (*MemoryTaskStore) DeleteSession(context.Context, string) error
+
+func (*MemoryTaskStore) Get(context.Context, TaskLookup) (*TaskRecord, error)
+
+func (*MemoryTaskStore) List(context.Context, TaskListRequest) (*TaskListResult, error)
+
+func (*MemoryTaskStore) Update(context.Context, TaskRecord) (*TaskRecord, error)
 
 func (*PromptRegistry) Get(context.Context, string, json.RawMessage) (*PromptResult, error)
 
@@ -2384,6 +2517,8 @@ func (*ToolRegistry) RegisterStreamingTool(ToolDef, StreamingToolHandler) error
 func (*ToolRegistry) RegisterTool(ToolDef, ToolHandler) error
 
 func (dynamoStreamRecord) TableName() string
+
+func (dynamoTaskRecord) TableName() string
 
 func (sessionRecord) TableName() string
 

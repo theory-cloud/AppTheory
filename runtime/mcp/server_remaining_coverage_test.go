@@ -257,7 +257,7 @@ func TestServerHelpersAndInternalBranches(t *testing.T) {
 			ID:      1,
 			Method:  methodToolsCall,
 			Params:  json.RawMessage(`{"name":""}`),
-		})
+		}, "sess-1")
 		if resp.Error == nil || resp.Error.Code != CodeInvalidParams {
 			t.Fatalf("expected invalid params error, got: %+v", resp.Error)
 		}
