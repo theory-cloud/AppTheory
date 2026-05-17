@@ -116,6 +116,10 @@ func (s *Server) hasCompletionHooks() bool {
 	return s.promptCompletionHook != nil || s.resourceCompletionHook != nil
 }
 
+func (s *Server) tasksEnabled() bool {
+	return s != nil && s.capabilities.Tasks && s.hasTaskRuntime()
+}
+
 func protocolSupportsCapability(pv string, surface capabilitySurface) bool {
 	if surface == capabilitySurfaceTasks {
 		return pv == protocolVersion

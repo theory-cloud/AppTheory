@@ -203,8 +203,8 @@ func (s *Server) hasTaskRuntime() bool {
 }
 
 func (s *Server) handleTaskToolsCall(ctx context.Context, req *Request, sessionID string, params toolsCallParams) *Response {
-	if !s.hasTaskRuntime() {
-		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: task runtime not configured")
+	if !s.tasksEnabled() {
+		return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: tasks not enabled")
 	}
 	if strings.TrimSpace(sessionID) == "" {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing session id")
