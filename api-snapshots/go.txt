@@ -942,12 +942,11 @@ var AllowedFields = map[string]bool{
 	"transaction_id": true,
 	"merchant_uid":   true,
 
-	"mid":              true,
-	"merchant_id":      true,
-	"acceptor_id":      true,
-	"tid":              true,
-	"terminal_id":      true,
-	"authorization_id": true,
+	"mid":         true,
+	"merchant_id": true,
+	"acceptor_id": true,
+	"tid":         true,
+	"terminal_id": true,
 }
 
 var PaymentXMLPatterns = []XMLSanitizationPattern{
@@ -1048,6 +1047,7 @@ var SensitiveFields = map[string]SanitizationType{
 	"api_key_id":           PartialMask,
 	"authorization":        FullyRedact,
 	"authorization_header": FullyRedact,
+	"authorization_id":     FullyRedact,
 }
 
 type Policy struct {
