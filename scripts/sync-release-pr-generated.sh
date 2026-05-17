@@ -260,6 +260,16 @@ PY
   done
 }
 
+dispatch_required_checks() {
+  local required_check_workflow="${RELEASE_PR_CHECK_WORKFLOW:-ci.yml}"
+
+  echo "sync-release-pr-generated: dispatching ${required_check_workflow} for ${release_branch}"
+  if ! gh workflow run "${required_check_workflow}" --ref "${release_branch}"; then
+    echo "sync-release-pr-generated: FAIL (could not dispatch ${required_check_workflow} for ${release_branch})"
+    exit 1
+  fi
+}
+
 wait_for_pr_head() {
   local expected_head="$1"
   local timeout_seconds="${RELEASE_PR_HEAD_TIMEOUT_SECONDS:-300}"
@@ -299,6 +309,30 @@ wait_for_pr_head() {
   done
 }
 
+sync_stable_release_premain_manifest() {
+  if [[ "${release_branch}" != "release-please--branches--main" ]]; then
+    return 0
+  fi
+
+  local stable_version
+  stable_version="$(./scripts/read-version.sh)"
+  if [[ -z "${stable_version}" ]]; then
+    echo "sync-release-pr-generated: FAIL (could not read stable release version)"
+    exit 1
+  fi
+
+  STABLE_VERSION="${stable_version}" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+path = Path(".release-please-manifest.premain.json")
+data = json.loads(path.read_text(encoding="utf-8"))
+data["."] = os.environ["STABLE_VERSION"]
+path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
 # The release PR must not be mergeable while generated artifacts are still being
 # rewritten. This is the release-lane invariant: release-please version files and
 # generated CDK/jsii artifacts land in the same release PR before it becomes
@@ -308,16 +342,17 @@ ensure_release_pr_is_draft "before generated artifacts are synced"
 git fetch origin "${release_branch}"
 git switch --detach FETCH_HEAD
 
+sync_stable_release_premain_manifest
 scripts/update-cdk-generated.sh >/dev/null
 
 changed=false
-if ! git diff --quiet -- cdk/.jsii cdk/lib cdk-go/apptheorycdk; then
+if ! git diff --quiet -- .release-please-manifest.premain.json cdk/.jsii cdk/lib cdk-go/apptheorycdk; then
   changed=true
 
   git config user.name "github-actions[bot]"
   git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-  git add cdk/.jsii cdk/lib cdk-go/apptheorycdk
-  git commit -m "chore(release): sync generated cdk artifacts"
+  git add .release-please-manifest.premain.json cdk/.jsii cdk/lib cdk-go/apptheorycdk
+  git commit -m "chore(release): sync generated release artifacts"
 fi
 
 go test ./cdk-go/apptheorycdk
@@ -330,9 +365,12 @@ fi
 
 wait_for_pr_head "$(git rev-parse HEAD)"
 # After the generated-artifact head is visible, rely only on independent PR
-# checks for protected required contexts. This workflow intentionally does not
-# self-attest protected statuses from mutable release-branch code.
+# checks for protected required contexts. Bot-authored release PR updates can be
+# suppressed by GitHub's recursive workflow guard, so explicitly dispatch CI on
+# the release branch instead of self-attesting protected statuses from mutable
+# release-branch code.
 ensure_release_pr_is_draft "before waiting for independent required checks"
+dispatch_required_checks
 wait_for_required_checks_to_start
 wait_for_required_checks
 

@@ -245,6 +245,10 @@ if [[ -f ".github/workflows/release-pr.yml" ]]; then
     echo "branch-release: release-pr workflow must sync generated cdk artifacts onto the release PR branch"
     failures=$((failures + 1))
   }
+  grep -Fq "sync_stable_release_premain_manifest" "scripts/sync-release-pr-generated.sh" || {
+    echo "branch-release: stable release PR sync must reset .release-please-manifest.premain.json"
+    failures=$((failures + 1))
+  }
 fi
 
 for cfg in "release-please-config.premain.json" "release-please-config.json"; do
