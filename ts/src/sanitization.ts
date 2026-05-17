@@ -21,7 +21,6 @@ const allowedSanitizeFields = new Set([
   "acceptor_id",
   "tid",
   "terminal_id",
-  "authorization_id",
 ]);
 
 const sensitiveSanitizeFields = new Map<string, "fully" | "partial">([
@@ -62,6 +61,7 @@ const sensitiveSanitizeFields = new Map<string, "fully" | "partial">([
   ["api_key_id", "partial"],
   ["authorization", "fully"],
   ["authorization_header", "fully"],
+  ["authorization_id", "fully"],
 ]);
 
 function canonicalizeSanitizationKey(key: string): string {
