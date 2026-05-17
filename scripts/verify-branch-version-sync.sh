@@ -61,6 +61,11 @@ if [[ "${branch}" == "premain" ]]; then
   else
     mode="premain"
   fi
+elif [[ "${branch}" == "staging" ]]; then
+  # Staging is where stale prerelease state must be repaired before the next
+  # staging -> premain promotion. Validate the checked-out staging PR/head so a
+  # stale .release-please-manifest.premain.json cannot reach premain.
+  mode="staging"
 elif [[ "${branch}" == "main" && "${head_ref}" == "premain" ]]; then
   mode="main-promotion"
 fi
@@ -100,9 +105,11 @@ subject_label="premain"
 premain_stable=""
 premain_version=""
 
-if [[ "${mode}" == "premain" || "${mode}" == "staging-promotion" ]]; then
+if [[ "${mode}" == "premain" || "${mode}" == "staging-promotion" || "${mode}" == "staging" ]]; then
   if [[ "${mode}" == "staging-promotion" ]]; then
     subject_label="staging->premain promotion"
+  elif [[ "${mode}" == "staging" ]]; then
+    subject_label="staging"
   fi
   premain_stable="$(
     python3 - <<'PY'

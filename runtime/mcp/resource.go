@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 	"sync"
 )
 
@@ -66,8 +68,12 @@ func errDuplicateResource(uri string) error {
 
 // RegisterResource registers a resource by URI.
 func (r *ResourceRegistry) RegisterResource(def ResourceDef, handler ResourceHandler) error {
+	def.URI = strings.TrimSpace(def.URI)
 	if def.URI == "" {
 		return fmt.Errorf("resource uri must not be empty")
+	}
+	if !validResourceURI(def.URI) {
+		return fmt.Errorf("resource uri must be absolute: %s", def.URI)
 	}
 	if def.Name == "" {
 		return fmt.Errorf("resource name must not be empty")
@@ -107,6 +113,13 @@ func (r *ResourceRegistry) Len() int {
 	return len(r.resources)
 }
 
+func (r *ResourceRegistry) exists(uri string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.index[uri]
+	return ok
+}
+
 // Read resolves a resource by URI and returns its content.
 func (r *ResourceRegistry) Read(ctx context.Context, uri string) ([]ResourceContent, error) {
 	r.mu.RLock()
@@ -119,4 +132,13 @@ func (r *ResourceRegistry) Read(ctx context.Context, uri string) ([]ResourceCont
 	r.mu.RUnlock()
 
 	return handler(ctx)
+}
+
+func validResourceURI(uri string) bool {
+	uri = strings.TrimSpace(uri)
+	if uri == "" || strings.ContainsAny(uri, " \t\r\n") {
+		return false
+	}
+	parsed, err := url.Parse(uri)
+	return err == nil && parsed.Scheme != ""
 }
