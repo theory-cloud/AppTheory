@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -55,6 +56,16 @@ func expectTaskNonTerminalWriteGuard(q *tablemocks.MockQuery) {
 	q.On("WithCondition", "Status", "<>", TaskStatusCompleted).Return(q).Once()
 	q.On("WithCondition", "Status", "<>", TaskStatusFailed).Return(q).Once()
 	q.On("WithCondition", "Status", "<>", TaskStatusCanceled).Return(q).Once()
+}
+
+func expectDynamoTaskListQuery(q *tablemocks.MockQuery, sessionID string, limit int, offset int) {
+	q.On("WithContext", mock.Anything).Return(q)
+	q.On("Where", "SessionID", "=", sessionID).Return(q)
+	q.On("OrderBy", "CreatedAt", "ASC").Return(q)
+	q.On("OrderBy", "TaskID", "ASC").Return(q)
+	q.On("Limit", limit).Return(q)
+	q.On("Offset", offset).Return(q)
+	q.On("Select", dynamoTaskListProjection).Return(q)
 }
 
 func TestDynamoTaskStore_CreatePersistsTaskRecord(t *testing.T) {
@@ -440,32 +451,11 @@ func TestDynamoTaskStore_ListFiltersSortsAndPaginates(t *testing.T) {
 	now := time.Date(2026, 5, 15, 1, 33, 0, 0, time.UTC)
 
 	db.On("Model", mock.Anything).Return(q)
-	q.On("WithContext", mock.Anything).Return(q)
-	q.On("Where", "SessionID", "=", "sess-1").Return(q)
+	expectDynamoTaskListQuery(q, "sess-1", 3, 0)
 	q.On("All", mock.Anything).Run(func(args mock.Arguments) {
 		out, ok := args.Get(0).(*[]dynamoTaskRecord)
 		require.True(t, ok)
 		*out = []dynamoTaskRecord{
-			{
-				SessionID:     "sess-1",
-				TaskID:        "task-3",
-				Method:        methodToolsCall,
-				Status:        TaskStatusWorking,
-				CreatedAt:     now.Add(3 * time.Second),
-				LastUpdatedAt: now.Add(3 * time.Second),
-				ExpiresAt:     now.Add(time.Hour).Unix(),
-				TTLMillis:     int64(time.Hour / time.Millisecond),
-			},
-			{
-				SessionID:     "sess-1",
-				TaskID:        "expired",
-				Method:        methodToolsCall,
-				Status:        TaskStatusWorking,
-				CreatedAt:     now.Add(time.Second),
-				LastUpdatedAt: now.Add(time.Second),
-				ExpiresAt:     now.Add(-time.Second).Unix(),
-				TTLMillis:     int64(time.Hour / time.Millisecond),
-			},
 			{
 				SessionID:     "sess-1",
 				TaskID:        "task-1",
@@ -483,6 +473,16 @@ func TestDynamoTaskStore_ListFiltersSortsAndPaginates(t *testing.T) {
 				Status:        TaskStatusWorking,
 				CreatedAt:     now.Add(2 * time.Second),
 				LastUpdatedAt: now.Add(2 * time.Second),
+				ExpiresAt:     now.Add(time.Hour).Unix(),
+				TTLMillis:     int64(time.Hour / time.Millisecond),
+			},
+			{
+				SessionID:     "sess-1",
+				TaskID:        "task-3",
+				Method:        methodToolsCall,
+				Status:        TaskStatusWorking,
+				CreatedAt:     now.Add(3 * time.Second),
+				LastUpdatedAt: now.Add(3 * time.Second),
 				ExpiresAt:     now.Add(time.Hour).Unix(),
 				TTLMillis:     int64(time.Hour / time.Millisecond),
 			},
@@ -508,6 +508,108 @@ func TestDynamoTaskStore_ListFiltersSortsAndPaginates(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, next.Tasks, 1)
 	require.Equal(t, "task-3", next.Tasks[0].TaskID)
+
+	paged := store.listQueryResult(2, 2, []dynamoTaskRecord{
+		{TaskID: "task-3", Status: TaskStatusWorking, CreatedAt: now.Add(2 * time.Second), LastUpdatedAt: now.Add(2 * time.Second), ExpiresAt: now.Add(time.Hour).Unix()},
+		{TaskID: "expired", Status: TaskStatusWorking, CreatedAt: now.Add(3 * time.Second), LastUpdatedAt: now.Add(3 * time.Second), ExpiresAt: now.Add(-time.Second).Unix()},
+		{TaskID: "task-4", Status: TaskStatusWorking, CreatedAt: now.Add(4 * time.Second), LastUpdatedAt: now.Add(4 * time.Second), ExpiresAt: now.Add(time.Hour).Unix()},
+	})
+	require.Len(t, paged.Tasks, 1)
+	require.Equal(t, "task-3", paged.Tasks[0].TaskID)
+	require.Equal(t, "4", paged.NextCursor)
+}
+
+func TestDynamoTaskStore_ListPaginatesHighCardinalityPartition(t *testing.T) {
+	const (
+		sessionID      = "sess-high"
+		pageLimit      = 3
+		queryPageLimit = pageLimit + 1
+		recordCount    = 1000
+	)
+	db := new(tablemocks.MockDB)
+	now := time.Date(2026, 5, 15, 1, 34, 0, 0, time.UTC)
+	backing := make([]dynamoTaskRecord, recordCount)
+	for i := range backing {
+		createdAt := now.Add(time.Duration(i/2) * time.Second)
+		backing[i] = dynamoTaskRecord{
+			SessionID:          sessionID,
+			TaskID:             fmt.Sprintf("task-%04d", i+1),
+			Method:             methodToolsCall,
+			ToolName:           "slow",
+			Status:             TaskStatusWorking,
+			StatusMessage:      "working",
+			CreatedAt:          createdAt,
+			LastUpdatedAt:      createdAt,
+			ExpiresAt:          now.Add(time.Hour).Unix(),
+			TTLMillis:          int64(time.Hour / time.Millisecond),
+			PollIntervalMillis: int64(defaultTaskPollInterval / time.Millisecond),
+			Result:             json.RawMessage(`{"content":[{"type":"text","text":"large payload must not be projected"}]}`),
+			ErrorCode:          CodeServerError,
+			ErrorMessage:       "large error must not be projected",
+			ErrorData:          json.RawMessage(`{"secret":"must not be projected"}`),
+		}
+	}
+	backing[1].ExpiresAt = now.Add(-time.Second).Unix()
+	backing[5].ExpiresAt = now.Add(-time.Second).Unix()
+
+	for _, field := range []string{"Result", "ErrorCode", "ErrorMessage", "ErrorData"} {
+		require.NotContains(t, dynamoTaskListProjection, field, "tasks/list projection must not read result/error payload fields")
+	}
+
+	expectListPage := func(offset int) {
+		t.Helper()
+		q := new(tablemocks.MockQuery)
+		t.Cleanup(func() {
+			q.AssertExpectations(t)
+		})
+		db.On("Model", mock.Anything).Return(q).Once()
+		expectDynamoTaskListQuery(q, sessionID, queryPageLimit, offset)
+		q.On("All", mock.Anything).Run(func(args mock.Arguments) {
+			end := offset + queryPageLimit
+			if end > len(backing) {
+				end = len(backing)
+			}
+			page := append([]dynamoTaskRecord(nil), backing[offset:end]...)
+			require.LessOrEqual(t, len(page), queryPageLimit)
+			require.Less(t, len(page), len(backing), "mock must emulate storage-layer paging instead of materializing the full partition")
+			out, ok := args.Get(0).(*[]dynamoTaskRecord)
+			require.True(t, ok)
+			*out = page
+		}).Return(nil).Once()
+	}
+
+	expectListPage(0)
+	expectListPage(3)
+	expectListPage(6)
+
+	store, ok := NewDynamoTaskStore(db).(*DynamoTaskStore)
+	require.True(t, ok)
+	store.now = func() time.Time { return now }
+
+	first, err := store.List(context.Background(), TaskListRequest{SessionID: " " + sessionID + " ", Limit: pageLimit})
+	require.NoError(t, err)
+	require.Equal(t, []string{"task-0001", "task-0003"}, taskIDs(first.Tasks))
+	require.Equal(t, "3", first.NextCursor)
+
+	second, err := store.List(context.Background(), TaskListRequest{SessionID: sessionID, Limit: pageLimit, Cursor: first.NextCursor})
+	require.NoError(t, err)
+	require.Equal(t, []string{"task-0004", "task-0005"}, taskIDs(second.Tasks))
+	require.Equal(t, "6", second.NextCursor)
+
+	third, err := store.List(context.Background(), TaskListRequest{SessionID: sessionID, Limit: pageLimit, Cursor: second.NextCursor})
+	require.NoError(t, err)
+	require.Equal(t, []string{"task-0007", "task-0008", "task-0009"}, taskIDs(third.Tasks))
+	require.Equal(t, "9", third.NextCursor)
+
+	db.AssertExpectations(t)
+}
+
+func taskIDs(tasks []Task) []string {
+	out := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		out = append(out, task.TaskID)
+	}
+	return out
 }
 
 func TestDynamoTaskStore_DeleteSessionAndInvalidWrites(t *testing.T) {
@@ -547,8 +649,7 @@ func TestDynamoTaskStore_ListAndDeleteErrorBranches(t *testing.T) {
 	q := new(tablemocks.MockQuery)
 	expected := errors.New("list failed")
 	db.On("Model", mock.Anything).Return(q)
-	q.On("WithContext", mock.Anything).Return(q)
-	q.On("Where", "SessionID", "=", "sess-1").Return(q)
+	expectDynamoTaskListQuery(q, "sess-1", defaultTaskListLimit+1, 0)
 	q.On("All", mock.Anything).Return(expected)
 
 	_, err = NewDynamoTaskStore(db).List(context.Background(), TaskListRequest{SessionID: "sess-1"})
@@ -594,8 +695,7 @@ func TestDynamoTaskStore_ListNotFoundReturnsEmpty(t *testing.T) {
 	q := new(tablemocks.MockQuery)
 
 	db.On("Model", mock.Anything).Return(q)
-	q.On("WithContext", mock.Anything).Return(q)
-	q.On("Where", "SessionID", "=", "sess-1").Return(q)
+	expectDynamoTaskListQuery(q, "sess-1", defaultTaskListLimit+1, 0)
 	q.On("All", mock.Anything).Return(tableerrors.ErrItemNotFound)
 
 	store := NewDynamoTaskStore(db)

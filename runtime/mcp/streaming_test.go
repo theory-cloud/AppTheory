@@ -256,6 +256,51 @@ func TestToolsCallStreaming_ProgressToken_NumberIsPreserved(t *testing.T) {
 	}
 }
 
+func TestToolsCallStreaming_RequiredTaskToolUsesJSONErrorPath(t *testing.T) {
+	s := NewServer("test-server", "1.0.0", WithTaskRuntime(TaskRuntimeOptions{Store: NewMemoryTaskStore()}))
+	sessionID := initializeSession(t, s)
+
+	called := false
+	if err := s.registry.RegisterStreamingTool(
+		ToolDef{
+			Name:        "required_stream",
+			Description: "Requires task execution",
+			Execution:   &ToolExecution{TaskSupport: TaskSupportRequired},
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+		},
+		func(context.Context, json.RawMessage, func(SSEEvent)) (*ToolResult, error) {
+			called = true
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "should not run"}}}, nil
+		},
+	); err != nil {
+		t.Fatalf("register streaming tool: %v", err)
+	}
+
+	params := toolsCallParams{Name: "required_stream", Arguments: json.RawMessage(`{}`)}
+	body := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodToolsCall, Params: mustMarshal(t, params)})
+
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"application/json, text/event-stream"}
+
+	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", body, headers)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if resp.BodyReader != nil {
+		t.Fatalf("expected required-task streaming call to stay on JSON error path")
+	}
+	rpcResp, err := parseJSONRPCResponse(resp)
+	if err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if rpcResp.Error == nil || rpcResp.Error.Code != CodeMethodNotFound {
+		t.Fatalf("expected required task tool to reject non-task streaming call, got %+v", rpcResp.Error)
+	}
+	if called {
+		t.Fatalf("required-task streaming handler ran without task execution")
+	}
+}
+
 func TestToolsCallStreaming_CanResumeViaGETWithLastEventID(t *testing.T) {
 	s := NewServer("test-server", "1.0.0")
 	sessionID := initializeSession(t, s)

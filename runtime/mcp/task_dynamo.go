@@ -19,6 +19,20 @@ const (
 	envTaskTableName           = "MCP_TASK_TABLE"
 )
 
+var dynamoTaskListProjection = []string{
+	"SessionID",
+	"TaskID",
+	"Method",
+	"ToolName",
+	"Status",
+	"StatusMessage",
+	"CreatedAt",
+	"LastUpdatedAt",
+	"ExpiresAt",
+	"TTLMillis",
+	"PollIntervalMillis",
+}
+
 type dynamoTaskRecord struct {
 	SessionID          string          `theorydb:"pk,attr:sessionId" json:"sessionId"`
 	TaskID             string          `theorydb:"sk,attr:taskId" json:"taskId"`
@@ -117,11 +131,21 @@ func (d *DynamoTaskStore) List(ctx context.Context, req TaskListRequest) (*TaskL
 	if sessionID == "" {
 		return &TaskListResult{Tasks: []Task{}}, nil
 	}
+	limit := taskListLimit(req.Limit)
+	start, err := taskListCursor(req.Cursor)
+	if err != nil {
+		return nil, err
+	}
 
 	var records []dynamoTaskRecord
-	err := d.db.Model(&dynamoTaskRecord{}).
+	err = d.db.Model(&dynamoTaskRecord{}).
 		WithContext(ctx).
 		Where("SessionID", "=", sessionID).
+		OrderBy("CreatedAt", "ASC").
+		OrderBy("TaskID", "ASC").
+		Limit(limit + 1).
+		Offset(start).
+		Select(dynamoTaskListProjection...).
 		All(&records)
 	if err != nil {
 		if tableerrors.IsNotFound(err) {
@@ -130,7 +154,7 @@ func (d *DynamoTaskStore) List(ctx context.Context, req TaskListRequest) (*TaskL
 		return nil, err
 	}
 
-	return d.listResult(req, records)
+	return d.listQueryResult(start, limit, records), nil
 }
 
 func (d *DynamoTaskStore) Cancel(ctx context.Context, lookup TaskLookup) (*TaskRecord, error) {
@@ -252,6 +276,43 @@ func (d *DynamoTaskStore) listResult(req TaskListRequest, records []dynamoTaskRe
 		result.NextCursor = strconv.Itoa(end)
 	}
 	return result, nil
+}
+
+func (d *DynamoTaskStore) listQueryResult(start int, limit int, records []dynamoTaskRecord) *TaskListResult {
+	if limit <= 0 {
+		limit = defaultTaskListLimit
+	}
+	if limit > maxTaskListLimit {
+		limit = maxTaskListLimit
+	}
+
+	hasMore := len(records) > limit
+	if hasMore {
+		records = records[:limit]
+	}
+
+	active := records[:0]
+	for _, record := range records {
+		if !d.expired(record) {
+			active = append(active, record)
+		}
+	}
+	sort.SliceStable(active, func(i, j int) bool {
+		if active[i].CreatedAt.Equal(active[j].CreatedAt) {
+			return active[i].TaskID < active[j].TaskID
+		}
+		return active[i].CreatedAt.Before(active[j].CreatedAt)
+	})
+
+	tasks := make([]Task, 0, len(active))
+	for _, record := range active {
+		tasks = append(tasks, dynamoTaskToTask(record))
+	}
+	result := &TaskListResult{Tasks: tasks}
+	if hasMore {
+		result.NextCursor = strconv.Itoa(start + limit)
+	}
+	return result
 }
 
 func taskListLimit(limit int) int {
