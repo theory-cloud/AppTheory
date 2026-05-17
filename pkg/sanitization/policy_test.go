@@ -33,7 +33,7 @@ func TestPolicySanitizer_RulesOverrideDefaultsAndRecurse(t *testing.T) {
 	t.Parallel()
 
 	fn, err := NewPolicySanitizer(&Policy{
-		AllowedFields:     []string{"authorization_id"},
+		AllowedFields:     []string{"authorization_id", "safe_reference"},
 		FullyRedactFields: []string{"merchant_uid"},
 		PartialMaskFields: []string{"custom_pan"},
 		Rules: []PolicyRule{
@@ -47,6 +47,7 @@ func TestPolicySanitizer_RulesOverrideDefaultsAndRecurse(t *testing.T) {
 
 	in := map[string]any{
 		"authorization_id": "auth_1",
+		"safe_reference":   "safe_1",
 		"merchant_uid":     "muid_1",
 		"custom_pan":       "4111111111111111",
 		"custom_pan2":      "4111111111111111",
@@ -66,8 +67,11 @@ func TestPolicySanitizer_RulesOverrideDefaultsAndRecurse(t *testing.T) {
 		t.Fatalf("expected map output, got %T (%#v)", out, out)
 	}
 
-	if out["authorization_id"] != "auth_1" {
-		t.Fatalf("expected authorization_id to be preserved, got %#v", out["authorization_id"])
+	if out["authorization_id"] != redactedValue {
+		t.Fatalf("expected authorization_id to remain redacted despite policy allow, got %#v", out["authorization_id"])
+	}
+	if out["safe_reference"] != "safe_1" {
+		t.Fatalf("expected safe_reference to be preserved by policy, got %#v", out["safe_reference"])
 	}
 	if out["merchant_uid"] != redactedValue {
 		t.Fatalf("expected merchant_uid to be redacted by policy, got %#v", out["merchant_uid"])

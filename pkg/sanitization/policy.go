@@ -151,6 +151,9 @@ func (s *policySanitizer) sanitizeFieldValueWithParent(parentKey string, key str
 	}
 
 	parentCanonical := canonicalizeSanitizationKey(parentKey)
+	if isNeverAllowedSensitiveField(keyLower, keyCanonical) {
+		return redactedValue
+	}
 	if action, ok := s.policy.lookup(parentCanonical, keyCanonical); ok {
 		return s.applyAction(action, parentKey, keyLower, keyCanonical, value)
 	}

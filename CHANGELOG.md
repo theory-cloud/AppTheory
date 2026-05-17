@@ -1,5 +1,55 @@
 # Changelog
 
+## [1.6.0](https://github.com/theory-cloud/AppTheory/compare/v1.5.0...v1.6.0) (2026-05-15)
+
+
+### Features
+
+* **cdk:** provision mcp task storage ([9b7448f](https://github.com/theory-cloud/AppTheory/commit/9b7448f347116d7e181784d83892d1c7dd326e79))
+* **mcp:** add completion hook ([b93b2d7](https://github.com/theory-cloud/AppTheory/commit/b93b2d7c28312b84f9d42e8a3cd0f16f0d75fc5c))
+* **mcp:** add explicit capability configuration ([ffba0c7](https://github.com/theory-cloud/AppTheory/commit/ffba0c75b50b8aeac07a6697f5e95ea3c0cbefd8))
+* **mcp:** add logging level hook ([5185926](https://github.com/theory-cloud/AppTheory/commit/5185926e3ab1c54faaf7c98dc68ae69f7a1edae1))
+* **mcp:** add resource subscription hooks ([2117015](https://github.com/theory-cloud/AppTheory/commit/21170154f1638622091b2631c5704d05ee14ed4a))
+* **mcp:** add task runtime ([2563cad](https://github.com/theory-cloud/AppTheory/commit/2563cada78c7680f7b5693c8ad1ad64af03f7116))
+* **mcp:** add task runtime contract ([685ca06](https://github.com/theory-cloud/AppTheory/commit/685ca06633799867f4fb7ba520167b0887f5d763))
+* **mcp:** add utility hooks ([8067029](https://github.com/theory-cloud/AppTheory/commit/80670298dfe40ab1d8de399cd8abd369ffc83c58))
+* **mcp:** gate capabilities by protocol version ([4f9f148](https://github.com/theory-cloud/AppTheory/commit/4f9f148cb18212d8085f001df80767c65cc5bcfa))
+* **mcp:** harden capability transport ([91a8c53](https://github.com/theory-cloud/AppTheory/commit/91a8c534e043bfb717a8ba21a47e18a44ae905a3))
+* **mcp:** implement task-backed tool calls ([889c2b5](https://github.com/theory-cloud/AppTheory/commit/889c2b56e7e960ec1271b45b86c99f1db0b3f4cc))
+* **mcp:** propagate cancellation notifications ([22baf62](https://github.com/theory-cloud/AppTheory/commit/22baf62a0e66563d2c36cfce1a156f3ef3d8f7d5))
+
+
+### Bug Fixes
+
+* **ci:** enforce Gov rubric gate ([9e876b7](https://github.com/theory-cloud/AppTheory/commit/9e876b7612429d2b8d6269971a162278220cca84))
+* **ci:** install TS deps for Gov rubric ([8e4dcba](https://github.com/theory-cloud/AppTheory/commit/8e4dcbaa7fd63505fc04932a13e0beb53ed63538))
+* **ci:** make prerelease readiness pipefail-safe ([3138051](https://github.com/theory-cloud/AppTheory/commit/31380518c668a72bf9551e8f85b222291d236e68))
+* **ci:** make prerelease readiness pipefail-safe ([0fcda4e](https://github.com/theory-cloud/AppTheory/commit/0fcda4ec35e1bda4a7667c7e384e9d0b8846b3c2))
+* **deps:** update tabletheory pins ([44dc0d8](https://github.com/theory-cloud/AppTheory/commit/44dc0d838ae0218c55204a3c18e5688c9f91f490))
+* **mcp:** align task runtime with protocol ([172a3f5](https://github.com/theory-cloud/AppTheory/commit/172a3f592ffe40061390e73d7636cb50dd23bed2))
+* **mcp:** bound stream spill reads ([444d949](https://github.com/theory-cloud/AppTheory/commit/444d949e76e9b492a29b92266538a234dd9441b3))
+* **mcp:** enforce streamable http headers ([e55665b](https://github.com/theory-cloud/AppTheory/commit/e55665bd8cce5ad6d64636b108c76d2e437ed0d9))
+* **mcp:** harden MCP runtime prerequisites ([66be609](https://github.com/theory-cloud/AppTheory/commit/66be609f207ed1f4d524bd295b590b35773e0783))
+* **mcp:** harden utility hook capabilities ([05fb576](https://github.com/theory-cloud/AppTheory/commit/05fb5762b06ba4ab1a9f3cebe157f38e9de1f236))
+* **mcp:** prime streamable http replay ([a55ded1](https://github.com/theory-cloud/AppTheory/commit/a55ded18252d52c15c769845f82caf481eb98ac7))
+* **mcp:** recover non-streaming tool panics ([28c8e0d](https://github.com/theory-cloud/AppTheory/commit/28c8e0db8442271e1e479f9b9ed85328ce2855ee))
+* **mcp:** upsert dynamo sessions ([d6a6a6b](https://github.com/theory-cloud/AppTheory/commit/d6a6a6b577089d79cf6e6629818e45990802ee97))
+* **mcp:** validate delete protocol version ([2695d5f](https://github.com/theory-cloud/AppTheory/commit/2695d5fdd07d1e13d442aaa77f6acce11e75a05e))
+* **release:** build assets before checksums ([54e4fb3](https://github.com/theory-cloud/AppTheory/commit/54e4fb3f6c2f0e1314eb0ec84d05abb651a8199b))
+* **release:** build assets before checksums ([d7fbfff](https://github.com/theory-cloud/AppTheory/commit/d7fbfffd8dd5e6020190f0bfd596bb89537a57f1))
+* **release:** enforce release PR artifact gates ([90dfa7c](https://github.com/theory-cloud/AppTheory/commit/90dfa7cf7bdd58428e027e95204c30442ce9b099))
+* **release:** enforce release PR artifact gates ([5e4bf91](https://github.com/theory-cloud/AppTheory/commit/5e4bf91fde487c0c97b2d1e85bcccaeba19cd13f))
+* **release:** harden release workflow promotion ([28bf5c0](https://github.com/theory-cloud/AppTheory/commit/28bf5c01951f89adce7863fde6241f0c520d052e))
+* **release:** repair rc artifact state ([24aa629](https://github.com/theory-cloud/AppTheory/commit/24aa62919a1e9a2f0f6fec5f42003729c6e5a090))
+* **release:** repair rc artifact state ([9469363](https://github.com/theory-cloud/AppTheory/commit/94693635e1ca70ecd0850751ae2284fac6ac8151))
+* **release:** run release PR gates before ready ([9301a07](https://github.com/theory-cloud/AppTheory/commit/9301a07a40808696f3790c87bc7b15bc060623da))
+* **release:** run release PR gates before ready ([4c48023](https://github.com/theory-cloud/AppTheory/commit/4c4802383d17ad303574fcdd28edc600ab7f9fb2))
+* **release:** run release PR gates before ready ([b3f3682](https://github.com/theory-cloud/AppTheory/commit/b3f368251a4e5d033c7e377ae741911f9fb0ee4a))
+* **release:** trigger draft release PR checks ([d273566](https://github.com/theory-cloud/AppTheory/commit/d273566db0ce1adad393546c56aceedb55648136))
+* **release:** wait for release PR checks to queue ([2f6809d](https://github.com/theory-cloud/AppTheory/commit/2f6809de1f76b08e764fccc89b89e2b2c73f537f))
+* **release:** wait for release PR checks to queue ([b0a4cee](https://github.com/theory-cloud/AppTheory/commit/b0a4cee9e2b8104def749d95ceacd86e93f904e0))
+* **release:** wait for release PR checks to queue ([02b6e11](https://github.com/theory-cloud/AppTheory/commit/02b6e11491fb61005f09c376ee7c53f033f31589))
+
 ## [1.5.0-rc.3](https://github.com/theory-cloud/AppTheory/compare/v1.5.0-rc.2...v1.5.0-rc.3) (2026-05-15)
 
 
