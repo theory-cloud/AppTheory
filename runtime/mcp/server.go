@@ -584,6 +584,10 @@ func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocol
 }
 
 func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessionID string) *Response {
+	if !s.methodCapabilityEnabled(req.Method) {
+		return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: "+req.Method)
+	}
+
 	switch req.Method {
 	case methodInitialize:
 		selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)
@@ -620,7 +624,7 @@ func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessio
 }
 
 func (s *Server) dispatchTaskMethod(ctx context.Context, req *Request, sessionID string) *Response {
-	if !s.hasTaskRuntime() {
+	if !s.tasksEnabled() {
 		return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: "+req.Method)
 	}
 
@@ -753,10 +757,14 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request, sessionID st
 	if params.Name == "" {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name")
 	}
-	if params.Task != nil && s.hasTaskRuntime() {
+	taskSupport := s.registry.taskSupport(params.Name)
+	if params.Task != nil {
+		if !s.tasksEnabled() {
+			return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: tasks not enabled")
+		}
 		return s.handleTaskToolsCall(ctx, req, sessionID, params)
 	}
-	if s.hasTaskRuntime() && s.registry.taskSupport(params.Name) == TaskSupportRequired {
+	if taskSupport == TaskSupportRequired {
 		return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: tool requires task execution")
 	}
 
@@ -1346,6 +1354,9 @@ func (s *Server) shouldStreamToolsCall(req *Request) bool {
 	if params.Task != nil {
 		return false
 	}
+	if s.registry.taskSupport(params.Name) == TaskSupportRequired {
+		return false
+	}
 	return s.registry.supportsStreaming(params.Name)
 }
 
@@ -1409,6 +1420,10 @@ func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID strin
 	}
 	if params.Name == "" {
 		s.appendStreamResponseOrDeliveryError(storeCtx, sessionID, streamID, req.ID, NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name"))
+		return
+	}
+	if params.Task != nil || s.registry.taskSupport(params.Name) == TaskSupportRequired {
+		s.appendStreamResponseOrDeliveryError(storeCtx, sessionID, streamID, req.ID, NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: tool requires task execution"))
 		return
 	}
 

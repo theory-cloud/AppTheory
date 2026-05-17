@@ -24,12 +24,11 @@ var AllowedFields = map[string]bool{
 	"merchant_uid":   true,
 
 	// External system identifiers (MIDs, acceptor IDs, terminal IDs, etc.).
-	"mid":              true,
-	"merchant_id":      true,
-	"acceptor_id":      true,
-	"tid":              true,
-	"terminal_id":      true,
-	"authorization_id": true,
+	"mid":         true,
+	"merchant_id": true,
+	"acceptor_id": true,
+	"tid":         true,
+	"terminal_id": true,
 }
 
 // SanitizationType defines how to sanitize a field.
@@ -81,6 +80,7 @@ var SensitiveFields = map[string]SanitizationType{
 	"api_key_id":           PartialMask,
 	"authorization":        FullyRedact,
 	"authorization_header": FullyRedact,
+	"authorization_id":     FullyRedact,
 }
 
 func init() {
@@ -203,7 +203,14 @@ func sanitizeFieldValueWithParent(parentKey string, key string, value any) any {
 }
 
 func isAllowedField(keyLower, keyCanonical string) bool {
+	if isNeverAllowedSensitiveField(keyLower, keyCanonical) {
+		return false
+	}
 	return AllowedFields[keyLower] || AllowedFields[keyCanonical]
+}
+
+func isNeverAllowedSensitiveField(keyLower, keyCanonical string) bool {
+	return keyLower == "authorization_id" || keyCanonical == "authorizationid"
 }
 
 func sensitiveFieldType(keyLower, keyCanonical string) (SanitizationType, bool) {
