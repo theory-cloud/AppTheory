@@ -211,6 +211,16 @@ require_order(
     "dispatch_required_checks\nwait_for_required_checks_to_start\nwait_for_required_checks",
     "release PR sync must dispatch and wait for independent CI after the generated-artifact head is visible",
 )
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "check-runs?per_page=100",
+    "release PR sync must read commit check-runs because workflow_dispatch checks are not always surfaced by PR checks",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "COMMIT_CHECKS_JSON",
+    "release PR sync must merge commit-attached check-runs into the required check view",
+)
 require_order(
     "scripts/sync-release-pr-generated.sh",
     "wait_for_required_checks",
