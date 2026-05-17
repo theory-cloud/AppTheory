@@ -22,6 +22,9 @@ jobs:
       - name: Fetch main + premain (release preflight)
         run: git fetch origin main premain --force
 
+      - name: Verify branch version sync (release preflight)
+        run: scripts/verify-branch-version-sync.sh
+
       - name: Set SOURCE_DATE_EPOCH (release preflight)
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
 
