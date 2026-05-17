@@ -584,6 +584,10 @@ func (s *Server) dispatchForProtocol(ctx context.Context, req *Request, protocol
 }
 
 func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessionID string) *Response {
+	if !s.methodCapabilityEnabled(req.Method) {
+		return NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: "+req.Method)
+	}
+
 	switch req.Method {
 	case methodInitialize:
 		selectedPV, errResp := s.negotiateInitializeProtocolVersion(req)

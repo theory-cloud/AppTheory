@@ -120,6 +120,24 @@ func (s *Server) tasksEnabled() bool {
 	return s != nil && s.capabilities.Tasks && s.hasTaskRuntime()
 }
 
+func (s *Server) methodCapabilityEnabled(method string) bool {
+	if s == nil {
+		return false
+	}
+	switch method {
+	case methodToolsList, methodToolsCall:
+		return s.capabilities.Tools
+	case methodResourcesList, methodResourcesRead, methodResourcesSubscribe, methodResourcesUnsubscribe:
+		return s.capabilities.Resources
+	case methodPromptsList, methodPromptsGet:
+		return s.capabilities.Prompts
+	case methodCompletionComplete:
+		return s.capabilities.Completions
+	default:
+		return true
+	}
+}
+
 func protocolSupportsCapability(pv string, surface capabilitySurface) bool {
 	if surface == capabilitySurfaceTasks {
 		return pv == protocolVersion
