@@ -72,7 +72,7 @@ func (s *Server) handleResourceSubscription(
 	if !validResourceURI(params.URI) {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: invalid uri")
 	}
-	if !s.resourceRegistry.Exists(params.URI) {
+	if !s.resourceRegistry.exists(params.URI) {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "resource not found: "+params.URI)
 	}
 
