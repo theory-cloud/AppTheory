@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -524,6 +525,101 @@ func TestTaskRuntimeToolsCall_ResultWaitIsBoundedByTTL(t *testing.T) {
 	}
 }
 
+func TestTaskRuntimeToolsCall_ResultReturnsWhenContextCanceled(t *testing.T) {
+	store := NewMemoryTaskStore()
+	record := taskTestRecord("sess-1", "task-result-context-cancel", TaskStatusWorking)
+	record.Result = nil
+	if _, err := store.Create(context.Background(), record); err != nil {
+		t.Fatalf("create working task: %v", err)
+	}
+
+	s := NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: store, PollInterval: time.Millisecond}))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan *Response, 1)
+	go func() {
+		done <- s.dispatchForProtocol(ctx, taskRequest(1, methodTasksResult, "task-result-context-cancel"), protocolVersion, "sess-1")
+	}()
+
+	select {
+	case resp := <-done:
+		t.Fatalf("tasks/result returned before request context was canceled: %+v", resp)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	start := time.Now()
+	cancel()
+
+	select {
+	case resp := <-done:
+		if resp.Error == nil || resp.Error.Code != CodeServerError || !strings.Contains(resp.Error.Message, context.Canceled.Error()) {
+			t.Fatalf("expected context-canceled server error, got %+v", resp.Error)
+		}
+		if elapsed := time.Since(start); elapsed > 250*time.Millisecond {
+			t.Fatalf("expected tasks/result to return promptly after context cancellation, elapsed %s", elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("tasks/result did not return after request context cancellation")
+	}
+}
+
+func TestTaskRuntimeToolsCall_ConcurrentResultWaitersBoundReadPressure(t *testing.T) {
+	base := NewMemoryTaskStore()
+	record := taskTestRecord("sess-1", "task-result-read-pressure", TaskStatusWorking)
+	record.Result = nil
+	poll := int64(time.Millisecond / time.Millisecond)
+	record.Task.PollInterval = &poll
+	if _, err := base.Create(context.Background(), record); err != nil {
+		t.Fatalf("create working task: %v", err)
+	}
+
+	store := &countingTaskStore{TaskStore: base}
+	s := NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: store, PollInterval: time.Millisecond}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const waiters = 8
+	done := make(chan *Response, waiters)
+	for i := 0; i < waiters; i++ {
+		go func(id int) {
+			done <- s.dispatchForProtocol(ctx, taskRequest(id+1, methodTasksResult, "task-result-read-pressure"), protocolVersion, "sess-1")
+		}(i)
+	}
+
+	deadline := time.After(time.Second)
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for store.gets.Load() < waiters {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for %d initial task reads; got %d", waiters, store.gets.Load())
+		case <-ticker.C:
+		}
+	}
+
+	initialReads := store.gets.Load()
+	time.Sleep(defaultTaskResultWait / 2)
+	if got := store.gets.Load(); got != initialReads {
+		t.Fatalf("expected no additional reads before %s poll floor, got initial=%d current=%d", defaultTaskResultWait, initialReads, got)
+	}
+
+	cancel()
+	for i := 0; i < waiters; i++ {
+		select {
+		case resp := <-done:
+			if resp.Error == nil || resp.Error.Code != CodeServerError || !strings.Contains(resp.Error.Message, context.Canceled.Error()) {
+				t.Fatalf("expected waiter %d to return context-canceled server error, got %+v", i, resp.Error)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("waiter %d did not return after context cancellation", i)
+		}
+	}
+
+	if got := store.gets.Load(); got != initialReads {
+		t.Fatalf("expected cancellation before poll interval to avoid extra reads, got initial=%d final=%d", initialReads, got)
+	}
+}
+
 func TestTaskRuntimeToolsCall_ErrorResultFailsTaskButReturnsToolResult(t *testing.T) {
 	store := NewMemoryTaskStore()
 	s := NewServer("test", "dev",
@@ -916,6 +1012,16 @@ type nilListTaskStore struct {
 
 func (s *nilListTaskStore) List(context.Context, TaskListRequest) (*TaskListResult, error) {
 	return &TaskListResult{}, nil
+}
+
+type countingTaskStore struct {
+	TaskStore
+	gets atomic.Int64
+}
+
+func (s *countingTaskStore) Get(ctx context.Context, lookup TaskLookup) (*TaskRecord, error) {
+	s.gets.Add(1)
+	return s.TaskStore.Get(ctx, lookup)
 }
 
 func TestTaskRuntimeHelpers_ErrorBranches(t *testing.T) {
