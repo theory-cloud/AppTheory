@@ -113,8 +113,7 @@ func (r *ResourceRegistry) Len() int {
 	return len(r.resources)
 }
 
-// Exists reports whether a resource URI is registered exactly.
-func (r *ResourceRegistry) Exists(uri string) bool {
+func (r *ResourceRegistry) exists(uri string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	_, ok := r.index[uri]
