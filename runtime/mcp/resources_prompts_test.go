@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -228,6 +229,12 @@ func TestResourceSubscriptionHooks_RoundTrip(t *testing.T) {
 	headers := sessionHeaders(sessionID)
 	headers["accept"] = []string{"application/json, text/event-stream"}
 
+	if err := s.Resources().RegisterResource(ResourceDef{URI: "file://hello.txt", Name: "hello"}, func(context.Context) ([]ResourceContent, error) {
+		return []ResourceContent{{URI: "file://hello.txt", Text: "hello"}}, nil
+	}); err != nil {
+		t.Fatalf("register resource: %v", err)
+	}
+
 	params := mustMarshal(t, map[string]any{"uri": "file://hello.txt"})
 	subscribeReq := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodResourcesSubscribe, Params: params})
 	subscribeResp, err := invokeHandlerWithMethod(context.Background(), s, "POST", subscribeReq, headers)
@@ -325,6 +332,68 @@ func TestResourceSubscriptionHooks_ValidateParamsAndErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("malformed uri", func(t *testing.T) {
+		called := false
+		s := NewServer("test", "1.0.0", WithResourceSubscriptionHooks(
+			func(context.Context, ResourceSubscription) error {
+				called = true
+				return nil
+			},
+			func(context.Context, ResourceSubscription) error { return nil },
+		))
+		sessionID := initializeSession(t, s)
+		headers := sessionHeaders(sessionID)
+		headers["accept"] = []string{"application/json, text/event-stream"}
+
+		params := mustMarshal(t, map[string]any{"uri": "relative/path"})
+		req := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodResourcesSubscribe, Params: params})
+		resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", req, headers)
+		if err != nil {
+			t.Fatalf("invoke resources/subscribe: %v", err)
+		}
+		rpcResp, err := parseJSONRPCResponse(resp)
+		if err != nil {
+			t.Fatalf("parse resources/subscribe: %v", err)
+		}
+		if rpcResp.Error == nil || rpcResp.Error.Code != CodeInvalidParams || !strings.Contains(rpcResp.Error.Message, "invalid uri") {
+			t.Fatalf("expected invalid params for malformed uri, got: %+v", rpcResp.Error)
+		}
+		if called {
+			t.Fatalf("subscription hook ran for malformed uri")
+		}
+	})
+
+	t.Run("unregistered uri", func(t *testing.T) {
+		called := false
+		s := NewServer("test", "1.0.0", WithResourceSubscriptionHooks(
+			func(context.Context, ResourceSubscription) error {
+				called = true
+				return nil
+			},
+			func(context.Context, ResourceSubscription) error { return nil },
+		))
+		sessionID := initializeSession(t, s)
+		headers := sessionHeaders(sessionID)
+		headers["accept"] = []string{"application/json, text/event-stream"}
+
+		params := mustMarshal(t, map[string]any{"uri": "file://missing.txt"})
+		req := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodResourcesSubscribe, Params: params})
+		resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", req, headers)
+		if err != nil {
+			t.Fatalf("invoke resources/subscribe: %v", err)
+		}
+		rpcResp, err := parseJSONRPCResponse(resp)
+		if err != nil {
+			t.Fatalf("parse resources/subscribe: %v", err)
+		}
+		if rpcResp.Error == nil || rpcResp.Error.Code != CodeInvalidParams || !strings.Contains(rpcResp.Error.Message, "resource not found") {
+			t.Fatalf("expected invalid params for unregistered uri, got: %+v", rpcResp.Error)
+		}
+		if called {
+			t.Fatalf("subscription hook ran for unregistered uri")
+		}
+	})
+
 	t.Run("hook error", func(t *testing.T) {
 		s := NewServer("test", "1.0.0", WithResourceSubscriptionHooks(
 			func(context.Context, ResourceSubscription) error { return errors.New("subscribe denied") },
@@ -333,6 +402,11 @@ func TestResourceSubscriptionHooks_ValidateParamsAndErrors(t *testing.T) {
 		sessionID := initializeSession(t, s)
 		headers := sessionHeaders(sessionID)
 		headers["accept"] = []string{"application/json, text/event-stream"}
+		if err := s.Resources().RegisterResource(ResourceDef{URI: "file://hello.txt", Name: "hello"}, func(context.Context) ([]ResourceContent, error) {
+			return []ResourceContent{{URI: "file://hello.txt", Text: "hello"}}, nil
+		}); err != nil {
+			t.Fatalf("register resource: %v", err)
+		}
 
 		params := mustMarshal(t, map[string]any{"uri": "file://hello.txt"})
 		req := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodResourcesSubscribe, Params: params})
