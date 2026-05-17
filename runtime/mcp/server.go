@@ -1350,6 +1350,9 @@ func (s *Server) shouldStreamToolsCall(req *Request) bool {
 	if params.Task != nil {
 		return false
 	}
+	if s.registry.taskSupport(params.Name) == TaskSupportRequired {
+		return false
+	}
 	return s.registry.supportsStreaming(params.Name)
 }
 
@@ -1413,6 +1416,10 @@ func (s *Server) runStreamingTool(ctx context.Context, sessionID, streamID strin
 	}
 	if params.Name == "" {
 		s.appendStreamResponseOrDeliveryError(storeCtx, sessionID, streamID, req.ID, NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing tool name"))
+		return
+	}
+	if params.Task != nil || s.registry.taskSupport(params.Name) == TaskSupportRequired {
+		s.appendStreamResponseOrDeliveryError(storeCtx, sessionID, streamID, req.ID, NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: tool requires task execution"))
 		return
 	}
 
