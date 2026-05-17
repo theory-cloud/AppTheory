@@ -27,40 +27,40 @@ jobs:
           ref: ${{ inputs.tag_name || github.ref }}
 
       - name: Checkout (stable release preflight)
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Fetch main + premain (stable release preflight)
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
         run: git fetch origin main premain --force
 
       - name: Set SOURCE_DATE_EPOCH (stable release preflight)
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
         with:
           go-version: "1.26.3"
 
       - name: Install golangci-lint (pinned) (stable release preflight)
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
 
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
         with:
           node-version: "24.13.1"
 
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
         with:
           python-version: "3.14.3"
 
       - name: Build + verify before stable release creation
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
         run: make rubric
 
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
@@ -106,8 +106,16 @@ jobs:
             exit 1
           fi
 
-          git fetch origin main premain --force
+          git fetch origin main premain --tags --force
           scripts/verify-release-branch.sh "${TAG_NAME}"
+          source_commit="$(git rev-parse HEAD)"
+          echo "release-assets: source ${source_commit} for ${TAG_NAME}"
+          {
+            echo "### Release asset source"
+            echo ""
+            echo "- Tag: \`${TAG_NAME}\`"
+            echo "- Source commit: \`${source_commit}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           make rubric
@@ -143,7 +151,7 @@ jobs:
 
       - name: Release Please (Stable)
         id: release
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
         uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
@@ -159,10 +167,11 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          ref: ${{ steps.release.outputs.tag_name }}
 
       - name: Fetch main + premain (release branch verification)
         if: steps.release.outputs.release_created == 'true'
-        run: git fetch origin main premain --force
+        run: git fetch origin main premain --tags --force
 
       - name: Verify tag was cut from the correct branch
         if: steps.release.outputs.release_created == 'true'

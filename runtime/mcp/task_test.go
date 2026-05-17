@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -84,7 +86,7 @@ func TestTaskRuntimeContract_ProtocolGatesTasks(t *testing.T) {
 func TestTaskRuntimeContract_ExplicitConfigCanDisableTasks(t *testing.T) {
 	s := NewServer("test", "dev",
 		WithTaskRuntime(TaskRuntimeOptions{Store: noopTaskStore{}}),
-		WithCapabilityConfig(CapabilityConfig{Tasks: false}),
+		WithCapabilityConfig(CapabilityConfig{Tools: true, Tasks: false}),
 	)
 	if err := s.Registry().RegisterTool(taskCapableToolDef(), func(context.Context, json.RawMessage) (*ToolResult, error) {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
@@ -95,6 +97,21 @@ func TestTaskRuntimeContract_ExplicitConfigCanDisableTasks(t *testing.T) {
 	caps := initializeCapabilityMap(t, s)
 	if _, ok := caps["tasks"]; ok {
 		t.Fatalf("expected explicitly disabled tasks capability to be omitted: %+v", caps)
+	}
+
+	taskMethod := s.dispatchForProtocol(context.Background(), taskRequest(1, methodTasksList, "task-1"), protocolVersion, "sess-1")
+	if taskMethod.Error == nil || taskMethod.Error.Code != CodeMethodNotFound {
+		t.Fatalf("expected disabled tasks method to fail closed, got %+v", taskMethod.Error)
+	}
+
+	taskCall := s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(2, "slow"), protocolVersion, "sess-1")
+	if taskCall.Error == nil || taskCall.Error.Code != CodeMethodNotFound {
+		t.Fatalf("expected disabled task-augmented tool call to fail closed, got %+v", taskCall.Error)
+	}
+
+	syncCall := s.dispatchForProtocol(context.Background(), toolsCallRequest(3, "slow"), protocolVersion, "sess-1")
+	if syncCall.Error != nil {
+		t.Fatalf("expected optional task tool to allow sync execution when tasks disabled, got %+v", syncCall.Error)
 	}
 }
 
@@ -475,6 +492,134 @@ func TestTaskRuntimeToolsCall_ResultBlocksUntilTerminal(t *testing.T) {
 	}
 }
 
+func TestTaskRuntimeToolsCall_ResultWaitIsBoundedByTTL(t *testing.T) {
+	store := NewMemoryTaskStore()
+	record := taskTestRecord("sess-1", "task-result-timeout", TaskStatusWorking)
+	record.Result = nil
+	record.Task.CreatedAt = time.Now().UTC()
+	record.Task.LastUpdatedAt = record.Task.CreatedAt
+	ttl := int64(80)
+	poll := int64(1)
+	record.Task.TTL = &ttl
+	record.Task.PollInterval = &poll
+	if _, err := store.Create(context.Background(), record); err != nil {
+		t.Fatalf("create working task: %v", err)
+	}
+
+	s := NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: store, PollInterval: time.Millisecond}))
+	start := time.Now()
+	resp := s.dispatchForProtocol(context.Background(), taskRequest(1, methodTasksResult, "task-result-timeout"), protocolVersion, "sess-1")
+	elapsed := time.Since(start)
+
+	if resp.Error == nil || resp.Error.Code != CodeServerError {
+		t.Fatalf("expected bounded wait timeout, got %+v", resp.Error)
+	}
+	if !strings.Contains(resp.Error.Message, errTaskResultWaitTimeout.Error()) {
+		t.Fatalf("expected timeout message, got %+v", resp.Error)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("expected task result wait to stop near TTL, elapsed %s", elapsed)
+	}
+	if got := s.taskResultWaitInterval(&record); got != defaultTaskResultWait {
+		t.Fatalf("expected task poll interval to floor at %s, got %s", defaultTaskResultWait, got)
+	}
+}
+
+func TestTaskRuntimeToolsCall_ResultReturnsWhenContextCanceled(t *testing.T) {
+	store := NewMemoryTaskStore()
+	record := taskTestRecord("sess-1", "task-result-context-cancel", TaskStatusWorking)
+	record.Result = nil
+	if _, err := store.Create(context.Background(), record); err != nil {
+		t.Fatalf("create working task: %v", err)
+	}
+
+	s := NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: store, PollInterval: time.Millisecond}))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan *Response, 1)
+	go func() {
+		done <- s.dispatchForProtocol(ctx, taskRequest(1, methodTasksResult, "task-result-context-cancel"), protocolVersion, "sess-1")
+	}()
+
+	select {
+	case resp := <-done:
+		t.Fatalf("tasks/result returned before request context was canceled: %+v", resp)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	start := time.Now()
+	cancel()
+
+	select {
+	case resp := <-done:
+		if resp.Error == nil || resp.Error.Code != CodeServerError || !strings.Contains(resp.Error.Message, context.Canceled.Error()) {
+			t.Fatalf("expected context-canceled server error, got %+v", resp.Error)
+		}
+		if elapsed := time.Since(start); elapsed > 250*time.Millisecond {
+			t.Fatalf("expected tasks/result to return promptly after context cancellation, elapsed %s", elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("tasks/result did not return after request context cancellation")
+	}
+}
+
+func TestTaskRuntimeToolsCall_ConcurrentResultWaitersBoundReadPressure(t *testing.T) {
+	base := NewMemoryTaskStore()
+	record := taskTestRecord("sess-1", "task-result-read-pressure", TaskStatusWorking)
+	record.Result = nil
+	poll := int64(1)
+	record.Task.PollInterval = &poll
+	if _, err := base.Create(context.Background(), record); err != nil {
+		t.Fatalf("create working task: %v", err)
+	}
+
+	store := &countingTaskStore{TaskStore: base}
+	s := NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: store, PollInterval: time.Millisecond}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const waiters = 8
+	done := make(chan *Response, waiters)
+	for i := 0; i < waiters; i++ {
+		go func(id int) {
+			done <- s.dispatchForProtocol(ctx, taskRequest(id+1, methodTasksResult, "task-result-read-pressure"), protocolVersion, "sess-1")
+		}(i)
+	}
+
+	deadline := time.After(time.Second)
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for store.gets.Load() < waiters {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for %d initial task reads; got %d", waiters, store.gets.Load())
+		case <-ticker.C:
+		}
+	}
+
+	initialReads := store.gets.Load()
+	time.Sleep(defaultTaskResultWait / 2)
+	if got := store.gets.Load(); got != initialReads {
+		t.Fatalf("expected no additional reads before %s poll floor, got initial=%d current=%d", defaultTaskResultWait, initialReads, got)
+	}
+
+	cancel()
+	for i := 0; i < waiters; i++ {
+		select {
+		case resp := <-done:
+			if resp.Error == nil || resp.Error.Code != CodeServerError || !strings.Contains(resp.Error.Message, context.Canceled.Error()) {
+				t.Fatalf("expected waiter %d to return context-canceled server error, got %+v", i, resp.Error)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("waiter %d did not return after context cancellation", i)
+		}
+	}
+
+	if got := store.gets.Load(); got != initialReads {
+		t.Fatalf("expected cancellation before poll interval to avoid extra reads, got initial=%d final=%d", initialReads, got)
+	}
+}
+
 func TestTaskRuntimeToolsCall_ErrorResultFailsTaskButReturnsToolResult(t *testing.T) {
 	store := NewMemoryTaskStore()
 	s := NewServer("test", "dev",
@@ -598,6 +743,22 @@ func TestTaskRuntimeToolsCall_EnforcesToolSupport(t *testing.T) {
 	if plainSync.Error != nil {
 		t.Fatalf("expected plain sync call to work, got %+v", plainSync.Error)
 	}
+
+	noRuntime := NewServer("test", "dev")
+	if err := noRuntime.Registry().RegisterTool(ToolDef{
+		Name:        "required",
+		Description: "requires tasks",
+		Execution:   &ToolExecution{TaskSupport: TaskSupportRequired},
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(context.Context, json.RawMessage) (*ToolResult, error) {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
+	}); err != nil {
+		t.Fatalf("register required tool without runtime: %v", err)
+	}
+	noRuntimeRequired := noRuntime.dispatchForProtocol(context.Background(), toolsCallRequest(4, "required"), protocolVersion, "sess-1")
+	if noRuntimeRequired.Error == nil || noRuntimeRequired.Error.Code != CodeMethodNotFound {
+		t.Fatalf("expected required task tool to reject sync call without runtime, got %+v", noRuntimeRequired.Error)
+	}
 }
 
 func TestTaskRuntimeToolsCall_FailsClosedOnRuntimeErrors(t *testing.T) {
@@ -608,8 +769,8 @@ func TestTaskRuntimeToolsCall_FailsClosedOnRuntimeErrors(t *testing.T) {
 		t.Fatalf("register task tool: %v", err)
 	}
 	resp := s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(1, "slow"), protocolVersion, "sess-1")
-	if resp.Error != nil {
-		t.Fatalf("expected task metadata to be ignored without advertised task runtime, got %+v", resp.Error)
+	if resp.Error == nil || resp.Error.Code != CodeMethodNotFound {
+		t.Fatalf("expected task metadata to fail closed without advertised task runtime, got %+v", resp.Error)
 	}
 
 	s = NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: NewMemoryTaskStore()}))
@@ -851,6 +1012,16 @@ type nilListTaskStore struct {
 
 func (s *nilListTaskStore) List(context.Context, TaskListRequest) (*TaskListResult, error) {
 	return &TaskListResult{}, nil
+}
+
+type countingTaskStore struct {
+	TaskStore
+	gets atomic.Int64
+}
+
+func (s *countingTaskStore) Get(ctx context.Context, lookup TaskLookup) (*TaskRecord, error) {
+	s.gets.Add(1)
+	return s.TaskStore.Get(ctx, lookup)
 }
 
 func TestTaskRuntimeHelpers_ErrorBranches(t *testing.T) {

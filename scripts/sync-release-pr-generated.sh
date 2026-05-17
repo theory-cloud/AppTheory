@@ -71,6 +71,89 @@ ensure_release_pr_is_draft() {
   fi
 }
 
+repo_full_name() {
+  if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
+    echo "${GITHUB_REPOSITORY}"
+    return 0
+  fi
+
+  gh repo view --json nameWithOwner --jq '.nameWithOwner'
+}
+
+collect_check_records() {
+  local current_pr_line
+  current_pr_line="$(pr_state_line)"
+  if [[ -z "${current_pr_line}" ]]; then
+    echo "sync-release-pr-generated: FAIL (PR #${pr_number} disappeared while reading checks)" >&2
+    return 1
+  fi
+
+  local current_pr_state
+  local current_pr_head
+  current_pr_state="${current_pr_line%%$'\t'*}"
+  current_pr_head="${current_pr_line##*$'\t'}"
+
+  if [[ "${current_pr_state}" != "OPEN" ]]; then
+    echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} while reading checks)" >&2
+    return 1
+  fi
+
+  local pr_checks_file
+  pr_checks_file="$(mktemp)"
+  if ! gh pr checks "${pr_number}" --json name,bucket,startedAt,completedAt,workflow >"${pr_checks_file}" 2>/dev/null; then
+    # `gh pr checks` exits 8 while checks are pending, but still prints the
+    # JSON payload. It can also report no checks for workflow_dispatch runs that
+    # are attached to the commit but not surfaced through the PR checks view.
+    if [[ ! -s "${pr_checks_file}" ]]; then
+      printf '[]' >"${pr_checks_file}"
+    fi
+  fi
+
+  local repo
+  repo="$(repo_full_name)"
+
+  local commit_checks_file
+  commit_checks_file="$(mktemp)"
+  if ! gh api "repos/${repo}/commits/${current_pr_head}/check-runs?per_page=100" \
+    --jq '[.check_runs[] | {
+      name: .name,
+      bucket: (
+        if .status != "completed" then "pending"
+        elif (.conclusion == "success" or .conclusion == "neutral") then "pass"
+        elif .conclusion == "skipped" then "skipping"
+        else .conclusion
+        end
+      ),
+      startedAt: (.started_at // ""),
+      completedAt: (.completed_at // ""),
+      workflow: (.app.slug // "github-actions")
+    }]' >"${commit_checks_file}" 2>/dev/null; then
+    printf '[]' >"${commit_checks_file}"
+  fi
+
+  PR_CHECKS_JSON="$(cat "${pr_checks_file}")" \
+    COMMIT_CHECKS_JSON="$(cat "${commit_checks_file}")" \
+    python3 - <<'PY'
+import json
+import os
+
+
+def load(name: str) -> list[dict]:
+    try:
+        data = json.loads(os.environ.get(name) or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+print(json.dumps(load("PR_CHECKS_JSON") + load("COMMIT_CHECKS_JSON"), separators=(",", ":")))
+PY
+
+  rm -f "${pr_checks_file}" "${commit_checks_file}"
+}
+
 wait_for_required_checks() {
   local timeout_seconds="${RELEASE_PR_CHECK_TIMEOUT_SECONDS:-2400}"
   local interval_seconds="${RELEASE_PR_CHECK_INTERVAL_SECONDS:-15}"
@@ -83,17 +166,7 @@ wait_for_required_checks() {
 
   while true; do
     local checks_json
-    local checks_file
-    checks_file="$(mktemp)"
-    if ! gh pr checks "${pr_number}" --json name,bucket,startedAt,completedAt,workflow >"${checks_file}" 2>/dev/null; then
-      # `gh pr checks` exits 8 while checks are pending, but still prints the
-      # JSON payload. Only synthesize an empty payload when no JSON was emitted.
-      if [[ ! -s "${checks_file}" ]]; then
-        printf '[]' >"${checks_file}"
-      fi
-    fi
-    checks_json="$(cat "${checks_file}")"
-    rm -f "${checks_file}"
+    checks_json="$(collect_check_records)"
 
     local status_file
     status_file="$(mktemp)"
@@ -197,17 +270,7 @@ wait_for_required_checks_to_start() {
 
   while true; do
     local checks_json
-    local checks_file
-    checks_file="$(mktemp)"
-    if ! gh pr checks "${pr_number}" --json name,bucket,startedAt,completedAt,workflow >"${checks_file}" 2>/dev/null; then
-      # `gh pr checks` exits 8 while checks are pending, but still prints the
-      # JSON payload. Only synthesize an empty payload when no JSON was emitted.
-      if [[ ! -s "${checks_file}" ]]; then
-        printf '[]' >"${checks_file}"
-      fi
-    fi
-    checks_json="$(cat "${checks_file}")"
-    rm -f "${checks_file}"
+    checks_json="$(collect_check_records)"
 
     local status_file
     status_file="$(mktemp)"
@@ -260,6 +323,16 @@ PY
   done
 }
 
+dispatch_required_checks() {
+  local required_check_workflow="${RELEASE_PR_CHECK_WORKFLOW:-ci.yml}"
+
+  echo "sync-release-pr-generated: dispatching ${required_check_workflow} for ${release_branch}"
+  if ! gh workflow run "${required_check_workflow}" --ref "${release_branch}"; then
+    echo "sync-release-pr-generated: FAIL (could not dispatch ${required_check_workflow} for ${release_branch})"
+    exit 1
+  fi
+}
+
 wait_for_pr_head() {
   local expected_head="$1"
   local timeout_seconds="${RELEASE_PR_HEAD_TIMEOUT_SECONDS:-300}"
@@ -299,59 +372,28 @@ wait_for_pr_head() {
   done
 }
 
-set_release_pr_status() {
-  local state="$1"
-  local context="$2"
-  local description="$3"
-  local head_sha
-  head_sha="$(git rev-parse HEAD)"
-
-  gh api \
-    --method POST \
-    "repos/${GITHUB_REPOSITORY}/statuses/${head_sha}" \
-    -f "state=${state}" \
-    -f "context=${context}" \
-    -f "description=${description:0:140}" \
-    -f "target_url=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-    >/dev/null
-}
-
-run_release_pr_status_check() {
-  local context="$1"
-  shift
-  local command="$*"
-
-  echo "sync-release-pr-generated: running ${context}"
-  set_release_pr_status pending "${context}" "Running release PR gate"
-  if bash -c "${command}"; then
-    set_release_pr_status success "${context}" "Release PR gate passed"
-    echo "sync-release-pr-generated: ${context}: PASS"
+sync_stable_release_premain_manifest() {
+  if [[ "${release_branch}" != "release-please--branches--main" ]]; then
     return 0
   fi
 
-  set_release_pr_status failure "${context}" "Release PR gate failed"
-  echo "sync-release-pr-generated: FAIL (${context})" >&2
-  return 1
-}
+  local stable_version
+  stable_version="$(./scripts/read-version.sh)"
+  if [[ -z "${stable_version}" ]]; then
+    echo "sync-release-pr-generated: FAIL (could not read stable release version)"
+    exit 1
+  fi
 
-run_release_pr_required_checks() {
-  # Events caused by GITHUB_TOKEN/Release Please token mutations do not
-  # reliably create pull_request CI runs for the generated release branch.
-  # Keep the PR draft, run the same gate scripts here, and publish commit
-  # statuses with the exact protected check names before the PR can become
-  # ready. This fails closed: any gate failure leaves the release PR draft.
-  ensure_release_pr_is_draft "before running generated-artifact checks"
+  STABLE_VERSION="${stable_version}" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
 
-  run_release_pr_status_check "Version alignment" "scripts/verify-version-alignment.sh"
-  run_release_pr_status_check "Go (test + vet)" "scripts/verify-go.sh"
-  run_release_pr_status_check "TypeScript (npm pack)" "scripts/verify-ts-pack.sh"
-  run_release_pr_status_check "Python (build wheel + sdist)" "scripts/verify-python-build.sh"
-  run_release_pr_status_check "Verify deterministic builds" "scripts/verify-builds.sh"
-  run_release_pr_status_check "Contract tests (fixtures)" "scripts/verify-api-snapshots.sh && scripts/verify-contract-tests.sh"
-  run_release_pr_status_check "Rubric (full gate set)" "make rubric"
-
-  wait_for_required_checks_to_start
-  ensure_release_pr_is_draft "after running generated-artifact checks"
+path = Path(".release-please-manifest.premain.json")
+data = json.loads(path.read_text(encoding="utf-8"))
+data["."] = os.environ["STABLE_VERSION"]
+path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PY
 }
 
 # The release PR must not be mergeable while generated artifacts are still being
@@ -363,16 +405,17 @@ ensure_release_pr_is_draft "before generated artifacts are synced"
 git fetch origin "${release_branch}"
 git switch --detach FETCH_HEAD
 
+sync_stable_release_premain_manifest
 scripts/update-cdk-generated.sh >/dev/null
 
 changed=false
-if ! git diff --quiet -- cdk/.jsii cdk/lib cdk-go/apptheorycdk; then
+if ! git diff --quiet -- .release-please-manifest.premain.json cdk/.jsii cdk/lib cdk-go/apptheorycdk; then
   changed=true
 
   git config user.name "github-actions[bot]"
   git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-  git add cdk/.jsii cdk/lib cdk-go/apptheorycdk
-  git commit -m "chore(release): sync generated cdk artifacts"
+  git add .release-please-manifest.premain.json cdk/.jsii cdk/lib cdk-go/apptheorycdk
+  git commit -m "chore(release): sync generated release artifacts"
 fi
 
 go test ./cdk-go/apptheorycdk
@@ -384,9 +427,14 @@ if [[ "${changed}" == "true" ]]; then
 fi
 
 wait_for_pr_head "$(git rev-parse HEAD)"
-# After the generated-artifact head is visible, run and publish the required
-# release PR gate statuses while preserving the draft lock.
-run_release_pr_required_checks
+# After the generated-artifact head is visible, rely only on independent PR
+# checks for protected required contexts. Bot-authored release PR updates can be
+# suppressed by GitHub's recursive workflow guard, so explicitly dispatch CI on
+# the release branch instead of self-attesting protected statuses from mutable
+# release-branch code.
+ensure_release_pr_is_draft "before waiting for independent required checks"
+dispatch_required_checks
+wait_for_required_checks_to_start
 wait_for_required_checks
 
 ensure_release_pr_is_draft "before marking generated-artifact-synced PR ready"
