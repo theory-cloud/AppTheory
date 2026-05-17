@@ -23,7 +23,6 @@ _ALLOWED_FIELDS: set[str] = {
     "acceptor_id",
     "tid",
     "terminal_id",
-    "authorization_id",
 }
 
 _SENSITIVE_FIELDS: dict[str, str] = {
@@ -59,6 +58,7 @@ _SENSITIVE_FIELDS: dict[str, str] = {
     "api_key_id": "partial",
     "authorization": "fully",
     "authorization_header": "fully",
+    "authorization_id": "fully",
 }
 
 _CANONICALIZE_KEY_RE = re.compile(r"[_\-\s]+")
