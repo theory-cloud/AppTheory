@@ -190,6 +190,70 @@ func TestPromptsListAndGet_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestCapabilityDisables_RejectResourceAndPromptMethods(t *testing.T) {
+	s := NewServer("test", "1.0.0",
+		WithCapabilityConfig(CapabilityConfig{
+			Tools:       true,
+			Resources:   false,
+			Prompts:     false,
+			Completions: true,
+			Tasks:       true,
+		}),
+		WithResourceSubscriptionHooks(
+			func(context.Context, ResourceSubscription) error { return nil },
+			func(context.Context, ResourceSubscription) error { return nil },
+		),
+	)
+	if err := s.Resources().RegisterResource(ResourceDef{URI: "file://hello.txt", Name: "hello"}, func(context.Context) ([]ResourceContent, error) {
+		return []ResourceContent{{URI: "file://hello.txt", Text: "hello"}}, nil
+	}); err != nil {
+		t.Fatalf("register resource: %v", err)
+	}
+	if err := s.Prompts().RegisterPrompt(PromptDef{Name: "greet"}, func(context.Context, json.RawMessage) (*PromptResult, error) {
+		return &PromptResult{Messages: []PromptMessage{{Role: "user", Content: ContentBlock{Type: "text", Text: "hello"}}}}, nil
+	}); err != nil {
+		t.Fatalf("register prompt: %v", err)
+	}
+
+	sessionID := initializeSession(t, s)
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"application/json, text/event-stream"}
+
+	tests := []struct {
+		name   string
+		method string
+		params any
+	}{
+		{name: "resources list", method: methodResourcesList},
+		{name: "resources read", method: methodResourcesRead, params: map[string]any{"uri": "file://hello.txt"}},
+		{name: "resources subscribe", method: methodResourcesSubscribe, params: map[string]any{"uri": "file://hello.txt"}},
+		{name: "resources unsubscribe", method: methodResourcesUnsubscribe, params: map[string]any{"uri": "file://hello.txt"}},
+		{name: "prompts list", method: methodPromptsList},
+		{name: "prompts get", method: methodPromptsGet, params: map[string]any{"name": "greet"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var params json.RawMessage
+			if tt.params != nil {
+				params = mustMarshal(t, tt.params)
+			}
+			req := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: tt.method, Params: params})
+			resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", req, headers)
+			if err != nil {
+				t.Fatalf("invoke %s: %v", tt.method, err)
+			}
+			rpcResp, err := parseJSONRPCResponse(resp)
+			if err != nil {
+				t.Fatalf("parse %s: %v", tt.method, err)
+			}
+			if rpcResp.Error == nil || rpcResp.Error.Code != CodeMethodNotFound {
+				t.Fatalf("expected method-not-found for disabled %s, got %+v", tt.method, rpcResp.Error)
+			}
+		})
+	}
+}
+
 func TestResourcesRead_NotFoundIsInvalidParams(t *testing.T) {
 	s := NewServer("test", "1.0.0")
 
