@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 )
 
 type resourcesReadParams struct {
@@ -64,8 +65,15 @@ func (s *Server) handleResourceSubscription(
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: "+err.Error())
 	}
+	params.URI = strings.TrimSpace(params.URI)
 	if params.URI == "" {
 		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: missing uri")
+	}
+	if !validResourceURI(params.URI) {
+		return NewErrorResponse(req.ID, CodeInvalidParams, "Invalid params: invalid uri")
+	}
+	if !s.resourceRegistry.exists(params.URI) {
+		return NewErrorResponse(req.ID, CodeInvalidParams, "resource not found: "+params.URI)
 	}
 
 	if err := hook(ctx, ResourceSubscription{SessionID: sessionID, URI: params.URI}); err != nil {
