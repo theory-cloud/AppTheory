@@ -71,6 +71,89 @@ ensure_release_pr_is_draft() {
   fi
 }
 
+repo_full_name() {
+  if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
+    echo "${GITHUB_REPOSITORY}"
+    return 0
+  fi
+
+  gh repo view --json nameWithOwner --jq '.nameWithOwner'
+}
+
+collect_check_records() {
+  local current_pr_line
+  current_pr_line="$(pr_state_line)"
+  if [[ -z "${current_pr_line}" ]]; then
+    echo "sync-release-pr-generated: FAIL (PR #${pr_number} disappeared while reading checks)" >&2
+    return 1
+  fi
+
+  local current_pr_state
+  local current_pr_head
+  current_pr_state="${current_pr_line%%$'\t'*}"
+  current_pr_head="${current_pr_line##*$'\t'}"
+
+  if [[ "${current_pr_state}" != "OPEN" ]]; then
+    echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} while reading checks)" >&2
+    return 1
+  fi
+
+  local pr_checks_file
+  pr_checks_file="$(mktemp)"
+  if ! gh pr checks "${pr_number}" --json name,bucket,startedAt,completedAt,workflow >"${pr_checks_file}" 2>/dev/null; then
+    # `gh pr checks` exits 8 while checks are pending, but still prints the
+    # JSON payload. It can also report no checks for workflow_dispatch runs that
+    # are attached to the commit but not surfaced through the PR checks view.
+    if [[ ! -s "${pr_checks_file}" ]]; then
+      printf '[]' >"${pr_checks_file}"
+    fi
+  fi
+
+  local repo
+  repo="$(repo_full_name)"
+
+  local commit_checks_file
+  commit_checks_file="$(mktemp)"
+  if ! gh api "repos/${repo}/commits/${current_pr_head}/check-runs?per_page=100" \
+    --jq '[.check_runs[] | {
+      name: .name,
+      bucket: (
+        if .status != "completed" then "pending"
+        elif (.conclusion == "success" or .conclusion == "neutral") then "pass"
+        elif .conclusion == "skipped" then "skipping"
+        else .conclusion
+        end
+      ),
+      startedAt: (.started_at // ""),
+      completedAt: (.completed_at // ""),
+      workflow: (.app.slug // "github-actions")
+    }]' >"${commit_checks_file}" 2>/dev/null; then
+    printf '[]' >"${commit_checks_file}"
+  fi
+
+  PR_CHECKS_JSON="$(cat "${pr_checks_file}")" \
+    COMMIT_CHECKS_JSON="$(cat "${commit_checks_file}")" \
+    python3 - <<'PY'
+import json
+import os
+
+
+def load(name: str) -> list[dict]:
+    try:
+        data = json.loads(os.environ.get(name) or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+print(json.dumps(load("PR_CHECKS_JSON") + load("COMMIT_CHECKS_JSON"), separators=(",", ":")))
+PY
+
+  rm -f "${pr_checks_file}" "${commit_checks_file}"
+}
+
 wait_for_required_checks() {
   local timeout_seconds="${RELEASE_PR_CHECK_TIMEOUT_SECONDS:-2400}"
   local interval_seconds="${RELEASE_PR_CHECK_INTERVAL_SECONDS:-15}"
@@ -83,17 +166,7 @@ wait_for_required_checks() {
 
   while true; do
     local checks_json
-    local checks_file
-    checks_file="$(mktemp)"
-    if ! gh pr checks "${pr_number}" --json name,bucket,startedAt,completedAt,workflow >"${checks_file}" 2>/dev/null; then
-      # `gh pr checks` exits 8 while checks are pending, but still prints the
-      # JSON payload. Only synthesize an empty payload when no JSON was emitted.
-      if [[ ! -s "${checks_file}" ]]; then
-        printf '[]' >"${checks_file}"
-      fi
-    fi
-    checks_json="$(cat "${checks_file}")"
-    rm -f "${checks_file}"
+    checks_json="$(collect_check_records)"
 
     local status_file
     status_file="$(mktemp)"
@@ -197,17 +270,7 @@ wait_for_required_checks_to_start() {
 
   while true; do
     local checks_json
-    local checks_file
-    checks_file="$(mktemp)"
-    if ! gh pr checks "${pr_number}" --json name,bucket,startedAt,completedAt,workflow >"${checks_file}" 2>/dev/null; then
-      # `gh pr checks` exits 8 while checks are pending, but still prints the
-      # JSON payload. Only synthesize an empty payload when no JSON was emitted.
-      if [[ ! -s "${checks_file}" ]]; then
-        printf '[]' >"${checks_file}"
-      fi
-    fi
-    checks_json="$(cat "${checks_file}")"
-    rm -f "${checks_file}"
+    checks_json="$(collect_check_records)"
 
     local status_file
     status_file="$(mktemp)"
