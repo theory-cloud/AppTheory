@@ -14,12 +14,13 @@ import (
 )
 
 const (
-	defaultTaskTTL          = 10 * time.Minute
-	defaultTaskMaxTTL       = time.Hour
-	defaultTaskPollInterval = 5 * time.Second
-	defaultTaskResultWait   = 100 * time.Millisecond
-	defaultTaskListLimit    = 100
-	maxTaskListLimit        = 500
+	defaultTaskTTL           = 10 * time.Minute
+	defaultTaskMaxTTL        = time.Hour
+	defaultTaskPollInterval  = 5 * time.Second
+	defaultTaskResultWait    = 100 * time.Millisecond
+	defaultTaskResultMaxWait = 30 * time.Second
+	defaultTaskListLimit     = 100
+	maxTaskListLimit         = 500
 )
 
 const (
@@ -129,6 +130,7 @@ var ErrTaskNotFound = errors.New("task not found")
 var ErrTaskTerminal = errors.New("task already terminal")
 
 var errTaskInvalidCursor = errors.New("invalid task list cursor")
+var errTaskResultWaitTimeout = errors.New("task result wait timeout")
 
 // TaskRuntimeOptions configures task-augmented MCP execution.
 type TaskRuntimeOptions struct {
@@ -375,6 +377,7 @@ func (s *Server) handleTasksResult(ctx context.Context, req *Request, sessionID 
 }
 
 func (s *Server) waitForTaskTerminal(ctx context.Context, lookup TaskLookup) (*TaskRecord, error) {
+	maxWaitDeadline := time.Now().UTC().Add(defaultTaskResultMaxWait)
 	for {
 		record, err := s.taskRuntime.store.Get(ctx, lookup)
 		if err != nil {
@@ -384,7 +387,19 @@ func (s *Server) waitForTaskTerminal(ctx context.Context, lookup TaskLookup) (*T
 			return record, nil
 		}
 
+		deadline := maxWaitDeadline
+		if taskDeadline, ok := taskResultDeadline(record); ok && taskDeadline.Before(deadline) {
+			deadline = taskDeadline
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, errTaskResultWaitTimeout
+		}
+
 		interval := s.taskResultWaitInterval(record)
+		if interval > remaining {
+			interval = remaining
+		}
 		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
@@ -414,7 +429,20 @@ func (s *Server) taskResultWaitInterval(record *TaskRecord) time.Duration {
 	if interval <= 0 {
 		return defaultTaskResultWait
 	}
+	if interval < defaultTaskResultWait {
+		return defaultTaskResultWait
+	}
+	if interval > defaultTaskPollInterval {
+		return defaultTaskPollInterval
+	}
 	return interval
+}
+
+func taskResultDeadline(record *TaskRecord) (time.Time, bool) {
+	if record == nil || record.Task.TTL == nil || *record.Task.TTL <= 0 || record.Task.CreatedAt.IsZero() {
+		return time.Time{}, false
+	}
+	return record.Task.CreatedAt.UTC().Add(time.Duration(*record.Task.TTL) * time.Millisecond), true
 }
 
 func (s *Server) handleTasksList(ctx context.Context, req *Request, sessionID string) *Response {

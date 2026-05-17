@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -472,6 +473,39 @@ func TestTaskRuntimeToolsCall_ResultBlocksUntilTerminal(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("tasks/result did not return after task completion")
+	}
+}
+
+func TestTaskRuntimeToolsCall_ResultWaitIsBoundedByTTL(t *testing.T) {
+	store := NewMemoryTaskStore()
+	record := taskTestRecord("sess-1", "task-result-timeout", TaskStatusWorking)
+	record.Result = nil
+	record.Task.CreatedAt = time.Now().UTC()
+	record.Task.LastUpdatedAt = record.Task.CreatedAt
+	ttl := int64(80)
+	poll := int64(1)
+	record.Task.TTL = &ttl
+	record.Task.PollInterval = &poll
+	if _, err := store.Create(context.Background(), record); err != nil {
+		t.Fatalf("create working task: %v", err)
+	}
+
+	s := NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: store, PollInterval: time.Millisecond}))
+	start := time.Now()
+	resp := s.dispatchForProtocol(context.Background(), taskRequest(1, methodTasksResult, "task-result-timeout"), protocolVersion, "sess-1")
+	elapsed := time.Since(start)
+
+	if resp.Error == nil || resp.Error.Code != CodeServerError {
+		t.Fatalf("expected bounded wait timeout, got %+v", resp.Error)
+	}
+	if !strings.Contains(resp.Error.Message, errTaskResultWaitTimeout.Error()) {
+		t.Fatalf("expected timeout message, got %+v", resp.Error)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("expected task result wait to stop near TTL, elapsed %s", elapsed)
+	}
+	if got := s.taskResultWaitInterval(&record); got != defaultTaskResultWait {
+		t.Fatalf("expected task poll interval to floor at %s, got %s", defaultTaskResultWait, got)
 	}
 }
 
