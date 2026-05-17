@@ -636,8 +636,8 @@ test("sanitization: sanitizeFieldValue context-aware accountNumber masking", asy
 test("sanitization: sanitizeFieldValue does not substring-redact business fields", async () => {
   const { sanitizeFieldValue } = await importDist("sanitization.js");
 
-  assert.equal(sanitizeFieldValue("authorization_id", "auth_123"), "auth_123");
-  assert.equal(sanitizeFieldValue("authorizationId", "auth_123"), "auth_123");
+  assert.equal(sanitizeFieldValue("authorization_id", "auth_123"), "[REDACTED]");
+  assert.equal(sanitizeFieldValue("authorizationId", "auth_123"), "[REDACTED]");
   assert.equal(sanitizeFieldValue("authorizationCode", "ok_1"), "ok_1");
   assert.equal(sanitizeFieldValue("tokenization_method", "apple_pay"), "apple_pay");
 
@@ -664,7 +664,7 @@ test("sanitization: Tesouro GraphQL fixture", async () => {
   });
 
   const tx = out.data.transaction;
-  assert.equal(tx.authorizationId, "auth_123");
+  assert.equal(tx.authorizationId, "[REDACTED]");
   assert.equal(tx.authorizationCode, "ok_1");
   assert.equal(tx.tokenization_method, "apple_pay");
   assert.equal(tx.accessToken, "[REDACTED]");
