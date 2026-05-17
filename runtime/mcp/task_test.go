@@ -85,7 +85,7 @@ func TestTaskRuntimeContract_ProtocolGatesTasks(t *testing.T) {
 func TestTaskRuntimeContract_ExplicitConfigCanDisableTasks(t *testing.T) {
 	s := NewServer("test", "dev",
 		WithTaskRuntime(TaskRuntimeOptions{Store: noopTaskStore{}}),
-		WithCapabilityConfig(CapabilityConfig{Tasks: false}),
+		WithCapabilityConfig(CapabilityConfig{Tools: true, Tasks: false}),
 	)
 	if err := s.Registry().RegisterTool(taskCapableToolDef(), func(context.Context, json.RawMessage) (*ToolResult, error) {
 		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
@@ -96,6 +96,21 @@ func TestTaskRuntimeContract_ExplicitConfigCanDisableTasks(t *testing.T) {
 	caps := initializeCapabilityMap(t, s)
 	if _, ok := caps["tasks"]; ok {
 		t.Fatalf("expected explicitly disabled tasks capability to be omitted: %+v", caps)
+	}
+
+	taskMethod := s.dispatchForProtocol(context.Background(), taskRequest(1, methodTasksList, "task-1"), protocolVersion, "sess-1")
+	if taskMethod.Error == nil || taskMethod.Error.Code != CodeMethodNotFound {
+		t.Fatalf("expected disabled tasks method to fail closed, got %+v", taskMethod.Error)
+	}
+
+	taskCall := s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(2, "slow"), protocolVersion, "sess-1")
+	if taskCall.Error == nil || taskCall.Error.Code != CodeMethodNotFound {
+		t.Fatalf("expected disabled task-augmented tool call to fail closed, got %+v", taskCall.Error)
+	}
+
+	syncCall := s.dispatchForProtocol(context.Background(), toolsCallRequest(3, "slow"), protocolVersion, "sess-1")
+	if syncCall.Error != nil {
+		t.Fatalf("expected optional task tool to allow sync execution when tasks disabled, got %+v", syncCall.Error)
 	}
 }
 
@@ -632,6 +647,22 @@ func TestTaskRuntimeToolsCall_EnforcesToolSupport(t *testing.T) {
 	if plainSync.Error != nil {
 		t.Fatalf("expected plain sync call to work, got %+v", plainSync.Error)
 	}
+
+	noRuntime := NewServer("test", "dev")
+	if err := noRuntime.Registry().RegisterTool(ToolDef{
+		Name:        "required",
+		Description: "requires tasks",
+		Execution:   &ToolExecution{TaskSupport: TaskSupportRequired},
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(context.Context, json.RawMessage) (*ToolResult, error) {
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
+	}); err != nil {
+		t.Fatalf("register required tool without runtime: %v", err)
+	}
+	noRuntimeRequired := noRuntime.dispatchForProtocol(context.Background(), toolsCallRequest(4, "required"), protocolVersion, "sess-1")
+	if noRuntimeRequired.Error == nil || noRuntimeRequired.Error.Code != CodeMethodNotFound {
+		t.Fatalf("expected required task tool to reject sync call without runtime, got %+v", noRuntimeRequired.Error)
+	}
 }
 
 func TestTaskRuntimeToolsCall_FailsClosedOnRuntimeErrors(t *testing.T) {
@@ -642,8 +673,8 @@ func TestTaskRuntimeToolsCall_FailsClosedOnRuntimeErrors(t *testing.T) {
 		t.Fatalf("register task tool: %v", err)
 	}
 	resp := s.dispatchForProtocol(context.Background(), toolsCallTaskRequest(1, "slow"), protocolVersion, "sess-1")
-	if resp.Error != nil {
-		t.Fatalf("expected task metadata to be ignored without advertised task runtime, got %+v", resp.Error)
+	if resp.Error == nil || resp.Error.Code != CodeMethodNotFound {
+		t.Fatalf("expected task metadata to fail closed without advertised task runtime, got %+v", resp.Error)
 	}
 
 	s = NewServer("test", "dev", WithTaskRuntime(TaskRuntimeOptions{Store: NewMemoryTaskStore()}))
