@@ -74,10 +74,10 @@ require_not_contains(
     "release PR sync must not depend on recursive pull_request events from bot-authored PR mutations",
 )
 for workflow in (".github/workflows/prerelease-pr.yml", ".github/workflows/release-pr.yml"):
-    require_contains(
+    require_not_contains(
         workflow,
         "statuses: write",
-        "release PR workflow must be allowed to publish protected release PR gate statuses",
+        "release PR workflow must not be able to self-attest protected release PR gate statuses",
     )
     require_order(
         workflow,
@@ -107,31 +107,13 @@ require_order(
     "scripts/sync-release-pr-generated.sh",
     'wait_for_pr_head "$(git rev-parse HEAD)"',
     "After the generated-artifact head is visible",
-    "release PR sync must wait for the pushed artifact commit before running checks",
+    "release PR sync must wait for the pushed artifact commit before checking independent CI",
 )
 require_order(
     "scripts/sync-release-pr-generated.sh",
     "After the generated-artifact head is visible",
-    "run_release_pr_required_checks\nwait_for_required_checks",
-    "release PR sync must run checks after the generated-artifact head is visible",
-)
-require_order(
-    "scripts/sync-release-pr-generated.sh",
-    "set_release_pr_status pending",
-    "set_release_pr_status success",
-    "release PR sync must publish pending statuses before passing statuses",
-)
-require_order(
-    "scripts/sync-release-pr-generated.sh",
-    "run_release_pr_status_check \"Version alignment\"",
-    "run_release_pr_status_check \"Rubric (full gate set)\"",
-    "release PR sync must run the version gate before the full rubric status",
-)
-require_order(
-    "scripts/sync-release-pr-generated.sh",
-    "run_release_pr_status_check \"Rubric (full gate set)\" \"make rubric\"",
-    "wait_for_required_checks_to_start\n  ensure_release_pr_is_draft \"after running generated-artifact checks\"",
-    "release PR sync must publish all required statuses before verifying their contexts exist",
+    "wait_for_required_checks_to_start\nwait_for_required_checks",
+    "release PR sync must wait for independent CI after the generated-artifact head is visible",
 )
 require_order(
     "scripts/sync-release-pr-generated.sh",
@@ -139,6 +121,17 @@ require_order(
     'gh pr ready "${pr_number}"\n\n',
     "release PR must wait for required checks before becoming ready",
 )
+for forbidden in (
+    "repos/${GITHUB_REPOSITORY}/statuses",
+    "set_release_pr_status",
+    "run_release_pr_status_check",
+    "run_release_pr_required_checks",
+):
+    require_not_contains(
+        "scripts/sync-release-pr-generated.sh",
+        forbidden,
+        "release PR sync must not self-attest protected contexts",
+    )
 
 print("release-workflows: PASS")
 PY
