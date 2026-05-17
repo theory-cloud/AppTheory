@@ -1803,11 +1803,18 @@ scan_python_supply_chain() {
         fi
       done
 
+      local has_hash_fragment=false
+      if [[ "${lower}" =~ \#sha256=[0-9a-f]{64} ]]; then
+        has_hash_fragment=true
+      fi
+
       if [[ -z "${rule}" ]]; then
         if [[ "${lower}" == *"git+https://"* || "${lower}" == *"git+http://"* || "${lower}" == *"git+ssh://"* || "${lower}" == *"hg+http"* || "${lower}" == *"svn+http"* || "${lower}" == *"bzr+http"* ]]; then
           rule="VCS_OR_URL_DEP"
         elif [[ "${lower}" == *" @ https://"* || "${lower}" == *" @ http://"* || "${lower}" == *" @ file://"* || "${lower}" == *" @ ssh://"* ]]; then
-          rule="VCS_OR_URL_DEP"
+          if [[ "${has_hash_fragment}" != "true" ]]; then
+            rule="VCS_OR_URL_DEP"
+          fi
         elif [[ "${lower}" == *"git = \""* && ( "${lower}" == *"http://"* || "${lower}" == *"https://"* || "${lower}" == *"ssh://"* ) ]]; then
           rule="VCS_OR_URL_DEP"
         fi
