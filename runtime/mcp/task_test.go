@@ -566,7 +566,7 @@ func TestTaskRuntimeToolsCall_ConcurrentResultWaitersBoundReadPressure(t *testin
 	base := NewMemoryTaskStore()
 	record := taskTestRecord("sess-1", "task-result-read-pressure", TaskStatusWorking)
 	record.Result = nil
-	poll := int64(time.Millisecond / time.Millisecond)
+	poll := int64(1)
 	record.Task.PollInterval = &poll
 	if _, err := base.Create(context.Background(), record); err != nil {
 		t.Fatalf("create working task: %v", err)
