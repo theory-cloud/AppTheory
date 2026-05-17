@@ -33,6 +33,23 @@ def require_order(path: str, first: str, second: str, description: str) -> None:
         )
 
 
+def require_order_after(path: str, anchor: str, first: str, second: str, description: str) -> None:
+    text = Path(path).read_text(encoding="utf-8")
+    anchor_index = text.find(anchor)
+    if anchor_index == -1:
+        raise SystemExit(f"release-workflows: FAIL ({description}; missing anchor {anchor!r} in {path})")
+    first_index = text.find(first, anchor_index)
+    second_index = text.find(second, first_index if first_index != -1 else anchor_index)
+    if first_index == -1:
+        raise SystemExit(f"release-workflows: FAIL ({description}; missing {first!r} after {anchor!r} in {path})")
+    if second_index == -1:
+        raise SystemExit(f"release-workflows: FAIL ({description}; missing {second!r} after {first!r} in {path})")
+    if first_index >= second_index:
+        raise SystemExit(
+            f"release-workflows: FAIL ({description}; {first!r} must appear before {second!r} after {anchor!r} in {path})"
+        )
+
+
 require_order(
     ".github/workflows/prerelease.yml",
     "Build + verify before prerelease creation",
@@ -44,6 +61,46 @@ require_order(
     "Build + verify before stable release creation",
     "Release Please (Stable)",
     "stable release must pass rubric before release-please can create a draft release",
+)
+require_not_contains(
+    ".github/workflows/release.yml",
+    "if: github.ref == 'refs/heads/main'\n",
+    "workflow_dispatch existing-tag uploads must not run stable main preflight from branch HEAD",
+)
+require_contains(
+    ".github/workflows/release.yml",
+    "if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
+    "stable release branch preflight must be skipped for workflow_dispatch existing-tag uploads",
+)
+require_contains(
+    ".github/workflows/release.yml",
+    "ref: ${{ steps.release.outputs.tag_name }}",
+    "stable release asset build must check out the immutable tag source",
+)
+require_contains(
+    ".github/workflows/release.yml",
+    "git fetch origin main premain --tags --force",
+    "release branch verification must fetch tag refs before asset provenance checks",
+)
+require_order_after(
+    ".github/workflows/release.yml",
+    "Upload assets for existing tag release",
+    'scripts/verify-release-branch.sh "${TAG_NAME}"',
+    "make rubric",
+    "existing-tag uploads must verify the checked-out tag source before building assets",
+)
+require_order_after(
+    ".github/workflows/release.yml",
+    "Upload assets for existing tag release",
+    'source_commit="$(git rev-parse HEAD)"',
+    "Release asset source",
+    "existing-tag uploads must record the source commit used for assets",
+)
+require_order(
+    "scripts/verify-release-branch.sh",
+    'tag_commit="$(git rev-parse "${tag_ref}^{commit}")"',
+    'if [[ "${commit}" != "${tag_commit}" ]]',
+    "release branch verifier must compare HEAD to the tag commit before allowing asset builds",
 )
 for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.yml"):
     require_order(

@@ -40,6 +40,18 @@ if ! git show-ref --verify --quiet "${premain_ref}"; then
 fi
 
 commit="$(git rev-parse HEAD)"
+tag_ref="refs/tags/${tag}"
+
+if ! git show-ref --verify --quiet "${tag_ref}"; then
+  echo "release-branch: FAIL (missing ${tag_ref}; run: git fetch ${remote} tag ${tag})"
+  exit 1
+fi
+
+tag_commit="$(git rev-parse "${tag_ref}^{commit}")"
+if [[ "${commit}" != "${tag_commit}" ]]; then
+  echo "release-branch: FAIL (HEAD ${commit} != ${tag} ${tag_commit}; build assets from the immutable tag source)"
+  exit 1
+fi
 
 # release-please uses `prerelease-type: rc` and may emit either:
 # - `X.Y.Z-rc` (first RC on a new track)
@@ -56,4 +68,4 @@ else
   fi
 fi
 
-echo "release-branch: PASS (${expected_tag})"
+echo "release-branch: PASS (${expected_tag} source=${commit})"
