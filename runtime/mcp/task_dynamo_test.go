@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -516,6 +517,99 @@ func TestDynamoTaskStore_ListFiltersSortsAndPaginates(t *testing.T) {
 	require.Len(t, paged.Tasks, 1)
 	require.Equal(t, "task-3", paged.Tasks[0].TaskID)
 	require.Equal(t, "4", paged.NextCursor)
+}
+
+func TestDynamoTaskStore_ListPaginatesHighCardinalityPartition(t *testing.T) {
+	const (
+		sessionID      = "sess-high"
+		pageLimit      = 3
+		queryPageLimit = pageLimit + 1
+		recordCount    = 1000
+	)
+	db := new(tablemocks.MockDB)
+	now := time.Date(2026, 5, 15, 1, 34, 0, 0, time.UTC)
+	backing := make([]dynamoTaskRecord, recordCount)
+	for i := range backing {
+		createdAt := now.Add(time.Duration(i/2) * time.Second)
+		backing[i] = dynamoTaskRecord{
+			SessionID:          sessionID,
+			TaskID:             fmt.Sprintf("task-%04d", i+1),
+			Method:             methodToolsCall,
+			ToolName:           "slow",
+			Status:             TaskStatusWorking,
+			StatusMessage:      "working",
+			CreatedAt:          createdAt,
+			LastUpdatedAt:      createdAt,
+			ExpiresAt:          now.Add(time.Hour).Unix(),
+			TTLMillis:          int64(time.Hour / time.Millisecond),
+			PollIntervalMillis: int64(defaultTaskPollInterval / time.Millisecond),
+			Result:             json.RawMessage(`{"content":[{"type":"text","text":"large payload must not be projected"}]}`),
+			ErrorCode:          CodeServerError,
+			ErrorMessage:       "large error must not be projected",
+			ErrorData:          json.RawMessage(`{"secret":"must not be projected"}`),
+		}
+	}
+	backing[1].ExpiresAt = now.Add(-time.Second).Unix()
+	backing[5].ExpiresAt = now.Add(-time.Second).Unix()
+
+	for _, field := range []string{"Result", "ErrorCode", "ErrorMessage", "ErrorData"} {
+		require.NotContains(t, dynamoTaskListProjection, field, "tasks/list projection must not read result/error payload fields")
+	}
+
+	expectListPage := func(offset int) {
+		t.Helper()
+		q := new(tablemocks.MockQuery)
+		t.Cleanup(func() {
+			q.AssertExpectations(t)
+		})
+		db.On("Model", mock.Anything).Return(q).Once()
+		expectDynamoTaskListQuery(q, sessionID, queryPageLimit, offset)
+		q.On("All", mock.Anything).Run(func(args mock.Arguments) {
+			end := offset + queryPageLimit
+			if end > len(backing) {
+				end = len(backing)
+			}
+			page := append([]dynamoTaskRecord(nil), backing[offset:end]...)
+			require.LessOrEqual(t, len(page), queryPageLimit)
+			require.Less(t, len(page), len(backing), "mock must emulate storage-layer paging instead of materializing the full partition")
+			out, ok := args.Get(0).(*[]dynamoTaskRecord)
+			require.True(t, ok)
+			*out = page
+		}).Return(nil).Once()
+	}
+
+	expectListPage(0)
+	expectListPage(3)
+	expectListPage(6)
+
+	store, ok := NewDynamoTaskStore(db).(*DynamoTaskStore)
+	require.True(t, ok)
+	store.now = func() time.Time { return now }
+
+	first, err := store.List(context.Background(), TaskListRequest{SessionID: " " + sessionID + " ", Limit: pageLimit})
+	require.NoError(t, err)
+	require.Equal(t, []string{"task-0001", "task-0003"}, taskIDs(first.Tasks))
+	require.Equal(t, "3", first.NextCursor)
+
+	second, err := store.List(context.Background(), TaskListRequest{SessionID: sessionID, Limit: pageLimit, Cursor: first.NextCursor})
+	require.NoError(t, err)
+	require.Equal(t, []string{"task-0004", "task-0005"}, taskIDs(second.Tasks))
+	require.Equal(t, "6", second.NextCursor)
+
+	third, err := store.List(context.Background(), TaskListRequest{SessionID: sessionID, Limit: pageLimit, Cursor: second.NextCursor})
+	require.NoError(t, err)
+	require.Equal(t, []string{"task-0007", "task-0008", "task-0009"}, taskIDs(third.Tasks))
+	require.Equal(t, "9", third.NextCursor)
+
+	db.AssertExpectations(t)
+}
+
+func taskIDs(tasks []Task) []string {
+	out := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		out = append(out, task.TaskID)
+	}
+	return out
 }
 
 func TestDynamoTaskStore_DeleteSessionAndInvalidWrites(t *testing.T) {
