@@ -121,6 +121,28 @@ require_contains(
     "CI must run when humans mark draft release PRs ready",
 )
 require_contains(
+    ".github/workflows/ci.yml",
+    "workflow_dispatch: {}",
+    "CI must be dispatchable for bot-authored release PR branch updates",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "scripts/verify-branch-version-sync.sh",
+    "CI must run the branch release-version sync verifier with git metadata",
+)
+require_order(
+    ".github/workflows/prerelease-pr.yml",
+    "Verify branch version sync before release PR",
+    "Release Please (PR only)",
+    "prerelease PR generation must fail closed before opening stale release-please PRs",
+)
+require_order(
+    ".github/workflows/prerelease.yml",
+    "Verify branch version sync (release preflight)",
+    "Build + verify before prerelease creation",
+    "prerelease creation must fail closed on stale branch release state before rubric",
+)
+require_contains(
     "scripts/sync-release-pr-generated.sh",
     'gh pr ready "${pr_number}" --undo',
     "release PR sync must force the release PR back to draft before generated artifact work",
@@ -131,6 +153,11 @@ require_not_contains(
     "release PR sync must not depend on recursive pull_request events from bot-authored PR mutations",
 )
 for workflow in (".github/workflows/prerelease-pr.yml", ".github/workflows/release-pr.yml"):
+    require_contains(
+        workflow,
+        "actions: write",
+        "release PR workflow must be able to dispatch independent CI for bot-authored branch updates",
+    )
     require_not_contains(
         workflow,
         "statuses: write",
@@ -160,6 +187,18 @@ require_order(
     "scripts/update-cdk-generated.sh",
     "generated artifact sync must draft-lock the release PR before regenerating artifacts",
 )
+require_order_after(
+    "scripts/sync-release-pr-generated.sh",
+    "git switch --detach FETCH_HEAD",
+    "sync_stable_release_premain_manifest",
+    "scripts/update-cdk-generated.sh",
+    "stable premain manifest reset must happen before regenerating artifacts",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "git add .release-please-manifest.premain.json cdk/.jsii cdk/lib cdk-go/apptheorycdk",
+    "stable release PR sync must commit the premain manifest reset with generated release artifacts",
+)
 require_order(
     "scripts/sync-release-pr-generated.sh",
     'wait_for_pr_head "$(git rev-parse HEAD)"',
@@ -169,8 +208,8 @@ require_order(
 require_order(
     "scripts/sync-release-pr-generated.sh",
     "After the generated-artifact head is visible",
-    "wait_for_required_checks_to_start\nwait_for_required_checks",
-    "release PR sync must wait for independent CI after the generated-artifact head is visible",
+    "dispatch_required_checks\nwait_for_required_checks_to_start\nwait_for_required_checks",
+    "release PR sync must dispatch and wait for independent CI after the generated-artifact head is visible",
 )
 require_order(
     "scripts/sync-release-pr-generated.sh",
