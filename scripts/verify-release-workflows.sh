@@ -72,49 +72,80 @@ require_contains(
     "if: github.ref == 'refs/heads/main' && inputs.tag_name == ''",
     "stable release branch preflight must be skipped for workflow_dispatch existing-tag uploads",
 )
-require_contains(
+require_not_contains(
     ".github/workflows/release.yml",
     "ref: ${{ steps.release.outputs.tag_name }}",
-    "stable release asset build must check out the immutable tag source",
+    "stable release asset build must not assume release-please draft releases have materialized git tags",
+)
+for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.yml"):
+    require_contains(
+        workflow,
+        'scripts/publish-release-assets.sh "${TAG_NAME}"',
+        "release workflows must publish assets through the shared draft-release-safe path",
+    )
+require_contains(
+    ".github/workflows/prerelease.yml",
+    "Recover existing draft prerelease assets",
+    "prerelease reruns must recover draft releases left by a failed first attempt",
 )
 require_contains(
     ".github/workflows/release.yml",
-    "git fetch origin main premain --tags --force",
-    "release branch verification must fetch tag refs before asset provenance checks",
+    "Recover existing draft release assets",
+    "stable reruns must recover draft releases left by a failed first attempt",
 )
-require_order_after(
-    ".github/workflows/release.yml",
-    "Upload assets for existing tag release",
-    'scripts/verify-release-branch.sh "${TAG_NAME}"',
+require_contains(
+    "scripts/publish-release-assets.sh",
+    'git fetch "${remote}" "${main_branch}" "${premain_branch}" --tags --force',
+    "release asset publisher must fetch branch and tag refs before provenance checks",
+)
+require_order(
+    "scripts/publish-release-assets.sh",
+    'scripts/verify-release-branch.sh "${tag}"',
     "make rubric",
-    "existing-tag uploads must verify the checked-out tag source before building assets",
+    "release asset publisher must verify the resolved source before running rubric",
+)
+require_order(
+    "scripts/publish-release-assets.sh",
+    "make rubric",
+    "make build",
+    "release asset publisher must run rubric before building release assets",
+)
+require_order(
+    "scripts/publish-release-assets.sh",
+    "make build",
+    "scripts/generate-checksums.sh",
+    "release asset publisher must build dist artifacts before generating checksums",
+)
+require_order(
+    "scripts/publish-release-assets.sh",
+    "scripts/generate-checksums.sh",
+    'gh release upload "${tag}"',
+    "release asset publisher must checksum artifacts before upload",
+)
+require_order(
+    "scripts/publish-release-assets.sh",
+    'gh release upload "${tag}"',
+    'gh release edit "${tag}" --target "${source_commit}" --draft=false',
+    "release asset publisher must upload assets before publishing the immutable release",
 )
 require_order_after(
-    ".github/workflows/release.yml",
-    "Upload assets for existing tag release",
-    'source_commit="$(git rev-parse HEAD)"',
-    "Release asset source",
-    "existing-tag uploads must record the source commit used for assets",
+    "scripts/publish-release-assets.sh",
+    'gh release edit "${tag}" --target "${source_commit}" --draft=false',
+    'git fetch "${remote}" tag "${tag}" --force',
+    'scripts/verify-release-branch.sh "${tag}"',
+    "release asset publisher must verify the materialized tag after publishing",
+)
+require_contains(
+    "scripts/verify-release-branch.sh",
+    "ALLOW_UNTAGGED_DRAFT_RELEASE",
+    "release branch verifier must only allow missing tag refs for explicitly verified draft releases",
 )
 require_order(
     "scripts/verify-release-branch.sh",
-    'tag_commit="$(git rev-parse "${tag_ref}^{commit}")"',
+    'tag_commit="$(git rev-parse "${DRAFT_RELEASE_TARGET}^{commit}")"',
     'if [[ "${commit}" != "${tag_commit}" ]]',
-    "release branch verifier must compare HEAD to the tag commit before allowing asset builds",
+    "release branch verifier must compare HEAD to the tag or draft target commit before allowing asset builds",
 )
-for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.yml"):
-    require_order(
-        workflow,
-        "Build + verify\n        if: steps.release.outputs.release_created == 'true'",
-        "Build release assets",
-        "release workflows must run rubric before building release assets",
-    )
-    require_order(
-        workflow,
-        "Build release assets",
-        "Generate SHA-256 checksums",
-        "release workflows must build dist artifacts before generating checksums",
-    )
 require_contains(
     ".github/workflows/ci.yml",
     "ready_for_review",

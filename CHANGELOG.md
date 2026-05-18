@@ -1,5 +1,47 @@
 # Changelog
 
+## [1.6.1](https://github.com/theory-cloud/AppTheory/compare/v1.6.0...v1.6.1) (2026-05-17)
+
+
+### Bug Fixes
+
+* **gov:** require hashed Python wheel dependencies ([5b1c18c](https://github.com/theory-cloud/AppTheory/commit/5b1c18c22557942efaeaf289e1f72ea6595ff7b7))
+* **mcp:** block streaming task bypass ([3e0b454](https://github.com/theory-cloud/AppTheory/commit/3e0b45402539d6a8fb63a7b9109821ac23322401))
+* **mcp:** bound task result polling ([0e1d179](https://github.com/theory-cloud/AppTheory/commit/0e1d1799c970eac1eedfdb53f9cf214bb49aab1d))
+* **mcp:** enforce resource prompt capability disables ([2c998aa](https://github.com/theory-cloud/AppTheory/commit/2c998aafe818145e77933c37fa6e42b87123f6d9))
+* **mcp:** enforce task capability policy ([60fa540](https://github.com/theory-cloud/AppTheory/commit/60fa5402d99d12c55e0d52be9e2fe5401dc2bb3e))
+* **mcp:** keep resource existence check internal ([2ae03fc](https://github.com/theory-cloud/AppTheory/commit/2ae03fcd58fc2ca58cefbc4a531f3a7e52e45adb))
+* **mcp:** page Dynamo task listings ([e9ceb4f](https://github.com/theory-cloud/AppTheory/commit/e9ceb4fab86a7282984bc4e021a93925c7d073ff))
+* **mcp:** validate resource subscriptions ([0766f7d](https://github.com/theory-cloud/AppTheory/commit/0766f7dfd1107fc3f16b1f22b7cb046f65ad92de))
+* **release:** read commit checks for release PR sync ([56535df](https://github.com/theory-cloud/AppTheory/commit/56535df12bc9cd7a7d55201aaec9e6e0c6453472))
+* **release:** read commit checks for release PR sync ([32cd09f](https://github.com/theory-cloud/AppTheory/commit/32cd09f7cf416f188fb6ad5a6b679dfaefcceada))
+* **release:** repair premain prerelease gate ([7001b27](https://github.com/theory-cloud/AppTheory/commit/7001b272f6b69454168e24a74a967e05313dbeae))
+* **release:** repair premain prerelease gate ([0b7c37d](https://github.com/theory-cloud/AppTheory/commit/0b7c37dc23b81dea9d5acf48a0b3a7c320d0d8b2))
+* **release:** stop release PR status self-attestation ([e078696](https://github.com/theory-cloud/AppTheory/commit/e078696f645b96b811ee740a0fbb630eedc324dd))
+* **release:** verify tag source before asset upload ([230b73f](https://github.com/theory-cloud/AppTheory/commit/230b73fbf74f8c54e3fb9e797a2086431ea3f33a))
+* **sanitization:** redact authorization identifiers ([e9fa21f](https://github.com/theory-cloud/AppTheory/commit/e9fa21feea891a0e1abefce2084a87e39010a16f))
+
+## [1.6.1-rc](https://github.com/theory-cloud/AppTheory/compare/v1.6.0...v1.6.1-rc) (2026-05-17)
+
+
+### Bug Fixes
+
+* **gov:** require hashed Python wheel dependencies ([5b1c18c](https://github.com/theory-cloud/AppTheory/commit/5b1c18c22557942efaeaf289e1f72ea6595ff7b7))
+* **mcp:** block streaming task bypass ([3e0b454](https://github.com/theory-cloud/AppTheory/commit/3e0b45402539d6a8fb63a7b9109821ac23322401))
+* **mcp:** bound task result polling ([0e1d179](https://github.com/theory-cloud/AppTheory/commit/0e1d1799c970eac1eedfdb53f9cf214bb49aab1d))
+* **mcp:** enforce resource prompt capability disables ([2c998aa](https://github.com/theory-cloud/AppTheory/commit/2c998aafe818145e77933c37fa6e42b87123f6d9))
+* **mcp:** enforce task capability policy ([60fa540](https://github.com/theory-cloud/AppTheory/commit/60fa5402d99d12c55e0d52be9e2fe5401dc2bb3e))
+* **mcp:** keep resource existence check internal ([2ae03fc](https://github.com/theory-cloud/AppTheory/commit/2ae03fcd58fc2ca58cefbc4a531f3a7e52e45adb))
+* **mcp:** page Dynamo task listings ([e9ceb4f](https://github.com/theory-cloud/AppTheory/commit/e9ceb4fab86a7282984bc4e021a93925c7d073ff))
+* **mcp:** validate resource subscriptions ([0766f7d](https://github.com/theory-cloud/AppTheory/commit/0766f7dfd1107fc3f16b1f22b7cb046f65ad92de))
+* **release:** read commit checks for release PR sync ([56535df](https://github.com/theory-cloud/AppTheory/commit/56535df12bc9cd7a7d55201aaec9e6e0c6453472))
+* **release:** read commit checks for release PR sync ([32cd09f](https://github.com/theory-cloud/AppTheory/commit/32cd09f7cf416f188fb6ad5a6b679dfaefcceada))
+* **release:** repair premain prerelease gate ([7001b27](https://github.com/theory-cloud/AppTheory/commit/7001b272f6b69454168e24a74a967e05313dbeae))
+* **release:** repair premain prerelease gate ([0b7c37d](https://github.com/theory-cloud/AppTheory/commit/0b7c37dc23b81dea9d5acf48a0b3a7c320d0d8b2))
+* **release:** stop release PR status self-attestation ([e078696](https://github.com/theory-cloud/AppTheory/commit/e078696f645b96b811ee740a0fbb630eedc324dd))
+* **release:** verify tag source before asset upload ([230b73f](https://github.com/theory-cloud/AppTheory/commit/230b73fbf74f8c54e3fb9e797a2086431ea3f33a))
+* **sanitization:** redact authorization identifiers ([e9fa21f](https://github.com/theory-cloud/AppTheory/commit/e9fa21feea891a0e1abefce2084a87e39010a16f))
+
 ## [1.6.0](https://github.com/theory-cloud/AppTheory/compare/v1.5.0...v1.6.0) (2026-05-15)
 
 
