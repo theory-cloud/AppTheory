@@ -21,6 +21,7 @@ required_files=(
   ".release-please-manifest.premain.json"
   ".release-please-manifest.json"
   "scripts/verify-branch-version-sync.sh"
+  "scripts/publish-release-assets.sh"
 )
 
 for f in "${required_files[@]}"; do
@@ -81,12 +82,16 @@ if [[ -f ".github/workflows/prerelease.yml" ]]; then
     echo "branch-release: prerelease workflow must build and verify (make rubric)"
     failures=$((failures + 1))
   }
-  grep -Eq 'scripts/generate-checksums\.sh' ".github/workflows/prerelease.yml" || {
-    echo "branch-release: prerelease workflow must generate checksums (scripts/generate-checksums.sh)"
+  grep -Eq 'scripts/publish-release-assets\.sh' ".github/workflows/prerelease.yml" || {
+    echo "branch-release: prerelease workflow must use the shared release asset publisher"
     failures=$((failures + 1))
   }
-  grep -Eq 'gh release upload' ".github/workflows/prerelease.yml" || {
-    echo "branch-release: prerelease workflow must upload release assets to GitHub release"
+  grep -Eq 'scripts/generate-checksums\.sh' "scripts/publish-release-assets.sh" || {
+    echo "branch-release: release asset publisher must generate checksums (scripts/generate-checksums.sh)"
+    failures=$((failures + 1))
+  }
+  grep -Eq 'gh release upload' "scripts/publish-release-assets.sh" || {
+    echo "branch-release: release asset publisher must upload release assets to GitHub release"
     failures=$((failures + 1))
   }
 fi
@@ -122,12 +127,16 @@ if [[ -f ".github/workflows/release.yml" ]]; then
     echo "branch-release: release workflow must build and verify (make rubric)"
     failures=$((failures + 1))
   }
-  grep -Eq 'scripts/generate-checksums\.sh' ".github/workflows/release.yml" || {
-    echo "branch-release: release workflow must generate checksums (scripts/generate-checksums.sh)"
+  grep -Eq 'scripts/publish-release-assets\.sh' ".github/workflows/release.yml" || {
+    echo "branch-release: release workflow must use the shared release asset publisher"
     failures=$((failures + 1))
   }
-  grep -Eq 'gh release upload' ".github/workflows/release.yml" || {
-    echo "branch-release: release workflow must upload release assets to GitHub release"
+  grep -Eq 'scripts/generate-checksums\.sh' "scripts/publish-release-assets.sh" || {
+    echo "branch-release: release asset publisher must generate checksums (scripts/generate-checksums.sh)"
+    failures=$((failures + 1))
+  }
+  grep -Eq 'gh release upload' "scripts/publish-release-assets.sh" || {
+    echo "branch-release: release asset publisher must upload release assets to GitHub release"
     failures=$((failures + 1))
   }
 fi
