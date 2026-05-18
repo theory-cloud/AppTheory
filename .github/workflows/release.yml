@@ -23,8 +23,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-          # On workflow_dispatch, allow publishing/uploading assets for an existing tag by checking out that tag.
-          ref: ${{ inputs.tag_name || github.ref }}
+          # The publish script resolves and checks out the immutable tag or draft-release target.
 
       - name: Checkout (stable release preflight)
         if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
@@ -87,67 +86,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ inputs.tag_name || github.ref_name }}
-        run: |
-          if [[ -z "${TAG_NAME}" ]]; then
-            echo "release-assets: FAIL (missing tag ref_name)"
-            exit 1
-          fi
-
-          # Immutable releases block asset/notes changes after publication.
-          # We only support mutating draft releases (or creating a draft release) here.
-          if ! gh release view "${TAG_NAME}" >/dev/null 2>&1; then
-            # Source code zip/tar is auto-attached by GitHub. Assets are uploaded below.
-            gh release create "${TAG_NAME}" --generate-notes --draft
-          fi
-
-          is_draft="$(gh release view "${TAG_NAME}" --json isDraft --jq '.isDraft')"
-          if [[ "${is_draft}" != "true" ]]; then
-            echo "release-assets: FAIL (release is already published; immutable releases prevent adding assets/notes)"
-            exit 1
-          fi
-
-          git fetch origin main premain --tags --force
-          scripts/verify-release-branch.sh "${TAG_NAME}"
-          source_commit="$(git rev-parse HEAD)"
-          echo "release-assets: source ${source_commit} for ${TAG_NAME}"
-          {
-            echo "### Release asset source"
-            echo ""
-            echo "- Tag: \`${TAG_NAME}\`"
-            echo "- Source commit: \`${source_commit}\`"
-          } >> "${GITHUB_STEP_SUMMARY}"
-
-          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
-          make rubric
-          scripts/generate-checksums.sh
-          scripts/render-release-notes.sh "${TAG_NAME}"
-
-          mapfile -t existing_assets < <(gh release view "${TAG_NAME}" --json assets --jq '.assets[].name' 2>/dev/null || true)
-
-          assets=(
-            dist/theory-cloud-apptheory*.tgz
-            dist/apptheory*.whl
-            dist/apptheory*.tar.gz
-            dist/SHA256SUMS.txt
-          )
-
-          for asset_glob in "${assets[@]}"; do
-            for asset_path in ${asset_glob}; do
-              asset_name="$(basename "${asset_path}")"
-              if printf '%s\n' "${existing_assets[@]}" | grep -Fxq "${asset_name}"; then
-                echo "release-assets: skip existing ${asset_name}"
-                continue
-              fi
-              gh release upload "${TAG_NAME}" "${asset_path}"
-            done
-          done
-
-          prerelease_flag=""
-          if [[ "${TAG_NAME}" =~ -rc(\.|$) ]]; then
-            prerelease_flag="--prerelease"
-          fi
-
-          gh release edit "${TAG_NAME}" --draft=false ${prerelease_flag} --notes-file dist/RELEASE_NOTES.md
+        run: scripts/publish-release-assets.sh "${TAG_NAME}"
 
       - name: Release Please (Stable)
         id: release
@@ -162,128 +101,40 @@ jobs:
           # PR generation runs in release-pr.yml.
           skip-github-pull-request: true
 
-      - name: Checkout (for release assets)
-        if: steps.release.outputs.release_created == 'true'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-          ref: ${{ steps.release.outputs.tag_name }}
-
-      - name: Fetch main + premain (release branch verification)
-        if: steps.release.outputs.release_created == 'true'
-        run: git fetch origin main premain --tags --force
-
-      - name: Verify tag was cut from the correct branch
-        if: steps.release.outputs.release_created == 'true'
-        run: scripts/verify-release-branch.sh "${{ steps.release.outputs.tag_name }}"
-
-      - name: Set SOURCE_DATE_EPOCH (deterministic artifacts)
-        if: steps.release.outputs.release_created == 'true'
-        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
-
-      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
-        if: steps.release.outputs.release_created == 'true'
-        with:
-          go-version: "1.26.3"
-
-      - name: Install golangci-lint (pinned)
-        if: steps.release.outputs.release_created == 'true'
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
-
-      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
-        if: steps.release.outputs.release_created == 'true'
-        with:
-          node-version: "24.13.1"
-
-      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
-        if: steps.release.outputs.release_created == 'true'
-        with:
-          python-version: "3.14.3"
-
-      - name: Build + verify
-        if: steps.release.outputs.release_created == 'true'
-        run: make rubric
-
-      - name: Build release assets
-        if: steps.release.outputs.release_created == 'true'
-        run: make build
-
-      - name: Generate SHA-256 checksums
-        if: steps.release.outputs.release_created == 'true'
-        run: scripts/generate-checksums.sh
-
-      - name: Render release notes template
-        if: steps.release.outputs.release_created == 'true'
-        run: scripts/render-release-notes.sh "${{ steps.release.outputs.tag_name }}"
-
-      - name: Upload release assets
+      - name: Build, upload, and publish release assets
         if: steps.release.outputs.release_created == 'true'
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ steps.release.outputs.tag_name }}
-        run: |
-          if [[ -z "${TAG_NAME}" ]]; then
-            echo "release-assets: FAIL (missing tag_name output)"
-            exit 1
-          fi
+        run: scripts/publish-release-assets.sh "${TAG_NAME}"
 
-          # Immutable releases block asset changes after publication.
-          # release-please creates the GitHub release as a draft; assert that before uploading.
-          is_draft="$(gh release view "${TAG_NAME}" --json isDraft --jq '.isDraft')"
-          if [[ "${is_draft}" != "true" ]]; then
-            echo "release-assets: FAIL (release is already published; cannot upload assets/notes under immutable releases)"
-            exit 1
-          fi
-
-          mapfile -t existing_assets < <(gh release view "${TAG_NAME}" --json assets --jq '.assets[].name' 2>/dev/null || true)
-
-          assets=(
-            dist/theory-cloud-apptheory*.tgz
-            dist/apptheory*.whl
-            dist/apptheory*.tar.gz
-            dist/SHA256SUMS.txt
-          )
-
-          for asset_glob in "${assets[@]}"; do
-            for asset_path in ${asset_glob}; do
-              asset_name="$(basename "${asset_path}")"
-              if printf '%s\n' "${existing_assets[@]}" | grep -Fxq "${asset_name}"; then
-                echo "release-assets: skip existing ${asset_name}"
-                continue
-              fi
-              gh release upload "${TAG_NAME}" "${asset_path}"
-            done
-          done
-
-      - name: Publish release (immutable)
-        if: steps.release.outputs.release_created == 'true'
+      - name: Recover existing draft release assets
+        if: github.ref == 'refs/heads/main' && inputs.tag_name == '' && steps.release.outputs.release_created != 'true'
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ steps.release.outputs.tag_name }}
         run: |
-          if [[ -z "${TAG_NAME}" ]]; then
-            echo "release-assets: FAIL (missing tag_name output)"
-            exit 1
-          fi
-
-          # If the release is already published, it is immutable (no edits allowed). Treat as no-op.
-          is_draft="$(gh release view "${TAG_NAME}" --json isDraft --jq '.isDraft')"
-          if [[ "${is_draft}" != "true" ]]; then
-            echo "release-assets: skip publish (already published)"
+          TAG_NAME="v$(./scripts/read-version.sh)"
+          if [[ "${TAG_NAME}" =~ -rc(\.|$) ]]; then
+            echo "release-assets: SKIP (${TAG_NAME} is not a stable tag)"
             exit 0
           fi
 
-          gh release edit "${TAG_NAME}" --draft=false --notes-file dist/RELEASE_NOTES.md
+          is_draft="$(gh release view "${TAG_NAME}" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
+          if [[ "${is_draft}" != "true" ]]; then
+            echo "release-assets: SKIP (${TAG_NAME} has no draft release to recover)"
+            exit 0
+          fi
+
+          scripts/publish-release-assets.sh "${TAG_NAME}"
 
       - name: Report failed draft release (immutable)
-        if: failure() && steps.release.outputs.release_created == 'true'
+        if: failure() && github.ref == 'refs/heads/main' && inputs.tag_name == ''
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ steps.release.outputs.tag_name }}
         run: |
           if [[ -z "${TAG_NAME}" ]]; then
-            echo "release-cleanup: SKIP (missing tag_name output)"
-            exit 0
+            TAG_NAME="v$(./scripts/read-version.sh)"
           fi
 
           # Releases and tags are immutable. Do not delete or mutate anything on

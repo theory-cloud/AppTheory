@@ -42,14 +42,29 @@ fi
 commit="$(git rev-parse HEAD)"
 tag_ref="refs/tags/${tag}"
 
-if ! git show-ref --verify --quiet "${tag_ref}"; then
-  echo "release-branch: FAIL (missing ${tag_ref}; run: git fetch ${remote} tag ${tag})"
-  exit 1
+if git show-ref --verify --quiet "${tag_ref}"; then
+  tag_commit="$(git rev-parse "${tag_ref}^{commit}")"
+else
+  if [[ "${ALLOW_UNTAGGED_DRAFT_RELEASE:-}" != "true" ]]; then
+    echo "release-branch: FAIL (missing ${tag_ref}; run: git fetch ${remote} tag ${tag})"
+    exit 1
+  fi
+
+  if [[ "${DRAFT_RELEASE_IS_DRAFT:-}" != "true" ]]; then
+    echo "release-branch: FAIL (${tag} has no tag ref and is not an explicitly verified draft release)"
+    exit 1
+  fi
+
+  if [[ -z "${DRAFT_RELEASE_TARGET:-}" ]]; then
+    echo "release-branch: FAIL (${tag} has no tag ref and no draft release target)"
+    exit 1
+  fi
+
+  tag_commit="$(git rev-parse "${DRAFT_RELEASE_TARGET}^{commit}")"
 fi
 
-tag_commit="$(git rev-parse "${tag_ref}^{commit}")"
 if [[ "${commit}" != "${tag_commit}" ]]; then
-  echo "release-branch: FAIL (HEAD ${commit} != ${tag} ${tag_commit}; build assets from the immutable tag source)"
+  echo "release-branch: FAIL (HEAD ${commit} != ${tag} ${tag_commit}; build assets from the immutable release source)"
   exit 1
 fi
 
