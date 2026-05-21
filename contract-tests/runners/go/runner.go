@@ -153,6 +153,25 @@ func printFailure(f Fixture, err error) {
 	fmt.Fprintf(os.Stderr, "FAIL %s — %s\n", f.ID, f.Name)
 	fmt.Fprintf(os.Stderr, "  %v\n", err)
 
+	if isLoggingProfileContractFixture(f) {
+		if len(f.Expect.LoggingProfileCatalog) > 0 {
+			expected := marshalIndentOrPlaceholder(f.Expect.LoggingProfileCatalog)
+			fmt.Fprintf(os.Stderr, "  expected.logging_profile_catalog: %s\n", string(expected))
+			fmt.Fprintf(os.Stderr, "  got.logging_profile_catalog: null\n")
+		}
+		if len(f.Expect.ProfileValidationErrors) > 0 {
+			expected := marshalIndentOrPlaceholder(f.Expect.ProfileValidationErrors)
+			fmt.Fprintf(os.Stderr, "  expected.profile_validation_errors: %s\n", string(expected))
+			fmt.Fprintf(os.Stderr, "  got.profile_validation_errors: []\n")
+		}
+		if len(f.Expect.ProfileLogs) > 0 {
+			expected := marshalIndentOrPlaceholder(f.Expect.ProfileLogs)
+			fmt.Fprintf(os.Stderr, "  expected.profile_logs: %s\n", string(expected))
+			fmt.Fprintf(os.Stderr, "  got.profile_logs: []\n")
+		}
+		return
+	}
+
 	if strings.EqualFold(strings.TrimSpace(f.Tier), "p0") {
 		printFailureP0(f)
 		return
