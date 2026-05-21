@@ -98,9 +98,14 @@ class FakeTable:
 
     def transact_write(self, actions: list[TransactUpdate]) -> None:
         staged = deepcopy(self.items)
+        transaction_targets: set[tuple[str, str]] = set()
 
         def apply_update(action: TransactUpdate) -> None:
             key = (str(action.pk), str(action.sk or ""))
+            if key in transaction_targets:
+                raise RuntimeError(f"duplicate transaction target: {key[0]}||{key[1]}")
+            transaction_targets.add(key)
+
             exists = key in staged
             current = deepcopy(staged.get(key) or RateLimitEntry(pk=key[0], sk=key[1]))
 
@@ -257,6 +262,12 @@ class TestLimited(unittest.TestCase):
 
         key = RateLimitKey(identifier="i1", resource="/r", operation="GET")
         limiter.check_and_increment(key)
+        self.assertEqual(len(table.items), 2)
+        persisted_keys = sorted(f"{pk}||{sk}" for pk, sk in table.items)
+        self.assertNotEqual(persisted_keys[0], persisted_keys[1])
+        self.assertTrue(any("60000ms" in item_key for item_key in persisted_keys))
+        self.assertTrue(any("3600000ms" in item_key for item_key in persisted_keys))
+
         limiter.check_and_increment(key)
         d3 = limiter.check_and_increment(key)
         self.assertFalse(d3.allowed)

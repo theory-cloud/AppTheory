@@ -8,9 +8,13 @@ import (
 
 // RateLimitEntry tracks rate limit usage in DynamoDB.
 //
-// Storage key shape:
+// Base storage key shape:
 //   - PK: {identifier}#{window_start_unix}
 //   - SK: {resource}#{operation}
+//
+// DynamoRateLimiter appends the logical window key to PK for multi-window
+// strategies so equal start timestamps in different windows remain distinct
+// DynamoDB items.
 type RateLimitEntry struct {
 	PK string `theorydb:"pk" json:"pk"`
 	SK string `theorydb:"sk" json:"sk"`

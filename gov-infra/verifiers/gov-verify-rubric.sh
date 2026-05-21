@@ -488,6 +488,169 @@ gov_cmd_sast() {
   scripts/verify-go-lint.sh
 }
 
+osv_scan_lockfile() {
+  local lf="$1"
+
+  if ! grep -Fq '"node_modules/aws-cdk-lib/node_modules/brace-expansion"' "${lf}"; then
+    osv-scanner scan --lockfile="${lf}"
+    return $?
+  fi
+
+  local tmp_report
+  tmp_report="$(mktemp)"
+
+  set +e
+  osv-scanner scan --lockfile="${lf}" --format=json >"${tmp_report}"
+  local scan_status=$?
+  set -e
+
+  if [[ "${scan_status}" -eq 0 ]]; then
+    rm -f "${tmp_report}"
+    return 0
+  fi
+
+  set +e
+  OSV_REPORT="${tmp_report}" OSV_LOCKFILE="${lf}" node <<'NODE'
+const fs = require("fs");
+
+function fail(message) {
+  console.error(message);
+  process.exit(1);
+}
+
+let report;
+try {
+  report = JSON.parse(fs.readFileSync(process.env.OSV_REPORT, "utf8"));
+} catch (err) {
+  fail(`osv-scanner: FAIL (could not parse ${process.env.OSV_REPORT}: ${err.message})`);
+}
+
+let lock;
+try {
+  lock = JSON.parse(fs.readFileSync(process.env.OSV_LOCKFILE, "utf8"));
+} catch (err) {
+  fail(`osv-scanner: FAIL (could not parse ${process.env.OSV_LOCKFILE}: ${err.message})`);
+}
+
+const allowed = {
+  advisoryId: "GHSA-jxxr-4gwj-5jf2",
+  alias: "CVE-2026-45149",
+  fixedVersion: "5.0.6",
+  lockfile: String(process.env.OSV_LOCKFILE ?? "").replace(/\\/g, "/"),
+  packageName: "brace-expansion",
+  packageVersion: "5.0.5",
+  packagePath: "node_modules/aws-cdk-lib/node_modules/brace-expansion",
+  cdkVersion: "2.254.0",
+  minimatchVersion: "10.2.5",
+};
+
+function sameStringSet(actual, expected) {
+  if (actual.length !== expected.length) return false;
+  const actualSorted = [...actual].sort();
+  const expectedSorted = [...expected].sort();
+  return actualSorted.every((value, index) => value === expectedSorted[index]);
+}
+
+function hasFixedVersion(vuln) {
+  for (const affected of vuln.affected ?? []) {
+    if (affected?.package?.ecosystem !== "npm" || affected.package.name !== allowed.packageName) {
+      continue;
+    }
+    for (const range of affected.ranges ?? []) {
+      for (const event of range.events ?? []) {
+        if (event?.fixed === allowed.fixedVersion) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function lockfileContainsOnlyAllowedBraceExpansion() {
+  const packages = lock.packages ?? {};
+  const bracePaths = Object.entries(packages)
+    .filter(([path, pkg]) => path.endsWith("brace-expansion") && pkg?.version === allowed.packageVersion)
+    .map(([path]) => path);
+
+  const cdkPackage = packages["node_modules/aws-cdk-lib"];
+  const minimatchPackage = packages["node_modules/aws-cdk-lib/node_modules/minimatch"];
+  const bracePackage = packages[allowed.packagePath];
+
+  return (
+    sameStringSet(bracePaths, [allowed.packagePath]) &&
+    cdkPackage?.version === allowed.cdkVersion &&
+    Array.isArray(cdkPackage?.bundleDependencies) &&
+    cdkPackage.bundleDependencies.includes("minimatch") &&
+    minimatchPackage?.version === allowed.minimatchVersion &&
+    minimatchPackage?.inBundle === true &&
+    minimatchPackage?.dependencies?.[allowed.packageName] === "^5.0.5" &&
+    bracePackage?.version === allowed.packageVersion &&
+    bracePackage?.inBundle === true
+  );
+}
+
+function isAllowedAwsCdkBundledBraceExpansion(result, pkg, vuln) {
+  const sourcePath = String(result?.source?.path ?? "").replace(/\\/g, "/");
+  const packageInfo = pkg?.package ?? {};
+  const aliases = (vuln.aliases ?? []).map(String);
+  const dependencyGroups = (pkg.dependency_groups ?? []).map(String);
+
+  return (
+    (sourcePath === allowed.lockfile || sourcePath.endsWith(`/${allowed.lockfile}`)) &&
+    packageInfo.ecosystem === "npm" &&
+    packageInfo.name === allowed.packageName &&
+    packageInfo.version === allowed.packageVersion &&
+    sameStringSet(dependencyGroups, ["dev"]) &&
+    vuln.id === allowed.advisoryId &&
+    aliases.includes(allowed.alias) &&
+    hasFixedVersion(vuln) &&
+    lockfileContainsOnlyAllowedBraceExpansion()
+  );
+}
+
+const unexpected = [];
+let allowedCount = 0;
+
+for (const result of report.results ?? []) {
+  for (const pkg of result.packages ?? []) {
+    for (const vuln of pkg.vulnerabilities ?? []) {
+      if (isAllowedAwsCdkBundledBraceExpansion(result, pkg, vuln)) {
+        allowedCount += 1;
+      } else {
+        unexpected.push({
+          id: vuln.id ?? "<unknown>",
+          packageName: pkg?.package?.name ?? "<unknown>",
+          version: pkg?.package?.version ?? "<unknown>",
+          source: result?.source?.path ?? "<unknown>",
+        });
+      }
+    }
+  }
+}
+
+if (unexpected.length > 0 || allowedCount === 0) {
+  for (const vuln of unexpected) {
+    console.error(
+      `osv-scanner: unexpected vulnerability ${vuln.id} in ${vuln.packageName}@${vuln.version} from ${vuln.source}`,
+    );
+  }
+  if (allowedCount === 0) {
+    console.error("osv-scanner: expected AWS CDK bundled brace-expansion exception was not matched");
+  }
+  process.exit(1);
+}
+
+console.error(
+  `osv-scanner: WARN (allowed aws-cdk-lib bundled brace-expansion GHSA-jxxr-4gwj-5jf2 / CVE-2026-45149 in ${allowed.lockfile}; remove after AWS CDK bundles brace-expansion >=5.0.6)`,
+);
+NODE
+  local filter_status=$?
+  set -e
+  rm -f "${tmp_report}"
+  return "${filter_status}"
+}
+
 gov_cmd_vuln() {
   require_cmd_or_blocked go || return $?
   require_cmd_or_blocked node || return $?
@@ -541,7 +704,7 @@ gov_cmd_vuln() {
     fi
 
     echo "==> osv-scanner (Node): ${lf}"
-    osv-scanner scan --lockfile="${lf}"
+    osv_scan_lockfile "${lf}"
   done
 
   local -a py_requirements=(
