@@ -48,6 +48,11 @@ Each fixture is a single JSON object.
 - `expect.error` (object, optional): expected thrown error (for example: fail-closed `m1` routing).
   - `message` (string): error message to match.
 - `expect.logs` (array, optional): expected structured log records (P2 portable envelope).
+- `expect.profile_logs` (array, optional): expected structured JSON log objects emitted by a configured
+  AppTheory logging profile.
+- `expect.profile_validation_errors` (array, optional): expected fail-closed validation errors for an invalid
+  AppTheory logging profile config.
+- `expect.logging_profile_catalog` (object, optional): expected built-in logging profile catalog.
 - `expect.metrics` (array, optional): expected metric emissions (portable subset).
 - `expect.spans` (array, optional): expected trace span emissions (portable subset).
 
@@ -144,6 +149,36 @@ Non-HTTP observability fixtures use the existing `expect.logs`, `expect.metrics`
 - Spans use trigger-specific names and attributes; raw event details, DynamoDB keys, and image values are not emitted.
 
 The safe-panic fixture pins the posture for non-HTTP handler panics/errors: observability records carry `error_code = "app.internal"`, while the surfaced error is the safe message `apptheory: event workload failed`.
+
+## P2 logging profile fixtures
+
+Logging profile fixtures pin the additive `apptheory.logging/v1` contract. They do not introduce a second
+observability path: profile-backed logging is the configured encoder/logger behavior for the existing P2
+observability surface.
+
+The contract-owned pieces are:
+
+- Profile schema version: `apptheory.logging/v1`.
+- Built-in profile names, sorted canonically: `cloudwatch-json`, `legacy`, `local-dev`, `paytheory-alert-v1`.
+- Encoding defaults and validation for JSON output.
+- Required and recommended field validation.
+- Field mapping from canonical AppTheory log event fields to profile output fields.
+- Static/env enrichment and request/job context enrichment.
+- Error type, error code, optional stack trace, and deterministic stack hash capture.
+- Sanitization-preserving behavior: profile fixtures may include safe structured fields, but raw payload fields must
+  not appear in `expect.profile_logs`.
+
+`setup.logging_profile` carries the profile config under test. `setup.environment` supplies deterministic values for
+`${ENV_VAR}` placeholders used by profile enrichment. `input.logging_event` is a synthetic canonical log event used by
+contract runners to exercise profile encoding without depending on a real provider backend.
+
+`expect.profile_logs` contains the exact structured JSON objects the profile must emit. For `paytheory-alert-v1`,
+the fixture requires enough context for alert-decisioner and Keeper lookup: partner, stage, account family, AWS region,
+service, function, request ID, trace ID, error type/code, stack hash, and normalized message.
+
+Validation-only fixtures use `expect.profile_validation_errors` and may omit `input.request`; runtimes must fail
+closed with deterministic validation messages for unsupported schema versions, profile names, encodings, field names,
+context sources, or stack hash algorithms.
 
 ## Bytes in JSON
 

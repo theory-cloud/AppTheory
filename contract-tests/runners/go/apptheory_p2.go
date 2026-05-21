@@ -10,6 +10,10 @@ import (
 )
 
 func runFixtureP2(f Fixture) error {
+	if isLoggingProfileContractFixture(f) {
+		return compareLoggingProfileContract(f)
+	}
+
 	now := time.Unix(0, 0).UTC()
 
 	var logs []FixtureLogRecord
@@ -138,4 +142,26 @@ func runFixtureP2(f Fixture) error {
 
 	actual := app.Serve(ctx, req)
 	return compareFixtureResponse(f, actual, logs, metrics, spans)
+}
+
+func isLoggingProfileContractFixture(f Fixture) bool {
+	return len(f.Setup.LoggingProfile) > 0 ||
+		len(f.Input.LoggingEvent) > 0 ||
+		f.Input.LoggingProfileCatalog ||
+		len(f.Expect.ProfileLogs) > 0 ||
+		len(f.Expect.ProfileValidationErrors) > 0 ||
+		len(f.Expect.LoggingProfileCatalog) > 0
+}
+
+func compareLoggingProfileContract(f Fixture) error {
+	if len(f.Expect.LoggingProfileCatalog) > 0 {
+		return fmt.Errorf("logging_profile_catalog mismatch")
+	}
+	if len(f.Expect.ProfileValidationErrors) > 0 {
+		return fmt.Errorf("profile_validation_errors mismatch")
+	}
+	if len(f.Expect.ProfileLogs) > 0 {
+		return fmt.Errorf("profile_logs mismatch")
+	}
+	return nil
 }

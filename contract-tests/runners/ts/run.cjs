@@ -50,6 +50,49 @@ function deepEqual(a, b) {
   return util.isDeepStrictEqual(a, b);
 }
 
+function isLoggingProfileContractFixture(fixture) {
+  const setup = fixture.setup ?? {};
+  const input = fixture.input ?? {};
+  const expect = fixture.expect ?? {};
+  return (
+    Object.prototype.hasOwnProperty.call(setup, "logging_profile") ||
+    Object.prototype.hasOwnProperty.call(input, "logging_event") ||
+    Object.prototype.hasOwnProperty.call(input, "logging_profile_catalog") ||
+    Object.prototype.hasOwnProperty.call(expect, "profile_logs") ||
+    Object.prototype.hasOwnProperty.call(expect, "profile_validation_errors") ||
+    Object.prototype.hasOwnProperty.call(expect, "logging_profile_catalog")
+  );
+}
+
+function compareLoggingProfileContract(fixture) {
+  const expect = fixture.expect ?? {};
+  if (Object.prototype.hasOwnProperty.call(expect, "logging_profile_catalog")) {
+    return {
+      ok: false,
+      reason: "logging_profile_catalog mismatch",
+      expected_logging_profile_catalog: expect.logging_profile_catalog,
+      actual_logging_profile_catalog: null,
+    };
+  }
+  if (Object.prototype.hasOwnProperty.call(expect, "profile_validation_errors")) {
+    return {
+      ok: false,
+      reason: "profile_validation_errors mismatch",
+      expected_profile_validation_errors: expect.profile_validation_errors ?? [],
+      actual_profile_validation_errors: [],
+    };
+  }
+  if (Object.prototype.hasOwnProperty.call(expect, "profile_logs")) {
+    return {
+      ok: false,
+      reason: "profile_logs mismatch",
+      expected_profile_logs: expect.profile_logs ?? [],
+      actual_profile_logs: [],
+    };
+  }
+  return { ok: true };
+}
+
 function listFixtureFiles(fixturesRoot) {
   const tiers = ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14"];
   const files = [];
@@ -617,6 +660,9 @@ async function runFixture(fixture) {
     return compareFixture(fixture, actual, effects);
   }
   if (tier === "p2") {
+    if (isLoggingProfileContractFixture(fixture)) {
+      return compareLoggingProfileContract(fixture);
+    }
     const expect = fixture.expect ?? {};
     if (
       Object.prototype.hasOwnProperty.call(expect, "output_json") ||
@@ -2636,8 +2682,19 @@ async function main() {
         console.error(`  got.error: ${stableStringify(result.actual_error)}`);
       }
     } else {
-      console.error(`  expected: ${stableStringify(result.expected)}`);
-      console.error(`  got: ${stableStringify(debugActualForExpected(result.actual, result.expected))}`);
+      if ("expected_logging_profile_catalog" in result) {
+        console.error(`  expected.logging_profile_catalog: ${stableStringify(result.expected_logging_profile_catalog)}`);
+        console.error(`  got.logging_profile_catalog: ${stableStringify(result.actual_logging_profile_catalog)}`);
+      } else if ("expected_profile_validation_errors" in result) {
+        console.error(`  expected.profile_validation_errors: ${stableStringify(result.expected_profile_validation_errors)}`);
+        console.error(`  got.profile_validation_errors: ${stableStringify(result.actual_profile_validation_errors)}`);
+      } else if ("expected_profile_logs" in result) {
+        console.error(`  expected.profile_logs: ${stableStringify(result.expected_profile_logs)}`);
+        console.error(`  got.profile_logs: ${stableStringify(result.actual_profile_logs)}`);
+      } else {
+        console.error(`  expected: ${stableStringify(result.expected)}`);
+        console.error(`  got: ${stableStringify(debugActualForExpected(result.actual, result.expected))}`);
+      }
     }
     if ("expected_logs" in result) {
       console.error(`  expected.logs: ${stableStringify(result.expected_logs)}`);
