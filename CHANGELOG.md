@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.1-rc](https://github.com/theory-cloud/AppTheory/compare/v1.7.0...v1.7.1-rc) (2026-05-21)
+
+
+### Bug Fixes
+
+* **rate-limit:** separate multi-window Dynamo keys ([062904a](https://github.com/theory-cloud/AppTheory/commit/062904ae2a9f0971c7280859078b1d0ab120630b))
+* **rate-limit:** separate multi-window Dynamo keys ([62d5143](https://github.com/theory-cloud/AppTheory/commit/62d514350fbfe2b20dc5a1152f927c9040e0de28))
+
 ## [1.7.0](https://github.com/theory-cloud/AppTheory/compare/v1.6.1...v1.7.0) (2026-05-18)
 
 
