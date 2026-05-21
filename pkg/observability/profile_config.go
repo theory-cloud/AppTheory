@@ -150,6 +150,9 @@ func LoggingProfileValidationErrors(config LoggingProfileConfig) []string {
 	if timestampFormat != "" && timestampFormat != "rfc3339nano" && timestampFormat != "rfc3339" {
 		errs = append(errs, "encoding.timestamp_format: unsupported value "+strings.TrimSpace(config.Encoding.TimestampFormat))
 	}
+	errs = append(errs, validateEncodingOutputField("encoding.timestamp_field", config.Encoding.TimestampField)...)
+	errs = append(errs, validateEncodingOutputField("encoding.level_field", config.Encoding.LevelField)...)
+	errs = append(errs, validateEncodingOutputField("encoding.message_field", config.Encoding.MessageField)...)
 
 	errs = append(errs, validateLevelMap(config.Levels)...)
 	errs = append(errs, validateProfileFieldList("required_fields", config.RequiredFields)...)
@@ -282,6 +285,17 @@ func validateProfileFieldList(path string, fields []string) []string {
 		}
 	}
 	return errs
+}
+
+func validateEncodingOutputField(path string, field string) []string {
+	trimmed := strings.TrimSpace(field)
+	if trimmed == "" {
+		return nil
+	}
+	if !isSupportedProfileOutputField(trimmed) {
+		return []string{path + ": unsupported field " + trimmed}
+	}
+	return nil
 }
 
 func validateFieldMap(fieldMap map[string]string) []string {

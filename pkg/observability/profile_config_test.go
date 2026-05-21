@@ -81,6 +81,26 @@ func TestLoggingProfile_ValidationErrorsAreDeterministic(t *testing.T) {
 	}
 }
 
+func TestLoggingProfile_EncodingFieldNamesFailClosed(t *testing.T) {
+	cfg, err := DefaultLoggingProfile(LoggingProfilePayTheoryAlertV1)
+	if err != nil {
+		t.Fatalf("DefaultLoggingProfile: %v", err)
+	}
+	cfg.Encoding.TimestampField = "raw_payload"
+	cfg.Encoding.LevelField = "raw_payload"
+	cfg.Encoding.MessageField = "raw_payload"
+
+	got := LoggingProfileValidationErrors(cfg)
+	want := []string{
+		"encoding.timestamp_field: unsupported field raw_payload",
+		"encoding.level_field: unsupported field raw_payload",
+		"encoding.message_field: unsupported field raw_payload",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("validation errors:\nexpected %#v\ngot      %#v", want, got)
+	}
+}
+
 func TestLoggingProfile_DefaultUnknownProfileFails(t *testing.T) {
 	_, err := DefaultLoggingProfile("custom-alert")
 	if err == nil {
