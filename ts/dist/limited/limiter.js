@@ -118,6 +118,16 @@ function setKeysStrict(entry) {
         throw newError("internal_error", "failed to set rate limit entry keys");
     }
 }
+function setKeysForWindowStrict(entry, windowKey) {
+    setKeysStrict(entry);
+    const suffix = String(windowKey ?? "").trim();
+    if (suffix) {
+        entry.PK = `${entry.Identifier}#${entry.WindowStart}#${suffix}`;
+    }
+}
+function storageWindowKey(strategy, window) {
+    return strategy instanceof MultiWindowStrategy ? window.key : "";
+}
 function countForPrimaryWindow(strategy, windows, counts) {
     if (windows.length === 0)
         return 0;
@@ -217,7 +227,7 @@ export class DynamoRateLimiter {
                 Resource: k.resource,
                 Operation: k.operation,
             };
-            setKeysStrict(entry);
+            setKeysForWindowStrict(entry, storageWindowKey(this._strategy, window));
             const key = { PK: entry.PK, SK: entry.SK };
             keys.push(key);
             keyIdByWindow.set(window.key, normalizeKeyId(key.PK, key.SK));
@@ -288,7 +298,7 @@ export class DynamoRateLimiter {
                 Resource: k.resource,
                 Operation: k.operation,
             };
-            setKeysStrict(entry);
+            setKeysForWindowStrict(entry, storageWindowKey(this._strategy, window));
             const ttl = unixSeconds(window.end) + cfg.ttlHours * 3600;
             const nowStr = formatRfc3339Nano(now);
             const windowId = formatWindowId(window.start);
@@ -547,7 +557,7 @@ export class DynamoRateLimiter {
                 Resource: key.resource,
                 Operation: key.operation,
             };
-            setKeysStrict(entry);
+            setKeysForWindowStrict(entry, window.key);
             const ttl = unixSeconds(window.end) + cfg.ttlHours * 3600;
             const windowId = formatWindowId(window.start);
             transactActions.push({
@@ -588,7 +598,7 @@ export class DynamoRateLimiter {
                 Resource: key.resource,
                 Operation: key.operation,
             };
-            setKeysStrict(entry);
+            setKeysForWindowStrict(entry, primary.key);
             const resp = await this._theorydb.batchGet(rateLimitModelName, [{ PK: entry.PK, SK: entry.SK }], { consistentRead: cfg.consistentRead });
             if (resp.unprocessedKeys.length > 0) {
                 throw new Error("apptheory: unprocessed rate limit key");
