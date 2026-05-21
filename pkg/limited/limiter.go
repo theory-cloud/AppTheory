@@ -79,7 +79,7 @@ func (r *DynamoRateLimiter) CheckLimit(ctx context.Context, key RateLimitKey) (*
 			Resource:    key.Resource,
 			Operation:   key.Operation,
 		}
-		entry.SetKeys()
+		setRateLimitEntryKeysForWindow(entry, storageWindowKey(r.strategy, window))
 
 		var record RateLimitEntry
 		err := r.db.Model(&RateLimitEntry{}).
@@ -155,7 +155,7 @@ func (r *DynamoRateLimiter) RecordRequest(ctx context.Context, key RateLimitKey)
 			Resource:    key.Resource,
 			Operation:   key.Operation,
 		}
-		entry.SetKeys()
+		setRateLimitEntryKeysForWindow(entry, storageWindowKey(r.strategy, window))
 
 		ttl := window.End.Unix() + int64(r.config.TTLHours*3600)
 
@@ -182,6 +182,24 @@ func (r *DynamoRateLimiter) RecordRequest(ctx context.Context, key RateLimitKey)
 	}
 
 	return nil
+}
+
+func setRateLimitEntryKeysForWindow(entry *RateLimitEntry, windowKey string) {
+	entry.SetKeys()
+
+	windowKey = strings.TrimSpace(windowKey)
+	if windowKey == "" {
+		return
+	}
+
+	entry.PK = fmt.Sprintf("%s#%d#%s", entry.Identifier, entry.WindowStart, windowKey)
+}
+
+func storageWindowKey(strategy RateLimitStrategy, window TimeWindow) string {
+	if isMultiWindowStrategy(strategy) {
+		return window.Key
+	}
+	return ""
 }
 
 func (r *DynamoRateLimiter) GetUsage(ctx context.Context, key RateLimitKey) (*UsageStats, error) {
@@ -612,7 +630,7 @@ func (r *DynamoRateLimiter) addMultiWindowUpdate(tx tablecore.TransactionBuilder
 		Resource:    key.Resource,
 		Operation:   key.Operation,
 	}
-	entry.SetKeys()
+	setRateLimitEntryKeysForWindow(entry, window.Key)
 
 	ttl := window.End.Unix() + int64(r.config.TTLHours*3600)
 
@@ -645,7 +663,7 @@ func (r *DynamoRateLimiter) loadPrimaryWindowCount(ctx context.Context, key Rate
 		Resource:    key.Resource,
 		Operation:   key.Operation,
 	}
-	entry.SetKeys()
+	setRateLimitEntryKeysForWindow(entry, window.Key)
 
 	var record RateLimitEntry
 	err := r.db.Model(&RateLimitEntry{}).
