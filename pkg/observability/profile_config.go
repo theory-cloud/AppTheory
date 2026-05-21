@@ -343,7 +343,7 @@ func validateErrorCapture(capture LoggingProfileErrorCapture) []string {
 }
 
 func validateAlertingHints(hints LoggingProfileAlertingHints) []string {
-	var errs []string
+	errs := make([]string, 0, len(hints.FingerprintFields)+len(hints.KeeperLookupFields))
 	errs = append(errs, validateProfileFieldList("alerting_hints.fingerprint_fields", hints.FingerprintFields)...)
 	errs = append(errs, validateProfileFieldList("alerting_hints.keeper_lookup_fields", hints.KeeperLookupFields)...)
 	return errs

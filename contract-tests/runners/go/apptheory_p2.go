@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
+	"github.com/theory-cloud/apptheory/pkg/observability"
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
@@ -155,13 +158,56 @@ func isLoggingProfileContractFixture(f Fixture) bool {
 
 func compareLoggingProfileContract(f Fixture) error {
 	if len(f.Expect.LoggingProfileCatalog) > 0 {
-		return fmt.Errorf("logging_profile_catalog mismatch")
+		if !reflect.DeepEqual(canonicalJSONValue(observability.LoggingProfileCatalog()), canonicalJSONValue(f.Expect.LoggingProfileCatalog)) {
+			return fmt.Errorf("logging_profile_catalog mismatch")
+		}
+		return nil
 	}
 	if len(f.Expect.ProfileValidationErrors) > 0 {
-		return fmt.Errorf("profile_validation_errors mismatch")
+		var config observability.LoggingProfileConfig
+		if err := json.Unmarshal(f.Setup.LoggingProfile, &config); err != nil {
+			return fmt.Errorf("parse setup.logging_profile: %w", err)
+		}
+		actual := observability.LoggingProfileValidationErrors(config)
+		if !reflect.DeepEqual(f.Expect.ProfileValidationErrors, actual) {
+			return fmt.Errorf("profile_validation_errors mismatch")
+		}
+		return nil
 	}
 	if len(f.Expect.ProfileLogs) > 0 {
-		return fmt.Errorf("profile_logs mismatch")
+		var config observability.LoggingProfileConfig
+		if err := json.Unmarshal(f.Setup.LoggingProfile, &config); err != nil {
+			return fmt.Errorf("parse setup.logging_profile: %w", err)
+		}
+		var event observability.LoggingProfileEvent
+		if err := json.Unmarshal(f.Input.LoggingEvent, &event); err != nil {
+			return fmt.Errorf("parse input.logging_event: %w", err)
+		}
+		actual, err := observability.EncodeLoggingProfileEvent(config, f.Setup.Environment, event)
+		if err != nil {
+			return fmt.Errorf("encode logging profile event: %w", err)
+		}
+		canonicalActual, ok := canonicalJSONValue(actual).(map[string]any)
+		if !ok {
+			return fmt.Errorf("profile_logs mismatch")
+		}
+		actualLogs := []map[string]any{canonicalActual}
+		if !reflect.DeepEqual(canonicalJSONValue(f.Expect.ProfileLogs), canonicalJSONValue(actualLogs)) {
+			return fmt.Errorf("profile_logs mismatch")
+		}
+		return nil
 	}
 	return nil
+}
+
+func canonicalJSONValue(value any) any {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	var out any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return value
+	}
+	return out
 }
