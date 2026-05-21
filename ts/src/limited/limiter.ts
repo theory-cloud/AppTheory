@@ -178,6 +178,24 @@ function setKeysStrict<T extends KeyableEntry>(
   }
 }
 
+function setKeysForWindowStrict<T extends KeyableEntry>(
+  entry: T,
+  windowKey: string,
+): asserts entry is T & KeyedEntry {
+  setKeysStrict(entry);
+  const suffix = String(windowKey ?? "").trim();
+  if (suffix) {
+    entry.PK = `${entry.Identifier}#${entry.WindowStart}#${suffix}`;
+  }
+}
+
+function storageWindowKey(
+  strategy: RateLimitStrategy,
+  window: TimeWindow,
+): string {
+  return strategy instanceof MultiWindowStrategy ? window.key : "";
+}
+
 function countForPrimaryWindow(
   strategy: RateLimitStrategy,
   windows: TimeWindow[],
@@ -304,7 +322,7 @@ export class DynamoRateLimiter implements AtomicRateLimiter, RateLimiter {
         Resource: k.resource,
         Operation: k.operation,
       };
-      setKeysStrict(entry);
+      setKeysForWindowStrict(entry, storageWindowKey(this._strategy, window));
       const key = { PK: entry.PK, SK: entry.SK };
       keys.push(key);
       keyIdByWindow.set(window.key, normalizeKeyId(key.PK, key.SK));
@@ -389,7 +407,7 @@ export class DynamoRateLimiter implements AtomicRateLimiter, RateLimiter {
         Resource: k.resource,
         Operation: k.operation,
       };
-      setKeysStrict(entry);
+      setKeysForWindowStrict(entry, storageWindowKey(this._strategy, window));
 
       const ttl = unixSeconds(window.end) + cfg.ttlHours * 3600;
 
@@ -748,7 +766,7 @@ export class DynamoRateLimiter implements AtomicRateLimiter, RateLimiter {
         Resource: key.resource,
         Operation: key.operation,
       };
-      setKeysStrict(entry);
+      setKeysForWindowStrict(entry, window.key);
 
       const ttl = unixSeconds(window.end) + cfg.ttlHours * 3600;
       const windowId = formatWindowId(window.start);
@@ -802,7 +820,7 @@ export class DynamoRateLimiter implements AtomicRateLimiter, RateLimiter {
         Resource: key.resource,
         Operation: key.operation,
       };
-      setKeysStrict(entry);
+      setKeysForWindowStrict(entry, primary.key);
       const resp = await this._theorydb.batchGet(
         rateLimitModelName,
         [{ PK: entry.PK, SK: entry.SK }],

@@ -242,11 +242,19 @@ class FakeTheorydb {
       throw this.failTransact;
     }
     const staged = new Map();
+    const transactionTargets = new Set();
     for (const [k, v] of this.items.entries()) staged.set(k, cloneJson(v));
 
     for (const action of actions ?? []) {
       if (!action || typeof action !== "object") continue;
       if (action.kind === "update") {
+        const { pk, sk } = normalizeKeyParts(action.key);
+        const transactionTarget = this._key(pk, sk);
+        if (transactionTargets.has(transactionTarget)) {
+          throw new Error(`duplicate transaction target: ${transactionTarget}`);
+        }
+        transactionTargets.add(transactionTarget);
+
         const builder = new FakeUpdateBuilder(staged, action.key);
         if (typeof action.updateFn === "function") {
           // eslint-disable-next-line no-await-in-loop
@@ -348,6 +356,12 @@ test("limited: multiwindow transact increments and denies on window breach", asy
 
   const key = { identifier: "i1", resource: "/r", operation: "GET" };
   await limiter.checkAndIncrement(key);
+  assert.equal(theorydb.items.size, 2);
+  const persistedKeys = [...theorydb.items.keys()].sort();
+  assert.notEqual(persistedKeys[0], persistedKeys[1]);
+  assert.ok(persistedKeys.some((k) => k.includes("60000ms")));
+  assert.ok(persistedKeys.some((k) => k.includes("3600000ms")));
+
   await limiter.checkAndIncrement(key);
   const d3 = await limiter.checkAndIncrement(key);
   assert.equal(d3.allowed, false);
