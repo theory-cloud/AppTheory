@@ -9,6 +9,10 @@ on:
         description: "Optional: upload assets to an existing tag's *draft* release (fails if already published/immutable) (e.g., v0.2.0)"
         required: false
 
+concurrency:
+  group: release-publisher-${{ github.repository }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   issues: write
