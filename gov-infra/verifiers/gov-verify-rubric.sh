@@ -58,6 +58,24 @@ COV_THRESHOLD="90"
 # Ensure evidence directory exists
 mkdir -p "${EVIDENCE_DIR}"
 
+EXISTING_REPORT_TIMESTAMP=""
+if [[ -f "${REPORT_PATH}" ]]; then
+  EXISTING_REPORT_TIMESTAMP="$({
+    python3 - "${REPORT_PATH}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("timestamp", "")
+except Exception:
+    value = ""
+if isinstance(value, str):
+    print(value)
+PY
+  } 2>/dev/null || true)"
+fi
+
 # Clean previous run outputs to prevent stale evidence from being misattributed.
 rm -f \
   "${REPORT_PATH}" \
@@ -71,7 +89,13 @@ rm -f \
 
 # Initialize report structure
 REPORT_SCHEMA_VERSION=1
-REPORT_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+REPORT_TIMESTAMP="${GOV_REPORT_TIMESTAMP:-}"
+if [[ -z "${REPORT_TIMESTAMP}" ]]; then
+  REPORT_TIMESTAMP="${EXISTING_REPORT_TIMESTAMP}"
+fi
+if [[ -z "${REPORT_TIMESTAMP}" ]]; then
+  REPORT_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+fi
 PASS_COUNT=0
 FAIL_COUNT=0
 BLOCKED_COUNT=0
@@ -1294,6 +1318,23 @@ check_docs_standard() {
   bash ./scripts/verify-docs-standard.sh
 }
 
+check_release_lifecycle_invariants() {
+  # GovTheory release lifecycle evidence is intentionally read-only and deterministic.
+  # It records the existing release state fixtures, release-train promotion classifier,
+  # and workflow/publisher hardening assertions without mutating branches, tags, PRs,
+  # or GitHub Releases.
+  echo "==> release state fixtures"
+  bash ./scripts/verify-release-state.sh --self-test
+
+  echo "==> release train promotion classifier"
+  bash ./scripts/verify-release-train-promotion.sh --self-test
+
+  echo "==> release workflow invariants"
+  bash ./scripts/verify-release-workflows.sh
+
+  echo "release-lifecycle: PASS"
+}
+
 check_file_budgets() {
   # Maintainability heuristic: prevent "god files" from growing unchecked.
   # This is intentionally simple and deterministic.
@@ -2383,6 +2424,7 @@ CMD_SINGLETON="check_duplicate_semantics"
 
 CMD_DOC_INTEGRITY="check_doc_integrity"
 CMD_DOCS_STANDARD="check_docs_standard"
+CMD_RELEASE_LIFECYCLE="check_release_lifecycle_invariants"
 
 # === Quality (QUA) ===
 run_check "QUA-1" "Quality" "$CMD_UNIT"
@@ -2412,6 +2454,9 @@ run_check "SEC-4" "Security" "$CMD_P0"
 check_file_exists "CMP-1" "Compliance" "${PLANNING_DIR}/apptheory-controls-matrix.md"
 check_file_exists "CMP-2" "Compliance" "${PLANNING_DIR}/apptheory-evidence-plan.md"
 check_file_exists "CMP-3" "Compliance" "${PLANNING_DIR}/apptheory-threat-model.md"
+
+# === Release Lifecycle (REL) ===
+run_check "REL-1" "Release" "$CMD_RELEASE_LIFECYCLE"
 
 # === Maintainability (MAI) ===
 run_check "MAI-1" "Maintainability" "$CMD_FILE_BUDGET"
