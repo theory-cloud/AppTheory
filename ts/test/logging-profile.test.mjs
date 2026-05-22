@@ -63,7 +63,7 @@ test("logging profile validation fails closed deterministically", () => {
     schema_version: "",
     profile: "",
     encoding: {},
-    levels: { trace: "TRACE", info: "" },
+    levels: { Error: "SEVERE", trace: "TRACE", info: "" },
     required_fields: [""],
     recommended_fields: [""],
     field_map: {
@@ -84,6 +84,7 @@ test("logging profile validation fails closed deterministically", () => {
     "schema_version: required",
     "profile: required",
     "encoding.format: required",
+    "levels.Error: unsupported level Error",
     "levels.info: required",
     "levels.trace: unsupported level trace",
     "required_fields[0]: required",

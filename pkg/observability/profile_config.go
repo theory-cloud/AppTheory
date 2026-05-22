@@ -368,8 +368,7 @@ func validateLevelMap(levels map[string]string) []string {
 	var errs []string
 	keys := sortedMapKeys(levels)
 	for _, key := range keys {
-		normalized := strings.ToLower(strings.TrimSpace(key))
-		if !stringInSet(normalized, map[string]struct{}{"debug": {}, "info": {}, "warn": {}, "error": {}}) {
+		if !stringInSet(key, map[string]struct{}{"debug": {}, "info": {}, "warn": {}, "error": {}}) {
 			errs = append(errs, "levels."+key+": unsupported level "+key)
 			continue
 		}

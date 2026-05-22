@@ -80,6 +80,7 @@ func TestLoggingProfile_ValidationErrorsAreDeterministic(t *testing.T) {
 			Format:          "xml",
 			TimestampFormat: "epoch_ms",
 		},
+		Levels:         map[string]string{"Error": "SEVERE"},
 		RequiredFields: []string{"raw_payload"},
 		Enrichment: LoggingProfileEnrichment{Context: map[string]string{
 			"request_id": "lambda.raw_event.requestContext.requestId",
@@ -95,6 +96,7 @@ func TestLoggingProfile_ValidationErrorsAreDeterministic(t *testing.T) {
 		"profile: unsupported value custom-alert",
 		"encoding.format: unsupported value xml",
 		"encoding.timestamp_format: unsupported value epoch_ms",
+		"levels.Error: unsupported level Error",
 		"required_fields[0]: unsupported field raw_payload",
 		"enrichment.context.request_id: unsupported source lambda.raw_event.requestContext.requestId",
 		"error_capture.stack_hash_algorithm: unsupported value md5",

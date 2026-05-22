@@ -702,8 +702,7 @@ function payTheoryAlertProfile() {
 function validateLevelMap(levels) {
     const errors = [];
     for (const key of sortedKeys(levels)) {
-        const normalized = trimString(key).toLowerCase();
-        if (!optionNameSet("debug", "info", "warn", "error").has(normalized)) {
+        if (!optionNameSet("debug", "info", "warn", "error").has(key)) {
             errors.push(`levels.${key}: unsupported level ${key}`);
             continue;
         }
