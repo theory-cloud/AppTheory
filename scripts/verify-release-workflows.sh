@@ -308,6 +308,28 @@ require_contains(
     "release train promotion verifier must preserve the single valid branch ordering",
 )
 require_contains(
+    "scripts/verify-release-gates.sh",
+    "bash ./scripts/verify-release-cycle.sh",
+    "full release gates must include deterministic full-cycle release regression",
+)
+require_contains(
+    "scripts/verify-release-cycle.sh",
+    "REQUIRED_COVERAGE",
+    "release cycle verifier must declare required coverage cases",
+)
+for coverage in (
+    "happy_path",
+    "publish_recovery_race",
+    "stale_release_please_pr",
+    "promotion_drift",
+    "back_merge_drift",
+):
+    require_contains(
+        "scripts/verify-release-cycle.sh",
+        coverage,
+        f"release cycle verifier must cover {coverage}",
+    )
+require_contains(
     ".github/workflows/ci.yml",
     "scripts/verify-branch-version-sync.sh",
     "CI must run the branch release-version sync verifier with git metadata",

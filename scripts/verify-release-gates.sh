@@ -26,6 +26,7 @@ bash ./scripts/verify-branch-version-sync.sh
 ./scripts/verify-testkit-examples.sh
 bash ./scripts/verify-docs-standard.sh
 bash ./scripts/verify-release-workflows.sh
+bash ./scripts/verify-release-cycle.sh
 bash ./scripts/verify-theorycloud-publish-workflow.sh
 
 echo "release-gates: PASS"
