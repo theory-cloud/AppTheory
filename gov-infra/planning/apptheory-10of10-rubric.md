@@ -1,14 +1,15 @@
-# AppTheory: 10/10 Rubric (Quality, Consistency, Completeness, Security, Compliance Readiness, Maintainability, Docs)
+# AppTheory: 10/10 Rubric (Quality, Consistency, Completeness, Security, Compliance Readiness, Release Lifecycle, Maintainability, Docs)
 
 This rubric defines what “10/10” means and how category grades are computed. It is designed to prevent goalpost drift and
 “green by dilution” by making scoring **versioned, measurable, and repeatable**.
 
 ## Versioning (no moving goalposts)
-- **Rubric version:** `v1.4.0` (2026-01-22)
+- **Rubric version:** `v1.5.0` (2026-05-22)
 - **Comparability rule:** grades are comparable only within the same version.
 - **Change rule:** bump the version + changelog entry for any rubric change (what changed + why).
 
 ### Changelog
+- `v1.5.0`: Add release lifecycle governance evidence for the single AppTheory release train, including release state, promotion, and workflow invariant checks.
 - `v1.4.0`: Enforce the Pay Theory documentation standard across shipped packages (repo docs + TS/Py/CDK docs), including the YAML knowledge-base triad, via deterministic verification.
 - `v1.3.0`: Raise the coverage requirement to **≥ 90%** across all shipped runtimes (Go/TypeScript/Python) and enforce the same floor in the verifier.
 - `v1.2.0`: Raise the coverage requirement to **≥ 75%** across all shipped runtimes (Go/TypeScript/Python) and enforce the same floor in the verifier.
@@ -79,6 +80,13 @@ Enforcement rule (anti-drift):
 | CMP-3 | 3 | Threat model exists and is current | File exists: `gov-infra/planning/apptheory-threat-model.md` |
 
 **10/10 definition:** CMP-1 through CMP-3 pass.
+
+## Release Lifecycle (REL) — single release train integrity
+| ID | Points | Requirement | How to verify |
+| --- | ---: | --- | --- |
+| REL-1 | 10 | Release lane invariants stay enforced: `staging` → `premain` → `main` → `staging`, Release Please state, publisher recovery, and promotion guards | `check_release_lifecycle_invariants` (inside `gov-verify-rubric.sh`) |
+
+**10/10 definition:** REL-1 passes.
 
 ## Maintainability (MAI) — convergent codebase (recommended for AI-heavy repos)
 | ID | Points | Requirement | How to verify |
