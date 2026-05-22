@@ -284,6 +284,31 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
+    "Release train promotion gate",
+    "CI must gate release train promotion PRs before release state can advance",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "scripts/verify-release-train-promotion.sh",
+    "CI must run the release train promotion verifier",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "ref: ${{ github.event.pull_request.head.sha }}",
+    "release train promotion verifier must inspect the PR head commit, not the synthetic merge ref",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "fetch-depth: 0",
+    "release train promotion verifier must have enough git history for ancestry checks",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    "staging → premain → main → staging",
+    "release train promotion verifier must preserve the single valid branch ordering",
+)
+require_contains(
+    ".github/workflows/ci.yml",
     "scripts/verify-branch-version-sync.sh",
     "CI must run the branch release-version sync verifier with git metadata",
 )
@@ -292,6 +317,29 @@ require_order(
     "Verify branch version sync before release PR",
     "Release Please (PR only)",
     "prerelease PR generation must fail closed before opening stale release-please PRs",
+)
+for workflow in (".github/workflows/prerelease-pr.yml", ".github/workflows/release-pr.yml"):
+    require_contains(
+        workflow,
+        "scripts/run-release-please-pr.sh",
+        "release PR workflows must create release-please PRs through the stale-state-tolerant wrapper",
+    )
+require_order(
+    "scripts/run-release-please-pr.sh",
+    'if use_existing_open_release_pr "valid release PR already exists"; then',
+    'npx "${args[@]}"',
+    "release-please PR generation must tolerate already-open draft release PRs before invoking release-please",
+)
+require_order(
+    "scripts/run-release-please-pr.sh",
+    'npx "${args[@]}"',
+    'if use_existing_open_release_pr "release-please exited ${release_please_status} after creating or finding a release PR"; then',
+    "release-please PR generation must recover when stale release-please state errors after a valid PR exists",
+)
+require_contains(
+    "scripts/run-release-please-pr.sh",
+    'gh pr ready "${pr_number}" --undo',
+    "release-please PR generation must draft-lock valid open release PRs before artifact setup",
 )
 require_order(
     ".github/workflows/prerelease.yml",
@@ -358,7 +406,13 @@ require_contains(
 )
 require_order(
     "scripts/sync-release-pr-generated.sh",
-    'wait_for_pr_head "$(git rev-parse HEAD)"',
+    'synced_head="$(git rev-parse HEAD)"',
+    'wait_for_pr_head "${synced_head}"',
+    "release PR sync must capture the generated-artifact head before waiting for it",
+)
+require_order(
+    "scripts/sync-release-pr-generated.sh",
+    'wait_for_pr_head "${synced_head}"',
     "After the generated-artifact head is visible",
     "release PR sync must wait for the pushed artifact commit before checking independent CI",
 )
@@ -378,11 +432,28 @@ require_contains(
     "COMMIT_CHECKS_JSON",
     "release PR sync must merge commit-attached check-runs into the required check view",
 )
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "headSha",
+    "release PR sync must only pass required checks attached to the current PR head",
+)
+require_order_after(
+    "scripts/sync-release-pr-generated.sh",
+    "dispatch_required_checks\nwait_for_required_checks_to_start\nwait_for_required_checks",
+    "wait_for_required_checks",
+    'require_pr_head "${synced_head}" "after required checks passed"',
+    "release PR must re-check the generated-artifact head after required checks pass",
+)
 require_order(
     "scripts/sync-release-pr-generated.sh",
-    "wait_for_required_checks",
+    'require_pr_head "${synced_head}" "after required checks passed"',
     'gh pr ready "${pr_number}"\n\n',
     "release PR must wait for required checks before becoming ready",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    'gh pr ready "${pr_number}" --undo || true',
+    "release PR sync must restore draft state if the PR head changes while becoming ready",
 )
 for forbidden in (
     "repos/${GITHUB_REPOSITORY}/statuses",
