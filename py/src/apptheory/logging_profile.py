@@ -1,7 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import sys
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any, NotRequired, TypedDict
+
+from apptheory.app import LogRecord, ObservabilityHooks
+from apptheory.logger import StructuredLogger
+from apptheory.sanitization import sanitize_field_value, sanitize_log_string
 
 LOGGING_PROFILE_SCHEMA_VERSION = "apptheory.logging/v1"
 
@@ -167,6 +176,535 @@ def logging_profile_validation_errors(config: LoggingProfileConfig) -> list[str]
     errors.extend(_validate_error_capture(config.get("error_capture") or {}))
     errors.extend(_validate_alerting_hints(config.get("alerting_hints") or {}))
     return errors
+
+
+class LoggingProfileRequestContext(TypedDict, total=False):
+    request_id: str
+    tenant_id: str
+    user_id: str
+    trace_id: str
+    span_id: str
+    correlation_id: str
+    route: str
+    method: str
+    path: str
+    status: int
+
+
+class LoggingProfileJobContext(TypedDict, total=False):
+    name: str
+
+
+class LoggingProfileError(TypedDict, total=False):
+    type: str
+    code: str
+    message: str
+    stack_trace: str
+
+
+class LoggingProfileEvent(TypedDict, total=False):
+    timestamp: datetime | str
+    level: str
+    event: str
+    message: str
+    normalized_message: str
+    request: LoggingProfileRequestContext
+    job: LoggingProfileJobContext
+    error: LoggingProfileError
+    fields: dict[str, Any]
+
+
+LoggingProfileSanitizer = Callable[[str, Any], Any]
+
+
+class ProfileLoggerOptions(TypedDict, total=False):
+    environment: dict[str, str]
+    writer: Callable[[str], None] | None
+    sanitizer: LoggingProfileSanitizer
+    clock: Callable[[], datetime]
+
+
+_DEFAULT_PROFILE_WRITER = object()
+
+
+class ProfileLogger:
+    def __init__(
+        self,
+        config: LoggingProfileConfig,
+        *,
+        environment: dict[str, str] | None = None,
+        writer: Callable[[str], None] | None | object = _DEFAULT_PROFILE_WRITER,
+        sanitizer: LoggingProfileSanitizer | None = None,
+        clock: Callable[[], datetime] | None = None,
+        _root: ProfileLogger | None = None,
+        _fields: dict[str, Any] | None = None,
+        _request_id: str = "",
+        _tenant_id: str = "",
+        _user_id: str = "",
+        _trace_id: str = "",
+        _span_id: str = "",
+    ) -> None:
+        if _root is None:
+            validate_logging_profile(config)
+        self._root = _root or self
+        self._config = config
+        self._environment = dict(environment or {})
+        self._writer = _default_profile_writer if writer is _DEFAULT_PROFILE_WRITER else writer
+        self._sanitizer = sanitizer or sanitize_field_value
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._fields = dict(_fields or {})
+        self._request_id = _request_id
+        self._tenant_id = _tenant_id
+        self._user_id = _user_id
+        self._trace_id = _trace_id
+        self._span_id = _span_id
+        if _root is None:
+            self._closed = False
+            self._entries: list[dict[str, Any]] = []
+            self._entries_logged = 0
+            self._last_error = ""
+
+    def debug(self, message: str, *fields: dict[str, Any]) -> None:
+        self._log("debug", message, fields)
+
+    def info(self, message: str, *fields: dict[str, Any]) -> None:
+        self._log("info", message, fields)
+
+    def warn(self, message: str, *fields: dict[str, Any]) -> None:
+        self._log("warn", message, fields)
+
+    def error(self, message: str, *fields: dict[str, Any]) -> None:
+        self._log("error", message, fields)
+
+    def with_field(self, key: str, value: Any) -> ProfileLogger:
+        return self.with_fields({key: value})
+
+    def with_fields(self, fields: dict[str, Any]) -> ProfileLogger:
+        merged = {**self._fields, **fields}
+        return self._clone(_fields=merged)
+
+    def with_request_id(self, request_id: str) -> ProfileLogger:
+        return self._clone(_request_id=request_id)
+
+    def with_tenant_id(self, tenant_id: str) -> ProfileLogger:
+        return self._clone(_tenant_id=tenant_id)
+
+    def with_user_id(self, user_id: str) -> ProfileLogger:
+        return self._clone(_user_id=user_id)
+
+    def with_trace_id(self, trace_id: str) -> ProfileLogger:
+        return self._clone(_trace_id=trace_id)
+
+    def with_span_id(self, span_id: str) -> ProfileLogger:
+        return self._clone(_span_id=span_id)
+
+    def flush(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self._root._closed = True
+
+    def is_healthy(self) -> bool:
+        return not self._root._closed and not self._root._last_error
+
+    def get_stats(self) -> dict[str, Any]:
+        return {"entries_logged": self._root._entries_logged, "last_error": self._root._last_error}
+
+    def entries(self) -> list[dict[str, Any]]:
+        return [dict(entry) for entry in self._root._entries]
+
+    def _clone(self, **overrides: Any) -> ProfileLogger:
+        return ProfileLogger(
+            self._config,
+            environment=self._environment,
+            writer=self._writer,
+            sanitizer=self._sanitizer,
+            clock=self._clock,
+            _root=self._root,
+            _fields=overrides.get("_fields", self._fields),
+            _request_id=overrides.get("_request_id", self._request_id),
+            _tenant_id=overrides.get("_tenant_id", self._tenant_id),
+            _user_id=overrides.get("_user_id", self._user_id),
+            _trace_id=overrides.get("_trace_id", self._trace_id),
+            _span_id=overrides.get("_span_id", self._span_id),
+        )
+
+    def _log(self, level: str, message: str, field_sets: tuple[dict[str, Any], ...]) -> None:
+        if self._root._closed:
+            return
+        merged = dict(self._fields)
+        for fields in field_sets:
+            merged.update(fields)
+        event: LoggingProfileEvent = {
+            "timestamp": self._clock(),
+            "level": level,
+            "message": message,
+            "request": {
+                "request_id": self._request_id,
+                "tenant_id": self._tenant_id,
+                "user_id": self._user_id,
+                "trace_id": self._trace_id,
+                "span_id": self._span_id,
+            },
+            "fields": merged,
+        }
+        _apply_known_profile_fields_to_event(event, merged)
+        try:
+            encoded = encode_logging_profile_event_with_sanitizer(
+                self._config,
+                self._environment,
+                event,
+                self._sanitizer,
+            )
+            self._root._entries.append(dict(encoded))
+            if self._writer is not None:
+                self._writer(json.dumps(encoded, separators=(",", ":")))
+            self._root._entries_logged += 1
+        except Exception as exc:  # noqa: BLE001 - logger records encoder failures instead of raising from hooks.
+            self._root._last_error = str(exc)
+
+
+def _default_profile_writer(line: str) -> None:
+    sys.stdout.write(line + "\n")
+
+
+def encode_logging_profile_event(
+    config: LoggingProfileConfig,
+    environment: dict[str, str] | None,
+    event: LoggingProfileEvent,
+) -> dict[str, Any]:
+    return encode_logging_profile_event_with_sanitizer(config, environment, event, sanitize_field_value)
+
+
+def encode_logging_profile_event_with_sanitizer(
+    config: LoggingProfileConfig,
+    environment: dict[str, str] | None,
+    event: LoggingProfileEvent,
+    sanitizer: LoggingProfileSanitizer | None,
+) -> dict[str, Any]:
+    validate_logging_profile(config)
+    sanitizer_fn = sanitizer or sanitize_field_value
+    out: dict[str, Any] = {}
+    encoding = config.get("encoding") or {}
+
+    _put_profile_field(
+        out,
+        _timestamp_field(config),
+        _format_profile_timestamp(event.get("timestamp"), encoding.get("timestamp_format")),
+        sanitizer_fn,
+    )
+    _put_profile_field(out, _level_field(config), _profile_level(config, event.get("level")), sanitizer_fn)
+    _put_profile_field(
+        out,
+        _message_field(config),
+        sanitize_log_string(str(event.get("message") or "")),
+        sanitizer_fn,
+    )
+    if _trim(event.get("event")):
+        _put_canonical_mapped_field(out, config, "event", event.get("event"), sanitizer_fn)
+    if _trim(event.get("normalized_message")):
+        _put_canonical_mapped_field(out, config, "normalized_message", event.get("normalized_message"), sanitizer_fn)
+
+    _apply_static_enrichment(out, config, environment, sanitizer_fn)
+    _apply_context_enrichment(out, config, event, sanitizer_fn)
+    _apply_error_capture(out, config, event, sanitizer_fn)
+    _apply_safe_event_fields(out, event.get("fields"), sanitizer_fn)
+
+    missing = _missing_required_profile_fields(out, config.get("required_fields"))
+    if missing:
+        raise ValueError("logging profile required fields missing: " + ", ".join(missing))
+    return out
+
+
+def hooks_from_profile_logger(
+    config: LoggingProfileConfig,
+    *,
+    environment: dict[str, str] | None = None,
+    writer: Callable[[str], None] | None | object = _DEFAULT_PROFILE_WRITER,
+    sanitizer: LoggingProfileSanitizer | None = None,
+    clock: Callable[[], datetime] | None = None,
+) -> tuple[ObservabilityHooks, ProfileLogger]:
+    logger = ProfileLogger(config, environment=environment, writer=writer, sanitizer=sanitizer, clock=clock)
+    return hooks_from_logger(logger), logger
+
+
+def hooks_from_logger(logger: StructuredLogger | None) -> ObservabilityHooks:
+    if logger is None:
+        return ObservabilityHooks()
+
+    def log(record: LogRecord) -> None:
+        fields: dict[str, Any] = {
+            "event": record.event,
+            "method": record.method,
+            "path": record.path,
+            "status": record.status,
+            "error_code": record.error_code,
+        }
+        _add_if_present(fields, "trigger", record.trigger)
+        _add_if_present(fields, "correlation_id", record.correlation_id)
+        _add_if_present(fields, "source", record.source)
+        _add_if_present(fields, "detail_type", record.detail_type)
+        _add_if_present(fields, "table_name", record.table_name)
+        _add_if_present(fields, "event_id", record.event_id)
+        _add_if_present(fields, "event_name", record.event_name)
+
+        scoped = logger.with_request_id(record.request_id).with_tenant_id(record.tenant_id)
+        if record.level == "error":
+            scoped.error(record.event, fields)
+        elif record.level == "warn":
+            scoped.warn(record.event, fields)
+        elif record.level == "debug":
+            scoped.debug(record.event, fields)
+        else:
+            scoped.info(record.event, fields)
+
+    return ObservabilityHooks(log=log)
+
+
+def _add_if_present(fields: dict[str, Any], key: str, value: Any) -> None:
+    if _trim(value):
+        fields[key] = value
+
+
+def _timestamp_field(config: LoggingProfileConfig) -> str:
+    field = _trim((config.get("encoding") or {}).get("timestamp_field"))
+    return field or _mapped_field_or_default(config, "timestamp", "timestamp")
+
+
+def _level_field(config: LoggingProfileConfig) -> str:
+    field = _trim((config.get("encoding") or {}).get("level_field"))
+    return field or _mapped_field_or_default(config, "severity", "level")
+
+
+def _message_field(config: LoggingProfileConfig) -> str:
+    field = _trim((config.get("encoding") or {}).get("message_field"))
+    return field or _mapped_field_or_default(config, "message", "message")
+
+
+def _mapped_field_or_default(config: LoggingProfileConfig, canonical: str, fallback: str) -> str:
+    return _trim((config.get("field_map") or {}).get(canonical)) or fallback
+
+
+def _put_canonical_mapped_field(
+    out: dict[str, Any],
+    config: LoggingProfileConfig,
+    canonical: str,
+    value: Any,
+    sanitizer: LoggingProfileSanitizer,
+) -> None:
+    _put_profile_field(out, _mapped_field_or_default(config, canonical, canonical), value, sanitizer)
+
+
+def _put_profile_field(out: dict[str, Any], field: str, value: Any, sanitizer: LoggingProfileSanitizer) -> None:
+    key = _trim(field)
+    if not key or _is_zero_profile_value(value):
+        return
+    out[key] = sanitizer(key, value)
+
+
+def _put_profile_raw_string(out: dict[str, Any], field: str, value: str | None) -> None:
+    key = _trim(field)
+    if not key or not _trim(value):
+        return
+    out[key] = value
+
+
+def _profile_level(config: LoggingProfileConfig, level: str | None) -> str:
+    key = _trim(level).lower() or "info"
+    return _trim((config.get("levels") or {}).get(key)) or key.upper()
+
+
+def _format_profile_timestamp(value: datetime | str | None, timestamp_format: str | None) -> str:
+    dt = _normalize_datetime(value).astimezone(UTC)
+    base = dt.strftime("%Y-%m-%dT%H:%M:%S")
+    if _trim(timestamp_format).lower() == "rfc3339" or dt.microsecond == 0:
+        return base + "Z"
+    fraction = f"{dt.microsecond:06d}".rstrip("0")
+    return f"{base}.{fraction}Z"
+
+
+def _normalize_datetime(value: datetime | str | None) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.fromtimestamp(0, UTC)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed
+    return datetime.fromtimestamp(0, UTC)
+
+
+def _apply_static_enrichment(
+    out: dict[str, Any],
+    config: LoggingProfileConfig,
+    environment: dict[str, str] | None,
+    sanitizer: LoggingProfileSanitizer,
+) -> None:
+    static = (config.get("enrichment") or {}).get("static") or {}
+    for field in sorted(static):
+        _put_profile_field(out, field, _resolve_static_enrichment_value(static.get(field), environment), sanitizer)
+
+
+def _resolve_static_enrichment_value(value: str | None, environment: dict[str, str] | None) -> str:
+    trimmed = _trim(value)
+    if trimmed.startswith("${") and trimmed.endswith("}") and len(trimmed) > 3:
+        name = trimmed[2:-1].strip()
+        return (environment or {}).get(name) or os.environ.get(name, "")
+    return str(value or "")
+
+
+def _apply_context_enrichment(
+    out: dict[str, Any],
+    config: LoggingProfileConfig,
+    event: LoggingProfileEvent,
+    sanitizer: LoggingProfileSanitizer,
+) -> None:
+    context = (config.get("enrichment") or {}).get("context") or {}
+    for field in sorted(context):
+        _put_profile_field(out, field, _context_source_value(context.get(field), event), sanitizer)
+
+
+def _context_source_value(source: str | None, event: LoggingProfileEvent) -> Any:
+    request = event.get("request") or {}
+    job = event.get("job") or {}
+    match _trim(source):
+        case "request.request_id":
+            return request.get("request_id")
+        case "request.tenant_id":
+            return request.get("tenant_id")
+        case "request.user_id":
+            return request.get("user_id")
+        case "request.trace_id":
+            return request.get("trace_id")
+        case "request.span_id":
+            return request.get("span_id")
+        case "request.correlation_id":
+            return request.get("correlation_id")
+        case "request.route":
+            return request.get("route")
+        case "request.method":
+            return request.get("method")
+        case "request.path":
+            return request.get("path")
+        case "request.status":
+            return request.get("status")
+        case "job.name":
+            return job.get("name")
+    return None
+
+
+def _apply_error_capture(
+    out: dict[str, Any],
+    config: LoggingProfileConfig,
+    event: LoggingProfileEvent,
+    sanitizer: LoggingProfileSanitizer,
+) -> None:
+    capture = config.get("error_capture") or {}
+    error = event.get("error") or {}
+    if capture.get("include_error_type"):
+        _put_canonical_mapped_field(out, config, "error_type", error.get("type"), sanitizer)
+    if capture.get("include_error_code"):
+        _put_canonical_mapped_field(out, config, "error_code", error.get("code"), sanitizer)
+    if capture.get("include_stack_trace"):
+        field = _trim(capture.get("stack_trace_field")) or _mapped_field_or_default(
+            config,
+            "stack_trace",
+            "stack_trace",
+        )
+        _put_profile_raw_string(out, field, error.get("stack_trace"))
+    stack_hash_field = _trim(capture.get("stack_hash_field"))
+    if stack_hash_field and _trim(error.get("stack_trace")):
+        _put_profile_field(out, stack_hash_field, _profile_stack_hash(error.get("stack_trace") or ""), sanitizer)
+
+
+def _profile_stack_hash(stack_trace: str) -> str:
+    return "sha256:" + hashlib.sha256(stack_trace.encode()).hexdigest()
+
+
+def _apply_safe_event_fields(
+    out: dict[str, Any],
+    fields: dict[str, Any] | None,
+    sanitizer: LoggingProfileSanitizer,
+) -> None:
+    for key in sorted(fields or {}):
+        trimmed = _trim(key)
+        if not _is_allowed_profile_event_field(trimmed) or trimmed in out:
+            continue
+        _put_profile_field(out, trimmed, (fields or {}).get(key), sanitizer)
+
+
+def _is_allowed_profile_event_field(field: str) -> bool:
+    return field.startswith("safe_") or is_supported_profile_output_field(field)
+
+
+def _missing_required_profile_fields(out: dict[str, Any], required: list[str] | None) -> list[str]:
+    missing: list[str] = []
+    for field in required or []:
+        key = _trim(field)
+        if key and (key not in out or _is_zero_profile_value(out.get(key))):
+            missing.append(key)
+    return missing
+
+
+def _is_zero_profile_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() == ""
+    if isinstance(value, int | float):
+        return value == 0
+    return False
+
+
+def _apply_known_profile_fields_to_event(event: LoggingProfileEvent, fields: dict[str, Any]) -> None:
+    event["normalized_message"] = event.get("normalized_message") or _string_field(fields, "normalized_message")
+    event["event"] = event.get("event") or _string_field(fields, "event")
+    request = event.setdefault("request", {})
+    job = event.setdefault("job", {})
+    error = event.setdefault("error", {})
+    request["correlation_id"] = request.get("correlation_id") or _string_field(fields, "correlation_id")
+    request["route"] = request.get("route") or _string_field(fields, "route")
+    request["method"] = request.get("method") or _string_field(fields, "method")
+    request["path"] = request.get("path") or _string_field(fields, "path")
+    request["status"] = request.get("status") or _int_field(fields, "status")
+    job["name"] = job.get("name") or _string_field(fields, "job_name")
+    error["type"] = error.get("type") or _first_string_field(fields, "error_type", "error.type")
+    error["code"] = error.get("code") or _first_string_field(fields, "error_code", "error.code")
+    error["stack_trace"] = error.get("stack_trace") or _string_field(fields, "stack_trace")
+
+
+def _first_string_field(fields: dict[str, Any], *names: str) -> str:
+    for name in names:
+        value = _string_field(fields, name)
+        if value:
+            return value
+    return ""
+
+
+def _string_field(fields: dict[str, Any], name: str) -> str:
+    value = fields.get(name)
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else str(value)
+
+
+def _int_field(fields: dict[str, Any], name: str) -> int:
+    value = fields.get(name)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
 
 
 class _JSONOptionSchema(TypedDict):
@@ -544,12 +1082,23 @@ __all__ = [
     "LoggingProfileConfig",
     "LoggingProfileEncoding",
     "LoggingProfileEnrichment",
+    "LoggingProfileError",
     "LoggingProfileErrorCapture",
+    "LoggingProfileEvent",
+    "LoggingProfileJobContext",
+    "LoggingProfileRequestContext",
     "LoggingProfileSanitization",
+    "LoggingProfileSanitizer",
     "LoggingProfileValidationError",
+    "ProfileLogger",
+    "ProfileLoggerOptions",
     "built_in_logging_profile_names",
     "decode_logging_profile_json",
     "default_logging_profile",
+    "encode_logging_profile_event",
+    "encode_logging_profile_event_with_sanitizer",
+    "hooks_from_logger",
+    "hooks_from_profile_logger",
     "is_supported_profile_output_field",
     "logging_profile_catalog",
     "logging_profile_validation_errors",
