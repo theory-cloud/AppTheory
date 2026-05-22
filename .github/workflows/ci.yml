@@ -24,10 +24,13 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
       - name: Verify release train promotion path
+        env:
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           scripts/verify-release-train-promotion.sh \
-            --base "${{ github.event.pull_request.base.ref }}" \
-            --head "${{ github.event.pull_request.head.ref }}" \
+            --base "${PR_BASE_REF}" \
+            --head "${PR_HEAD_REF}" \
             --head-ref HEAD
 
   prerelease-readiness:
