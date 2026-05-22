@@ -284,6 +284,31 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
+    "Release train promotion gate",
+    "CI must gate release train promotion PRs before release state can advance",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "scripts/verify-release-train-promotion.sh",
+    "CI must run the release train promotion verifier",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "ref: ${{ github.event.pull_request.head.sha }}",
+    "release train promotion verifier must inspect the PR head commit, not the synthetic merge ref",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "fetch-depth: 0",
+    "release train promotion verifier must have enough git history for ancestry checks",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    "staging → premain → main → staging",
+    "release train promotion verifier must preserve the single valid branch ordering",
+)
+require_contains(
+    ".github/workflows/ci.yml",
     "scripts/verify-branch-version-sync.sh",
     "CI must run the branch release-version sync verifier with git metadata",
 )
