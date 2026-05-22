@@ -116,6 +116,54 @@ require_contains(
     "Recover existing draft release assets",
     "stable reruns must recover draft releases left by a failed first attempt",
 )
+for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.yml"):
+    require_contains(
+        workflow,
+        "scripts/diagnose-release-state.sh --tag",
+        "failed release publisher jobs must print read-only release diagnostics",
+    )
+require_contains(
+    ".github/workflows/release.yml",
+    "- name: Diagnose failed release state (read-only)\n        if: failure()",
+    "stable diagnostics must run for main, tag, and workflow_dispatch publisher failures",
+)
+require_contains(
+    "scripts/diagnose-release-state.sh",
+    "release-diagnostics: branch=",
+    "release diagnostics must print the current branch and head",
+)
+require_contains(
+    "scripts/diagnose-release-state.sh",
+    "release-diagnostics: tag=",
+    "release diagnostics must print the active tag state",
+)
+require_contains(
+    "scripts/diagnose-release-state.sh",
+    "release-diagnostics: release=",
+    "release diagnostics must print GitHub Release state",
+)
+require_contains(
+    "scripts/diagnose-release-state.sh",
+    "release-diagnostics: manifests:",
+    "release diagnostics must print manifest state",
+)
+require_contains(
+    "scripts/diagnose-release-state.sh",
+    "release-diagnostics: safe-next-action=",
+    "release diagnostics must print the safe next action",
+)
+for forbidden in (
+    "gh release upload",
+    "gh release edit",
+    "gh release create",
+    "gh release delete",
+    "gh release delete-asset",
+):
+    require_not_contains(
+        "scripts/diagnose-release-state.sh",
+        forbidden,
+        "release diagnostics must not mutate GitHub Releases",
+    )
 require_contains(
     "scripts/publish-release-assets.sh",
     'git fetch "${remote}" "${main_branch}" "${premain_branch}" --tags --force',
