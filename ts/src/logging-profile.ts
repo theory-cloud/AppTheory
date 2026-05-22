@@ -1,0 +1,662 @@
+export const LOGGING_PROFILE_SCHEMA_VERSION = "apptheory.logging/v1";
+
+export const LOGGING_PROFILE_PAYTHEORY_ALERT_V1 = "paytheory-alert-v1";
+export const LOGGING_PROFILE_CLOUDWATCH_JSON = "cloudwatch-json";
+export const LOGGING_PROFILE_LEGACY = "legacy";
+export const LOGGING_PROFILE_LOCAL_DEV = "local-dev";
+
+export interface LoggingProfileConfig {
+  schema_version?: string;
+  profile?: string;
+  encoding?: LoggingProfileEncoding;
+  levels?: Record<string, string>;
+  required_fields?: string[];
+  recommended_fields?: string[];
+  field_map?: Record<string, string>;
+  enrichment?: LoggingProfileEnrichment;
+  error_capture?: LoggingProfileErrorCapture;
+  sanitization?: LoggingProfileSanitization;
+  alerting_hints?: LoggingProfileAlertingHints;
+}
+
+export interface LoggingProfileEncoding {
+  format?: string;
+  timestamp_field?: string;
+  timestamp_format?: string;
+  level_field?: string;
+  message_field?: string;
+}
+
+export interface LoggingProfileEnrichment {
+  static?: Record<string, string>;
+  context?: Record<string, string>;
+}
+
+export interface LoggingProfileErrorCapture {
+  include_error_type?: boolean;
+  include_error_code?: boolean;
+  include_stack_trace?: boolean;
+  stack_trace_field?: string;
+  stack_hash_field?: string;
+  stack_hash_algorithm?: string;
+}
+
+export interface LoggingProfileSanitization {
+  existing_sanitized_logging?: boolean;
+  notes?: string;
+}
+
+export interface LoggingProfileAlertingHints {
+  fingerprint_fields?: string[];
+  keeper_lookup_fields?: string[];
+}
+
+export class LoggingProfileValidationError extends Error {
+  readonly errors: string[];
+
+  constructor(errors: string[]) {
+    const message =
+      errors.length === 0
+        ? "logging profile validation failed"
+        : `logging profile validation failed: ${errors.join("; ")}`;
+    super(message);
+    this.name = "LoggingProfileValidationError";
+    this.errors = [...errors];
+  }
+}
+
+export function builtInLoggingProfileNames(): string[] {
+  return [
+    LOGGING_PROFILE_CLOUDWATCH_JSON,
+    LOGGING_PROFILE_LEGACY,
+    LOGGING_PROFILE_LOCAL_DEV,
+    LOGGING_PROFILE_PAYTHEORY_ALERT_V1,
+  ].sort();
+}
+
+export function loggingProfileCatalog(): Record<string, unknown> {
+  return {
+    schema_version: LOGGING_PROFILE_SCHEMA_VERSION,
+    profiles: builtInLoggingProfileNames(),
+  };
+}
+
+export function defaultLoggingProfile(profile: string): LoggingProfileConfig {
+  const key = normalizeProfileToken(profile);
+  if (key === LOGGING_PROFILE_PAYTHEORY_ALERT_V1)
+    return payTheoryAlertProfile();
+  if (key === LOGGING_PROFILE_CLOUDWATCH_JSON) {
+    const cfg = baseJSONProfile(LOGGING_PROFILE_CLOUDWATCH_JSON);
+    cfg.required_fields = ["timestamp", "level", "message"];
+    return cfg;
+  }
+  if (key === LOGGING_PROFILE_LEGACY) {
+    const cfg = baseJSONProfile(LOGGING_PROFILE_LEGACY);
+    cfg.encoding = {
+      ...cfg.encoding,
+      timestamp_field: "timestamp",
+      level_field: "level",
+      message_field: "message",
+    };
+    return cfg;
+  }
+  if (key === LOGGING_PROFILE_LOCAL_DEV) {
+    const cfg = baseJSONProfile(LOGGING_PROFILE_LOCAL_DEV);
+    cfg.levels = { debug: "DEBUG", info: "INFO", warn: "WARN", error: "ERROR" };
+    return cfg;
+  }
+  throw new Error(`profile: unsupported value ${String(profile ?? "").trim()}`);
+}
+
+export function decodeLoggingProfileJSON(
+  raw: string | Uint8Array,
+): LoggingProfileConfig {
+  let parsed: unknown;
+  try {
+    const text = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
+    parsed = JSON.parse(text) as unknown;
+  } catch (error) {
+    throw new Error(`logging profile json: ${errorMessage(error)}`);
+  }
+  if (!isRecord(parsed)) {
+    throw new Error("logging profile json: root must be an object");
+  }
+  const strictErrors = validateLoggingProfileJSONOptions(
+    "",
+    parsed,
+    loggingProfileJSONOptions,
+  );
+  const config = parsed as LoggingProfileConfig;
+  const errors = [...strictErrors, ...loggingProfileValidationErrors(config)];
+  if (errors.length > 0) throw new LoggingProfileValidationError(errors);
+  return config;
+}
+
+export function validateLoggingProfile(config: LoggingProfileConfig): void {
+  const errors = loggingProfileValidationErrors(config);
+  if (errors.length > 0) throw new LoggingProfileValidationError(errors);
+}
+
+export function loggingProfileValidationErrors(
+  config: LoggingProfileConfig,
+): string[] {
+  const errors: string[] = [];
+
+  const schema = trimString(config.schema_version);
+  if (!schema) {
+    errors.push("schema_version: required");
+  } else if (schema !== LOGGING_PROFILE_SCHEMA_VERSION) {
+    errors.push(`schema_version: unsupported value ${schema}`);
+  }
+
+  const profile = normalizeProfileToken(config.profile ?? "");
+  if (!profile) {
+    errors.push("profile: required");
+  } else if (!isSupportedProfile(profile)) {
+    errors.push(`profile: unsupported value ${trimString(config.profile)}`);
+  }
+
+  const encoding = config.encoding ?? {};
+  const format = trimString(encoding.format).toLowerCase();
+  if (!format) {
+    errors.push("encoding.format: required");
+  } else if (format !== "json") {
+    errors.push(
+      `encoding.format: unsupported value ${trimString(encoding.format)}`,
+    );
+  }
+
+  const timestampFormat = trimString(encoding.timestamp_format).toLowerCase();
+  if (
+    timestampFormat &&
+    timestampFormat !== "rfc3339nano" &&
+    timestampFormat !== "rfc3339"
+  ) {
+    errors.push(
+      `encoding.timestamp_format: unsupported value ${trimString(encoding.timestamp_format)}`,
+    );
+  }
+  errors.push(
+    ...validateEncodingOutputField(
+      "encoding.timestamp_field",
+      encoding.timestamp_field,
+    ),
+  );
+  errors.push(
+    ...validateEncodingOutputField(
+      "encoding.level_field",
+      encoding.level_field,
+    ),
+  );
+  errors.push(
+    ...validateEncodingOutputField(
+      "encoding.message_field",
+      encoding.message_field,
+    ),
+  );
+
+  errors.push(...validateLevelMap(config.levels));
+  errors.push(
+    ...validateProfileFieldList("required_fields", config.required_fields),
+  );
+  errors.push(
+    ...validateProfileFieldList(
+      "recommended_fields",
+      config.recommended_fields,
+    ),
+  );
+  errors.push(...validateFieldMap(config.field_map));
+  errors.push(...validateStaticEnrichment(config.enrichment?.static));
+  errors.push(...validateContextEnrichment(config.enrichment?.context));
+  errors.push(...validateErrorCapture(config.error_capture));
+  errors.push(...validateAlertingHints(config.alerting_hints));
+
+  return errors;
+}
+
+interface LoggingProfileJSONOptionSchema {
+  allowed: Set<string>;
+  nested?: Record<string, LoggingProfileJSONOptionSchema>;
+}
+
+const loggingProfileJSONOptions: LoggingProfileJSONOptionSchema = {
+  allowed: optionNameSet(
+    "schema_version",
+    "profile",
+    "encoding",
+    "levels",
+    "required_fields",
+    "recommended_fields",
+    "field_map",
+    "enrichment",
+    "error_capture",
+    "sanitization",
+    "alerting_hints",
+  ),
+  nested: {
+    encoding: {
+      allowed: optionNameSet(
+        "format",
+        "timestamp_field",
+        "timestamp_format",
+        "level_field",
+        "message_field",
+      ),
+    },
+    enrichment: { allowed: optionNameSet("static", "context") },
+    error_capture: {
+      allowed: optionNameSet(
+        "include_error_type",
+        "include_error_code",
+        "include_stack_trace",
+        "stack_trace_field",
+        "stack_hash_field",
+        "stack_hash_algorithm",
+      ),
+    },
+    sanitization: {
+      allowed: optionNameSet("existing_sanitized_logging", "notes"),
+    },
+    alerting_hints: {
+      allowed: optionNameSet("fingerprint_fields", "keeper_lookup_fields"),
+    },
+  },
+};
+
+function validateLoggingProfileJSONOptions(
+  path: string,
+  object: Record<string, unknown>,
+  schema: LoggingProfileJSONOptionSchema,
+): string[] {
+  const errors: string[] = [];
+  for (const key of sortedKeys(object)) {
+    const childPath = profileJSONOptionPath(path, key);
+    if (!schema.allowed.has(key)) {
+      errors.push(`${childPath}: unsupported option`);
+      continue;
+    }
+    const childSchema = schema.nested?.[key];
+    const child = object[key];
+    if (!childSchema || !isRecord(child)) continue;
+    errors.push(
+      ...validateLoggingProfileJSONOptions(childPath, child, childSchema),
+    );
+  }
+  return errors;
+}
+
+function profileJSONOptionPath(parent: string, key: string): string {
+  return parent ? `${parent}.${key}` : key;
+}
+
+function baseJSONProfile(profile: string): LoggingProfileConfig {
+  return {
+    schema_version: LOGGING_PROFILE_SCHEMA_VERSION,
+    profile,
+    encoding: {
+      format: "json",
+      timestamp_field: "timestamp",
+      timestamp_format: "rfc3339nano",
+      level_field: "level",
+      message_field: "message",
+    },
+    levels: { debug: "DEBUG", info: "INFO", warn: "WARN", error: "ERROR" },
+    field_map: {
+      timestamp: "timestamp",
+      severity: "level",
+      message: "message",
+    },
+  };
+}
+
+function payTheoryAlertProfile(): LoggingProfileConfig {
+  const cfg = baseJSONProfile(LOGGING_PROFILE_PAYTHEORY_ALERT_V1);
+  cfg.encoding = {
+    format: "json",
+    timestamp_field: "ts",
+    timestamp_format: "rfc3339nano",
+    level_field: "level",
+    message_field: "message",
+  };
+  cfg.required_fields = [
+    "ts",
+    "level",
+    "message",
+    "service",
+    "stage",
+    "partner",
+    "function",
+    "aws_region",
+  ];
+  cfg.recommended_fields = [
+    "source_account_id",
+    "account_family",
+    "request_id",
+    "trace_id",
+    "correlation_id",
+    "error_type",
+    "error_code",
+    "normalized_message",
+    "stack_hash",
+    "route",
+    "job_name",
+  ];
+  cfg.field_map = {
+    timestamp: "ts",
+    severity: "level",
+    message: "message",
+    normalized_message: "normalized_message",
+    error_type: "error_type",
+    error_code: "error_code",
+    request_id: "request_id",
+    trace_id: "trace_id",
+    correlation_id: "correlation_id",
+    stack_trace: "stack_trace",
+    stack_hash: "stack_hash",
+    service: "service",
+    stage: "stage",
+    partner: "partner",
+    function: "function",
+    account_family: "account_family",
+    source_account_id: "source_account_id",
+    aws_region: "aws_region",
+    route: "route",
+    job_name: "job_name",
+  };
+  cfg.enrichment = {
+    static: {
+      service: "${SERVICE_NAME}",
+      stage: "${STAGE}",
+      partner: "${PARTNER}",
+      function: "${AWS_LAMBDA_FUNCTION_NAME}",
+      aws_region: "${AWS_REGION}",
+      source_account_id: "${SOURCE_ACCOUNT_ID}",
+      account_family: "${ACCOUNT_FAMILY}",
+    },
+    context: {
+      request_id: "request.request_id",
+      trace_id: "request.trace_id",
+      correlation_id: "request.correlation_id",
+      route: "request.route",
+      job_name: "job.name",
+    },
+  };
+  cfg.error_capture = {
+    include_error_type: true,
+    include_error_code: true,
+    include_stack_trace: true,
+    stack_trace_field: "stack_trace",
+    stack_hash_field: "stack_hash",
+    stack_hash_algorithm: "sha256",
+  };
+  cfg.sanitization = { existing_sanitized_logging: true };
+  cfg.alerting_hints = {
+    fingerprint_fields: [
+      "service",
+      "normalized_message",
+      "error_type",
+      "stack_hash",
+    ],
+    keeper_lookup_fields: [
+      "partner",
+      "stage",
+      "account_family",
+      "aws_region",
+      "service",
+      "function",
+      "request_id",
+      "trace_id",
+    ],
+  };
+  return cfg;
+}
+
+function validateLevelMap(
+  levels: Record<string, string> | undefined,
+): string[] {
+  const errors: string[] = [];
+  for (const key of sortedKeys(levels)) {
+    const normalized = trimString(key).toLowerCase();
+    if (!optionNameSet("debug", "info", "warn", "error").has(normalized)) {
+      errors.push(`levels.${key}: unsupported level ${key}`);
+      continue;
+    }
+    if (!trimString(levels?.[key])) errors.push(`levels.${key}: required`);
+  }
+  return errors;
+}
+
+function validateProfileFieldList(
+  path: string,
+  fields: string[] | undefined,
+): string[] {
+  const errors: string[] = [];
+  for (const [index, field] of (fields ?? []).entries()) {
+    const trimmed = trimString(field);
+    if (!trimmed) {
+      errors.push(`${path}[${index}]: required`);
+      continue;
+    }
+    if (!isSupportedProfileOutputField(trimmed)) {
+      errors.push(`${path}[${index}]: unsupported field ${trimmed}`);
+    }
+  }
+  return errors;
+}
+
+function validateEncodingOutputField(
+  path: string,
+  field: string | undefined,
+): string[] {
+  const trimmed = trimString(field);
+  if (!trimmed) return [];
+  if (!isSupportedProfileOutputField(trimmed))
+    return [`${path}: unsupported field ${trimmed}`];
+  return [];
+}
+
+function validateFieldMap(
+  fieldMap: Record<string, string> | undefined,
+): string[] {
+  const errors: string[] = [];
+  for (const key of sortedKeys(fieldMap)) {
+    const canonical = trimString(key);
+    if (!isSupportedCanonicalField(canonical)) {
+      errors.push(`field_map.${key}: unsupported source ${canonical}`);
+    }
+    const out = trimString(fieldMap?.[key]);
+    if (!out) {
+      errors.push(`field_map.${key}: required`);
+    } else if (!isSupportedProfileOutputField(out)) {
+      errors.push(`field_map.${key}: unsupported field ${out}`);
+    }
+  }
+  return errors;
+}
+
+function validateStaticEnrichment(
+  staticFields: Record<string, string> | undefined,
+): string[] {
+  const errors: string[] = [];
+  for (const key of sortedKeys(staticFields)) {
+    const trimmed = trimString(key);
+    if (!isSupportedProfileOutputField(trimmed)) {
+      errors.push(`enrichment.static.${key}: unsupported field ${trimmed}`);
+    }
+  }
+  return errors;
+}
+
+function validateContextEnrichment(
+  contextFields: Record<string, string> | undefined,
+): string[] {
+  const errors: string[] = [];
+  for (const key of sortedKeys(contextFields)) {
+    const trimmed = trimString(key);
+    if (!isSupportedProfileOutputField(trimmed)) {
+      errors.push(`enrichment.context.${key}: unsupported field ${trimmed}`);
+    }
+    const source = trimString(contextFields?.[key]);
+    if (!source) {
+      errors.push(`enrichment.context.${key}: required`);
+    } else if (!isSupportedContextSource(source)) {
+      errors.push(`enrichment.context.${key}: unsupported source ${source}`);
+    }
+  }
+  return errors;
+}
+
+function validateErrorCapture(
+  capture: LoggingProfileErrorCapture | undefined,
+): string[] {
+  const errors: string[] = [];
+  const stackTraceField = trimString(capture?.stack_trace_field);
+  if (stackTraceField && !isSupportedProfileOutputField(stackTraceField)) {
+    errors.push(
+      `error_capture.stack_trace_field: unsupported field ${stackTraceField}`,
+    );
+  }
+  const stackHashField = trimString(capture?.stack_hash_field);
+  if (stackHashField && !isSupportedProfileOutputField(stackHashField)) {
+    errors.push(
+      `error_capture.stack_hash_field: unsupported field ${stackHashField}`,
+    );
+  }
+  const algorithm = trimString(capture?.stack_hash_algorithm).toLowerCase();
+  if (algorithm && algorithm !== "sha256") {
+    errors.push(
+      `error_capture.stack_hash_algorithm: unsupported value ${trimString(capture?.stack_hash_algorithm)}`,
+    );
+  }
+  return errors;
+}
+
+function validateAlertingHints(
+  hints: LoggingProfileAlertingHints | undefined,
+): string[] {
+  return [
+    ...validateProfileFieldList(
+      "alerting_hints.fingerprint_fields",
+      hints?.fingerprint_fields,
+    ),
+    ...validateProfileFieldList(
+      "alerting_hints.keeper_lookup_fields",
+      hints?.keeper_lookup_fields,
+    ),
+  ];
+}
+
+export function isSupportedProfileOutputField(field: string): boolean {
+  return optionNameSet(
+    "ts",
+    "timestamp",
+    "level",
+    "severity",
+    "message",
+    "event",
+    "service",
+    "stage",
+    "partner",
+    "function",
+    "aws_region",
+    "source_account_id",
+    "account_family",
+    "request_id",
+    "tenant_id",
+    "user_id",
+    "trace_id",
+    "span_id",
+    "correlation_id",
+    "error_type",
+    "error_code",
+    "normalized_message",
+    "stack_trace",
+    "stack_hash",
+    "route",
+    "job_name",
+    "method",
+    "path",
+    "status",
+  ).has(field);
+}
+
+function isSupportedProfile(profile: string): boolean {
+  return optionNameSet(
+    LOGGING_PROFILE_PAYTHEORY_ALERT_V1,
+    LOGGING_PROFILE_CLOUDWATCH_JSON,
+    LOGGING_PROFILE_LEGACY,
+    LOGGING_PROFILE_LOCAL_DEV,
+  ).has(normalizeProfileToken(profile));
+}
+
+function isSupportedCanonicalField(field: string): boolean {
+  return optionNameSet(
+    "timestamp",
+    "severity",
+    "message",
+    "event",
+    "normalized_message",
+    "error_type",
+    "error_code",
+    "request_id",
+    "tenant_id",
+    "user_id",
+    "trace_id",
+    "span_id",
+    "correlation_id",
+    "stack_trace",
+    "stack_hash",
+    "service",
+    "stage",
+    "partner",
+    "function",
+    "account_family",
+    "source_account_id",
+    "aws_region",
+    "route",
+    "job_name",
+    "method",
+    "path",
+    "status",
+  ).has(field);
+}
+
+function isSupportedContextSource(source: string): boolean {
+  return optionNameSet(
+    "request.request_id",
+    "request.tenant_id",
+    "request.user_id",
+    "request.trace_id",
+    "request.span_id",
+    "request.correlation_id",
+    "request.route",
+    "request.method",
+    "request.path",
+    "request.status",
+    "job.name",
+  ).has(source);
+}
+
+function normalizeProfileToken(value: string): string {
+  return trimString(value).toLowerCase();
+}
+
+function optionNameSet(...names: string[]): Set<string> {
+  return new Set(names);
+}
+
+function sortedKeys(object: Record<string, unknown> | undefined): string[] {
+  return Object.keys(object ?? {}).sort();
+}
+
+function trimString(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
