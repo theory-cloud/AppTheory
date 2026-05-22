@@ -104,6 +104,90 @@ func TestInitializeCapabilities_ExplicitConfigCanDisableSurface(t *testing.T) {
 	}
 }
 
+func TestCapabilityDisables_RejectToolMethods(t *testing.T) {
+	s := NewServer("test", "dev", WithCapabilityConfig(CapabilityConfig{
+		Tools:       false,
+		Resources:   true,
+		Prompts:     true,
+		Completions: true,
+		Tasks:       true,
+	}))
+
+	toolCalled := false
+	if err := s.Registry().RegisterTool(ToolDef{
+		Name:        "secret_tool",
+		Description: "Should not run when tools are disabled",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(context.Context, json.RawMessage) (*ToolResult, error) {
+		toolCalled = true
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "SECRET_TOOL_EXECUTED"}}}, nil
+	}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+
+	streamCalled := false
+	if err := s.Registry().RegisterStreamingTool(ToolDef{
+		Name:        "secret_stream",
+		Description: "Should not stream when tools are disabled",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(context.Context, json.RawMessage, func(SSEEvent)) (*ToolResult, error) {
+		streamCalled = true
+		return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "SECRET_STREAM_EXECUTED"}}}, nil
+	}); err != nil {
+		t.Fatalf("register streaming tool: %v", err)
+	}
+
+	caps := initializeCapabilityMap(t, s)
+	if _, ok := caps["tools"]; ok {
+		t.Fatalf("expected disabled tools capability to be omitted: %+v", caps)
+	}
+
+	sessionID := initializeSession(t, s)
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"application/json, text/event-stream"}
+
+	tests := []struct {
+		name   string
+		method string
+		params any
+	}{
+		{name: "tools list", method: methodToolsList},
+		{name: "tools call", method: methodToolsCall, params: map[string]any{"name": "secret_tool", "arguments": map[string]any{}}},
+		{name: "tools call stream", method: methodToolsCall, params: map[string]any{"name": "secret_stream", "arguments": map[string]any{}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var params json.RawMessage
+			if tt.params != nil {
+				params = mustMarshal(t, tt.params)
+			}
+			req := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: tt.method, Params: params})
+			resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", req, headers)
+			if err != nil {
+				t.Fatalf("invoke %s: %v", tt.method, err)
+			}
+			if resp.BodyReader != nil {
+				t.Fatalf("expected disabled %s to use JSON error path, got BodyReader", tt.method)
+			}
+			rpcResp, err := parseJSONRPCResponse(resp)
+			if err != nil {
+				t.Fatalf("parse %s: %v", tt.method, err)
+			}
+			if rpcResp.Error == nil || rpcResp.Error.Code != CodeMethodNotFound {
+				t.Fatalf("expected method-not-found for disabled %s, got %+v", tt.method, rpcResp.Error)
+			}
+		})
+	}
+
+	if toolCalled {
+		t.Fatalf("disabled tools/call executed registered tool")
+	}
+	if streamCalled {
+		t.Fatalf("disabled streaming tools/call executed registered streaming tool")
+	}
+}
+
 func TestInitializeCapabilities_OmitsResourceSubscribeUntilOutboundNotificationsExist(t *testing.T) {
 	s := NewServer("test", "dev", WithResourceSubscriptionHooks(
 		func(context.Context, ResourceSubscription) error { return nil },
