@@ -1893,6 +1893,95 @@ scan_go_supply_chain_for_mod() {
   return 0
 }
 
+strip_python_dependency_comment() {
+  local raw="$1"
+  local out=""
+  local in_single=false
+  local in_double=false
+  local escaped=false
+  local i ch out_lower
+
+  for ((i = 0; i < ${#raw}; i++)); do
+    ch="${raw:i:1}"
+
+    if [[ "${in_double}" == "true" ]]; then
+      out+="${ch}"
+      if [[ "${escaped}" == "true" ]]; then
+        escaped=false
+      elif [[ "${ch}" == "\\" ]]; then
+        escaped=true
+      elif [[ "${ch}" == '"' ]]; then
+        in_double=false
+      fi
+      continue
+    fi
+
+    if [[ "${in_single}" == "true" ]]; then
+      out+="${ch}"
+      if [[ "${ch}" == "'" ]]; then
+        in_single=false
+      fi
+      continue
+    fi
+
+    case "${ch}" in
+      '"')
+        in_double=true
+        out+="${ch}"
+        ;;
+      "'")
+        in_single=true
+        out+="${ch}"
+        ;;
+      "#")
+        out_lower="${out,,}"
+        if [[ "${out_lower}" =~ (git\+)?(https?|ssh|file)://[^[:space:],\"]+$ ]]; then
+          out+="${ch}"
+        else
+          break
+        fi
+        ;;
+      *)
+        out+="${ch}"
+        ;;
+    esac
+  done
+
+  printf '%s' "${out}"
+}
+
+python_line_has_sha256_fragment() {
+  local effective lower
+  effective="$(strip_python_dependency_comment "$1")"
+  lower="$(printf '%s' "${effective}" | tr '[:upper:]' '[:lower:]')"
+  [[ "${lower}" =~ (git\+)?(https?|ssh|file)://[^[:space:],\"]*\#sha256=[0-9a-f]{64} ]]
+}
+
+verify_python_dependency_comment_parser() {
+  local hash="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+  if ! python_line_has_sha256_fragment "\"safe @ https://example.com/safe.whl#sha256=${hash}\","; then
+    echo "Python supply-chain scan: internal parser failed to preserve TOML URL hash fragments" >&2
+    return 1
+  fi
+  if python_line_has_sha256_fragment "\"evil @ https://example.com/evil.whl\", #sha256=${hash}"; then
+    echo "Python supply-chain scan: internal parser treated TOML comment text as a URL hash fragment" >&2
+    return 1
+  fi
+  if python_line_has_sha256_fragment "\"evil @ https://example.com/evil.whl\", \"#sha256=${hash}\""; then
+    echo "Python supply-chain scan: internal parser treated a separate TOML string as a URL hash fragment" >&2
+    return 1
+  fi
+  if ! python_line_has_sha256_fragment "safe @ https://example.com/safe.whl#sha256=${hash}"; then
+    echo "Python supply-chain scan: internal parser failed to preserve requirements URL hash fragments" >&2
+    return 1
+  fi
+  if python_line_has_sha256_fragment "evil @ https://example.com/evil.whl #sha256=${hash}"; then
+    echo "Python supply-chain scan: internal parser treated requirements comment text as a URL hash fragment" >&2
+    return 1
+  fi
+}
+
 scan_python_supply_chain() {
   local allowlist_path="$1"
 
@@ -1941,6 +2030,8 @@ scan_python_supply_chain() {
   local allowlisted=0
   local file_count=0
 
+  verify_python_dependency_comment_parser || return $?
+
   local f
   for f in "${files[@]}"; do
     file_count=$((file_count + 1))
@@ -1949,8 +2040,10 @@ scan_python_supply_chain() {
     local line
     while IFS= read -r line || [[ -n "${line}" ]]; do
       local raw="${line//$'\r'/}"
+      local effective
+      effective="$(strip_python_dependency_comment "${raw}")"
       local trimmed
-      trimmed="$(printf '%s' "${raw}" | sed -E 's/[[:space:]]+/ /g; s/^ +//; s/ +$//')"
+      trimmed="$(printf '%s' "${effective}" | sed -E 's/[[:space:]]+/ /g; s/^ +//; s/ +$//')"
       [[ -z "${trimmed}" ]] && continue
 
       local lower
@@ -1967,7 +2060,7 @@ scan_python_supply_chain() {
       done
 
       local has_hash_fragment=false
-      if [[ "${lower}" =~ \#sha256=[0-9a-f]{64} ]]; then
+      if python_line_has_sha256_fragment "${raw}"; then
         has_hash_fragment=true
       fi
 
