@@ -293,6 +293,29 @@ require_order(
     "Release Please (PR only)",
     "prerelease PR generation must fail closed before opening stale release-please PRs",
 )
+for workflow in (".github/workflows/prerelease-pr.yml", ".github/workflows/release-pr.yml"):
+    require_contains(
+        workflow,
+        "scripts/run-release-please-pr.sh",
+        "release PR workflows must create release-please PRs through the stale-state-tolerant wrapper",
+    )
+require_order(
+    "scripts/run-release-please-pr.sh",
+    'if use_existing_open_release_pr "valid release PR already exists"; then',
+    'npx "${args[@]}"',
+    "release-please PR generation must tolerate already-open draft release PRs before invoking release-please",
+)
+require_order(
+    "scripts/run-release-please-pr.sh",
+    'npx "${args[@]}"',
+    'if use_existing_open_release_pr "release-please exited ${release_please_status} after creating or finding a release PR"; then',
+    "release-please PR generation must recover when stale release-please state errors after a valid PR exists",
+)
+require_contains(
+    "scripts/run-release-please-pr.sh",
+    'gh pr ready "${pr_number}" --undo',
+    "release-please PR generation must draft-lock valid open release PRs before artifact setup",
+)
 require_order(
     ".github/workflows/prerelease.yml",
     "Verify branch version sync (release preflight)",
