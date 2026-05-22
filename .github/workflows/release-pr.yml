@@ -123,6 +123,7 @@ jobs:
           # NOTE: release-please-action currently does not apply `release-as` when using
           # `config-file`+`manifest-file` (manifest mode). Use the CLI so the stable
           # release PR can be forced to the premain RC baseline.
+          # Wrapper pins release-please@17.1.3 and always passes --draft-pull-request.
           scripts/run-release-please-pr.sh \
             --target-branch main \
             --config-file release-please-config.json \
@@ -135,6 +136,7 @@ jobs:
         env:
           RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
+          # Wrapper pins release-please@17.1.3 and always passes --draft-pull-request.
           scripts/run-release-please-pr.sh \
             --target-branch main \
             --config-file release-please-config.json \
