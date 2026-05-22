@@ -64,33 +64,64 @@ function isLoggingProfileContractFixture(fixture) {
   );
 }
 
-function compareLoggingProfileContract(fixture) {
+async function compareLoggingProfileContract(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const setup = fixture.setup ?? {};
+  const input = fixture.input ?? {};
   const expect = fixture.expect ?? {};
   if (Object.prototype.hasOwnProperty.call(expect, "logging_profile_catalog")) {
+    const actual = runtime.loggingProfileCatalog();
+    if (deepEqual(actual, expect.logging_profile_catalog)) return { ok: true };
     return {
       ok: false,
       reason: "logging_profile_catalog mismatch",
       expected_logging_profile_catalog: expect.logging_profile_catalog,
-      actual_logging_profile_catalog: null,
+      actual_logging_profile_catalog: actual,
     };
   }
   if (Object.prototype.hasOwnProperty.call(expect, "profile_validation_errors")) {
+    const actual = decodeLoggingProfileValidationErrors(runtime, setup.logging_profile);
+    if (deepEqual(actual, expect.profile_validation_errors ?? [])) return { ok: true };
     return {
       ok: false,
       reason: "profile_validation_errors mismatch",
       expected_profile_validation_errors: expect.profile_validation_errors ?? [],
-      actual_profile_validation_errors: [],
+      actual_profile_validation_errors: actual,
     };
   }
   if (Object.prototype.hasOwnProperty.call(expect, "profile_logs")) {
+    let actualLogs = [];
+    try {
+      const config = runtime.decodeLoggingProfileJSON(JSON.stringify(setup.logging_profile ?? {}));
+      const actual = runtime.encodeLoggingProfileEvent(config, setup.environment ?? {}, input.logging_event ?? {});
+      actualLogs = [actual];
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `profile_logs encode failed: ${err?.message ?? String(err)}`,
+        expected_profile_logs: expect.profile_logs ?? [],
+        actual_profile_logs: actualLogs,
+      };
+    }
+    if (deepEqual(actualLogs, expect.profile_logs ?? [])) return { ok: true };
     return {
       ok: false,
       reason: "profile_logs mismatch",
       expected_profile_logs: expect.profile_logs ?? [],
-      actual_profile_logs: [],
+      actual_profile_logs: actualLogs,
     };
   }
   return { ok: true };
+}
+
+function decodeLoggingProfileValidationErrors(runtime, profile) {
+  try {
+    runtime.decodeLoggingProfileJSON(JSON.stringify(profile ?? {}));
+    return [];
+  } catch (err) {
+    if (Array.isArray(err?.errors)) return err.errors;
+    return [err?.message ?? String(err)];
+  }
 }
 
 function listFixtureFiles(fixturesRoot) {
@@ -661,7 +692,7 @@ async function runFixture(fixture) {
   }
   if (tier === "p2") {
     if (isLoggingProfileContractFixture(fixture)) {
-      return compareLoggingProfileContract(fixture);
+      return await compareLoggingProfileContract(fixture);
     }
     const expect = fixture.expect ?? {};
     if (
