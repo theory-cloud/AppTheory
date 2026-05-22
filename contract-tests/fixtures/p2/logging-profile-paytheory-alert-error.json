@@ -1,0 +1,180 @@
+{
+  "id": "p2.logging_profile.paytheory_alert_error",
+  "tier": "p2",
+  "name": "Logging profile: paytheory-alert-v1 ERROR output",
+  "setup": {
+    "logging_profile": {
+      "schema_version": "apptheory.logging/v1",
+      "profile": "paytheory-alert-v1",
+      "encoding": {
+        "format": "json",
+        "timestamp_field": "ts",
+        "timestamp_format": "rfc3339nano",
+        "level_field": "level",
+        "message_field": "message"
+      },
+      "levels": {
+        "error": "ERROR",
+        "info": "INFO",
+        "debug": "DEBUG",
+        "warn": "WARN"
+      },
+      "required_fields": [
+        "ts",
+        "level",
+        "message",
+        "service",
+        "stage",
+        "partner",
+        "function",
+        "aws_region"
+      ],
+      "recommended_fields": [
+        "source_account_id",
+        "account_family",
+        "request_id",
+        "trace_id",
+        "correlation_id",
+        "error_type",
+        "error_code",
+        "normalized_message",
+        "stack_hash",
+        "route",
+        "job_name"
+      ],
+      "field_map": {
+        "timestamp": "ts",
+        "severity": "level",
+        "message": "message",
+        "normalized_message": "normalized_message",
+        "error_type": "error_type",
+        "error_code": "error_code",
+        "request_id": "request_id",
+        "trace_id": "trace_id",
+        "correlation_id": "correlation_id",
+        "stack_trace": "stack_trace",
+        "stack_hash": "stack_hash",
+        "service": "service",
+        "stage": "stage",
+        "partner": "partner",
+        "function": "function",
+        "account_family": "account_family",
+        "source_account_id": "source_account_id",
+        "aws_region": "aws_region",
+        "route": "route",
+        "job_name": "job_name"
+      },
+      "enrichment": {
+        "static": {
+          "service": "${SERVICE_NAME}",
+          "stage": "${STAGE}",
+          "partner": "${PARTNER}",
+          "function": "${AWS_LAMBDA_FUNCTION_NAME}",
+          "aws_region": "${AWS_REGION}",
+          "source_account_id": "${SOURCE_ACCOUNT_ID}",
+          "account_family": "${ACCOUNT_FAMILY}"
+        },
+        "context": {
+          "request_id": "request.request_id",
+          "trace_id": "request.trace_id",
+          "correlation_id": "request.correlation_id",
+          "route": "request.route",
+          "job_name": "job.name"
+        }
+      },
+      "error_capture": {
+        "include_error_type": true,
+        "include_error_code": true,
+        "include_stack_trace": true,
+        "stack_trace_field": "stack_trace",
+        "stack_hash_field": "stack_hash",
+        "stack_hash_algorithm": "sha256"
+      },
+      "sanitization": {
+        "existing_sanitized_logging": true,
+        "notes": "Application fields must already be sanitized before they reach the profile; profile encoding must not introduce raw payload fields."
+      },
+      "alerting_hints": {
+        "fingerprint_fields": [
+          "service",
+          "normalized_message",
+          "error_type",
+          "stack_hash"
+        ],
+        "keeper_lookup_fields": [
+          "partner",
+          "stage",
+          "account_family",
+          "aws_region",
+          "service",
+          "function",
+          "request_id",
+          "trace_id"
+        ]
+      }
+    },
+    "environment": {
+      "SERVICE_NAME": "payments-api",
+      "STAGE": "live",
+      "PARTNER": "paytheory",
+      "AWS_LAMBDA_FUNCTION_NAME": "payments-live-authorize",
+      "AWS_REGION": "us-east-1",
+      "SOURCE_ACCOUNT_ID": "111122223333",
+      "ACCOUNT_FAMILY": "paytheory-live"
+    }
+  },
+  "input": {
+    "logging_event": {
+      "timestamp": "1970-01-01T00:00:00Z",
+      "level": "error",
+      "message": "charge authorization failed",
+      "normalized_message": "charge authorization failed",
+      "request": {
+        "request_id": "req_test_123",
+        "trace_id": "trace-profile-123",
+        "correlation_id": "corr-profile-123",
+        "route": "POST /payments/{payment_id}/authorize"
+      },
+      "job": {
+        "name": "authorize-payment"
+      },
+      "error": {
+        "type": "ProcessorError",
+        "code": "processor.declined",
+        "message": "processor declined",
+        "stack_trace": "processor.go:42\nhandler.go:7"
+      },
+      "fields": {
+        "safe_processor": "tesouro",
+        "raw_payload": "must-not-appear"
+      }
+    }
+  },
+  "expect": {
+    "profile_logs": [
+      {
+        "ts": "1970-01-01T00:00:00Z",
+        "level": "ERROR",
+        "message": "charge authorization failed",
+        "service": "payments-api",
+        "stage": "live",
+        "partner": "paytheory",
+        "function": "payments-live-authorize",
+        "aws_region": "us-east-1",
+        "source_account_id": "111122223333",
+        "account_family": "paytheory-live",
+        "request_id": "req_test_123",
+        "trace_id": "trace-profile-123",
+        "correlation_id": "corr-profile-123",
+        "error_type": "ProcessorError",
+        "error_code": "processor.declined",
+        "normalized_message": "charge authorization failed",
+        "stack_trace": "processor.go:42\nhandler.go:7",
+        "stack_hash": "sha256:d3d3dd723c56522d25492427bf8ca94b80feed197d55aa42e9bab0c1b5031bdc",
+        "route": "POST /payments/{payment_id}/authorize",
+        "job_name": "authorize-payment",
+        "safe_processor": "tesouro"
+      }
+    ]
+  }
+}
