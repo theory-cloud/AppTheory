@@ -10,6 +10,9 @@
         "format": "xml",
         "timestamp_format": "epoch_ms"
       },
+      "levels": {
+        "Error": "SEVERE"
+      },
       "required_fields": [
         "raw_payload"
       ],
@@ -30,6 +33,7 @@
       "profile: unsupported value custom-alert",
       "encoding.format: unsupported value xml",
       "encoding.timestamp_format: unsupported value epoch_ms",
+      "levels.Error: unsupported level Error",
       "required_fields[0]: unsupported field raw_payload",
       "enrichment.context.request_id: unsupported source lambda.raw_event.requestContext.requestId",
       "error_capture.stack_hash_algorithm: unsupported value md5"

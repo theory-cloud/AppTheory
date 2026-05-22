@@ -883,8 +883,7 @@ def _paytheory_alert_profile() -> LoggingProfileConfig:
 def _validate_level_map(levels: dict[str, str] | None) -> list[str]:
     errors: list[str] = []
     for key in sorted(levels or {}):
-        normalized = _trim(key).lower()
-        if normalized not in {"debug", "info", "warn", "error"}:
+        if key not in {"debug", "info", "warn", "error"}:
             errors.append(f"levels.{key}: unsupported level {key}")
             continue
         if not _trim((levels or {}).get(key)):
