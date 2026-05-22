@@ -62,6 +62,29 @@ require_order(
     "Release Please (Stable)",
     "stable release must pass rubric before release-please can create a draft release",
 )
+for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.yml"):
+    require_contains(
+        workflow,
+        "concurrency:\n  group: release-publisher-${{ github.repository }}\n  cancel-in-progress: false",
+        "release publisher workflows must share one non-cancelling concurrency group",
+    )
+    require_not_contains(
+        workflow,
+        "cancel-in-progress: true",
+        "release publisher workflows must queue reruns and workflow_dispatch events instead of cancelling an active publisher",
+    )
+    require_order(
+        workflow,
+        "workflow_dispatch",
+        "concurrency:",
+        "release publisher concurrency must apply at workflow scope, including workflow_dispatch reruns",
+    )
+    require_order(
+        workflow,
+        "concurrency:",
+        "permissions:",
+        "release publisher concurrency must be declared before jobs so the whole publisher workflow is serialized",
+    )
 require_not_contains(
     ".github/workflows/release.yml",
     "if: github.ref == 'refs/heads/main'\n",
