@@ -92,8 +92,6 @@ make build
 scripts/generate-checksums.sh
 scripts/render-release-notes.sh "${tag}"
 
-mapfile -t existing_assets < <(gh release view "${tag}" --json assets --jq '.assets[].name' 2>/dev/null || true)
-
 assets=(
   'dist/theory-cloud-apptheory*.tgz'
   'dist/apptheory*.whl'
@@ -111,12 +109,10 @@ for asset_glob in "${assets[@]}"; do
   fi
 
   for asset_path in "${matches[@]}"; do
-    asset_name="$(basename "${asset_path}")"
-    if printf '%s\n' "${existing_assets[@]}" | grep -Fxq "${asset_name}"; then
-      echo "release-assets: skip existing ${asset_name}"
-      continue
-    fi
-    gh release upload "${tag}" "${asset_path}"
+    # Draft recovery must never trust pre-existing asset bytes by filename.
+    # Always replace the draft asset with the artifact built and checksummed
+    # from source_commit in this run before publishing the immutable release.
+    gh release upload "${tag}" "${asset_path}" --clobber
   done
 done
 
