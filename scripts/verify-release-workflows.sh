@@ -129,8 +129,53 @@ require_contains(
 )
 require_not_contains(
     "scripts/publish-release-assets.sh",
+    "is already published; immutable releases prevent adding assets/notes",
+    "release asset publisher reruns must verify published immutable assets instead of failing before integrity checks",
+)
+require_contains(
+    "scripts/publish-release-assets.sh",
+    "verify_published_release_assets",
+    "release asset publisher must verify immutable assets when a rerun finds the release already published",
+)
+require_contains(
+    "scripts/publish-release-assets.sh",
+    "published release is missing immutable asset",
+    "release asset publisher must fail closed when a published release is missing an expected asset",
+)
+require_contains(
+    "scripts/publish-release-assets.sh",
+    "does not match source build",
+    "release asset publisher must fail closed when a published release asset checksum differs from the source build",
+)
+require_contains(
+    "scripts/publish-release-assets.sh",
+    "already published with matching immutable assets",
+    "release asset publisher must skip safely when rerun after successful publication",
+)
+require_not_contains(
+    "scripts/publish-release-assets.sh",
     "release-assets: skip existing",
     "release asset publisher must not trust existing draft assets by filename",
+)
+require_order(
+    "scripts/publish-release-assets.sh",
+    "scripts/generate-checksums.sh",
+    "collect_release_assets asset_paths",
+    "release asset publisher must enumerate source-built assets after checksums are generated",
+)
+require_order_after(
+    "scripts/publish-release-assets.sh",
+    "collect_release_assets asset_paths",
+    "verify_published_release_assets",
+    'gh release upload "${tag}" "${asset_path}" --clobber',
+    "release asset publisher must verify-and-skip published releases before any clobbering draft upload",
+)
+require_order_after(
+    "scripts/publish-release-assets.sh",
+    'if ! gh release upload "${tag}" "${asset_path}" --clobber; then',
+    "verify_published_release_assets",
+    "failed to upload draft asset",
+    "release asset publisher must re-check immutable publication races before failing an upload rerun",
 )
 require_order(
     "scripts/publish-release-assets.sh",
