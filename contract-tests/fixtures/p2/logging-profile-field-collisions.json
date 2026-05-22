@@ -1,0 +1,73 @@
+{
+  "id": "p2.logging_profile.field_collisions",
+  "tier": "p2",
+  "name": "Logging profile: caller fields do not override profile-owned fields",
+  "setup": {
+    "environment": {
+      "SERVICE_NAME": "payments-api",
+      "STAGE": "live",
+      "PARTNER": "paytheory",
+      "AWS_LAMBDA_FUNCTION_NAME": "payments-live-authorize",
+      "AWS_REGION": "us-east-1"
+    },
+    "logging_profile": {
+      "schema_version": "apptheory.logging/v1",
+      "profile": "paytheory-alert-v1",
+      "encoding": {
+        "format": "json",
+        "timestamp_field": "ts",
+        "timestamp_format": "rfc3339nano",
+        "level_field": "level",
+        "message_field": "message"
+      },
+      "required_fields": [
+        "ts",
+        "level",
+        "message",
+        "service",
+        "stage",
+        "partner",
+        "function",
+        "aws_region"
+      ],
+      "enrichment": {
+        "static": {
+          "service": "${SERVICE_NAME}",
+          "stage": "${STAGE}",
+          "partner": "${PARTNER}",
+          "function": "${AWS_LAMBDA_FUNCTION_NAME}",
+          "aws_region": "${AWS_REGION}"
+        }
+      }
+    }
+  },
+  "input": {
+    "logging_event": {
+      "timestamp": "1970-01-01T00:00:00Z",
+      "level": "error",
+      "message": "profile-owned message",
+      "fields": {
+        "ts": "2099-01-01T00:00:00Z",
+        "level": "INFO",
+        "message": "override-msg",
+        "service": "override-service",
+        "safe_processor": "tesouro"
+      }
+    }
+  },
+  "expect": {
+    "profile_logs": [
+      {
+        "ts": "1970-01-01T00:00:00Z",
+        "level": "ERROR",
+        "message": "profile-owned message",
+        "service": "payments-api",
+        "stage": "live",
+        "partner": "paytheory",
+        "function": "payments-live-authorize",
+        "aws_region": "us-east-1",
+        "safe_processor": "tesouro"
+      }
+    ]
+  }
+}

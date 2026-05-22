@@ -1893,6 +1893,121 @@ scan_go_supply_chain_for_mod() {
   return 0
 }
 
+strip_python_dependency_comment() {
+  local raw="$1"
+  local out=""
+  local in_single=false
+  local in_double=false
+  local escaped=false
+  local i ch out_lower
+
+  for ((i = 0; i < ${#raw}; i++)); do
+    ch="${raw:i:1}"
+
+    if [[ "${in_double}" == "true" ]]; then
+      out+="${ch}"
+      if [[ "${escaped}" == "true" ]]; then
+        escaped=false
+      elif [[ "${ch}" == "\\" ]]; then
+        escaped=true
+      elif [[ "${ch}" == '"' ]]; then
+        in_double=false
+      fi
+      continue
+    fi
+
+    if [[ "${in_single}" == "true" ]]; then
+      out+="${ch}"
+      if [[ "${ch}" == "'" ]]; then
+        in_single=false
+      fi
+      continue
+    fi
+
+    case "${ch}" in
+      '"')
+        in_double=true
+        out+="${ch}"
+        ;;
+      "'")
+        in_single=true
+        out+="${ch}"
+        ;;
+      "#")
+        out_lower="${out,,}"
+        if [[ "${out_lower}" =~ (git\+)?(https?|ssh|file)://[^[:space:],\"]+$ ]]; then
+          out+="${ch}"
+        else
+          break
+        fi
+        ;;
+      *)
+        out+="${ch}"
+        ;;
+    esac
+  done
+
+  printf '%s' "${out}"
+}
+
+python_line_has_unhashed_direct_url() {
+  local effective lower rest match url
+  effective="$(strip_python_dependency_comment "$1")"
+  lower="$(printf '%s' "${effective}" | tr '[:upper:]' '[:lower:]')"
+  rest="${lower}"
+
+  while [[ "${rest}" =~ [[:space:]]@[[:space:]]*((https?|file|ssh)://[^[:space:],\"\']+) ]]; do
+    match="${BASH_REMATCH[0]}"
+    url="${BASH_REMATCH[1]}"
+    if ! [[ "${url}" =~ \#sha256=[0-9a-f]{64} ]]; then
+      return 0
+    fi
+
+    # Continue scanning after this URL so same-line TOML arrays cannot let
+    # one hashed direct dependency cover another unhashed direct dependency.
+    rest="${rest#*"${match}"}"
+    if [[ "${rest}" == "${lower}" ]]; then
+      break
+    fi
+    lower="${rest}"
+  done
+
+  return 1
+}
+
+verify_python_dependency_comment_parser() {
+  local hash="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+  if python_line_has_unhashed_direct_url "\"safe @ https://example.com/safe.whl#sha256=${hash}\","; then
+    echo "Python supply-chain scan: internal parser failed to preserve TOML URL hash fragments" >&2
+    return 1
+  fi
+  if ! python_line_has_unhashed_direct_url "\"evil @ https://example.com/evil.whl\", #sha256=${hash}"; then
+    echo "Python supply-chain scan: internal parser treated TOML comment text as a URL hash fragment" >&2
+    return 1
+  fi
+  if ! python_line_has_unhashed_direct_url "\"evil @ https://example.com/evil.whl\", \"#sha256=${hash}\""; then
+    echo "Python supply-chain scan: internal parser treated a separate TOML string as a URL hash fragment" >&2
+    return 1
+  fi
+  if ! python_line_has_unhashed_direct_url "dependencies = [\"safe @ https://example.com/safe.whl#sha256=${hash}\", \"evil @ https://example.com/evil.whl\"]"; then
+    echo "Python supply-chain scan: internal parser let one hashed TOML dependency cover an unhashed direct URL" >&2
+    return 1
+  fi
+  if python_line_has_unhashed_direct_url "dependencies = [\"safe @ https://example.com/safe.whl#sha256=${hash}\", \"also-safe @ https://example.com/also-safe.whl#sha256=${hash}\"]"; then
+    echo "Python supply-chain scan: internal parser rejected a TOML line where every direct URL has its own hash" >&2
+    return 1
+  fi
+  if python_line_has_unhashed_direct_url "safe @ https://example.com/safe.whl#sha256=${hash}"; then
+    echo "Python supply-chain scan: internal parser failed to preserve requirements URL hash fragments" >&2
+    return 1
+  fi
+  if ! python_line_has_unhashed_direct_url "evil @ https://example.com/evil.whl #sha256=${hash}"; then
+    echo "Python supply-chain scan: internal parser treated requirements comment text as a URL hash fragment" >&2
+    return 1
+  fi
+}
+
 scan_python_supply_chain() {
   local allowlist_path="$1"
 
@@ -1941,6 +2056,8 @@ scan_python_supply_chain() {
   local allowlisted=0
   local file_count=0
 
+  verify_python_dependency_comment_parser || return $?
+
   local f
   for f in "${files[@]}"; do
     file_count=$((file_count + 1))
@@ -1949,8 +2066,10 @@ scan_python_supply_chain() {
     local line
     while IFS= read -r line || [[ -n "${line}" ]]; do
       local raw="${line//$'\r'/}"
+      local effective
+      effective="$(strip_python_dependency_comment "${raw}")"
       local trimmed
-      trimmed="$(printf '%s' "${raw}" | sed -E 's/[[:space:]]+/ /g; s/^ +//; s/ +$//')"
+      trimmed="$(printf '%s' "${effective}" | sed -E 's/[[:space:]]+/ /g; s/^ +//; s/ +$//')"
       [[ -z "${trimmed}" ]] && continue
 
       local lower
@@ -1966,16 +2085,16 @@ scan_python_supply_chain() {
         fi
       done
 
-      local has_hash_fragment=false
-      if [[ "${lower}" =~ \#sha256=[0-9a-f]{64} ]]; then
-        has_hash_fragment=true
+      local has_unhashed_direct_url=false
+      if python_line_has_unhashed_direct_url "${raw}"; then
+        has_unhashed_direct_url=true
       fi
 
       if [[ -z "${rule}" ]]; then
         if [[ "${lower}" == *"git+https://"* || "${lower}" == *"git+http://"* || "${lower}" == *"git+ssh://"* || "${lower}" == *"hg+http"* || "${lower}" == *"svn+http"* || "${lower}" == *"bzr+http"* ]]; then
           rule="VCS_OR_URL_DEP"
         elif [[ "${lower}" == *" @ https://"* || "${lower}" == *" @ http://"* || "${lower}" == *" @ file://"* || "${lower}" == *" @ ssh://"* ]]; then
-          if [[ "${has_hash_fragment}" != "true" ]]; then
+          if [[ "${has_unhashed_direct_url}" == "true" ]]; then
             rule="VCS_OR_URL_DEP"
           fi
         elif [[ "${lower}" == *"git = \""* && ( "${lower}" == *"http://"* || "${lower}" == *"https://"* || "${lower}" == *"ssh://"* ) ]]; then

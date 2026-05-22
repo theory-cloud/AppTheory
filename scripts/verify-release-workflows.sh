@@ -122,6 +122,16 @@ require_order(
     'gh release upload "${tag}"',
     "release asset publisher must checksum artifacts before upload",
 )
+require_contains(
+    "scripts/publish-release-assets.sh",
+    '--clobber',
+    "release asset publisher must replace any existing draft assets during recovery",
+)
+require_not_contains(
+    "scripts/publish-release-assets.sh",
+    "release-assets: skip existing",
+    "release asset publisher must not trust existing draft assets by filename",
+)
 require_order(
     "scripts/publish-release-assets.sh",
     'gh release upload "${tag}"',

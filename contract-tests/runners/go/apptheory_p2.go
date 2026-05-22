@@ -2,14 +2,22 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
+	"github.com/theory-cloud/apptheory/pkg/observability"
 	apptheory "github.com/theory-cloud/apptheory/runtime"
 )
 
 func runFixtureP2(f Fixture) error {
+	if isLoggingProfileContractFixture(f) {
+		return compareLoggingProfileContract(f)
+	}
+
 	now := time.Unix(0, 0).UTC()
 
 	var logs []FixtureLogRecord
@@ -138,4 +146,77 @@ func runFixtureP2(f Fixture) error {
 
 	actual := app.Serve(ctx, req)
 	return compareFixtureResponse(f, actual, logs, metrics, spans)
+}
+
+func isLoggingProfileContractFixture(f Fixture) bool {
+	return len(f.Setup.LoggingProfile) > 0 ||
+		len(f.Input.LoggingEvent) > 0 ||
+		f.Input.LoggingProfileCatalog ||
+		len(f.Expect.ProfileLogs) > 0 ||
+		len(f.Expect.ProfileValidationErrors) > 0 ||
+		len(f.Expect.LoggingProfileCatalog) > 0
+}
+
+func compareLoggingProfileContract(f Fixture) error {
+	if len(f.Expect.LoggingProfileCatalog) > 0 {
+		if !reflect.DeepEqual(canonicalJSONValue(observability.LoggingProfileCatalog()), canonicalJSONValue(f.Expect.LoggingProfileCatalog)) {
+			return fmt.Errorf("logging_profile_catalog mismatch")
+		}
+		return nil
+	}
+	if len(f.Expect.ProfileValidationErrors) > 0 {
+		actual := decodeLoggingProfileValidationErrors(f.Setup.LoggingProfile)
+		if !reflect.DeepEqual(f.Expect.ProfileValidationErrors, actual) {
+			return fmt.Errorf("profile_validation_errors mismatch")
+		}
+		return nil
+	}
+	if len(f.Expect.ProfileLogs) > 0 {
+		config, err := observability.DecodeLoggingProfileJSON(f.Setup.LoggingProfile)
+		if err != nil {
+			return fmt.Errorf("parse setup.logging_profile: %w", err)
+		}
+		var event observability.LoggingProfileEvent
+		if parseErr := json.Unmarshal(f.Input.LoggingEvent, &event); parseErr != nil {
+			return fmt.Errorf("parse input.logging_event: %w", parseErr)
+		}
+		actual, err := observability.EncodeLoggingProfileEvent(config, f.Setup.Environment, event)
+		if err != nil {
+			return fmt.Errorf("encode logging profile event: %w", err)
+		}
+		canonicalActual, ok := canonicalJSONValue(actual).(map[string]any)
+		if !ok {
+			return fmt.Errorf("profile_logs mismatch")
+		}
+		actualLogs := []map[string]any{canonicalActual}
+		if !reflect.DeepEqual(canonicalJSONValue(f.Expect.ProfileLogs), canonicalJSONValue(actualLogs)) {
+			return fmt.Errorf("profile_logs mismatch")
+		}
+		return nil
+	}
+	return nil
+}
+
+func decodeLoggingProfileValidationErrors(raw json.RawMessage) []string {
+	_, err := observability.DecodeLoggingProfileJSON(raw)
+	if err == nil {
+		return nil
+	}
+	var profileErr *observability.LoggingProfileValidationError
+	if errors.As(err, &profileErr) {
+		return profileErr.Errors
+	}
+	return []string{err.Error()}
+}
+
+func canonicalJSONValue(value any) any {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	var out any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return value
+	}
+	return out
 }

@@ -1343,6 +1343,9 @@ func (s *Server) shouldStreamToolsCall(req *Request) bool {
 	if s == nil || s.registry == nil || req == nil {
 		return false
 	}
+	if !s.methodCapabilityEnabled(methodToolsCall) {
+		return false
+	}
 
 	var params toolsCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -1361,6 +1364,10 @@ func (s *Server) shouldStreamToolsCall(req *Request) bool {
 }
 
 func (s *Server) handleToolsCallStream(ctx context.Context, sessionID string, req *Request) (*apptheory.Response, error) {
+	if !s.methodCapabilityEnabled(methodToolsCall) {
+		resp := NewErrorResponse(req.ID, CodeMethodNotFound, "Method not found: "+methodToolsCall)
+		return s.marshalSingleResponse(resp, sessionID, false)
+	}
 	if s.streamStore == nil {
 		resp := NewErrorResponse(req.ID, CodeInternalError, "streaming not supported")
 		return s.marshalSingleResponse(resp, sessionID, false)
