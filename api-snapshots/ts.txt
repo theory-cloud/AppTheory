@@ -94,8 +94,13 @@ LoggingProfileAlertingHints	interface
 LoggingProfileConfig	interface
 LoggingProfileEncoding	interface
 LoggingProfileEnrichment	interface
+LoggingProfileError	interface
 LoggingProfileErrorCapture	interface
+LoggingProfileEvent	interface
+LoggingProfileJobContext	interface
+LoggingProfileRequestContext	interface
 LoggingProfileSanitization	interface
+LoggingProfileSanitizer	type
 LoggingProfileValidationError	class
 ManualClock	class
 ManualIdGenerator	class
@@ -105,6 +110,8 @@ MultiWindowStrategy	class
 ObservabilityHooks	interface
 PolicyDecision	interface
 PolicyHook	type
+ProfileLogger	class
+ProfileLoggerOptions	interface
 Query	type
 RandomIdGenerator	class
 RateLimitEntry	interface
@@ -180,6 +187,8 @@ defaultConfig	function
 defaultJobsConfig	function
 defaultJobsTableName	const
 defaultLoggingProfile	function
+encodeLoggingProfileEvent	function
+encodeLoggingProfileEventWithSanitizer	function
 etag	function
 formatRfc3339Nano	function
 formatWindowId	function
@@ -188,6 +197,8 @@ getFixedWindow	function
 getHourWindow	function
 getLogger	function
 getMinuteWindow	function
+hooksFromLogger	function
+hooksFromProfileLogger	function
 html	function
 htmlStream	function
 isAppTheoryError	const
