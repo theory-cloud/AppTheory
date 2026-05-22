@@ -11,6 +11,9 @@ sys.path.insert(0, str(REPO_ROOT / "py" / "src"))
 
 from apptheory.app import LogRecord  # noqa: E402
 from apptheory.logging_profile import (  # noqa: E402
+    LOGGING_PROFILE_CLOUDWATCH_JSON,
+    LOGGING_PROFILE_LEGACY,
+    LOGGING_PROFILE_LOCAL_DEV,
     LOGGING_PROFILE_PAYTHEORY_ALERT_V1,
     LOGGING_PROFILE_SCHEMA_VERSION,
     LoggingProfileValidationError,
@@ -19,6 +22,7 @@ from apptheory.logging_profile import (  # noqa: E402
     decode_logging_profile_json,
     default_logging_profile,
     encode_logging_profile_event,
+    hooks_from_logger,
     hooks_from_profile_logger,
     logging_profile_catalog,
     logging_profile_validation_errors,
@@ -42,6 +46,20 @@ class TestLoggingProfile(unittest.TestCase):
         self.assertEqual(cfg["field_map"]["stack_hash"], "stack_hash")
         self.assertTrue(cfg["error_capture"]["include_stack_trace"])
         self.assertEqual(cfg["error_capture"]["stack_hash_algorithm"], "sha256")
+
+    def test_default_profile_variants_validate(self) -> None:
+        cloudwatch = default_logging_profile(LOGGING_PROFILE_CLOUDWATCH_JSON)
+        legacy = default_logging_profile(LOGGING_PROFILE_LEGACY)
+        local = default_logging_profile(LOGGING_PROFILE_LOCAL_DEV)
+
+        validate_logging_profile(cloudwatch)
+        validate_logging_profile(legacy)
+        validate_logging_profile(local)
+        self.assertEqual(cloudwatch["required_fields"], ["timestamp", "level", "message"])
+        self.assertEqual(legacy["encoding"]["timestamp_field"], "timestamp")
+        self.assertEqual(legacy["encoding"]["level_field"], "level")
+        self.assertEqual(legacy["encoding"]["message_field"], "message")
+        self.assertEqual(local["levels"]["warn"], "WARN")
 
     def test_validation_errors_are_deterministic(self) -> None:
         cfg = {
@@ -109,6 +127,56 @@ class TestLoggingProfile(unittest.TestCase):
     def test_unknown_default_profile_fails(self) -> None:
         with self.assertRaises(ValueError):
             default_logging_profile("custom-alert")
+
+    def test_decode_json_invalid_inputs_fail_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "logging profile json:"):
+            decode_logging_profile_json("{")
+        with self.assertRaisesRegex(ValueError, "root must be an object"):
+            decode_logging_profile_json("[]")
+
+    def test_validation_required_and_nested_field_errors(self) -> None:
+        cfg = {
+            "schema_version": "",
+            "profile": "",
+            "encoding": {},
+            "levels": {"trace": "TRACE", "info": ""},
+            "required_fields": [""],
+            "recommended_fields": [""],
+            "field_map": {
+                "raw_source": "service",
+                "message": "raw_payload",
+                "event": "",
+            },
+            "enrichment": {
+                "static": {"raw_payload": "payload"},
+                "context": {"raw_payload": "", "method": ""},
+            },
+            "error_capture": {
+                "stack_trace_field": "raw_payload",
+                "stack_hash_field": "raw_payload",
+            },
+        }
+        self.assertEqual(
+            logging_profile_validation_errors(cfg),
+            [
+                "schema_version: required",
+                "profile: required",
+                "encoding.format: required",
+                "levels.info: required",
+                "levels.trace: unsupported level trace",
+                "required_fields[0]: required",
+                "recommended_fields[0]: required",
+                "field_map.event: required",
+                "field_map.message: unsupported field raw_payload",
+                "field_map.raw_source: unsupported source raw_source",
+                "enrichment.static.raw_payload: unsupported field raw_payload",
+                "enrichment.context.method: required",
+                "enrichment.context.raw_payload: unsupported field raw_payload",
+                "enrichment.context.raw_payload: required",
+                "error_capture.stack_trace_field: unsupported field raw_payload",
+                "error_capture.stack_hash_field: unsupported field raw_payload",
+            ],
+        )
 
     def test_encode_paytheory_alert_error(self) -> None:
         cfg = default_logging_profile(LOGGING_PROFILE_PAYTHEORY_ALERT_V1)
@@ -187,6 +255,59 @@ class TestLoggingProfile(unittest.TestCase):
         self.assertEqual(got["service"], "payments-api")
         self.assertEqual(got["safe_processor"], "tesouro")
 
+    def test_encode_timestamp_context_and_literal_enrichment_variants(self) -> None:
+        cfg = default_logging_profile(LOGGING_PROFILE_CLOUDWATCH_JSON)
+        cfg["encoding"]["timestamp_format"] = "rfc3339"
+        cfg["enrichment"] = {
+            "static": {"service": "local-service"},
+            "context": {
+                "tenant_id": "request.tenant_id",
+                "user_id": "request.user_id",
+                "span_id": "request.span_id",
+                "method": "request.method",
+                "path": "request.path",
+                "status": "request.status",
+            },
+        }
+        cfg["required_fields"] = ["timestamp", "level", "message", "service"]
+
+        got = encode_logging_profile_event(
+            cfg,
+            {},
+            {
+                "timestamp": datetime(2026, 5, 22, 12, 34, 56, 789000),
+                "level": "info",
+                "message": "ok",
+                "request": {
+                    "tenant_id": "tenant_test_123",
+                    "user_id": "user_test_123",
+                    "span_id": "span_test_123",
+                    "method": "POST",
+                    "path": "/payments",
+                    "status": 201,
+                },
+            },
+        )
+        self.assertEqual(got["timestamp"], "2026-05-22T12:34:56Z")
+        self.assertEqual(got["service"], "local-service")
+        self.assertEqual(got["tenant_id"], "tenant_test_123")
+        self.assertEqual(got["status"], "201")
+
+        nano_cfg = default_logging_profile(LOGGING_PROFILE_CLOUDWATCH_JSON)
+        nano_cfg["required_fields"] = ["timestamp", "level", "message"]
+        nano = encode_logging_profile_event(
+            nano_cfg,
+            {},
+            {"timestamp": datetime(2026, 5, 22, 12, 34, 56, 789000, UTC), "message": "ok"},
+        )
+        self.assertEqual(nano["timestamp"], "2026-05-22T12:34:56.789Z")
+        fallback = encode_logging_profile_event(
+            nano_cfg,
+            {},
+            {"timestamp": "not-a-time", "message": "ok"},
+        )
+        self.assertEqual(fallback["timestamp"], "1970-01-01T00:00:00Z")
+
     def test_encode_missing_required_fields_fails(self) -> None:
         cfg = default_logging_profile(LOGGING_PROFILE_PAYTHEORY_ALERT_V1)
         with self.assertRaisesRegex(ValueError, "logging profile required fields missing: service"):
@@ -233,8 +354,10 @@ class TestLoggingProfile(unittest.TestCase):
             clock=lambda: datetime.fromtimestamp(0, UTC),
         )
         self.assertIsNotNone(hooks.log)
-        assert hooks.log is not None
-        hooks.log(
+        log_hook = hooks.log
+        if log_hook is None:
+            self.fail("hooks.log should be configured")
+        log_hook(
             LogRecord(
                 level="warn",
                 event="request.completed",
@@ -252,6 +375,53 @@ class TestLoggingProfile(unittest.TestCase):
         self.assertEqual(hook_entries[0]["request_id"], "req_hook_123")
         self.assertEqual(hook_entries[0]["method"], "POST")
         self.assertEqual(hook_lines, [json.dumps(hook_entries[0], separators=(",", ":"))])
+
+    def test_profile_logger_context_methods_close_and_none_hooks(self) -> None:
+        cfg = default_logging_profile(LOGGING_PROFILE_CLOUDWATCH_JSON)
+        cfg["enrichment"] = {
+            "context": {
+                "tenant_id": "request.tenant_id",
+                "user_id": "request.user_id",
+                "trace_id": "request.trace_id",
+                "span_id": "request.span_id",
+            }
+        }
+        cfg["required_fields"] = ["timestamp", "level", "message"]
+        logger = ProfileLogger(
+            cfg,
+            writer=None,
+            clock=lambda: datetime.fromtimestamp(0, UTC),
+        )
+
+        scoped = (
+            logger.with_field("safe_field", "safe")
+            .with_user_id("user_test_123")
+            .with_trace_id("trace_test_123")
+            .with_span_id("span_test_123")
+            .with_tenant_id("tenant_test_123")
+        )
+        scoped.debug("debug message")
+        self.assertEqual(logger.entries()[0]["level"], "DEBUG")
+        self.assertEqual(logger.entries()[0]["tenant_id"], "tenant_test_123")
+        self.assertEqual(logger.entries()[0]["user_id"], "user_test_123")
+        self.assertEqual(logger.entries()[0]["trace_id"], "trace_test_123")
+        self.assertEqual(logger.entries()[0]["span_id"], "span_test_123")
+        self.assertEqual(logger.entries()[0]["safe_field"], "safe")
+        self.assertTrue(logger.is_healthy())
+        self.assertIsNone(logger.flush())
+        logger.close()
+        self.assertFalse(logger.is_healthy())
+        logger.info("ignored after close")
+        self.assertEqual(len(logger.entries()), 1)
+        self.assertIsNone(hooks_from_logger(None).log)
+
+        broken = ProfileLogger(
+            default_logging_profile(LOGGING_PROFILE_PAYTHEORY_ALERT_V1),
+            writer=None,
+            clock=lambda: datetime.fromtimestamp(0, UTC),
+        )
+        broken.info("missing env")
+        self.assertIn("logging profile required fields missing", broken.get_stats()["last_error"])
 
 
 def _profile_environment() -> dict[str, str]:
