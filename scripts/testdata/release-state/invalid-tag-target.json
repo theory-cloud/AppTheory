@@ -1,0 +1,24 @@
+{
+  "case": "invalid-tag-target",
+  "expected": {
+    "valid": false,
+    "classification": "invalid",
+    "diagnostic_codes": ["tag:target-not-on-branch"]
+  },
+  "branches": {
+    "main": { "head": "M1" },
+    "staging": { "head": "S1", "ancestors": ["M1"] },
+    "premain": { "head": "P0", "ancestors": ["M1"] }
+  },
+  "manifests": {
+    "main": { "stable": "1.7.0", "premain": "1.7.0" },
+    "staging": { "stable": "1.7.0", "premain": "1.7.0" },
+    "premain": { "stable": "1.7.0", "premain": "1.7.0" }
+  },
+  "tags": {
+    "v1.7.0": { "target": "X1" }
+  },
+  "releases": {
+    "v1.7.0": { "state": "published", "target": "X1", "prerelease": false }
+  }
+}

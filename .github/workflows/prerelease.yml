@@ -5,6 +5,10 @@ on:
     branches: ["premain"]
   workflow_dispatch: {}
 
+concurrency:
+  group: release-publisher-${{ github.repository }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   issues: write
@@ -84,7 +88,7 @@ jobs:
 
           scripts/publish-release-assets.sh "${TAG_NAME}"
 
-      - name: Report failed draft prerelease (immutable)
+      - name: Diagnose failed prerelease state (read-only)
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
@@ -94,8 +98,5 @@ jobs:
             TAG_NAME="v$(./scripts/read-version.sh)"
           fi
 
-          # Releases and tags are immutable. Do not delete or mutate anything on
-          # failure; leave the draft/tag state visible for process recovery.
-          is_draft="$(gh release view "${TAG_NAME}" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
-          echo "release-cleanup: PRESERVE ${TAG_NAME} (draft=${is_draft:-unknown})"
-          echo "release-cleanup: manual deletion is forbidden; recover through the branch release process"
+          export TAG_NAME
+          scripts/diagnose-release-state.sh --tag "${TAG_NAME}"
