@@ -1950,33 +1950,59 @@ strip_python_dependency_comment() {
   printf '%s' "${out}"
 }
 
-python_line_has_sha256_fragment() {
-  local effective lower
+python_line_has_unhashed_direct_url() {
+  local effective lower rest match url
   effective="$(strip_python_dependency_comment "$1")"
   lower="$(printf '%s' "${effective}" | tr '[:upper:]' '[:lower:]')"
-  [[ "${lower}" =~ (git\+)?(https?|ssh|file)://[^[:space:],\"]*\#sha256=[0-9a-f]{64} ]]
+  rest="${lower}"
+
+  while [[ "${rest}" =~ [[:space:]]@[[:space:]]*((https?|file|ssh)://[^[:space:],\"\']+) ]]; do
+    match="${BASH_REMATCH[0]}"
+    url="${BASH_REMATCH[1]}"
+    if ! [[ "${url}" =~ \#sha256=[0-9a-f]{64} ]]; then
+      return 0
+    fi
+
+    # Continue scanning after this URL so same-line TOML arrays cannot let
+    # one hashed direct dependency cover another unhashed direct dependency.
+    rest="${rest#*"${match}"}"
+    if [[ "${rest}" == "${lower}" ]]; then
+      break
+    fi
+    lower="${rest}"
+  done
+
+  return 1
 }
 
 verify_python_dependency_comment_parser() {
   local hash="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-  if ! python_line_has_sha256_fragment "\"safe @ https://example.com/safe.whl#sha256=${hash}\","; then
+  if python_line_has_unhashed_direct_url "\"safe @ https://example.com/safe.whl#sha256=${hash}\","; then
     echo "Python supply-chain scan: internal parser failed to preserve TOML URL hash fragments" >&2
     return 1
   fi
-  if python_line_has_sha256_fragment "\"evil @ https://example.com/evil.whl\", #sha256=${hash}"; then
+  if ! python_line_has_unhashed_direct_url "\"evil @ https://example.com/evil.whl\", #sha256=${hash}"; then
     echo "Python supply-chain scan: internal parser treated TOML comment text as a URL hash fragment" >&2
     return 1
   fi
-  if python_line_has_sha256_fragment "\"evil @ https://example.com/evil.whl\", \"#sha256=${hash}\""; then
+  if ! python_line_has_unhashed_direct_url "\"evil @ https://example.com/evil.whl\", \"#sha256=${hash}\""; then
     echo "Python supply-chain scan: internal parser treated a separate TOML string as a URL hash fragment" >&2
     return 1
   fi
-  if ! python_line_has_sha256_fragment "safe @ https://example.com/safe.whl#sha256=${hash}"; then
+  if ! python_line_has_unhashed_direct_url "dependencies = [\"safe @ https://example.com/safe.whl#sha256=${hash}\", \"evil @ https://example.com/evil.whl\"]"; then
+    echo "Python supply-chain scan: internal parser let one hashed TOML dependency cover an unhashed direct URL" >&2
+    return 1
+  fi
+  if python_line_has_unhashed_direct_url "dependencies = [\"safe @ https://example.com/safe.whl#sha256=${hash}\", \"also-safe @ https://example.com/also-safe.whl#sha256=${hash}\"]"; then
+    echo "Python supply-chain scan: internal parser rejected a TOML line where every direct URL has its own hash" >&2
+    return 1
+  fi
+  if python_line_has_unhashed_direct_url "safe @ https://example.com/safe.whl#sha256=${hash}"; then
     echo "Python supply-chain scan: internal parser failed to preserve requirements URL hash fragments" >&2
     return 1
   fi
-  if python_line_has_sha256_fragment "evil @ https://example.com/evil.whl #sha256=${hash}"; then
+  if ! python_line_has_unhashed_direct_url "evil @ https://example.com/evil.whl #sha256=${hash}"; then
     echo "Python supply-chain scan: internal parser treated requirements comment text as a URL hash fragment" >&2
     return 1
   fi
@@ -2059,16 +2085,16 @@ scan_python_supply_chain() {
         fi
       done
 
-      local has_hash_fragment=false
-      if python_line_has_sha256_fragment "${raw}"; then
-        has_hash_fragment=true
+      local has_unhashed_direct_url=false
+      if python_line_has_unhashed_direct_url "${raw}"; then
+        has_unhashed_direct_url=true
       fi
 
       if [[ -z "${rule}" ]]; then
         if [[ "${lower}" == *"git+https://"* || "${lower}" == *"git+http://"* || "${lower}" == *"git+ssh://"* || "${lower}" == *"hg+http"* || "${lower}" == *"svn+http"* || "${lower}" == *"bzr+http"* ]]; then
           rule="VCS_OR_URL_DEP"
         elif [[ "${lower}" == *" @ https://"* || "${lower}" == *" @ http://"* || "${lower}" == *" @ file://"* || "${lower}" == *" @ ssh://"* ]]; then
-          if [[ "${has_hash_fragment}" != "true" ]]; then
+          if [[ "${has_unhashed_direct_url}" == "true" ]]; then
             rule="VCS_OR_URL_DEP"
           fi
         elif [[ "${lower}" == *"git = \""* && ( "${lower}" == *"http://"* || "${lower}" == *"https://"* || "${lower}" == *"ssh://"* ) ]]; then
