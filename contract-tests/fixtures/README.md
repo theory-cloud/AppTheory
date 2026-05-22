@@ -161,12 +161,14 @@ The contract-owned pieces are:
 - Profile schema version: `apptheory.logging/v1`.
 - Built-in profile names, sorted canonically: `cloudwatch-json`, `legacy`, `local-dev`, `paytheory-alert-v1`.
 - Encoding defaults and validation for JSON output.
+- Strict profile config decoding: unsupported top-level or nested profile options fail closed.
 - Required and recommended field validation.
 - Field mapping from canonical AppTheory log event fields to profile output fields.
 - Static/env enrichment and request/job context enrichment.
 - Error type, error code, optional stack trace, and deterministic stack hash capture.
 - Sanitization-preserving behavior: profile fixtures may include safe structured fields, but raw payload fields must
-  not appear in `expect.profile_logs`.
+  not appear in `expect.profile_logs`. Caller-provided fields must not overwrite profile-owned fields such as
+  timestamp, level, message, or static enrichment values.
 
 `setup.logging_profile` carries the profile config under test. `setup.environment` supplies deterministic values for
 `${ENV_VAR}` placeholders used by profile enrichment. `input.logging_event` is a synthetic canonical log event used by
@@ -177,8 +179,8 @@ the fixture requires enough context for alert-decisioner and Keeper lookup: part
 service, function, request ID, trace ID, error type/code, stack hash, and normalized message.
 
 Validation-only fixtures use `expect.profile_validation_errors` and may omit `input.request`; runtimes must fail
-closed with deterministic validation messages for unsupported schema versions, profile names, encodings, field names,
-context sources, or stack hash algorithms.
+closed with deterministic validation messages for unsupported schema versions, profile names, encodings, config options,
+field names, context sources, or stack hash algorithms.
 
 ## Bytes in JSON
 

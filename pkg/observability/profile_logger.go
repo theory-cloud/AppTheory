@@ -559,6 +559,9 @@ func applySafeEventFields(out map[string]any, fields map[string]any, sanitizerFn
 		if !isAllowedProfileEventField(trimmed) {
 			continue
 		}
+		if _, exists := out[trimmed]; exists {
+			continue
+		}
 		putProfileField(out, trimmed, fields[key], sanitizerFn)
 	}
 }

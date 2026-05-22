@@ -85,6 +85,49 @@ func TestEncodeLoggingProfileEvent_PayTheoryAlert(t *testing.T) {
 	}
 }
 
+func TestEncodeLoggingProfileEvent_ProfileFieldsOwnCollisions(t *testing.T) {
+	cfg, err := DefaultLoggingProfile(LoggingProfilePayTheoryAlertV1)
+	if err != nil {
+		t.Fatalf("DefaultLoggingProfile: %v", err)
+	}
+	event := LoggingProfileEvent{
+		Timestamp: time.Unix(0, 0).UTC(),
+		Level:     "error",
+		Message:   "profile-owned message",
+		Fields: map[string]any{
+			"ts":             "2099-01-01T00:00:00Z",
+			"level":          "INFO",
+			"message":        "override-msg",
+			"service":        "override-service",
+			"safe_processor": "tesouro",
+		},
+	}
+	env := map[string]string{
+		"SERVICE_NAME":             "payments-api",
+		"STAGE":                    "live",
+		"PARTNER":                  "paytheory",
+		"AWS_LAMBDA_FUNCTION_NAME": "payments-live-authorize",
+		"AWS_REGION":               "us-east-1",
+	}
+
+	got, err := EncodeLoggingProfileEvent(cfg, env, event)
+	if err != nil {
+		t.Fatalf("EncodeLoggingProfileEvent: %v", err)
+	}
+	checks := map[string]any{
+		"ts":             "1970-01-01T00:00:00Z",
+		"level":          "ERROR",
+		"message":        "profile-owned message",
+		"service":        "payments-api",
+		"safe_processor": "tesouro",
+	}
+	for field, want := range checks {
+		if got[field] != want {
+			t.Fatalf("field %s: expected %#v, got %#v in %#v", field, want, got[field], got)
+		}
+	}
+}
+
 func TestProfileLogger_WritesJSONAndHooks(t *testing.T) {
 	cfg, err := DefaultLoggingProfile(LoggingProfilePayTheoryAlertV1)
 	if err != nil {

@@ -894,6 +894,10 @@ type TestLogger struct {
 
 func BuiltInLoggingProfileNames() []string
 
+func DecodeLoggingProfileJSON([]byte) (LoggingProfileConfig, error)
+
+func DecodeLoggingProfileYAML([]byte) (LoggingProfileConfig, error)
+
 func DefaultLoggingProfile(string) (LoggingProfileConfig, error)
 
 func EncodeLoggingProfileEvent(LoggingProfileConfig, map[string]string, LoggingProfileEvent) (map[string]any, error)

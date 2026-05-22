@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -164,24 +165,20 @@ func compareLoggingProfileContract(f Fixture) error {
 		return nil
 	}
 	if len(f.Expect.ProfileValidationErrors) > 0 {
-		var config observability.LoggingProfileConfig
-		if err := json.Unmarshal(f.Setup.LoggingProfile, &config); err != nil {
-			return fmt.Errorf("parse setup.logging_profile: %w", err)
-		}
-		actual := observability.LoggingProfileValidationErrors(config)
+		actual := decodeLoggingProfileValidationErrors(f.Setup.LoggingProfile)
 		if !reflect.DeepEqual(f.Expect.ProfileValidationErrors, actual) {
 			return fmt.Errorf("profile_validation_errors mismatch")
 		}
 		return nil
 	}
 	if len(f.Expect.ProfileLogs) > 0 {
-		var config observability.LoggingProfileConfig
-		if err := json.Unmarshal(f.Setup.LoggingProfile, &config); err != nil {
+		config, err := observability.DecodeLoggingProfileJSON(f.Setup.LoggingProfile)
+		if err != nil {
 			return fmt.Errorf("parse setup.logging_profile: %w", err)
 		}
 		var event observability.LoggingProfileEvent
-		if err := json.Unmarshal(f.Input.LoggingEvent, &event); err != nil {
-			return fmt.Errorf("parse input.logging_event: %w", err)
+		if parseErr := json.Unmarshal(f.Input.LoggingEvent, &event); parseErr != nil {
+			return fmt.Errorf("parse input.logging_event: %w", parseErr)
 		}
 		actual, err := observability.EncodeLoggingProfileEvent(config, f.Setup.Environment, event)
 		if err != nil {
@@ -198,6 +195,18 @@ func compareLoggingProfileContract(f Fixture) error {
 		return nil
 	}
 	return nil
+}
+
+func decodeLoggingProfileValidationErrors(raw json.RawMessage) []string {
+	_, err := observability.DecodeLoggingProfileJSON(raw)
+	if err == nil {
+		return nil
+	}
+	var profileErr *observability.LoggingProfileValidationError
+	if errors.As(err, &profileErr) {
+		return profileErr.Errors
+	}
+	return []string{err.Error()}
 }
 
 func canonicalJSONValue(value any) any {
