@@ -381,7 +381,13 @@ require_contains(
 )
 require_order(
     "scripts/sync-release-pr-generated.sh",
-    'wait_for_pr_head "$(git rev-parse HEAD)"',
+    'synced_head="$(git rev-parse HEAD)"',
+    'wait_for_pr_head "${synced_head}"',
+    "release PR sync must capture the generated-artifact head before waiting for it",
+)
+require_order(
+    "scripts/sync-release-pr-generated.sh",
+    'wait_for_pr_head "${synced_head}"',
     "After the generated-artifact head is visible",
     "release PR sync must wait for the pushed artifact commit before checking independent CI",
 )
@@ -401,11 +407,28 @@ require_contains(
     "COMMIT_CHECKS_JSON",
     "release PR sync must merge commit-attached check-runs into the required check view",
 )
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "headSha",
+    "release PR sync must only pass required checks attached to the current PR head",
+)
+require_order_after(
+    "scripts/sync-release-pr-generated.sh",
+    "dispatch_required_checks\nwait_for_required_checks_to_start\nwait_for_required_checks",
+    "wait_for_required_checks",
+    'require_pr_head "${synced_head}" "after required checks passed"',
+    "release PR must re-check the generated-artifact head after required checks pass",
+)
 require_order(
     "scripts/sync-release-pr-generated.sh",
-    "wait_for_required_checks",
+    'require_pr_head "${synced_head}" "after required checks passed"',
     'gh pr ready "${pr_number}"\n\n',
     "release PR must wait for required checks before becoming ready",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    'gh pr ready "${pr_number}" --undo || true',
+    "release PR sync must restore draft state if the PR head changes while becoming ready",
 )
 for forbidden in (
     "repos/${GITHUB_REPOSITORY}/statuses",
