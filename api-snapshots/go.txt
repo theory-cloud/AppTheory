@@ -687,6 +687,16 @@ func ResourceName(string, string, string, string) string
 
 ## github.com/theory-cloud/apptheory/pkg/observability
 
+const LoggingProfileCloudWatchJSON = "cloudwatch-json"
+
+const LoggingProfileLegacy = "legacy"
+
+const LoggingProfileLocalDev = "local-dev"
+
+const LoggingProfilePayTheoryAlertV1 = "paytheory-alert-v1"
+
+const LoggingProfileSchemaVersion = "apptheory.logging/v1"
+
 type ErrorNotifier interface {
 	Notify(context.Context, LogEntry) error
 }
@@ -732,6 +742,118 @@ type LoggerStats struct {
 	AverageFlush   time.Duration `json:"average_flush_time"`
 }
 
+type LoggingProfileAlertingHints struct {
+	FingerprintFields  []string `json:"fingerprint_fields,omitempty" yaml:"fingerprint_fields,omitempty"`
+	KeeperLookupFields []string `json:"keeper_lookup_fields,omitempty" yaml:"keeper_lookup_fields,omitempty"`
+}
+
+type LoggingProfileConfig struct {
+	SchemaVersion     string                      `json:"schema_version" yaml:"schema_version"`
+	Profile           string                      `json:"profile" yaml:"profile"`
+	Encoding          LoggingProfileEncoding      `json:"encoding" yaml:"encoding"`
+	Levels            map[string]string           `json:"levels,omitempty" yaml:"levels,omitempty"`
+	RequiredFields    []string                    `json:"required_fields,omitempty" yaml:"required_fields,omitempty"`
+	RecommendedFields []string                    `json:"recommended_fields,omitempty" yaml:"recommended_fields,omitempty"`
+	FieldMap          map[string]string           `json:"field_map,omitempty" yaml:"field_map,omitempty"`
+	Enrichment        LoggingProfileEnrichment    `json:"enrichment,omitempty" yaml:"enrichment,omitempty"`
+	ErrorCapture      LoggingProfileErrorCapture  `json:"error_capture,omitempty" yaml:"error_capture,omitempty"`
+	Sanitization      LoggingProfileSanitization  `json:"sanitization,omitempty" yaml:"sanitization,omitempty"`
+	AlertingHints     LoggingProfileAlertingHints `json:"alerting_hints,omitempty" yaml:"alerting_hints,omitempty"`
+}
+
+type LoggingProfileEncoding struct {
+	Format          string `json:"format" yaml:"format"`
+	TimestampField  string `json:"timestamp_field,omitempty" yaml:"timestamp_field,omitempty"`
+	TimestampFormat string `json:"timestamp_format,omitempty" yaml:"timestamp_format,omitempty"`
+	LevelField      string `json:"level_field,omitempty" yaml:"level_field,omitempty"`
+	MessageField    string `json:"message_field,omitempty" yaml:"message_field,omitempty"`
+}
+
+type LoggingProfileEnrichment struct {
+	Static  map[string]string `json:"static,omitempty" yaml:"static,omitempty"`
+	Context map[string]string `json:"context,omitempty" yaml:"context,omitempty"`
+}
+
+type LoggingProfileError struct {
+	Type       string `json:"type,omitempty"`
+	Code       string `json:"code,omitempty"`
+	Message    string `json:"message,omitempty"`
+	StackTrace string `json:"stack_trace,omitempty"`
+}
+
+type LoggingProfileErrorCapture struct {
+	IncludeErrorType   bool   `json:"include_error_type" yaml:"include_error_type"`
+	IncludeErrorCode   bool   `json:"include_error_code" yaml:"include_error_code"`
+	IncludeStackTrace  bool   `json:"include_stack_trace" yaml:"include_stack_trace"`
+	StackTraceField    string `json:"stack_trace_field,omitempty" yaml:"stack_trace_field,omitempty"`
+	StackHashField     string `json:"stack_hash_field,omitempty" yaml:"stack_hash_field,omitempty"`
+	StackHashAlgorithm string `json:"stack_hash_algorithm,omitempty" yaml:"stack_hash_algorithm,omitempty"`
+}
+
+type LoggingProfileEvent struct {
+	Timestamp         time.Time                    `json:"timestamp"`
+	Level             string                       `json:"level"`
+	Event             string                       `json:"event,omitempty"`
+	Message           string                       `json:"message"`
+	NormalizedMessage string                       `json:"normalized_message,omitempty"`
+	Request           LoggingProfileRequestContext `json:"request,omitempty"`
+	Job               LoggingProfileJobContext     `json:"job,omitempty"`
+	Error             LoggingProfileError          `json:"error,omitempty"`
+	Fields            map[string]any               `json:"fields,omitempty"`
+}
+
+type LoggingProfileJobContext struct {
+	Name string `json:"name,omitempty"`
+}
+
+type LoggingProfileRequestContext struct {
+	RequestID     string `json:"request_id,omitempty"`
+	TenantID      string `json:"tenant_id,omitempty"`
+	UserID        string `json:"user_id,omitempty"`
+	TraceID       string `json:"trace_id,omitempty"`
+	SpanID        string `json:"span_id,omitempty"`
+	CorrelationID string `json:"correlation_id,omitempty"`
+	Route         string `json:"route,omitempty"`
+	Method        string `json:"method,omitempty"`
+	Path          string `json:"path,omitempty"`
+	Status        int    `json:"status,omitempty"`
+}
+
+type LoggingProfileSanitization struct {
+	ExistingSanitizedLogging bool   `json:"existing_sanitized_logging" yaml:"existing_sanitized_logging"`
+	Notes                    string `json:"notes,omitempty" yaml:"notes,omitempty"`
+}
+
+type LoggingProfileValidationError struct {
+	Errors []string
+}
+
+type ProfileLogger struct {
+	root *ProfileLogger
+
+	config      LoggingProfileConfig
+	environment map[string]string
+	writer      io.Writer
+	sanitizer   SanitizerFunc
+	clock       func() time.Time
+
+	mu      sync.Mutex
+	entries []map[string]any
+	fields  map[string]any
+
+	requestID string
+	tenantID  string
+	userID    string
+	traceID   string
+	spanID    string
+
+	closed        atomic.Bool
+	entriesLogged atomic.Int64
+	lastError     atomic.Value
+}
+
+type ProfileLoggerOption func(*profileLoggerOptions)
+
 type SanitizerFunc func(string, any) any
 
 type StructuredLogger interface {
@@ -770,11 +892,75 @@ type TestLogger struct {
 	closed atomic.Bool
 }
 
+func BuiltInLoggingProfileNames() []string
+
+func DecodeLoggingProfileJSON([]byte) (LoggingProfileConfig, error)
+
+func DecodeLoggingProfileYAML([]byte) (LoggingProfileConfig, error)
+
+func DefaultLoggingProfile(string) (LoggingProfileConfig, error)
+
+func EncodeLoggingProfileEvent(LoggingProfileConfig, map[string]string, LoggingProfileEvent) (map[string]any, error)
+
+func EncodeLoggingProfileEventWithSanitizer(LoggingProfileConfig, map[string]string, LoggingProfileEvent, SanitizerFunc) (map[string]any, error)
+
 func HooksFromLogger(StructuredLogger) apptheory.ObservabilityHooks
+
+func HooksFromProfileLogger(LoggingProfileConfig, ...ProfileLoggerOption) (apptheory.ObservabilityHooks, *ProfileLogger, error)
+
+func LoggingProfileCatalog() map[string]any
+
+func LoggingProfileValidationErrors(LoggingProfileConfig) []string
 
 func NewNoOpLogger() StructuredLogger
 
+func NewProfileLogger(LoggingProfileConfig, ...ProfileLoggerOption) (*ProfileLogger, error)
+
 func NewTestLogger() *TestLogger
+
+func ValidateLoggingProfile(LoggingProfileConfig) error
+
+func WithProfileClock(func() time.Time) ProfileLoggerOption
+
+func WithProfileEnvironment(map[string]string) ProfileLoggerOption
+
+func WithProfileSanitizer(SanitizerFunc) ProfileLoggerOption
+
+func WithProfileWriter(io.Writer) ProfileLoggerOption
+
+func (*LoggingProfileValidationError) Error() string
+
+func (*ProfileLogger) Close() error
+
+func (*ProfileLogger) Debug(string, ...map[string]any)
+
+func (*ProfileLogger) Entries() []map[string]any
+
+func (*ProfileLogger) Error(string, ...map[string]any)
+
+func (*ProfileLogger) Flush(context.Context) error
+
+func (*ProfileLogger) GetStats() LoggerStats
+
+func (*ProfileLogger) Info(string, ...map[string]any)
+
+func (*ProfileLogger) IsHealthy() bool
+
+func (*ProfileLogger) Warn(string, ...map[string]any)
+
+func (*ProfileLogger) WithField(string, any) StructuredLogger
+
+func (*ProfileLogger) WithFields(map[string]any) StructuredLogger
+
+func (*ProfileLogger) WithRequestID(string) StructuredLogger
+
+func (*ProfileLogger) WithSpanID(string) StructuredLogger
+
+func (*ProfileLogger) WithTenantID(string) StructuredLogger
+
+func (*ProfileLogger) WithTraceID(string) StructuredLogger
+
+func (*ProfileLogger) WithUserID(string) StructuredLogger
 
 func (*TestLogger) Close() error
 
