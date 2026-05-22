@@ -1,12 +1,31 @@
 # Changelog
 
-## [1.7.1-rc](https://github.com/theory-cloud/AppTheory/compare/v1.7.0...v1.7.1-rc) (2026-05-21)
+## [1.8.0-rc](https://github.com/theory-cloud/AppTheory/compare/v1.7.0...v1.8.0-rc) (2026-05-22)
+
+
+### Features
+
+* **observability:** add Go profile logger ([ee7a970](https://github.com/theory-cloud/AppTheory/commit/ee7a97066bd7eb7506a342993122b3afc836d715))
+* **observability:** add logging profile schema ([0204731](https://github.com/theory-cloud/AppTheory/commit/0204731d71a2bfe9f702df12728471253becd143))
+* **py:** add logging profile logger ([1d35723](https://github.com/theory-cloud/AppTheory/commit/1d35723ef490badaca6b225a14f1ade0fb1472c5))
+* **py:** add logging profile schema ([b00ac9e](https://github.com/theory-cloud/AppTheory/commit/b00ac9e6cc691c41b8b3a3af7c854d87ccf107e0))
+* **runtime:** add logging profile parity ([7016c12](https://github.com/theory-cloud/AppTheory/commit/7016c121cec473ce2a290e33dfe59151bb594956))
+* **ts:** add logging profile logger ([078e5e7](https://github.com/theory-cloud/AppTheory/commit/078e5e79c71033a0420660121a54f46bb12a3db2))
+* **ts:** add logging profile schema ([00b0af1](https://github.com/theory-cloud/AppTheory/commit/00b0af13ecb15de4f5443229b23dd2bc48807d5d))
 
 
 ### Bug Fixes
 
+* **mcp:** enforce tool capability disables ([7ebef38](https://github.com/theory-cloud/AppTheory/commit/7ebef386efd7b2b7fef76b23b2bf0a6c71bc30cf))
+* **observability:** fail closed logging profiles ([59e1988](https://github.com/theory-cloud/AppTheory/commit/59e1988dfbc753443d6ee0ff0cc96262bfb86c1b))
+* **observability:** reject noncanonical profile levels ([6442b8f](https://github.com/theory-cloud/AppTheory/commit/6442b8fd7df8b849f8a1c18dbb80a7a197e1629f))
+* **observability:** validate profile encoding fields ([d4bd9aa](https://github.com/theory-cloud/AppTheory/commit/d4bd9aa5d44d348719a3dc946a6c3f45f2cae696))
 * **rate-limit:** separate multi-window Dynamo keys ([062904a](https://github.com/theory-cloud/AppTheory/commit/062904ae2a9f0971c7280859078b1d0ab120630b))
 * **rate-limit:** separate multi-window Dynamo keys ([62d5143](https://github.com/theory-cloud/AppTheory/commit/62d514350fbfe2b20dc5a1152f927c9040e0de28))
+* **release:** replace draft release assets on recovery ([d75736a](https://github.com/theory-cloud/AppTheory/commit/d75736a5593537f2b957f69fdc13a6118a8a1c32))
+* **security:** check each Python URL hash ([e2baeb7](https://github.com/theory-cloud/AppTheory/commit/e2baeb776ed8189a08b391aab1ea90fb039980ea))
+* **security:** harden release and MCP gates ([3d6272a](https://github.com/theory-cloud/AppTheory/commit/3d6272a07f717fa9efc60799e25f0683c112ab53))
+* **security:** require real Python URL hash fragments ([a6ba364](https://github.com/theory-cloud/AppTheory/commit/a6ba364693d3c8a5e7e051d7a9a09230536a016a))
 
 ## [1.7.0](https://github.com/theory-cloud/AppTheory/compare/v1.6.1...v1.7.0) (2026-05-18)
 
