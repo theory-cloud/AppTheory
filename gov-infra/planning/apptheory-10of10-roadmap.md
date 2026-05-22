@@ -1,8 +1,8 @@
-# AppTheory: 10/10 Roadmap (Rubric v1.4.0)
+# AppTheory: 10/10 Roadmap (Rubric v1.5.0)
 
 This roadmap maps milestones directly to rubric IDs with measurable acceptance criteria and verification commands.
 
-## Current scorecard (Rubric v1.4.0)
+## Current scorecard (Rubric v1.5.0)
 Scoring note: a check is only treated as “passing” if it is both green **and** enforced by a trustworthy verifier
 (pinned tooling, schema-valid configs, and no “green by dilution” shortcuts). Completeness failures invalidate “green by
 drift”.
@@ -16,6 +16,7 @@ Until `bash gov-infra/verifiers/gov-verify-rubric.sh` is run in CI and archived,
 | Completeness | unknown | COM-1..COM-6 (not yet validated) |
 | Security | unknown | SEC-1..SEC-4 (not yet validated) |
 | Compliance Readiness | in-scope | CMP-1..CMP-3 (files exist once committed) |
+| Release Lifecycle | unknown | REL-1 (not yet validated) |
 | Maintainability | unknown | MAI-1..MAI-3 (not yet validated) |
 | Docs | unknown | DOC-1..DOC-6 (not yet validated) |
 
@@ -33,6 +34,7 @@ Evidence (refresh whenever behavior changes):
 - `scripts/verify-go-lint.sh`
 - SEC-3 supply-chain gate (via verifier)
 - `scripts/verify-builds.sh`
+- `check_release_lifecycle_invariants` (via verifier)
 - `check_doc_integrity` (via verifier)
 - `check_docs_standard` (via verifier)
 
@@ -58,6 +60,7 @@ Evidence (refresh whenever behavior changes):
 | CMP-1 | planned | M0 |
 | CMP-2 | planned | M0 |
 | CMP-3 | planned | M0 |
+| REL-1 | unknown | M0 |
 | MAI-1 | unknown | M4 |
 | MAI-2 | unknown | M4 |
 | MAI-3 | unknown | M5 |

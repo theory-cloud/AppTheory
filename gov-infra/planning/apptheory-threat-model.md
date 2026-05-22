@@ -1,4 +1,4 @@
-# AppTheory Threat Model (custom — v1.0.0)
+# AppTheory Threat Model (custom — v1.1.0)
 
 This document enumerates the highest-risk threats for the in-scope system and assigns stable IDs (`THR-*`) that must map
 to controls in `gov-infra/planning/apptheory-controls-matrix.md`.
@@ -42,6 +42,7 @@ Threat IDs must be stable over time. When a new class of risk is discovered:
 | THR-8 | Install-time script execution | Postinstall/prepare scripts execute unexpected commands (curl|sh, token access, exfil). | SEC-3 | SEC-3 supply-chain gate (via `gov-verify-rubric.sh`) |
 | THR-9 | Evidence/doc drift (“paper security”) | Docs claim controls exist, but verifiers don’t run or evidence isn’t reproducible; threats are unmapped. | DOC-4, DOC-5, CMP-1..3 | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 | THR-10 | Example/CDK drift breaks real deployments | Examples or CDK stacks stop synthesizing or diverge from snapshot; users copy broken patterns. | COM-1, QUA-2 | `scripts/verify-cdk-synth.sh` + `scripts/verify-testkit-examples.sh` |
+| THR-11 | Release lane invariant drift | Release branches, Release Please state, generated artifacts, or publisher recovery paths drift from the single valid cycle, making a stale or mutable release path mergeable. | REL-1 | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 
 ## Parity Rule (no “named threat without control”)
 - Every `THR-*` listed above must appear at least once in the controls matrix “Threat IDs” column.

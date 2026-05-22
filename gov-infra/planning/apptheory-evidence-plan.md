@@ -1,4 +1,4 @@
-# AppTheory Evidence Plan (Rubric v1.4.0)
+# AppTheory Evidence Plan (Rubric v1.5.0)
 
 Defines where evidence for rubric items is produced and how to regenerate it. Evidence should be reproducible from a commit SHA (no hand-assembled screenshots unless unavoidable).
 
@@ -44,6 +44,7 @@ Every rubric ID maps to exactly one verifier and one primary evidence location.
 | CMP-1 | Controls matrix exists | `gov-infra/planning/apptheory-controls-matrix.md` | File existence check |
 | CMP-2 | Evidence plan exists | `gov-infra/planning/apptheory-evidence-plan.md` | File existence check |
 | CMP-3 | Threat model exists | `gov-infra/planning/apptheory-threat-model.md` | File existence check |
+| REL-1 | Release lifecycle invariant verification | `gov-infra/evidence/REL-1-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 | MAI-1 | File budget check | `gov-infra/evidence/MAI-1-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 | MAI-2 | Maintainability roadmap check | `gov-infra/evidence/MAI-2-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
 | MAI-3 | Singleton check | `gov-infra/evidence/MAI-3-output.log` | `bash gov-infra/verifiers/gov-verify-rubric.sh` |
