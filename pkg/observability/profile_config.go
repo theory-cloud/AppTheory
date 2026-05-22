@@ -1,9 +1,13 @@
 package observability
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 const LoggingProfileSchemaVersion = "apptheory.logging/v1"
@@ -114,6 +118,37 @@ func DefaultLoggingProfile(profile string) (LoggingProfileConfig, error) {
 	}
 }
 
+func DecodeLoggingProfileJSON(raw []byte) (LoggingProfileConfig, error) {
+	var config LoggingProfileConfig
+	strictErrs, err := strictLoggingProfileJSONOptionErrors(raw)
+	if err != nil {
+		return config, err
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return config, fmt.Errorf("logging profile json: %w", err)
+	}
+	errs := make([]string, 0, len(strictErrs))
+	errs = append(errs, strictErrs...)
+	errs = append(errs, LoggingProfileValidationErrors(config)...)
+	if len(errs) > 0 {
+		return config, &LoggingProfileValidationError{Errors: errs}
+	}
+	return config, nil
+}
+
+func DecodeLoggingProfileYAML(raw []byte) (LoggingProfileConfig, error) {
+	var config LoggingProfileConfig
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&config); err != nil {
+		return config, fmt.Errorf("logging profile yaml: %w", err)
+	}
+	if err := ValidateLoggingProfile(config); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
 func ValidateLoggingProfile(config LoggingProfileConfig) error {
 	errs := LoggingProfileValidationErrors(config)
 	if len(errs) == 0 {
@@ -164,6 +199,72 @@ func LoggingProfileValidationErrors(config LoggingProfileConfig) []string {
 	errs = append(errs, validateAlertingHints(config.AlertingHints)...)
 
 	return errs
+}
+
+type loggingProfileJSONOptionSchema struct {
+	allowed map[string]struct{}
+	nested  map[string]loggingProfileJSONOptionSchema
+}
+
+var loggingProfileJSONOptions = loggingProfileJSONOptionSchema{
+	allowed: optionNameSet(
+		"schema_version", "profile", "encoding", "levels", "required_fields", "recommended_fields",
+		"field_map", "enrichment", "error_capture", "sanitization", "alerting_hints",
+	),
+	nested: map[string]loggingProfileJSONOptionSchema{
+		"encoding":   {allowed: optionNameSet("format", "timestamp_field", "timestamp_format", "level_field", "message_field")},
+		"enrichment": {allowed: optionNameSet("static", "context")},
+		"error_capture": {allowed: optionNameSet(
+			"include_error_type", "include_error_code", "include_stack_trace",
+			"stack_trace_field", "stack_hash_field", "stack_hash_algorithm",
+		)},
+		"sanitization":   {allowed: optionNameSet("existing_sanitized_logging", "notes")},
+		"alerting_hints": {allowed: optionNameSet("fingerprint_fields", "keeper_lookup_fields")},
+	},
+}
+
+func strictLoggingProfileJSONOptionErrors(raw []byte) ([]string, error) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return nil, fmt.Errorf("logging profile json: %w", err)
+	}
+	return validateLoggingProfileJSONOptions("", root, loggingProfileJSONOptions), nil
+}
+
+func validateLoggingProfileJSONOptions(path string, object map[string]json.RawMessage, schema loggingProfileJSONOptionSchema) []string {
+	var errs []string
+	for _, key := range sortedMapKeys(object) {
+		childPath := profileJSONOptionPath(path, key)
+		if !stringInSet(key, schema.allowed) {
+			errs = append(errs, childPath+": unsupported option")
+			continue
+		}
+		childSchema, ok := schema.nested[key]
+		if !ok {
+			continue
+		}
+		var child map[string]json.RawMessage
+		if err := json.Unmarshal(object[key], &child); err != nil {
+			continue
+		}
+		errs = append(errs, validateLoggingProfileJSONOptions(childPath, child, childSchema)...)
+	}
+	return errs
+}
+
+func profileJSONOptionPath(parent string, key string) string {
+	if parent == "" {
+		return key
+	}
+	return parent + "." + key
+}
+
+func optionNameSet(names ...string) map[string]struct{} {
+	out := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		out[name] = struct{}{}
+	}
+	return out
 }
 
 func baseJSONProfile(profile string) LoggingProfileConfig {

@@ -1,0 +1,26 @@
+{
+  "id": "p2.logging_profile.unknown_options",
+  "tier": "p2",
+  "name": "Logging profile: fail closed unknown config options",
+  "setup": {
+    "logging_profile": {
+      "schema_version": "apptheory.logging/v1",
+      "profile": "paytheory-alert-v1",
+      "encoding": {
+        "format": "json",
+        "timestamp_field": "ts",
+        "timestamp_format": "rfc3339nano",
+        "level_field": "level",
+        "message_field": "message",
+        "unknown_encoding_option": true
+      },
+      "unknown_top_level": true
+    }
+  },
+  "expect": {
+    "profile_validation_errors": [
+      "encoding.unknown_encoding_option: unsupported option",
+      "unknown_top_level: unsupported option"
+    ]
+  }
+}

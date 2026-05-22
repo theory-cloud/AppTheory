@@ -1,7 +1,9 @@
 package observability
 
 import (
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -98,6 +100,60 @@ func TestLoggingProfile_EncodingFieldNamesFailClosed(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("validation errors:\nexpected %#v\ngot      %#v", want, got)
+	}
+}
+
+func TestDecodeLoggingProfileJSON_UnknownOptionsFailClosed(t *testing.T) {
+	raw := []byte(`{
+		"schema_version":"apptheory.logging/v1",
+		"profile":"paytheory-alert-v1",
+		"encoding":{
+			"format":"json",
+			"timestamp_field":"ts",
+			"timestamp_format":"rfc3339nano",
+			"level_field":"level",
+			"message_field":"message",
+			"unknown_encoding_option":true
+		},
+		"unknown_top_level":true
+	}`)
+
+	_, err := DecodeLoggingProfileJSON(raw)
+	if err == nil {
+		t.Fatal("expected strict decode error")
+	}
+	var profileErr *LoggingProfileValidationError
+	if !errors.As(err, &profileErr) {
+		t.Fatalf("expected *LoggingProfileValidationError, got %T: %v", err, err)
+	}
+	want := []string{
+		"encoding.unknown_encoding_option: unsupported option",
+		"unknown_top_level: unsupported option",
+	}
+	if !reflect.DeepEqual(profileErr.Errors, want) {
+		t.Fatalf("validation errors:\nexpected %#v\ngot      %#v", want, profileErr.Errors)
+	}
+}
+
+func TestDecodeLoggingProfileYAML_UnknownOptionsFailClosed(t *testing.T) {
+	raw := []byte(`
+schema_version: apptheory.logging/v1
+profile: paytheory-alert-v1
+encoding:
+  format: json
+  timestamp_field: ts
+  timestamp_format: rfc3339nano
+  level_field: level
+  message_field: message
+unknown_top_level: true
+`)
+
+	_, err := DecodeLoggingProfileYAML(raw)
+	if err == nil {
+		t.Fatal("expected strict YAML decode error")
+	}
+	if !strings.Contains(err.Error(), "unknown_top_level") {
+		t.Fatalf("expected unknown option in YAML error, got %v", err)
 	}
 }
 
