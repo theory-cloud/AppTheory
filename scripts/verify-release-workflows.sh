@@ -62,6 +62,29 @@ require_order(
     "Release Please (Stable)",
     "stable release must pass rubric before release-please can create a draft release",
 )
+for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.yml"):
+    require_contains(
+        workflow,
+        "concurrency:\n  group: release-publisher-${{ github.repository }}\n  cancel-in-progress: false",
+        "release publisher workflows must share one non-cancelling concurrency group",
+    )
+    require_not_contains(
+        workflow,
+        "cancel-in-progress: true",
+        "release publisher workflows must queue reruns and workflow_dispatch events instead of cancelling an active publisher",
+    )
+    require_order(
+        workflow,
+        "workflow_dispatch",
+        "concurrency:",
+        "release publisher concurrency must apply at workflow scope, including workflow_dispatch reruns",
+    )
+    require_order(
+        workflow,
+        "concurrency:",
+        "permissions:",
+        "release publisher concurrency must be declared before jobs so the whole publisher workflow is serialized",
+    )
 require_not_contains(
     ".github/workflows/release.yml",
     "if: github.ref == 'refs/heads/main'\n",
@@ -93,6 +116,54 @@ require_contains(
     "Recover existing draft release assets",
     "stable reruns must recover draft releases left by a failed first attempt",
 )
+for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.yml"):
+    require_contains(
+        workflow,
+        "scripts/diagnose-release-state.sh --tag",
+        "failed release publisher jobs must print read-only release diagnostics",
+    )
+require_contains(
+    ".github/workflows/release.yml",
+    "- name: Diagnose failed release state (read-only)\n        if: failure()",
+    "stable diagnostics must run for main, tag, and workflow_dispatch publisher failures",
+)
+require_contains(
+    "scripts/diagnose-release-state.sh",
+    "release-diagnostics: branch=",
+    "release diagnostics must print the current branch and head",
+)
+require_contains(
+    "scripts/diagnose-release-state.sh",
+    "release-diagnostics: tag=",
+    "release diagnostics must print the active tag state",
+)
+require_contains(
+    "scripts/diagnose-release-state.sh",
+    "release-diagnostics: release=",
+    "release diagnostics must print GitHub Release state",
+)
+require_contains(
+    "scripts/diagnose-release-state.sh",
+    "release-diagnostics: manifests:",
+    "release diagnostics must print manifest state",
+)
+require_contains(
+    "scripts/diagnose-release-state.sh",
+    "release-diagnostics: safe-next-action=",
+    "release diagnostics must print the safe next action",
+)
+for forbidden in (
+    "gh release upload",
+    "gh release edit",
+    "gh release create",
+    "gh release delete",
+    "gh release delete-asset",
+):
+    require_not_contains(
+        "scripts/diagnose-release-state.sh",
+        forbidden,
+        "release diagnostics must not mutate GitHub Releases",
+    )
 require_contains(
     "scripts/publish-release-assets.sh",
     'git fetch "${remote}" "${main_branch}" "${premain_branch}" --tags --force',
@@ -129,8 +200,53 @@ require_contains(
 )
 require_not_contains(
     "scripts/publish-release-assets.sh",
+    "is already published; immutable releases prevent adding assets/notes",
+    "release asset publisher reruns must verify published immutable assets instead of failing before integrity checks",
+)
+require_contains(
+    "scripts/publish-release-assets.sh",
+    "verify_published_release_assets",
+    "release asset publisher must verify immutable assets when a rerun finds the release already published",
+)
+require_contains(
+    "scripts/publish-release-assets.sh",
+    "published release is missing immutable asset",
+    "release asset publisher must fail closed when a published release is missing an expected asset",
+)
+require_contains(
+    "scripts/publish-release-assets.sh",
+    "does not match source build",
+    "release asset publisher must fail closed when a published release asset checksum differs from the source build",
+)
+require_contains(
+    "scripts/publish-release-assets.sh",
+    "already published with matching immutable assets",
+    "release asset publisher must skip safely when rerun after successful publication",
+)
+require_not_contains(
+    "scripts/publish-release-assets.sh",
     "release-assets: skip existing",
     "release asset publisher must not trust existing draft assets by filename",
+)
+require_order(
+    "scripts/publish-release-assets.sh",
+    "scripts/generate-checksums.sh",
+    "collect_release_assets asset_paths",
+    "release asset publisher must enumerate source-built assets after checksums are generated",
+)
+require_order_after(
+    "scripts/publish-release-assets.sh",
+    "collect_release_assets asset_paths",
+    "verify_published_release_assets",
+    'gh release upload "${tag}" "${asset_path}" --clobber',
+    "release asset publisher must verify-and-skip published releases before any clobbering draft upload",
+)
+require_order_after(
+    "scripts/publish-release-assets.sh",
+    'if ! gh release upload "${tag}" "${asset_path}" --clobber; then',
+    "verify_published_release_assets",
+    "failed to upload draft asset",
+    "release asset publisher must re-check immutable publication races before failing an upload rerun",
 )
 require_order(
     "scripts/publish-release-assets.sh",
