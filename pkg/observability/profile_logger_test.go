@@ -2,6 +2,7 @@ package observability
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -178,6 +179,133 @@ func TestEncodeLoggingProfileEvent_MissingRequiredFails(t *testing.T) {
 	}
 }
 
+func TestEncodeLoggingProfileEvent_TimestampContextAndLiteralEnrichmentVariants(t *testing.T) {
+	cfg, err := DefaultLoggingProfile(LoggingProfileCloudWatchJSON)
+	if err != nil {
+		t.Fatalf("DefaultLoggingProfile: %v", err)
+	}
+	cfg.Encoding.TimestampFormat = loggingProfileTimestampFormatRFC3339
+	cfg.Enrichment = LoggingProfileEnrichment{
+		Static: map[string]string{"service": "local-service"},
+		Context: map[string]string{
+			"tenant_id": "request.tenant_id",
+			"user_id":   "request.user_id",
+			"span_id":   "request.span_id",
+			"method":    "request.method",
+			"path":      "request.path",
+			"status":    "request.status",
+		},
+	}
+	cfg.RequiredFields = []string{"timestamp", "level", "message", "service"}
+
+	got, err := EncodeLoggingProfileEvent(cfg, nil, LoggingProfileEvent{
+		Timestamp: time.Date(2026, 5, 22, 12, 34, 56, 789000000, time.UTC),
+		Level:     "info",
+		Message:   "ok",
+		Request: LoggingProfileRequestContext{
+			TenantID: "tenant_test_123",
+			UserID:   "user_test_123",
+			SpanID:   "span_test_123",
+			Method:   "POST",
+			Path:     "/payments",
+			Status:   201,
+		},
+	})
+	if err != nil {
+		t.Fatalf("EncodeLoggingProfileEvent: %v", err)
+	}
+	if got["timestamp"] != "2026-05-22T12:34:56Z" || got["service"] != "local-service" || got["status"] != "201" {
+		t.Fatalf("unexpected context output: %#v", got)
+	}
+
+	nanoCfg, err := DefaultLoggingProfile(LoggingProfileCloudWatchJSON)
+	if err != nil {
+		t.Fatalf("DefaultLoggingProfile: %v", err)
+	}
+	nanoCfg.RequiredFields = []string{"timestamp", "level", "message"}
+	nano, err := EncodeLoggingProfileEvent(nanoCfg, nil, LoggingProfileEvent{
+		Timestamp: time.Date(2026, 5, 22, 12, 34, 56, 789000000, time.UTC),
+		Message:   "ok",
+	})
+	if err != nil {
+		t.Fatalf("EncodeLoggingProfileEvent(nano): %v", err)
+	}
+	if nano["timestamp"] != "2026-05-22T12:34:56.789Z" {
+		t.Fatalf("unexpected nano timestamp: %#v", nano)
+	}
+}
+
+func TestProfileLogger_ContextMethodsCloseAndErrorState(t *testing.T) {
+	cfg, err := DefaultLoggingProfile(LoggingProfileCloudWatchJSON)
+	if err != nil {
+		t.Fatalf("DefaultLoggingProfile: %v", err)
+	}
+	cfg.Enrichment = LoggingProfileEnrichment{Context: map[string]string{
+		"tenant_id": "request.tenant_id",
+		"user_id":   "request.user_id",
+		"trace_id":  "request.trace_id",
+		"span_id":   "request.span_id",
+	}}
+	cfg.RequiredFields = []string{"timestamp", "level", "message"}
+	logger, err := NewProfileLogger(
+		cfg,
+		WithProfileWriter(nil),
+		WithProfileSanitizer(nil),
+		WithProfileClock(func() time.Time { return time.Unix(0, 0).UTC() }),
+	)
+	if err != nil {
+		t.Fatalf("NewProfileLogger: %v", err)
+	}
+
+	scoped := logger.
+		WithField("safe_field", "safe").
+		WithUserID("user_test_123").
+		WithTraceID("trace_test_123").
+		WithSpanID("span_test_123").
+		WithTenantID("tenant_test_123")
+	scoped.Debug("debug message", map[string]any{"status": "201"})
+	entries := logger.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("expected one entry, got %#v", entries)
+	}
+	if entries[0]["level"] != "DEBUG" || entries[0]["tenant_id"] != "tenant_test_123" || entries[0]["safe_field"] != "safe" {
+		t.Fatalf("unexpected logger entry: %#v", entries[0])
+	}
+	if !logger.IsHealthy() {
+		t.Fatalf("expected healthy logger, got stats %#v", logger.GetStats())
+	}
+	if flushErr := logger.Flush(context.Background()); flushErr != nil {
+		t.Fatalf("Flush: %v", flushErr)
+	}
+	if closeErr := logger.Close(); closeErr != nil {
+		t.Fatalf("Close: %v", closeErr)
+	}
+	if logger.IsHealthy() {
+		t.Fatal("expected closed logger to be unhealthy")
+	}
+	logger.Info("ignored after close")
+	if len(logger.Entries()) != 1 {
+		t.Fatalf("closed logger should not append entries: %#v", logger.Entries())
+	}
+
+	broken, err := NewProfileLogger(
+		mustProfile(t, LoggingProfilePayTheoryAlertV1),
+		WithProfileWriter(nil),
+		WithProfileClock(func() time.Time { return time.Unix(0, 0).UTC() }),
+	)
+	if err != nil {
+		t.Fatalf("NewProfileLogger(broken): %v", err)
+	}
+	broken.Info("missing env")
+	if !strings.Contains(broken.GetStats().LastError, "logging profile required fields missing") {
+		t.Fatalf("expected last error, got %#v", broken.GetStats())
+	}
+
+	if hooks := HooksFromLogger(nil); hooks.Log != nil {
+		t.Fatalf("nil logger hooks should be empty: %#v", hooks)
+	}
+}
+
 func apptheoryLogRecordForProfileTest() apptheory.LogRecord {
 	return apptheory.LogRecord{
 		Level:     "error",
@@ -188,4 +316,13 @@ func apptheoryLogRecordForProfileTest() apptheory.LogRecord {
 		Status:    500,
 		ErrorCode: "app.internal",
 	}
+}
+
+func mustProfile(t *testing.T, profile string) LoggingProfileConfig {
+	t.Helper()
+	cfg, err := DefaultLoggingProfile(profile)
+	if err != nil {
+		t.Fatalf("DefaultLoggingProfile(%s): %v", profile, err)
+	}
+	return cfg
 }

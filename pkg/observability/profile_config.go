@@ -19,6 +19,11 @@ const (
 	LoggingProfileLocalDev         = "local-dev"
 )
 
+const (
+	loggingProfileTimestampFormatRFC3339Nano = "rfc3339nano"
+	loggingProfileTimestampFormatRFC3339     = "rfc3339"
+)
+
 type LoggingProfileConfig struct {
 	SchemaVersion     string                      `json:"schema_version" yaml:"schema_version"`
 	Profile           string                      `json:"profile" yaml:"profile"`
@@ -182,7 +187,9 @@ func LoggingProfileValidationErrors(config LoggingProfileConfig) []string {
 	}
 
 	timestampFormat := strings.ToLower(strings.TrimSpace(config.Encoding.TimestampFormat))
-	if timestampFormat != "" && timestampFormat != "rfc3339nano" && timestampFormat != "rfc3339" {
+	if timestampFormat != "" &&
+		timestampFormat != loggingProfileTimestampFormatRFC3339Nano &&
+		timestampFormat != loggingProfileTimestampFormatRFC3339 {
 		errs = append(errs, "encoding.timestamp_format: unsupported value "+strings.TrimSpace(config.Encoding.TimestampFormat))
 	}
 	errs = append(errs, validateEncodingOutputField("encoding.timestamp_field", config.Encoding.TimestampField)...)
@@ -274,7 +281,7 @@ func baseJSONProfile(profile string) LoggingProfileConfig {
 		Encoding: LoggingProfileEncoding{
 			Format:          "json",
 			TimestampField:  "timestamp",
-			TimestampFormat: "rfc3339nano",
+			TimestampFormat: loggingProfileTimestampFormatRFC3339Nano,
 			LevelField:      "level",
 			MessageField:    "message",
 		},

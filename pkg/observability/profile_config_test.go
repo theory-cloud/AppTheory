@@ -42,6 +42,36 @@ func TestLoggingProfile_DefaultPayTheoryAlertValidates(t *testing.T) {
 	}
 }
 
+func TestLoggingProfile_DefaultProfileVariantsValidate(t *testing.T) {
+	cloudwatch, err := DefaultLoggingProfile(LoggingProfileCloudWatchJSON)
+	if err != nil {
+		t.Fatalf("DefaultLoggingProfile(cloudwatch): %v", err)
+	}
+	legacy, err := DefaultLoggingProfile(LoggingProfileLegacy)
+	if err != nil {
+		t.Fatalf("DefaultLoggingProfile(legacy): %v", err)
+	}
+	local, err := DefaultLoggingProfile(LoggingProfileLocalDev)
+	if err != nil {
+		t.Fatalf("DefaultLoggingProfile(local-dev): %v", err)
+	}
+
+	for _, cfg := range []LoggingProfileConfig{cloudwatch, legacy, local} {
+		if err := ValidateLoggingProfile(cfg); err != nil {
+			t.Fatalf("ValidateLoggingProfile(%s): %v", cfg.Profile, err)
+		}
+	}
+	if !reflect.DeepEqual(cloudwatch.RequiredFields, []string{"timestamp", "level", "message"}) {
+		t.Fatalf("cloudwatch required fields: %#v", cloudwatch.RequiredFields)
+	}
+	if legacy.Encoding.TimestampField != "timestamp" || legacy.Encoding.LevelField != "level" || legacy.Encoding.MessageField != "message" {
+		t.Fatalf("legacy encoding fields: %#v", legacy.Encoding)
+	}
+	if local.Levels["warn"] != "WARN" {
+		t.Fatalf("local levels: %#v", local.Levels)
+	}
+}
+
 func TestLoggingProfile_ValidationErrorsAreDeterministic(t *testing.T) {
 	cfg := LoggingProfileConfig{
 		SchemaVersion: "apptheory.logging/v2",
@@ -83,6 +113,52 @@ func TestLoggingProfile_ValidationErrorsAreDeterministic(t *testing.T) {
 	}
 }
 
+func TestLoggingProfile_ValidationRequiredAndNestedFieldErrors(t *testing.T) {
+	cfg := LoggingProfileConfig{
+		Levels:            map[string]string{"trace": "TRACE", "info": ""},
+		RequiredFields:    []string{""},
+		RecommendedFields: []string{""},
+		FieldMap: map[string]string{
+			"raw_source": "service",
+			"message":    "raw_payload",
+			"event":      "",
+		},
+		Enrichment: LoggingProfileEnrichment{
+			Static: map[string]string{"raw_payload": "payload"},
+			Context: map[string]string{
+				"raw_payload": "",
+				"method":      "",
+			},
+		},
+		ErrorCapture: LoggingProfileErrorCapture{
+			StackTraceField: "raw_payload",
+			StackHashField:  "raw_payload",
+		},
+	}
+	got := LoggingProfileValidationErrors(cfg)
+	want := []string{
+		"schema_version: required",
+		"profile: required",
+		"encoding.format: required",
+		"levels.info: required",
+		"levels.trace: unsupported level trace",
+		"required_fields[0]: required",
+		"recommended_fields[0]: required",
+		"field_map.event: required",
+		"field_map.message: unsupported field raw_payload",
+		"field_map.raw_source: unsupported source raw_source",
+		"enrichment.static.raw_payload: unsupported field raw_payload",
+		"enrichment.context.method: required",
+		"enrichment.context.raw_payload: unsupported field raw_payload",
+		"enrichment.context.raw_payload: required",
+		"error_capture.stack_trace_field: unsupported field raw_payload",
+		"error_capture.stack_hash_field: unsupported field raw_payload",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("validation errors:\nexpected %#v\ngot      %#v", want, got)
+	}
+}
+
 func TestLoggingProfile_EncodingFieldNamesFailClosed(t *testing.T) {
 	cfg, err := DefaultLoggingProfile(LoggingProfilePayTheoryAlertV1)
 	if err != nil {
@@ -100,6 +176,15 @@ func TestLoggingProfile_EncodingFieldNamesFailClosed(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("validation errors:\nexpected %#v\ngot      %#v", want, got)
+	}
+}
+
+func TestDecodeLoggingProfileJSON_InvalidInputsFailClosed(t *testing.T) {
+	if _, err := DecodeLoggingProfileJSON([]byte("{")); err == nil || !strings.Contains(err.Error(), "logging profile json") {
+		t.Fatalf("expected JSON parse error, got %v", err)
+	}
+	if _, err := DecodeLoggingProfileJSON([]byte("[]")); err == nil || !strings.Contains(err.Error(), "logging profile json") {
+		t.Fatalf("expected JSON root decode error, got %v", err)
 	}
 }
 

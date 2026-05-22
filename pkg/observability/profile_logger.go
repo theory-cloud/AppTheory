@@ -465,7 +465,7 @@ func formatProfileTimestamp(value time.Time, format string) string {
 		value = time.Unix(0, 0).UTC()
 	}
 	switch strings.ToLower(strings.TrimSpace(format)) {
-	case "rfc3339":
+	case loggingProfileTimestampFormatRFC3339:
 		return value.UTC().Format(time.RFC3339)
 	default:
 		return value.UTC().Format(time.RFC3339Nano)
