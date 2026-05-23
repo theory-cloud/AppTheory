@@ -9,6 +9,10 @@ on:
         description: "Optional: upload assets to an existing tag's *draft* release (fails if already published/immutable) (e.g., v0.2.0)"
         required: false
 
+concurrency:
+  group: release-publisher-${{ github.repository }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   issues: write
@@ -127,18 +131,19 @@ jobs:
 
           scripts/publish-release-assets.sh "${TAG_NAME}"
 
-      - name: Report failed draft release (immutable)
-        if: failure() && github.ref == 'refs/heads/main' && inputs.tag_name == ''
+      - name: Diagnose failed release state (read-only)
+        if: failure()
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ steps.release.outputs.tag_name }}
+          TAG_NAME: ${{ inputs.tag_name || steps.release.outputs.tag_name }}
         run: |
+          if [[ -z "${TAG_NAME}" && "${GITHUB_REF:-}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF_NAME}"
+          fi
+
           if [[ -z "${TAG_NAME}" ]]; then
             TAG_NAME="v$(./scripts/read-version.sh)"
           fi
 
-          # Releases and tags are immutable. Do not delete or mutate anything on
-          # failure; leave the draft/tag state visible for process recovery.
-          is_draft="$(gh release view "${TAG_NAME}" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
-          echo "release-cleanup: PRESERVE ${TAG_NAME} (draft=${is_draft:-unknown})"
-          echo "release-cleanup: manual deletion is forbidden; recover through the branch release process"
+          export TAG_NAME
+          scripts/diagnose-release-state.sh --tag "${TAG_NAME}"

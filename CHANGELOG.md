@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.7.1-rc.1](https://github.com/theory-cloud/AppTheory/compare/v1.7.1-rc...v1.7.1-rc.1) (2026-05-23)
+
+
+### Bug Fixes
+
+* **ci:** quote release train PR refs via environment ([38a6524](https://github.com/theory-cloud/AppTheory/commit/38a6524b8deec6d655b7ee3173188461b150c8a1))
+* **gov:** verify release lifecycle invariants ([2209c30](https://github.com/theory-cloud/AppTheory/commit/2209c3062a069db77fab7173f5c4a329308f7964))
+* **release:** allow repair prerelease promotions ([3405ccf](https://github.com/theory-cloud/AppTheory/commit/3405ccfc3516f69e287aa8a4b89278ef790e08f2))
+* **release:** allow repair prerelease promotions ([39b7158](https://github.com/theory-cloud/AppTheory/commit/39b71589c0446fcf8281dc274a978d7f2925c8b2))
+* **release:** gate release train promotions ([32ba98f](https://github.com/theory-cloud/AppTheory/commit/32ba98f4812ebac9158347baa25aaabe8cc3acc2))
+* **release:** harden release PR artifact sync ([54ce212](https://github.com/theory-cloud/AppTheory/commit/54ce2129f945b301d6eac897577f3a776b672d7b))
+* **release:** harden release PR promotion flow ([ff5aaed](https://github.com/theory-cloud/AppTheory/commit/ff5aaedb7b1709262dee6eb86f6aa783bd021dba))
+* **release:** harden release publisher reliability ([1e96abd](https://github.com/theory-cloud/AppTheory/commit/1e96abde80a782c20a8ccbf80b9f236d35aeeeef))
+* **release:** make asset publication reentrant ([dd8f3df](https://github.com/theory-cloud/AppTheory/commit/dd8f3df226fff991827c9367a7159b483fa34d0b))
+* **release:** model release train state explicitly ([d84b64b](https://github.com/theory-cloud/AppTheory/commit/d84b64b857c8aef32ba7586e9fb0f791f74f81f3))
+* **release:** model release train state explicitly ([318761a](https://github.com/theory-cloud/AppTheory/commit/318761a3a94e5bc7a774ce3297d047400698c0ab))
+* **release:** report actionable release state ([4fa525d](https://github.com/theory-cloud/AppTheory/commit/4fa525dedb95eac356ed53f195679ed23900a881))
+* **release:** serialize release publishers ([5c643af](https://github.com/theory-cloud/AppTheory/commit/5c643af9b4905a8053f7a642febb8757b69698d8))
+* **release:** tolerate stale release PR state ([04d1813](https://github.com/theory-cloud/AppTheory/commit/04d18134744c724f8f57328ca87eacd05e31315a))
+* **release:** tolerate stale release PR state ([a5ca667](https://github.com/theory-cloud/AppTheory/commit/a5ca66787341c220d55720d9322efcba2971c028))
+* **release:** verify release cycle reliability ([7809810](https://github.com/theory-cloud/AppTheory/commit/7809810c78f029db475f8c2a7d0890df6ea01522))
+
+## [1.7.1-rc](https://github.com/theory-cloud/AppTheory/compare/v1.7.0...v1.7.1-rc) (2026-05-21)
+
+
+### Bug Fixes
+
+* **rate-limit:** separate multi-window Dynamo keys ([062904a](https://github.com/theory-cloud/AppTheory/commit/062904ae2a9f0971c7280859078b1d0ab120630b))
+* **rate-limit:** separate multi-window Dynamo keys ([62d5143](https://github.com/theory-cloud/AppTheory/commit/62d514350fbfe2b20dc5a1152f927c9040e0de28))
+
 ## [1.7.0](https://github.com/theory-cloud/AppTheory/compare/v1.6.1...v1.7.0) (2026-05-18)
 
 

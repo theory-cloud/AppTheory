@@ -98,17 +98,6 @@ collect_check_records() {
     return 1
   fi
 
-  local pr_checks_file
-  pr_checks_file="$(mktemp)"
-  if ! gh pr checks "${pr_number}" --json name,bucket,startedAt,completedAt,workflow >"${pr_checks_file}" 2>/dev/null; then
-    # `gh pr checks` exits 8 while checks are pending, but still prints the
-    # JSON payload. It can also report no checks for workflow_dispatch runs that
-    # are attached to the commit but not surfaced through the PR checks view.
-    if [[ ! -s "${pr_checks_file}" ]]; then
-      printf '[]' >"${pr_checks_file}"
-    fi
-  fi
-
   local repo
   repo="$(repo_full_name)"
 
@@ -126,13 +115,13 @@ collect_check_records() {
       ),
       startedAt: (.started_at // ""),
       completedAt: (.completed_at // ""),
-      workflow: (.app.slug // "github-actions")
+      workflow: (.app.slug // "github-actions"),
+      headSha: "'${current_pr_head}'"
     }]' >"${commit_checks_file}" 2>/dev/null; then
     printf '[]' >"${commit_checks_file}"
   fi
 
-  PR_CHECKS_JSON="$(cat "${pr_checks_file}")" \
-    COMMIT_CHECKS_JSON="$(cat "${commit_checks_file}")" \
+  CURRENT_PR_HEAD="${current_pr_head}" COMMIT_CHECKS_JSON="$(cat "${commit_checks_file}")" \
     python3 - <<'PY'
 import json
 import os
@@ -148,10 +137,16 @@ def load(name: str) -> list[dict]:
     return [item for item in data if isinstance(item, dict)]
 
 
-print(json.dumps(load("PR_CHECKS_JSON") + load("COMMIT_CHECKS_JSON"), separators=(",", ":")))
+current_head = os.environ["CURRENT_PR_HEAD"]
+records = []
+for item in load("COMMIT_CHECKS_JSON"):
+    if item.get("headSha") == current_head:
+        records.append(item)
+
+print(json.dumps(records, separators=(",", ":")))
 PY
 
-  rm -f "${pr_checks_file}" "${commit_checks_file}"
+  rm -f "${commit_checks_file}"
 }
 
 wait_for_required_checks() {
@@ -182,8 +177,8 @@ for check in checks:
     name = check.get("name", "")
     if name not in required:
         continue
-    # `gh pr checks` can report multiple workflow runs for the same PR head.
-    # Keep the newest status per required check.
+    # Manual reruns and workflow_dispatch can attach multiple check runs to the
+    # same PR head. Keep the newest status per required check.
     timestamp = check.get("startedAt") or check.get("completedAt") or ""
     if name not in latest or timestamp >= latest[name][0]:
         latest[name] = (timestamp, check)
@@ -372,6 +367,32 @@ wait_for_pr_head() {
   done
 }
 
+require_pr_head() {
+  local expected_head="$1"
+  local context="$2"
+  local current_pr_line
+  current_pr_line="$(pr_state_line)"
+  if [[ -z "${current_pr_line}" ]]; then
+    echo "sync-release-pr-generated: FAIL (PR #${pr_number} disappeared ${context})"
+    exit 1
+  fi
+
+  local current_pr_state
+  local current_pr_head
+  current_pr_state="${current_pr_line%%$'\t'*}"
+  current_pr_head="${current_pr_line##*$'\t'}"
+
+  if [[ "${current_pr_state}" != "OPEN" ]]; then
+    echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} ${context})"
+    exit 1
+  fi
+
+  if [[ "${current_pr_head}" != "${expected_head}" ]]; then
+    echo "sync-release-pr-generated: FAIL (PR #${pr_number} head changed ${context}; expected ${expected_head}, found ${current_pr_head})"
+    exit 1
+  fi
+}
+
 sync_stable_release_premain_manifest() {
   if [[ "${release_branch}" != "release-please--branches--main" ]]; then
     return 0
@@ -426,18 +447,46 @@ if [[ "${changed}" == "true" ]]; then
   git push origin HEAD:"${release_branch}"
 fi
 
-wait_for_pr_head "$(git rev-parse HEAD)"
+synced_head="$(git rev-parse HEAD)"
+
+wait_for_pr_head "${synced_head}"
 # After the generated-artifact head is visible, rely only on independent PR
 # checks for protected required contexts. Bot-authored release PR updates can be
 # suppressed by GitHub's recursive workflow guard, so explicitly dispatch CI on
 # the release branch instead of self-attesting protected statuses from mutable
 # release-branch code.
 ensure_release_pr_is_draft "before waiting for independent required checks"
+require_pr_head "${synced_head}" "before dispatching independent required checks"
 dispatch_required_checks
 wait_for_required_checks_to_start
 wait_for_required_checks
 
+require_pr_head "${synced_head}" "after required checks passed"
 ensure_release_pr_is_draft "before marking generated-artifact-synced PR ready"
+require_pr_head "${synced_head}" "before marking generated-artifact-synced PR ready"
 gh pr ready "${pr_number}"
+
+current_pr_line="$(pr_state_line)"
+if [[ -z "${current_pr_line}" ]]; then
+  echo "sync-release-pr-generated: FAIL (PR #${pr_number} disappeared after marking ready)"
+  exit 1
+fi
+current_pr_state="${current_pr_line%%$'\t'*}"
+current_pr_is_draft="${current_pr_line#*$'\t'}"
+current_pr_is_draft="${current_pr_is_draft%%$'\t'*}"
+current_pr_head="${current_pr_line##*$'\t'}"
+if [[ "${current_pr_state}" != "OPEN" ]]; then
+  echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} after marking ready)"
+  exit 1
+fi
+if [[ "${current_pr_head}" != "${synced_head}" ]]; then
+  gh pr ready "${pr_number}" --undo || true
+  echo "sync-release-pr-generated: FAIL (PR #${pr_number} head changed while marking ready; expected ${synced_head}, found ${current_pr_head})"
+  exit 1
+fi
+if [[ "${current_pr_is_draft}" != "false" ]]; then
+  echo "sync-release-pr-generated: FAIL (PR #${pr_number} could not be marked ready after generated artifacts and required checks matched ${synced_head})"
+  exit 1
+fi
 
 echo "sync-release-pr-generated: PASS (${release_branch} updated)"

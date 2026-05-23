@@ -1,0 +1,32 @@
+{
+  "case": "invalid-back-merge-drift",
+  "coverage": ["back_merge_drift"],
+  "expected": {
+    "valid": false,
+    "diagnostic_codes": ["branch:staging-missing-main"]
+  },
+  "states": [
+    {
+      "name": "stable-without-backmerge",
+      "state": {
+        "case": "release-cycle-backmerge-drift",
+        "branches": {
+          "main": { "head": "M2", "ancestors": ["P2", "S2", "M1"] },
+          "staging": { "head": "S2", "ancestors": ["M1"] },
+          "premain": { "head": "P3", "ancestors": ["M2", "P2", "S2", "M1"] }
+        },
+        "manifests": {
+          "main": { "stable": "1.7.1", "premain": "1.7.1" },
+          "staging": { "stable": "1.7.1", "premain": "1.7.1" },
+          "premain": { "stable": "1.7.1", "premain": "1.7.1" }
+        },
+        "tags": {
+          "v1.7.1": { "target": "M2" }
+        },
+        "releases": {
+          "v1.7.1": { "state": "published", "target": "M2", "prerelease": false }
+        }
+      }
+    }
+  ]
+}

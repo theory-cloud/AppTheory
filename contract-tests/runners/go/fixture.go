@@ -25,6 +25,8 @@ type FixtureSetup struct {
 	Routes          []FixtureRoute            `json:"routes,omitempty"`
 	Middlewares     []string                  `json:"middlewares,omitempty"`
 	CORS            FixtureCORSConfig         `json:"cors,omitempty"`
+	Environment     map[string]string         `json:"environment,omitempty"`
+	LoggingProfile  json.RawMessage           `json:"logging_profile,omitempty"`
 	WebSockets      []FixtureWebSocketRoute   `json:"websockets,omitempty"`
 	SQS             []FixtureSQSRoute         `json:"sqs,omitempty"`
 	Kinesis         []FixtureKinesisRoute     `json:"kinesis,omitempty"`
@@ -79,9 +81,11 @@ type FixtureDynamoDBRoute struct {
 }
 
 type FixtureInput struct {
-	Context  FixtureContext   `json:"context,omitempty"`
-	Request  *FixtureRequest  `json:"request,omitempty"`
-	AWSEvent *FixtureAWSEvent `json:"aws_event,omitempty"`
+	Context               FixtureContext   `json:"context,omitempty"`
+	Request               *FixtureRequest  `json:"request,omitempty"`
+	AWSEvent              *FixtureAWSEvent `json:"aws_event,omitempty"`
+	LoggingEvent          json.RawMessage  `json:"logging_event,omitempty"`
+	LoggingProfileCatalog bool             `json:"logging_profile_catalog,omitempty"`
 }
 
 type FixtureAWSEvent struct {
@@ -104,13 +108,16 @@ type FixtureRequest struct {
 }
 
 type FixtureExpect struct {
-	Response       *FixtureResponse       `json:"response,omitempty"`
-	Output         json.RawMessage        `json:"output_json,omitempty"`
-	Error          *FixtureError          `json:"error,omitempty"`
-	WebSocketCalls []FixtureWebSocketCall `json:"ws_calls,omitempty"`
-	Logs           []FixtureLogRecord     `json:"logs,omitempty"`
-	Metrics        []FixtureMetricRecord  `json:"metrics,omitempty"`
-	Spans          []FixtureSpanRecord    `json:"spans,omitempty"`
+	Response                *FixtureResponse       `json:"response,omitempty"`
+	Output                  json.RawMessage        `json:"output_json,omitempty"`
+	Error                   *FixtureError          `json:"error,omitempty"`
+	WebSocketCalls          []FixtureWebSocketCall `json:"ws_calls,omitempty"`
+	Logs                    []FixtureLogRecord     `json:"logs,omitempty"`
+	Metrics                 []FixtureMetricRecord  `json:"metrics,omitempty"`
+	Spans                   []FixtureSpanRecord    `json:"spans,omitempty"`
+	ProfileLogs             []map[string]any       `json:"profile_logs,omitempty"`
+	ProfileValidationErrors []string               `json:"profile_validation_errors,omitempty"`
+	LoggingProfileCatalog   map[string]any         `json:"logging_profile_catalog,omitempty"`
 }
 
 type FixtureError struct {

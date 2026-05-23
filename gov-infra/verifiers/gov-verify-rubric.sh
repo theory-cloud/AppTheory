@@ -58,6 +58,24 @@ COV_THRESHOLD="90"
 # Ensure evidence directory exists
 mkdir -p "${EVIDENCE_DIR}"
 
+EXISTING_REPORT_TIMESTAMP=""
+if [[ -f "${REPORT_PATH}" ]]; then
+  EXISTING_REPORT_TIMESTAMP="$({
+    python3 - "${REPORT_PATH}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("timestamp", "")
+except Exception:
+    value = ""
+if isinstance(value, str):
+    print(value)
+PY
+  } 2>/dev/null || true)"
+fi
+
 # Clean previous run outputs to prevent stale evidence from being misattributed.
 rm -f \
   "${REPORT_PATH}" \
@@ -71,7 +89,13 @@ rm -f \
 
 # Initialize report structure
 REPORT_SCHEMA_VERSION=1
-REPORT_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+REPORT_TIMESTAMP="${GOV_REPORT_TIMESTAMP:-}"
+if [[ -z "${REPORT_TIMESTAMP}" ]]; then
+  REPORT_TIMESTAMP="${EXISTING_REPORT_TIMESTAMP}"
+fi
+if [[ -z "${REPORT_TIMESTAMP}" ]]; then
+  REPORT_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+fi
 PASS_COUNT=0
 FAIL_COUNT=0
 BLOCKED_COUNT=0
@@ -488,6 +512,169 @@ gov_cmd_sast() {
   scripts/verify-go-lint.sh
 }
 
+osv_scan_lockfile() {
+  local lf="$1"
+
+  if ! grep -Fq '"node_modules/aws-cdk-lib/node_modules/brace-expansion"' "${lf}"; then
+    osv-scanner scan --lockfile="${lf}"
+    return $?
+  fi
+
+  local tmp_report
+  tmp_report="$(mktemp)"
+
+  set +e
+  osv-scanner scan --lockfile="${lf}" --format=json >"${tmp_report}"
+  local scan_status=$?
+  set -e
+
+  if [[ "${scan_status}" -eq 0 ]]; then
+    rm -f "${tmp_report}"
+    return 0
+  fi
+
+  set +e
+  OSV_REPORT="${tmp_report}" OSV_LOCKFILE="${lf}" node <<'NODE'
+const fs = require("fs");
+
+function fail(message) {
+  console.error(message);
+  process.exit(1);
+}
+
+let report;
+try {
+  report = JSON.parse(fs.readFileSync(process.env.OSV_REPORT, "utf8"));
+} catch (err) {
+  fail(`osv-scanner: FAIL (could not parse ${process.env.OSV_REPORT}: ${err.message})`);
+}
+
+let lock;
+try {
+  lock = JSON.parse(fs.readFileSync(process.env.OSV_LOCKFILE, "utf8"));
+} catch (err) {
+  fail(`osv-scanner: FAIL (could not parse ${process.env.OSV_LOCKFILE}: ${err.message})`);
+}
+
+const allowed = {
+  advisoryId: "GHSA-jxxr-4gwj-5jf2",
+  alias: "CVE-2026-45149",
+  fixedVersion: "5.0.6",
+  lockfile: String(process.env.OSV_LOCKFILE ?? "").replace(/\\/g, "/"),
+  packageName: "brace-expansion",
+  packageVersion: "5.0.5",
+  packagePath: "node_modules/aws-cdk-lib/node_modules/brace-expansion",
+  cdkVersion: "2.254.0",
+  minimatchVersion: "10.2.5",
+};
+
+function sameStringSet(actual, expected) {
+  if (actual.length !== expected.length) return false;
+  const actualSorted = [...actual].sort();
+  const expectedSorted = [...expected].sort();
+  return actualSorted.every((value, index) => value === expectedSorted[index]);
+}
+
+function hasFixedVersion(vuln) {
+  for (const affected of vuln.affected ?? []) {
+    if (affected?.package?.ecosystem !== "npm" || affected.package.name !== allowed.packageName) {
+      continue;
+    }
+    for (const range of affected.ranges ?? []) {
+      for (const event of range.events ?? []) {
+        if (event?.fixed === allowed.fixedVersion) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function lockfileContainsOnlyAllowedBraceExpansion() {
+  const packages = lock.packages ?? {};
+  const bracePaths = Object.entries(packages)
+    .filter(([path, pkg]) => path.endsWith("brace-expansion") && pkg?.version === allowed.packageVersion)
+    .map(([path]) => path);
+
+  const cdkPackage = packages["node_modules/aws-cdk-lib"];
+  const minimatchPackage = packages["node_modules/aws-cdk-lib/node_modules/minimatch"];
+  const bracePackage = packages[allowed.packagePath];
+
+  return (
+    sameStringSet(bracePaths, [allowed.packagePath]) &&
+    cdkPackage?.version === allowed.cdkVersion &&
+    Array.isArray(cdkPackage?.bundleDependencies) &&
+    cdkPackage.bundleDependencies.includes("minimatch") &&
+    minimatchPackage?.version === allowed.minimatchVersion &&
+    minimatchPackage?.inBundle === true &&
+    minimatchPackage?.dependencies?.[allowed.packageName] === "^5.0.5" &&
+    bracePackage?.version === allowed.packageVersion &&
+    bracePackage?.inBundle === true
+  );
+}
+
+function isAllowedAwsCdkBundledBraceExpansion(result, pkg, vuln) {
+  const sourcePath = String(result?.source?.path ?? "").replace(/\\/g, "/");
+  const packageInfo = pkg?.package ?? {};
+  const aliases = (vuln.aliases ?? []).map(String);
+  const dependencyGroups = (pkg.dependency_groups ?? []).map(String);
+
+  return (
+    (sourcePath === allowed.lockfile || sourcePath.endsWith(`/${allowed.lockfile}`)) &&
+    packageInfo.ecosystem === "npm" &&
+    packageInfo.name === allowed.packageName &&
+    packageInfo.version === allowed.packageVersion &&
+    sameStringSet(dependencyGroups, ["dev"]) &&
+    vuln.id === allowed.advisoryId &&
+    aliases.includes(allowed.alias) &&
+    hasFixedVersion(vuln) &&
+    lockfileContainsOnlyAllowedBraceExpansion()
+  );
+}
+
+const unexpected = [];
+let allowedCount = 0;
+
+for (const result of report.results ?? []) {
+  for (const pkg of result.packages ?? []) {
+    for (const vuln of pkg.vulnerabilities ?? []) {
+      if (isAllowedAwsCdkBundledBraceExpansion(result, pkg, vuln)) {
+        allowedCount += 1;
+      } else {
+        unexpected.push({
+          id: vuln.id ?? "<unknown>",
+          packageName: pkg?.package?.name ?? "<unknown>",
+          version: pkg?.package?.version ?? "<unknown>",
+          source: result?.source?.path ?? "<unknown>",
+        });
+      }
+    }
+  }
+}
+
+if (unexpected.length > 0 || allowedCount === 0) {
+  for (const vuln of unexpected) {
+    console.error(
+      `osv-scanner: unexpected vulnerability ${vuln.id} in ${vuln.packageName}@${vuln.version} from ${vuln.source}`,
+    );
+  }
+  if (allowedCount === 0) {
+    console.error("osv-scanner: expected AWS CDK bundled brace-expansion exception was not matched");
+  }
+  process.exit(1);
+}
+
+console.error(
+  `osv-scanner: WARN (allowed aws-cdk-lib bundled brace-expansion GHSA-jxxr-4gwj-5jf2 / CVE-2026-45149 in ${allowed.lockfile}; remove after AWS CDK bundles brace-expansion >=5.0.6)`,
+);
+NODE
+  local filter_status=$?
+  set -e
+  rm -f "${tmp_report}"
+  return "${filter_status}"
+}
+
 gov_cmd_vuln() {
   require_cmd_or_blocked go || return $?
   require_cmd_or_blocked node || return $?
@@ -541,7 +728,7 @@ gov_cmd_vuln() {
     fi
 
     echo "==> osv-scanner (Node): ${lf}"
-    osv-scanner scan --lockfile="${lf}"
+    osv_scan_lockfile "${lf}"
   done
 
   local -a py_requirements=(
@@ -1129,6 +1316,23 @@ check_doc_integrity() {
 check_docs_standard() {
   # Ensures shipped packages follow the Pay Theory documentation standard (docs file set + YAML triad).
   bash ./scripts/verify-docs-standard.sh
+}
+
+check_release_lifecycle_invariants() {
+  # GovTheory release lifecycle evidence is intentionally read-only and deterministic.
+  # It records the existing release state fixtures, release-train promotion classifier,
+  # and workflow/publisher hardening assertions without mutating branches, tags, PRs,
+  # or GitHub Releases.
+  echo "==> release state fixtures"
+  bash ./scripts/verify-release-state.sh --self-test
+
+  echo "==> release train promotion classifier"
+  bash ./scripts/verify-release-train-promotion.sh --self-test
+
+  echo "==> release workflow invariants"
+  bash ./scripts/verify-release-workflows.sh
+
+  echo "release-lifecycle: PASS"
 }
 
 check_file_budgets() {
@@ -1730,6 +1934,121 @@ scan_go_supply_chain_for_mod() {
   return 0
 }
 
+strip_python_dependency_comment() {
+  local raw="$1"
+  local out=""
+  local in_single=false
+  local in_double=false
+  local escaped=false
+  local i ch out_lower
+
+  for ((i = 0; i < ${#raw}; i++)); do
+    ch="${raw:i:1}"
+
+    if [[ "${in_double}" == "true" ]]; then
+      out+="${ch}"
+      if [[ "${escaped}" == "true" ]]; then
+        escaped=false
+      elif [[ "${ch}" == "\\" ]]; then
+        escaped=true
+      elif [[ "${ch}" == '"' ]]; then
+        in_double=false
+      fi
+      continue
+    fi
+
+    if [[ "${in_single}" == "true" ]]; then
+      out+="${ch}"
+      if [[ "${ch}" == "'" ]]; then
+        in_single=false
+      fi
+      continue
+    fi
+
+    case "${ch}" in
+      '"')
+        in_double=true
+        out+="${ch}"
+        ;;
+      "'")
+        in_single=true
+        out+="${ch}"
+        ;;
+      "#")
+        out_lower="${out,,}"
+        if [[ "${out_lower}" =~ (git\+)?(https?|ssh|file)://[^[:space:],\"]+$ ]]; then
+          out+="${ch}"
+        else
+          break
+        fi
+        ;;
+      *)
+        out+="${ch}"
+        ;;
+    esac
+  done
+
+  printf '%s' "${out}"
+}
+
+python_line_has_unhashed_direct_url() {
+  local effective lower rest match url
+  effective="$(strip_python_dependency_comment "$1")"
+  lower="$(printf '%s' "${effective}" | tr '[:upper:]' '[:lower:]')"
+  rest="${lower}"
+
+  while [[ "${rest}" =~ [[:space:]]@[[:space:]]*((https?|file|ssh)://[^[:space:],\"\']+) ]]; do
+    match="${BASH_REMATCH[0]}"
+    url="${BASH_REMATCH[1]}"
+    if ! [[ "${url}" =~ \#sha256=[0-9a-f]{64} ]]; then
+      return 0
+    fi
+
+    # Continue scanning after this URL so same-line TOML arrays cannot let
+    # one hashed direct dependency cover another unhashed direct dependency.
+    rest="${rest#*"${match}"}"
+    if [[ "${rest}" == "${lower}" ]]; then
+      break
+    fi
+    lower="${rest}"
+  done
+
+  return 1
+}
+
+verify_python_dependency_comment_parser() {
+  local hash="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+  if python_line_has_unhashed_direct_url "\"safe @ https://example.com/safe.whl#sha256=${hash}\","; then
+    echo "Python supply-chain scan: internal parser failed to preserve TOML URL hash fragments" >&2
+    return 1
+  fi
+  if ! python_line_has_unhashed_direct_url "\"evil @ https://example.com/evil.whl\", #sha256=${hash}"; then
+    echo "Python supply-chain scan: internal parser treated TOML comment text as a URL hash fragment" >&2
+    return 1
+  fi
+  if ! python_line_has_unhashed_direct_url "\"evil @ https://example.com/evil.whl\", \"#sha256=${hash}\""; then
+    echo "Python supply-chain scan: internal parser treated a separate TOML string as a URL hash fragment" >&2
+    return 1
+  fi
+  if ! python_line_has_unhashed_direct_url "dependencies = [\"safe @ https://example.com/safe.whl#sha256=${hash}\", \"evil @ https://example.com/evil.whl\"]"; then
+    echo "Python supply-chain scan: internal parser let one hashed TOML dependency cover an unhashed direct URL" >&2
+    return 1
+  fi
+  if python_line_has_unhashed_direct_url "dependencies = [\"safe @ https://example.com/safe.whl#sha256=${hash}\", \"also-safe @ https://example.com/also-safe.whl#sha256=${hash}\"]"; then
+    echo "Python supply-chain scan: internal parser rejected a TOML line where every direct URL has its own hash" >&2
+    return 1
+  fi
+  if python_line_has_unhashed_direct_url "safe @ https://example.com/safe.whl#sha256=${hash}"; then
+    echo "Python supply-chain scan: internal parser failed to preserve requirements URL hash fragments" >&2
+    return 1
+  fi
+  if ! python_line_has_unhashed_direct_url "evil @ https://example.com/evil.whl #sha256=${hash}"; then
+    echo "Python supply-chain scan: internal parser treated requirements comment text as a URL hash fragment" >&2
+    return 1
+  fi
+}
+
 scan_python_supply_chain() {
   local allowlist_path="$1"
 
@@ -1778,6 +2097,8 @@ scan_python_supply_chain() {
   local allowlisted=0
   local file_count=0
 
+  verify_python_dependency_comment_parser || return $?
+
   local f
   for f in "${files[@]}"; do
     file_count=$((file_count + 1))
@@ -1786,8 +2107,10 @@ scan_python_supply_chain() {
     local line
     while IFS= read -r line || [[ -n "${line}" ]]; do
       local raw="${line//$'\r'/}"
+      local effective
+      effective="$(strip_python_dependency_comment "${raw}")"
       local trimmed
-      trimmed="$(printf '%s' "${raw}" | sed -E 's/[[:space:]]+/ /g; s/^ +//; s/ +$//')"
+      trimmed="$(printf '%s' "${effective}" | sed -E 's/[[:space:]]+/ /g; s/^ +//; s/ +$//')"
       [[ -z "${trimmed}" ]] && continue
 
       local lower
@@ -1803,16 +2126,16 @@ scan_python_supply_chain() {
         fi
       done
 
-      local has_hash_fragment=false
-      if [[ "${lower}" =~ \#sha256=[0-9a-f]{64} ]]; then
-        has_hash_fragment=true
+      local has_unhashed_direct_url=false
+      if python_line_has_unhashed_direct_url "${raw}"; then
+        has_unhashed_direct_url=true
       fi
 
       if [[ -z "${rule}" ]]; then
         if [[ "${lower}" == *"git+https://"* || "${lower}" == *"git+http://"* || "${lower}" == *"git+ssh://"* || "${lower}" == *"hg+http"* || "${lower}" == *"svn+http"* || "${lower}" == *"bzr+http"* ]]; then
           rule="VCS_OR_URL_DEP"
         elif [[ "${lower}" == *" @ https://"* || "${lower}" == *" @ http://"* || "${lower}" == *" @ file://"* || "${lower}" == *" @ ssh://"* ]]; then
-          if [[ "${has_hash_fragment}" != "true" ]]; then
+          if [[ "${has_unhashed_direct_url}" == "true" ]]; then
             rule="VCS_OR_URL_DEP"
           fi
         elif [[ "${lower}" == *"git = \""* && ( "${lower}" == *"http://"* || "${lower}" == *"https://"* || "${lower}" == *"ssh://"* ) ]]; then
@@ -2101,6 +2424,7 @@ CMD_SINGLETON="check_duplicate_semantics"
 
 CMD_DOC_INTEGRITY="check_doc_integrity"
 CMD_DOCS_STANDARD="check_docs_standard"
+CMD_RELEASE_LIFECYCLE="check_release_lifecycle_invariants"
 
 # === Quality (QUA) ===
 run_check "QUA-1" "Quality" "$CMD_UNIT"
@@ -2130,6 +2454,9 @@ run_check "SEC-4" "Security" "$CMD_P0"
 check_file_exists "CMP-1" "Compliance" "${PLANNING_DIR}/apptheory-controls-matrix.md"
 check_file_exists "CMP-2" "Compliance" "${PLANNING_DIR}/apptheory-evidence-plan.md"
 check_file_exists "CMP-3" "Compliance" "${PLANNING_DIR}/apptheory-threat-model.md"
+
+# === Release Lifecycle (REL) ===
+run_check "REL-1" "Release" "$CMD_RELEASE_LIFECYCLE"
 
 # === Maintainability (MAI) ===
 run_check "MAI-1" "Maintainability" "$CMD_FILE_BUDGET"

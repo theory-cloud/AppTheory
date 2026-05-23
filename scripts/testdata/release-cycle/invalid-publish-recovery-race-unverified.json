@@ -1,0 +1,18 @@
+{
+  "case": "invalid-publish-recovery-race-unverified",
+  "coverage": ["publish_recovery_race"],
+  "expected": {
+    "valid": false,
+    "diagnostic_codes": ["publisher:published-race-unverified"]
+  },
+  "events": [
+    {
+      "kind": "publisher_race",
+      "tag": "v1.7.1",
+      "publishedDuringRun": true,
+      "recheckedPublishedAssets": false,
+      "publishedAssetsMatchSource": true,
+      "attemptedDraftUploadAfterPublished": false
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "id": "p2.logging_profile.catalog",
+  "tier": "p2",
+  "name": "Logging profile: built-in profile catalog",
+  "input": {
+    "logging_profile_catalog": true
+  },
+  "expect": {
+    "logging_profile_catalog": {
+      "schema_version": "apptheory.logging/v1",
+      "profiles": [
+        "cloudwatch-json",
+        "legacy",
+        "local-dev",
+        "paytheory-alert-v1"
+      ]
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "case": "invalid-stale-release-please-pr",
+  "coverage": ["stale_release_please_pr"],
+  "expected": {
+    "valid": false,
+    "diagnostic_codes": ["release-pr:stale-state"]
+  },
+  "events": [
+    {
+      "kind": "release_please_pr",
+      "target": "premain",
+      "head": "release-please--branches--premain",
+      "state": "merged",
+      "draft": true,
+      "baseCurrent": true,
+      "generatedArtifactsSynced": true,
+      "checksPassed": true
+    }
+  ]
+}

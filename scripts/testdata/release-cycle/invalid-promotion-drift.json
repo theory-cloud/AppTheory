@@ -1,0 +1,11 @@
+{
+  "case": "invalid-promotion-drift",
+  "coverage": ["promotion_drift"],
+  "expected": {
+    "valid": false,
+    "diagnostic_codes": ["promotion:invalid-edge"]
+  },
+  "events": [
+    { "kind": "promotion", "from": "staging", "to": "main", "ancestorPresent": true }
+  ]
+}
