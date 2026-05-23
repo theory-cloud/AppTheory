@@ -7,11 +7,15 @@ python3 - "$@" <<'PY'
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
 RELEASE_BRANCHES = {"staging", "premain", "main"}
 VALID_PROMOTIONS = {
@@ -94,7 +98,7 @@ def classify(base: str, head: str) -> PromotionPlan:
                 "invalid release-train PR "
                 f"{head} → premain; premain only accepts staging → premain prerelease promotions",
             )
-        return PromotionPlan(True, VALID_PROMOTIONS[(head, base)], ancestor_branch="premain", descendant_branch=head)
+        return PromotionPlan(True, VALID_PROMOTIONS[(head, base)])
 
     if base == "main":
         if head != "premain":
@@ -142,6 +146,14 @@ def validate(base: str, head: str, remote: str, base_ref: str | None, head_ref: 
         print(f"release-train-promotion: PASS ({plan.message}; {head} → {base})")
         return
 
+    if plan.ancestor_branch is None and plan.descendant_branch is None:
+        if base_ref:
+            resolve_branch_ref(remote, base, base_ref)
+        if head_ref:
+            resolve_branch_ref(remote, head, head_ref)
+        print(f"release-train-promotion: PASS ({plan.message}; {head} → {base})")
+        return
+
     assert plan.ancestor_branch is not None
     assert plan.descendant_branch is not None
 
@@ -182,8 +194,135 @@ def assert_plan(base: str, head: str, valid: bool, ancestor: str | None, descend
         )
 
 
+@contextlib.contextmanager
+def pushd(path: str):
+    previous = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
+def commit_marker(label: str) -> None:
+    marker = Path("release-train-self-test.txt")
+    marker.write_text(f"{label}\n", encoding="utf-8")
+    run(["git", "add", str(marker)])
+    run(["git", "commit", "-q", "-m", label])
+
+
+def mirror_origin_ref(branch: str) -> None:
+    run(["git", "update-ref", f"refs/remotes/origin/{branch}", branch])
+
+
+def build_release_train_self_test_repo() -> None:
+    run(["git", "init", "-q", "--initial-branch=main"])
+    run(["git", "config", "user.email", "apptheory-release-train@example.invalid"])
+    run(["git", "config", "user.name", "AppTheory Release Train Self Test"])
+
+    commit_marker("main-1")
+
+    run(["git", "switch", "-q", "-c", "feature/without-main"])
+    commit_marker("feature-without-current-main")
+
+    run(["git", "switch", "-q", "main"])
+    commit_marker("main-2")
+
+    run(["git", "switch", "-q", "-c", "staging"])
+    commit_marker("staging")
+
+    run(["git", "switch", "-q", "main"])
+    run(["git", "switch", "-q", "-c", "premain"])
+    commit_marker("premain")
+
+    run(["git", "switch", "-q", "main"])
+    run(["git", "switch", "-q", "-c", "feature/with-main"])
+    commit_marker("feature-with-current-main")
+
+    for branch in ("main", "staging", "premain", "feature/without-main", "feature/with-main"):
+        mirror_origin_ref(branch)
+
+
+def validate_exit(
+    base: str,
+    head: str,
+    *,
+    base_ref: str | None = None,
+    head_ref: str | None = None,
+) -> tuple[int, str]:
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        try:
+            validate(base, head, "origin", base_ref, head_ref)
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else 1
+            return code, output.getvalue()
+    return 0, output.getvalue()
+
+
+def assert_validation(
+    base: str,
+    head: str,
+    expected_exit: int,
+    *,
+    base_ref: str | None = None,
+    head_ref: str | None = None,
+    contains: str | None = None,
+) -> None:
+    code, output = validate_exit(base, head, base_ref=base_ref, head_ref=head_ref)
+    if code != expected_exit:
+        raise AssertionError(
+            f"{head} → {base}: expected exit {expected_exit}, got {code}; output:\n{output}"
+        )
+    if contains is not None and contains not in output:
+        raise AssertionError(
+            f"{head} → {base}: expected output containing {contains!r}; output:\n{output}"
+        )
+
+
+def self_test_git_topology() -> None:
+    with tempfile.TemporaryDirectory(prefix="apptheory-release-train-") as tmp:
+        with pushd(tmp):
+            build_release_train_self_test_repo()
+            if is_ancestor("premain", "staging"):
+                raise AssertionError("self-test topology must keep premain divergent from staging")
+
+            assert_validation(
+                "premain",
+                "staging",
+                0,
+                base_ref="premain",
+                head_ref="staging",
+                contains="staging → premain prerelease promotion",
+            )
+            assert_validation(
+                "main",
+                "premain",
+                0,
+                base_ref="main",
+                head_ref="premain",
+                contains="premain → main stable promotion",
+            )
+            assert_validation(
+                "staging",
+                "feature/with-main",
+                0,
+                base_ref="staging",
+                head_ref="feature/with-main",
+                contains="ordinary staging PR with current main baseline",
+            )
+            assert_validation(
+                "staging",
+                "feature/without-main",
+                1,
+                base_ref="staging",
+                head_ref="feature/without-main",
+                contains="current main baseline",
+            )
+
+
 def self_test() -> None:
-    assert_plan("premain", "staging", True, "premain", "staging")
+    assert_plan("premain", "staging", True, None, None)
     assert_plan("main", "premain", True, "main", "premain")
     assert_plan("staging", "main", True, "staging", "main")
     assert_plan("staging", "feature/release-fix", True, "main", "feature/release-fix")
@@ -192,6 +331,8 @@ def self_test() -> None:
     assert_plan("premain", "feature/release-fix", False, None, None)
     assert_plan("project/apptheory-release-process-reliability", "main", False, None, None)
     assert_plan("project/apptheory-release-process-reliability", "milestone/release-hardening", True, None, None)
+
+    self_test_git_topology()
 
     print("release-train-promotion: self-test PASS")
 
