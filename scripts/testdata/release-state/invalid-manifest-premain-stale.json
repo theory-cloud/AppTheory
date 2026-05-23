@@ -1,0 +1,24 @@
+{
+  "case": "invalid-manifest-premain-stale",
+  "expected": {
+    "valid": false,
+    "classification": "invalid",
+    "diagnostic_codes": ["manifest:premain-stable-mismatch", "manifest:premain-premain-behind-main"]
+  },
+  "branches": {
+    "main": { "head": "M2", "ancestors": ["M1"] },
+    "staging": { "head": "S2", "ancestors": ["M2", "M1"] },
+    "premain": { "head": "P1", "ancestors": ["M2", "M1"] }
+  },
+  "manifests": {
+    "main": { "stable": "1.7.1", "premain": "1.7.1" },
+    "staging": { "stable": "1.7.1", "premain": "1.7.1" },
+    "premain": { "stable": "1.7.0", "premain": "1.7.0" }
+  },
+  "tags": {
+    "v1.7.1": { "target": "M2" }
+  },
+  "releases": {
+    "v1.7.1": { "state": "published", "target": "M2", "prerelease": false }
+  }
+}
