@@ -1,4 +1,4 @@
-# AppTheory Controls Matrix (custom — v1.4.0)
+# AppTheory Controls Matrix (custom — v1.5.0)
 
 This matrix is the “requirements → controls → verifiers → evidence” backbone for AppTheory. It is intentionally
 engineering-focused: it does not claim compliance, but it makes security/quality assertions traceable and repeatable.
@@ -42,6 +42,7 @@ This table is the canonical mapping used by the rubric/roadmap/evidence plan.
 | Security | THR-3 | SEC-2 | Dependency vulnerability scan stays green | Vulnerability scanning is run with pinned tooling and fails closed. | `gov_cmd_vuln` (inside `gov-verify-rubric.sh`) | `gov-infra/evidence/SEC-2-output.log` |
 | Security | THR-3, THR-8 | SEC-3 | Supply-chain verification stays green | Supply-chain checks: GitHub Actions integrity pinning + dependency script/IIOC scanning. | SEC-3 supply-chain gate (via `gov-verify-rubric.sh`) | `gov-infra/evidence/SEC-3-output.log` |
 | Security | THR-4 | SEC-4 | P0 integrity regression tests stay green | Deterministic build verification to detect non-reproducible artifacts and drift. | `scripts/verify-builds.sh` | `gov-infra/evidence/SEC-4-output.log` |
+| Release | THR-4, THR-9, THR-11 | REL-1 | Release lifecycle invariants stay enforced | GovTheory records release train evidence for release state fixtures, promotion self-tests, and workflow/publisher hardening. | `check_release_lifecycle_invariants` (inside `gov-verify-rubric.sh`) | `gov-infra/evidence/REL-1-output.log` |
 | Docs | THR-9 | DOC-4 | Doc integrity (links, version claims) | Governance docs contain no unrendered tokens and match pack metadata expectations. | `check_doc_integrity` (inside `gov-verify-rubric.sh`) | `gov-infra/evidence/DOC-4-output.log` |
 | Docs | THR-9 | DOC-5 | Threat model ↔ controls parity (no unmapped threats) | All threat IDs in the threat model map to at least one controls matrix row. | (built into verifier) | `gov-infra/evidence/DOC-5-parity.log` |
 | Docs | THR-9, THR-10 | DOC-6 | Pay Theory documentation standard enforced (packages) | Shipped packages have standard docs and YAML triads so usage and drift prevention remain reviewable. | `check_docs_standard` (inside `gov-verify-rubric.sh`) | `gov-infra/evidence/DOC-6-output.log` |

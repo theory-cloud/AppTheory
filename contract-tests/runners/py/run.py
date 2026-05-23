@@ -691,6 +691,78 @@ def compare_headers(expected: dict[str, Any] | None, actual: dict[str, Any] | No
     return canonicalize_headers(expected) == canonicalize_headers(actual)
 
 
+def is_logging_profile_contract_fixture(fixture: dict[str, Any]) -> bool:
+    setup = fixture.get("setup", {}) or {}
+    input_obj = fixture.get("input", {}) or {}
+    expect_obj = fixture.get("expect", {}) or {}
+    return (
+        "logging_profile" in setup
+        or "logging_event" in input_obj
+        or "logging_profile_catalog" in input_obj
+        or "profile_logs" in expect_obj
+        or "profile_validation_errors" in expect_obj
+        or "logging_profile_catalog" in expect_obj
+    )
+
+
+def compare_logging_profile_contract(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, dict[str, Any], dict[str, Any], _DummyEffectsApp]:
+    runtime = _load_apptheory_runtime()
+    setup = fixture.get("setup", {}) or {}
+    input_obj = fixture.get("input", {}) or {}
+    expect_obj = fixture.get("expect", {}) or {}
+    actual: dict[str, Any] = {
+        "logging_profile_catalog": None,
+        "profile_validation_errors": [],
+        "profile_logs": [],
+    }
+    if "logging_profile_catalog" in expect_obj:
+        actual["logging_profile_catalog"] = runtime.logging_profile_catalog()
+        if actual["logging_profile_catalog"] == expect_obj.get(
+            "logging_profile_catalog"
+        ):
+            return True, "", actual, expect_obj, _DummyEffectsApp()
+        return False, "logging_profile_catalog mismatch", actual, expect_obj, _DummyEffectsApp()
+    if "profile_validation_errors" in expect_obj:
+        actual["profile_validation_errors"] = decode_logging_profile_validation_errors(
+            runtime,
+            setup.get("logging_profile"),
+        )
+        if actual["profile_validation_errors"] == (expect_obj.get("profile_validation_errors") or []):
+            return True, "", actual, expect_obj, _DummyEffectsApp()
+        return False, "profile_validation_errors mismatch", actual, expect_obj, _DummyEffectsApp()
+    if "profile_logs" in expect_obj:
+        try:
+            config = runtime.decode_logging_profile_json(
+                json.dumps(setup.get("logging_profile") or {})
+            )
+            actual["profile_logs"] = [
+                runtime.encode_logging_profile_event(
+                    config,
+                    setup.get("environment") or {},
+                    input_obj.get("logging_event") or {},
+                )
+            ]
+        except Exception as exc:  # noqa: BLE001
+            return False, f"profile_logs encode failed: {exc}", actual, expect_obj, _DummyEffectsApp()
+        if actual["profile_logs"] == (expect_obj.get("profile_logs") or []):
+            return True, "", actual, expect_obj, _DummyEffectsApp()
+        return False, "profile_logs mismatch", actual, expect_obj, _DummyEffectsApp()
+    return True, "", actual, expect_obj, _DummyEffectsApp()
+
+
+def decode_logging_profile_validation_errors(runtime: Any, profile: Any) -> list[str]:
+    try:
+        runtime.decode_logging_profile_json(json.dumps(profile or {}))
+    except Exception as exc:  # noqa: BLE001
+        errors = getattr(exc, "errors", None)
+        if isinstance(errors, list):
+            return [str(error) for error in errors]
+        return [str(exc)]
+    return []
+
+
 def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     tier = str(fixture.get("tier", "")).strip().lower()
     if tier == "p0":
@@ -698,6 +770,8 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
     if tier == "p1":
         return run_fixture_p1(fixture)
     if tier == "p2":
+        if is_logging_profile_contract_fixture(fixture):
+            return compare_logging_profile_contract(fixture)
         expect_obj = fixture.get("expect", {}) or {}
         if "output_json" in expect_obj or "error" in expect_obj:
             return run_fixture_p2_output(fixture)
@@ -2507,6 +2581,32 @@ def main() -> int:
                     print(f"  got.error: {stable_json(actual)}", file=sys.stderr)
                 else:
                     print(f"  got.output_json: {stable_json(actual)}", file=sys.stderr)
+        elif (
+            "logging_profile_catalog" in expect_obj
+            or "profile_validation_errors" in expect_obj
+            or "profile_logs" in expect_obj
+        ):
+            if "logging_profile_catalog" in expect_obj:
+                print(
+                    f"  expected.logging_profile_catalog: {stable_json(expect_obj.get('logging_profile_catalog'))}",
+                    file=sys.stderr,
+                )
+                print(
+                    f"  got.logging_profile_catalog: {stable_json(actual.get('logging_profile_catalog'))}",
+                    file=sys.stderr,
+                )
+            if "profile_validation_errors" in expect_obj:
+                print(
+                    f"  expected.profile_validation_errors: {stable_json(expect_obj.get('profile_validation_errors'))}",
+                    file=sys.stderr,
+                )
+                print(
+                    f"  got.profile_validation_errors: {stable_json(actual.get('profile_validation_errors'))}",
+                    file=sys.stderr,
+                )
+            if "profile_logs" in expect_obj:
+                print(f"  expected.profile_logs: {stable_json(expect_obj.get('profile_logs'))}", file=sys.stderr)
+                print(f"  got.profile_logs: {stable_json(actual.get('profile_logs'))}", file=sys.stderr)
         else:
             print(f"  expected: {stable_json(expected)}", file=sys.stderr)
             print(f"  got: {stable_json(debug_actual_for_expected(actual, expected))}", file=sys.stderr)

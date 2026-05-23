@@ -116,6 +116,17 @@ def _max_requests_for_window(strategy: MultiWindowStrategy, window: TimeWindow) 
     return int(strategy.windows[0].max_requests) if strategy.windows else 0
 
 
+def _set_keys_for_window(entry: RateLimitEntry, window_key: str) -> None:
+    set_keys(entry)
+    suffix = str(window_key or "").strip()
+    if suffix:
+        entry.pk = f"{entry.identifier}#{entry.window_start}#{suffix}"
+
+
+def _storage_window_key(strategy: RateLimitStrategy, window: TimeWindow) -> str:
+    return str(window.key) if isinstance(strategy, MultiWindowStrategy) else ""
+
+
 def _reset_time_for_decision(
     strategy: RateLimitStrategy,
     now: dt.datetime,
@@ -191,7 +202,7 @@ class DynamoRateLimiter:
                 operation=k.operation,
                 window_start=unix_seconds(window.start),
             )
-            set_keys(entry)
+            _set_keys_for_window(entry, _storage_window_key(self.strategy, window))
             keys.append((entry.pk, entry.sk))
             key_by_window[window.key] = (entry.pk, entry.sk)
 
@@ -249,7 +260,7 @@ class DynamoRateLimiter:
                 operation=k.operation,
                 window_start=unix_seconds(window.start),
             )
-            set_keys(entry)
+            _set_keys_for_window(entry, _storage_window_key(self.strategy, window))
 
             ttl = unix_seconds(window.end) + int(cfg.ttl_hours) * 3600
             window_id = format_window_id(window.start)
@@ -497,7 +508,7 @@ class DynamoRateLimiter:
                 operation=key.operation,
                 window_start=unix_seconds(window.start),
             )
-            set_keys(entry)
+            _set_keys_for_window(entry, window.key)
 
             ttl = unix_seconds(window.end) + int(cfg.ttl_hours) * 3600
             window_id = format_window_id(window.start)
@@ -547,7 +558,7 @@ class DynamoRateLimiter:
             operation=key.operation,
             window_start=unix_seconds(primary.start),
         )
-        set_keys(primary_entry)
+        _set_keys_for_window(primary_entry, primary.key)
         try:
             out = self.table.get(primary_entry.pk, primary_entry.sk, consistent_read=bool(cfg.consistent_read))
             count = int(out.count)
