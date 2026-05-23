@@ -1,0 +1,25 @@
+{
+  "case": "invalid-published-release-missing-tag",
+  "expected": {
+    "valid": false,
+    "classification": "invalid",
+    "diagnostic_codes": ["release:published-missing-tag"]
+  },
+  "branches": {
+    "main": { "head": "M1" },
+    "staging": { "head": "S1", "ancestors": ["M1"] },
+    "premain": { "head": "P1", "ancestors": ["S1", "M1"] }
+  },
+  "manifests": {
+    "main": { "stable": "1.7.0", "premain": "1.7.0" },
+    "staging": { "stable": "1.7.0", "premain": "1.7.0" },
+    "premain": { "stable": "1.7.0", "premain": "1.7.1-rc" }
+  },
+  "tags": {
+    "v1.7.0": { "target": "M1" }
+  },
+  "releases": {
+    "v1.7.0": { "state": "published", "target": "M1", "prerelease": false },
+    "v1.7.1-rc": { "state": "published", "target": "P1", "prerelease": true }
+  }
+}

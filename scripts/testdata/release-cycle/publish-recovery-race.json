@@ -1,0 +1,15 @@
+{
+  "case": "publish-recovery-race",
+  "coverage": ["publish_recovery_race"],
+  "expected": { "valid": true },
+  "events": [
+    {
+      "kind": "publisher_race",
+      "tag": "v1.7.1",
+      "publishedDuringRun": true,
+      "recheckedPublishedAssets": true,
+      "publishedAssetsMatchSource": true,
+      "attemptedDraftUploadAfterPublished": false
+    }
+  ]
+}
