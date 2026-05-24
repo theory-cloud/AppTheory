@@ -20,6 +20,7 @@ const facetheoryOriginalHostHeader = "x-facetheory-original-host";
 const ssrOriginalUriHeaders = [apptheoryOriginalUriHeader, facetheoryOriginalUriHeader] as const;
 const ssrOriginalHostHeaders = [apptheoryOriginalHostHeader, facetheoryOriginalHostHeader] as const;
 const ssgIsrHydrationPathPattern = "/_facetheory/data/*";
+const ssgIsrSsrDataPathPattern = "/_facetheory/ssr-data/*";
 const defaultIsrHtmlStoreKeyPrefix = "isr";
 const maxDefaultCacheKeyHeaders = 10;
 const defaultViewerTenantHeader = "x-tenant-id";
@@ -283,6 +284,9 @@ export interface AppTheorySsrSiteProps {
    * Additional path patterns that should bypass the `ssg-isr` origin group and route directly
    * to the Lambda Function URL with full method support.
    *
+   * In `ssg-isr` mode, `/_facetheory/ssr-data/*` is added automatically for FaceTheory
+   * strict no-inline-CSP SSR hydration sidecars.
+   *
    * Use this for same-origin dynamic paths such as auth callbacks, actions, or form posts.
    * Example direct-SSR path: "/actions/*"
    */
@@ -543,7 +547,10 @@ export class AppTheorySsrSite extends Construct {
       ...(siteMode === AppTheorySsrSiteMode.SSG_ISR ? [ssgIsrHydrationPathPattern] : []),
       ...(Array.isArray(props.directS3PathPatterns) ? props.directS3PathPatterns : []),
     ]);
-    const ssrPathPatterns = normalizePathPatterns(props.ssrPathPatterns);
+    const ssrPathPatterns = normalizePathPatterns([
+      ...(siteMode === AppTheorySsrSiteMode.SSG_ISR ? [ssgIsrSsrDataPathPattern] : []),
+      ...(Array.isArray(props.ssrPathPatterns) ? props.ssrPathPatterns : []),
+    ]);
     const bearerFunctionUrlOrigins = Array.isArray(props.bearerFunctionUrlOrigins)
       ? props.bearerFunctionUrlOrigins
       : [];
