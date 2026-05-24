@@ -90,3 +90,11 @@ Acceptance:
 - Co-origin behaviors share the site distribution without weakening the SSR origin's `AWS_IAM` + Lambda OAC default.
 - Co-origin path patterns participate in conflict detection and bypass SSG/ISR HTML rewrites.
 - CDK synth tests and docs cover the supported mixed-auth shape.
+
+### I6 — FaceTheory SSR data sidecar routing
+
+Acceptance:
+- `AppTheorySsrSite` in `ssg-isr` mode keeps `/_facetheory/data/*` on direct S3 for SSG sidecars.
+- `AppTheorySsrSite` in `ssg-isr` mode routes `/_facetheory/ssr-data/*` to the SSR Lambda origin for strict no-inline-CSP SSR sidecars.
+- SSR sidecar paths participate in path conflict checks, bypass SSG/ISR HTML rewrites, and preserve the SSR origin's `AWS_IAM` + Lambda OAC default.
+- CDK synth tests and docs cover the S3-vs-Lambda sidecar split.
