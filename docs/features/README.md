@@ -9,6 +9,7 @@ contract.
 ## Current feature guides
 
 - [Sanitization](./sanitization.md)
+- [Logging Profiles](./logging-profiles.md)
 - [Jobs Ledger](./jobs-ledger.md)
 - [Event Workload Contracts](./event-workloads.md)
 
