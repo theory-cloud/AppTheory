@@ -25,6 +25,7 @@ FaceTheory's recommended topology splits CloudFront behaviors so static paths do
 
 - `assets/*` -> S3 (assets)
 - `/_facetheory/data/*` -> S3 (SSG hydration JSON)
+- `/_facetheory/ssr-data/*` -> Lambda Function URL (SSR hydration sidecars for strict no-inline-CSP pages)
 - default `*` -> S3 primary HTML origin with Lambda Function URL fallback
 
 Example configuration:
@@ -45,6 +46,7 @@ new AppTheorySsrSite(this, "Site", {
   staticPathPatterns: ["/marketing/*"],
 
   // Dynamic same-origin routes that should bypass the origin group.
+  // /_facetheory/ssr-data/* is already routed to Lambda in ssg-isr mode.
   ssrPathPatterns: ["/actions/*"],
 
   // Add bearer-auth Lambda Function URL API co-origins when one distribution
@@ -65,14 +67,14 @@ Default SSR origin contract:
 - Omitted `ssrUrlAuthType` now fails closed to `AWS_IAM` + CloudFront Function URL OAC for all CloudFront-to-Lambda traffic.
 - Set `ssrUrlAuthType` explicitly to `NONE` only when you intentionally need public direct Function URL access.
 - `ssr-only` preserves the existing shape: Lambda is the default origin and direct S3 behaviors are only used for assets and explicitly configured static paths.
-- `ssg-isr` promotes the stronger FaceTheory topology: `htmlStoreBucket` becomes the primary HTML origin, Lambda is the fallback for cache misses on `GET` / `HEAD` / `OPTIONS`, `/_facetheory/data/*` stays on direct S3, and extensionless HTML paths rewrite to `/index.html` at the edge.
-- Use `ssrPathPatterns` for same-origin dynamic routes such as actions, callbacks, or form posts that must bypass the origin group and route directly to Lambda with full method support.
+- `ssg-isr` promotes the stronger FaceTheory topology: `htmlStoreBucket` becomes the primary HTML origin, Lambda is the fallback for cache misses on `GET` / `HEAD` / `OPTIONS`, `/_facetheory/data/*` stays on direct S3, `/_facetheory/ssr-data/*` routes directly to Lambda for strict no-inline-CSP SSR hydration sidecars, and extensionless HTML paths rewrite to `/index.html` at the edge.
+- Use `ssrPathPatterns` for same-origin dynamic routes such as actions, callbacks, or form posts that must bypass the origin group and route directly to Lambda with full method support; the FaceTheory SSR sidecar prefix is automatic and should not be added to `directS3PathPatterns`.
 - The viewer-request function preserves an inbound `x-request-id`, otherwise falls back to the CloudFront request ID, and records both `x-apptheory-*` and `x-facetheory-*` original host/URI headers for the origin contract.
 - The viewer-response function echoes `x-request-id` back to clients for both S3 and SSR responses.
 - Default forwarded headers are limited to safe edge context: `cloudfront-forwarded-proto`, `cloudfront-viewer-address`, `x-apptheory-original-host`, `x-apptheory-original-uri`, `x-facetheory-original-host`, `x-facetheory-original-uri`, and `x-request-id`.
 - Viewer-supplied tenant headers are not trusted by default: `x-tenant-id` is stripped at the edge, and tenant-like `ssrForwardHeaders` require `allowViewerTenantHeaders: true` as a deliberate compatibility mode.
 - Additional non-tenant app-specific headers remain opt-in via `ssrForwardHeaders`; `host` and `x-forwarded-proto` are intentionally rejected.
-- Direct Lambda-backed SSR behaviors default to `CACHING_DISABLED` unless you opt into `ssrCachePolicy`.
+- Direct Lambda-backed SSR behaviors, including `/_facetheory/ssr-data/*`, default to `CACHING_DISABLED` unless you opt into `ssrCachePolicy`.
 - The default `ssg-isr` HTML behavior and any `staticPathPatterns` HTML sections use a public cache policy that keys on all query strings plus stable public variant headers, excludes cookies, and still lets origin cache-control headers drive freshness.
 - Direct S3 asset/data behaviors continue to use origin-defined cache-control semantics.
 - AppTheory provisions baseline CDN security headers by default: HSTS, `nosniff`, `frame-options`, `referrer-policy`, XSS protection, and a restrictive `permissions-policy`. CSP remains origin-defined.
