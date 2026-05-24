@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.8.0](https://github.com/theory-cloud/AppTheory/compare/v1.7.1...v1.8.0) (2026-05-24)
+
+
+### Features
+
+* **cdk:** add ssr mixed-auth co-origins ([f4e20de](https://github.com/theory-cloud/AppTheory/commit/f4e20defc6fab533721301504fa37a9b7b05e90a))
+* **cdk:** add ssr mixed-auth co-origins ([1bd5ba2](https://github.com/theory-cloud/AppTheory/commit/1bd5ba29bc37e4ad81d1458a23cfde5c444123f1)), closes [#593](https://github.com/theory-cloud/AppTheory/issues/593)
+
+
+### Bug Fixes
+
+* **cdk:** reject duplicate ssr co-origin paths ([f7f6f00](https://github.com/theory-cloud/AppTheory/commit/f7f6f0073cd61796ea1c0c828340acf0ca0020d1)), closes [#593](https://github.com/theory-cloud/AppTheory/issues/593)
+
 ## [1.8.0-rc](https://github.com/theory-cloud/AppTheory/compare/v1.7.1...v1.8.0-rc) (2026-05-24)
 
 
