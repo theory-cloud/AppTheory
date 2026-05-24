@@ -260,6 +260,10 @@ Lift-compatible masking helpers are available in sanitization:
 
 These helpers return `"(empty)"` for empty input and `"***masked***"` when the value is too short.
 
+For service logs, prefer AppTheory's fixture-backed [logging profiles](../features/logging-profiles.md) over
+service-local encoders. Select a built-in profile such as `paytheory-alert-v1`, provide required static enrichment from
+deployment configuration, and keep Slack/alert routing in the operations layer that consumes the JSON logs.
+
 ### 8) AWS entrypoints (HTTP)
 
 Contract v0 covers AWS HTTP events:
