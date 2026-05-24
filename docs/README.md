@@ -62,6 +62,7 @@ These pages are versioned with the docs contract, but they are not part of the i
 ## Functional guides now covered by the canonical ingest surface
 
 - [Sanitization](./features/sanitization.md)
+- [Logging Profiles](./features/logging-profiles.md)
 - [Jobs Ledger](./features/jobs-ledger.md)
 - [MCP Runtime](./integrations/mcp.md)
 - [Bedrock AgentCore MCP](./integrations/agentcore-mcp.md)

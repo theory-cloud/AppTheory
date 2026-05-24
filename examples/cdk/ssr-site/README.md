@@ -47,6 +47,13 @@ new AppTheorySsrSite(this, "Site", {
   // Dynamic same-origin routes that should bypass the origin group.
   ssrPathPatterns: ["/actions/*"],
 
+  // Add bearer-auth Lambda Function URL API co-origins when one distribution
+  // must serve SSR plus handler-authenticated APIs.
+  // bearerFunctionUrlOrigins: [
+  //   { function: controlPlaneApiFunction, pathPatterns: ["/api/*", "/auth/*", "/setup/*"] },
+  //   { function: trustApiFunction, pathPatterns: ["/.well-known/*", "/attestations/*"] },
+  // ],
+
   // This example keeps the auth model explicit because it wants public direct
   // Function URL compatibility during smoke verification.
   ssrUrlAuthType: lambda.FunctionUrlAuthType.NONE,
@@ -69,6 +76,16 @@ Default SSR origin contract:
 - The default `ssg-isr` HTML behavior and any `staticPathPatterns` HTML sections use a public cache policy that keys on all query strings plus stable public variant headers, excludes cookies, and still lets origin cache-control headers drive freshness.
 - Direct S3 asset/data behaviors continue to use origin-defined cache-control semantics.
 - AppTheory provisions baseline CDN security headers by default: HSTS, `nosniff`, `frame-options`, `referrer-policy`, XSS protection, and a restrictive `permissions-policy`. CSP remains origin-defined.
+
+Mixed-auth co-origin note:
+
+- Use `bearerFunctionUrlOrigins` for additional Lambda Function URL APIs that keep bearer authentication in handler
+  code while sharing the site distribution.
+- AppTheory creates those co-origin Function URLs as `AuthType.NONE`; the SSR origin still defaults to `AWS_IAM` plus
+  Lambda OAC when `ssrUrlAuthType` is omitted.
+- Co-origin paths participate in AppTheory path-collision checks, bypass SSG/ISR HTML rewrites, and inherit the site
+  edge request-id/original-host functions. Prefer this over raw `site.distribution.addBehavior(...)` for AppTheory-owned
+  mixed-auth sites.
 
 Tenant trust migration note:
 
