@@ -73,17 +73,61 @@ function expandBehaviorPathPatterns(patterns: string[]): string[] {
   return Array.from(expanded);
 }
 
+interface SeenBehaviorPattern {
+  readonly pattern: string;
+  readonly label: string;
+}
+
+function pathPatternWildcardPrefix(pattern: string): string | undefined {
+  const wildcardIndex = pattern.indexOf("*");
+  if (wildcardIndex < 0) {
+    return undefined;
+  }
+  return pattern.slice(0, wildcardIndex);
+}
+
+function pathPatternCoversPattern(left: string, right: string): boolean {
+  if (left === right) {
+    return true;
+  }
+
+  const wildcardPrefix = pathPatternWildcardPrefix(left);
+  if (wildcardPrefix === undefined) {
+    return false;
+  }
+  if (wildcardPrefix.length === 0) {
+    return true;
+  }
+
+  return right.startsWith(wildcardPrefix);
+}
+
+function pathPatternsCanOverlap(left: string, right: string): boolean {
+  return pathPatternCoversPattern(left, right) || pathPatternCoversPattern(right, left);
+}
+
 function assertNoConflictingBehaviorPatterns(
   label: string,
   patterns: string[],
   seenOwners: Map<string, string>,
+  seenPatterns: SeenBehaviorPattern[],
 ): void {
   for (const pattern of expandBehaviorPathPatterns(patterns)) {
     const owner = seenOwners.get(pattern);
     if (owner && owner !== label) {
       throw new Error(`AppTheorySsrSite received overlapping path pattern "${pattern}" for ${owner} and ${label}`);
     }
+
+    for (const seenPattern of seenPatterns) {
+      if (seenPattern.label !== label && pathPatternsCanOverlap(seenPattern.pattern, pattern)) {
+        throw new Error(
+          `AppTheorySsrSite received overlapping path patterns "${seenPattern.pattern}" and "${pattern}" for ${seenPattern.label} and ${label}`,
+        );
+      }
+    }
+
     seenOwners.set(pattern, label);
+    seenPatterns.push({ pattern, label });
   }
 }
 
@@ -566,6 +610,7 @@ export class AppTheorySsrSite extends Construct {
     });
     const bearerFunctionUrlPathPatterns = bearerFunctionUrlOriginConfigs.flatMap((config) => config.pathPatterns);
     const behaviorPatternOwners = new Map<string, string>();
+    const behaviorPatterns: SeenBehaviorPattern[] = [];
     const ssrUrlAuthType = props.ssrUrlAuthType ?? lambda.FunctionUrlAuthType.AWS_IAM;
     const allowViewerTenantHeaders = props.allowViewerTenantHeaders ?? false;
 
@@ -680,14 +725,20 @@ export class AppTheorySsrSite extends Construct {
         enableAcceptEncodingGzip: true,
       });
 
-    assertNoConflictingBehaviorPatterns("direct S3 paths", [`${assetsKeyPrefix}/*`, ...directS3PathPatterns], behaviorPatternOwners);
-    assertNoConflictingBehaviorPatterns("static HTML paths", staticPathPatterns, behaviorPatternOwners);
-    assertNoConflictingBehaviorPatterns("direct SSR paths", ssrPathPatterns, behaviorPatternOwners);
+    assertNoConflictingBehaviorPatterns(
+      "direct S3 paths",
+      [`${assetsKeyPrefix}/*`, ...directS3PathPatterns],
+      behaviorPatternOwners,
+      behaviorPatterns,
+    );
+    assertNoConflictingBehaviorPatterns("static HTML paths", staticPathPatterns, behaviorPatternOwners, behaviorPatterns);
+    assertNoConflictingBehaviorPatterns("direct SSR paths", ssrPathPatterns, behaviorPatternOwners, behaviorPatterns);
     bearerFunctionUrlOriginConfigs.forEach((config, index) => {
       assertNoConflictingBehaviorPatterns(
         `bearer Function URL co-origin ${index + 1}`,
         config.pathPatterns,
         behaviorPatternOwners,
+        behaviorPatterns,
       );
     });
 

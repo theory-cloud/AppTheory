@@ -2230,6 +2230,69 @@ test("AppTheorySsrSite rejects direct S3 ownership of reserved SSR data sidecars
   );
 });
 
+test("AppTheorySsrSite rejects broader direct S3 ownership of reserved SSR data sidecars", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: fn,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+        directS3PathPatterns: ["/_facetheory/*"],
+      }),
+    /AppTheorySsrSite received overlapping path patterns "_facetheory\/\*" and "_facetheory\/ssr-data\/\*" for direct S3 paths and direct SSR paths/,
+  );
+});
+
+test("AppTheorySsrSite rejects broader static HTML ownership of reserved SSR data sidecars", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: fn,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+        staticPathPatterns: ["/_facetheory/*"],
+      }),
+    /AppTheorySsrSite received overlapping path patterns "_facetheory\/data\/\*" and "_facetheory\/\*" for direct S3 paths and static HTML paths/,
+  );
+});
+
+test("AppTheorySsrSite rejects nested static HTML ownership of reserved SSR data sidecars", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: fn,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+        staticPathPatterns: ["/_facetheory/ssr-data/private/*"],
+      }),
+    /AppTheorySsrSite received overlapping path patterns "_facetheory\/ssr-data\/private\/\*" and "_facetheory\/ssr-data\/\*" for static HTML paths and direct SSR paths/,
+  );
+});
+
 test("AppTheorySsrSite expands static HTML and direct SSR path patterns for root plus nested routes", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
