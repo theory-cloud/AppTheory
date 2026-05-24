@@ -44,8 +44,21 @@ new AppTheorySsrSite(this, "Site", {
   // Cacheable HTML sections that should stay on S3.
   staticPathPatterns: ["/marketing/*"],
 
-  // Dynamic same-origin routes that should stay on Lambda.
+  // Dynamic same-origin routes that should stay on the SSR Lambda.
   ssrPathPatterns: ["/actions/*"],
+
+  // Bearer-auth API co-origins that share the distribution without weakening
+  // the SSR origin's AWS_IAM + Lambda OAC posture.
+  bearerFunctionUrlOrigins: [
+    {
+      function: controlPlaneApiFunction,
+      pathPatterns: ["/api/*", "/auth/*", "/setup/*"],
+    },
+    {
+      function: trustApiFunction,
+      pathPatterns: ["/.well-known/*", "/attestations/*"],
+    },
+  ],
 
   // Optional explicit compatibility override. Omit this to keep the default
   // CloudFront-signed AWS_IAM Function URL origin.
@@ -85,6 +98,43 @@ new AppTheorySsrSite(this, "Site", {
     - tenant-like viewer headers join the cache key only when `allowViewerTenantHeaders: true` is explicitly enabled
     - origin cache-control headers still drive freshness within that safe cache key
   - direct S3 asset/data behaviors continue to use origin cache-control semantics
+
+## Mixed-auth Lambda Function URL co-origins
+
+Use `bearerFunctionUrlOrigins` when the same CloudFront distribution must host AppTheory-managed FaceTheory SSR plus
+additional Lambda Function URL APIs that authenticate inside handler code. This is the supported AppTheory path for
+mixed-auth co-origins. Do not hand-wire raw `site.distribution.addBehavior(...)` calls when AppTheory should own path
+collision checks, SSG/ISR rewrite bypasses, and edge request-id/original-host policy.
+
+```ts
+new AppTheorySsrSite(this, "Site", {
+  ssrFunction,
+  mode: AppTheorySsrSiteMode.SSG_ISR,
+
+  // Omit ssrUrlAuthType so the SSR origin keeps AWS_IAM + Lambda OAC.
+  bearerFunctionUrlOrigins: [
+    {
+      function: controlPlaneApiFunction,
+      pathPatterns: ["/api/*", "/auth/*", "/setup/*"],
+    },
+    {
+      function: trustApiFunction,
+      pathPatterns: ["/.well-known/*", "/attestations/*"],
+    },
+  ],
+});
+```
+
+AppTheory creates each co-origin Function URL with `lambda.FunctionUrlAuthType.NONE`. The co-origin behaviors use
+`AllowedMethods.ALLOW_ALL`, `CachePolicy.CACHING_DISABLED`, and
+`OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER`, so bearer headers reach the API without forwarding the viewer
+`Host` header to Lambda Function URLs. The site's response headers policy and viewer request/response functions are
+applied to these behaviors, preserving `x-request-id` echo and `x-apptheory-*` / `x-facetheory-*` original host and URI
+headers.
+
+The SSR Lambda OAC posture is origin-scoped: AppTheory attaches Lambda OAC only to the SSR Function URL origin when
+`ssrUrlAuthType` is omitted or set to `AWS_IAM`. Bearer co-origins remain non-OAC `AuthType.NONE` Function URLs and are
+expected to enforce authentication in handler code.
 
 ## Tenant trust
 

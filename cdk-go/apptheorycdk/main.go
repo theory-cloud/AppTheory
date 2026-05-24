@@ -748,6 +748,7 @@ func init() {
 			_jsii_.MemberProperty{JsiiProperty: "assetsBucket", GoGetter: "AssetsBucket"},
 			_jsii_.MemberProperty{JsiiProperty: "assetsKeyPrefix", GoGetter: "AssetsKeyPrefix"},
 			_jsii_.MemberProperty{JsiiProperty: "assetsManifestKey", GoGetter: "AssetsManifestKey"},
+			_jsii_.MemberProperty{JsiiProperty: "bearerFunctionUrls", GoGetter: "BearerFunctionUrls"},
 			_jsii_.MemberProperty{JsiiProperty: "certificate", GoGetter: "Certificate"},
 			_jsii_.MemberProperty{JsiiProperty: "distribution", GoGetter: "Distribution"},
 			_jsii_.MemberProperty{JsiiProperty: "htmlStoreBucket", GoGetter: "HtmlStoreBucket"},
@@ -765,6 +766,10 @@ func init() {
 			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
 			return &j
 		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheorySsrSiteBearerFunctionUrlOrigin",
+		reflect.TypeOf((*AppTheorySsrSiteBearerFunctionUrlOrigin)(nil)).Elem(),
 	)
 	_jsii_.RegisterEnum(
 		"@theory-cloud/apptheory-cdk.AppTheorySsrSiteMode",
