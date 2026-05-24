@@ -2293,6 +2293,53 @@ test("AppTheorySsrSite rejects nested static HTML ownership of reserved SSR data
   );
 });
 
+test("AppTheorySsrSite rejects question-mark wildcard shadows of reserved SSR data sidecars", () => {
+  const createStack = (id) => {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, id);
+    const fn = new lambda.Function(stack, "Fn", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "index.handler",
+      code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    });
+
+    return { fn, stack };
+  };
+
+  const directS3AnySuffix = createStack("DirectS3AnySuffixStack");
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(directS3AnySuffix.stack, "Site", {
+        ssrFunction: directS3AnySuffix.fn,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+        directS3PathPatterns: ["/_facetheory/ssr-data?*"],
+      }),
+    /AppTheorySsrSite received overlapping path patterns "_facetheory\/ssr-data\?\*" and "_facetheory\/ssr-data\/\*" for direct S3 paths and direct SSR paths/,
+  );
+
+  const staticAnySuffix = createStack("StaticAnySuffixStack");
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(staticAnySuffix.stack, "Site", {
+        ssrFunction: staticAnySuffix.fn,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+        staticPathPatterns: ["/_facetheory/ssr-data?*"],
+      }),
+    /AppTheorySsrSite received overlapping path patterns "_facetheory\/ssr-data\?\*" and "_facetheory\/ssr-data\/\*" for static HTML paths and direct SSR paths/,
+  );
+
+  const directS3SegmentCharacter = createStack("DirectS3SegmentCharacterStack");
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(directS3SegmentCharacter.stack, "Site", {
+        ssrFunction: directS3SegmentCharacter.fn,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+        directS3PathPatterns: ["/_facetheory/ssr-dat?/*"],
+      }),
+    /AppTheorySsrSite received overlapping path patterns "_facetheory\/ssr-dat\?\/\*" and "_facetheory\/ssr-data\/\*" for direct S3 paths and direct SSR paths/,
+  );
+});
+
 test("AppTheorySsrSite expands static HTML and direct SSR path patterns for root plus nested routes", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");

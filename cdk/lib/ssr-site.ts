@@ -78,32 +78,91 @@ interface SeenBehaviorPattern {
   readonly label: string;
 }
 
-function pathPatternWildcardPrefix(pattern: string): string | undefined {
-  const wildcardIndex = pattern.indexOf("*");
-  if (wildcardIndex < 0) {
-    return undefined;
-  }
-  return pattern.slice(0, wildcardIndex);
+interface PathPatternTransition {
+  readonly target: number;
+  readonly any: boolean;
+  readonly literal?: string;
 }
 
-function pathPatternCoversPattern(left: string, right: string): boolean {
-  if (left === right) {
-    return true;
+function pathPatternEpsilonClosure(pattern: string, index: number): number[] {
+  const closure: number[] = [];
+  const seen = new Set<number>();
+  const stack = [index];
+
+  while (stack.length > 0) {
+    const current = stack.pop() ?? 0;
+    if (seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+    closure.push(current);
+
+    if (pattern[current] === "*") {
+      stack.push(current + 1);
+    }
   }
 
-  const wildcardPrefix = pathPatternWildcardPrefix(left);
-  if (wildcardPrefix === undefined) {
-    return false;
-  }
-  if (wildcardPrefix.length === 0) {
-    return true;
+  return closure;
+}
+
+function pathPatternTransitions(pattern: string, index: number): PathPatternTransition[] {
+  const token = pattern[index];
+  if (token === undefined) {
+    return [];
   }
 
-  return right.startsWith(wildcardPrefix);
+  if (token === "*") {
+    return [{ target: index, any: true }];
+  }
+
+  if (token === "?") {
+    return [{ target: index + 1, any: true }];
+  }
+
+  return [{ target: index + 1, any: false, literal: token }];
+}
+
+function pathPatternTransitionsCanShareCharacter(left: PathPatternTransition, right: PathPatternTransition): boolean {
+  return left.any || right.any || left.literal === right.literal;
 }
 
 function pathPatternsCanOverlap(left: string, right: string): boolean {
-  return pathPatternCoversPattern(left, right) || pathPatternCoversPattern(right, left);
+  const seenStates = new Set<string>();
+  const queue: Array<[number, number]> = [];
+
+  const enqueueClosurePairs = (leftIndex: number, rightIndex: number): void => {
+    for (const leftClosed of pathPatternEpsilonClosure(left, leftIndex)) {
+      for (const rightClosed of pathPatternEpsilonClosure(right, rightIndex)) {
+        const key = `${leftClosed}:${rightClosed}`;
+        if (seenStates.has(key)) {
+          continue;
+        }
+        seenStates.add(key);
+        queue.push([leftClosed, rightClosed]);
+      }
+    }
+  };
+
+  enqueueClosurePairs(0, 0);
+
+  while (queue.length > 0) {
+    const [leftIndex, rightIndex] = queue.shift() ?? [0, 0];
+    if (leftIndex === left.length && rightIndex === right.length) {
+      return true;
+    }
+
+    for (const leftTransition of pathPatternTransitions(left, leftIndex)) {
+      for (const rightTransition of pathPatternTransitions(right, rightIndex)) {
+        if (!pathPatternTransitionsCanShareCharacter(leftTransition, rightTransition)) {
+          continue;
+        }
+
+        enqueueClosurePairs(leftTransition.target, rightTransition.target);
+      }
+    }
+  }
+
+  return false;
 }
 
 function assertNoConflictingBehaviorPatterns(

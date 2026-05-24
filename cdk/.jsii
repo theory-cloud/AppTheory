@@ -19053,7 +19053,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/ssr-site.ts",
-          "line": 493
+          "line": 552
         },
         "parameters": [
           {
@@ -19079,7 +19079,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 479
+        "line": 538
       },
       "name": "AppTheorySsrSite",
       "properties": [
@@ -19087,7 +19087,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 480
+            "line": 539
           },
           "name": "assetsBucket",
           "type": {
@@ -19098,7 +19098,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 481
+            "line": 540
           },
           "name": "assetsKeyPrefix",
           "type": {
@@ -19109,7 +19109,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 482
+            "line": 541
           },
           "name": "assetsManifestKey",
           "type": {
@@ -19120,7 +19120,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 488
+            "line": 547
           },
           "name": "bearerFunctionUrls",
           "type": {
@@ -19136,7 +19136,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 489
+            "line": 548
           },
           "name": "distribution",
           "type": {
@@ -19147,7 +19147,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 491
+            "line": 550
           },
           "name": "responseHeadersPolicy",
           "type": {
@@ -19158,7 +19158,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 487
+            "line": 546
           },
           "name": "ssrUrl",
           "type": {
@@ -19169,7 +19169,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 490
+            "line": 549
           },
           "name": "certificate",
           "optional": true,
@@ -19181,7 +19181,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 483
+            "line": 542
           },
           "name": "htmlStoreBucket",
           "optional": true,
@@ -19193,7 +19193,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 484
+            "line": 543
           },
           "name": "htmlStoreKeyPrefix",
           "optional": true,
@@ -19205,7 +19205,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 485
+            "line": 544
           },
           "name": "isrMetadataTable",
           "optional": true,
@@ -19217,7 +19217,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 486
+            "line": 545
           },
           "name": "logsBucket",
           "optional": true,
@@ -19235,7 +19235,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 455
+        "line": 514
       },
       "name": "AppTheorySsrSiteBearerFunctionUrlOrigin",
       "properties": [
@@ -19248,7 +19248,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 462
+            "line": 521
           },
           "name": "function",
           "type": {
@@ -19264,7 +19264,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 470
+            "line": 529
           },
           "name": "pathPatterns",
           "type": {
@@ -19285,7 +19285,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 476
+            "line": 535
           },
           "name": "invokeMode",
           "optional": true,
@@ -19330,7 +19330,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 257
+        "line": 316
       },
       "name": "AppTheorySsrSiteProps",
       "properties": [
@@ -19339,7 +19339,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 258
+            "line": 317
           },
           "name": "ssrFunction",
           "type": {
@@ -19356,7 +19356,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 411
+            "line": 470
           },
           "name": "allowViewerTenantHeaders",
           "optional": true,
@@ -19369,7 +19369,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 289
+            "line": 348
           },
           "name": "assetsBucket",
           "optional": true,
@@ -19382,7 +19382,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 291
+            "line": 350
           },
           "name": "assetsKeyPrefix",
           "optional": true,
@@ -19395,7 +19395,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 292
+            "line": 351
           },
           "name": "assetsManifestKey",
           "optional": true,
@@ -19408,7 +19408,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 290
+            "line": 349
           },
           "name": "assetsPath",
           "optional": true,
@@ -19421,7 +19421,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 446
+            "line": 505
           },
           "name": "autoDeleteObjects",
           "optional": true,
@@ -19438,7 +19438,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 352
+            "line": 411
           },
           "name": "bearerFunctionUrlOrigins",
           "optional": true,
@@ -19461,7 +19461,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 373
+            "line": 432
           },
           "name": "cacheTableName",
           "optional": true,
@@ -19474,7 +19474,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 450
+            "line": 509
           },
           "name": "certificateArn",
           "optional": true,
@@ -19491,7 +19491,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 325
+            "line": 384
           },
           "name": "directS3PathPatterns",
           "optional": true,
@@ -19509,7 +19509,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 448
+            "line": 507
           },
           "name": "domainName",
           "optional": true,
@@ -19522,7 +19522,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 413
+            "line": 472
           },
           "name": "enableLogging",
           "optional": true,
@@ -19535,7 +19535,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 449
+            "line": 508
           },
           "name": "hostedZone",
           "optional": true,
@@ -19552,7 +19552,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 443
+            "line": 502
           },
           "name": "htmlCachePolicy",
           "optional": true,
@@ -19569,7 +19569,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 301
+            "line": 360
           },
           "name": "htmlStoreBucket",
           "optional": true,
@@ -19586,7 +19586,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 307
+            "line": 366
           },
           "name": "htmlStoreKeyPrefix",
           "optional": true,
@@ -19603,7 +19603,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 275
+            "line": 334
           },
           "name": "invokeMode",
           "optional": true,
@@ -19620,7 +19620,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 360
+            "line": 419
           },
           "name": "isrMetadataTable",
           "optional": true,
@@ -19637,7 +19637,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 367
+            "line": 426
           },
           "name": "isrMetadataTableName",
           "optional": true,
@@ -19650,7 +19650,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 414
+            "line": 473
           },
           "name": "logsBucket",
           "optional": true,
@@ -19668,7 +19668,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 269
+            "line": 328
           },
           "name": "mode",
           "optional": true,
@@ -19681,7 +19681,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 445
+            "line": 504
           },
           "name": "removalPolicy",
           "optional": true,
@@ -19698,7 +19698,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 423
+            "line": 482
           },
           "name": "responseHeadersPolicy",
           "optional": true,
@@ -19716,7 +19716,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 432
+            "line": 491
           },
           "name": "ssrCachePolicy",
           "optional": true,
@@ -19733,7 +19733,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 396
+            "line": 455
           },
           "name": "ssrForwardHeaders",
           "optional": true,
@@ -19755,7 +19755,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 337
+            "line": 396
           },
           "name": "ssrPathPatterns",
           "optional": true,
@@ -19778,7 +19778,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 287
+            "line": 346
           },
           "name": "ssrUrlAuthType",
           "optional": true,
@@ -19795,7 +19795,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 317
+            "line": 376
           },
           "name": "staticPathPatterns",
           "optional": true,
@@ -19813,7 +19813,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 452
+            "line": 511
           },
           "name": "webAclId",
           "optional": true,
@@ -19826,7 +19826,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 376
+            "line": 435
           },
           "name": "wireRuntimeEnv",
           "optional": true,
@@ -20826,5 +20826,5 @@
     }
   },
   "version": "1.8.0",
-  "fingerprint": "XaSfasItdMgUclLZ6TkwWX8Q8W4RAHo8arSeNVxiYik="
+  "fingerprint": "yQQj6ugJ0JosmODmI5Z310iEwfb2546UpjoHNCFFU1U="
 }
