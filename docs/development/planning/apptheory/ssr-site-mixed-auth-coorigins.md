@@ -98,7 +98,7 @@ contract checks.
 ## Deprecation and migration plan
 
 No deprecation. Existing `ssrPathPatterns`, `staticPathPatterns`, and `directS3PathPatterns` remain valid. Applications
-that hand-wired extra behaviors can migrate to `coOrigins` when they want AppTheory-owned collision checks and rewrite
+that hand-wired extra behaviors can migrate to `bearerFunctionUrlOrigins` when they want AppTheory-owned collision checks and rewrite
 bypass behavior.
 
 ## Open questions

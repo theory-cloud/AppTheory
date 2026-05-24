@@ -1784,7 +1784,48 @@ test("AppTheorySsrSite rejects overlapping bearer Function URL co-origin paths",
           },
         ],
       }),
-    /AppTheorySsrSite received overlapping path pattern "assets\/\*" for direct S3 paths and bearer Function URL co-origins/,
+    /AppTheorySsrSite received overlapping path pattern "assets\/\*" for direct S3 paths and bearer Function URL co-origin 1/,
+  );
+});
+
+test("AppTheorySsrSite rejects duplicate bearer Function URL co-origin paths across origins", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const handlerCode = lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });");
+  const ssrFn = new lambda.Function(stack, "SsrFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: handlerCode,
+  });
+  const apiFn = new lambda.Function(stack, "ApiFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: handlerCode,
+  });
+  const trustFn = new lambda.Function(stack, "TrustFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: handlerCode,
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: ssrFn,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+        bearerFunctionUrlOrigins: [
+          {
+            function: apiFn,
+            pathPatterns: ["/api/*"],
+          },
+          {
+            function: trustFn,
+            pathPatterns: ["/api"],
+          },
+        ],
+      }),
+    /AppTheorySsrSite received overlapping path pattern "api" for bearer Function URL co-origin 1 and bearer Function URL co-origin 2/,
   );
 });
 
