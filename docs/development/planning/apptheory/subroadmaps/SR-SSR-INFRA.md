@@ -90,4 +90,3 @@ Acceptance:
 - Co-origin behaviors share the site distribution without weakening the SSR origin's `AWS_IAM` + Lambda OAC default.
 - Co-origin path patterns participate in conflict detection and bypass SSG/ISR HTML rewrites.
 - CDK synth tests and docs cover the supported mixed-auth shape.
-

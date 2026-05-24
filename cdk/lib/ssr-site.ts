@@ -547,7 +547,7 @@ export class AppTheorySsrSite extends Construct {
     const bearerFunctionUrlOrigins = Array.isArray(props.bearerFunctionUrlOrigins)
       ? props.bearerFunctionUrlOrigins
       : [];
-    const bearerFunctionUrlPathPatterns = bearerFunctionUrlOrigins.flatMap((origin, index) => {
+    const bearerFunctionUrlOriginConfigs = bearerFunctionUrlOrigins.map((origin, index) => {
       if (!origin?.function) {
         throw new Error(`AppTheorySsrSite bearerFunctionUrlOrigins[${index}] requires function`);
       }
@@ -555,8 +555,9 @@ export class AppTheorySsrSite extends Construct {
       if (pathPatterns.length === 0) {
         throw new Error(`AppTheorySsrSite bearerFunctionUrlOrigins[${index}] requires at least one path pattern`);
       }
-      return pathPatterns;
+      return { origin, pathPatterns };
     });
+    const bearerFunctionUrlPathPatterns = bearerFunctionUrlOriginConfigs.flatMap((config) => config.pathPatterns);
     const behaviorPatternOwners = new Map<string, string>();
     const ssrUrlAuthType = props.ssrUrlAuthType ?? lambda.FunctionUrlAuthType.AWS_IAM;
     const allowViewerTenantHeaders = props.allowViewerTenantHeaders ?? false;
@@ -675,11 +676,13 @@ export class AppTheorySsrSite extends Construct {
     assertNoConflictingBehaviorPatterns("direct S3 paths", [`${assetsKeyPrefix}/*`, ...directS3PathPatterns], behaviorPatternOwners);
     assertNoConflictingBehaviorPatterns("static HTML paths", staticPathPatterns, behaviorPatternOwners);
     assertNoConflictingBehaviorPatterns("direct SSR paths", ssrPathPatterns, behaviorPatternOwners);
-    assertNoConflictingBehaviorPatterns(
-      "bearer Function URL co-origins",
-      bearerFunctionUrlPathPatterns,
-      behaviorPatternOwners,
-    );
+    bearerFunctionUrlOriginConfigs.forEach((config, index) => {
+      assertNoConflictingBehaviorPatterns(
+        `bearer Function URL co-origin ${index + 1}`,
+        config.pathPatterns,
+        behaviorPatternOwners,
+      );
+    });
 
     const viewerRequestFunction = new cloudfront.Function(this, "SsrViewerRequestFunction", {
       code: cloudfront.FunctionCode.fromInline(
@@ -815,11 +818,11 @@ export class AppTheorySsrSite extends Construct {
     addExpandedBehavior(staticPathPatterns, createStaticHtmlBehavior);
     addExpandedBehavior(ssrPathPatterns, createSsrBehavior);
     this.bearerFunctionUrls = [];
-    bearerFunctionUrlOrigins.forEach((origin, index) => {
+    bearerFunctionUrlOriginConfigs.forEach((config, index) => {
       const functionUrl = new lambda.FunctionUrl(this, `BearerFunctionUrl${index + 1}`, {
-        function: origin.function,
+        function: config.origin.function,
         authType: lambda.FunctionUrlAuthType.NONE,
-        invokeMode: origin.invokeMode ?? lambda.InvokeMode.BUFFERED,
+        invokeMode: config.origin.invokeMode ?? lambda.InvokeMode.BUFFERED,
       });
       this.bearerFunctionUrls.push(functionUrl);
       const functionUrlOrigin = new origins.FunctionUrlOrigin(functionUrl);
@@ -832,7 +835,7 @@ export class AppTheorySsrSite extends Construct {
         responseHeadersPolicy: this.responseHeadersPolicy,
         functionAssociations: createEdgeFunctionAssociations(),
       });
-      addExpandedBehavior(normalizePathPatterns(origin.pathPatterns), createBearerFunctionUrlBehavior);
+      addExpandedBehavior(config.pathPatterns, createBearerFunctionUrlBehavior);
     });
 
     const defaultOrigin =
