@@ -56,7 +56,7 @@ than asking applications to hand-wire raw `distribution.addBehavior(...)` calls 
 
 ### 3. Document and example the supported co-origin pattern
 
-- **Paths**: `docs/cdk/ssr-site.md`, `examples/cdk/ssr-site/README.md`, `examples/cdk/ssr-site/lib/ssr-site-stack.ts`
+- **Paths**: `docs/cdk/ssr-site.md`, `examples/cdk/ssr-site/README.md`
 - **Runtime scope**: none
 - **Contract impact**: doc-only / example
 - **Acceptance**: Operators can copy the documented co-origin API, understand that OAC is origin-scoped, and see how added bearer origins differ from raw `distribution.addBehavior(...)`.
