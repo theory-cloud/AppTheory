@@ -18,6 +18,7 @@ type AppTheorySsrSite interface {
 	AssetsBucket() awss3.IBucket
 	AssetsKeyPrefix() *string
 	AssetsManifestKey() *string
+	BearerFunctionUrls() *[]awslambda.FunctionUrl
 	Certificate() awscertificatemanager.ICertificate
 	Distribution() awscloudfront.Distribution
 	HtmlStoreBucket() awss3.IBucket
@@ -71,6 +72,16 @@ func (j *jsiiProxy_AppTheorySsrSite) AssetsManifestKey() *string {
 	_jsii_.Get(
 		j,
 		"assetsManifestKey",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheorySsrSite) BearerFunctionUrls() *[]awslambda.FunctionUrl {
+	var returns *[]awslambda.FunctionUrl
+	_jsii_.Get(
+		j,
+		"bearerFunctionUrls",
 		&returns,
 	)
 	return returns

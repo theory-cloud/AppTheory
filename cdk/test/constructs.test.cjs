@@ -6,6 +6,7 @@ const test = require("node:test");
 const cdk = require("aws-cdk-lib");
 const assertions = require("aws-cdk-lib/assertions");
 const codebuild = require("aws-cdk-lib/aws-codebuild");
+const cloudfront = require("aws-cdk-lib/aws-cloudfront");
 const dynamodb = require("aws-cdk-lib/aws-dynamodb");
 const ec2 = require("aws-cdk-lib/aws-ec2");
 const events = require("aws-cdk-lib/aws-events");
@@ -1648,6 +1649,145 @@ test("AppTheorySsrSite signs direct SSR write paths by default", () => {
   assert.equal(publicUrlPermissions.length, 0);
 });
 
+test("AppTheorySsrSite composes bearer Function URL co-origins without weakening SSR OAC", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const handlerCode = lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });");
+  const ssrFn = new lambda.Function(stack, "SsrFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: handlerCode,
+  });
+  const controlPlaneFn = new lambda.Function(stack, "ControlPlaneFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: handlerCode,
+  });
+  const trustFn = new lambda.Function(stack, "TrustFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: handlerCode,
+  });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: ssrFn,
+    mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+    bearerFunctionUrlOrigins: [
+      {
+        function: controlPlaneFn,
+        pathPatterns: ["/api/*", "/auth/*", "/setup/*"],
+      },
+      {
+        function: trustFn,
+        pathPatterns: ["/.well-known/*", "/attestations/*"],
+      },
+    ],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = template.Resources ?? {};
+  const resourceValues = Object.values(resources);
+  const distribution = resourceValues.find((resource) => resource.Type === "AWS::CloudFront::Distribution");
+  const requestFunction = resourceValues.find(
+    (resource) =>
+      resource.Type === "AWS::CloudFront::Function" &&
+      String(resource.Properties?.FunctionConfig?.Comment ?? "").includes("viewer-request"),
+  );
+  const functionUrls = resourceValues.filter((resource) => resource.Type === "AWS::Lambda::Url");
+  const lambdaOriginAccessControls = resourceValues.filter(
+    (resource) =>
+      resource.Type === "AWS::CloudFront::OriginAccessControl" &&
+      resource.Properties?.OriginAccessControlConfig?.OriginAccessControlOriginType === "lambda",
+  );
+  const publicUrlPermissions = resourceValues.filter(
+    (resource) =>
+      resource.Type === "AWS::Lambda::Permission" &&
+      resource.Properties?.Principal === "*" &&
+      resource.Properties?.Action === "lambda:InvokeFunctionUrl",
+  );
+
+  assert.ok(distribution, "Should synthesize a CloudFront distribution");
+  assert.ok(requestFunction, "Should synthesize the shared SSR viewer-request function");
+  assert.equal(lambdaOriginAccessControls.length, 1);
+  assert.deepEqual(
+    functionUrls.map((resource) => resource.Properties?.AuthType).sort(),
+    ["AWS_IAM", "NONE", "NONE"],
+  );
+  assert.equal(publicUrlPermissions.length, 2);
+
+  const distributionConfig = distribution.Properties?.DistributionConfig ?? {};
+  const origins = distributionConfig.Origins ?? [];
+  const originsById = new Map(origins.map((origin) => [origin.Id, origin]));
+  const cacheBehaviors = distributionConfig.CacheBehaviors ?? [];
+  const bearerBehaviorPatterns = [
+    "api/*",
+    "api",
+    "auth/*",
+    "auth",
+    "setup/*",
+    "setup",
+    ".well-known/*",
+    ".well-known",
+    "attestations/*",
+    "attestations",
+  ];
+  const bearerBehaviors = bearerBehaviorPatterns.map((pattern) => {
+    const behavior = cacheBehaviors.find((candidate) => candidate.PathPattern === pattern);
+    assert.ok(behavior, `Should synthesize bearer Function URL behavior for ${pattern}`);
+    return behavior;
+  });
+
+  for (const behavior of bearerBehaviors) {
+    const targetOrigin = originsById.get(behavior.TargetOriginId);
+    assert.ok(targetOrigin, `Should synthesize origin for ${behavior.PathPattern}`);
+    assert.equal(targetOrigin.CustomOriginConfig?.OriginProtocolPolicy, "https-only");
+    assert.equal(targetOrigin.OriginAccessControlId, undefined);
+    assert.deepEqual(behavior.AllowedMethods, ["GET", "HEAD", "OPTIONS", "PUT", "PATCH", "POST", "DELETE"]);
+    assert.equal(behavior.CachePolicyId, "4135ea2d-6df8-44a3-9df3-4b5a84be39ad");
+    assert.equal(behavior.OriginRequestPolicyId, "b689b0a8-53d0-40ab-baf2-68738e2966ac");
+    assert.equal(behavior.FunctionAssociations?.length, 2);
+  }
+
+  const functionCode = String(requestFunction.Properties?.FunctionCode ?? "");
+  assert.ok(functionCode.includes("'/api'"));
+  assert.ok(functionCode.includes("'/.well-known'"));
+  assert.match(functionCode, /x-apptheory-original-host/);
+  assert.match(functionCode, /x-request-id/);
+});
+
+test("AppTheorySsrSite rejects overlapping bearer Function URL co-origin paths", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const handlerCode = lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });");
+  const ssrFn = new lambda.Function(stack, "SsrFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: handlerCode,
+  });
+  const apiFn = new lambda.Function(stack, "ApiFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: handlerCode,
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: ssrFn,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+        bearerFunctionUrlOrigins: [
+          {
+            function: apiFn,
+            pathPatterns: ["/assets/*"],
+          },
+        ],
+      }),
+    /AppTheorySsrSite received overlapping path pattern "assets\/\*" for direct S3 paths and bearer Function URL co-origins/,
+  );
+});
+
 test("AppTheorySsrSite defaults to FaceTheory-safe SSR origin request headers", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -2604,8 +2744,6 @@ test("AppTheoryPathRoutedFrontend (domain + Route53) synthesizes expected templa
 // ============================================================================
 // AppTheoryMediaCdn tests
 // ============================================================================
-
-const cloudfront = require("aws-cdk-lib/aws-cloudfront");
 
 test("AppTheoryMediaCdn (basic) synthesizes expected template", () => {
   const app = new cdk.App();

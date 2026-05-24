@@ -88,6 +88,20 @@ export interface AppTheorySsrSiteProps {
      */
     readonly ssrPathPatterns?: string[];
     /**
+     * Additional bearer-auth Lambda Function URL co-origins to attach to the same CloudFront distribution.
+     *
+     * AppTheory creates each co-origin Function URL with `AuthType.NONE` and routes the supplied
+     * path patterns to it without Lambda Origin Access Control. The SSR origin remains governed by
+     * `ssrUrlAuthType` and still defaults to `AWS_IAM` plus Lambda OAC.
+     *
+     * Co-origin paths participate in AppTheory's behavior path collision checks and bypass `ssg-isr`
+     * HTML rewrites. This is the supported AppTheory path for mixed-auth distributions; do not hand-wire
+     * raw `distribution.addBehavior(...)` calls when AppTheory should own path and edge-context policy.
+     *
+     * Example bearer API paths: `["/api/*", "/auth/*"]`.
+     */
+    readonly bearerFunctionUrlOrigins?: AppTheorySsrSiteBearerFunctionUrlOrigin[];
+    /**
      * Optional TableTheory/DynamoDB table used for FaceTheory ISR metadata and lease coordination.
      *
      * When provided, AppTheory grants the SSR function read/write access and wires the
@@ -174,6 +188,27 @@ export interface AppTheorySsrSiteProps {
     readonly certificateArn?: string;
     readonly webAclId?: string;
 }
+export interface AppTheorySsrSiteBearerFunctionUrlOrigin {
+    /**
+     * Lambda function that AppTheory exposes as a bearer-auth Function URL co-origin.
+     *
+     * AppTheory creates the Function URL with `lambda.FunctionUrlAuthType.NONE`; authentication remains
+     * the responsibility of the Lambda handler.
+     */
+    readonly function: lambda.IFunction;
+    /**
+     * CloudFront path patterns that route to this co-origin.
+     *
+     * Patterns are normalized the same way as `ssrPathPatterns`. A pattern ending in `/*` also creates
+     * a root behavior without the wildcard so `/api/*` covers both `/api` and `/api/...`.
+     */
+    readonly pathPatterns: string[];
+    /**
+     * Lambda Function URL invoke mode for this co-origin.
+     * @default lambda.InvokeMode.BUFFERED
+     */
+    readonly invokeMode?: lambda.InvokeMode;
+}
 export declare class AppTheorySsrSite extends Construct {
     readonly assetsBucket: s3.IBucket;
     readonly assetsKeyPrefix: string;
@@ -183,6 +218,7 @@ export declare class AppTheorySsrSite extends Construct {
     readonly isrMetadataTable?: dynamodb.ITable;
     readonly logsBucket?: s3.IBucket;
     readonly ssrUrl: lambda.FunctionUrl;
+    readonly bearerFunctionUrls: lambda.FunctionUrl[];
     readonly distribution: cloudfront.Distribution;
     readonly certificate?: acm.ICertificate;
     readonly responseHeadersPolicy: cloudfront.IResponseHeadersPolicy;

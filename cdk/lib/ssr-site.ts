@@ -289,6 +289,21 @@ export interface AppTheorySsrSiteProps {
   readonly ssrPathPatterns?: string[];
 
   /**
+   * Additional bearer-auth Lambda Function URL co-origins to attach to the same CloudFront distribution.
+   *
+   * AppTheory creates each co-origin Function URL with `AuthType.NONE` and routes the supplied
+   * path patterns to it without Lambda Origin Access Control. The SSR origin remains governed by
+   * `ssrUrlAuthType` and still defaults to `AWS_IAM` plus Lambda OAC.
+   *
+   * Co-origin paths participate in AppTheory's behavior path collision checks and bypass `ssg-isr`
+   * HTML rewrites. This is the supported AppTheory path for mixed-auth distributions; do not hand-wire
+   * raw `distribution.addBehavior(...)` calls when AppTheory should own path and edge-context policy.
+   *
+   * Example bearer API paths: `["/api/*", "/auth/*"]`.
+   */
+  readonly bearerFunctionUrlOrigins?: AppTheorySsrSiteBearerFunctionUrlOrigin[];
+
+  /**
    * Optional TableTheory/DynamoDB table used for FaceTheory ISR metadata and lease coordination.
    *
    * When provided, AppTheory grants the SSR function read/write access and wires the
@@ -389,6 +404,30 @@ export interface AppTheorySsrSiteProps {
   readonly webAclId?: string;
 }
 
+export interface AppTheorySsrSiteBearerFunctionUrlOrigin {
+  /**
+   * Lambda function that AppTheory exposes as a bearer-auth Function URL co-origin.
+   *
+   * AppTheory creates the Function URL with `lambda.FunctionUrlAuthType.NONE`; authentication remains
+   * the responsibility of the Lambda handler.
+   */
+  readonly function: lambda.IFunction;
+
+  /**
+   * CloudFront path patterns that route to this co-origin.
+   *
+   * Patterns are normalized the same way as `ssrPathPatterns`. A pattern ending in `/*` also creates
+   * a root behavior without the wildcard so `/api/*` covers both `/api` and `/api/...`.
+   */
+  readonly pathPatterns: string[];
+
+  /**
+   * Lambda Function URL invoke mode for this co-origin.
+   * @default lambda.InvokeMode.BUFFERED
+   */
+  readonly invokeMode?: lambda.InvokeMode;
+}
+
 export class AppTheorySsrSite extends Construct {
   public readonly assetsBucket: s3.IBucket;
   public readonly assetsKeyPrefix: string;
@@ -398,6 +437,7 @@ export class AppTheorySsrSite extends Construct {
   public readonly isrMetadataTable?: dynamodb.ITable;
   public readonly logsBucket?: s3.IBucket;
   public readonly ssrUrl: lambda.FunctionUrl;
+  public readonly bearerFunctionUrls: lambda.FunctionUrl[];
   public readonly distribution: cloudfront.Distribution;
   public readonly certificate?: acm.ICertificate;
   public readonly responseHeadersPolicy: cloudfront.IResponseHeadersPolicy;
@@ -504,6 +544,19 @@ export class AppTheorySsrSite extends Construct {
       ...(Array.isArray(props.directS3PathPatterns) ? props.directS3PathPatterns : []),
     ]);
     const ssrPathPatterns = normalizePathPatterns(props.ssrPathPatterns);
+    const bearerFunctionUrlOrigins = Array.isArray(props.bearerFunctionUrlOrigins)
+      ? props.bearerFunctionUrlOrigins
+      : [];
+    const bearerFunctionUrlPathPatterns = bearerFunctionUrlOrigins.flatMap((origin, index) => {
+      if (!origin?.function) {
+        throw new Error(`AppTheorySsrSite bearerFunctionUrlOrigins[${index}] requires function`);
+      }
+      const pathPatterns = normalizePathPatterns(origin.pathPatterns);
+      if (pathPatterns.length === 0) {
+        throw new Error(`AppTheorySsrSite bearerFunctionUrlOrigins[${index}] requires at least one path pattern`);
+      }
+      return pathPatterns;
+    });
     const behaviorPatternOwners = new Map<string, string>();
     const ssrUrlAuthType = props.ssrUrlAuthType ?? lambda.FunctionUrlAuthType.AWS_IAM;
     const allowViewerTenantHeaders = props.allowViewerTenantHeaders ?? false;
@@ -622,13 +675,18 @@ export class AppTheorySsrSite extends Construct {
     assertNoConflictingBehaviorPatterns("direct S3 paths", [`${assetsKeyPrefix}/*`, ...directS3PathPatterns], behaviorPatternOwners);
     assertNoConflictingBehaviorPatterns("static HTML paths", staticPathPatterns, behaviorPatternOwners);
     assertNoConflictingBehaviorPatterns("direct SSR paths", ssrPathPatterns, behaviorPatternOwners);
+    assertNoConflictingBehaviorPatterns(
+      "bearer Function URL co-origins",
+      bearerFunctionUrlPathPatterns,
+      behaviorPatternOwners,
+    );
 
     const viewerRequestFunction = new cloudfront.Function(this, "SsrViewerRequestFunction", {
       code: cloudfront.FunctionCode.fromInline(
         generateSsrViewerRequestFunctionCode(
           siteMode,
           [`${assetsKeyPrefix}/*`, ...directS3PathPatterns],
-          ssrPathPatterns,
+          [...ssrPathPatterns, ...bearerFunctionUrlPathPatterns],
           blockedViewerTenantHeaders,
         ),
       ),
@@ -756,6 +814,26 @@ export class AppTheorySsrSite extends Construct {
     addExpandedBehavior(directS3PathPatterns, createStaticBehavior);
     addExpandedBehavior(staticPathPatterns, createStaticHtmlBehavior);
     addExpandedBehavior(ssrPathPatterns, createSsrBehavior);
+    this.bearerFunctionUrls = [];
+    bearerFunctionUrlOrigins.forEach((origin, index) => {
+      const functionUrl = new lambda.FunctionUrl(this, `BearerFunctionUrl${index + 1}`, {
+        function: origin.function,
+        authType: lambda.FunctionUrlAuthType.NONE,
+        invokeMode: origin.invokeMode ?? lambda.InvokeMode.BUFFERED,
+      });
+      this.bearerFunctionUrls.push(functionUrl);
+      const functionUrlOrigin = new origins.FunctionUrlOrigin(functionUrl);
+      const createBearerFunctionUrlBehavior = (): cloudfront.BehaviorOptions => ({
+        origin: functionUrlOrigin,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        responseHeadersPolicy: this.responseHeadersPolicy,
+        functionAssociations: createEdgeFunctionAssociations(),
+      });
+      addExpandedBehavior(normalizePathPatterns(origin.pathPatterns), createBearerFunctionUrlBehavior);
+    });
 
     const defaultOrigin =
       siteMode === AppTheorySsrSiteMode.SSG_ISR
