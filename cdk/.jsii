@@ -19053,7 +19053,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/ssr-site.ts",
-          "line": 405
+          "line": 445
         },
         "parameters": [
           {
@@ -19079,7 +19079,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 392
+        "line": 431
       },
       "name": "AppTheorySsrSite",
       "properties": [
@@ -19087,7 +19087,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 393
+            "line": 432
           },
           "name": "assetsBucket",
           "type": {
@@ -19098,7 +19098,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 394
+            "line": 433
           },
           "name": "assetsKeyPrefix",
           "type": {
@@ -19109,7 +19109,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 395
+            "line": 434
           },
           "name": "assetsManifestKey",
           "type": {
@@ -19120,7 +19120,23 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 401
+            "line": 440
+          },
+          "name": "bearerFunctionUrls",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_lambda.FunctionUrl"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 441
           },
           "name": "distribution",
           "type": {
@@ -19131,7 +19147,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 403
+            "line": 443
           },
           "name": "responseHeadersPolicy",
           "type": {
@@ -19142,7 +19158,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 400
+            "line": 439
           },
           "name": "ssrUrl",
           "type": {
@@ -19153,7 +19169,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 402
+            "line": 442
           },
           "name": "certificate",
           "optional": true,
@@ -19165,7 +19181,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 396
+            "line": 435
           },
           "name": "htmlStoreBucket",
           "optional": true,
@@ -19177,7 +19193,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 397
+            "line": 436
           },
           "name": "htmlStoreKeyPrefix",
           "optional": true,
@@ -19189,7 +19205,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 398
+            "line": 437
           },
           "name": "isrMetadataTable",
           "optional": true,
@@ -19201,7 +19217,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 399
+            "line": 438
           },
           "name": "logsBucket",
           "optional": true,
@@ -19211,6 +19227,74 @@
         }
       ],
       "symbolId": "lib/ssr-site:AppTheorySsrSite"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheorySsrSiteBearerFunctionUrlOrigin": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheorySsrSiteBearerFunctionUrlOrigin",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/ssr-site.ts",
+        "line": 407
+      },
+      "name": "AppTheorySsrSiteBearerFunctionUrlOrigin",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "AppTheory creates the Function URL with `lambda.FunctionUrlAuthType.NONE`; authentication remains\nthe responsibility of the Lambda handler.",
+            "summary": "Lambda function that AppTheory exposes as a bearer-auth Function URL co-origin."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 414
+          },
+          "name": "function",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Patterns are normalized the same way as `ssrPathPatterns`. A pattern ending in `/*` also creates\na root behavior without the wildcard so `/api/*` covers both `/api` and `/api/...`.",
+            "summary": "CloudFront path patterns that route to this co-origin."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 422
+          },
+          "name": "pathPatterns",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "lambda.InvokeMode.BUFFERED",
+            "summary": "Lambda Function URL invoke mode for this co-origin."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 428
+          },
+          "name": "invokeMode",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.InvokeMode"
+          }
+        }
+      ],
+      "symbolId": "lib/ssr-site:AppTheorySsrSiteBearerFunctionUrlOrigin"
     },
     "@theory-cloud/apptheory-cdk.AppTheorySsrSiteMode": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -19272,7 +19356,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 348
+            "line": 363
           },
           "name": "allowViewerTenantHeaders",
           "optional": true,
@@ -19337,12 +19421,34 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 383
+            "line": 398
           },
           "name": "autoDeleteObjects",
           "optional": true,
           "type": {
             "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "AppTheory creates each co-origin Function URL with `AuthType.NONE` and routes the supplied\npath patterns to it without Lambda Origin Access Control. The SSR origin remains governed by\n`ssrUrlAuthType` and still defaults to `AWS_IAM` plus Lambda OAC.\n\nCo-origin paths participate in AppTheory's behavior path collision checks and bypass `ssg-isr`\nHTML rewrites. This is the supported AppTheory path for mixed-auth distributions; do not hand-wire\nraw `distribution.addBehavior(...)` calls when AppTheory should own path and edge-context policy.\n\nExample bearer API paths: `[\"/api/*\", \"/auth/*\"]`.",
+            "summary": "Additional bearer-auth Lambda Function URL co-origins to attach to the same CloudFront distribution."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/ssr-site.ts",
+            "line": 304
+          },
+          "name": "bearerFunctionUrlOrigins",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheorySsrSiteBearerFunctionUrlOrigin"
+              },
+              "kind": "array"
+            }
           }
         },
         {
@@ -19355,7 +19461,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 310
+            "line": 325
           },
           "name": "cacheTableName",
           "optional": true,
@@ -19368,7 +19474,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 387
+            "line": 402
           },
           "name": "certificateArn",
           "optional": true,
@@ -19403,7 +19509,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 385
+            "line": 400
           },
           "name": "domainName",
           "optional": true,
@@ -19416,7 +19522,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 350
+            "line": 365
           },
           "name": "enableLogging",
           "optional": true,
@@ -19429,7 +19535,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 386
+            "line": 401
           },
           "name": "hostedZone",
           "optional": true,
@@ -19446,7 +19552,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 380
+            "line": 395
           },
           "name": "htmlCachePolicy",
           "optional": true,
@@ -19514,7 +19620,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 297
+            "line": 312
           },
           "name": "isrMetadataTable",
           "optional": true,
@@ -19531,7 +19637,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 304
+            "line": 319
           },
           "name": "isrMetadataTableName",
           "optional": true,
@@ -19544,7 +19650,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 351
+            "line": 366
           },
           "name": "logsBucket",
           "optional": true,
@@ -19575,7 +19681,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 382
+            "line": 397
           },
           "name": "removalPolicy",
           "optional": true,
@@ -19592,7 +19698,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 360
+            "line": 375
           },
           "name": "responseHeadersPolicy",
           "optional": true,
@@ -19610,7 +19716,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 369
+            "line": 384
           },
           "name": "ssrCachePolicy",
           "optional": true,
@@ -19627,7 +19733,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 333
+            "line": 348
           },
           "name": "ssrForwardHeaders",
           "optional": true,
@@ -19707,7 +19813,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 389
+            "line": 404
           },
           "name": "webAclId",
           "optional": true,
@@ -19720,7 +19826,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 313
+            "line": 328
           },
           "name": "wireRuntimeEnv",
           "optional": true,
@@ -20719,6 +20825,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "1.7.1-rc.1",
-  "fingerprint": "FqroM9dqYiGLb2E2arpyaTw7m0mS1mx362VK5iOV9nk="
+  "version": "1.7.1",
+  "fingerprint": "/tBtmdwrJqp/1gj0W+rKBSkVaW8ptuc8vRA5jilNP7A="
 }
