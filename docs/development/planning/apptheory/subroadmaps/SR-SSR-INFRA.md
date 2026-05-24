@@ -82,3 +82,11 @@ Conventions (AppTheory `m14`):
   - `examples/cdk/ssr-site/scripts/upload-assets.sh`
 - **Invalidation input**: use `AppTheorySsrSite.distribution.distributionId` (exposed as `CloudFrontDistributionId` in the
   example stack) rather than wiring the distribution id into the Lambda env (avoids CloudFormation dependency cycles).
+
+### I5 — Mixed-auth Lambda Function URL co-origins
+
+Acceptance:
+- `AppTheorySsrSite` supports a first-class bearer-auth Lambda Function URL co-origin list.
+- Co-origin behaviors share the site distribution without weakening the SSR origin's `AWS_IAM` + Lambda OAC default.
+- Co-origin path patterns participate in conflict detection and bypass SSG/ISR HTML rewrites.
+- CDK synth tests and docs cover the supported mixed-auth shape.

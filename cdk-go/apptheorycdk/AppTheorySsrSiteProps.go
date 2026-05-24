@@ -29,6 +29,18 @@ type AppTheorySsrSiteProps struct {
 	AssetsManifestKey        *string       `field:"optional" json:"assetsManifestKey" yaml:"assetsManifestKey"`
 	AssetsPath               *string       `field:"optional" json:"assetsPath" yaml:"assetsPath"`
 	AutoDeleteObjects        *bool         `field:"optional" json:"autoDeleteObjects" yaml:"autoDeleteObjects"`
+	// Additional bearer-auth Lambda Function URL co-origins to attach to the same CloudFront distribution.
+	//
+	// AppTheory creates each co-origin Function URL with `AuthType.NONE` and routes the supplied
+	// path patterns to it without Lambda Origin Access Control. The SSR origin remains governed by
+	// `ssrUrlAuthType` and still defaults to `AWS_IAM` plus Lambda OAC.
+	//
+	// Co-origin paths participate in AppTheory's behavior path collision checks and bypass `ssg-isr`
+	// HTML rewrites. This is the supported AppTheory path for mixed-auth distributions; do not hand-wire
+	// raw `distribution.addBehavior(...)` calls when AppTheory should own path and edge-context policy.
+	//
+	// Example bearer API paths: `["/api/*", "/auth/*"]`.
+	BearerFunctionUrlOrigins *[]*AppTheorySsrSiteBearerFunctionUrlOrigin `field:"optional" json:"bearerFunctionUrlOrigins" yaml:"bearerFunctionUrlOrigins"`
 	// Legacy alias for `isrMetadataTableName`.
 	// Deprecated: prefer `isrMetadataTable` or `isrMetadataTableName`.
 	CacheTableName *string `field:"optional" json:"cacheTableName" yaml:"cacheTableName"`
