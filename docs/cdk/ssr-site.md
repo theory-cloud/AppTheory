@@ -81,9 +81,10 @@ new AppTheorySsrSite(this, "Site", {
 
 The SSR sidecar behavior is automatic; do not add it to `directS3PathPatterns`. AppTheory includes it in the same
 fail-closed path ownership checks as assets, static HTML sections, direct SSR paths, and bearer Function URL co-origins.
-It also bypasses the `ssg-isr` HTML rewrite so extensionless sidecar URLs cannot become `/index.html` requests before
-origin selection. The behavior uses the same SSR Lambda origin request policy and preserves the default `AWS_IAM` plus
-Lambda Origin Access Control posture when `ssrUrlAuthType` is omitted.
+Exact, broader, or nested wildcard patterns that would shadow the reserved SSR sidecar prefix are rejected. The sidecar
+behavior also bypasses the `ssg-isr` HTML rewrite so extensionless sidecar URLs cannot become `/index.html` requests
+before origin selection. The behavior uses the same SSR Lambda origin request policy and preserves the default
+`AWS_IAM` plus Lambda Origin Access Control posture when `ssrUrlAuthType` is omitted.
 
 ## Contract
 
