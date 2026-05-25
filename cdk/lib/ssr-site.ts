@@ -20,6 +20,7 @@ const facetheoryOriginalHostHeader = "x-facetheory-original-host";
 const ssrOriginalUriHeaders = [apptheoryOriginalUriHeader, facetheoryOriginalUriHeader] as const;
 const ssrOriginalHostHeaders = [apptheoryOriginalHostHeader, facetheoryOriginalHostHeader] as const;
 const ssgIsrHydrationPathPattern = "/_facetheory/data/*";
+const ssgIsrSsrDataPathPattern = "/_facetheory/ssr-data/*";
 const defaultIsrHtmlStoreKeyPrefix = "isr";
 const maxDefaultCacheKeyHeaders = 10;
 const defaultViewerTenantHeader = "x-tenant-id";
@@ -72,17 +73,120 @@ function expandBehaviorPathPatterns(patterns: string[]): string[] {
   return Array.from(expanded);
 }
 
+interface SeenBehaviorPattern {
+  readonly pattern: string;
+  readonly label: string;
+}
+
+interface PathPatternTransition {
+  readonly target: number;
+  readonly any: boolean;
+  readonly literal?: string;
+}
+
+function pathPatternEpsilonClosure(pattern: string, index: number): number[] {
+  const closure: number[] = [];
+  const seen = new Set<number>();
+  const stack = [index];
+
+  while (stack.length > 0) {
+    const current = stack.pop() ?? 0;
+    if (seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+    closure.push(current);
+
+    if (pattern[current] === "*") {
+      stack.push(current + 1);
+    }
+  }
+
+  return closure;
+}
+
+function pathPatternTransitions(pattern: string, index: number): PathPatternTransition[] {
+  const token = pattern[index];
+  if (token === undefined) {
+    return [];
+  }
+
+  if (token === "*") {
+    return [{ target: index, any: true }];
+  }
+
+  if (token === "?") {
+    return [{ target: index + 1, any: true }];
+  }
+
+  return [{ target: index + 1, any: false, literal: token }];
+}
+
+function pathPatternTransitionsCanShareCharacter(left: PathPatternTransition, right: PathPatternTransition): boolean {
+  return left.any || right.any || left.literal === right.literal;
+}
+
+function pathPatternsCanOverlap(left: string, right: string): boolean {
+  const seenStates = new Set<string>();
+  const queue: Array<[number, number]> = [];
+
+  const enqueueClosurePairs = (leftIndex: number, rightIndex: number): void => {
+    for (const leftClosed of pathPatternEpsilonClosure(left, leftIndex)) {
+      for (const rightClosed of pathPatternEpsilonClosure(right, rightIndex)) {
+        const key = `${leftClosed}:${rightClosed}`;
+        if (seenStates.has(key)) {
+          continue;
+        }
+        seenStates.add(key);
+        queue.push([leftClosed, rightClosed]);
+      }
+    }
+  };
+
+  enqueueClosurePairs(0, 0);
+
+  while (queue.length > 0) {
+    const [leftIndex, rightIndex] = queue.shift() ?? [0, 0];
+    if (leftIndex === left.length && rightIndex === right.length) {
+      return true;
+    }
+
+    for (const leftTransition of pathPatternTransitions(left, leftIndex)) {
+      for (const rightTransition of pathPatternTransitions(right, rightIndex)) {
+        if (!pathPatternTransitionsCanShareCharacter(leftTransition, rightTransition)) {
+          continue;
+        }
+
+        enqueueClosurePairs(leftTransition.target, rightTransition.target);
+      }
+    }
+  }
+
+  return false;
+}
+
 function assertNoConflictingBehaviorPatterns(
   label: string,
   patterns: string[],
   seenOwners: Map<string, string>,
+  seenPatterns: SeenBehaviorPattern[],
 ): void {
   for (const pattern of expandBehaviorPathPatterns(patterns)) {
     const owner = seenOwners.get(pattern);
     if (owner && owner !== label) {
       throw new Error(`AppTheorySsrSite received overlapping path pattern "${pattern}" for ${owner} and ${label}`);
     }
+
+    for (const seenPattern of seenPatterns) {
+      if (seenPattern.label !== label && pathPatternsCanOverlap(seenPattern.pattern, pattern)) {
+        throw new Error(
+          `AppTheorySsrSite received overlapping path patterns "${seenPattern.pattern}" and "${pattern}" for ${seenPattern.label} and ${label}`,
+        );
+      }
+    }
+
     seenOwners.set(pattern, label);
+    seenPatterns.push({ pattern, label });
   }
 }
 
@@ -282,6 +386,9 @@ export interface AppTheorySsrSiteProps {
   /**
    * Additional path patterns that should bypass the `ssg-isr` origin group and route directly
    * to the Lambda Function URL with full method support.
+   *
+   * In `ssg-isr` mode, `/_facetheory/ssr-data/*` is added automatically for FaceTheory
+   * strict no-inline-CSP SSR hydration sidecars.
    *
    * Use this for same-origin dynamic paths such as auth callbacks, actions, or form posts.
    * Example direct-SSR path: "/actions/*"
@@ -543,7 +650,10 @@ export class AppTheorySsrSite extends Construct {
       ...(siteMode === AppTheorySsrSiteMode.SSG_ISR ? [ssgIsrHydrationPathPattern] : []),
       ...(Array.isArray(props.directS3PathPatterns) ? props.directS3PathPatterns : []),
     ]);
-    const ssrPathPatterns = normalizePathPatterns(props.ssrPathPatterns);
+    const ssrPathPatterns = normalizePathPatterns([
+      ...(siteMode === AppTheorySsrSiteMode.SSG_ISR ? [ssgIsrSsrDataPathPattern] : []),
+      ...(Array.isArray(props.ssrPathPatterns) ? props.ssrPathPatterns : []),
+    ]);
     const bearerFunctionUrlOrigins = Array.isArray(props.bearerFunctionUrlOrigins)
       ? props.bearerFunctionUrlOrigins
       : [];
@@ -559,6 +669,7 @@ export class AppTheorySsrSite extends Construct {
     });
     const bearerFunctionUrlPathPatterns = bearerFunctionUrlOriginConfigs.flatMap((config) => config.pathPatterns);
     const behaviorPatternOwners = new Map<string, string>();
+    const behaviorPatterns: SeenBehaviorPattern[] = [];
     const ssrUrlAuthType = props.ssrUrlAuthType ?? lambda.FunctionUrlAuthType.AWS_IAM;
     const allowViewerTenantHeaders = props.allowViewerTenantHeaders ?? false;
 
@@ -673,14 +784,20 @@ export class AppTheorySsrSite extends Construct {
         enableAcceptEncodingGzip: true,
       });
 
-    assertNoConflictingBehaviorPatterns("direct S3 paths", [`${assetsKeyPrefix}/*`, ...directS3PathPatterns], behaviorPatternOwners);
-    assertNoConflictingBehaviorPatterns("static HTML paths", staticPathPatterns, behaviorPatternOwners);
-    assertNoConflictingBehaviorPatterns("direct SSR paths", ssrPathPatterns, behaviorPatternOwners);
+    assertNoConflictingBehaviorPatterns(
+      "direct S3 paths",
+      [`${assetsKeyPrefix}/*`, ...directS3PathPatterns],
+      behaviorPatternOwners,
+      behaviorPatterns,
+    );
+    assertNoConflictingBehaviorPatterns("static HTML paths", staticPathPatterns, behaviorPatternOwners, behaviorPatterns);
+    assertNoConflictingBehaviorPatterns("direct SSR paths", ssrPathPatterns, behaviorPatternOwners, behaviorPatterns);
     bearerFunctionUrlOriginConfigs.forEach((config, index) => {
       assertNoConflictingBehaviorPatterns(
         `bearer Function URL co-origin ${index + 1}`,
         config.pathPatterns,
         behaviorPatternOwners,
+        behaviorPatterns,
       );
     });
 
