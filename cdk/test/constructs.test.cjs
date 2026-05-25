@@ -2174,11 +2174,29 @@ test("AppTheorySsrSite ssg-isr mode synthesizes origin-group fallback and edge r
   const fallbackStatusCodes =
     distribution.Properties?.DistributionConfig?.OriginGroups?.Items?.[0]?.FailoverCriteria?.StatusCodes?.Items ?? [];
   const cacheBehaviors = distribution.Properties?.DistributionConfig?.CacheBehaviors ?? [];
+  const origins = distribution.Properties?.DistributionConfig?.Origins ?? [];
+  const originsById = new Map(origins.map((origin) => [origin.Id, origin]));
   const hydrationBehavior = cacheBehaviors.find((behavior) => behavior.PathPattern === "_facetheory/data/*");
+  const hydrationRootBehavior = cacheBehaviors.find((behavior) => behavior.PathPattern === "_facetheory/data");
+  const ssrDataBehavior = cacheBehaviors.find((behavior) => behavior.PathPattern === "_facetheory/ssr-data/*");
+  const ssrDataRootBehavior = cacheBehaviors.find((behavior) => behavior.PathPattern === "_facetheory/ssr-data");
 
   assert.equal(originGroupMembers.length, 2);
   assert.deepEqual(fallbackStatusCodes, [403, 404]);
   assert.ok(hydrationBehavior, "Should keep FaceTheory hydration path on direct S3 behavior");
+  assert.ok(hydrationRootBehavior, "Should keep FaceTheory hydration root on direct S3 behavior");
+  assert.ok(ssrDataBehavior, "Should route FaceTheory SSR data sidecar path to direct SSR behavior");
+  assert.ok(ssrDataRootBehavior, "Should route FaceTheory SSR data sidecar root to direct SSR behavior");
+
+  const hydrationOrigin = originsById.get(hydrationBehavior.TargetOriginId);
+  const ssrDataOrigin = originsById.get(ssrDataBehavior.TargetOriginId);
+
+  assert.ok(hydrationOrigin?.S3OriginConfig, "FaceTheory SSG hydration sidecars should stay on S3");
+  assert.equal(ssrDataOrigin?.CustomOriginConfig?.OriginProtocolPolicy, "https-only");
+  assert.ok(ssrDataOrigin?.OriginAccessControlId, "FaceTheory SSR data sidecars should keep Lambda OAC");
+  assert.deepEqual(ssrDataBehavior.AllowedMethods, ["GET", "HEAD", "OPTIONS", "PUT", "PATCH", "POST", "DELETE"]);
+  assert.equal(ssrDataBehavior.CachePolicyId, cloudfront.CachePolicy.CACHING_DISABLED.cachePolicyId);
+  assert.ok(ssrDataBehavior.OriginRequestPolicyId, "SSR data sidecars should use the Lambda origin request policy");
 
   const functionCode = String(requestFunction.Properties?.FunctionCode ?? "");
   assert.match(functionCode, /x-apptheory-original-host/);
@@ -2187,6 +2205,139 @@ test("AppTheorySsrSite ssg-isr mode synthesizes origin-group fallback and edge r
   assert.match(functionCode, /x-facetheory-original-uri/);
   assert.match(functionCode, /event\.context\.requestId/);
   assert.match(functionCode, /index\.html/);
+  assert.match(functionCode, /'\/_facetheory\/data'/);
+  assert.match(functionCode, /'\/_facetheory\/ssr-data'/);
+});
+
+test("AppTheorySsrSite rejects direct S3 ownership of reserved SSR data sidecars", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: fn,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+        directS3PathPatterns: ["/_facetheory/ssr-data/*"],
+      }),
+    /AppTheorySsrSite received overlapping path pattern "_facetheory\/ssr-data\/\*" for direct S3 paths and direct SSR paths/,
+  );
+});
+
+test("AppTheorySsrSite rejects broader direct S3 ownership of reserved SSR data sidecars", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: fn,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+        directS3PathPatterns: ["/_facetheory/*"],
+      }),
+    /AppTheorySsrSite received overlapping path patterns "_facetheory\/\*" and "_facetheory\/ssr-data\/\*" for direct S3 paths and direct SSR paths/,
+  );
+});
+
+test("AppTheorySsrSite rejects broader static HTML ownership of reserved SSR data sidecars", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: fn,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+        staticPathPatterns: ["/_facetheory/*"],
+      }),
+    /AppTheorySsrSite received overlapping path patterns "_facetheory\/data\/\*" and "_facetheory\/\*" for direct S3 paths and static HTML paths/,
+  );
+});
+
+test("AppTheorySsrSite rejects nested static HTML ownership of reserved SSR data sidecars", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: fn,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+        staticPathPatterns: ["/_facetheory/ssr-data/private/*"],
+      }),
+    /AppTheorySsrSite received overlapping path patterns "_facetheory\/ssr-data\/private\/\*" and "_facetheory\/ssr-data\/\*" for static HTML paths and direct SSR paths/,
+  );
+});
+
+test("AppTheorySsrSite rejects question-mark wildcard shadows of reserved SSR data sidecars", () => {
+  const createStack = (id) => {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, id);
+    const fn = new lambda.Function(stack, "Fn", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "index.handler",
+      code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    });
+
+    return { fn, stack };
+  };
+
+  const directS3AnySuffix = createStack("DirectS3AnySuffixStack");
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(directS3AnySuffix.stack, "Site", {
+        ssrFunction: directS3AnySuffix.fn,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+        directS3PathPatterns: ["/_facetheory/ssr-data?*"],
+      }),
+    /AppTheorySsrSite received overlapping path patterns "_facetheory\/ssr-data\?\*" and "_facetheory\/ssr-data\/\*" for direct S3 paths and direct SSR paths/,
+  );
+
+  const staticAnySuffix = createStack("StaticAnySuffixStack");
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(staticAnySuffix.stack, "Site", {
+        ssrFunction: staticAnySuffix.fn,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+        staticPathPatterns: ["/_facetheory/ssr-data?*"],
+      }),
+    /AppTheorySsrSite received overlapping path patterns "_facetheory\/ssr-data\?\*" and "_facetheory\/ssr-data\/\*" for static HTML paths and direct SSR paths/,
+  );
+
+  const directS3SegmentCharacter = createStack("DirectS3SegmentCharacterStack");
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(directS3SegmentCharacter.stack, "Site", {
+        ssrFunction: directS3SegmentCharacter.fn,
+        mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+        directS3PathPatterns: ["/_facetheory/ssr-dat?/*"],
+      }),
+    /AppTheorySsrSite received overlapping path patterns "_facetheory\/ssr-dat\?\/\*" and "_facetheory\/ssr-data\/\*" for direct S3 paths and direct SSR paths/,
+  );
 });
 
 test("AppTheorySsrSite expands static HTML and direct SSR path patterns for root plus nested routes", () => {
@@ -2303,6 +2454,11 @@ test("AppTheorySsrSite defaults to FaceTheory CDN response headers and origin ca
   assert.ok(defaultBehavior.ResponseHeadersPolicyId, "Default behavior should use response headers policy");
 
   for (const behavior of staticBehaviors) {
+    if (String(behavior.PathPattern ?? "").startsWith("_facetheory/ssr-data")) {
+      assert.equal(behavior.CachePolicyId, cloudfront.CachePolicy.CACHING_DISABLED.cachePolicyId);
+      assert.ok(behavior.OriginRequestPolicyId, "SSR data sidecars should use the Lambda origin request policy");
+      continue;
+    }
     assert.equal(behavior.CachePolicyId, cloudfront.CachePolicy.USE_ORIGIN_CACHE_CONTROL_HEADERS.cachePolicyId);
     assert.deepEqual(
       behavior.ResponseHeadersPolicyId,
