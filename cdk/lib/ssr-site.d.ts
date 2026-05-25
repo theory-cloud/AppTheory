@@ -83,6 +83,9 @@ export interface AppTheorySsrSiteProps {
      * Additional path patterns that should bypass the `ssg-isr` origin group and route directly
      * to the Lambda Function URL with full method support.
      *
+     * In `ssg-isr` mode, `/_facetheory/ssr-data/*` is added automatically for FaceTheory
+     * strict no-inline-CSP SSR hydration sidecars.
+     *
      * Use this for same-origin dynamic paths such as auth callbacks, actions, or form posts.
      * Example direct-SSR path: "/actions/*"
      */

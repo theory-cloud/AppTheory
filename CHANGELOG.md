@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.9.0-rc](https://github.com/theory-cloud/AppTheory/compare/v1.8.0...v1.9.0-rc) (2026-05-25)
+
+
+### Features
+
+* **cdk:** route ssr data sidecars to lambda ([3fb0ece](https://github.com/theory-cloud/AppTheory/commit/3fb0ece8d470873ab778421dcfa4d4cb0543107f))
+* **cdk:** route ssr data sidecars to lambda ([95eb268](https://github.com/theory-cloud/AppTheory/commit/95eb2689145c71e22b37c11d47c59f770d639e43))
+
+
+### Bug Fixes
+
+* **cdk:** reject ssr sidecar question wildcards ([45a791d](https://github.com/theory-cloud/AppTheory/commit/45a791d68f46fb0a2eff90a1cbbdce1a046d2fd4)), closes [#600](https://github.com/theory-cloud/AppTheory/issues/600)
+* **cdk:** reject ssr sidecar wildcard shadows ([3f76e3c](https://github.com/theory-cloud/AppTheory/commit/3f76e3cf34b55ce57d05db56477ed1420fb608d0)), closes [#600](https://github.com/theory-cloud/AppTheory/issues/600)
+
 ## [1.8.0](https://github.com/theory-cloud/AppTheory/compare/v1.7.1...v1.8.0) (2026-05-24)
 
 

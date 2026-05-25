@@ -15,8 +15,9 @@ Prefer `mode: AppTheorySsrSiteMode.SSG_ISR` unless you are intentionally keeping
 
 - `ssg-isr` is the FaceTheory-first topology:
   - `/assets/*` and `/_facetheory/data/*` stay on direct S3 behaviors
+  - `/_facetheory/ssr-data/*` routes directly to the SSR Lambda Function URL for strict no-inline-CSP SSR sidecars
   - default `/*` uses a primary HTML S3 origin with Lambda Function URL fallback for `GET` / `HEAD` / `OPTIONS`
-  - extensionless HTML routes rewrite to `/index.html` at the edge
+  - extensionless HTML routes rewrite to `/index.html` at the edge, except for direct S3/data and direct SSR carve-outs
   - same-origin dynamic paths such as actions, auth callbacks, and form posts should be carved out with
     `ssrPathPatterns` so they bypass the origin group and route straight to Lambda
 - `ssr-only` remains available for compatibility, but it is not the preferred documented deployment story for new
@@ -45,6 +46,7 @@ new AppTheorySsrSite(this, "Site", {
   staticPathPatterns: ["/marketing/*"],
 
   // Dynamic same-origin routes that should stay on the SSR Lambda.
+  // AppTheory adds /_facetheory/ssr-data/* automatically in ssg-isr mode.
   ssrPathPatterns: ["/actions/*"],
 
   // Bearer-auth API co-origins that share the distribution without weakening
@@ -68,6 +70,22 @@ new AppTheorySsrSite(this, "Site", {
   ssrForwardHeaders: ["x-facetheory-segment"],
 });
 ```
+
+## FaceTheory data sidecars
+
+`ssg-isr` mode reserves two FaceTheory data prefixes with different origins:
+
+- `/_facetheory/data/*` and exact `/_facetheory/data` are SSG sidecars and stay on direct S3 behaviors.
+- `/_facetheory/ssr-data/*` and exact `/_facetheory/ssr-data` are SSR sidecars and route directly to the SSR Lambda
+  Function URL.
+
+The SSR sidecar behavior is automatic; do not add it to `directS3PathPatterns`. AppTheory includes it in the same
+fail-closed path ownership checks as assets, static HTML sections, direct SSR paths, and bearer Function URL co-origins.
+Exact, broader, or nested wildcard patterns that would shadow the reserved SSR sidecar prefix are rejected, including
+CloudFront `*` and `?` path-pattern wildcards. The sidecar behavior also bypasses the `ssg-isr` HTML rewrite so
+extensionless sidecar URLs cannot become `/index.html` requests before origin selection. The behavior uses the same SSR
+Lambda origin request policy and preserves the default `AWS_IAM` plus Lambda Origin Access Control posture when
+`ssrUrlAuthType` is omitted.
 
 ## Contract
 
@@ -98,6 +116,7 @@ new AppTheorySsrSite(this, "Site", {
     - tenant-like viewer headers join the cache key only when `allowViewerTenantHeaders: true` is explicitly enabled
     - origin cache-control headers still drive freshness within that safe cache key
   - direct S3 asset/data behaviors continue to use origin cache-control semantics
+  - the reserved SSR sidecar behavior (`/_facetheory/ssr-data/*`) is Lambda-backed and defaults to `CACHING_DISABLED`
 
 ## Mixed-auth Lambda Function URL co-origins
 
