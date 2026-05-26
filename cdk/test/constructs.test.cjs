@@ -12,6 +12,7 @@ const ec2 = require("aws-cdk-lib/aws-ec2");
 const events = require("aws-cdk-lib/aws-events");
 const iam = require("aws-cdk-lib/aws-iam");
 const kms = require("aws-cdk-lib/aws-kms");
+const kinesis = require("aws-cdk-lib/aws-kinesis");
 const lambda = require("aws-cdk-lib/aws-lambda");
 const logs = require("aws-cdk-lib/aws-logs");
 const route53 = require("aws-cdk-lib/aws-route53");
@@ -834,6 +835,176 @@ test("AppTheoryS3Ingest (SQS notifications + filters) synthesizes expected templ
   } else {
     expectSnapshot("s3-ingest-sqs-filters", template);
   }
+});
+
+test("AppTheoryKinesisStream (on-demand) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream", {
+    streamName: "apptheory-events",
+    mode: kinesis.StreamMode.ON_DEMAND,
+    retentionPeriod: cdk.Duration.hours(48),
+    encryption: kinesis.StreamEncryption.MANAGED,
+  });
+
+  assert.ok(stream.stream);
+  assert.ok(stream.streamArn);
+  assert.ok(stream.streamName);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("kinesis-stream-on-demand", template);
+  } else {
+    expectSnapshot("kinesis-stream-on-demand", template);
+  }
+});
+
+test("AppTheoryKinesisStream (provisioned) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryKinesisStream(stack, "Stream", {
+    streamName: "apptheory-provisioned-events",
+    mode: kinesis.StreamMode.PROVISIONED,
+    shardCount: 2,
+    retentionPeriod: cdk.Duration.days(7),
+    encryption: kinesis.StreamEncryption.MANAGED,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("kinesis-stream-provisioned", template);
+  } else {
+    expectSnapshot("kinesis-stream-provisioned", template);
+  }
+});
+
+test("AppTheoryKinesisStream (KMS, removal policy, grants) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const key = new kms.Key(stack, "Key");
+  const reader = new iam.Role(stack, "Reader", { assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com") });
+  const writer = new iam.Role(stack, "Writer", { assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com") });
+  const readWriter = new iam.Role(stack, "ReadWriter", { assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com") });
+
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream", {
+    streamName: "apptheory-secure-events",
+    mode: kinesis.StreamMode.PROVISIONED,
+    shardCount: 1,
+    retentionPeriod: cdk.Duration.days(3),
+    encryption: kinesis.StreamEncryption.KMS,
+    encryptionKey: key,
+    removalPolicy: cdk.RemovalPolicy.DESTROY,
+    grantReadTo: [reader],
+    grantWriteTo: [writer],
+  });
+  stream.grantReadWrite(readWriter);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("kinesis-stream-kms-removal-policy-grants", template);
+  } else {
+    expectSnapshot("kinesis-stream-kms-removal-policy-grants", template);
+  }
+});
+
+test("AppTheoryKinesisStream wraps imported streams without replacement resources", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "111111111111", region: "us-east-1" },
+  });
+
+  const role = new iam.Role(stack, "Reader", { assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com") });
+  const imported = kinesis.Stream.fromStreamArn(
+    stack,
+    "Imported",
+    "arn:aws:kinesis:us-east-1:111111111111:stream/existing-events",
+  );
+
+  const wrapped = new apptheory.AppTheoryKinesisStream(stack, "Stream", {
+    stream: imported,
+    grantReadTo: [role],
+  });
+
+  assert.equal(wrapped.streamArn, imported.streamArn);
+  assert.equal(wrapped.streamName, imported.streamName);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const kinesisResources = Object.values(template.Resources ?? {}).filter(
+    (resource) => resource.Type === "AWS::Kinesis::Stream",
+  );
+  assert.equal(kinesisResources.length, 0, "Imported streams must not synthesize replacement stream resources");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("kinesis-stream-imported", template);
+  } else {
+    expectSnapshot("kinesis-stream-imported", template);
+  }
+});
+
+test("AppTheoryKinesisStream fails closed on invalid props", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const imported = kinesis.Stream.fromStreamArn(
+    stack,
+    "Imported",
+    "arn:aws:kinesis:us-east-1:111111111111:stream/existing-events",
+  );
+  const key = new kms.Key(stack, "Key");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStream(stack, "ImportedWithCreateProps", {
+        stream: imported,
+        streamName: "replacement",
+      }),
+    /does not allow create-time properties/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStream(stack, "OnDemandWithShardCount", {
+        mode: kinesis.StreamMode.ON_DEMAND,
+        shardCount: 2,
+      }),
+    /requires mode PROVISIONED/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStream(stack, "InvalidShardCount", {
+        mode: kinesis.StreamMode.PROVISIONED,
+        shardCount: 0,
+      }),
+    /positive integer/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStream(stack, "KmsWithoutKey", {
+        encryption: kinesis.StreamEncryption.KMS,
+      }),
+    /requires encryptionKey/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStream(stack, "ManagedWithKey", {
+        encryption: kinesis.StreamEncryption.MANAGED,
+        encryptionKey: key,
+      }),
+    /only supports encryptionKey/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStream(stack, "Unencrypted", {
+        encryption: kinesis.StreamEncryption.UNENCRYPTED,
+      }),
+    /requires stream encryption/,
+  );
 });
 
 test("AppTheoryJobsTable synthesizes expected template", () => {
