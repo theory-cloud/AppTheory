@@ -1566,6 +1566,34 @@ type Clock interface {
 	Now() time.Time
 }
 
+type CloudWatchLogsSubscription struct {
+	RecordID            string                               `json:"record_id"`
+	MessageType         string                               `json:"message_type"`
+	Owner               string                               `json:"owner"`
+	LogGroup            string                               `json:"log_group"`
+	LogStream           string                               `json:"log_stream"`
+	SubscriptionFilters []string                             `json:"subscription_filters"`
+	LogEvents           []CloudWatchLogsSubscriptionLogEvent `json:"log_events"`
+	SafeSummary         CloudWatchLogsSubscriptionSummary    `json:"safe_summary"`
+}
+
+type CloudWatchLogsSubscriptionLogEvent struct {
+	ID        string `json:"id"`
+	Timestamp int64  `json:"timestamp"`
+	Message   string `json:"message"`
+}
+
+type CloudWatchLogsSubscriptionSummary struct {
+	RecordID                string `json:"record_id"`
+	MessageType             string `json:"message_type"`
+	Owner                   string `json:"owner"`
+	LogGroup                string `json:"log_group"`
+	LogStream               string `json:"log_stream"`
+	SubscriptionFilterCount int    `json:"subscription_filter_count"`
+	LogEventCount           int    `json:"log_event_count"`
+	SafeLog                 string `json:"safe_log"`
+}
+
 type Context struct {
 	ctx     context.Context
 	Request Request
@@ -1853,6 +1881,8 @@ func CaptureBodyStream(context.Context, BodyStream) ([][]byte, []byte, error)
 func ClientIP(map[string][]string) string
 
 func CreatedJSON(any) (*Response, error)
+
+func DecodeCloudWatchLogsSubscription(events.KinesisEventRecord) (CloudWatchLogsSubscription, error)
 
 func ETag([]byte) string
 
@@ -2892,6 +2922,15 @@ type AppSyncEventOptions struct {
 	Stash          map[string]any
 }
 
+type CloudWatchLogsSubscriptionOptions struct {
+	MessageType         string
+	Owner               string
+	LogGroup            string
+	LogStream           string
+	SubscriptionFilters []string
+	LogEvents           []apptheory.CloudWatchLogsSubscriptionLogEvent
+}
+
 type DynamoDBStreamEventOptions struct {
 	StreamARN string
 	Records   []DynamoDBStreamRecordOptions
@@ -2948,6 +2987,13 @@ type HTTPEventOptions struct {
 	Body         []byte
 	IsBase64     bool
 	SourceIP     string
+}
+
+type KinesisCloudWatchLogsSubscriptionRecordOptions struct {
+	EventID        string
+	EventSourceARN string
+	PartitionKey   string
+	Subscription   CloudWatchLogsSubscriptionOptions
 }
 
 type KinesisEventOptions struct {
@@ -3047,9 +3093,13 @@ func APIGatewayV2Request(string, string, HTTPEventOptions) events.APIGatewayV2HT
 
 func AppSyncEvent(AppSyncEventOptions) apptheory.AppSyncResolverEvent
 
+func CloudWatchLogsSubscriptionData(CloudWatchLogsSubscriptionOptions) []byte
+
 func DynamoDBStreamEvent(DynamoDBStreamEventOptions) events.DynamoDBEvent
 
 func EventBridgeEvent(EventBridgeEventOptions) events.EventBridgeEvent
+
+func KinesisCloudWatchLogsSubscriptionRecord(KinesisCloudWatchLogsSubscriptionRecordOptions) KinesisRecordOptions
 
 func KinesisEvent(KinesisEventOptions) events.KinesisEvent
 

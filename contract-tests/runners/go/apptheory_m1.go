@@ -305,7 +305,7 @@ func builtInKinesisHandler(name string, cloudWatchLogsExpectations *cloudWatchLo
 			return requireEventMiddleware(ctx)
 		}
 	case cloudWatchLogsSubscriptionHandlerName:
-		return newCloudWatchLogsSubscriptionHandler(cloudWatchLogsExpectations, missingCloudWatchLogsSubscriptionDecoder)
+		return newCloudWatchLogsSubscriptionHandler(cloudWatchLogsExpectations, decodeCloudWatchLogsSubscriptionRecord)
 	}
 
 	handler := builtInRecordHandler[events.KinesisEventRecord](
@@ -503,6 +503,53 @@ func newCloudWatchLogsSubscriptionHandler(
 			return fmt.Errorf("cloudwatch logs subscription record_id %q expected decode_error=true, got decoded record", recordID)
 		}
 		return compareCloudWatchLogsSubscriptionDecodedRecord(expected, actual)
+	}
+}
+
+func decodeCloudWatchLogsSubscriptionRecord(record events.KinesisEventRecord) (FixtureCloudWatchLogsSubscriptionRecord, error) {
+	decoded, err := apptheory.DecodeCloudWatchLogsSubscription(record)
+	if err != nil {
+		return FixtureCloudWatchLogsSubscriptionRecord{}, err
+	}
+	return FixtureCloudWatchLogsSubscriptionRecord{
+		RecordID:            decoded.RecordID,
+		MessageType:         decoded.MessageType,
+		Owner:               decoded.Owner,
+		LogGroup:            decoded.LogGroup,
+		LogStream:           decoded.LogStream,
+		SubscriptionFilters: append([]string(nil), decoded.SubscriptionFilters...),
+		LogEvents:           cloudWatchLogsSubscriptionFixtureLogEvents(decoded.LogEvents),
+		SafeSummary:         cloudWatchLogsSubscriptionSafeSummaryMap(decoded.SafeSummary),
+	}, nil
+}
+
+func cloudWatchLogsSubscriptionFixtureLogEvents(
+	in []apptheory.CloudWatchLogsSubscriptionLogEvent,
+) []FixtureCloudWatchLogsSubscriptionLogEvent {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]FixtureCloudWatchLogsSubscriptionLogEvent, len(in))
+	for i, event := range in {
+		out[i] = FixtureCloudWatchLogsSubscriptionLogEvent{
+			ID:        event.ID,
+			Timestamp: event.Timestamp,
+			Message:   event.Message,
+		}
+	}
+	return out
+}
+
+func cloudWatchLogsSubscriptionSafeSummaryMap(summary apptheory.CloudWatchLogsSubscriptionSummary) map[string]any {
+	return map[string]any{
+		"record_id":                 summary.RecordID,
+		"message_type":              summary.MessageType,
+		"owner":                     summary.Owner,
+		"log_group":                 summary.LogGroup,
+		"log_stream":                summary.LogStream,
+		"subscription_filter_count": summary.SubscriptionFilterCount,
+		"log_event_count":           summary.LogEventCount,
+		"safe_log":                  summary.SafeLog,
 	}
 }
 
