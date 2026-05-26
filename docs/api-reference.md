@@ -155,8 +155,38 @@ Event workload contract notes:
 - `metadata.correlation_id` and top-level `headers["x-correlation-id"]` are AppTheory portable envelope conventions, not AWS-native EventBridge fields.
 - Scheduled workloads use EventBridge scheduled events and derive run IDs, idempotency keys, remaining-time/deadline fields, and structured result summaries.
 - DynamoDB Streams workloads keep the Lambda partial-batch response contract and derive only safe record summaries.
+- Kinesis workloads keep the Lambda partial-batch response contract, route by stream name, and fail closed for
+  unregistered streams by returning every record ID as a failure.
+
+### Kinesis runtime and helpers
+
+Kinesis uses the universal Lambda dispatcher. Register one stream handler through the AppTheory app and keep the Lambda
+handler on `HandleLambda`, `handleLambda`, or `handle_lambda`.
+
+| Concern | Go | TypeScript | Python |
+| --- | --- | --- | --- |
+| Register stream handler | `app.Kinesis(streamName, handler)` | `app.kinesis(streamName, handler)` | `app.kinesis(stream_name, handler)` |
+| Direct Kinesis entrypoint | `app.ServeKinesis(ctx, event)` | `app.serveKinesisEvent(event, ctx)` | `app.serve_kinesis(event, ctx)` |
+| CloudWatch Logs decoder | `DecodeCloudWatchLogsSubscription(record)` | `decodeCloudWatchLogsSubscription(record)` | `decode_cloudwatch_logs_subscription(record)` |
+| JSON producer record helper | `NewKinesisJSONRecord(opts)` | `createKinesisJsonRecord(opts)` | `create_kinesis_json_record(...)` |
+| PutRecords failure reporter | `ReportKinesisPutRecordsFailures(records, results)` | `reportKinesisPutRecordsFailures(records, results)` | `report_kinesis_put_records_failures(records, results)` |
+
+Kinesis handler failures are returned as Lambda partial-batch failures by record `eventID`; successful records are
+omitted. `DecodeCloudWatchLogsSubscription` and its TypeScript/Python equivalents decode the gzip CloudWatch Logs
+subscription envelope carried in Kinesis data and return a `safe_summary` that excludes raw log messages. The producer
+helpers create deterministic JSON record bytes and safe failure summaries without introducing a second per-service
+record or failure shape.
+
+Testkit helpers:
+
+| Concern | Go | TypeScript | Python |
+| --- | --- | --- | --- |
+| Build Kinesis event | `KinesisEvent` | `buildKinesisEvent` | `build_kinesis_event` |
+| Build CloudWatch Logs subscription record | `KinesisCloudWatchLogsSubscriptionRecord` | `kinesisCloudWatchLogsSubscriptionRecord` | `kinesis_cloudwatch_logs_subscription_record` |
+| Build CloudWatch Logs subscription data | `CloudWatchLogsSubscriptionData` | `cloudWatchLogsSubscriptionData` | `cloudwatch_logs_subscription_data` |
 
 Guide: [Event Workload Contracts](./features/event-workloads.md)
+Canonical CDK example: `examples/cdk/kinesis-cloudwatch-logs`
 
 ### AppSync resolvers
 
@@ -338,11 +368,15 @@ includes:
 - `AppTheoryJobsTable`
 - `AppTheoryS3Ingest`
 - `AppTheoryCodeBuildJobRunner`
+- `AppTheoryKinesisStream`
+- `AppTheoryKinesisStreamMapping`
+- `AppTheoryCloudWatchLogsDestination`
 
 Start with:
 
 - [CDK Getting Started](./cdk/getting-started.md)
 - [CDK API Reference](./cdk/api-reference.md)
+- [Kinesis + CloudWatch Logs](./cdk/kinesis-cloudwatch-logs.md)
 - [CDK Import Pipeline Guides](./cdk/import-pipeline.md)
 
 Package-local docs remain available under `ts/docs/`, `py/docs/`, and `cdk/docs/` for language-specific examples, but
