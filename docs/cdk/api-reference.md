@@ -16,6 +16,11 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryCodeBuildJobRunner`: batch-step runner for import pipelines
 - `AppTheoryEventBridgeBus`: custom EventBridge bus with explicit cross-account publish allowlist
 - `AppTheoryEventBridgeRuleTarget`: EventBridge rule or schedule to Lambda target
+- `AppTheoryKinesisStream`: create or wrap the encrypted Kinesis Data Stream used by AppTheory stream consumers
+- `AppTheoryKinesisStreamMapping`: Kinesis stream to AppTheory Lambda event-source mapping with partial-batch failures
+  enabled by default
+- `AppTheoryCloudWatchLogsDestination`: CloudWatch Logs destination and fail-closed source allowlist for Logs-to-Kinesis
+  delivery
 - `AppTheoryHttpIngestionEndpoint`: authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer
 - `AppTheorySsrSite`: FaceTheory-first CloudFront + S3 + Lambda URL deployment for SSR, SSG, and ISR
 - `AppTheoryQueue`, `AppTheoryQueueConsumer`, `AppTheoryQueueProcessor`: SQS queue and consumer patterns
@@ -47,12 +52,20 @@ Event workload wiring:
 - use `AppTheoryEventBridgeRuleTarget` for scheduled workloads and EventBridge pattern intake
 - use `targetProps` on EventBridge targets for DLQ, retry, and maximum-event-age policy
 - use `AppTheoryDynamoDBStreamMapping` for DynamoDB Streams to Lambda wiring
+- use `AppTheoryKinesisStream` plus `AppTheoryKinesisStreamMapping` for Kinesis stream consumers
+- use `AppTheoryCloudWatchLogsDestination` when CloudWatch Logs subscriptions deliver through Kinesis; configure
+  `allowedSourceAccounts` and/or `allowedOrganizationIds` explicitly
 - use `AppTheoryJobsTable` when the workload needs durable run state, idempotency, leases, or record status
 - keep handlers on AppTheory runtime entrypoints so routing, retry posture, and observability stay fixture-backed
 
 Runtime guide:
 
 - [Event Workload Contracts](../features/event-workloads.md)
+
+Kinesis guide and example:
+
+- [Kinesis + CloudWatch Logs](./kinesis-cloudwatch-logs.md)
+- `examples/cdk/kinesis-cloudwatch-logs`
 
 Guide:
 

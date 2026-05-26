@@ -26,6 +26,9 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryS3Ingest` (secure S3 ingest bucket + optional EventBridge/SQS notifications)
 - `AppTheoryCodeBuildJobRunner` (CodeBuild project wrapper for batch steps; safe defaults + logs + state-change hook)
 - `AppTheoryDynamoDBStreamMapping` (Streams mapping + permissions)
+- `AppTheoryKinesisStream` (Kinesis Data Stream create/wrap surface with encryption and grant helpers)
+- `AppTheoryKinesisStreamMapping` (Kinesis stream → Lambda event-source mapping; partial-batch failures default on)
+- `AppTheoryCloudWatchLogsDestination` (CloudWatch Logs destination → Kinesis with explicit source allowlists)
 - `AppTheoryEventBusTable` (opinionated EventBus DynamoDB table + required GSIs + Lambda binding helper)
 - `AppTheoryDynamoTable` (general-purpose DynamoDB table; schema-explicit + consistent defaults)
 - `AppTheoryJobsTable` (opinionated Jobs table for import pipelines; schema + GSIs + TTL)
@@ -37,3 +40,27 @@ AppTheory CDK exports constructs such as:
 - Higher-level "app"/SSR patterns now converge on the FaceTheory-first deployment contract rather than a weaker helper path
 
 For the exact list and prop types, read `cdk/lib/*.d.ts`.
+
+## Kinesis and CloudWatch Logs path
+
+The supported AppTheory Kinesis ingestion path is:
+
+```text
+CloudWatch Logs subscription
+  -> AppTheoryCloudWatchLogsDestination
+  -> AppTheoryKinesisStream
+  -> AppTheoryKinesisStreamMapping
+  -> AppTheory Lambda runtime decoder
+```
+
+Use `AppTheoryKinesisStream` to create or wrap the stream, `AppTheoryKinesisStreamMapping` to connect the stream to the
+consumer Lambda, and `AppTheoryCloudWatchLogsDestination` to expose a fail-closed Logs destination. The destination
+requires `allowedSourceAccounts` and/or `allowedOrganizationIds`; placeholder IDs in examples are examples only and are
+not live account claims.
+
+Keep the handler on the AppTheory runtime entrypoint and decode Kinesis-delivered CloudWatch Logs envelopes with
+`DecodeCloudWatchLogsSubscription` / `decodeCloudWatchLogsSubscription` /
+`decode_cloudwatch_logs_subscription`.
+
+Canonical guide: `docs/cdk/kinesis-cloudwatch-logs.md`.
+Canonical example: `examples/cdk/kinesis-cloudwatch-logs`.

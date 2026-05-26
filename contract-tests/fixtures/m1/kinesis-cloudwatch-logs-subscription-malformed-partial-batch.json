@@ -1,0 +1,147 @@
+{
+  "id": "m1.kinesis.cloudwatch_logs_subscription.malformed_partial_batch",
+  "tier": "m1",
+  "name": "Kinesis: CloudWatch Logs subscription malformed record fails only itself",
+  "setup": {
+    "kinesis": [
+      {
+        "stream": "contract-logs-stream",
+        "handler": "kinesis_require_cloudwatch_logs_subscription"
+      }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "kinesis",
+      "event": {
+        "Records": [
+          {
+            "eventID": "kin-cwl-valid-1",
+            "eventName": "aws:kinesis:record",
+            "eventSource": "aws:kinesis",
+            "eventSourceARN": "arn:aws:kinesis:us-east-1:000000000000:stream/contract-logs-stream",
+            "eventVersion": "1.0",
+            "awsRegion": "us-east-1",
+            "kinesis": {
+              "partitionKey": "pk-cwl-valid-1",
+              "sequenceNumber": "1001",
+              "kinesisSchemaVersion": "1.0",
+              "data": "H4sIAAAAAAAC/4WQwWrDMBBEf8UsPVrIdtqk8c1QJ5f2ZN+CKWtnmwhkS0hKTQj5964CoYdQOgcdZp6GYS+gzaH+pil4KHcXUHsoYZi1oOgJzCGFkbzHA8XATMHhEBL+lGg1UYLaHpGZoJgKOFoo89Vq/Zotn7Ooa/rYWfzT2VP4qzKPlV0aR2+dOXEEEmcvNY79HiVaG45k3FncW+HGNsERjgwXWbGU2Yvkd/f0XrV103Z3VODvrvZs47a3qq0+P+qmqbY1h2aeyLGdswrWgsW2P/V+cMoGZaaN0oFcvCU8jhFftxS66w9T/9mvdwEAAA=="
+            }
+          },
+          {
+            "eventID": "kin-cwl-malformed-1",
+            "eventName": "aws:kinesis:record",
+            "eventSource": "aws:kinesis",
+            "eventSourceARN": "arn:aws:kinesis:us-east-1:000000000000:stream/contract-logs-stream",
+            "eventVersion": "1.0",
+            "awsRegion": "us-east-1",
+            "kinesis": {
+              "partitionKey": "pk-cwl-malformed-1",
+              "sequenceNumber": "1002",
+              "kinesisSchemaVersion": "1.0",
+              "data": "eyJtZXNzYWdlVHlwZSI6IkRBVEFfTUVTU0FHRSIsIm5vdCI6Imd6aXAifQ=="
+            }
+          },
+          {
+            "eventID": "kin-cwl-valid-2",
+            "eventName": "aws:kinesis:record",
+            "eventSource": "aws:kinesis",
+            "eventSourceARN": "arn:aws:kinesis:us-east-1:000000000000:stream/contract-logs-stream",
+            "eventVersion": "1.0",
+            "awsRegion": "us-east-1",
+            "kinesis": {
+              "partitionKey": "pk-cwl-valid-2",
+              "sequenceNumber": "1003",
+              "kinesisSchemaVersion": "1.0",
+              "data": "H4sIAAAAAAAC/2WPzWrDMBCEX8UsPUZIdtuk8c1QN5f2ZN+CKRtFdQX6Q1JqQsi7dxUIPXQOOsx8uzu6gPFz/6NcTtDuL6CP0IJcDFPFY7KGFViVEs6qBN7liDJXNFQZ7VQ1o7VITNZEZbQB2nqz2b6I9ZNohBDXaVUu7KI/UQQcl8QN2sMROYaQv5WPZ3ZfCzd2yFGhJbgRzZqLZ07v/uG9G/thnO4ok3/FxnMo5V67sfv86Ieh2/UU+sWpSHZNakiPJLLT6ZBk1CFr7960ySqWj8P/MuzrlsJ0/QWxCWzrJAEAAA=="
+            }
+          }
+        ]
+      }
+    }
+  },
+  "expect": {
+    "cloudwatch_logs_subscription": {
+      "records": [
+        {
+          "record_id": "kin-cwl-valid-1",
+          "message_type": "DATA_MESSAGE",
+          "owner": "111122223333",
+          "log_group": "/aws/lambda/apptheory-contract",
+          "log_stream": "2026/05/26/[$LATEST]contract-a",
+          "subscription_filters": [
+            "apptheory-contract-filter"
+          ],
+          "log_events": [
+            {
+              "id": "cwl-event-a1",
+              "timestamp": 1779806400000,
+              "message": "contract log line alpha"
+            },
+            {
+              "id": "cwl-event-a2",
+              "timestamp": 1779806401000,
+              "message": "contract log line beta"
+            }
+          ],
+          "safe_summary": {
+            "record_id": "kin-cwl-valid-1",
+            "message_type": "DATA_MESSAGE",
+            "owner": "111122223333",
+            "log_group": "/aws/lambda/apptheory-contract",
+            "log_stream": "2026/05/26/[$LATEST]contract-a",
+            "subscription_filter_count": 1,
+            "log_event_count": 2,
+            "safe_log": "record_id=kin-cwl-valid-1 owner=111122223333 log_group=/aws/lambda/apptheory-contract log_stream=2026/05/26/[$LATEST]contract-a message_type=DATA_MESSAGE log_events=2 subscription_filters=1"
+          },
+          "forbidden_safe_log_substrings": [
+            "contract log line alpha",
+            "contract log line beta"
+          ]
+        },
+        {
+          "record_id": "kin-cwl-malformed-1",
+          "decode_error": true
+        },
+        {
+          "record_id": "kin-cwl-valid-2",
+          "message_type": "DATA_MESSAGE",
+          "owner": "111122223333",
+          "log_group": "/aws/lambda/apptheory-contract",
+          "log_stream": "2026/05/26/[$LATEST]contract-c",
+          "subscription_filters": [
+            "apptheory-contract-filter"
+          ],
+          "log_events": [
+            {
+              "id": "cwl-event-c1",
+              "timestamp": 1779806402000,
+              "message": "contract log line gamma"
+            }
+          ],
+          "safe_summary": {
+            "record_id": "kin-cwl-valid-2",
+            "message_type": "DATA_MESSAGE",
+            "owner": "111122223333",
+            "log_group": "/aws/lambda/apptheory-contract",
+            "log_stream": "2026/05/26/[$LATEST]contract-c",
+            "subscription_filter_count": 1,
+            "log_event_count": 1,
+            "safe_log": "record_id=kin-cwl-valid-2 owner=111122223333 log_group=/aws/lambda/apptheory-contract log_stream=2026/05/26/[$LATEST]contract-c message_type=DATA_MESSAGE log_events=1 subscription_filters=1"
+          },
+          "forbidden_safe_log_substrings": [
+            "contract log line gamma"
+          ]
+        }
+      ]
+    },
+    "output_json": {
+      "batchItemFailures": [
+        {
+          "itemIdentifier": "kin-cwl-malformed-1"
+        }
+      ]
+    }
+  }
+}

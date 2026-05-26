@@ -1,0 +1,3 @@
+{
+  "app": "node --preserve-symlinks -r ts-node/register bin/app.ts"
+}

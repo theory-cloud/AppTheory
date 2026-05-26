@@ -12,6 +12,7 @@ const ec2 = require("aws-cdk-lib/aws-ec2");
 const events = require("aws-cdk-lib/aws-events");
 const iam = require("aws-cdk-lib/aws-iam");
 const kms = require("aws-cdk-lib/aws-kms");
+const kinesis = require("aws-cdk-lib/aws-kinesis");
 const lambda = require("aws-cdk-lib/aws-lambda");
 const logs = require("aws-cdk-lib/aws-logs");
 const route53 = require("aws-cdk-lib/aws-route53");
@@ -30,6 +31,16 @@ function stableJson(value) {
     return out;
   }
   return value;
+}
+
+function renderedString(value) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(renderedString).join("");
+  if (value && typeof value === "object" && Array.isArray(value["Fn::Join"])) {
+    return renderedString(value["Fn::Join"][1]);
+  }
+  if (value && typeof value === "object") return JSON.stringify(stableJson(value));
+  return String(value);
 }
 
 function snapshotPath(name) {
@@ -114,6 +125,22 @@ function lambdaPermissionSourceArns(template) {
 
 function lambdaPermissionCount(template) {
   return lambdaPermissionSourceArns(template).length;
+}
+
+function iamPolicyActions(template) {
+  const actions = [];
+  for (const resource of Object.values(template.Resources ?? {})) {
+    if (resource.Type !== "AWS::IAM::Policy") continue;
+    for (const statement of resource.Properties?.PolicyDocument?.Statement ?? []) {
+      const action = statement.Action;
+      if (Array.isArray(action)) {
+        actions.push(...action);
+      } else if (typeof action === "string") {
+        actions.push(action);
+      }
+    }
+  }
+  return actions;
 }
 
 function assertNoTestInvokeStagePermissions(template) {
@@ -834,6 +861,436 @@ test("AppTheoryS3Ingest (SQS notifications + filters) synthesizes expected templ
   } else {
     expectSnapshot("s3-ingest-sqs-filters", template);
   }
+});
+
+test("AppTheoryKinesisStream (on-demand) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream", {
+    streamName: "apptheory-events",
+    mode: kinesis.StreamMode.ON_DEMAND,
+    retentionPeriod: cdk.Duration.hours(48),
+    encryption: kinesis.StreamEncryption.MANAGED,
+  });
+
+  assert.ok(stream.stream);
+  assert.ok(stream.streamArn);
+  assert.ok(stream.streamName);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("kinesis-stream-on-demand", template);
+  } else {
+    expectSnapshot("kinesis-stream-on-demand", template);
+  }
+});
+
+test("AppTheoryKinesisStream (provisioned) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryKinesisStream(stack, "Stream", {
+    streamName: "apptheory-provisioned-events",
+    mode: kinesis.StreamMode.PROVISIONED,
+    shardCount: 2,
+    retentionPeriod: cdk.Duration.days(7),
+    encryption: kinesis.StreamEncryption.MANAGED,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("kinesis-stream-provisioned", template);
+  } else {
+    expectSnapshot("kinesis-stream-provisioned", template);
+  }
+});
+
+test("AppTheoryKinesisStream (KMS, removal policy, grants) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const key = new kms.Key(stack, "Key");
+  const reader = new iam.Role(stack, "Reader", { assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com") });
+  const writer = new iam.Role(stack, "Writer", { assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com") });
+  const readWriter = new iam.Role(stack, "ReadWriter", { assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com") });
+
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream", {
+    streamName: "apptheory-secure-events",
+    mode: kinesis.StreamMode.PROVISIONED,
+    shardCount: 1,
+    retentionPeriod: cdk.Duration.days(3),
+    encryption: kinesis.StreamEncryption.KMS,
+    encryptionKey: key,
+    removalPolicy: cdk.RemovalPolicy.DESTROY,
+    grantReadTo: [reader],
+    grantWriteTo: [writer],
+  });
+  stream.grantReadWrite(readWriter);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("kinesis-stream-kms-removal-policy-grants", template);
+  } else {
+    expectSnapshot("kinesis-stream-kms-removal-policy-grants", template);
+  }
+});
+
+test("AppTheoryKinesisStream wraps imported streams without replacement resources", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "111111111111", region: "us-east-1" },
+  });
+
+  const role = new iam.Role(stack, "Reader", { assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com") });
+  const imported = kinesis.Stream.fromStreamArn(
+    stack,
+    "Imported",
+    "arn:aws:kinesis:us-east-1:111111111111:stream/existing-events",
+  );
+
+  const wrapped = new apptheory.AppTheoryKinesisStream(stack, "Stream", {
+    stream: imported,
+    grantReadTo: [role],
+  });
+
+  assert.equal(wrapped.streamArn, imported.streamArn);
+  assert.equal(wrapped.streamName, imported.streamName);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const kinesisResources = Object.values(template.Resources ?? {}).filter(
+    (resource) => resource.Type === "AWS::Kinesis::Stream",
+  );
+  assert.equal(kinesisResources.length, 0, "Imported streams must not synthesize replacement stream resources");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("kinesis-stream-imported", template);
+  } else {
+    expectSnapshot("kinesis-stream-imported", template);
+  }
+});
+
+test("AppTheoryKinesisStream fails closed on invalid props", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const imported = kinesis.Stream.fromStreamArn(
+    stack,
+    "Imported",
+    "arn:aws:kinesis:us-east-1:111111111111:stream/existing-events",
+  );
+  const key = new kms.Key(stack, "Key");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStream(stack, "ImportedWithCreateProps", {
+        stream: imported,
+        streamName: "replacement",
+      }),
+    /does not allow create-time properties/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStream(stack, "OnDemandWithShardCount", {
+        mode: kinesis.StreamMode.ON_DEMAND,
+        shardCount: 2,
+      }),
+    /requires mode PROVISIONED/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStream(stack, "InvalidShardCount", {
+        mode: kinesis.StreamMode.PROVISIONED,
+        shardCount: 0,
+      }),
+    /positive integer/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStream(stack, "KmsWithoutKey", {
+        encryption: kinesis.StreamEncryption.KMS,
+      }),
+    /requires encryptionKey/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStream(stack, "ManagedWithKey", {
+        encryption: kinesis.StreamEncryption.MANAGED,
+        encryptionKey: key,
+      }),
+    /only supports encryptionKey/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStream(stack, "Unencrypted", {
+        encryption: kinesis.StreamEncryption.UNENCRYPTED,
+      }),
+    /requires stream encryption/,
+  );
+});
+
+test("AppTheoryKinesisStreamMapping synthesizes partial batch failures and read grant", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream", {
+    streamName: "apptheory-events",
+  });
+
+  new apptheory.AppTheoryKinesisStreamMapping(stack, "Mapping", {
+    consumer: fn,
+    stream: stream.stream,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const eventSourceMappings = Object.values(template.Resources ?? {}).filter(
+    (resource) => resource.Type === "AWS::Lambda::EventSourceMapping",
+  );
+  assert.equal(eventSourceMappings.length, 1);
+  assert.equal(eventSourceMappings[0].Properties?.StartingPosition, "LATEST");
+  assert.deepEqual(eventSourceMappings[0].Properties?.FunctionResponseTypes, ["ReportBatchItemFailures"]);
+
+  const actions = iamPolicyActions(template);
+  assert.ok(actions.includes("kinesis:GetRecords"), "Mapping should grant Kinesis read access");
+  assert.ok(actions.includes("kinesis:GetShardIterator"), "Mapping should grant Kinesis iterator access");
+  assert.equal(actions.includes("kinesis:PutRecord"), false, "Mapping must not grant Kinesis write access");
+  assert.equal(actions.includes("kinesis:PutRecords"), false, "Mapping must not grant Kinesis write access");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("kinesis-stream-mapping", template);
+  } else {
+    expectSnapshot("kinesis-stream-mapping", template);
+  }
+});
+
+test("AppTheoryKinesisStreamMapping passes representative stream options", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "111111111111", region: "us-east-1" },
+  });
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const stream = kinesis.Stream.fromStreamArn(
+    stack,
+    "Imported",
+    "arn:aws:kinesis:us-east-1:111111111111:stream/existing-events",
+  );
+
+  new apptheory.AppTheoryKinesisStreamMapping(stack, "Mapping", {
+    consumer: fn,
+    stream,
+    startingPosition: lambda.StartingPosition.AT_TIMESTAMP,
+    startingPositionTimestamp: 1710000000,
+    batchSize: 250,
+    maxBatchingWindow: cdk.Duration.seconds(30),
+    retryAttempts: 3,
+    maxRecordAge: cdk.Duration.hours(2),
+    bisectBatchOnError: true,
+    parallelizationFactor: 2,
+    reportBatchItemFailures: true,
+    tumblingWindow: cdk.Duration.minutes(1),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("kinesis-stream-mapping-options", template);
+  } else {
+    expectSnapshot("kinesis-stream-mapping-options", template);
+  }
+});
+
+test("AppTheoryKinesisStreamMapping fails closed on timestamp mismatch", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStreamMapping(stack, "MissingTimestamp", {
+        consumer: fn,
+        stream: stream.stream,
+        startingPosition: lambda.StartingPosition.AT_TIMESTAMP,
+      }),
+    /requires startingPositionTimestamp/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStreamMapping(stack, "UnexpectedTimestamp", {
+        consumer: fn,
+        stream: stream.stream,
+        startingPositionTimestamp: 1710000000,
+      }),
+    /only supports startingPositionTimestamp/,
+  );
+});
+
+test("AppTheoryCloudWatchLogsDestination (account allowlist) synthesizes narrow destination", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "999999999999", region: "us-east-1" },
+  });
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream", {
+    streamName: "apptheory-events",
+  });
+
+  new apptheory.AppTheoryCloudWatchLogsDestination(stack, "LogsDestination", {
+    stream: stream.stream,
+    destinationName: "apptheory-central-logs",
+    allowedSourceAccounts: ["111111111111", "222222222222"],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const destinations = resources.filter((resource) => resource.Type === "AWS::Logs::Destination");
+  const roles = resources.filter((resource) => resource.Type === "AWS::IAM::Role");
+
+  assert.equal(destinations.length, 1, "Should synthesize one CloudWatch Logs destination");
+  assert.equal(destinations[0].Properties?.DestinationName, "apptheory-central-logs");
+  assert.ok(destinations[0].Properties?.TargetArn, "Destination should target the Kinesis stream");
+  assert.ok(destinations[0].Properties?.RoleArn, "Destination should use the service role");
+
+  const destinationPolicy = renderedString(destinations[0].Properties?.DestinationPolicy);
+  assert.match(destinationPolicy, /logs:PutSubscriptionFilter/);
+  assert.match(destinationPolicy, /111111111111/);
+  assert.match(destinationPolicy, /222222222222/);
+  assert.doesNotMatch(destinationPolicy, /"Principal":"\*"/);
+  assert.doesNotMatch(destinationPolicy, /kinesis:\*/);
+
+  assert.equal(roles.length, 1, "Should synthesize one CloudWatch Logs service role");
+  const assumeRole = roles[0].Properties?.AssumeRolePolicyDocument?.Statement ?? [];
+  assert.equal(assumeRole.length, 1);
+  assert.deepEqual(assumeRole[0].Principal, { Service: "logs.amazonaws.com" });
+  assert.deepEqual(assumeRole[0].Condition?.StringLike?.["aws:SourceArn"], [
+    { "Fn::Join": ["", ["arn:", { Ref: "AWS::Partition" }, ":logs:us-east-1:999999999999:*"]] },
+    { "Fn::Join": ["", ["arn:", { Ref: "AWS::Partition" }, ":logs:us-east-1:111111111111:*"]] },
+    { "Fn::Join": ["", ["arn:", { Ref: "AWS::Partition" }, ":logs:us-east-1:222222222222:*"]] },
+  ]);
+
+  const actions = iamPolicyActions(template);
+  assert.ok(actions.includes("kinesis:PutRecord"), "Service role should be able to write records");
+  assert.equal(
+    actions.includes("kinesis:PutRecords"),
+    false,
+    "Service role should grant only the documented PutRecord operation",
+  );
+  assert.equal(
+    actions.includes("kinesis:ListShards"),
+    false,
+    "Service role must not receive Kinesis read/list permissions",
+  );
+  assert.equal(actions.includes("kinesis:*"), false, "Service role must not receive broad Kinesis permissions");
+  assert.equal(actions.includes("logs:PutSubscriptionFilter"), false, "Service role must not write destination policies");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("cloudwatch-logs-destination-account-allowlist", template);
+  } else {
+    expectSnapshot("cloudwatch-logs-destination-account-allowlist", template);
+  }
+});
+
+test("AppTheoryCloudWatchLogsDestination (organization allowlist) constrains wildcard principal", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "999999999999", region: "us-east-1" },
+  });
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream", {
+    streamName: "apptheory-org-events",
+  });
+
+  new apptheory.AppTheoryCloudWatchLogsDestination(stack, "LogsDestination", {
+    stream: stream.stream,
+    destinationName: "apptheory-org-logs",
+    allowedOrganizationIds: ["o-abcdef1234"],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const destination = resources.find((resource) => resource.Type === "AWS::Logs::Destination");
+  const role = resources.find((resource) => resource.Type === "AWS::IAM::Role");
+
+  assert.ok(destination, "Should synthesize a CloudWatch Logs destination");
+  const destinationPolicy = renderedString(destination.Properties?.DestinationPolicy);
+  assert.match(destinationPolicy, /"Principal":"\*"/);
+  assert.match(destinationPolicy, /aws:PrincipalOrgID/);
+  assert.match(destinationPolicy, /o-abcdef1234/);
+  assert.match(destinationPolicy, /logs:PutSubscriptionFilter/);
+
+  assert.ok(role, "Should synthesize the CloudWatch Logs service role");
+  const assumeRole = role.Properties?.AssumeRolePolicyDocument?.Statement ?? [];
+  assert.equal(assumeRole.length, 2);
+  assert.deepEqual(assumeRole[1].Principal, { Service: "logs.amazonaws.com" });
+  assert.deepEqual(assumeRole[1].Condition, {
+    StringEquals: {
+      "aws:SourceOrgID": ["o-abcdef1234"],
+    },
+  });
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("cloudwatch-logs-destination-organization-allowlist", template);
+  } else {
+    expectSnapshot("cloudwatch-logs-destination-organization-allowlist", template);
+  }
+});
+
+test("AppTheoryCloudWatchLogsDestination fails closed without an allowlist", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsDestination(stack, "MissingAllowlist", {
+        stream: stream.stream,
+      }),
+    /requires allowedSourceAccounts and\/or allowedOrganizationIds/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsDestination(stack, "EmptyAllowlist", {
+        stream: stream.stream,
+        allowedSourceAccounts: [],
+        allowedOrganizationIds: [],
+      }),
+    /requires allowedSourceAccounts and\/or allowedOrganizationIds/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsDestination(stack, "EmptyAccount", {
+        stream: stream.stream,
+        allowedSourceAccounts: [" "],
+      }),
+    /allowedSourceAccounts cannot contain empty values/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsDestination(stack, "InvalidOrg", {
+        stream: stream.stream,
+        allowedOrganizationIds: ["not-an-org"],
+      }),
+    /allowedOrganizationIds must contain AWS Organization IDs/,
+  );
 });
 
 test("AppTheoryJobsTable synthesizes expected template", () => {
