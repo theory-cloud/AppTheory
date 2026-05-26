@@ -61,12 +61,8 @@ func runFixtureM1(f Fixture) error {
 		}),
 	)
 
-	for _, name := range f.Setup.Middlewares {
-		mw := builtInM1EventMiddleware(name)
-		if mw == nil {
-			return fmt.Errorf("unknown event middleware %q", name)
-		}
-		app.UseEvents(mw)
+	if err := registerFixtureM1EventMiddlewares(app, f); err != nil {
+		return err
 	}
 
 	if f.Input.AWSEvent == nil {
@@ -78,6 +74,51 @@ func runFixtureM1(f Fixture) error {
 		return err
 	}
 
+	if routeErr := registerFixtureM1EventRoutes(app, f, cloudWatchLogsExpectations); routeErr != nil {
+		return routeErr
+	}
+
+	ctx, cancel := fixtureM1LambdaContext(now, f.Input.Context)
+	if cancel != nil {
+		defer cancel()
+	}
+
+	out, err := app.HandleLambda(ctx, f.Input.AWSEvent.Event)
+	return compareFixtureM1Result(f, out, err, effects)
+}
+
+func registerFixtureM1EventMiddlewares(app *apptheory.App, f Fixture) error {
+	for _, name := range f.Setup.Middlewares {
+		mw := builtInM1EventMiddleware(name)
+		if mw == nil {
+			return fmt.Errorf("unknown event middleware %q", name)
+		}
+		app.UseEvents(mw)
+	}
+	return nil
+}
+
+func registerFixtureM1EventRoutes(
+	app *apptheory.App,
+	f Fixture,
+	cloudWatchLogsExpectations *cloudWatchLogsSubscriptionExpectations,
+) error {
+	if err := registerFixtureM1SQSRoutes(app, f); err != nil {
+		return err
+	}
+	if err := registerFixtureM1KinesisRoutes(app, f, cloudWatchLogsExpectations); err != nil {
+		return err
+	}
+	if err := registerFixtureM1SNSRoutes(app, f); err != nil {
+		return err
+	}
+	if err := registerFixtureM1DynamoDBRoutes(app, f); err != nil {
+		return err
+	}
+	return registerFixtureM1EventBridgeRoutes(app, f)
+}
+
+func registerFixtureM1SQSRoutes(app *apptheory.App, f Fixture) error {
 	for _, r := range f.Setup.SQS {
 		queue := strings.TrimSpace(r.Queue)
 		handler := builtInSQSHandler(r.Handler)
@@ -86,7 +127,14 @@ func runFixtureM1(f Fixture) error {
 		}
 		app.SQS(queue, handler)
 	}
+	return nil
+}
 
+func registerFixtureM1KinesisRoutes(
+	app *apptheory.App,
+	f Fixture,
+	cloudWatchLogsExpectations *cloudWatchLogsSubscriptionExpectations,
+) error {
 	for _, r := range f.Setup.Kinesis {
 		stream := strings.TrimSpace(r.Stream)
 		handler := builtInKinesisHandler(r.Handler, cloudWatchLogsExpectations)
@@ -95,7 +143,10 @@ func runFixtureM1(f Fixture) error {
 		}
 		app.Kinesis(stream, handler)
 	}
+	return nil
+}
 
+func registerFixtureM1SNSRoutes(app *apptheory.App, f Fixture) error {
 	for _, r := range f.Setup.SNS {
 		topic := strings.TrimSpace(r.Topic)
 		handler := builtInSNSHandler(r.Handler)
@@ -104,7 +155,10 @@ func runFixtureM1(f Fixture) error {
 		}
 		app.SNS(topic, handler)
 	}
+	return nil
+}
 
+func registerFixtureM1DynamoDBRoutes(app *apptheory.App, f Fixture) error {
 	for _, r := range f.Setup.DynamoDB {
 		table := strings.TrimSpace(r.Table)
 		handler := builtInDynamoDBStreamHandler(r.Handler)
@@ -113,7 +167,10 @@ func runFixtureM1(f Fixture) error {
 		}
 		app.DynamoDB(table, handler)
 	}
+	return nil
+}
 
+func registerFixtureM1EventBridgeRoutes(app *apptheory.App, f Fixture) error {
 	for _, r := range f.Setup.EventBridge {
 		handler := builtInEventBridgeHandler(r.Handler)
 		if handler == nil {
@@ -126,14 +183,7 @@ func runFixtureM1(f Fixture) error {
 		}
 		app.EventBridge(selector, handler)
 	}
-
-	ctx, cancel := fixtureM1LambdaContext(now, f.Input.Context)
-	if cancel != nil {
-		defer cancel()
-	}
-
-	out, err := app.HandleLambda(ctx, f.Input.AWSEvent.Event)
-	return compareFixtureM1Result(f, out, err, effects)
+	return nil
 }
 
 func builtInM1EventMiddleware(name string) apptheory.EventMiddleware {
@@ -330,25 +380,12 @@ type cloudWatchLogsSubscriptionExpectations struct {
 type cloudWatchLogsSubscriptionDecoder func(events.KinesisEventRecord) (FixtureCloudWatchLogsSubscriptionRecord, error)
 
 func newCloudWatchLogsSubscriptionExpectations(f Fixture) (*cloudWatchLogsSubscriptionExpectations, error) {
-	usesHandler := false
-	for _, route := range f.Setup.Kinesis {
-		if strings.TrimSpace(route.Handler) == cloudWatchLogsSubscriptionHandlerName {
-			usesHandler = true
-			break
-		}
+	usesHandler := fixtureUsesCloudWatchLogsSubscriptionHandler(f)
+	if err := validateCloudWatchLogsSubscriptionExpectationShape(f, usesHandler); err != nil {
+		return nil, err
 	}
-
 	if f.Expect.CloudWatchLogsSubscription == nil {
-		if usesHandler {
-			return nil, errors.New("fixture missing expect.cloudwatch_logs_subscription")
-		}
 		return nil, nil
-	}
-	if !usesHandler {
-		return nil, errors.New("expect.cloudwatch_logs_subscription requires kinesis_require_cloudwatch_logs_subscription handler")
-	}
-	if len(f.Expect.CloudWatchLogsSubscription.Records) == 0 {
-		return nil, errors.New("fixture missing expect.cloudwatch_logs_subscription.records")
 	}
 	if f.Input.AWSEvent == nil {
 		return nil, errors.New("fixture missing input.aws_event")
@@ -359,8 +396,47 @@ func newCloudWatchLogsSubscriptionExpectations(f Fixture) (*cloudWatchLogsSubscr
 		return nil, err
 	}
 
-	expectedByID := make(map[string]FixtureCloudWatchLogsSubscriptionRecord, len(f.Expect.CloudWatchLogsSubscription.Records))
-	for i, expected := range f.Expect.CloudWatchLogsSubscription.Records {
+	expectedByID, err := cloudWatchLogsSubscriptionExpectationsByRecordID(f.Expect.CloudWatchLogsSubscription.Records)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCloudWatchLogsSubscriptionInputRecordIDs(inputRecordIDs, expectedByID); err != nil {
+		return nil, err
+	}
+
+	return &cloudWatchLogsSubscriptionExpectations{byRecordID: expectedByID}, nil
+}
+
+func fixtureUsesCloudWatchLogsSubscriptionHandler(f Fixture) bool {
+	for _, route := range f.Setup.Kinesis {
+		if strings.TrimSpace(route.Handler) == cloudWatchLogsSubscriptionHandlerName {
+			return true
+		}
+	}
+	return false
+}
+
+func validateCloudWatchLogsSubscriptionExpectationShape(f Fixture, usesHandler bool) error {
+	if f.Expect.CloudWatchLogsSubscription == nil {
+		if usesHandler {
+			return errors.New("fixture missing expect.cloudwatch_logs_subscription")
+		}
+		return nil
+	}
+	if !usesHandler {
+		return errors.New("expect.cloudwatch_logs_subscription requires kinesis_require_cloudwatch_logs_subscription handler")
+	}
+	if len(f.Expect.CloudWatchLogsSubscription.Records) == 0 {
+		return errors.New("fixture missing expect.cloudwatch_logs_subscription.records")
+	}
+	return nil
+}
+
+func cloudWatchLogsSubscriptionExpectationsByRecordID(
+	records []FixtureCloudWatchLogsSubscriptionRecord,
+) (map[string]FixtureCloudWatchLogsSubscriptionRecord, error) {
+	expectedByID := make(map[string]FixtureCloudWatchLogsSubscriptionRecord, len(records))
+	for i, expected := range records {
 		recordID := strings.TrimSpace(expected.RecordID)
 		if recordID == "" {
 			return nil, fmt.Errorf("expect.cloudwatch_logs_subscription.records[%d] missing record_id", i)
@@ -374,24 +450,29 @@ func newCloudWatchLogsSubscriptionExpectations(f Fixture) (*cloudWatchLogsSubscr
 		}
 		expectedByID[recordID] = expected
 	}
+	return expectedByID, nil
+}
 
+func validateCloudWatchLogsSubscriptionInputRecordIDs(
+	inputRecordIDs []string,
+	expectedByID map[string]FixtureCloudWatchLogsSubscriptionRecord,
+) error {
 	seenInputRecordIDs := make(map[string]bool, len(inputRecordIDs))
 	for _, recordID := range inputRecordIDs {
 		if seenInputRecordIDs[recordID] {
-			return nil, fmt.Errorf("duplicate kinesis input record_id %q", recordID)
+			return fmt.Errorf("duplicate kinesis input record_id %q", recordID)
 		}
 		seenInputRecordIDs[recordID] = true
 		if _, ok := expectedByID[recordID]; !ok {
-			return nil, fmt.Errorf("missing cloudwatch logs subscription expectation for kinesis record_id %q", recordID)
+			return fmt.Errorf("missing cloudwatch logs subscription expectation for kinesis record_id %q", recordID)
 		}
 	}
 	for recordID := range expectedByID {
 		if !seenInputRecordIDs[recordID] {
-			return nil, fmt.Errorf("extra cloudwatch logs subscription expectation for record_id %q", recordID)
+			return fmt.Errorf("extra cloudwatch logs subscription expectation for record_id %q", recordID)
 		}
 	}
-
-	return &cloudWatchLogsSubscriptionExpectations{byRecordID: expectedByID}, nil
+	return nil
 }
 
 func kinesisInputRecordIDs(raw json.RawMessage) ([]string, error) {
@@ -419,20 +500,47 @@ func kinesisInputRecordIDs(raw json.RawMessage) ([]string, error) {
 
 func validateCloudWatchLogsSubscriptionExpectationRecord(expected FixtureCloudWatchLogsSubscriptionRecord) error {
 	if expected.DecodeError {
-		if strings.TrimSpace(expected.MessageType) != "" ||
-			strings.TrimSpace(expected.Owner) != "" ||
-			strings.TrimSpace(expected.LogGroup) != "" ||
-			strings.TrimSpace(expected.LogStream) != "" ||
-			len(expected.SubscriptionFilters) > 0 ||
-			len(expected.LogEvents) > 0 ||
-			len(expected.SafeSummary) > 0 ||
-			len(expected.ForbiddenSafeLogSubstrings) > 0 {
-			return fmt.Errorf("cloudwatch logs subscription record_id %q has decode_error=true and decoded fields", expected.RecordID)
-		}
-		return nil
+		return validateCloudWatchLogsSubscriptionDecodeErrorExpectation(expected)
 	}
 
-	var missing []string
+	if missing := missingCloudWatchLogsSubscriptionDecodedFields(expected); len(missing) > 0 {
+		return fmt.Errorf("cloudwatch logs subscription record_id %q expectation missing %s; malformed records must set decode_error=true", expected.RecordID, strings.Join(missing, ", "))
+	}
+	if err := validateCloudWatchLogsSubscriptionFilters(expected); err != nil {
+		return err
+	}
+	if err := validateCloudWatchLogsSubscriptionLogEvents(expected); err != nil {
+		return err
+	}
+	if cloudWatchLogsSafeSummaryContainsForbidden(expected.SafeSummary, expected.ForbiddenSafeLogSubstrings) {
+		return fmt.Errorf("cloudwatch logs subscription record_id %q safe_summary contains forbidden raw log substring", expected.RecordID)
+	}
+
+	return nil
+}
+
+func validateCloudWatchLogsSubscriptionDecodeErrorExpectation(
+	expected FixtureCloudWatchLogsSubscriptionRecord,
+) error {
+	if cloudWatchLogsSubscriptionDecodeErrorHasDecodedFields(expected) {
+		return fmt.Errorf("cloudwatch logs subscription record_id %q has decode_error=true and decoded fields", expected.RecordID)
+	}
+	return nil
+}
+
+func cloudWatchLogsSubscriptionDecodeErrorHasDecodedFields(expected FixtureCloudWatchLogsSubscriptionRecord) bool {
+	return strings.TrimSpace(expected.MessageType) != "" ||
+		strings.TrimSpace(expected.Owner) != "" ||
+		strings.TrimSpace(expected.LogGroup) != "" ||
+		strings.TrimSpace(expected.LogStream) != "" ||
+		len(expected.SubscriptionFilters) > 0 ||
+		len(expected.LogEvents) > 0 ||
+		len(expected.SafeSummary) > 0 ||
+		len(expected.ForbiddenSafeLogSubstrings) > 0
+}
+
+func missingCloudWatchLogsSubscriptionDecodedFields(expected FixtureCloudWatchLogsSubscriptionRecord) []string {
+	missing := make([]string, 0, 7)
 	if strings.TrimSpace(expected.MessageType) == "" {
 		missing = append(missing, "message_type")
 	}
@@ -454,15 +562,19 @@ func validateCloudWatchLogsSubscriptionExpectationRecord(expected FixtureCloudWa
 	if len(expected.SafeSummary) == 0 {
 		missing = append(missing, "safe_summary")
 	}
-	if len(missing) > 0 {
-		return fmt.Errorf("cloudwatch logs subscription record_id %q expectation missing %s; malformed records must set decode_error=true", expected.RecordID, strings.Join(missing, ", "))
-	}
+	return missing
+}
 
+func validateCloudWatchLogsSubscriptionFilters(expected FixtureCloudWatchLogsSubscriptionRecord) error {
 	for i, filter := range expected.SubscriptionFilters {
 		if strings.TrimSpace(filter) == "" {
 			return fmt.Errorf("cloudwatch logs subscription record_id %q subscription_filters[%d] is empty", expected.RecordID, i)
 		}
 	}
+	return nil
+}
+
+func validateCloudWatchLogsSubscriptionLogEvents(expected FixtureCloudWatchLogsSubscriptionRecord) error {
 	for i, event := range expected.LogEvents {
 		if strings.TrimSpace(event.ID) == "" {
 			return fmt.Errorf("cloudwatch logs subscription record_id %q log_events[%d] missing id", expected.RecordID, i)
@@ -471,10 +583,6 @@ func validateCloudWatchLogsSubscriptionExpectationRecord(expected FixtureCloudWa
 			return fmt.Errorf("cloudwatch logs subscription record_id %q log_events[%d] missing message", expected.RecordID, i)
 		}
 	}
-	if cloudWatchLogsSafeSummaryContainsForbidden(expected.SafeSummary, expected.ForbiddenSafeLogSubstrings) {
-		return fmt.Errorf("cloudwatch logs subscription record_id %q safe_summary contains forbidden raw log substring", expected.RecordID)
-	}
-
 	return nil
 }
 

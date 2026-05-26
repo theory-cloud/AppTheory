@@ -67,15 +67,15 @@ func TestDecodeCloudWatchLogsSubscription_DecodesEnvelopeAndSafeSummary(t *testi
 func TestDecodeCloudWatchLogsSubscription_FailsClosedWithoutLeakingRawData(t *testing.T) {
 	t.Parallel()
 
-	secret := "do-not-log-customer-message"
+	rawMessageSentinel := "do-not-log-customer-message"
 	_, err := DecodeCloudWatchLogsSubscription(events.KinesisEventRecord{
 		EventID: "kin-cwl-bad",
-		Kinesis: events.KinesisRecord{Data: []byte(`{"message":"` + secret + `"}`)},
+		Kinesis: events.KinesisRecord{Data: []byte(`{"message":"` + rawMessageSentinel + `"}`)},
 	})
 	if err == nil {
 		t.Fatal("expected invalid gzip to fail")
 	}
-	if strings.Contains(err.Error(), secret) {
+	if strings.Contains(err.Error(), rawMessageSentinel) {
 		t.Fatalf("decode error leaked raw payload: %v", err)
 	}
 
@@ -83,13 +83,13 @@ func TestDecodeCloudWatchLogsSubscription_FailsClosedWithoutLeakingRawData(t *te
 		EventID: "kin-cwl-missing",
 		Kinesis: events.KinesisRecord{Data: gzipCloudWatchLogsSubscriptionTestPayload(t, map[string]any{
 			"messageType": "DATA_MESSAGE",
-			"logEvents":   []map[string]any{{"id": "cwl-event-a1", "message": secret}},
+			"logEvents":   []map[string]any{{"id": "cwl-event-a1", "message": rawMessageSentinel}},
 		})},
 	})
 	if err == nil {
 		t.Fatal("expected missing required fields to fail")
 	}
-	if strings.Contains(err.Error(), secret) {
+	if strings.Contains(err.Error(), rawMessageSentinel) {
 		t.Fatalf("validation error leaked raw log message: %v", err)
 	}
 }
