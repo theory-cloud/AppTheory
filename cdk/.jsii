@@ -13776,6 +13776,266 @@
       ],
       "symbolId": "lib/kinesis-stream:AppTheoryKinesisStream"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMapping": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "The mapping owns no stream lifecycle. Use AppTheoryKinesisStream when the\napplication should create or wrap the stream, then pass its `stream` here.",
+        "summary": "Wires a Kinesis Data Stream to a Lambda consumer."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMapping",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/kinesis-stream-mapping.ts",
+          "line": 103
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMappingProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/kinesis-stream-mapping.ts",
+        "line": 102
+      },
+      "name": "AppTheoryKinesisStreamMapping",
+      "symbolId": "lib/kinesis-stream-mapping:AppTheoryKinesisStreamMapping"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMappingProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for AppTheoryKinesisStreamMapping."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMappingProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/kinesis-stream-mapping.ts",
+        "line": 11
+      },
+      "name": "AppTheoryKinesisStreamMappingProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The Lambda function that will consume records from the stream."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 15
+          },
+          "name": "consumer",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The Kinesis Data Stream to consume."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 20
+          },
+          "name": "stream",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kinesis.IStream"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS Lambda default for Kinesis event source mappings",
+            "summary": "The largest number of records that AWS Lambda retrieves per invocation."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 41
+          },
+          "name": "batchSize",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS Lambda default for Kinesis event source mappings",
+            "summary": "Split a failed batch in two and retry."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 69
+          },
+          "name": "bisectBatchOnError",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS Lambda default for Kinesis event source mappings",
+            "summary": "The maximum amount of time to gather records before invoking the function."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 48
+          },
+          "name": "maxBatchingWindow",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS Lambda default for Kinesis event source mappings",
+            "summary": "The maximum age of a record that Lambda sends to the consumer."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 62
+          },
+          "name": "maxRecordAge",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS Lambda default for Kinesis event source mappings",
+            "summary": "The number of batches to process from each shard concurrently."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 76
+          },
+          "name": "parallelizationFactor",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "remarks": "AppTheory defaults this on so Kinesis consumers can fail closed per record\ninstead of replaying successfully processed records.",
+            "summary": "Allow partial-batch failure responses from the consumer."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 86
+          },
+          "name": "reportBatchItemFailures",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS Lambda default for Kinesis event source mappings",
+            "summary": "Maximum number of retry attempts for failed records."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 55
+          },
+          "name": "retryAttempts",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "lambda.StartingPosition.LATEST",
+            "summary": "Where to begin consuming the stream."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 27
+          },
+          "name": "startingPosition",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.StartingPosition"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- no timestamp",
+            "summary": "The Unix timestamp, in seconds, used with lambda.StartingPosition.AT_TIMESTAMP."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 34
+          },
+          "name": "startingPositionTimestamp",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- no tumbling window",
+            "summary": "The tumbling window used to group records before invocation."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 93
+          },
+          "name": "tumblingWindow",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        }
+      ],
+      "symbolId": "lib/kinesis-stream-mapping:AppTheoryKinesisStreamMappingProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamProps": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "datatype": true,
@@ -21207,5 +21467,5 @@
     }
   },
   "version": "1.9.0",
-  "fingerprint": "GzgSPsehtoczAR5WWmyM+9Kb3y1/s6RqSFsHZGZjDcE="
+  "fingerprint": "iFLD4GHbWFhW9oW7NmzqhilcWwUVGi/k+jVPlznmhGw="
 }

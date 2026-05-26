@@ -117,6 +117,22 @@ function lambdaPermissionCount(template) {
   return lambdaPermissionSourceArns(template).length;
 }
 
+function iamPolicyActions(template) {
+  const actions = [];
+  for (const resource of Object.values(template.Resources ?? {})) {
+    if (resource.Type !== "AWS::IAM::Policy") continue;
+    for (const statement of resource.Properties?.PolicyDocument?.Statement ?? []) {
+      const action = statement.Action;
+      if (Array.isArray(action)) {
+        actions.push(...action);
+      } else if (typeof action === "string") {
+        actions.push(action);
+      }
+    }
+  }
+  return actions;
+}
+
 function assertNoTestInvokeStagePermissions(template) {
   const sourceArns = lambdaPermissionSourceArns(template);
   assert.ok(sourceArns.length >= 1, "Should synthesize at least one Lambda permission");
@@ -1004,6 +1020,116 @@ test("AppTheoryKinesisStream fails closed on invalid props", () => {
         encryption: kinesis.StreamEncryption.UNENCRYPTED,
       }),
     /requires stream encryption/,
+  );
+});
+
+test("AppTheoryKinesisStreamMapping synthesizes partial batch failures and read grant", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream", {
+    streamName: "apptheory-events",
+  });
+
+  new apptheory.AppTheoryKinesisStreamMapping(stack, "Mapping", {
+    consumer: fn,
+    stream: stream.stream,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const eventSourceMappings = Object.values(template.Resources ?? {}).filter(
+    (resource) => resource.Type === "AWS::Lambda::EventSourceMapping",
+  );
+  assert.equal(eventSourceMappings.length, 1);
+  assert.equal(eventSourceMappings[0].Properties?.StartingPosition, "LATEST");
+  assert.deepEqual(eventSourceMappings[0].Properties?.FunctionResponseTypes, ["ReportBatchItemFailures"]);
+
+  const actions = iamPolicyActions(template);
+  assert.ok(actions.includes("kinesis:GetRecords"), "Mapping should grant Kinesis read access");
+  assert.ok(actions.includes("kinesis:GetShardIterator"), "Mapping should grant Kinesis iterator access");
+  assert.equal(actions.includes("kinesis:PutRecord"), false, "Mapping must not grant Kinesis write access");
+  assert.equal(actions.includes("kinesis:PutRecords"), false, "Mapping must not grant Kinesis write access");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("kinesis-stream-mapping", template);
+  } else {
+    expectSnapshot("kinesis-stream-mapping", template);
+  }
+});
+
+test("AppTheoryKinesisStreamMapping passes representative stream options", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "111111111111", region: "us-east-1" },
+  });
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const stream = kinesis.Stream.fromStreamArn(
+    stack,
+    "Imported",
+    "arn:aws:kinesis:us-east-1:111111111111:stream/existing-events",
+  );
+
+  new apptheory.AppTheoryKinesisStreamMapping(stack, "Mapping", {
+    consumer: fn,
+    stream,
+    startingPosition: lambda.StartingPosition.AT_TIMESTAMP,
+    startingPositionTimestamp: 1710000000,
+    batchSize: 250,
+    maxBatchingWindow: cdk.Duration.seconds(30),
+    retryAttempts: 3,
+    maxRecordAge: cdk.Duration.hours(2),
+    bisectBatchOnError: true,
+    parallelizationFactor: 2,
+    reportBatchItemFailures: true,
+    tumblingWindow: cdk.Duration.minutes(1),
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("kinesis-stream-mapping-options", template);
+  } else {
+    expectSnapshot("kinesis-stream-mapping-options", template);
+  }
+});
+
+test("AppTheoryKinesisStreamMapping fails closed on timestamp mismatch", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStreamMapping(stack, "MissingTimestamp", {
+        consumer: fn,
+        stream: stream.stream,
+        startingPosition: lambda.StartingPosition.AT_TIMESTAMP,
+      }),
+    /requires startingPositionTimestamp/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryKinesisStreamMapping(stack, "UnexpectedTimestamp", {
+        consumer: fn,
+        stream: stream.stream,
+        startingPositionTimestamp: 1710000000,
+      }),
+    /only supports startingPositionTimestamp/,
   );
 });
 
