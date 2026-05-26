@@ -31,6 +31,18 @@ concepts:
     related_docs:
       - cdk/docs/eventbridge-rule-target.md
 
+  kinesis_ingestion_constructs:
+    type: construct_group
+    purpose: "AppTheory Kinesis stream, stream mapping, and CloudWatch Logs destination path."
+    provides:
+      - encrypted_stream_create_or_wrap
+      - lambda_kinesis_event_source_mapping
+      - cloudwatch_logs_destination_allowlist
+      - partial_batch_failure_default
+    related_docs:
+      - docs/cdk/kinesis-cloudwatch-logs.md
+      - cdk/docs/api-reference.md
+
   s3_ingest:
     type: construct
     purpose: "Secure S3 ingest bucket with optional EventBridge/SQS notifications (import pipeline front door)."

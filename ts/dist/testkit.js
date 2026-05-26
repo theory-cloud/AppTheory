@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { gzipSync } from "node:zlib";
 import { createApp } from "./app.js";
 import { ManualClock } from "./clock.js";
 import { AppError, AppTheoryError } from "./errors.js";
@@ -340,6 +341,31 @@ export function buildDynamoDBStreamEvent(streamArn, records = []) {
         })),
     };
 }
+export function cloudWatchLogsSubscriptionData(options = {}) {
+    const payload = {
+        messageType: defaultCloudWatchLogsSubscriptionMessageType(options.messageType),
+        owner: defaultCloudWatchLogsSubscriptionOwner(options.owner),
+        logGroup: defaultCloudWatchLogsSubscriptionLogGroup(options.logGroup),
+        logStream: defaultCloudWatchLogsSubscriptionLogStream(options.logStream),
+        subscriptionFilters: defaultCloudWatchLogsSubscriptionFilters(options.subscriptionFilters),
+        logEvents: defaultCloudWatchLogsSubscriptionLogEvents(options.logEvents),
+    };
+    return gzipSync(Buffer.from(JSON.stringify(payload), "utf8"));
+}
+export function kinesisCloudWatchLogsSubscriptionRecord(options = {}) {
+    const record = {
+        data: cloudWatchLogsSubscriptionData(options.subscription ?? {}),
+    };
+    if (options.eventID !== undefined)
+        record.eventID = options.eventID;
+    if (options.eventSourceARN !== undefined) {
+        record.eventSourceARN = options.eventSourceARN;
+    }
+    if (options.partitionKey !== undefined) {
+        record.partitionKey = options.partitionKey;
+    }
+    return record;
+}
 export function buildKinesisEvent(streamArn, records = []) {
     const arn = String(streamArn ?? "").trim();
     return {
@@ -372,6 +398,46 @@ export function buildKinesisEvent(streamArn, records = []) {
             };
         }),
     };
+}
+function defaultCloudWatchLogsSubscriptionMessageType(value) {
+    const normalized = String(value ?? "").trim();
+    return normalized || "DATA_MESSAGE";
+}
+function defaultCloudWatchLogsSubscriptionOwner(value) {
+    const normalized = String(value ?? "").trim();
+    return normalized || "000000000000";
+}
+function defaultCloudWatchLogsSubscriptionLogGroup(value) {
+    const normalized = String(value ?? "").trim();
+    return normalized || "/aws/lambda/apptheory-test";
+}
+function defaultCloudWatchLogsSubscriptionLogStream(value) {
+    const normalized = String(value ?? "").trim();
+    return normalized || "1970/01/01/[$LATEST]apptheory-test";
+}
+function defaultCloudWatchLogsSubscriptionFilters(filters) {
+    if (!filters || filters.length === 0) {
+        return ["apptheory-test-filter"];
+    }
+    return filters.map((filter) => String(filter ?? "").trim());
+}
+function defaultCloudWatchLogsSubscriptionLogEvents(logEvents) {
+    if (!logEvents || logEvents.length === 0) {
+        return [
+            {
+                id: "cwl-event-1",
+                timestamp: 0,
+                message: "test log line",
+            },
+        ];
+    }
+    return logEvents.map((event) => ({
+        id: String(event.id ?? "").trim(),
+        timestamp: typeof event.timestamp === "number" && Number.isFinite(event.timestamp)
+            ? Math.trunc(event.timestamp)
+            : 0,
+        message: String(event.message ?? ""),
+    }));
 }
 export function buildSNSEvent(topicArn, records = []) {
     const arn = String(topicArn ?? "").trim();
