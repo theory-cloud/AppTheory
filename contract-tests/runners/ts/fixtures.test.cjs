@@ -3,7 +3,13 @@ const path = require("node:path");
 const test = require("node:test");
 const { pathToFileURL } = require("node:url");
 
-const { runAllFixtures } = require("./run.cjs");
+const {
+  CLOUDWATCH_LOGS_SUBSCRIPTION_MISSING_HELPER,
+  buildCloudWatchLogsSubscriptionExpectations,
+  compareCloudWatchLogsSubscriptionDecodedRecord,
+  makeCloudWatchLogsSubscriptionKinesisHandler,
+  runAllFixtures,
+} = require("./run.cjs");
 
 async function importDist(relPath) {
   const abs = path.join(process.cwd(), "ts", "dist", relPath);
@@ -277,6 +283,131 @@ test("contract fixtures (ts runtime)", { timeout: 60_000 }, async () => {
     `expected 0 failing fixtures, got ${failures.length}/${fixtures.length}: ${ids.join(", ")}`,
   );
 });
+
+test("cloudwatch logs subscription expectations enforce fixture hygiene", () => {
+  const fixture = cloudWatchLogsSubscriptionFixtureForTest();
+  const expectations = buildCloudWatchLogsSubscriptionExpectations(fixture);
+  assert.equal(expectations.size, 2);
+  assert.ok(expectations.has("r1"));
+  assert.ok(expectations.has("r2"));
+
+  const missing = cloudWatchLogsSubscriptionFixtureForTest();
+  missing.expect.cloudwatch_logs_subscription.records = missing.expect.cloudwatch_logs_subscription.records.slice(0, 1);
+  assert.throws(
+    () => buildCloudWatchLogsSubscriptionExpectations(missing),
+    /missing cloudwatch logs subscription expectation/,
+  );
+
+  const extra = cloudWatchLogsSubscriptionFixtureForTest();
+  extra.expect.cloudwatch_logs_subscription.records.push({ record_id: "unexpected", decode_error: true });
+  assert.throws(
+    () => buildCloudWatchLogsSubscriptionExpectations(extra),
+    /extra cloudwatch logs subscription expectation/,
+  );
+
+  const duplicate = cloudWatchLogsSubscriptionFixtureForTest();
+  duplicate.expect.cloudwatch_logs_subscription.records.push(
+    duplicate.expect.cloudwatch_logs_subscription.records[0],
+  );
+  assert.throws(
+    () => buildCloudWatchLogsSubscriptionExpectations(duplicate),
+    /duplicate cloudwatch logs subscription expectation/,
+  );
+
+  const malformedNotMarked = cloudWatchLogsSubscriptionFixtureForTest();
+  malformedNotMarked.expect.cloudwatch_logs_subscription.records[1] = { record_id: "r2" };
+  assert.throws(
+    () => buildCloudWatchLogsSubscriptionExpectations(malformedNotMarked),
+    /malformed records must set decode_error=true/,
+  );
+
+  const decodeErrorWithFields = cloudWatchLogsSubscriptionFixtureForTest();
+  decodeErrorWithFields.expect.cloudwatch_logs_subscription.records[1] = {
+    record_id: "r2",
+    decode_error: true,
+    message_type: "DATA_MESSAGE",
+  };
+  assert.throws(
+    () => buildCloudWatchLogsSubscriptionExpectations(decodeErrorWithFields),
+    /decode_error=true and decoded fields/,
+  );
+});
+
+test("cloudwatch logs subscription handler compares decoder results", async () => {
+  const fixture = cloudWatchLogsSubscriptionFixtureForTest();
+  const validExpected = fixture.expect.cloudwatch_logs_subscription.records[0];
+  const handler = makeCloudWatchLogsSubscriptionKinesisHandler(fixture, async (record) => {
+    if (record.eventID === "r2") {
+      throw new Error("decode failed");
+    }
+    return validExpected;
+  });
+
+  await handler({}, { eventID: "r1" });
+  await assert.rejects(() => handler({}, { eventID: "r2" }), /decode failed/);
+
+  const mismatched = makeCloudWatchLogsSubscriptionKinesisHandler(fixture, async () => ({
+    ...validExpected,
+    message_type: "CONTROL_MESSAGE",
+  }));
+  await assert.rejects(() => mismatched({}, { eventID: "r1" }), /message_type mismatch/);
+
+  const unsafe = compareCloudWatchLogsSubscriptionDecodedRecord(validExpected, {
+    ...validExpected,
+    safe_summary: { ...validExpected.safe_summary, safe_log: "contract log line alpha" },
+  });
+  assert.equal(unsafe.ok, false);
+  assert.match(unsafe.reason, /safe_summary mismatch/);
+
+  const missingHelper = makeCloudWatchLogsSubscriptionKinesisHandler(fixture);
+  await assert.rejects(
+    () => missingHelper({}, { eventID: "r1" }),
+    new RegExp(CLOUDWATCH_LOGS_SUBSCRIPTION_MISSING_HELPER),
+  );
+});
+
+function cloudWatchLogsSubscriptionFixtureForTest() {
+  return {
+    setup: {
+      kinesis: [{ stream: "stream", handler: "kinesis_require_cloudwatch_logs_subscription" }],
+    },
+    input: {
+      aws_event: {
+        source: "kinesis",
+        event: { Records: [{ eventID: "r1" }, { eventID: "r2" }] },
+      },
+    },
+    expect: {
+      cloudwatch_logs_subscription: {
+        records: [
+          {
+            record_id: "r1",
+            message_type: "DATA_MESSAGE",
+            owner: "111122223333",
+            log_group: "/aws/lambda/example",
+            log_stream: "2026/05/26/[$LATEST]example",
+            subscription_filters: ["filter"],
+            log_events: [
+              { id: "event-1", timestamp: 1779806400000, message: "contract log line alpha" },
+            ],
+            safe_summary: {
+              record_id: "r1",
+              message_type: "DATA_MESSAGE",
+              owner: "111122223333",
+              log_group: "/aws/lambda/example",
+              log_stream: "2026/05/26/[$LATEST]example",
+              subscription_filter_count: 1,
+              log_event_count: 1,
+              safe_log: "record_id=r1 owner=111122223333 log_events=1 subscription_filters=1",
+            },
+            forbidden_safe_log_substrings: ["contract log line alpha"],
+          },
+          { record_id: "r2", decode_error: true },
+        ],
+      },
+    },
+  };
+}
 
 test("routing: handleStrict rejects invalid patterns", async () => {
   const { createApp } = await importDist("index.js");

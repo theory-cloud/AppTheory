@@ -66,10 +66,6 @@ if (vulnerabilities.length === 0) {
   fail("cdk-audit: FAIL (npm audit failed without vulnerabilities in report)");
 }
 
-const allowedFastUriAdvisories = [
-  "https://github.com/advisories/GHSA-q3j6-qgpj-74h6",
-  "https://github.com/advisories/GHSA-v39h-62p7-jpjc",
-];
 const allowedBraceExpansionAdvisories = ["https://github.com/advisories/GHSA-jxxr-4gwj-5jf2"];
 
 function sameStringSet(actual, expected) {
@@ -77,26 +73,6 @@ function sameStringSet(actual, expected) {
   const actualSorted = [...actual].sort();
   const expectedSorted = [...expected].sort();
   return actualSorted.every((value, index) => value === expectedSorted[index]);
-}
-
-function isAllowedBundledAwsCdkFastUri(vuln) {
-  const cdkPackage = lock.packages?.["node_modules/aws-cdk-lib"];
-  const fastUriPackage = lock.packages?.["node_modules/aws-cdk-lib/node_modules/fast-uri"];
-  const viaUrls = (vuln.via ?? [])
-    .filter((entry) => entry && typeof entry === "object")
-    .map((entry) => String(entry.url ?? ""))
-    .filter(Boolean);
-
-  return (
-    vuln.name === "fast-uri" &&
-    vuln.isDirect === false &&
-    Array.isArray(vuln.nodes) &&
-    sameStringSet(vuln.nodes, ["node_modules/aws-cdk-lib/node_modules/fast-uri"]) &&
-    sameStringSet(viaUrls, allowedFastUriAdvisories) &&
-    cdkPackage?.version === "2.253.0" &&
-    fastUriPackage?.version === "3.1.0" &&
-    fastUriPackage?.inBundle === true
-  );
 }
 
 function isAllowedBundledAwsCdkBraceExpansion(vuln) {
@@ -130,12 +106,8 @@ function isAllowedBundledAwsCdkBraceExpansion(vuln) {
   );
 }
 
-const allowed = vulnerabilities.filter(
-  (vuln) => isAllowedBundledAwsCdkFastUri(vuln) || isAllowedBundledAwsCdkBraceExpansion(vuln),
-);
-const unexpected = vulnerabilities.filter(
-  (vuln) => !isAllowedBundledAwsCdkFastUri(vuln) && !isAllowedBundledAwsCdkBraceExpansion(vuln),
-);
+const allowed = vulnerabilities.filter((vuln) => isAllowedBundledAwsCdkBraceExpansion(vuln));
+const unexpected = vulnerabilities.filter((vuln) => !isAllowedBundledAwsCdkBraceExpansion(vuln));
 if (unexpected.length > 0) {
   for (const vuln of unexpected) {
     const nodes = Array.isArray(vuln.nodes) ? vuln.nodes.join(", ") : "<unknown nodes>";

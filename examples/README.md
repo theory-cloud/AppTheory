@@ -5,6 +5,7 @@ Deployable examples and templates (CDK, etc).
 ## Index
 
 - `examples/cdk/multilang` — CDK demo deploying the same app in Go/Node/Python.
+- `examples/cdk/kinesis-cloudwatch-logs` — CDK demo for CloudWatch Logs → Kinesis → AppTheory Lambda.
 - `examples/migration/rate-limited-http` — Lift `limited` → AppTheory `pkg/limited` migration example (Go + TableTheory).
 - `examples/mcp/tools-only` — Minimal Streamable HTTP MCP server (tools only).
 - `examples/mcp/tools-resources-prompts` — MCP server exposing tools + resources + prompts.

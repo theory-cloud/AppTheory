@@ -92,6 +92,32 @@ concepts:
       - appsync_resolver_detection
       - single_lambda_entrypoint
 
+  kinesis_ingestion:
+    type: component
+    purpose: "AppTheory-owned Kinesis ingestion path for stream records and CloudWatch Logs subscription envelopes."
+    provides:
+      - kinesis_stream_routing
+      - partial_batch_failure_responses
+      - cloudwatch_logs_subscription_decoder
+      - bounded_kinesis_json_producer_helpers
+      - deterministic_kinesis_testkit_builders
+      - cdk_stream_destination_and_mapping_constructs
+    configuration:
+      - runtime/aws_eventsources.go
+      - runtime/kinesis_cloudwatch_logs.go
+      - runtime/kinesis_producer.go
+      - ts/src/kinesis-cloudwatch-logs.ts
+      - ts/src/kinesis-producer.ts
+      - py/src/apptheory/kinesis_cloudwatch_logs.py
+      - py/src/apptheory/kinesis_producer.py
+      - cdk/lib/kinesis-stream.ts
+      - cdk/lib/kinesis-stream-mapping.ts
+      - cdk/lib/cloudwatch-logs-destination.ts
+    docs:
+      - docs/features/event-workloads.md
+      - docs/cdk/kinesis-cloudwatch-logs.md
+      - examples/cdk/kinesis-cloudwatch-logs/README.md
+
   appsync_resolvers:
     type: component
     purpose: "Direct Lambda resolver support that adapts standard AWS AppSync events into the normal AppTheory router."
@@ -183,6 +209,7 @@ concepts:
       - rest_api_constructs
       - mcp_server_constructs
       - import_pipeline_constructs
+      - kinesis_ingestion_constructs
       - lambda_defaults
     configuration:
       - cdk/
