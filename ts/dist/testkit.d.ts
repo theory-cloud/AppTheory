@@ -2,6 +2,7 @@ import { type App } from "./app.js";
 import type { AppSyncResolverEvent, ALBTargetGroupRequest, ALBTargetGroupResponse, APIGatewayProxyResponse, APIGatewayProxyRequest, APIGatewayV2HTTPRequest, APIGatewayV2HTTPResponse, DynamoDBStreamEvent, DynamoDBStreamEventResponse, DynamoDBStreamRecord, EventBridgeEvent, KinesisEventResponse, KinesisEvent, KinesisEventRecordInput, LambdaFunctionURLResponse, LambdaFunctionURLRequest, SNSEvent, SQSEventResponse, SNSEventRecordInput, SQSEvent, SQSMessage } from "./aws-types.js";
 import { ManualClock } from "./clock.js";
 import { ManualIdGenerator } from "./ids.js";
+import type { CloudWatchLogsSubscriptionLogEvent } from "./kinesis-cloudwatch-logs.js";
 import type { Headers, Query, Request, Response } from "./types.js";
 export declare class TestEnv {
     readonly clock: ManualClock;
@@ -93,6 +94,22 @@ export declare function buildEventBridgeEvent(options?: {
     detail?: unknown;
 }): EventBridgeEvent;
 export declare function buildDynamoDBStreamEvent(streamArn: string, records?: Array<Partial<DynamoDBStreamRecord>>): DynamoDBStreamEvent;
+export interface CloudWatchLogsSubscriptionOptions {
+    messageType?: string;
+    owner?: string;
+    logGroup?: string;
+    logStream?: string;
+    subscriptionFilters?: string[];
+    logEvents?: CloudWatchLogsSubscriptionLogEvent[];
+}
+export interface KinesisCloudWatchLogsSubscriptionRecordOptions {
+    eventID?: string;
+    eventSourceARN?: string;
+    partitionKey?: string;
+    subscription?: CloudWatchLogsSubscriptionOptions;
+}
+export declare function cloudWatchLogsSubscriptionData(options?: CloudWatchLogsSubscriptionOptions): Uint8Array;
+export declare function kinesisCloudWatchLogsSubscriptionRecord(options?: KinesisCloudWatchLogsSubscriptionRecordOptions): KinesisEventRecordInput;
 export declare function buildKinesisEvent(streamArn: string, records?: Array<KinesisEventRecordInput>): KinesisEvent;
 export declare function buildSNSEvent(topicArn: string, records?: Array<SNSEventRecordInput>): SNSEvent;
 export declare function stepFunctionsTaskToken(event: unknown): string;
