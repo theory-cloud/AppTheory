@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -151,7 +152,7 @@ func TestBuiltInOutputHandler_UnknownIsNil(t *testing.T) {
 		t.Fatal("expected unknown dynamodb handler to be nil")
 	}
 
-	if builtInKinesisHandler("nope") != nil {
+	if builtInKinesisHandler("nope", nil) != nil {
 		t.Fatal("expected unknown kinesis handler to be nil")
 	}
 
@@ -178,5 +179,149 @@ func TestRunFixtureM1_MissingAWSEvent(t *testing.T) {
 	err := runFixtureM1(Fixture{})
 	if err == nil || !strings.Contains(err.Error(), "fixture missing input.aws_event") {
 		t.Fatalf("expected missing input.aws_event error, got %v", err)
+	}
+}
+
+func TestCloudWatchLogsSubscriptionExpectations_Hygiene(t *testing.T) {
+	t.Parallel()
+
+	fixture := cloudWatchLogsSubscriptionFixtureForTest()
+	expectations, err := newCloudWatchLogsSubscriptionExpectations(fixture)
+	if err != nil {
+		t.Fatalf("expected valid cloudwatch logs subscription expectations, got %v", err)
+	}
+	if expectations == nil || len(expectations.byRecordID) != 2 {
+		t.Fatalf("expected two expectations, got %#v", expectations)
+	}
+
+	missing := cloudWatchLogsSubscriptionFixtureForTest()
+	missing.Expect.CloudWatchLogsSubscription.Records = missing.Expect.CloudWatchLogsSubscription.Records[:1]
+	if _, err := newCloudWatchLogsSubscriptionExpectations(missing); err == nil || !strings.Contains(err.Error(), "missing cloudwatch logs subscription expectation") {
+		t.Fatalf("expected missing input record expectation error, got %v", err)
+	}
+
+	extra := cloudWatchLogsSubscriptionFixtureForTest()
+	extra.Expect.CloudWatchLogsSubscription.Records = append(
+		append([]FixtureCloudWatchLogsSubscriptionRecord(nil), extra.Expect.CloudWatchLogsSubscription.Records...),
+		FixtureCloudWatchLogsSubscriptionRecord{RecordID: "unexpected", DecodeError: true},
+	)
+	if _, err := newCloudWatchLogsSubscriptionExpectations(extra); err == nil || !strings.Contains(err.Error(), "extra cloudwatch logs subscription expectation") {
+		t.Fatalf("expected extra expectation error, got %v", err)
+	}
+
+	duplicate := cloudWatchLogsSubscriptionFixtureForTest()
+	duplicate.Expect.CloudWatchLogsSubscription.Records = append(
+		append([]FixtureCloudWatchLogsSubscriptionRecord(nil), duplicate.Expect.CloudWatchLogsSubscription.Records...),
+		duplicate.Expect.CloudWatchLogsSubscription.Records[0],
+	)
+	if _, err := newCloudWatchLogsSubscriptionExpectations(duplicate); err == nil || !strings.Contains(err.Error(), "duplicate cloudwatch logs subscription expectation") {
+		t.Fatalf("expected duplicate expectation error, got %v", err)
+	}
+
+	malformedNotMarked := cloudWatchLogsSubscriptionFixtureForTest()
+	malformedNotMarked.Expect.CloudWatchLogsSubscription.Records[1] = FixtureCloudWatchLogsSubscriptionRecord{RecordID: "r2"}
+	if _, err := newCloudWatchLogsSubscriptionExpectations(malformedNotMarked); err == nil || !strings.Contains(err.Error(), "malformed records must set decode_error=true") {
+		t.Fatalf("expected malformed expectation hygiene error, got %v", err)
+	}
+
+	decodeErrorWithFields := cloudWatchLogsSubscriptionFixtureForTest()
+	decodeErrorWithFields.Expect.CloudWatchLogsSubscription.Records[1] = FixtureCloudWatchLogsSubscriptionRecord{
+		RecordID:    "r2",
+		DecodeError: true,
+		MessageType: "DATA_MESSAGE",
+	}
+	if _, err := newCloudWatchLogsSubscriptionExpectations(decodeErrorWithFields); err == nil || !strings.Contains(err.Error(), "decode_error=true and decoded fields") {
+		t.Fatalf("expected decode_error decoded field hygiene error, got %v", err)
+	}
+}
+
+func TestCloudWatchLogsSubscriptionHandler_CompareScaffold(t *testing.T) {
+	t.Parallel()
+
+	fixture := cloudWatchLogsSubscriptionFixtureForTest()
+	expectations, err := newCloudWatchLogsSubscriptionExpectations(fixture)
+	if err != nil {
+		t.Fatalf("expected valid expectations, got %v", err)
+	}
+
+	validExpected := expectations.byRecordID["r1"]
+	handler := newCloudWatchLogsSubscriptionHandler(expectations, func(record events.KinesisEventRecord) (FixtureCloudWatchLogsSubscriptionRecord, error) {
+		if record.EventID == "r2" {
+			return FixtureCloudWatchLogsSubscriptionRecord{}, errors.New("decode failed")
+		}
+		return validExpected, nil
+	})
+
+	if err := handler(&apptheory.EventContext{}, events.KinesisEventRecord{EventID: "r1"}); err != nil {
+		t.Fatalf("expected valid decoded record to pass, got %v", err)
+	}
+	if err := handler(&apptheory.EventContext{}, events.KinesisEventRecord{EventID: "r2"}); err == nil || !strings.Contains(err.Error(), "decode failed") {
+		t.Fatalf("expected decode_error record to return decoder error, got %v", err)
+	}
+
+	mismatched := newCloudWatchLogsSubscriptionHandler(expectations, func(events.KinesisEventRecord) (FixtureCloudWatchLogsSubscriptionRecord, error) {
+		actual := validExpected
+		actual.MessageType = "CONTROL_MESSAGE"
+		return actual, nil
+	})
+	if err := mismatched(&apptheory.EventContext{}, events.KinesisEventRecord{EventID: "r1"}); err == nil || !strings.Contains(err.Error(), "message_type mismatch") {
+		t.Fatalf("expected message_type comparison error, got %v", err)
+	}
+
+	unsafe := newCloudWatchLogsSubscriptionHandler(expectations, func(events.KinesisEventRecord) (FixtureCloudWatchLogsSubscriptionRecord, error) {
+		actual := validExpected
+		actual.SafeSummary = map[string]any{"safe_log": "contract log line alpha"}
+		return actual, nil
+	})
+	if err := unsafe(&apptheory.EventContext{}, events.KinesisEventRecord{EventID: "r1"}); err == nil || !strings.Contains(err.Error(), "safe_summary mismatch") {
+		t.Fatalf("expected safe_summary comparison error, got %v", err)
+	}
+
+	missingHelper := newCloudWatchLogsSubscriptionHandler(expectations, nil)
+	if err := missingHelper(&apptheory.EventContext{}, events.KinesisEventRecord{EventID: "r1"}); err == nil || !strings.Contains(err.Error(), cloudWatchLogsSubscriptionMissingHelperMessage) {
+		t.Fatalf("expected missing helper error, got %v", err)
+	}
+}
+
+func cloudWatchLogsSubscriptionFixtureForTest() Fixture {
+	return Fixture{
+		Setup: FixtureSetup{
+			Kinesis: []FixtureKinesisRoute{{Stream: "stream", Handler: cloudWatchLogsSubscriptionHandlerName}},
+		},
+		Input: FixtureInput{
+			AWSEvent: &FixtureAWSEvent{
+				Source: "kinesis",
+				Event:  json.RawMessage(`{"Records":[{"eventID":"r1"},{"eventID":"r2"}]}`),
+			},
+		},
+		Expect: FixtureExpect{
+			CloudWatchLogsSubscription: &FixtureCloudWatchLogsSubscription{
+				Records: []FixtureCloudWatchLogsSubscriptionRecord{
+					{
+						RecordID:            "r1",
+						MessageType:         "DATA_MESSAGE",
+						Owner:               "111122223333",
+						LogGroup:            "/aws/lambda/example",
+						LogStream:           "2026/05/26/[$LATEST]example",
+						SubscriptionFilters: []string{"filter"},
+						LogEvents: []FixtureCloudWatchLogsSubscriptionLogEvent{
+							{ID: "event-1", Timestamp: 1779806400000, Message: "contract log line alpha"},
+						},
+						SafeSummary: map[string]any{
+							"record_id":                 "r1",
+							"message_type":              "DATA_MESSAGE",
+							"owner":                     "111122223333",
+							"log_group":                 "/aws/lambda/example",
+							"log_stream":                "2026/05/26/[$LATEST]example",
+							"subscription_filter_count": 1,
+							"log_event_count":           1,
+							"safe_log":                  "record_id=r1 owner=111122223333 log_events=1 subscription_filters=1",
+						},
+						ForbiddenSafeLogSubstrings: []string{"contract log line alpha"},
+					},
+					{RecordID: "r2", DecodeError: true},
+				},
+			},
+		},
 	}
 }
