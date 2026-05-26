@@ -1698,6 +1698,57 @@ type IdGenerator = IDGenerator
 
 type KinesisHandler func(*EventContext, events.KinesisEventRecord) error
 
+type KinesisJSONRecord struct {
+	PartitionKey    string                   `json:"partition_key"`
+	Data            []byte                   `json:"data"`
+	ExplicitHashKey string                   `json:"explicit_hash_key,omitempty"`
+	SafeSummary     KinesisJSONRecordSummary `json:"safe_summary"`
+}
+
+type KinesisJSONRecordOptions struct {
+	PartitionKey    string
+	Payload         any
+	ExplicitHashKey string
+}
+
+type KinesisJSONRecordSummary struct {
+	PartitionKey    string `json:"partition_key"`
+	ExplicitHashKey string `json:"explicit_hash_key,omitempty"`
+	DataByteLength  int    `json:"data_byte_length"`
+	SafeLog         string `json:"safe_log"`
+}
+
+type KinesisPutRecordsFailure struct {
+	Index                  int    `json:"index"`
+	PartitionKey           string `json:"partition_key"`
+	ExplicitHashKey        string `json:"explicit_hash_key,omitempty"`
+	DataByteLength         int    `json:"data_byte_length"`
+	ErrorCode              string `json:"error_code"`
+	ErrorMessagePresent    bool   `json:"error_message_present"`
+	ErrorMessageByteLength int    `json:"error_message_byte_length"`
+	SafeLog                string `json:"safe_log"`
+}
+
+type KinesisPutRecordsFailureReport struct {
+	RecordCount       int                                   `json:"record_count"`
+	FailedRecordCount int                                   `json:"failed_record_count"`
+	Failures          []KinesisPutRecordsFailure            `json:"failures"`
+	SafeSummary       KinesisPutRecordsFailureReportSummary `json:"safe_summary"`
+}
+
+type KinesisPutRecordsFailureReportSummary struct {
+	RecordCount       int    `json:"record_count"`
+	FailedRecordCount int    `json:"failed_record_count"`
+	SafeLog           string `json:"safe_log"`
+}
+
+type KinesisPutRecordsResultRecord struct {
+	SequenceNumber string `json:"sequence_number,omitempty"`
+	ShardID        string `json:"shard_id,omitempty"`
+	ErrorCode      string `json:"error_code,omitempty"`
+	ErrorMessage   string `json:"error_message,omitempty"`
+}
+
 type Limits struct {
 	MaxRequestBytes  int
 	MaxResponseBytes int
@@ -1912,6 +1963,8 @@ func New(...Option) *App
 
 func NewAppTheoryError(string, string) *AppTheoryError
 
+func NewKinesisJSONRecord(KinesisJSONRecordOptions) (KinesisJSONRecord, error)
+
 func NoContent() *Response
 
 func NormalizeDynamoDBStreamRecord(events.DynamoDBEventRecord) DynamoDBStreamRecordSummary
@@ -1935,6 +1988,11 @@ func OriginalHost(map[string][]string) string
 func OriginalURI(map[string][]string) string
 
 func RateLimitMiddleware(RateLimitConfig) Middleware
+
+func ReportKinesisPutRecordsFailures(
+	[]KinesisJSONRecord,
+	[]KinesisPutRecordsResultRecord,
+) (KinesisPutRecordsFailureReport, error)
 
 func RequireAnyScope(...string) RouteOption
 

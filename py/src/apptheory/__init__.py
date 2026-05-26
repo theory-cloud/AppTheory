@@ -53,6 +53,16 @@ from apptheory.kinesis_cloudwatch_logs import (
     CloudWatchLogsSubscriptionSummary,
     decode_cloudwatch_logs_subscription,
 )
+from apptheory.kinesis_producer import (
+    KinesisJsonRecord,
+    KinesisJsonRecordSummary,
+    KinesisPutRecordsFailure,
+    KinesisPutRecordsFailureReport,
+    KinesisPutRecordsFailureReportSummary,
+    KinesisPutRecordsResultRecord,
+    create_kinesis_json_record,
+    report_kinesis_put_records_failures,
+)
 
 try:
     from apptheory.jobs import (  # type: ignore
@@ -243,6 +253,12 @@ __all__ = [
     "FakeWebSocketManagementClient",
     "IDGenerator",
     "IdGenerator",
+    "KinesisJsonRecord",
+    "KinesisJsonRecordSummary",
+    "KinesisPutRecordsFailure",
+    "KinesisPutRecordsFailureReport",
+    "KinesisPutRecordsFailureReportSummary",
+    "KinesisPutRecordsResultRecord",
     "JobLedgerError",
     "JobsConfig",
     "Limits",
@@ -298,6 +314,7 @@ __all__ = [
     "cloudwatch_logs_subscription_data",
     "create_app",
     "create_fake_websocket_client_factory",
+    "create_kinesis_json_record",
     "create_test_env",
     "decode_cloudwatch_logs_subscription",
     "decode_logging_profile_json",
@@ -339,6 +356,7 @@ __all__ = [
     "payment_xml_patterns",
     "rapid_connect_xml_patterns",
     "require_eventbridge_workload_envelope",
+    "report_kinesis_put_records_failures",
     "resource_name",
     "safe_json_for_html",
     "sanitize_error_envelope",
