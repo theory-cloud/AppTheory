@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { gzipSync } from "node:zlib";
 
 import { createApp, type App } from "./app.js";
 import type {
@@ -39,6 +40,7 @@ import {
   splitPathAndQuery,
   toBuffer,
 } from "./internal/http.js";
+import type { CloudWatchLogsSubscriptionLogEvent } from "./kinesis-cloudwatch-logs.js";
 import type { Headers, Query, Request, Response } from "./types.js";
 
 function streamErrorCodeFrom(err: unknown): string {
@@ -559,6 +561,56 @@ export function buildDynamoDBStreamEvent(
   };
 }
 
+export interface CloudWatchLogsSubscriptionOptions {
+  messageType?: string;
+  owner?: string;
+  logGroup?: string;
+  logStream?: string;
+  subscriptionFilters?: string[];
+  logEvents?: CloudWatchLogsSubscriptionLogEvent[];
+}
+
+export interface KinesisCloudWatchLogsSubscriptionRecordOptions {
+  eventID?: string;
+  eventSourceARN?: string;
+  partitionKey?: string;
+  subscription?: CloudWatchLogsSubscriptionOptions;
+}
+
+export function cloudWatchLogsSubscriptionData(
+  options: CloudWatchLogsSubscriptionOptions = {},
+): Uint8Array {
+  const payload = {
+    messageType: defaultCloudWatchLogsSubscriptionMessageType(
+      options.messageType,
+    ),
+    owner: defaultCloudWatchLogsSubscriptionOwner(options.owner),
+    logGroup: defaultCloudWatchLogsSubscriptionLogGroup(options.logGroup),
+    logStream: defaultCloudWatchLogsSubscriptionLogStream(options.logStream),
+    subscriptionFilters: defaultCloudWatchLogsSubscriptionFilters(
+      options.subscriptionFilters,
+    ),
+    logEvents: defaultCloudWatchLogsSubscriptionLogEvents(options.logEvents),
+  };
+  return gzipSync(Buffer.from(JSON.stringify(payload), "utf8"));
+}
+
+export function kinesisCloudWatchLogsSubscriptionRecord(
+  options: KinesisCloudWatchLogsSubscriptionRecordOptions = {},
+): KinesisEventRecordInput {
+  const record: KinesisEventRecordInput = {
+    data: cloudWatchLogsSubscriptionData(options.subscription ?? {}),
+  };
+  if (options.eventID !== undefined) record.eventID = options.eventID;
+  if (options.eventSourceARN !== undefined) {
+    record.eventSourceARN = options.eventSourceARN;
+  }
+  if (options.partitionKey !== undefined) {
+    record.partitionKey = options.partitionKey;
+  }
+  return record;
+}
+
 export function buildKinesisEvent(
   streamArn: string,
   records: Array<KinesisEventRecordInput> = [],
@@ -599,6 +651,65 @@ export function buildKinesisEvent(
       };
     }),
   };
+}
+
+function defaultCloudWatchLogsSubscriptionMessageType(
+  value: string | undefined,
+): string {
+  const normalized = String(value ?? "").trim();
+  return normalized || "DATA_MESSAGE";
+}
+
+function defaultCloudWatchLogsSubscriptionOwner(
+  value: string | undefined,
+): string {
+  const normalized = String(value ?? "").trim();
+  return normalized || "000000000000";
+}
+
+function defaultCloudWatchLogsSubscriptionLogGroup(
+  value: string | undefined,
+): string {
+  const normalized = String(value ?? "").trim();
+  return normalized || "/aws/lambda/apptheory-test";
+}
+
+function defaultCloudWatchLogsSubscriptionLogStream(
+  value: string | undefined,
+): string {
+  const normalized = String(value ?? "").trim();
+  return normalized || "1970/01/01/[$LATEST]apptheory-test";
+}
+
+function defaultCloudWatchLogsSubscriptionFilters(
+  filters: string[] | undefined,
+): string[] {
+  if (!filters || filters.length === 0) {
+    return ["apptheory-test-filter"];
+  }
+  return filters.map((filter) => String(filter ?? "").trim());
+}
+
+function defaultCloudWatchLogsSubscriptionLogEvents(
+  logEvents: CloudWatchLogsSubscriptionLogEvent[] | undefined,
+): CloudWatchLogsSubscriptionLogEvent[] {
+  if (!logEvents || logEvents.length === 0) {
+    return [
+      {
+        id: "cwl-event-1",
+        timestamp: 0,
+        message: "test log line",
+      },
+    ];
+  }
+  return logEvents.map((event) => ({
+    id: String(event.id ?? "").trim(),
+    timestamp:
+      typeof event.timestamp === "number" && Number.isFinite(event.timestamp)
+        ? Math.trunc(event.timestamp)
+        : 0,
+    message: String(event.message ?? ""),
+  }));
 }
 
 export function buildSNSEvent(
