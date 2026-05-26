@@ -5,9 +5,9 @@ AppTheory's non-HTTP Lambda story uses the same single entrypoint as HTTP and Ap
 Streams are detected by event shape and routed through the AppTheory event-source registry. Do not add a second dispatcher
 for "background jobs"; grow the contract and fixtures when workload behavior needs to become portable.
 
-This page documents the event workload contract pinned by the shared `m1` fixtures. Runtime helper APIs and framework-owned
-panic recovery are implemented in follow-up runtime milestones; until those land, the fixtures are the specification and
-runner handlers emulate the future contract shape.
+This page documents the event workload contract pinned by the shared `m1` fixtures. The fixtures remain the
+specification for every event-source behavior. When a helper is part of the public API, use that helper instead of
+copying event-shape or decoding logic into service code.
 
 ## EventBridge workload envelope
 
@@ -59,6 +59,63 @@ Retry and reliability guidance:
 - Configure EventBridge target retry policy, maximum event age, and DLQ through the deployment construct instead of
   branching inside the handler.
 - Use the Lambda remaining-time/deadline fields to stop before timeout and return a structured summary when possible.
+
+## Kinesis workloads and CloudWatch Logs subscriptions
+
+Kinesis uses the same AppTheory Lambda entrypoint as every other trigger. `HandleLambda`, `handleLambda`, and
+`handle_lambda` detect `Records[0].eventSource == "aws:kinesis"` and route to the registered Kinesis stream handler:
+
+- Go: `app.Kinesis(streamName, handler)` and `app.ServeKinesis(ctx, event)`
+- TypeScript: `app.kinesis(streamName, handler)` and `app.serveKinesisEvent(event, ctx)`
+- Python: `app.kinesis(stream_name, handler)` and `app.serve_kinesis(event, ctx)`
+
+Kinesis handlers run per record. If a handler returns an error or throws, the record's `eventID` is returned in
+`batchItemFailures`. Successful records are omitted. An event for an unregistered stream fails closed by returning every
+record ID as a failure, matching Lambda's partial-batch response model.
+
+The AppTheory-owned path for CloudWatch Logs delivered through Kinesis is:
+
+1. A CloudWatch Logs subscription filter targets an `AppTheoryCloudWatchLogsDestination`.
+2. `AppTheoryCloudWatchLogsDestination` delivers records to an `AppTheoryKinesisStream`.
+3. `AppTheoryKinesisStreamMapping` wires the stream to the AppTheory Lambda consumer with partial-batch failures enabled.
+4. The Lambda handler stays on `HandleLambda` / `handleLambda` / `handle_lambda`.
+5. The Kinesis handler decodes each CloudWatch Logs envelope with the runtime decoder before domain processing.
+
+Runtime decoder names:
+
+| Language | Decoder |
+| --- | --- |
+| Go | `DecodeCloudWatchLogsSubscription(record)` |
+| TypeScript | `decodeCloudWatchLogsSubscription(record)` |
+| Python | `decode_cloudwatch_logs_subscription(record)` |
+
+The decoder understands the gzip-compressed CloudWatch Logs subscription envelope carried in the Lambda Kinesis record's
+data field. It returns typed log envelope fields plus `safe_summary`. Raw CloudWatch log messages are available only in
+the decoded `log_events` / `LogEvents` payload for the handler's local domain work; `safe_summary` intentionally contains
+only record/log identity and counts.
+
+Kinesis producer helper names:
+
+| Language | Record helper | Failure report helper |
+| --- | --- | --- |
+| Go | `NewKinesisJSONRecord` | `ReportKinesisPutRecordsFailures` |
+| TypeScript | `createKinesisJsonRecord` | `reportKinesisPutRecordsFailures` |
+| Python | `create_kinesis_json_record` | `report_kinesis_put_records_failures` |
+
+Use these helpers when an AppTheory workload needs deterministic JSON bytes and safe PutRecords-style failure summaries.
+They validate partition keys, canonicalize explicit hash keys, enforce Kinesis record bounds, align failures by
+input/result index, and exclude JSON payload bodies and raw error messages from safe summaries. If a service needs a
+broader producer abstraction, grow the AppTheory helper surface instead of inventing a per-service record or failure
+shape.
+
+Deterministic testkit helpers are available for Kinesis events and CloudWatch Logs subscription records:
+
+- Go: `KinesisEvent`, `KinesisCloudWatchLogsSubscriptionRecord`, and `CloudWatchLogsSubscriptionData`
+- TypeScript: `buildKinesisEvent`, `kinesisCloudWatchLogsSubscriptionRecord`, and `cloudWatchLogsSubscriptionData`
+- Python: `build_kinesis_event`, `kinesis_cloudwatch_logs_subscription_record`, and
+  `cloudwatch_logs_subscription_data`
+
+Canonical example: `examples/cdk/kinesis-cloudwatch-logs`.
 
 ## DynamoDB Streams workloads
 
@@ -128,6 +185,11 @@ Use AppTheory CDK constructs for deployment wiring; do not drop to bespoke raw C
   retries, and maximum event age.
 - `AppTheoryEventBridgeBus`: custom bus plus explicit cross-account publisher allowlist.
 - `AppTheoryDynamoDBStreamMapping`: DynamoDB stream to Lambda event-source mapping.
+- `AppTheoryKinesisStream`: create or wrap the encrypted Kinesis Data Stream for AppTheory event ingestion.
+- `AppTheoryKinesisStreamMapping`: stream-to-Lambda event-source mapping with `reportBatchItemFailures` defaulting to
+  `true`.
+- `AppTheoryCloudWatchLogsDestination`: CloudWatch Logs destination with explicit source account and/or organization
+  allowlists; it does not synthesize a broad default destination policy.
 - `AppTheoryQueue`, `AppTheoryQueueConsumer`, and `AppTheoryQueueProcessor`: SQS queue and worker patterns when a DLQ or
   queue boundary is the correct retry domain.
 - `AppTheoryJobsTable`: job/run ledger storage for long-running workloads that need idempotency, leases, and record-level
@@ -135,3 +197,8 @@ Use AppTheory CDK constructs for deployment wiring; do not drop to bespoke raw C
 
 The CDK constructs provide transport and IAM wiring. The handler still owns domain idempotency and must stay on the
 AppTheory runtime entrypoint so the event workload contract remains fixture-backed across Go, TypeScript, and Python.
+
+For CloudWatch Logs through Kinesis, use the single AppTheory-owned chain documented above. Placeholder account IDs such
+as `111122223333` and organization IDs such as `o-example1234` in examples are examples only; replace them before any
+real deployment. The Logs destination must be explicitly allowlisted and should fail closed when no trusted source is
+configured.
