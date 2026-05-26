@@ -47,6 +47,12 @@ from apptheory.event_workloads import (
     require_eventbridge_workload_envelope,
 )
 from apptheory.ids import IDGenerator, IdGenerator, ManualIdGenerator, RealIdGenerator
+from apptheory.kinesis_cloudwatch_logs import (
+    CloudWatchLogsSubscription,
+    CloudWatchLogsSubscriptionLogEvent,
+    CloudWatchLogsSubscriptionSummary,
+    decode_cloudwatch_logs_subscription,
+)
 
 try:
     from apptheory.jobs import (  # type: ignore
@@ -197,8 +203,10 @@ from apptheory.testkit import (
     WebSocketCall,
     build_appsync_event,
     build_websocket_event,
+    cloudwatch_logs_subscription_data,
     create_fake_websocket_client_factory,
     create_test_env,
+    kinesis_cloudwatch_logs_subscription_record,
 )
 
 __all__ = [
@@ -219,6 +227,9 @@ __all__ = [
     "AppTheoryError",
     "CORSConfig",
     "Clock",
+    "CloudWatchLogsSubscription",
+    "CloudWatchLogsSubscriptionLogEvent",
+    "CloudWatchLogsSubscriptionSummary",
     "Context",
     "DynamoDBStreamRecordSummary",
     "DynamoJobLedger",
@@ -284,9 +295,11 @@ __all__ = [
     "cache_control_ssg",
     "cache_control_ssr",
     "client_ip",
+    "cloudwatch_logs_subscription_data",
     "create_app",
     "create_fake_websocket_client_factory",
     "create_test_env",
+    "decode_cloudwatch_logs_subscription",
     "decode_logging_profile_json",
     "default_jobs_config",
     "default_logging_profile",
@@ -309,6 +322,7 @@ __all__ = [
     "job_request_sort_key",
     "jobs_table_name",
     "json",
+    "kinesis_cloudwatch_logs_subscription_record",
     "logging_profile_catalog",
     "logging_profile_validation_errors",
     "mask_first_last",
