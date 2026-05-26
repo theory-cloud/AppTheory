@@ -419,6 +419,24 @@ func init() {
 			return &j
 		},
 	)
+	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMapping",
+		reflect.TypeOf((*AppTheoryKinesisStreamMapping)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryKinesisStreamMapping{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMappingProps",
+		reflect.TypeOf((*AppTheoryKinesisStreamMappingProps)(nil)).Elem(),
+	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamProps",
 		reflect.TypeOf((*AppTheoryKinesisStreamProps)(nil)).Elem(),
