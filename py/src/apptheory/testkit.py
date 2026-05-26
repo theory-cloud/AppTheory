@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import gzip
+import json as jsonlib
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -150,6 +153,54 @@ def build_appsync_event(**kwargs: Any) -> AppSyncResolverEvent:
     return _build_appsync_event(**kwargs)
 
 
+def cloudwatch_logs_subscription_data(
+    *,
+    message_type: str = "",
+    owner: str = "",
+    log_group: str = "",
+    log_stream: str = "",
+    subscription_filters: list[str] | None = None,
+    log_events: list[dict[str, Any]] | None = None,
+) -> bytes:
+    payload = {
+        "messageType": _default_cloudwatch_logs_subscription_message_type(message_type),
+        "owner": _default_cloudwatch_logs_subscription_owner(owner),
+        "logGroup": _default_cloudwatch_logs_subscription_log_group(log_group),
+        "logStream": _default_cloudwatch_logs_subscription_log_stream(log_stream),
+        "subscriptionFilters": _default_cloudwatch_logs_subscription_filters(subscription_filters),
+        "logEvents": _default_cloudwatch_logs_subscription_log_events(log_events),
+    }
+    raw = jsonlib.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return gzip.compress(raw, mtime=0)
+
+
+def kinesis_cloudwatch_logs_subscription_record(
+    *,
+    event_id: str = "",
+    event_source_arn: str = "",
+    partition_key: str = "",
+    subscription: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    subscription = subscription or {}
+    record: dict[str, Any] = {
+        "data": cloudwatch_logs_subscription_data(
+            message_type=str(subscription.get("message_type") or ""),
+            owner=str(subscription.get("owner") or ""),
+            log_group=str(subscription.get("log_group") or ""),
+            log_stream=str(subscription.get("log_stream") or ""),
+            subscription_filters=subscription.get("subscription_filters"),
+            log_events=subscription.get("log_events"),
+        )
+    }
+    if event_id:
+        record["eventID"] = event_id
+    if event_source_arn:
+        record["eventSourceARN"] = event_source_arn
+    if partition_key:
+        record["partitionKey"] = partition_key
+    return record
+
+
 def build_websocket_event(
     *,
     route_key: str,
@@ -261,3 +312,55 @@ class FakeWebSocketClientFactory:
 
 def create_fake_websocket_client_factory() -> WebSocketClientFactory:
     return FakeWebSocketClientFactory()
+
+
+def _default_cloudwatch_logs_subscription_message_type(value: str) -> str:
+    normalized = str(value or "").strip()
+    return normalized or "DATA_MESSAGE"
+
+
+def _default_cloudwatch_logs_subscription_owner(value: str) -> str:
+    normalized = str(value or "").strip()
+    return normalized or "000000000000"
+
+
+def _default_cloudwatch_logs_subscription_log_group(value: str) -> str:
+    normalized = str(value or "").strip()
+    return normalized or "/aws/lambda/apptheory-test"
+
+
+def _default_cloudwatch_logs_subscription_log_stream(value: str) -> str:
+    normalized = str(value or "").strip()
+    return normalized or "1970/01/01/[$LATEST]apptheory-test"
+
+
+def _default_cloudwatch_logs_subscription_filters(filters: list[str] | None) -> list[str]:
+    if not filters:
+        return ["apptheory-test-filter"]
+    return [str(filter_value or "").strip() for filter_value in filters]
+
+
+def _default_cloudwatch_logs_subscription_log_events(log_events: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    if not log_events:
+        return [{"id": "cwl-event-1", "timestamp": 0, "message": "test log line"}]
+    out: list[dict[str, Any]] = []
+    for event in log_events:
+        event_obj = event if isinstance(event, dict) else {}
+        out.append(
+            {
+                "id": str(event_obj.get("id") or "").strip(),
+                "timestamp": _cloudwatch_logs_subscription_log_event_timestamp(event_obj.get("timestamp")),
+                "message": str(event_obj.get("message") or ""),
+            }
+        )
+    return out
+
+
+def _cloudwatch_logs_subscription_log_event_timestamp(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value):
+        return int(value)
+    return 0
