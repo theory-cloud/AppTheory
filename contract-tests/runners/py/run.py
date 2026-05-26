@@ -1370,6 +1370,12 @@ def _built_in_kinesis_handler(name: str):
 
         return handler
 
+    if name == "kinesis_require_cloudwatch_logs_subscription":
+        def handler(_ctx, _record):
+            raise RuntimeError("apptheory: cloudwatch logs subscription decoder helper missing")
+
+        return handler
+
     return None
 
 

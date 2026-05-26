@@ -139,6 +139,24 @@ DynamoDB stream normalization fixtures keep the runtime contract on the partial-
 The partial-failure fixture intentionally fails only the `REMOVE` record after summary validation, proving the existing per-record retry behavior remains intact while the normalized summary contract grows.
 
 
+## M1 Kinesis CloudWatch Logs subscription fixtures
+
+Kinesis CloudWatch Logs subscription fixtures keep the runtime contract on the existing Kinesis partial-batch response
+path while pinning the portable decoder contract that later runtime work must expose. The runner-only handler
+`kinesis_require_cloudwatch_logs_subscription` represents the future runtime helper and records expectations under
+`expect.cloudwatch_logs_subscription.records`:
+
+- Valid records contain gzip-compressed CloudWatch Logs subscription JSON in `kinesis.data` and must decode to
+  `message_type`, `owner`, `log_group`, `log_stream`, `subscription_filters`, and ordered `log_events`.
+- Malformed records use `decode_error = true`; decoding them must fail closed for that record without broadening the
+  failure to neighboring valid records.
+- `safe_summary` pins the safe metadata a handler may log: record/log identity and counts only. Values listed in
+  `forbidden_safe_log_substrings` are raw log event messages and must not appear in the safe summary.
+
+The runner handler is intentionally narrow: it should call the runtime decoder and compare the result to the fixture
+expectations. It must not grow a runner-local alternate decoder that bypasses the runtime contract.
+
+
 ## M1 non-HTTP observability and safe error fixtures
 
 Non-HTTP observability fixtures use the existing `expect.logs`, `expect.metrics`, and `expect.spans` fixture fields for event workloads. Event log records keep the HTTP fields present but empty/zero and add event dimensions for the non-HTTP trigger:
