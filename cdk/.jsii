@@ -9799,6 +9799,201 @@
       ],
       "symbolId": "lib/certificate:AppTheoryCertificateProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestination": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "The construct owns the destination, the CloudWatch Logs service role, and a fail-closed\ndestination policy. Subscription filter writers must be explicitly allowed by source account\nand/or AWS Organization ID; no unconstrained wildcard principal is synthesized.",
+        "summary": "CloudWatch Logs destination that delivers subscription records to Kinesis."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestination",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/cloudwatch-logs-destination.ts",
+          "line": 72
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestinationProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/cloudwatch-logs-destination.ts",
+        "line": 51
+      },
+      "name": "AppTheoryCloudWatchLogsDestination",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The CloudWatch Logs destination resource."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 55
+          },
+          "name": "destination",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.CfnDestination"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The destination ARN."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 65
+          },
+          "name": "destinationArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The destination name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 70
+          },
+          "name": "destinationName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "IAM role assumed by CloudWatch Logs to write records to the target stream."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 60
+          },
+          "name": "serviceRole",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_iam.Role"
+          }
+        }
+      ],
+      "symbolId": "lib/cloudwatch-logs-destination:AppTheoryCloudWatchLogsDestination"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestinationProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for AppTheoryCloudWatchLogsDestination."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestinationProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/cloudwatch-logs-destination.ts",
+        "line": 10
+      },
+      "name": "AppTheoryCloudWatchLogsDestinationProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Kinesis Data Stream that receives CloudWatch Logs subscription records."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 14
+          },
+          "name": "stream",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kinesis.IStream"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[]",
+            "remarks": "Organization entries use a wildcard principal only with an `aws:PrincipalOrgID` condition.\nAt least one allowed source account or organization ID is required.",
+            "summary": "Explicit AWS Organizations IDs allowed to create subscription filters against this destination."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 41
+          },
+          "name": "allowedOrganizationIds",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[]",
+            "remarks": "At least one allowed source account or organization ID is required. AppTheory does not\nsynthesize a broad default destination policy.",
+            "summary": "Explicit AWS account IDs allowed to create subscription filters against this destination."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 31
+          },
+          "name": "allowedSourceAccounts",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- deterministic name derived from the construct path",
+            "summary": "Optional physical CloudWatch Logs destination name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 21
+          },
+          "name": "destinationName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/cloudwatch-logs-destination:AppTheoryCloudWatchLogsDestinationProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryCodeBuildJobRunner": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -13617,6 +13812,647 @@
         }
       ],
       "symbolId": "lib/jobs-table:AppTheoryJobsTableProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryKinesisStream": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "Creates or wraps a single Kinesis Data Stream and exposes the stable stream\nidentity plus AppTheory grant helpers. Event source mappings and CloudWatch\nLogs destinations are intentionally separate constructs.",
+        "summary": "AppTheory Kinesis Data Stream construct."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryKinesisStream",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/kinesis-stream.ts",
+          "line": 124
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "optional": true,
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/kinesis-stream.ts",
+        "line": 108
+      },
+      "methods": [
+        {
+          "docs": {
+            "summary": "Grant read permissions for this stream and its contents."
+          },
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 151
+          },
+          "name": "grantRead",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_iam.Grant"
+            }
+          }
+        },
+        {
+          "docs": {
+            "summary": "Grant read/write permissions for this stream and its contents."
+          },
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 165
+          },
+          "name": "grantReadWrite",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_iam.Grant"
+            }
+          }
+        },
+        {
+          "docs": {
+            "summary": "Grant write permissions for this stream and its contents."
+          },
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 158
+          },
+          "name": "grantWrite",
+          "parameters": [
+            {
+              "name": "grantee",
+              "type": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "aws-cdk-lib.aws_iam.Grant"
+            }
+          }
+        }
+      ],
+      "name": "AppTheoryKinesisStream",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The Kinesis stream, created or imported."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 112
+          },
+          "name": "stream",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kinesis.IStream"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The ARN of the stream."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 117
+          },
+          "name": "streamArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The name of the stream."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 122
+          },
+          "name": "streamName",
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/kinesis-stream:AppTheoryKinesisStream"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMapping": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "The mapping owns no stream lifecycle. Use AppTheoryKinesisStream when the\napplication should create or wrap the stream, then pass its `stream` here.",
+        "summary": "Wires a Kinesis Data Stream to a Lambda consumer."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMapping",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/kinesis-stream-mapping.ts",
+          "line": 103
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMappingProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/kinesis-stream-mapping.ts",
+        "line": 102
+      },
+      "name": "AppTheoryKinesisStreamMapping",
+      "symbolId": "lib/kinesis-stream-mapping:AppTheoryKinesisStreamMapping"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMappingProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for AppTheoryKinesisStreamMapping."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMappingProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/kinesis-stream-mapping.ts",
+        "line": 11
+      },
+      "name": "AppTheoryKinesisStreamMappingProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The Lambda function that will consume records from the stream."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 15
+          },
+          "name": "consumer",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The Kinesis Data Stream to consume."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 20
+          },
+          "name": "stream",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kinesis.IStream"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS Lambda default for Kinesis event source mappings",
+            "summary": "The largest number of records that AWS Lambda retrieves per invocation."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 41
+          },
+          "name": "batchSize",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS Lambda default for Kinesis event source mappings",
+            "summary": "Split a failed batch in two and retry."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 69
+          },
+          "name": "bisectBatchOnError",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS Lambda default for Kinesis event source mappings",
+            "summary": "The maximum amount of time to gather records before invoking the function."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 48
+          },
+          "name": "maxBatchingWindow",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS Lambda default for Kinesis event source mappings",
+            "summary": "The maximum age of a record that Lambda sends to the consumer."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 62
+          },
+          "name": "maxRecordAge",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS Lambda default for Kinesis event source mappings",
+            "summary": "The number of batches to process from each shard concurrently."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 76
+          },
+          "name": "parallelizationFactor",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "remarks": "AppTheory defaults this on so Kinesis consumers can fail closed per record\ninstead of replaying successfully processed records.",
+            "summary": "Allow partial-batch failure responses from the consumer."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 86
+          },
+          "name": "reportBatchItemFailures",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS Lambda default for Kinesis event source mappings",
+            "summary": "Maximum number of retry attempts for failed records."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 55
+          },
+          "name": "retryAttempts",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "lambda.StartingPosition.LATEST",
+            "summary": "Where to begin consuming the stream."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 27
+          },
+          "name": "startingPosition",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.StartingPosition"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- no timestamp",
+            "summary": "The Unix timestamp, in seconds, used with lambda.StartingPosition.AT_TIMESTAMP."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 34
+          },
+          "name": "startingPositionTimestamp",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- no tumbling window",
+            "summary": "The tumbling window used to group records before invocation."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream-mapping.ts",
+            "line": 93
+          },
+          "name": "tumblingWindow",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        }
+      ],
+      "symbolId": "lib/kinesis-stream-mapping:AppTheoryKinesisStreamMappingProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for AppTheoryKinesisStream."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/kinesis-stream.ts",
+        "line": 10
+      },
+      "name": "AppTheoryKinesisStreamProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "kinesis.StreamEncryption.MANAGED",
+            "remarks": "AppTheory supports AWS-managed Kinesis encryption and explicit\ncustomer-managed KMS keys. Unencrypted streams are rejected.",
+            "summary": "Server-side encryption for a newly created stream."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 61
+          },
+          "name": "encryption",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kinesis.StreamEncryption"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- no customer-managed KMS key",
+            "remarks": "Requires encryption to be kinesis.StreamEncryption.KMS.",
+            "summary": "Customer-managed KMS key for stream encryption."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 70
+          },
+          "name": "encryptionKey",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kms.IKey"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- No additional read grants",
+            "summary": "Principals to grant read permissions to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 84
+          },
+          "name": "grantReadTo",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- No additional read/write grants",
+            "summary": "Principals to grant read/write permissions to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 98
+          },
+          "name": "grantReadWriteTo",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- No additional write grants",
+            "summary": "Principals to grant write permissions to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 91
+          },
+          "name": "grantWriteTo",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_iam.IGrantable"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "kinesis.StreamMode.ON_DEMAND",
+            "summary": "Capacity mode for a newly created stream."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 35
+          },
+          "name": "mode",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kinesis.StreamMode"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "RemovalPolicy.RETAIN",
+            "summary": "Removal policy for a newly created stream."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 77
+          },
+          "name": "removalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- Kinesis default retention period",
+            "summary": "Retention period for stream records."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 51
+          },
+          "name": "retentionPeriod",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "1 when mode is PROVISIONED",
+            "remarks": "Only valid when mode is kinesis.StreamMode.PROVISIONED.",
+            "summary": "Shard count for provisioned streams."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 44
+          },
+          "name": "shardCount",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- create a new Kinesis Data Stream",
+            "remarks": "When provided, create-time properties such as streamName, mode,\nshardCount, retentionPeriod, encryption, encryptionKey, and\nremovalPolicy are rejected so imports cannot accidentally synthesize a\nreplacement stream.",
+            "summary": "Existing Kinesis stream to wrap."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 21
+          },
+          "name": "stream",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kinesis.IStream"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- CloudFormation-generated name",
+            "summary": "Optional physical stream name for a newly created stream."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/kinesis-stream.ts",
+            "line": 28
+          },
+          "name": "streamName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/kinesis-stream:AppTheoryKinesisStreamProps"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryKmsKey": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -20825,6 +21661,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "1.9.0-rc",
-  "fingerprint": "crETQtAnlx8YJbSN6eXSjTybWzJo0caj7vINqt4Zye8="
+  "version": "1.9.0",
+  "fingerprint": "iAhg1z/z75rIINbC0HMalGPiYJGym+zFAEVIj/pMIas="
 }

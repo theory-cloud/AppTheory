@@ -1,0 +1,169 @@
+{
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "LogsDestination0129DA64": {
+      "Properties": {
+        "DestinationName": "apptheory-central-logs",
+        "DestinationPolicy": {
+          "Fn::Join": [
+            "",
+            [
+              "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"AllowSourceAccounts\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":[\"111111111111\",\"222222222222\"]},\"Action\":\"logs:PutSubscriptionFilter\",\"Resource\":\"arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":logs:us-east-1:999999999999:destination:apptheory-central-logs\"}]}"
+            ]
+          ]
+        },
+        "RoleArn": {
+          "Fn::GetAtt": [
+            "LogsDestinationServiceRole3BBCBE97",
+            "Arn"
+          ]
+        },
+        "TargetArn": {
+          "Fn::GetAtt": [
+            "Stream862536A4",
+            "Arn"
+          ]
+        }
+      },
+      "Type": "AWS::Logs::Destination"
+    },
+    "LogsDestinationServiceRole3BBCBE97": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringLike": {
+                  "aws:SourceArn": [
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          "arn:",
+                          {
+                            "Ref": "AWS::Partition"
+                          },
+                          ":logs:us-east-1:999999999999:*"
+                        ]
+                      ]
+                    },
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          "arn:",
+                          {
+                            "Ref": "AWS::Partition"
+                          },
+                          ":logs:us-east-1:111111111111:*"
+                        ]
+                      ]
+                    },
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          "arn:",
+                          {
+                            "Ref": "AWS::Partition"
+                          },
+                          ":logs:us-east-1:222222222222:*"
+                        ]
+                      ]
+                    }
+                  ]
+                }
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "logs.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        }
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "LogsDestinationServiceRoleDefaultPolicy738C7018": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "kinesis:PutRecord",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "Stream862536A4",
+                  "Arn"
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "PolicyName": "LogsDestinationServiceRoleDefaultPolicy738C7018",
+        "Roles": [
+          {
+            "Ref": "LogsDestinationServiceRole3BBCBE97"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Policy"
+    },
+    "Stream862536A4": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "Name": "apptheory-events",
+        "RetentionPeriodHours": 24,
+        "StreamEncryption": {
+          "EncryptionType": "KMS",
+          "KeyId": "alias/aws/kinesis"
+        },
+        "StreamModeDetails": {
+          "StreamMode": "ON_DEMAND"
+        }
+      },
+      "Type": "AWS::Kinesis::Stream",
+      "UpdateReplacePolicy": "Retain"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}

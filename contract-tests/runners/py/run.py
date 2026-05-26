@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 _APPTHEORY_RUNTIME: Any | None = None
+CLOUDWATCH_LOGS_SUBSCRIPTION_HANDLER = "kinesis_require_cloudwatch_logs_subscription"
+CLOUDWATCH_LOGS_SUBSCRIPTION_MISSING_HELPER = "apptheory: cloudwatch logs subscription decoder helper missing"
 
 
 @dataclass
@@ -1341,7 +1343,7 @@ def _built_in_sqs_handler(name: str):
     return None
 
 
-def _built_in_kinesis_handler(name: str):
+def _built_in_kinesis_handler(runtime: Any, name: str, fixture: dict[str, Any]):
     if name == "kinesis_noop":
         return lambda _ctx, _record: None
 
@@ -1369,6 +1371,12 @@ def _built_in_kinesis_handler(name: str):
                 raise RuntimeError("bad trace")
 
         return handler
+
+    if name == CLOUDWATCH_LOGS_SUBSCRIPTION_HANDLER:
+        return make_cloudwatch_logs_subscription_kinesis_handler(
+            fixture,
+            _runtime_cloudwatch_logs_subscription_decoder(runtime),
+        )
 
     return None
 
@@ -1622,7 +1630,7 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
         app.sqs(str(route.get("queue") or ""), handler)
 
     for route in setup.get("kinesis", []) or []:
-        handler = _built_in_kinesis_handler(str(route.get("handler") or ""))
+        handler = _built_in_kinesis_handler(runtime, str(route.get("handler") or ""), fixture)
         if handler is None:
             raise RuntimeError(f"unknown kinesis handler {route.get('handler')!r}")
         app.kinesis(str(route.get("stream") or ""), handler)
@@ -1710,6 +1718,222 @@ def _compare_m1_side_effects_if_expected(
     if (expect_obj.get("spans") or []) != effects.spans:
         return False, "spans mismatch", actual, expected, effects
     return True, "", actual, expected, effects
+
+
+def uses_cloudwatch_logs_subscription_handler(fixture: dict[str, Any]) -> bool:
+    setup = fixture.get("setup", {}) or {}
+    return any(
+        str((route or {}).get("handler") or "").strip() == CLOUDWATCH_LOGS_SUBSCRIPTION_HANDLER
+        for route in setup.get("kinesis", []) or []
+    )
+
+
+def build_cloudwatch_logs_subscription_expectations(
+    fixture: dict[str, Any],
+) -> dict[str, dict[str, Any]] | None:
+    uses_handler = uses_cloudwatch_logs_subscription_handler(fixture)
+    expectation_root = (fixture.get("expect", {}) or {}).get("cloudwatch_logs_subscription")
+    if not expectation_root:
+        if uses_handler:
+            raise RuntimeError("fixture missing expect.cloudwatch_logs_subscription")
+        return None
+    if not uses_handler:
+        raise RuntimeError(
+            "expect.cloudwatch_logs_subscription requires kinesis_require_cloudwatch_logs_subscription handler"
+        )
+
+    expected_records = expectation_root.get("records") or []
+    if not isinstance(expected_records, list) or not expected_records:
+        raise RuntimeError("fixture missing expect.cloudwatch_logs_subscription.records")
+
+    input_records = (
+        (((fixture.get("input", {}) or {}).get("aws_event") or {}).get("event") or {}).get("Records")
+    )
+    if not isinstance(input_records, list) or not input_records:
+        raise RuntimeError("cloudwatch logs subscription fixture missing kinesis input records")
+
+    by_record_id: dict[str, dict[str, Any]] = {}
+    for index, expected in enumerate(expected_records):
+        record_id = str((expected or {}).get("record_id") or "").strip()
+        if not record_id:
+            raise RuntimeError(f"expect.cloudwatch_logs_subscription.records[{index}] missing record_id")
+        if record_id in by_record_id:
+            raise RuntimeError(f"duplicate cloudwatch logs subscription expectation for record_id {record_id!r}")
+        normalized = dict(expected or {})
+        normalized["record_id"] = record_id
+        validate_cloudwatch_logs_subscription_expectation_record(normalized)
+        by_record_id[record_id] = normalized
+
+    seen_input_record_ids: set[str] = set()
+    for index, record in enumerate(input_records):
+        record_id = str((record or {}).get("eventID") or "").strip()
+        if not record_id:
+            raise RuntimeError(
+                f"kinesis input Records[{index}] missing eventID for cloudwatch logs subscription expectation"
+            )
+        if record_id in seen_input_record_ids:
+            raise RuntimeError(f"duplicate kinesis input record_id {record_id!r}")
+        seen_input_record_ids.add(record_id)
+        if record_id not in by_record_id:
+            raise RuntimeError(
+                f"missing cloudwatch logs subscription expectation for kinesis record_id {record_id!r}"
+            )
+
+    for record_id in by_record_id:
+        if record_id not in seen_input_record_ids:
+            raise RuntimeError(f"extra cloudwatch logs subscription expectation for record_id {record_id!r}")
+
+    return by_record_id
+
+
+def validate_cloudwatch_logs_subscription_expectation_record(expected: dict[str, Any]) -> None:
+    record_id = str((expected or {}).get("record_id") or "").strip()
+    if expected.get("decode_error") is True:
+        has_decoded_fields = (
+            str(expected.get("message_type") or "").strip()
+            or str(expected.get("owner") or "").strip()
+            or str(expected.get("log_group") or "").strip()
+            or str(expected.get("log_stream") or "").strip()
+            or bool(expected.get("subscription_filters") or [])
+            or bool(expected.get("log_events") or [])
+            or bool(expected.get("safe_summary") or {})
+            or bool(expected.get("forbidden_safe_log_substrings") or [])
+        )
+        if has_decoded_fields:
+            raise RuntimeError(
+                f"cloudwatch logs subscription record_id {record_id!r} has decode_error=true and decoded fields"
+            )
+        return
+
+    missing: list[str] = []
+    if not str(expected.get("message_type") or "").strip():
+        missing.append("message_type")
+    if not str(expected.get("owner") or "").strip():
+        missing.append("owner")
+    if not str(expected.get("log_group") or "").strip():
+        missing.append("log_group")
+    if not str(expected.get("log_stream") or "").strip():
+        missing.append("log_stream")
+    if not isinstance(expected.get("subscription_filters"), list) or not expected.get("subscription_filters"):
+        missing.append("subscription_filters")
+    if not isinstance(expected.get("log_events"), list) or not expected.get("log_events"):
+        missing.append("log_events")
+    safe_summary = expected.get("safe_summary")
+    if not isinstance(safe_summary, dict) or not safe_summary:
+        missing.append("safe_summary")
+    if missing:
+        raise RuntimeError(
+            f"cloudwatch logs subscription record_id {record_id!r} expectation missing {', '.join(missing)}; "
+            "malformed records must set decode_error=true"
+        )
+
+    for index, value in enumerate(expected.get("subscription_filters") or []):
+        if not str(value or "").strip():
+            raise RuntimeError(
+                f"cloudwatch logs subscription record_id {record_id!r} subscription_filters[{index}] is empty"
+            )
+    for index, event in enumerate(expected.get("log_events") or []):
+        if not str((event or {}).get("id") or "").strip():
+            raise RuntimeError(f"cloudwatch logs subscription record_id {record_id!r} log_events[{index}] missing id")
+        if not str((event or {}).get("message") or "").strip():
+            raise RuntimeError(
+                f"cloudwatch logs subscription record_id {record_id!r} log_events[{index}] missing message"
+            )
+    if cloudwatch_logs_safe_summary_contains_forbidden(
+        safe_summary,
+        expected.get("forbidden_safe_log_substrings") or [],
+    ):
+        raise RuntimeError(
+            f"cloudwatch logs subscription record_id {record_id!r} safe_summary contains forbidden raw log substring"
+        )
+
+
+def _runtime_cloudwatch_logs_subscription_decoder(runtime: Any):
+    helper = getattr(runtime, "decode_cloudwatch_logs_subscription_record", None)
+    if not callable(helper):
+        helper = getattr(runtime, "decode_cloudwatch_logs_subscription", None)
+    if not callable(helper):
+        return missing_cloudwatch_logs_subscription_decoder
+    return lambda record: helper(record)
+
+
+def missing_cloudwatch_logs_subscription_decoder(_record: Any) -> dict[str, Any]:
+    raise RuntimeError(CLOUDWATCH_LOGS_SUBSCRIPTION_MISSING_HELPER)
+
+
+def make_cloudwatch_logs_subscription_kinesis_handler(
+    fixture: dict[str, Any],
+    decoder: Any | None = None,
+):
+    expectations = build_cloudwatch_logs_subscription_expectations(fixture)
+    if decoder is None:
+        decoder = missing_cloudwatch_logs_subscription_decoder
+
+    def handler(_ctx: Any, record: dict[str, Any]) -> None:
+        if expectations is None:
+            raise RuntimeError("fixture missing validated cloudwatch logs subscription expectations")
+        record_id = str((record or {}).get("eventID") or "").strip()
+        expected = expectations.get(record_id)
+        if expected is None:
+            raise RuntimeError(f"missing cloudwatch logs subscription expectation for kinesis record_id {record_id!r}")
+
+        actual = decoder(record)
+        if expected.get("decode_error") is True:
+            raise RuntimeError(
+                f"cloudwatch logs subscription record_id {record_id!r} expected decode_error=true, got decoded record"
+            )
+
+        ok, reason = compare_cloudwatch_logs_subscription_decoded_record(expected, actual)
+        if not ok:
+            raise RuntimeError(reason)
+
+    return handler
+
+
+def compare_cloudwatch_logs_subscription_decoded_record(
+    expected: dict[str, Any],
+    actual: dict[str, Any],
+) -> tuple[bool, str]:
+    record_id = str((expected or {}).get("record_id") or "").strip()
+    actual_record_id = str((actual or {}).get("record_id") or "").strip()
+    if actual_record_id and actual_record_id != record_id:
+        return (
+            False,
+            "cloudwatch logs subscription record_id mismatch: "
+            f"expected {record_id!r}, got {actual_record_id!r}",
+        )
+    for key in ("message_type", "owner", "log_group", "log_stream"):
+        if str((actual or {}).get(key) or "").strip() != str((expected or {}).get(key) or "").strip():
+            return False, f"cloudwatch logs subscription record_id {record_id!r} {key} mismatch"
+    expected_filters = (expected or {}).get("subscription_filters") or []
+    actual_filters = (actual or {}).get("subscription_filters") or []
+    if expected_filters != actual_filters:
+        return False, f"cloudwatch logs subscription record_id {record_id!r} subscription_filters mismatch"
+    expected_events = (expected or {}).get("log_events") or []
+    actual_events = (actual or {}).get("log_events") or []
+    if expected_events != actual_events:
+        return False, f"cloudwatch logs subscription record_id {record_id!r} log_events mismatch"
+    expected_summary = (expected or {}).get("safe_summary") or {}
+    actual_summary = (actual or {}).get("safe_summary") or {}
+    if expected_summary != actual_summary:
+        return False, f"cloudwatch logs subscription record_id {record_id!r} safe_summary mismatch"
+    if cloudwatch_logs_safe_summary_contains_forbidden(
+        actual_summary,
+        (expected or {}).get("forbidden_safe_log_substrings") or [],
+    ):
+        return (
+            False,
+            f"cloudwatch logs subscription record_id {record_id!r} "
+            "safe_summary contains forbidden raw log substring",
+        )
+    return True, ""
+
+
+def cloudwatch_logs_safe_summary_contains_forbidden(safe_summary: Any, forbidden_substrings: Any) -> bool:
+    if not isinstance(safe_summary, dict) or not isinstance(forbidden_substrings, list):
+        return False
+    serialized = json.dumps(safe_summary, sort_keys=True, separators=(",", ":"))
+    return any(str(substring or "") and str(substring) in serialized for substring in forbidden_substrings)
 
 
 def _m1_log_record(record: Any) -> dict[str, Any]:
