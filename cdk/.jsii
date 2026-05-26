@@ -9799,6 +9799,201 @@
       ],
       "symbolId": "lib/certificate:AppTheoryCertificateProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestination": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "The construct owns the destination, the CloudWatch Logs service role, and a fail-closed\ndestination policy. Subscription filter writers must be explicitly allowed by source account\nand/or AWS Organization ID; no unconstrained wildcard principal is synthesized.",
+        "summary": "CloudWatch Logs destination that delivers subscription records to Kinesis."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestination",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/cloudwatch-logs-destination.ts",
+          "line": 72
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestinationProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/cloudwatch-logs-destination.ts",
+        "line": 51
+      },
+      "name": "AppTheoryCloudWatchLogsDestination",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The CloudWatch Logs destination resource."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 55
+          },
+          "name": "destination",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.CfnDestination"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The destination ARN."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 65
+          },
+          "name": "destinationArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The destination name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 70
+          },
+          "name": "destinationName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "IAM role assumed by CloudWatch Logs to write records to the target stream."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 60
+          },
+          "name": "serviceRole",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_iam.Role"
+          }
+        }
+      ],
+      "symbolId": "lib/cloudwatch-logs-destination:AppTheoryCloudWatchLogsDestination"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestinationProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for AppTheoryCloudWatchLogsDestination."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestinationProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/cloudwatch-logs-destination.ts",
+        "line": 10
+      },
+      "name": "AppTheoryCloudWatchLogsDestinationProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Kinesis Data Stream that receives CloudWatch Logs subscription records."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 14
+          },
+          "name": "stream",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kinesis.IStream"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[]",
+            "remarks": "Organization entries use a wildcard principal only with an `aws:PrincipalOrgID` condition.\nAt least one allowed source account or organization ID is required.",
+            "summary": "Explicit AWS Organizations IDs allowed to create subscription filters against this destination."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 41
+          },
+          "name": "allowedOrganizationIds",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[]",
+            "remarks": "At least one allowed source account or organization ID is required. AppTheory does not\nsynthesize a broad default destination policy.",
+            "summary": "Explicit AWS account IDs allowed to create subscription filters against this destination."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 31
+          },
+          "name": "allowedSourceAccounts",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- deterministic name derived from the construct path",
+            "summary": "Optional physical CloudWatch Logs destination name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-destination.ts",
+            "line": 21
+          },
+          "name": "destinationName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/cloudwatch-logs-destination:AppTheoryCloudWatchLogsDestinationProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryCodeBuildJobRunner": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -21467,5 +21662,5 @@
     }
   },
   "version": "1.9.0",
-  "fingerprint": "iFLD4GHbWFhW9oW7NmzqhilcWwUVGi/k+jVPlznmhGw="
+  "fingerprint": "iAhg1z/z75rIINbC0HMalGPiYJGym+zFAEVIj/pMIas="
 }
