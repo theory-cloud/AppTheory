@@ -14,6 +14,7 @@ patterns and treat `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts` as the 
 - [Claude Remote MCP + Streaming](./mcp-server-remote-mcp.md)
 - [MCP Protected Resource Metadata](./mcp-protected-resource.md)
 - [Import Pipeline Constructs](./import-pipeline.md)
+- [Kinesis + CloudWatch Logs](./kinesis-cloudwatch-logs.md)
 
 ## Scope
 
@@ -26,5 +27,6 @@ These pages cover the canonical user-facing CDK patterns for:
 - MCP and OAuth discovery endpoints
 - import-pipeline infrastructure primitives
 - EventBridge bus and rule-target transport primitives
+- Kinesis stream, stream mapping, and CloudWatch Logs destination transport primitives
 
 Package-local authoring docs may still exist outside `docs/cdk/`, but canonical external guidance lives here.

@@ -10,6 +10,10 @@ const util = require("node:util");
 
 let cachedRuntime = null;
 
+const CLOUDWATCH_LOGS_SUBSCRIPTION_HANDLER = "kinesis_require_cloudwatch_logs_subscription";
+const CLOUDWATCH_LOGS_SUBSCRIPTION_MISSING_HELPER =
+  "apptheory: cloudwatch logs subscription decoder helper missing";
+
 async function loadAppTheoryRuntime() {
   if (cachedRuntime) return cachedRuntime;
   const runtimePath = path.join(process.cwd(), "ts", "dist", "index.js");
@@ -1053,6 +1057,210 @@ function compareM1SideEffectsIfExpected(fixture, effects) {
   return { ok: true };
 }
 
+function usesCloudWatchLogsSubscriptionHandler(fixture) {
+  return (fixture.setup?.kinesis ?? []).some(
+    (route) => String(route?.handler ?? "").trim() === CLOUDWATCH_LOGS_SUBSCRIPTION_HANDLER,
+  );
+}
+
+function buildCloudWatchLogsSubscriptionExpectations(fixture) {
+  const usesHandler = usesCloudWatchLogsSubscriptionHandler(fixture);
+  const expectationRoot = fixture.expect?.cloudwatch_logs_subscription ?? null;
+  if (!expectationRoot) {
+    if (usesHandler) {
+      throw new Error("fixture missing expect.cloudwatch_logs_subscription");
+    }
+    return null;
+  }
+  if (!usesHandler) {
+    throw new Error("expect.cloudwatch_logs_subscription requires kinesis_require_cloudwatch_logs_subscription handler");
+  }
+
+  const expectedRecords = expectationRoot.records ?? [];
+  if (!Array.isArray(expectedRecords) || expectedRecords.length === 0) {
+    throw new Error("fixture missing expect.cloudwatch_logs_subscription.records");
+  }
+
+  const inputRecords = fixture.input?.aws_event?.event?.Records ?? null;
+  if (!Array.isArray(inputRecords) || inputRecords.length === 0) {
+    throw new Error("cloudwatch logs subscription fixture missing kinesis input records");
+  }
+
+  const byRecordId = new Map();
+  expectedRecords.forEach((expected, index) => {
+    const recordId = String(expected?.record_id ?? "").trim();
+    if (!recordId) {
+      throw new Error(`expect.cloudwatch_logs_subscription.records[${index}] missing record_id`);
+    }
+    if (byRecordId.has(recordId)) {
+      throw new Error(`duplicate cloudwatch logs subscription expectation for record_id ${JSON.stringify(recordId)}`);
+    }
+    validateCloudWatchLogsSubscriptionExpectationRecord({ ...expected, record_id: recordId });
+    byRecordId.set(recordId, { ...expected, record_id: recordId });
+  });
+
+  const seenInputRecordIds = new Set();
+  inputRecords.forEach((record, index) => {
+    const recordId = String(record?.eventID ?? "").trim();
+    if (!recordId) {
+      throw new Error(`kinesis input Records[${index}] missing eventID for cloudwatch logs subscription expectation`);
+    }
+    if (seenInputRecordIds.has(recordId)) {
+      throw new Error(`duplicate kinesis input record_id ${JSON.stringify(recordId)}`);
+    }
+    seenInputRecordIds.add(recordId);
+    if (!byRecordId.has(recordId)) {
+      throw new Error(`missing cloudwatch logs subscription expectation for kinesis record_id ${JSON.stringify(recordId)}`);
+    }
+  });
+
+  for (const recordId of byRecordId.keys()) {
+    if (!seenInputRecordIds.has(recordId)) {
+      throw new Error(`extra cloudwatch logs subscription expectation for record_id ${JSON.stringify(recordId)}`);
+    }
+  }
+
+  return byRecordId;
+}
+
+function validateCloudWatchLogsSubscriptionExpectationRecord(expected) {
+  const recordId = String(expected?.record_id ?? "").trim();
+  if (expected?.decode_error === true) {
+    const hasDecodedFields =
+      String(expected.message_type ?? "").trim() ||
+      String(expected.owner ?? "").trim() ||
+      String(expected.log_group ?? "").trim() ||
+      String(expected.log_stream ?? "").trim() ||
+      (Array.isArray(expected.subscription_filters) && expected.subscription_filters.length > 0) ||
+      (Array.isArray(expected.log_events) && expected.log_events.length > 0) ||
+      (expected.safe_summary && Object.keys(expected.safe_summary).length > 0) ||
+      (Array.isArray(expected.forbidden_safe_log_substrings) &&
+        expected.forbidden_safe_log_substrings.length > 0);
+    if (hasDecodedFields) {
+      throw new Error(`cloudwatch logs subscription record_id ${JSON.stringify(recordId)} has decode_error=true and decoded fields`);
+    }
+    return;
+  }
+
+  const missing = [];
+  if (!String(expected?.message_type ?? "").trim()) missing.push("message_type");
+  if (!String(expected?.owner ?? "").trim()) missing.push("owner");
+  if (!String(expected?.log_group ?? "").trim()) missing.push("log_group");
+  if (!String(expected?.log_stream ?? "").trim()) missing.push("log_stream");
+  if (!Array.isArray(expected?.subscription_filters) || expected.subscription_filters.length === 0) {
+    missing.push("subscription_filters");
+  }
+  if (!Array.isArray(expected?.log_events) || expected.log_events.length === 0) {
+    missing.push("log_events");
+  }
+  if (!expected?.safe_summary || typeof expected.safe_summary !== "object" || Array.isArray(expected.safe_summary) || Object.keys(expected.safe_summary).length === 0) {
+    missing.push("safe_summary");
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} expectation missing ${missing.join(", ")}; malformed records must set decode_error=true`,
+    );
+  }
+
+  expected.subscription_filters.forEach((filter, index) => {
+    if (!String(filter ?? "").trim()) {
+      throw new Error(`cloudwatch logs subscription record_id ${JSON.stringify(recordId)} subscription_filters[${index}] is empty`);
+    }
+  });
+  expected.log_events.forEach((event, index) => {
+    if (!String(event?.id ?? "").trim()) {
+      throw new Error(`cloudwatch logs subscription record_id ${JSON.stringify(recordId)} log_events[${index}] missing id`);
+    }
+    if (!String(event?.message ?? "").trim()) {
+      throw new Error(`cloudwatch logs subscription record_id ${JSON.stringify(recordId)} log_events[${index}] missing message`);
+    }
+  });
+  if (cloudWatchLogsSafeSummaryContainsForbidden(
+    expected.safe_summary,
+    expected.forbidden_safe_log_substrings ?? [],
+  )) {
+    throw new Error(`cloudwatch logs subscription record_id ${JSON.stringify(recordId)} safe_summary contains forbidden raw log substring`);
+  }
+}
+
+function runtimeCloudWatchLogsSubscriptionDecoder(runtime) {
+  const helper =
+    runtime?.decodeCloudWatchLogsSubscriptionRecord ??
+    runtime?.decodeCloudWatchLogsSubscription;
+  if (typeof helper !== "function") {
+    return missingCloudWatchLogsSubscriptionDecoder;
+  }
+  return async (record) => helper(record);
+}
+
+async function missingCloudWatchLogsSubscriptionDecoder() {
+  throw new Error(CLOUDWATCH_LOGS_SUBSCRIPTION_MISSING_HELPER);
+}
+
+function makeCloudWatchLogsSubscriptionKinesisHandler(fixture, decoder = missingCloudWatchLogsSubscriptionDecoder) {
+  const expectations = buildCloudWatchLogsSubscriptionExpectations(fixture);
+  return async (_ctx, record) => {
+    if (!expectations) {
+      throw new Error("fixture missing validated cloudwatch logs subscription expectations");
+    }
+    const recordId = String(record?.eventID ?? "").trim();
+    const expected = expectations.get(recordId);
+    if (!expected) {
+      throw new Error(`missing cloudwatch logs subscription expectation for kinesis record_id ${JSON.stringify(recordId)}`);
+    }
+
+    const actual = await decoder(record);
+    if (expected.decode_error === true) {
+      throw new Error(`cloudwatch logs subscription record_id ${JSON.stringify(recordId)} expected decode_error=true, got decoded record`);
+    }
+
+    const compare = compareCloudWatchLogsSubscriptionDecodedRecord(expected, actual);
+    if (!compare.ok) {
+      throw new Error(compare.reason);
+    }
+  };
+}
+
+function compareCloudWatchLogsSubscriptionDecodedRecord(expected, actual) {
+  const recordId = String(expected?.record_id ?? "").trim();
+  const actualRecordId = String(actual?.record_id ?? "").trim();
+  if (actualRecordId && actualRecordId !== recordId) {
+    return { ok: false, reason: `cloudwatch logs subscription record_id mismatch: expected ${JSON.stringify(recordId)}, got ${JSON.stringify(actualRecordId)}` };
+  }
+  for (const key of ["message_type", "owner", "log_group", "log_stream"]) {
+    if (String(actual?.[key] ?? "").trim() !== String(expected?.[key] ?? "").trim()) {
+      return { ok: false, reason: `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} ${key} mismatch` };
+    }
+  }
+  if (!deepEqual(expected?.subscription_filters ?? [], actual?.subscription_filters ?? [])) {
+    return { ok: false, reason: `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} subscription_filters mismatch` };
+  }
+  if (!deepEqual(expected?.log_events ?? [], actual?.log_events ?? [])) {
+    return { ok: false, reason: `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} log_events mismatch` };
+  }
+  if (!deepEqual(expected?.safe_summary ?? {}, actual?.safe_summary ?? {})) {
+    return { ok: false, reason: `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} safe_summary mismatch` };
+  }
+  if (cloudWatchLogsSafeSummaryContainsForbidden(
+    actual?.safe_summary ?? {},
+    expected?.forbidden_safe_log_substrings ?? [],
+  )) {
+    return { ok: false, reason: `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} safe_summary contains forbidden raw log substring` };
+  }
+  return { ok: true };
+}
+
+function cloudWatchLogsSafeSummaryContainsForbidden(safeSummary, forbiddenSubstrings) {
+  if (!safeSummary || !Array.isArray(forbiddenSubstrings) || forbiddenSubstrings.length === 0) {
+    return false;
+  }
+  const serialized = JSON.stringify(safeSummary);
+  return forbiddenSubstrings.some((substring) => {
+    const needle = String(substring ?? "");
+    return needle && serialized.includes(needle);
+  });
+}
+
 function compareWebSocketCalls(fixture, wsCalls) {
   const expected = fixture.expect?.ws_calls ?? [];
   const actual = wsCalls?.calls ?? [];
@@ -1133,7 +1341,7 @@ function builtInSQSHandler(name) {
   }
 }
 
-function builtInKinesisHandler(name) {
+function builtInKinesisHandler(runtime, name, fixture) {
   switch (String(name ?? "").trim()) {
     case "kinesis_noop":
       return async () => {};
@@ -1159,6 +1367,11 @@ function builtInKinesisHandler(name) {
           throw new Error("bad trace");
         }
       };
+    case CLOUDWATCH_LOGS_SUBSCRIPTION_HANDLER:
+      return makeCloudWatchLogsSubscriptionKinesisHandler(
+        fixture,
+        runtimeCloudWatchLogsSubscriptionDecoder(runtime),
+      );
     default:
       return null;
   }
@@ -1592,7 +1805,7 @@ async function runFixtureM1(fixture) {
   }
 
   for (const route of fixture.setup?.kinesis ?? []) {
-    const handler = builtInKinesisHandler(route.handler);
+    const handler = builtInKinesisHandler(runtime, route.handler, fixture);
     if (!handler) {
       throw new Error(`unknown kinesis handler ${JSON.stringify(route.handler)}`);
     }
@@ -2765,6 +2978,10 @@ async function runAllFixtures({ fixturesRoot } = {}) {
 }
 
 module.exports = {
+  CLOUDWATCH_LOGS_SUBSCRIPTION_MISSING_HELPER,
+  buildCloudWatchLogsSubscriptionExpectations,
+  compareCloudWatchLogsSubscriptionDecodedRecord,
+  makeCloudWatchLogsSubscriptionKinesisHandler,
   runAllFixtures,
 };
 

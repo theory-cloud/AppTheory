@@ -28,6 +28,8 @@
 - [SQS Queue + Consumer Patterns](./sqs-queue-consumer.md) — queue-only, queue+consumer, and processor patterns (DLQs + partial batch failures).
 - [EventBridge Bus](./eventbridge-bus.md) — custom EventBridge bus with explicit cross-account publish allowlist.
 - [EventBridge Rule Target](./eventbridge-rule-target.md) — rule → Lambda wiring for schedules and event patterns.
+- [Canonical Kinesis + CloudWatch Logs](../../docs/cdk/kinesis-cloudwatch-logs.md) — AppTheory Kinesis stream,
+  stream mapping, and Logs destination path.
 - [EventBus Table](./eventbus-table.md) — durable EventBus DynamoDB table with binding guidance for publish and replay flows.
 - [HTTP Ingestion Endpoint](./http-ingestion-endpoint.md) — authenticated server-to-server ingestion endpoint with Lambda request authorizer.
 - [S3 Ingest Front Door](./s3-ingest.md) — secure bucket + optional EventBridge/SQS notifications for import workloads.

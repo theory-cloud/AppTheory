@@ -15,6 +15,7 @@ export SOURCE_DATE_EPOCH="${epoch}"
 
 examples=(
   "examples/cdk/import-pipeline|AppTheoryImportPipelineDemo"
+  "examples/cdk/kinesis-cloudwatch-logs|AppTheoryKinesisCloudWatchLogsDemo"
   "examples/cdk/multilang|AppTheoryMultilangDemo"
   "examples/cdk/ssr-site|AppTheorySsrSiteDemo"
   "examples/cdk/lesser-parity|LesserParityExample"
