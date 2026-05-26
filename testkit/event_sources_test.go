@@ -85,6 +85,63 @@ func TestKinesisEvent_DefaultsAndDataCopy(t *testing.T) {
 	}
 }
 
+func TestCloudWatchLogsSubscriptionData_DecodesThroughRuntime(t *testing.T) {
+	out := KinesisEvent(KinesisEventOptions{
+		StreamARN: "arn:aws:kinesis:us-east-1:123:stream/logs",
+		Records: []KinesisRecordOptions{
+			KinesisCloudWatchLogsSubscriptionRecord(KinesisCloudWatchLogsSubscriptionRecordOptions{
+				EventID: "kin-cwl-1",
+				Subscription: CloudWatchLogsSubscriptionOptions{
+					Owner:               "111122223333",
+					LogGroup:            "/aws/lambda/apptheory-contract",
+					LogStream:           "2026/05/26/[$LATEST]contract-a",
+					SubscriptionFilters: []string{"apptheory-contract-filter"},
+					LogEvents: []apptheory.CloudWatchLogsSubscriptionLogEvent{
+						{ID: "cwl-event-a1", Timestamp: 1779806400000, Message: "contract log line alpha"},
+					},
+				},
+			}),
+		},
+	})
+	if len(out.Records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(out.Records))
+	}
+
+	decoded, err := apptheory.DecodeCloudWatchLogsSubscription(out.Records[0])
+	if err != nil {
+		t.Fatalf("decode cloudwatch logs subscription: %v", err)
+	}
+	if decoded.RecordID != "kin-cwl-1" || decoded.Owner != "111122223333" {
+		t.Fatalf("unexpected decoded identity: %#v", decoded)
+	}
+	if len(decoded.LogEvents) != 1 || decoded.LogEvents[0].Message != "contract log line alpha" {
+		t.Fatalf("unexpected decoded log events: %#v", decoded.LogEvents)
+	}
+	if decoded.SafeSummary.LogEventCount != 1 || decoded.SafeSummary.SubscriptionFilterCount != 1 {
+		t.Fatalf("unexpected safe summary: %#v", decoded.SafeSummary)
+	}
+}
+
+func TestCloudWatchLogsSubscriptionData_DefaultsBuildValidSyntheticPayload(t *testing.T) {
+	out := KinesisEvent(KinesisEventOptions{
+		StreamARN: "arn:aws:kinesis:us-east-1:123:stream/logs",
+		Records: []KinesisRecordOptions{
+			KinesisCloudWatchLogsSubscriptionRecord(KinesisCloudWatchLogsSubscriptionRecordOptions{}),
+		},
+	})
+
+	decoded, err := apptheory.DecodeCloudWatchLogsSubscription(out.Records[0])
+	if err != nil {
+		t.Fatalf("decode default cloudwatch logs subscription: %v", err)
+	}
+	if decoded.MessageType != "DATA_MESSAGE" || decoded.Owner != "000000000000" {
+		t.Fatalf("unexpected default decoded values: %#v", decoded)
+	}
+	if decoded.LogGroup == "" || decoded.LogStream == "" || len(decoded.SubscriptionFilters) != 1 || len(decoded.LogEvents) != 1 {
+		t.Fatalf("expected complete synthetic defaults, got %#v", decoded)
+	}
+}
+
 func TestSNSEvent_Defaults(t *testing.T) {
 	out := SNSEvent(SNSEventOptions{
 		TopicARN: "arn:aws:sns:us-east-1:123:topic1",

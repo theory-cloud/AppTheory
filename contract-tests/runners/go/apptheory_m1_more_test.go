@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 
 	apptheory "github.com/theory-cloud/apptheory/runtime"
+	"github.com/theory-cloud/apptheory/testkit"
 )
 
 func TestCompareFixtureOutputJSON_CoversAllErrorBranches(t *testing.T) {
@@ -283,6 +284,44 @@ func TestCloudWatchLogsSubscriptionHandler_CompareScaffold(t *testing.T) {
 	}
 }
 
+func TestCloudWatchLogsSubscriptionDecoderAdapter_UsesRuntimeHelper(t *testing.T) {
+	t.Parallel()
+
+	record := testkit.KinesisEvent(testkit.KinesisEventOptions{
+		StreamARN: "arn:aws:kinesis:us-east-1:123:stream/stream",
+		Records: []testkit.KinesisRecordOptions{
+			testkit.KinesisCloudWatchLogsSubscriptionRecord(testkit.KinesisCloudWatchLogsSubscriptionRecordOptions{
+				EventID: "r1",
+				Subscription: testkit.CloudWatchLogsSubscriptionOptions{
+					Owner:               "111122223333",
+					LogGroup:            "/aws/lambda/example",
+					LogStream:           "2026/05/26/[$LATEST]example",
+					SubscriptionFilters: []string{"filter"},
+					LogEvents: []apptheory.CloudWatchLogsSubscriptionLogEvent{
+						{ID: "event-1", Timestamp: 1779806400000, Message: "contract log line alpha"},
+					},
+				},
+			}),
+		},
+	}).Records[0]
+
+	actual, err := decodeCloudWatchLogsSubscriptionRecord(record)
+	if err != nil {
+		t.Fatalf("decodeCloudWatchLogsSubscriptionRecord returned error: %v", err)
+	}
+	expected := cloudWatchLogsSubscriptionFixtureForTest().Expect.CloudWatchLogsSubscription.Records[0]
+	if err := compareCloudWatchLogsSubscriptionDecodedRecord(expected, actual); err != nil {
+		t.Fatalf("expected runtime decoded record to match fixture shape: %v", err)
+	}
+
+	if _, err := decodeCloudWatchLogsSubscriptionRecord(events.KinesisEventRecord{
+		EventID: "r2",
+		Kinesis: events.KinesisRecord{Data: []byte(`not-gzip`)},
+	}); err == nil || !strings.Contains(err.Error(), "cloudwatch logs subscription gzip") {
+		t.Fatalf("expected malformed kinesis data to fail decode, got %v", err)
+	}
+}
+
 func cloudWatchLogsSubscriptionFixtureForTest() Fixture {
 	return Fixture{
 		Setup: FixtureSetup{
@@ -315,7 +354,7 @@ func cloudWatchLogsSubscriptionFixtureForTest() Fixture {
 							"log_stream":                "2026/05/26/[$LATEST]example",
 							"subscription_filter_count": 1,
 							"log_event_count":           1,
-							"safe_log":                  "record_id=r1 owner=111122223333 log_events=1 subscription_filters=1",
+							"safe_log":                  "record_id=r1 owner=111122223333 log_group=/aws/lambda/example log_stream=2026/05/26/[$LATEST]example message_type=DATA_MESSAGE log_events=1 subscription_filters=1",
 						},
 						ForbiddenSafeLogSubstrings: []string{"contract log line alpha"},
 					},
