@@ -1,6 +1,8 @@
 package testkit
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -134,6 +136,122 @@ func DynamoDBStreamEvent(opts DynamoDBStreamEventOptions) events.DynamoDBEvent {
 			EventVersion:   "1.1",
 			AWSRegion:      "us-east-1",
 		})
+	}
+	return out
+}
+
+type CloudWatchLogsSubscriptionOptions struct {
+	MessageType         string
+	Owner               string
+	LogGroup            string
+	LogStream           string
+	SubscriptionFilters []string
+	LogEvents           []apptheory.CloudWatchLogsSubscriptionLogEvent
+}
+
+type KinesisCloudWatchLogsSubscriptionRecordOptions struct {
+	EventID        string
+	EventSourceARN string
+	PartitionKey   string
+	Subscription   CloudWatchLogsSubscriptionOptions
+}
+
+func CloudWatchLogsSubscriptionData(opts CloudWatchLogsSubscriptionOptions) []byte {
+	payload := struct {
+		MessageType         string                                         `json:"messageType"`
+		Owner               string                                         `json:"owner"`
+		LogGroup            string                                         `json:"logGroup"`
+		LogStream           string                                         `json:"logStream"`
+		SubscriptionFilters []string                                       `json:"subscriptionFilters"`
+		LogEvents           []apptheory.CloudWatchLogsSubscriptionLogEvent `json:"logEvents"`
+	}{
+		MessageType:         defaultCloudWatchLogsSubscriptionMessageType(opts.MessageType),
+		Owner:               defaultCloudWatchLogsSubscriptionOwner(opts.Owner),
+		LogGroup:            defaultCloudWatchLogsSubscriptionLogGroup(opts.LogGroup),
+		LogStream:           defaultCloudWatchLogsSubscriptionLogStream(opts.LogStream),
+		SubscriptionFilters: defaultCloudWatchLogsSubscriptionFilters(opts.SubscriptionFilters),
+		LogEvents:           defaultCloudWatchLogsSubscriptionLogEvents(opts.LogEvents),
+	}
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil
+	}
+	var buf bytes.Buffer
+	writer := gzip.NewWriter(&buf)
+	if _, err := writer.Write(raw); err != nil {
+		return nil
+	}
+	if err := writer.Close(); err != nil {
+		return nil
+	}
+	return buf.Bytes()
+}
+
+func KinesisCloudWatchLogsSubscriptionRecord(opts KinesisCloudWatchLogsSubscriptionRecordOptions) KinesisRecordOptions {
+	return KinesisRecordOptions{
+		EventID:        opts.EventID,
+		EventSourceARN: opts.EventSourceARN,
+		PartitionKey:   opts.PartitionKey,
+		Data:           CloudWatchLogsSubscriptionData(opts.Subscription),
+	}
+}
+
+func defaultCloudWatchLogsSubscriptionMessageType(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "DATA_MESSAGE"
+	}
+	return value
+}
+
+func defaultCloudWatchLogsSubscriptionOwner(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "000000000000"
+	}
+	return value
+}
+
+func defaultCloudWatchLogsSubscriptionLogGroup(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "/aws/lambda/apptheory-test"
+	}
+	return value
+}
+
+func defaultCloudWatchLogsSubscriptionLogStream(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "1970/01/01/[$LATEST]apptheory-test"
+	}
+	return value
+}
+
+func defaultCloudWatchLogsSubscriptionFilters(filters []string) []string {
+	if len(filters) == 0 {
+		return []string{"apptheory-test-filter"}
+	}
+	out := make([]string, len(filters))
+	for i, filter := range filters {
+		out[i] = strings.TrimSpace(filter)
+	}
+	return out
+}
+
+func defaultCloudWatchLogsSubscriptionLogEvents(logEvents []apptheory.CloudWatchLogsSubscriptionLogEvent) []apptheory.CloudWatchLogsSubscriptionLogEvent {
+	if len(logEvents) == 0 {
+		return []apptheory.CloudWatchLogsSubscriptionLogEvent{{
+			ID:        "cwl-event-1",
+			Timestamp: 0,
+			Message:   "test log line",
+		}}
+	}
+	out := make([]apptheory.CloudWatchLogsSubscriptionLogEvent, len(logEvents))
+	for i, event := range logEvents {
+		event.ID = strings.TrimSpace(event.ID)
+		out[i] = event
 	}
 	return out
 }
