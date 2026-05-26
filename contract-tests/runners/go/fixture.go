@@ -108,16 +108,17 @@ type FixtureRequest struct {
 }
 
 type FixtureExpect struct {
-	Response                *FixtureResponse       `json:"response,omitempty"`
-	Output                  json.RawMessage        `json:"output_json,omitempty"`
-	Error                   *FixtureError          `json:"error,omitempty"`
-	WebSocketCalls          []FixtureWebSocketCall `json:"ws_calls,omitempty"`
-	Logs                    []FixtureLogRecord     `json:"logs,omitempty"`
-	Metrics                 []FixtureMetricRecord  `json:"metrics,omitempty"`
-	Spans                   []FixtureSpanRecord    `json:"spans,omitempty"`
-	ProfileLogs             []map[string]any       `json:"profile_logs,omitempty"`
-	ProfileValidationErrors []string               `json:"profile_validation_errors,omitempty"`
-	LoggingProfileCatalog   map[string]any         `json:"logging_profile_catalog,omitempty"`
+	Response                   *FixtureResponse                   `json:"response,omitempty"`
+	Output                     json.RawMessage                    `json:"output_json,omitempty"`
+	Error                      *FixtureError                      `json:"error,omitempty"`
+	WebSocketCalls             []FixtureWebSocketCall             `json:"ws_calls,omitempty"`
+	CloudWatchLogsSubscription *FixtureCloudWatchLogsSubscription `json:"cloudwatch_logs_subscription,omitempty"`
+	Logs                       []FixtureLogRecord                 `json:"logs,omitempty"`
+	Metrics                    []FixtureMetricRecord              `json:"metrics,omitempty"`
+	Spans                      []FixtureSpanRecord                `json:"spans,omitempty"`
+	ProfileLogs                []map[string]any                   `json:"profile_logs,omitempty"`
+	ProfileValidationErrors    []string                           `json:"profile_validation_errors,omitempty"`
+	LoggingProfileCatalog      map[string]any                     `json:"logging_profile_catalog,omitempty"`
 }
 
 type FixtureError struct {
@@ -141,6 +142,29 @@ type FixtureWebSocketCall struct {
 	Endpoint     string       `json:"endpoint,omitempty"`
 	ConnectionID string       `json:"connection_id"`
 	Data         *FixtureBody `json:"data,omitempty"`
+}
+
+type FixtureCloudWatchLogsSubscription struct {
+	Records []FixtureCloudWatchLogsSubscriptionRecord `json:"records,omitempty"`
+}
+
+type FixtureCloudWatchLogsSubscriptionRecord struct {
+	RecordID                   string                                      `json:"record_id"`
+	DecodeError                bool                                        `json:"decode_error,omitempty"`
+	MessageType                string                                      `json:"message_type,omitempty"`
+	Owner                      string                                      `json:"owner,omitempty"`
+	LogGroup                   string                                      `json:"log_group,omitempty"`
+	LogStream                  string                                      `json:"log_stream,omitempty"`
+	SubscriptionFilters        []string                                    `json:"subscription_filters,omitempty"`
+	LogEvents                  []FixtureCloudWatchLogsSubscriptionLogEvent `json:"log_events,omitempty"`
+	SafeSummary                map[string]any                              `json:"safe_summary,omitempty"`
+	ForbiddenSafeLogSubstrings []string                                    `json:"forbidden_safe_log_substrings,omitempty"`
+}
+
+type FixtureCloudWatchLogsSubscriptionLogEvent struct {
+	ID        string `json:"id"`
+	Timestamp int64  `json:"timestamp"`
+	Message   string `json:"message"`
 }
 
 type FixtureBody struct {

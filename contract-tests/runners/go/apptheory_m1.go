@@ -292,9 +292,14 @@ func builtInSQSHandler(name string) apptheory.SQSHandler {
 }
 
 func builtInKinesisHandler(name string) apptheory.KinesisHandler {
-	if strings.TrimSpace(name) == "kinesis_requires_event_middleware" {
+	switch strings.TrimSpace(name) {
+	case "kinesis_requires_event_middleware":
 		return func(ctx *apptheory.EventContext, _ events.KinesisEventRecord) error {
 			return requireEventMiddleware(ctx)
+		}
+	case "kinesis_require_cloudwatch_logs_subscription":
+		return func(_ *apptheory.EventContext, _ events.KinesisEventRecord) error {
+			return errors.New("apptheory: cloudwatch logs subscription decoder helper missing")
 		}
 	}
 

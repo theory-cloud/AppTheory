@@ -1159,6 +1159,10 @@ function builtInKinesisHandler(name) {
           throw new Error("bad trace");
         }
       };
+    case "kinesis_require_cloudwatch_logs_subscription":
+      return async () => {
+        throw new Error("apptheory: cloudwatch logs subscription decoder helper missing");
+      };
     default:
       return null;
   }
