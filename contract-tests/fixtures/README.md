@@ -155,6 +155,9 @@ path while pinning the portable decoder contract that later runtime work must ex
 
 The runner handler is intentionally narrow: it should call the runtime decoder and compare the result to the fixture
 expectations. It must not grow a runner-local alternate decoder that bypasses the runtime contract.
+The runners also validate expectation hygiene before invoking the runtime path: every Kinesis input record must have
+exactly one `record_id` expectation, malformed records must be explicit `decode_error` expectations, and extra expected
+records fail the fixture instead of being ignored.
 
 
 ## M1 non-HTTP observability and safe error fixtures
