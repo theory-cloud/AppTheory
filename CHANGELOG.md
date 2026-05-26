@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.10.0-rc](https://github.com/theory-cloud/AppTheory/compare/v1.9.0...v1.10.0-rc) (2026-05-26)
+
+
+### Features
+
+* add kinesis ingestion support ([53fc37d](https://github.com/theory-cloud/AppTheory/commit/53fc37d0efd8e6be01a7d86f119827837a58db8d))
+* **cdk:** add AppTheoryKinesisStream ([#614](https://github.com/theory-cloud/AppTheory/issues/614)) ([bb03e46](https://github.com/theory-cloud/AppTheory/commit/bb03e46e01656ad13b2a01b47b28038a72c9bc75))
+* **cdk:** add CloudWatch Logs destination ([1c78d6f](https://github.com/theory-cloud/AppTheory/commit/1c78d6f8231f268bc70bf2cd3f2c00d1e0457ba5))
+* **cdk:** add Kinesis stream mapping ([3e831c9](https://github.com/theory-cloud/AppTheory/commit/3e831c91685e52ed25e498e06d9348c08b3b6de0))
+* **py:** add kinesis log subscription decoder ([#611](https://github.com/theory-cloud/AppTheory/issues/611)) ([b1ab0ab](https://github.com/theory-cloud/AppTheory/commit/b1ab0abf08ef34dc56fd2ca7d8b614218e2b2a29))
+* **runtime:** add kinesis producer helpers ([#612](https://github.com/theory-cloud/AppTheory/issues/612)) ([ccd3aea](https://github.com/theory-cloud/AppTheory/commit/ccd3aea17ce36f9aadb645ce1b1b5a81d71ccb86))
+* **runtime:** add TypeScript Kinesis logs decoder ([#610](https://github.com/theory-cloud/AppTheory/issues/610)) ([1eb97c3](https://github.com/theory-cloud/AppTheory/commit/1eb97c31655906a5f655830fd0a9bd5ab7a54393))
+* **runtime:** decode CloudWatch Logs Kinesis records ([#609](https://github.com/theory-cloud/AppTheory/issues/609)) ([1a08c48](https://github.com/theory-cloud/AppTheory/commit/1a08c48260f2014efc95bb7339a49c0daf755f2b))
+
+
+### Bug Fixes
+
+* **deps:** update TableTheory pins to v1.8.4 ([6860820](https://github.com/theory-cloud/AppTheory/commit/68608202a44bd454deceba8283663ad0e58e047a))
+* **deps:** update TableTheory pins to v1.8.4 ([37dc012](https://github.com/theory-cloud/AppTheory/commit/37dc012c46981b08c4c061d81a73c5298d3a708a))
+
 ## [1.9.0](https://github.com/theory-cloud/AppTheory/compare/v1.8.0...v1.9.0) (2026-05-25)
 
 
