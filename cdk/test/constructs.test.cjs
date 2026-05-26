@@ -33,6 +33,16 @@ function stableJson(value) {
   return value;
 }
 
+function renderedString(value) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(renderedString).join("");
+  if (value && typeof value === "object" && Array.isArray(value["Fn::Join"])) {
+    return renderedString(value["Fn::Join"][1]);
+  }
+  if (value && typeof value === "object") return JSON.stringify(stableJson(value));
+  return String(value);
+}
+
 function snapshotPath(name) {
   return path.join(__dirname, "snapshots", `${name}.json`);
 }
@@ -1130,6 +1140,156 @@ test("AppTheoryKinesisStreamMapping fails closed on timestamp mismatch", () => {
         startingPositionTimestamp: 1710000000,
       }),
     /only supports startingPositionTimestamp/,
+  );
+});
+
+test("AppTheoryCloudWatchLogsDestination (account allowlist) synthesizes narrow destination", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "999999999999", region: "us-east-1" },
+  });
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream", {
+    streamName: "apptheory-events",
+  });
+
+  new apptheory.AppTheoryCloudWatchLogsDestination(stack, "LogsDestination", {
+    stream: stream.stream,
+    destinationName: "apptheory-central-logs",
+    allowedSourceAccounts: ["111111111111", "222222222222"],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const destinations = resources.filter((resource) => resource.Type === "AWS::Logs::Destination");
+  const roles = resources.filter((resource) => resource.Type === "AWS::IAM::Role");
+
+  assert.equal(destinations.length, 1, "Should synthesize one CloudWatch Logs destination");
+  assert.equal(destinations[0].Properties?.DestinationName, "apptheory-central-logs");
+  assert.ok(destinations[0].Properties?.TargetArn, "Destination should target the Kinesis stream");
+  assert.ok(destinations[0].Properties?.RoleArn, "Destination should use the service role");
+
+  const destinationPolicy = renderedString(destinations[0].Properties?.DestinationPolicy);
+  assert.match(destinationPolicy, /logs:PutSubscriptionFilter/);
+  assert.match(destinationPolicy, /111111111111/);
+  assert.match(destinationPolicy, /222222222222/);
+  assert.doesNotMatch(destinationPolicy, /"Principal":"\*"/);
+  assert.doesNotMatch(destinationPolicy, /kinesis:\*/);
+
+  assert.equal(roles.length, 1, "Should synthesize one CloudWatch Logs service role");
+  const assumeRole = roles[0].Properties?.AssumeRolePolicyDocument?.Statement ?? [];
+  assert.equal(assumeRole.length, 1);
+  assert.deepEqual(assumeRole[0].Principal, { Service: "logs.amazonaws.com" });
+  assert.deepEqual(assumeRole[0].Condition?.StringLike?.["aws:SourceArn"], [
+    { "Fn::Join": ["", ["arn:", { Ref: "AWS::Partition" }, ":logs:us-east-1:999999999999:*"]] },
+    { "Fn::Join": ["", ["arn:", { Ref: "AWS::Partition" }, ":logs:us-east-1:111111111111:*"]] },
+    { "Fn::Join": ["", ["arn:", { Ref: "AWS::Partition" }, ":logs:us-east-1:222222222222:*"]] },
+  ]);
+
+  const actions = iamPolicyActions(template);
+  assert.ok(actions.includes("kinesis:PutRecord"), "Service role should be able to write records");
+  assert.equal(
+    actions.includes("kinesis:PutRecords"),
+    false,
+    "Service role should grant only the documented PutRecord operation",
+  );
+  assert.equal(
+    actions.includes("kinesis:ListShards"),
+    false,
+    "Service role must not receive Kinesis read/list permissions",
+  );
+  assert.equal(actions.includes("kinesis:*"), false, "Service role must not receive broad Kinesis permissions");
+  assert.equal(actions.includes("logs:PutSubscriptionFilter"), false, "Service role must not write destination policies");
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("cloudwatch-logs-destination-account-allowlist", template);
+  } else {
+    expectSnapshot("cloudwatch-logs-destination-account-allowlist", template);
+  }
+});
+
+test("AppTheoryCloudWatchLogsDestination (organization allowlist) constrains wildcard principal", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "999999999999", region: "us-east-1" },
+  });
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream", {
+    streamName: "apptheory-org-events",
+  });
+
+  new apptheory.AppTheoryCloudWatchLogsDestination(stack, "LogsDestination", {
+    stream: stream.stream,
+    destinationName: "apptheory-org-logs",
+    allowedOrganizationIds: ["o-abcdef1234"],
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const destination = resources.find((resource) => resource.Type === "AWS::Logs::Destination");
+  const role = resources.find((resource) => resource.Type === "AWS::IAM::Role");
+
+  assert.ok(destination, "Should synthesize a CloudWatch Logs destination");
+  const destinationPolicy = renderedString(destination.Properties?.DestinationPolicy);
+  assert.match(destinationPolicy, /"Principal":"\*"/);
+  assert.match(destinationPolicy, /aws:PrincipalOrgID/);
+  assert.match(destinationPolicy, /o-abcdef1234/);
+  assert.match(destinationPolicy, /logs:PutSubscriptionFilter/);
+
+  assert.ok(role, "Should synthesize the CloudWatch Logs service role");
+  const assumeRole = role.Properties?.AssumeRolePolicyDocument?.Statement ?? [];
+  assert.equal(assumeRole.length, 2);
+  assert.deepEqual(assumeRole[1].Principal, { Service: "logs.amazonaws.com" });
+  assert.deepEqual(assumeRole[1].Condition, {
+    StringEquals: {
+      "aws:SourceOrgID": ["o-abcdef1234"],
+    },
+  });
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("cloudwatch-logs-destination-organization-allowlist", template);
+  } else {
+    expectSnapshot("cloudwatch-logs-destination-organization-allowlist", template);
+  }
+});
+
+test("AppTheoryCloudWatchLogsDestination fails closed without an allowlist", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const stream = new apptheory.AppTheoryKinesisStream(stack, "Stream");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsDestination(stack, "MissingAllowlist", {
+        stream: stream.stream,
+      }),
+    /requires allowedSourceAccounts and\/or allowedOrganizationIds/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsDestination(stack, "EmptyAllowlist", {
+        stream: stream.stream,
+        allowedSourceAccounts: [],
+        allowedOrganizationIds: [],
+      }),
+    /requires allowedSourceAccounts and\/or allowedOrganizationIds/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsDestination(stack, "EmptyAccount", {
+        stream: stream.stream,
+        allowedSourceAccounts: [" "],
+      }),
+    /allowedSourceAccounts cannot contain empty values/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsDestination(stack, "InvalidOrg", {
+        stream: stream.stream,
+        allowedOrganizationIds: ["not-an-org"],
+      }),
+    /allowedOrganizationIds must contain AWS Organization IDs/,
   );
 });
 
