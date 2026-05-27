@@ -1,4 +1,4 @@
-import { Duration } from "aws-cdk-lib";
+import { Duration, Size } from "aws-cdk-lib";
 import * as apigw from "aws-cdk-lib/aws-apigateway";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
@@ -353,6 +353,10 @@ export class AppTheoryRestApiRouter extends Construct {
 
         const stageOpts = props.stage ?? {};
         const stageName = stageOpts.stageName ?? "prod";
+        const compressionProps =
+            props.minimumCompressionSize === undefined
+                ? {}
+                : { minCompressionSize: Size.bytes(props.minimumCompressionSize) };
 
         // Create the REST API
         this.api = new apigw.RestApi(this, "Api", {
@@ -362,7 +366,7 @@ export class AppTheoryRestApiRouter extends Construct {
             retainDeployments: props.retainDeployments,
             endpointTypes: props.endpointTypes ?? [apigw.EndpointType.REGIONAL],
             binaryMediaTypes: props.binaryMediaTypes,
-            minimumCompressionSize: props.minimumCompressionSize?.valueOf(),
+            ...compressionProps,
             apiKeySourceType: props.apiKeySourceType,
             deployOptions: this.buildDeployOptions(stageOpts, stageName),
         });

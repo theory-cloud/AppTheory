@@ -17,6 +17,7 @@ bash ./scripts/verify-branch-version-sync.sh
 ./scripts/verify-python-build.sh
 ./scripts/verify-cdk-audit.sh
 ./scripts/verify-cdk-constructs.sh
+./scripts/verify-cdk-deprecation-warnings.sh
 ./scripts/verify-cdk-ts-pack.sh
 ./scripts/verify-cdk-python-build.sh
 ./scripts/verify-cdk-go.sh
