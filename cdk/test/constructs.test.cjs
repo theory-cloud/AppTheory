@@ -63,6 +63,10 @@ function writeSnapshot(name, template) {
   fs.writeFileSync(filePath, JSON.stringify(stableJson(template), null, 2) + "\n");
 }
 
+function resourcesOfType(template, type) {
+  return Object.values(template.Resources ?? {}).filter((resource) => resource.Type === type);
+}
+
 function findCachePolicyEntry(resources, commentNeedle) {
   return Object.entries(resources).find(
     ([, resource]) =>
@@ -166,6 +170,14 @@ function assertStreamingRouteStageVariable(template, method, path) {
   const variables = restApiStageVariables(template);
   const key = restApiStreamingRouteStageVariableName(method, path);
   assert.equal(variables[key], "1", `Stage should mark ${method} ${path} as streaming`);
+}
+
+function singleRestApiResource(template) {
+  const restApis = Object.values(template.Resources ?? {}).filter(
+    (resource) => resource.Type === "AWS::ApiGateway::RestApi",
+  );
+  assert.equal(restApis.length, 1, "Should synthesize exactly one REST API resource");
+  return restApis[0];
 }
 
 test("AppTheoryFunction synthesizes expected template", () => {
@@ -1301,6 +1313,218 @@ test("AppTheoryCloudWatchLogsDestination fails closed without an allowlist", () 
   );
 });
 
+test("AppTheoryCloudWatchLogsSubscription (log group reference) synthesizes source filter", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "111111111111", region: "us-east-1" },
+  });
+  const logGroup = new logs.LogGroup(stack, "SourceLogGroup", {
+    logGroupName: "/apptheory/source",
+  });
+  const deliveryRole = new iam.Role(stack, "DeliveryRole", {
+    assumedBy: new iam.ServicePrincipal("logs.amazonaws.com"),
+  });
+
+  new apptheory.AppTheoryCloudWatchLogsSubscription(stack, "SourceSubscription", {
+    logGroup,
+    destinationArn: "arn:aws:kinesis:us-east-1:111111111111:stream/app-events",
+    filterPatternText: "",
+    role: deliveryRole,
+    filterName: "all-source-events",
+    distribution: logs.Distribution.RANDOM,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const subscriptionEntries = Object.entries(template.Resources ?? {}).filter(
+    ([, resource]) => resource.Type === "AWS::Logs::SubscriptionFilter",
+  );
+  const logGroupEntries = Object.entries(template.Resources ?? {}).filter(
+    ([, resource]) => resource.Type === "AWS::Logs::LogGroup",
+  );
+  const roleEntries = Object.entries(template.Resources ?? {}).filter(
+    ([, resource]) => resource.Type === "AWS::IAM::Role",
+  );
+
+  assert.equal(subscriptionEntries.length, 1, "Should synthesize one subscription filter");
+  assert.equal(logGroupEntries.length, 1, "Should synthesize one source log group");
+  assert.equal(roleEntries.length, 1, "Should use only the caller-provided delivery role");
+
+  const [subscriptionId, subscription] = subscriptionEntries[0];
+  const [logGroupId] = logGroupEntries[0];
+  const [roleId] = roleEntries[0];
+
+  assert.match(subscriptionId, /SourceSubscriptionSubscriptionFilter/);
+  assert.deepEqual(subscription.Properties?.LogGroupName, { Ref: logGroupId });
+  assert.equal(subscription.Properties?.DestinationArn, "arn:aws:kinesis:us-east-1:111111111111:stream/app-events");
+  assert.equal(subscription.Properties?.FilterPattern, "");
+  assert.equal(subscription.Properties?.FilterName, "all-source-events");
+  assert.equal(subscription.Properties?.Distribution, "Random");
+  assert.deepEqual(subscription.Properties?.RoleArn, { "Fn::GetAtt": [roleId, "Arn"] });
+});
+
+test("AppTheoryCloudWatchLogsSubscription supports caller-owned destination configs", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "111111111111", region: "us-east-1" },
+  });
+  const configs = [
+    {
+      id: "LambdaSubscription",
+      logGroupName: "/app/lambda",
+      destinationArn: "arn:aws:lambda:us-east-1:111111111111:function:logs-processor",
+      filterPatternText: '{ $.level = "info" }',
+    },
+    {
+      id: "KinesisSubscription",
+      logGroupName: "/app/kinesis",
+      destinationArn: "arn:aws:kinesis:us-east-1:111111111111:stream/app-events",
+      filterPattern: logs.FilterPattern.allEvents(),
+      roleArn: "arn:aws:iam::111111111111:role/logs-to-kinesis",
+      distribution: logs.Distribution.BY_LOG_STREAM,
+    },
+    {
+      id: "FirehoseSubscription",
+      logGroupName: "/app/firehose",
+      destinationArn: "arn:aws:firehose:us-east-1:111111111111:deliverystream/app-events",
+      filterPatternText: "?audit",
+      roleArn: "arn:aws:iam::111111111111:role/logs-to-firehose",
+    },
+    {
+      id: "CrossAccountSubscription",
+      logGroupName: "/app/cross-account",
+      destinationArn: "arn:aws:logs:us-east-1:999999999999:destination:shared-app-logs",
+      filterPattern: logs.FilterPattern.literal('{ $.service = "api" }'),
+      filterName: "shared-api-events",
+    },
+  ];
+
+  for (const config of configs) {
+    const { id, ...subscriptionProps } = config;
+    new apptheory.AppTheoryCloudWatchLogsSubscription(stack, id, subscriptionProps);
+  }
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const subscriptions = resourcesOfType(template, "AWS::Logs::SubscriptionFilter");
+  assert.equal(subscriptions.length, configs.length, "Should synthesize one subscription per caller config");
+
+  const byLogGroupName = new Map(
+    subscriptions.map((subscription) => [subscription.Properties?.LogGroupName, subscription]),
+  );
+  const lambdaSubscription = byLogGroupName.get("/app/lambda");
+  const kinesisSubscription = byLogGroupName.get("/app/kinesis");
+  const firehoseSubscription = byLogGroupName.get("/app/firehose");
+  const crossAccountSubscription = byLogGroupName.get("/app/cross-account");
+
+  assert.equal(lambdaSubscription?.Properties?.DestinationArn, configs[0].destinationArn);
+  assert.equal(lambdaSubscription?.Properties?.FilterPattern, '{ $.level = "info" }');
+  assert.equal(lambdaSubscription?.Properties?.RoleArn, undefined);
+
+  assert.equal(kinesisSubscription?.Properties?.DestinationArn, configs[1].destinationArn);
+  assert.equal(kinesisSubscription?.Properties?.FilterPattern, "");
+  assert.equal(kinesisSubscription?.Properties?.RoleArn, configs[1].roleArn);
+  assert.equal(kinesisSubscription?.Properties?.Distribution, "ByLogStream");
+
+  assert.equal(firehoseSubscription?.Properties?.DestinationArn, configs[2].destinationArn);
+  assert.equal(firehoseSubscription?.Properties?.FilterPattern, "?audit");
+  assert.equal(firehoseSubscription?.Properties?.RoleArn, configs[2].roleArn);
+
+  assert.equal(crossAccountSubscription?.Properties?.DestinationArn, configs[3].destinationArn);
+  assert.equal(crossAccountSubscription?.Properties?.FilterPattern, '{ $.service = "api" }');
+  assert.equal(crossAccountSubscription?.Properties?.FilterName, "shared-api-events");
+  assert.equal(crossAccountSubscription?.Properties?.RoleArn, undefined);
+});
+
+test("AppTheoryCloudWatchLogsSubscription fails closed for ambiguous props", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const logGroup = new logs.LogGroup(stack, "SourceLogGroup");
+  const deliveryRole = new iam.Role(stack, "DeliveryRole", {
+    assumedBy: new iam.ServicePrincipal("logs.amazonaws.com"),
+  });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsSubscription(stack, "MissingLogGroup", {
+        destinationArn: "arn:aws:lambda:us-east-1:111111111111:function:logs-processor",
+        filterPatternText: "",
+      }),
+    /requires exactly one of logGroup or logGroupName/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsSubscription(stack, "BothLogGroupInputs", {
+        logGroup,
+        logGroupName: "/app/logs",
+        destinationArn: "arn:aws:lambda:us-east-1:111111111111:function:logs-processor",
+        filterPatternText: "",
+      }),
+    /requires exactly one of logGroup or logGroupName/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsSubscription(stack, "MissingDestinationArn", {
+        logGroupName: "/app/logs",
+        filterPatternText: "",
+      }),
+    /requires destinationArn/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsSubscription(stack, "MissingFilterPattern", {
+        logGroupName: "/app/logs",
+        destinationArn: "arn:aws:lambda:us-east-1:111111111111:function:logs-processor",
+      }),
+    /requires exactly one of filterPattern or filterPatternText/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsSubscription(stack, "BothFilterPatternInputs", {
+        logGroupName: "/app/logs",
+        destinationArn: "arn:aws:lambda:us-east-1:111111111111:function:logs-processor",
+        filterPattern: logs.FilterPattern.allEvents(),
+        filterPatternText: "",
+      }),
+    /requires exactly one of filterPattern or filterPatternText/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsSubscription(stack, "BothRoleInputs", {
+        logGroupName: "/app/logs",
+        destinationArn: "arn:aws:kinesis:us-east-1:111111111111:stream/app-events",
+        filterPatternText: "",
+        role: deliveryRole,
+        roleArn: "arn:aws:iam::111111111111:role/logs-to-kinesis",
+      }),
+    /accepts at most one of role or roleArn/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsSubscription(stack, "EmptyDestinationArn", {
+        logGroupName: "/app/logs",
+        destinationArn: " ",
+        filterPatternText: "",
+      }),
+    /destinationArn cannot be empty/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryCloudWatchLogsSubscription(stack, "EmptyFilterName", {
+        logGroupName: "/app/logs",
+        destinationArn: "arn:aws:lambda:us-east-1:111111111111:function:logs-processor",
+        filterPatternText: "",
+        filterName: " ",
+      }),
+    /filterName cannot be empty/,
+  );
+});
+
 test("AppTheoryJobsTable synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -1438,9 +1662,38 @@ test("AppTheoryDynamoDBStreamMapping synthesizes expected template", () => {
     stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
   });
 
+  const originalGrantStreamRead = table.grantStreamRead.bind(table);
+  let grantStreamReadCalls = 0;
+  table.grantStreamRead = (...args) => {
+    grantStreamReadCalls += 1;
+    return originalGrantStreamRead(...args);
+  };
+
   new apptheory.AppTheoryDynamoDBStreamMapping(stack, "Stream", { consumer: fn, table });
 
   const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(grantStreamReadCalls, 1, "DynamoEventSource must be the only stream-read grant path");
+
+  const policyStatements = Object.values(template.Resources ?? {})
+    .filter((resource) => resource.Type === "AWS::IAM::Policy")
+    .flatMap((resource) => resource.Properties?.PolicyDocument?.Statement ?? []);
+  const listStreamsStatements = policyStatements.filter(
+    (statement) =>
+      statement.Effect === "Allow" && statement.Action === "dynamodb:ListStreams" && statement.Resource === "*",
+  );
+  const streamReadStatements = policyStatements.filter((statement) => {
+    const actions = Array.isArray(statement.Action) ? statement.Action : [statement.Action];
+    return (
+      statement.Effect === "Allow" &&
+      actions.includes("dynamodb:DescribeStream") &&
+      actions.includes("dynamodb:GetRecords") &&
+      actions.includes("dynamodb:GetShardIterator") &&
+      JSON.stringify(statement.Resource).includes("StreamArn")
+    );
+  });
+  assert.equal(listStreamsStatements.length, 1, "consumer must retain the DynamoDB ListStreams grant");
+  assert.equal(streamReadStatements.length, 1, "consumer must retain one DynamoDB stream-read grant statement");
+
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("dynamodb-stream-mapping", template);
   } else {
@@ -1814,6 +2067,53 @@ test("AppTheorySsrSite synthesizes expected template", () => {
   } else {
     expectSnapshot("ssr-site", template);
   }
+});
+
+test("AppTheorySsrSite auto-creates hosted-zone certificate only in explicit us-east-1 stacks", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "123456789012", region: "us-east-1" },
+  });
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    domainName: "app.example.com",
+    hostedZone: zone,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const certificates = resourcesOfType(template, "AWS::CertificateManager::Certificate");
+  assert.equal(certificates.length, 1, "Should synthesize one non-deprecated ACM certificate resource");
+  assert.equal(certificates[0].Properties?.DomainName, "app.example.com");
+});
+
+test("AppTheorySsrSite rejects hosted-zone certificate creation for environment-agnostic stacks", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: fn,
+        domainName: "app.example.com",
+        hostedZone: zone,
+      }),
+    /AppTheorySsrSite cannot create a hosted-zone CloudFront certificate unless the stack region is explicitly us-east-1; stack region is unresolved\. Provide props\.certificateArn/,
+  );
 });
 
 test("AppTheorySsrSite (FaceTheory) synthesizes expected template", () => {
@@ -3023,6 +3323,51 @@ test("AppTheoryRestApiRouter (multi-Lambda) synthesizes expected template", () =
   }
 });
 
+test("AppTheoryRestApiRouter omits REST compression configuration by default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-router-compression-default",
+  });
+  router.addLambdaIntegration("/{proxy+}", ["ANY"], fn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const restApi = singleRestApiResource(template);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(restApi.Properties ?? {}, "MinimumCompressionSize"),
+    false,
+    "Should not synthesize a compression threshold unless configured",
+  );
+});
+
+test("AppTheoryRestApiRouter maps REST compression threshold when configured", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-router-compression-enabled",
+    minimumCompressionSize: 1024,
+  });
+  router.addLambdaIntegration("/{proxy+}", ["ANY"], fn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const restApi = singleRestApiResource(template);
+  assert.equal(restApi.Properties?.MinimumCompressionSize, 1024);
+});
+
 test("AppTheoryRestApiRouter can suppress test-invoke-stage permissions", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -3416,6 +3761,53 @@ test("AppTheoryPathRoutedFrontend (domain + Route53) synthesizes expected templa
   }
 });
 
+test("AppTheoryPathRoutedFrontend auto-creates hosted-zone certificate only in explicit us-east-1 stacks", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "123456789012", region: "us-east-1" },
+  });
+
+  const clientBucket = new s3.Bucket(stack, "ClientBucket");
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+
+  new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+    apiOriginUrl: "https://api.example.com",
+    spaOrigins: [{ bucket: clientBucket, pathPattern: "/l/*" }],
+    domain: {
+      domainName: "app.example.com",
+      hostedZone: zone,
+    },
+    enableLogging: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const certificates = resourcesOfType(template, "AWS::CertificateManager::Certificate");
+  assert.equal(certificates.length, 1, "Should synthesize one non-deprecated ACM certificate resource");
+  assert.equal(certificates[0].Properties?.DomainName, "app.example.com");
+});
+
+test("AppTheoryPathRoutedFrontend rejects hosted-zone certificate creation for environment-agnostic stacks", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const clientBucket = new s3.Bucket(stack, "ClientBucket");
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+        apiOriginUrl: "https://api.example.com",
+        spaOrigins: [{ bucket: clientBucket, pathPattern: "/l/*" }],
+        domain: {
+          domainName: "app.example.com",
+          hostedZone: zone,
+        },
+        enableLogging: false,
+      }),
+    /AppTheoryPathRoutedFrontend cannot create a hosted-zone CloudFront certificate unless the stack region is explicitly us-east-1; stack region is unresolved\. Provide domain\.certificate or domain\.certificateArn/,
+  );
+});
+
 // ============================================================================
 // AppTheoryMediaCdn tests
 // ============================================================================
@@ -3490,6 +3882,48 @@ test("AppTheoryMediaCdn (domain + Route53) synthesizes expected template", () =>
   } else {
     expectSnapshot("media-cdn-domain", template);
   }
+});
+
+test("AppTheoryMediaCdn auto-creates hosted-zone certificate only in explicit us-east-1 stacks", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "123456789012", region: "us-east-1" },
+  });
+
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+
+  new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+    domain: {
+      domainName: "media.example.com",
+      hostedZone: zone,
+    },
+    enableLogging: false,
+    comment: "Media CDN with auto-created hosted-zone certificate",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const certificates = resourcesOfType(template, "AWS::CertificateManager::Certificate");
+  assert.equal(certificates.length, 1, "Should synthesize one non-deprecated ACM certificate resource");
+  assert.equal(certificates[0].Properties?.DomainName, "media.example.com");
+});
+
+test("AppTheoryMediaCdn rejects hosted-zone certificate creation for environment-agnostic stacks", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+        domain: {
+          domainName: "media.example.com",
+          hostedZone: zone,
+        },
+        enableLogging: false,
+      }),
+    /AppTheoryMediaCdn cannot create a hosted-zone CloudFront certificate unless the stack region is explicitly us-east-1; stack region is unresolved\. Provide domain\.certificate or domain\.certificateArn/,
+  );
 });
 
 test("AppTheoryMediaCdn (private media with key group) synthesizes expected template", () => {

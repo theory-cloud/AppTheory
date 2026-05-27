@@ -187,7 +187,20 @@ export interface AppTheorySsrSiteProps {
     readonly removalPolicy?: RemovalPolicy;
     readonly autoDeleteObjects?: boolean;
     readonly domainName?: string;
+    /**
+     * Route53 hosted zone for DNS records and optional certificate validation.
+     *
+     * When `domainName` is set without `certificateArn`, hosted-zone certificate
+     * creation is allowed only for stacks whose region is explicitly `us-east-1`.
+     * CloudFront requires viewer certificates in `us-east-1`; environment-agnostic
+     * or other-region stacks must provide `certificateArn`.
+     */
     readonly hostedZone?: route53.IHostedZone;
+    /**
+     * Existing ACM certificate ARN for the CloudFront distribution.
+     *
+     * The certificate must be in `us-east-1` for CloudFront.
+     */
     readonly certificateArn?: string;
     readonly webAclId?: string;
 }

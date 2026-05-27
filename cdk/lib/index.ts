@@ -19,6 +19,7 @@ export * from "./jobs-table";
 export * from "./kinesis-stream";
 export * from "./kinesis-stream-mapping";
 export * from "./cloudwatch-logs-destination";
+export * from "./cloudwatch-logs-subscription";
 export * from "./queue";
 export * from "./queue-consumer";
 export * from "./queue-processor";
