@@ -95,7 +95,7 @@ function isAllowedBundledAwsCdkBraceExpansion(vuln) {
     sameStringSet(vuln.nodes, ["node_modules/aws-cdk-lib/node_modules/brace-expansion"]) &&
     sameStringSet(viaUrls, allowedBraceExpansionAdvisories) &&
     sameStringSet(viaRanges, [">=5.0.0 <5.0.6"]) &&
-    cdkPackage?.version === "2.254.0" &&
+    cdkPackage?.version === "2.257.0" &&
     Array.isArray(cdkPackage?.bundleDependencies) &&
     cdkPackage.bundleDependencies.includes("minimatch") &&
     minimatchPackage?.version === "10.2.5" &&
