@@ -18419,7 +18419,7 @@
           },
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 386
+            "line": 390
           },
           "name": "addLambdaIntegration",
           "parameters": [
@@ -21691,5 +21691,5 @@
     }
   },
   "version": "1.10.0",
-  "fingerprint": "o4ytLELh3GsW+0NTVA16f6RbpN9FVbqsmmjD2lJ+G4U="
+  "fingerprint": "rxErJqwhBvSGDH/42xUiFlZG8N11R+HaMvVKCEKkyz8="
 }
