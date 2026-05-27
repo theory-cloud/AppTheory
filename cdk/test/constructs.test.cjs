@@ -168,6 +168,14 @@ function assertStreamingRouteStageVariable(template, method, path) {
   assert.equal(variables[key], "1", `Stage should mark ${method} ${path} as streaming`);
 }
 
+function singleRestApiResource(template) {
+  const restApis = Object.values(template.Resources ?? {}).filter(
+    (resource) => resource.Type === "AWS::ApiGateway::RestApi",
+  );
+  assert.equal(restApis.length, 1, "Should synthesize exactly one REST API resource");
+  return restApis[0];
+}
+
 test("AppTheoryFunction synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -3021,6 +3029,51 @@ test("AppTheoryRestApiRouter (multi-Lambda) synthesizes expected template", () =
   } else {
     expectSnapshot("rest-api-router-multi-lambda", template);
   }
+});
+
+test("AppTheoryRestApiRouter omits REST compression configuration by default", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-router-compression-default",
+  });
+  router.addLambdaIntegration("/{proxy+}", ["ANY"], fn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const restApi = singleRestApiResource(template);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(restApi.Properties ?? {}, "MinimumCompressionSize"),
+    false,
+    "Should not synthesize a compression threshold unless configured",
+  );
+});
+
+test("AppTheoryRestApiRouter maps REST compression threshold when configured", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-router-compression-enabled",
+    minimumCompressionSize: 1024,
+  });
+  router.addLambdaIntegration("/{proxy+}", ["ANY"], fn);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const restApi = singleRestApiResource(template);
+  assert.equal(restApi.Properties?.MinimumCompressionSize, 1024);
 });
 
 test("AppTheoryRestApiRouter can suppress test-invoke-stage permissions", () => {
