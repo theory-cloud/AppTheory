@@ -51,13 +51,15 @@ const zone = route53.HostedZone.fromLookup(this, 'Zone', {
 const mediaCdn = new AppTheoryMediaCdn(this, 'MediaCdn', {
     domain: {
         domainName: 'media.example.com',
-        hostedZone: zone, // Creates Route53 A record + DNS-validated cert in us-east-1
+        certificateArn: 'arn:aws:acm:us-east-1:123456789012:certificate/...',
+        hostedZone: zone, // Creates the Route53 A record
     },
 });
 ```
 
-Note: CloudFront requires ACM certificates in `us-east-1`. When you provide `hostedZone` without a certificate, this
-construct creates a DNS-validated certificate in `us-east-1` automatically.
+Note: CloudFront requires ACM certificates in `us-east-1`. Provide `certificate` or `certificateArn` for
+environment-agnostic stacks and stacks outside `us-east-1`. Hosted-zone auto-certificate creation uses
+non-deprecated `acm.Certificate` semantics and is allowed only when the stack region is explicitly `us-east-1`.
 
 ### With Certificate ARN
 
@@ -157,6 +159,7 @@ const mediaCdn = new AppTheoryMediaCdn(this, 'MediaCdn', {
     // Domain configuration
     domain: {
         domainName: 'media.example.com',
+        certificateArn: 'arn:aws:acm:us-east-1:123456789012:certificate/...',
         hostedZone: zone,
     },
     
@@ -244,7 +247,7 @@ aws cloudfront create-invalidation \
 | `domainName` | `string` | Domain name (e.g., "media.example.com") |
 | `certificate` | `ICertificate` | ACM certificate (us-east-1) |
 | `certificateArn` | `string` | Certificate ARN (alternative to certificate) |
-| `hostedZone` | `IHostedZone` | Route53 hosted zone for A record |
+| `hostedZone` | `IHostedZone` | Route53 hosted zone for A record; hosted-zone auto-certificate creation is allowed only in explicit `us-east-1` stacks |
 
 ### PrivateMediaConfig
 

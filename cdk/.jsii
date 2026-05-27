@@ -9004,7 +9004,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 77
+        "line": 89
       },
       "name": "ApiBypassConfig",
       "properties": [
@@ -9016,7 +9016,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 81
+            "line": 93
           },
           "name": "pathPattern",
           "type": {
@@ -9032,7 +9032,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 86
+            "line": 98
           },
           "name": "cachePolicy",
           "optional": true,
@@ -9048,7 +9048,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 91
+            "line": 103
           },
           "name": "originRequestPolicy",
           "optional": true,
@@ -9065,7 +9065,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 97
+            "line": 109
           },
           "name": "responseHeadersPolicy",
           "optional": true,
@@ -15774,7 +15774,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/media-cdn.ts",
-          "line": 219
+          "line": 237
         },
         "parameters": [
           {
@@ -15800,7 +15800,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/media-cdn.ts",
-        "line": 188
+        "line": 206
       },
       "name": "AppTheoryMediaCdn",
       "properties": [
@@ -15811,7 +15811,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 197
+            "line": 215
           },
           "name": "bucket",
           "type": {
@@ -15825,7 +15825,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 192
+            "line": 210
           },
           "name": "distribution",
           "type": {
@@ -15839,7 +15839,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 207
+            "line": 225
           },
           "name": "certificate",
           "optional": true,
@@ -15854,7 +15854,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 212
+            "line": 230
           },
           "name": "keyGroup",
           "optional": true,
@@ -15869,7 +15869,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 202
+            "line": 220
           },
           "name": "logsBucket",
           "optional": true,
@@ -15884,7 +15884,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 217
+            "line": 235
           },
           "name": "publicKey",
           "optional": true,
@@ -15902,7 +15902,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/media-cdn.ts",
-        "line": 76
+        "line": 94
       },
       "name": "AppTheoryMediaCdnProps",
       "properties": [
@@ -15915,7 +15915,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 170
+            "line": 188
           },
           "name": "allowedMethods",
           "optional": true,
@@ -15933,7 +15933,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 132
+            "line": 150
           },
           "name": "autoDeleteObjects",
           "optional": true,
@@ -15950,7 +15950,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 81
+            "line": 99
           },
           "name": "bucket",
           "optional": true,
@@ -15966,7 +15966,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 86
+            "line": 104
           },
           "name": "bucketName",
           "optional": true,
@@ -15983,7 +15983,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 154
+            "line": 172
           },
           "name": "cachePolicy",
           "optional": true,
@@ -15999,7 +15999,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 148
+            "line": 166
           },
           "name": "comment",
           "optional": true,
@@ -16015,7 +16015,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 107
+            "line": 125
           },
           "name": "defaultRootObject",
           "optional": true,
@@ -16031,7 +16031,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 91
+            "line": 109
           },
           "name": "domain",
           "optional": true,
@@ -16048,7 +16048,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 113
+            "line": 131
           },
           "name": "enableLogging",
           "optional": true,
@@ -16064,7 +16064,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 164
+            "line": 182
           },
           "name": "errorResponses",
           "optional": true,
@@ -16086,7 +16086,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 119
+            "line": 137
           },
           "name": "logsBucket",
           "optional": true,
@@ -16102,7 +16102,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 159
+            "line": 177
           },
           "name": "originRequestPolicy",
           "optional": true,
@@ -16119,7 +16119,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 143
+            "line": 161
           },
           "name": "priceClass",
           "optional": true,
@@ -16136,7 +16136,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 102
+            "line": 120
           },
           "name": "privateMedia",
           "optional": true,
@@ -16153,7 +16153,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 125
+            "line": 143
           },
           "name": "removalPolicy",
           "optional": true,
@@ -16169,7 +16169,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 96
+            "line": 114
           },
           "name": "responseHeadersPolicy",
           "optional": true,
@@ -16185,7 +16185,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 137
+            "line": 155
           },
           "name": "webAclId",
           "optional": true,
@@ -16207,7 +16207,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/path-routed-frontend.ts",
-          "line": 336
+          "line": 354
         },
         "parameters": [
           {
@@ -16233,7 +16233,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 315
+        "line": 333
       },
       "name": "AppTheoryPathRoutedFrontend",
       "properties": [
@@ -16244,7 +16244,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 319
+            "line": 337
           },
           "name": "distribution",
           "type": {
@@ -16258,7 +16258,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 334
+            "line": 352
           },
           "name": "certificate",
           "optional": true,
@@ -16273,7 +16273,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 329
+            "line": 347
           },
           "name": "logsBucket",
           "optional": true,
@@ -16288,7 +16288,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 324
+            "line": 342
           },
           "name": "spaRewriteFunction",
           "optional": true,
@@ -16306,7 +16306,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 132
+        "line": 150
       },
       "name": "AppTheoryPathRoutedFrontendProps",
       "properties": [
@@ -16318,7 +16318,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 137
+            "line": 155
           },
           "name": "apiOriginUrl",
           "type": {
@@ -16334,7 +16334,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 150
+            "line": 168
           },
           "name": "apiBypassPaths",
           "optional": true,
@@ -16356,7 +16356,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 180
+            "line": 198
           },
           "name": "apiBypassResponseHeadersPolicy",
           "optional": true,
@@ -16372,7 +16372,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 185
+            "line": 203
           },
           "name": "apiOriginRequestPolicy",
           "optional": true,
@@ -16388,7 +16388,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 168
+            "line": 186
           },
           "name": "apiResponseHeadersPolicy",
           "optional": true,
@@ -16406,7 +16406,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 210
+            "line": 228
           },
           "name": "autoDeleteObjects",
           "optional": true,
@@ -16422,7 +16422,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 226
+            "line": 244
           },
           "name": "comment",
           "optional": true,
@@ -16438,7 +16438,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 155
+            "line": 173
           },
           "name": "domain",
           "optional": true,
@@ -16455,7 +16455,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 191
+            "line": 209
           },
           "name": "enableLogging",
           "optional": true,
@@ -16472,7 +16472,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 197
+            "line": 215
           },
           "name": "logsBucket",
           "optional": true,
@@ -16489,7 +16489,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 221
+            "line": 239
           },
           "name": "priceClass",
           "optional": true,
@@ -16506,7 +16506,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 203
+            "line": 221
           },
           "name": "removalPolicy",
           "optional": true,
@@ -16523,7 +16523,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 163
+            "line": 181
           },
           "name": "responseHeadersPolicy",
           "optional": true,
@@ -16540,7 +16540,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 143
+            "line": 161
           },
           "name": "spaOrigins",
           "optional": true,
@@ -16562,7 +16562,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 174
+            "line": 192
           },
           "name": "spaResponseHeadersPolicy",
           "optional": true,
@@ -16578,7 +16578,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 215
+            "line": 233
           },
           "name": "webAclId",
           "optional": true,
@@ -19891,7 +19891,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 12
+        "line": 24
       },
       "members": [
         {
@@ -19918,7 +19918,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/ssr-site.ts",
-          "line": 552
+          "line": 577
         },
         "parameters": [
           {
@@ -19944,7 +19944,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 538
+        "line": 563
       },
       "name": "AppTheorySsrSite",
       "properties": [
@@ -19952,7 +19952,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 539
+            "line": 564
           },
           "name": "assetsBucket",
           "type": {
@@ -19963,7 +19963,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 540
+            "line": 565
           },
           "name": "assetsKeyPrefix",
           "type": {
@@ -19974,7 +19974,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 541
+            "line": 566
           },
           "name": "assetsManifestKey",
           "type": {
@@ -19985,7 +19985,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 547
+            "line": 572
           },
           "name": "bearerFunctionUrls",
           "type": {
@@ -20001,7 +20001,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 548
+            "line": 573
           },
           "name": "distribution",
           "type": {
@@ -20012,7 +20012,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 550
+            "line": 575
           },
           "name": "responseHeadersPolicy",
           "type": {
@@ -20023,7 +20023,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 546
+            "line": 571
           },
           "name": "ssrUrl",
           "type": {
@@ -20034,7 +20034,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 549
+            "line": 574
           },
           "name": "certificate",
           "optional": true,
@@ -20046,7 +20046,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 542
+            "line": 567
           },
           "name": "htmlStoreBucket",
           "optional": true,
@@ -20058,7 +20058,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 543
+            "line": 568
           },
           "name": "htmlStoreKeyPrefix",
           "optional": true,
@@ -20070,7 +20070,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 544
+            "line": 569
           },
           "name": "isrMetadataTable",
           "optional": true,
@@ -20082,7 +20082,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 545
+            "line": 570
           },
           "name": "logsBucket",
           "optional": true,
@@ -20100,7 +20100,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 514
+        "line": 539
       },
       "name": "AppTheorySsrSiteBearerFunctionUrlOrigin",
       "properties": [
@@ -20113,7 +20113,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 521
+            "line": 546
           },
           "name": "function",
           "type": {
@@ -20129,7 +20129,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 529
+            "line": 554
           },
           "name": "pathPatterns",
           "type": {
@@ -20150,7 +20150,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 535
+            "line": 560
           },
           "name": "invokeMode",
           "optional": true,
@@ -20195,7 +20195,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 316
+        "line": 328
       },
       "name": "AppTheorySsrSiteProps",
       "properties": [
@@ -20204,7 +20204,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 317
+            "line": 329
           },
           "name": "ssrFunction",
           "type": {
@@ -20221,7 +20221,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 470
+            "line": 482
           },
           "name": "allowViewerTenantHeaders",
           "optional": true,
@@ -20234,7 +20234,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 348
+            "line": 360
           },
           "name": "assetsBucket",
           "optional": true,
@@ -20247,7 +20247,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 350
+            "line": 362
           },
           "name": "assetsKeyPrefix",
           "optional": true,
@@ -20260,7 +20260,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 351
+            "line": 363
           },
           "name": "assetsManifestKey",
           "optional": true,
@@ -20273,7 +20273,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 349
+            "line": 361
           },
           "name": "assetsPath",
           "optional": true,
@@ -20286,7 +20286,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 505
+            "line": 517
           },
           "name": "autoDeleteObjects",
           "optional": true,
@@ -20303,7 +20303,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 411
+            "line": 423
           },
           "name": "bearerFunctionUrlOrigins",
           "optional": true,
@@ -20326,7 +20326,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 432
+            "line": 444
           },
           "name": "cacheTableName",
           "optional": true,
@@ -20336,10 +20336,14 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "remarks": "The certificate must be in `us-east-1` for CloudFront.",
+            "summary": "Existing ACM certificate ARN for the CloudFront distribution."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 509
+            "line": 534
           },
           "name": "certificateArn",
           "optional": true,
@@ -20356,7 +20360,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 384
+            "line": 396
           },
           "name": "directS3PathPatterns",
           "optional": true,
@@ -20374,7 +20378,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 507
+            "line": 519
           },
           "name": "domainName",
           "optional": true,
@@ -20387,7 +20391,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 472
+            "line": 484
           },
           "name": "enableLogging",
           "optional": true,
@@ -20397,10 +20401,14 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "remarks": "When `domainName` is set without `certificateArn`, hosted-zone certificate\ncreation is allowed only for stacks whose region is explicitly `us-east-1`.\nCloudFront requires viewer certificates in `us-east-1`; environment-agnostic\nor other-region stacks must provide `certificateArn`.",
+            "summary": "Route53 hosted zone for DNS records and optional certificate validation."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 508
+            "line": 528
           },
           "name": "hostedZone",
           "optional": true,
@@ -20417,7 +20425,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 502
+            "line": 514
           },
           "name": "htmlCachePolicy",
           "optional": true,
@@ -20434,7 +20442,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 360
+            "line": 372
           },
           "name": "htmlStoreBucket",
           "optional": true,
@@ -20451,7 +20459,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 366
+            "line": 378
           },
           "name": "htmlStoreKeyPrefix",
           "optional": true,
@@ -20468,7 +20476,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 334
+            "line": 346
           },
           "name": "invokeMode",
           "optional": true,
@@ -20485,7 +20493,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 419
+            "line": 431
           },
           "name": "isrMetadataTable",
           "optional": true,
@@ -20502,7 +20510,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 426
+            "line": 438
           },
           "name": "isrMetadataTableName",
           "optional": true,
@@ -20515,7 +20523,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 473
+            "line": 485
           },
           "name": "logsBucket",
           "optional": true,
@@ -20533,7 +20541,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 328
+            "line": 340
           },
           "name": "mode",
           "optional": true,
@@ -20546,7 +20554,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 504
+            "line": 516
           },
           "name": "removalPolicy",
           "optional": true,
@@ -20563,7 +20571,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 482
+            "line": 494
           },
           "name": "responseHeadersPolicy",
           "optional": true,
@@ -20581,7 +20589,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 491
+            "line": 503
           },
           "name": "ssrCachePolicy",
           "optional": true,
@@ -20598,7 +20606,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 455
+            "line": 467
           },
           "name": "ssrForwardHeaders",
           "optional": true,
@@ -20620,7 +20628,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 396
+            "line": 408
           },
           "name": "ssrPathPatterns",
           "optional": true,
@@ -20643,7 +20651,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 346
+            "line": 358
           },
           "name": "ssrUrlAuthType",
           "optional": true,
@@ -20660,7 +20668,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 376
+            "line": 388
           },
           "name": "staticPathPatterns",
           "optional": true,
@@ -20678,7 +20686,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 511
+            "line": 536
           },
           "name": "webAclId",
           "optional": true,
@@ -20691,7 +20699,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 435
+            "line": 447
           },
           "name": "wireRuntimeEnv",
           "optional": true,
@@ -21283,7 +21291,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/media-cdn.ts",
-        "line": 13
+        "line": 25
       },
       "name": "MediaCdnDomainConfig",
       "properties": [
@@ -21295,7 +21303,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 17
+            "line": 29
           },
           "name": "domainName",
           "type": {
@@ -21311,7 +21319,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 22
+            "line": 34
           },
           "name": "certificate",
           "optional": true,
@@ -21327,7 +21335,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 27
+            "line": 39
           },
           "name": "certificateArn",
           "optional": true,
@@ -21344,7 +21352,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 39
+            "line": 57
           },
           "name": "createAAAARecord",
           "optional": true,
@@ -21355,13 +21363,13 @@
         {
           "abstract": true,
           "docs": {
-            "remarks": "When provided, an A record alias will be created for the domain.",
-            "summary": "Route53 hosted zone for DNS record creation."
+            "remarks": "If `domainName` is set without `certificate` or `certificateArn`,\nhosted-zone certificate creation is allowed only for stacks whose region\nis explicitly `us-east-1`. CloudFront requires viewer certificates in\n`us-east-1`; environment-agnostic or other-region stacks must provide an\nexplicit certificate input.",
+            "summary": "Route53 hosted zone for DNS record creation. When provided, an A record alias will be created for the domain."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 33
+            "line": 51
           },
           "name": "hostedZone",
           "optional": true,
@@ -21382,7 +21390,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 103
+        "line": 115
       },
       "name": "PathRoutedFrontendDomainConfig",
       "properties": [
@@ -21394,7 +21402,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 107
+            "line": 119
           },
           "name": "domainName",
           "type": {
@@ -21410,7 +21418,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 112
+            "line": 124
           },
           "name": "certificate",
           "optional": true,
@@ -21426,7 +21434,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 117
+            "line": 129
           },
           "name": "certificateArn",
           "optional": true,
@@ -21443,7 +21451,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 129
+            "line": 147
           },
           "name": "createAAAARecord",
           "optional": true,
@@ -21454,13 +21462,13 @@
         {
           "abstract": true,
           "docs": {
-            "remarks": "When provided, an A record alias will be created for the domain.",
-            "summary": "Route53 hosted zone for DNS record creation."
+            "remarks": "If `domainName` is set without `certificate` or `certificateArn`,\nhosted-zone certificate creation is allowed only for stacks whose region\nis explicitly `us-east-1`. CloudFront requires viewer certificates in\n`us-east-1`; environment-agnostic or other-region stacks must provide an\nexplicit certificate input.",
+            "summary": "Route53 hosted zone for DNS record creation. When provided, an A record alias will be created for the domain."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 123
+            "line": 141
           },
           "name": "hostedZone",
           "optional": true,
@@ -21481,7 +21489,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/media-cdn.ts",
-        "line": 45
+        "line": 63
       },
       "name": "PrivateMediaConfig",
       "properties": [
@@ -21494,7 +21502,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 50
+            "line": 68
           },
           "name": "keyGroup",
           "optional": true,
@@ -21510,7 +21518,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 73
+            "line": 91
           },
           "name": "keyGroupComment",
           "optional": true,
@@ -21527,7 +21535,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 68
+            "line": 86
           },
           "name": "keyGroupName",
           "optional": true,
@@ -21544,7 +21552,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 62
+            "line": 80
           },
           "name": "publicKeyName",
           "optional": true,
@@ -21561,7 +21569,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 56
+            "line": 74
           },
           "name": "publicKeyPem",
           "optional": true,
@@ -21582,7 +21590,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 27
+        "line": 39
       },
       "name": "SpaOriginConfig",
       "properties": [
@@ -21594,7 +21602,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 31
+            "line": 43
           },
           "name": "bucket",
           "type": {
@@ -21609,7 +21617,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 37
+            "line": 49
           },
           "name": "pathPattern",
           "type": {
@@ -21625,7 +21633,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 42
+            "line": 54
           },
           "name": "cachePolicy",
           "optional": true,
@@ -21642,7 +21650,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 48
+            "line": 60
           },
           "name": "responseHeadersPolicy",
           "optional": true,
@@ -21660,7 +21668,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 71
+            "line": 83
           },
           "name": "rewriteMode",
           "optional": true,
@@ -21678,7 +21686,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 61
+            "line": 73
           },
           "name": "stripPrefixBeforeOrigin",
           "optional": true,
@@ -21691,5 +21699,5 @@
     }
   },
   "version": "1.10.0",
-  "fingerprint": "rxErJqwhBvSGDH/42xUiFlZG8N11R+HaMvVKCEKkyz8="
+  "fingerprint": "5H+Zwo2c7ywPepB4lWqWGZvqgkyPkSwVm08Nrd/1slA="
 }
