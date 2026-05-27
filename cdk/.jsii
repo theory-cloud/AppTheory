@@ -6,7 +6,7 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.254.0",
+    "aws-cdk-lib": "2.257.0",
     "constructs": "10.6.0"
   },
   "dependencyClosure": {
@@ -520,6 +520,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_autoscalingplans"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_awsexternalanthropic": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.AWSExternalAnthropic"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.awsexternalanthropic"
+            },
+            "python": {
+              "module": "aws_cdk.aws_awsexternalanthropic"
             }
           }
         },
@@ -4697,6 +4710,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_autoscalingplans"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_awsexternalanthropic": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.AWSExternalAnthropic"
+            },
+            "go": {
+              "packageName": "interfacesawsawsexternalanthropic"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.awsexternalanthropic"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_awsexternalanthropic"
             }
           }
         },
@@ -21662,5 +21691,5 @@
     }
   },
   "version": "1.10.0",
-  "fingerprint": "6EnEZiMm6MIv5RYMo87ltora5tPtGWqPjzPysO/L/n4="
+  "fingerprint": "o4ytLELh3GsW+0NTVA16f6RbpN9FVbqsmmjD2lJ+G4U="
 }
