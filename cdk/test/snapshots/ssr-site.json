@@ -345,7 +345,9 @@
                 "HEAD",
                 "OPTIONS"
               ],
-              "CachePolicyId": "83da9c7e-98b4-4e11-a168-04f0df8e2c65",
+              "CachePolicyId": {
+                "Ref": "SiteStaticAssetsCachePolicy416A79D8"
+              },
               "Compress": true,
               "FunctionAssociations": [
                 {
@@ -380,7 +382,9 @@
                 "HEAD",
                 "OPTIONS"
               ],
-              "CachePolicyId": "83da9c7e-98b4-4e11-a168-04f0df8e2c65",
+              "CachePolicyId": {
+                "Ref": "SiteStaticAssetsCachePolicy416A79D8"
+              },
               "Compress": true,
               "FunctionAssociations": [
                 {
@@ -761,6 +765,41 @@
         }
       },
       "Type": "AWS::CloudFront::Function"
+    },
+    "SiteStaticAssetsCachePolicy416A79D8": {
+      "Properties": {
+        "CachePolicyConfig": {
+          "Comment": "AppTheory direct S3 asset/data cache policy: origin Cache-Control bounded by no viewer header forwarding",
+          "DefaultTTL": 86400,
+          "MaxTTL": 31536000,
+          "MinTTL": 0,
+          "Name": {
+            "Fn::Join": [
+              "",
+              [
+                "TestStackSiteStaticAssetsCachePolicy1EBAF5A4-",
+                {
+                  "Ref": "AWS::Region"
+                }
+              ]
+            ]
+          },
+          "ParametersInCacheKeyAndForwardedToOrigin": {
+            "CookiesConfig": {
+              "CookieBehavior": "none"
+            },
+            "EnableAcceptEncodingBrotli": true,
+            "EnableAcceptEncodingGzip": true,
+            "HeadersConfig": {
+              "HeaderBehavior": "none"
+            },
+            "QueryStringsConfig": {
+              "QueryStringBehavior": "none"
+            }
+          }
+        }
+      },
+      "Type": "AWS::CloudFront::CachePolicy"
     }
   },
   "Rules": {
