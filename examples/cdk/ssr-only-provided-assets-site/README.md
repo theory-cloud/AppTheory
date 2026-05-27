@@ -11,10 +11,13 @@ It intentionally proves the provided-bucket path instead of `AppTheorySsrSite.as
 - A private `ProvidedAssetsBucket` is passed as `assetsBucket`.
 - `BucketDeployment` uploads assets under `assets/` outside `AppTheorySsrSite`.
 - AppTheory still owns the CloudFront `/assets/*` and exact `/assets` S3 OAC behaviors.
+- The smoke stack sets `enableLogging: false` so CloudFront log delivery cannot race auto-delete
+  cleanup for this throwaway validation target.
 
 The asset bucket remains private: block-public-access is enabled, SSL is enforced, and the only
 CloudFront read grant is the AppTheory-generated service-principal policy scoped to the distribution
-`SourceArn`. This example does not use the legacy OAI workaround.
+`SourceArn`. Direct asset behaviors use AppTheory's static asset cache policy, which does not forward
+the viewer `Host` header to S3/OAC. This example does not use the legacy OAI workaround.
 
 ## Local synth
 

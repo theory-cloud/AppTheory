@@ -74,6 +74,9 @@ export class SsrOnlyProvidedAssetsSiteStack extends Stack {
       assetsKeyPrefix,
       // Deliberately omit assetsPath. This example proves the provided-bucket path:
       // assets are deployed below, outside AppTheorySsrSite, into the stack-owned bucket.
+      // The smoke stack disables CloudFront logging so late log delivery cannot race
+      // bucket auto-delete during deterministic example cleanup.
+      enableLogging: false,
       removalPolicy: RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
     });

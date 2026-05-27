@@ -115,7 +115,9 @@ Lambda origin request policy and preserves the default `AWS_IAM` plus Lambda Ori
       cache key by default
     - tenant-like viewer headers join the cache key only when `allowViewerTenantHeaders: true` is explicitly enabled
     - origin cache-control headers still drive freshness within that safe cache key
-  - direct S3 asset/data behaviors continue to use origin cache-control semantics
+  - direct S3 asset/data behaviors use the AppTheory static asset cache policy: no viewer headers, cookies, or query
+    strings are forwarded to the S3/OAC origin (including the viewer `Host` header), origin cache-control headers drive
+    freshness with a 0-second minimum TTL, and objects without origin cache-control fall back to a 1-day default TTL
   - the reserved SSR sidecar behavior (`/_facetheory/ssr-data/*`) is Lambda-backed and defaults to `CACHING_DISABLED`
 
 ## Mixed-auth Lambda Function URL co-origins
@@ -214,7 +216,7 @@ Security posture stays on the AppTheory default path:
 - the provided assets bucket blocks public access, enforces SSL, and receives only the AppTheory-generated CloudFront
   service-principal read grant scoped to the distribution `SourceArn`
 - `/assets/*` and exact `/assets` stay on AppTheory-managed direct S3 OAC behaviors with the standard
-  viewer-request/viewer-response functions for request-id propagation
+  viewer-request/viewer-response functions for request-id propagation and the no-viewer-`Host` static asset cache policy
 - no legacy OAI comparison path is part of the example
 
 Local deterministic proof:

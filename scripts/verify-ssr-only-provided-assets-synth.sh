@@ -107,6 +107,10 @@ assert.ok(
   !bucketEntries.some(([logicalId]) => logicalId.startsWith("SiteAssetsBucket")),
   "AppTheorySsrSite should not create its own AssetsBucket when assetsBucket is provided",
 );
+assert.ok(
+  !bucketEntries.some(([logicalId]) => logicalId.startsWith("SiteCloudFrontLogsBucket")),
+  "throwaway smoke example should disable CloudFront logging for deterministic cleanup",
+);
 assert.deepEqual(
   providedBucket.Properties?.PublicAccessBlockConfiguration,
   {
@@ -147,6 +151,7 @@ assert.ok(
 const distribution = resourceValues("AWS::CloudFront::Distribution")[0];
 assert.ok(distribution, "CloudFront distribution should be synthesized");
 const distributionConfig = distribution.Properties?.DistributionConfig ?? {};
+assert.equal(distributionConfig.Logging, undefined, "example distribution should not configure CloudFront logging");
 assert.ok(!distributionConfig.OriginGroups, "SSR_ONLY topology should not synthesize an SSG/ISR origin group");
 assert.deepEqual(
   distributionConfig.DefaultCacheBehavior?.AllowedMethods,
@@ -167,8 +172,28 @@ assert.equal(
   "/assets/* and exact /assets should target the same S3 OAC origin",
 );
 
+const staticCachePolicyEntry = resourceEntries("AWS::CloudFront::CachePolicy").find(([, resource]) =>
+  String(resource.Properties?.CachePolicyConfig?.Comment ?? "").includes("AppTheory direct S3 asset/data"),
+);
+assert.ok(staticCachePolicyEntry, "AppTheory should synthesize the direct-S3 static asset cache policy");
+const [staticCachePolicyId, staticCachePolicy] = staticCachePolicyEntry;
+const staticCacheConfig = staticCachePolicy.Properties?.CachePolicyConfig ?? {};
+const staticCacheKey = staticCacheConfig.ParametersInCacheKeyAndForwardedToOrigin ?? {};
+assert.equal(staticCacheConfig.MinTTL, 0, "static asset cache policy should preserve no-cache origin responses");
+assert.equal(staticCacheConfig.DefaultTTL, 86400, "static asset cache policy should default to a 1-day TTL");
+assert.equal(staticCacheConfig.MaxTTL, 31536000, "static asset cache policy should cap asset caching at 365 days");
+assert.equal(staticCacheKey.HeadersConfig?.HeaderBehavior, "none", "static asset policy must not forward viewer Host");
+assert.equal(staticCacheKey.CookiesConfig?.CookieBehavior, "none", "static asset policy should not forward cookies");
+assert.equal(staticCacheKey.QueryStringsConfig?.QueryStringBehavior, "none", "static asset policy should not forward query strings");
+
 for (const behavior of [assetWildcardBehavior, assetExactBehavior]) {
   assert.deepEqual(behavior.AllowedMethods, ["GET", "HEAD", "OPTIONS"], `${behavior.PathPattern} should be read-only`);
+  assert.deepEqual(
+    behavior.CachePolicyId,
+    { Ref: staticCachePolicyId },
+    `${behavior.PathPattern} should use the no-viewer-Host static asset cache policy`,
+  );
+  assert.equal(behavior.OriginRequestPolicyId, undefined, `${behavior.PathPattern} should not forward viewer headers`);
   const eventTypes = (behavior.FunctionAssociations ?? []).map((association) => association.EventType).sort();
   assert.deepEqual(
     eventTypes,
