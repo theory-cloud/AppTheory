@@ -1446,9 +1446,38 @@ test("AppTheoryDynamoDBStreamMapping synthesizes expected template", () => {
     stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
   });
 
+  const originalGrantStreamRead = table.grantStreamRead.bind(table);
+  let grantStreamReadCalls = 0;
+  table.grantStreamRead = (...args) => {
+    grantStreamReadCalls += 1;
+    return originalGrantStreamRead(...args);
+  };
+
   new apptheory.AppTheoryDynamoDBStreamMapping(stack, "Stream", { consumer: fn, table });
 
   const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(grantStreamReadCalls, 1, "DynamoEventSource must be the only stream-read grant path");
+
+  const policyStatements = Object.values(template.Resources ?? {})
+    .filter((resource) => resource.Type === "AWS::IAM::Policy")
+    .flatMap((resource) => resource.Properties?.PolicyDocument?.Statement ?? []);
+  const listStreamsStatements = policyStatements.filter(
+    (statement) =>
+      statement.Effect === "Allow" && statement.Action === "dynamodb:ListStreams" && statement.Resource === "*",
+  );
+  const streamReadStatements = policyStatements.filter((statement) => {
+    const actions = Array.isArray(statement.Action) ? statement.Action : [statement.Action];
+    return (
+      statement.Effect === "Allow" &&
+      actions.includes("dynamodb:DescribeStream") &&
+      actions.includes("dynamodb:GetRecords") &&
+      actions.includes("dynamodb:GetShardIterator") &&
+      JSON.stringify(statement.Resource).includes("StreamArn")
+    );
+  });
+  assert.equal(listStreamsStatements.length, 1, "consumer must retain the DynamoDB ListStreams grant");
+  assert.equal(streamReadStatements.length, 1, "consumer must retain one DynamoDB stream-read grant statement");
+
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("dynamodb-stream-mapping", template);
   } else {
