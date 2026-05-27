@@ -770,6 +770,18 @@ export class AppTheorySsrSite extends Construct {
       headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(...ssrForwardHeaders),
     });
     const ssrCachePolicy = props.ssrCachePolicy ?? cloudfront.CachePolicy.CACHING_DISABLED;
+    const staticAssetsCachePolicy = new cloudfront.CachePolicy(this, "StaticAssetsCachePolicy", {
+      comment:
+        "AppTheory direct S3 asset/data cache policy: origin Cache-Control bounded by no viewer header forwarding",
+      minTtl: Duration.seconds(0),
+      defaultTtl: Duration.days(1),
+      maxTtl: Duration.days(365),
+      cookieBehavior: cloudfront.CacheCookieBehavior.none(),
+      headerBehavior: cloudfront.CacheHeaderBehavior.none(),
+      queryStringBehavior: cloudfront.CacheQueryStringBehavior.none(),
+      enableAcceptEncodingBrotli: true,
+      enableAcceptEncodingGzip: true,
+    });
     const htmlCachePolicy =
       props.htmlCachePolicy ??
       new cloudfront.CachePolicy(this, "HtmlCachePolicy", {
@@ -898,7 +910,7 @@ export class AppTheorySsrSite extends Construct {
       origin: assetsOrigin,
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
-      cachePolicy: cloudfront.CachePolicy.USE_ORIGIN_CACHE_CONTROL_HEADERS,
+      cachePolicy: staticAssetsCachePolicy,
       compress: true,
       responseHeadersPolicy: this.responseHeadersPolicy,
       functionAssociations: createEdgeFunctionAssociations(),
