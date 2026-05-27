@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.11.0](https://github.com/theory-cloud/AppTheory/compare/v1.10.0...v1.11.0) (2026-05-27)
+
+
+### Features
+
+* **cdk:** add SSR_ONLY provided assets example ([1115dc9](https://github.com/theory-cloud/AppTheory/commit/1115dc9452e1fc00387e743df26469968e197567))
+* **cdk:** add SSR_ONLY provided assets example ([817517a](https://github.com/theory-cloud/AppTheory/commit/817517a9a5582dce45bf214bd00b4a2964bc758f))
+
+
+### Bug Fixes
+
+* **cdk:** keep static S3 assets off viewer host ([f846e8b](https://github.com/theory-cloud/AppTheory/commit/f846e8b9ba22ed585e066646113eedde0ecbf8e2))
+
 ## [1.11.0-rc](https://github.com/theory-cloud/AppTheory/compare/v1.10.0...v1.11.0-rc) (2026-05-27)
 
 
