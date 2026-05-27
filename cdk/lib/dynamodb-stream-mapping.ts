@@ -33,7 +33,5 @@ export class AppTheoryDynamoDBStreamMapping extends Construct {
         reportBatchItemFailures: props.reportBatchItemFailures ?? true,
       }),
     );
-
-    props.table.grantStreamRead(props.consumer);
   }
 }
