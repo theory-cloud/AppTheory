@@ -10023,6 +10023,290 @@
       ],
       "symbolId": "lib/cloudwatch-logs-destination:AppTheoryCloudWatchLogsDestinationProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscription": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "This construct wraps `AWS::Logs::SubscriptionFilter` without creating the\ndestination, ingestion pipeline, or IAM role. Callers must provide the exact\nlog group, destination ARN, filter pattern, and any delivery role required by\nthe selected destination type.",
+        "summary": "Source-side CloudWatch Logs subscription filter."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscription",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/cloudwatch-logs-subscription.ts",
+          "line": 112
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscriptionProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/cloudwatch-logs-subscription.ts",
+        "line": 86
+      },
+      "name": "AppTheoryCloudWatchLogsSubscription",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The destination ARN configured on the subscription filter."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 100
+          },
+          "name": "destinationArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The rendered CloudWatch Logs filter pattern text."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 105
+          },
+          "name": "filterPatternText",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The resolved log group name attached by the subscription filter."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 95
+          },
+          "name": "logGroupName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The CloudWatch Logs subscription filter resource."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 90
+          },
+          "name": "subscriptionFilter",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.CfnSubscriptionFilter"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The caller-provided delivery role ARN, if any."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 110
+          },
+          "name": "roleArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/cloudwatch-logs-subscription:AppTheoryCloudWatchLogsSubscription"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscriptionProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for AppTheoryCloudWatchLogsSubscription."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscriptionProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/cloudwatch-logs-subscription.ts",
+        "line": 9
+      },
+      "name": "AppTheoryCloudWatchLogsSubscriptionProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "The ARN may point to a Lambda function, Kinesis stream, Firehose delivery stream,\nor a cross-account CloudWatch Logs destination. AppTheory does not create or\nvalidate the destination-side resources.",
+            "summary": "Destination ARN that receives matching log events."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 31
+          },
+          "name": "destinationArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- CloudWatch Logs default",
+            "summary": "Method used to distribute log events to Kinesis destinations."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 75
+          },
+          "name": "distribution",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.Distribution"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- CloudFormation assigns a name",
+            "summary": "Optional physical subscription filter name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 68
+          },
+          "name": "filterName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Exactly one of `filterPattern` or `filterPatternText` is required.",
+            "summary": "CloudWatch Logs filter pattern."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 38
+          },
+          "name": "filterPattern",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.IFilterPattern"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Use an empty string when the subscription should match all events. Exactly one\nof `filterPattern` or `filterPatternText` is required.",
+            "summary": "Raw CloudWatch Logs filter pattern text."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 46
+          },
+          "name": "filterPatternText",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Exactly one of `logGroup` or `logGroupName` is required.",
+            "summary": "Log group to attach the subscription filter to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 15
+          },
+          "name": "logGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.ILogGroup"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Exactly one of `logGroup` or `logGroupName` is required.",
+            "summary": "Name of an existing log group to attach the subscription filter to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 22
+          },
+          "name": "logGroupName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "At most one of `role` or `roleArn` may be provided. AppTheory never synthesizes\na default delivery role for this source-side construct.",
+            "summary": "Delivery role assumed by CloudWatch Logs when the destination requires one."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 54
+          },
+          "name": "role",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_iam.IRole"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "At most one of `role` or `roleArn` may be provided.",
+            "summary": "ARN of a caller-owned delivery role assumed by CloudWatch Logs."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 61
+          },
+          "name": "roleArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/cloudwatch-logs-subscription:AppTheoryCloudWatchLogsSubscriptionProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryCodeBuildJobRunner": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -21699,5 +21983,5 @@
     }
   },
   "version": "1.10.0",
-  "fingerprint": "5H+Zwo2c7ywPepB4lWqWGZvqgkyPkSwVm08Nrd/1slA="
+  "fingerprint": "t1e0AYHzNeGXi7LUGhrEED88N7c22bh5s7DbjVidbE4="
 }
