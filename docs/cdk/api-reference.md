@@ -21,6 +21,8 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
   enabled by default
 - `AppTheoryCloudWatchLogsDestination`: CloudWatch Logs destination and fail-closed source allowlist for Logs-to-Kinesis
   delivery
+- `AppTheoryCloudWatchLogsSubscription`: source-side CloudWatch Logs subscription attachment for a caller-provided log
+  group, destination ARN, filter pattern, and optional delivery role
 - `AppTheoryHttpIngestionEndpoint`: authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer
 - `AppTheorySsrSite`: FaceTheory-first CloudFront + S3 + Lambda URL deployment for SSR, SSG, and ISR
 - `AppTheoryQueue`, `AppTheoryQueueConsumer`, `AppTheoryQueueProcessor`: SQS queue and consumer patterns
@@ -55,6 +57,9 @@ Event workload wiring:
 - use `AppTheoryKinesisStream` plus `AppTheoryKinesisStreamMapping` for Kinesis stream consumers
 - use `AppTheoryCloudWatchLogsDestination` when CloudWatch Logs subscriptions deliver through Kinesis; configure
   `allowedSourceAccounts` and/or `allowedOrganizationIds` explicitly
+- use `AppTheoryCloudWatchLogsSubscription` to attach one source log group to the destination ARN from TypeScript
+  (`new AppTheoryCloudWatchLogsSubscription(...)`) or Go
+  (`apptheorycdk.NewAppTheoryCloudWatchLogsSubscription(...)`)
 - use `AppTheoryJobsTable` when the workload needs durable run state, idempotency, leases, or record status
 - keep handlers on AppTheory runtime entrypoints so routing, retry posture, and observability stay fixture-backed
 
