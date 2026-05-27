@@ -122,7 +122,7 @@ probe_contains() {
   exit 1
 }
 
-probe_status_with_echo() {
+probe_s3_origin_4xx() {
   local url="$1"
   local request_id="$2"
   local attempts="${3:-20}"
@@ -134,9 +134,7 @@ probe_status_with_echo() {
     status="$(curl -sS -H "x-request-id: ${request_id}" -D "${headers_file}" -o "${body_file}" --max-time 30 "${url}" -w '%{http_code}' || true)"
 
     if [[ "${status}" == "403" || "${status}" == "404" ]]; then
-      if expect_request_id_echo "${request_id}" >/dev/null 2>&1; then
-        return 0
-      fi
+      return 0
     fi
 
     if [[ "${attempt}" -lt "${attempts}" ]]; then
@@ -145,7 +143,7 @@ probe_status_with_echo() {
     attempt=$((attempt + 1))
   done
 
-  echo "ssr-only-provided-assets-smoke: FAIL (url=${url} expected 403/404 with x-request-id echo, got ${status:-curl-error})" >&2
+  echo "ssr-only-provided-assets-smoke: FAIL (url=${url} expected S3-origin 403/404, got ${status:-curl-error})" >&2
   echo "ssr-only-provided-assets-smoke: headers" >&2
   cat "${headers_file}" >&2 || true
   echo "ssr-only-provided-assets-smoke: body" >&2
@@ -182,6 +180,6 @@ probe_contains "${cloudfront_url}" "200" "AppTheory SSR_ONLY provided assets" "$
 probe_contains "${cloudfront_url%/}${known_js_path}" "200" "AppTheory SSR_ONLY provided assets validation" "${request_id}-js" 20 10
 probe_contains "${cloudfront_url%/}${known_css_path}" "200" "--apptheory-validation-accent" "${request_id}-css" 20 10
 probe_contains "${cloudfront_url%/}${known_text_path}" "200" "apptheory-ssr-only-provided-assets" "${request_id}-txt" 20 10
-probe_status_with_echo "${cloudfront_url%/}/assets" "${request_id}-assets-direct" 20 10
+probe_s3_origin_4xx "${cloudfront_url%/}/assets" "${request_id}-assets-direct" 20 10
 
 echo "ssr-only-provided-assets-smoke: PASS (stack=${stack_name} distribution=${distribution_id} assets_bucket=${asset_bucket_name})"

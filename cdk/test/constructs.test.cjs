@@ -63,6 +63,14 @@ function writeSnapshot(name, template) {
   fs.writeFileSync(filePath, JSON.stringify(stableJson(template), null, 2) + "\n");
 }
 
+function findCachePolicyEntry(resources, commentNeedle) {
+  return Object.entries(resources).find(
+    ([, resource]) =>
+      resource.Type === "AWS::CloudFront::CachePolicy" &&
+      String(resource.Properties?.CachePolicyConfig?.Comment ?? "").includes(commentNeedle),
+  );
+}
+
 function restApiResourcePaths(template) {
   const resources = template.Resources ?? {};
   const cache = {};
@@ -2528,7 +2536,7 @@ test("AppTheorySsrSite ssg-isr mode creates a stable public HTML cache key", () 
   const template = assertions.Template.fromStack(stack).toJSON();
   const resources = template.Resources ?? {};
   const distribution = Object.values(resources).find((resource) => resource.Type === "AWS::CloudFront::Distribution");
-  const cachePolicyEntry = Object.entries(resources).find(([, resource]) => resource.Type === "AWS::CloudFront::CachePolicy");
+  const cachePolicyEntry = findCachePolicyEntry(resources, "FaceTheory HTML cache policy");
 
   assert.ok(distribution, "Should have CloudFront distribution");
   assert.ok(cachePolicyEntry, "Should synthesize a custom HTML cache policy");
@@ -2567,7 +2575,7 @@ test("AppTheorySsrSite ssg-isr mode allows explicit tenant headers into the publ
   });
 
   const resources = assertions.Template.fromStack(stack).toJSON().Resources ?? {};
-  const cachePolicyEntry = Object.entries(resources).find(([, resource]) => resource.Type === "AWS::CloudFront::CachePolicy");
+  const cachePolicyEntry = findCachePolicyEntry(resources, "FaceTheory HTML cache policy");
 
   assert.ok(cachePolicyEntry, "Should synthesize a custom HTML cache policy");
 
@@ -2607,7 +2615,7 @@ test("AppTheorySsrSite ssg-isr mode synthesizes origin-group fallback and edge r
   const requestFunction = functions.find((resource) =>
     String(resource.Properties?.FunctionConfig?.Comment ?? "").includes("viewer-request"),
   );
-  const cachePolicyEntry = resourceEntries.find(([, resource]) => resource.Type === "AWS::CloudFront::CachePolicy");
+  const cachePolicyEntry = findCachePolicyEntry(template.Resources ?? {}, "FaceTheory HTML cache policy");
   const htmlOriginRequestPolicyEntry = resourceEntries.find(
     ([, resource]) =>
       resource.Type === "AWS::CloudFront::OriginRequestPolicy" &&
@@ -2822,7 +2830,7 @@ test("AppTheorySsrSite expands static HTML and direct SSR path patterns for root
   const requestFunction = functions.find((resource) =>
     String(resource.Properties?.FunctionConfig?.Comment ?? "").includes("viewer-request"),
   );
-  const cachePolicyEntry = resourceEntries.find(([, resource]) => resource.Type === "AWS::CloudFront::CachePolicy");
+  const cachePolicyEntry = findCachePolicyEntry(template.Resources ?? {}, "FaceTheory HTML cache policy");
   const htmlOriginRequestPolicyEntry = resourceEntries.find(
     ([, resource]) =>
       resource.Type === "AWS::CloudFront::OriginRequestPolicy" &&
@@ -2874,7 +2882,8 @@ test("AppTheorySsrSite defaults to FaceTheory CDN response headers and origin ca
   });
 
   const template = assertions.Template.fromStack(stack).toJSON();
-  const resources = Object.values(template.Resources ?? {});
+  const templateResources = template.Resources ?? {};
+  const resources = Object.values(templateResources);
   const distribution = resources.find((resource) => resource.Type === "AWS::CloudFront::Distribution");
   const responseHeadersPolicies = resources.filter((resource) => resource.Type === "AWS::CloudFront::ResponseHeadersPolicy");
 
@@ -2902,13 +2911,24 @@ test("AppTheorySsrSite defaults to FaceTheory CDN response headers and origin ca
 
   const defaultBehavior = distribution.Properties?.DistributionConfig?.DefaultCacheBehavior ?? {};
   const staticBehaviors = distribution.Properties?.DistributionConfig?.CacheBehaviors ?? [];
-  const cachePolicyEntry = Object.entries(template.Resources ?? {}).find(
-    ([, resource]) => resource.Type === "AWS::CloudFront::CachePolicy",
-  );
+  const htmlCachePolicyEntry = findCachePolicyEntry(templateResources, "FaceTheory HTML cache policy");
+  const staticAssetsCachePolicyEntry = findCachePolicyEntry(templateResources, "AppTheory direct S3 asset/data");
 
-  assert.ok(cachePolicyEntry, "Should synthesize a dedicated HTML cache policy for the default HTML behavior");
-  assert.deepEqual(defaultBehavior.CachePolicyId, { Ref: cachePolicyEntry[0] });
+  assert.ok(htmlCachePolicyEntry, "Should synthesize a dedicated HTML cache policy for the default HTML behavior");
+  assert.ok(staticAssetsCachePolicyEntry, "Should synthesize a dedicated direct-S3 static asset cache policy");
+  assert.deepEqual(defaultBehavior.CachePolicyId, { Ref: htmlCachePolicyEntry[0] });
   assert.ok(defaultBehavior.ResponseHeadersPolicyId, "Default behavior should use response headers policy");
+
+  const staticCacheConfig = staticAssetsCachePolicyEntry[1].Properties?.CachePolicyConfig ?? {};
+  const staticCacheKey = staticCacheConfig.ParametersInCacheKeyAndForwardedToOrigin ?? {};
+  assert.equal(staticCacheConfig.MinTTL, 0);
+  assert.equal(staticCacheConfig.DefaultTTL, 86400);
+  assert.equal(staticCacheConfig.MaxTTL, 31536000);
+  assert.equal(staticCacheKey.HeadersConfig?.HeaderBehavior, "none");
+  assert.equal(staticCacheKey.CookiesConfig?.CookieBehavior, "none");
+  assert.equal(staticCacheKey.QueryStringsConfig?.QueryStringBehavior, "none");
+  assert.equal(staticCacheKey.EnableAcceptEncodingBrotli, true);
+  assert.equal(staticCacheKey.EnableAcceptEncodingGzip, true);
 
   for (const behavior of staticBehaviors) {
     if (String(behavior.PathPattern ?? "").startsWith("_facetheory/ssr-data")) {
@@ -2916,7 +2936,8 @@ test("AppTheorySsrSite defaults to FaceTheory CDN response headers and origin ca
       assert.ok(behavior.OriginRequestPolicyId, "SSR data sidecars should use the Lambda origin request policy");
       continue;
     }
-    assert.equal(behavior.CachePolicyId, cloudfront.CachePolicy.USE_ORIGIN_CACHE_CONTROL_HEADERS.cachePolicyId);
+    assert.deepEqual(behavior.CachePolicyId, { Ref: staticAssetsCachePolicyEntry[0] });
+    assert.equal(behavior.OriginRequestPolicyId, undefined, "Direct S3 behaviors should not forward viewer headers");
     assert.deepEqual(
       behavior.ResponseHeadersPolicyId,
       defaultBehavior.ResponseHeadersPolicyId,
