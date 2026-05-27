@@ -35,7 +35,7 @@ class AppTheoryKinesisStreamMapping extends constructs_1.Construct {
 }
 exports.AppTheoryKinesisStreamMapping = AppTheoryKinesisStreamMapping;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryKinesisStreamMapping[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMapping", version: "1.10.0-rc" };
+AppTheoryKinesisStreamMapping[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryKinesisStreamMapping", version: "1.10.0" };
 function validateStartingPositionTimestamp(startingPosition, startingPositionTimestamp) {
     if (startingPosition === lambda.StartingPosition.AT_TIMESTAMP && startingPositionTimestamp === undefined) {
         throw new Error("AppTheoryKinesisStreamMapping requires startingPositionTimestamp when startingPosition is AT_TIMESTAMP");
