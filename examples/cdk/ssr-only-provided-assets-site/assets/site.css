@@ -1,0 +1,12 @@
+:root {
+  --apptheory-validation-accent: #2f6fed;
+}
+
+body {
+  color: #102033;
+  font-family: system-ui, sans-serif;
+}
+
+h1 {
+  color: var(--apptheory-validation-accent);
+}

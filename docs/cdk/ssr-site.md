@@ -115,7 +115,9 @@ Lambda origin request policy and preserves the default `AWS_IAM` plus Lambda Ori
       cache key by default
     - tenant-like viewer headers join the cache key only when `allowViewerTenantHeaders: true` is explicitly enabled
     - origin cache-control headers still drive freshness within that safe cache key
-  - direct S3 asset/data behaviors continue to use origin cache-control semantics
+  - direct S3 asset/data behaviors use the AppTheory static asset cache policy: no viewer headers, cookies, or query
+    strings are forwarded to the S3/OAC origin (including the viewer `Host` header), origin cache-control headers drive
+    freshness with a 0-second minimum TTL, and objects without origin cache-control fall back to a 1-day default TTL
   - the reserved SSR sidecar behavior (`/_facetheory/ssr-data/*`) is Lambda-backed and defaults to `CACHING_DISABLED`
 
 ## Mixed-auth Lambda Function URL co-origins
@@ -196,6 +198,41 @@ When `wireRuntimeEnv` is left enabled (the default), AppTheory wires:
 If you pass `htmlStoreBucket` and `isrMetadataTable`, AppTheory also grants the SSR Lambda the required S3 and
 DynamoDB permissions. If you use name-only wiring for the metadata table, you still need to grant access in your app
 stack.
+
+## SSR_ONLY provided-assets validation example
+
+`examples/cdk/ssr-only-provided-assets-site/` is a narrow validation example for operators who need to prove
+`ssr-only` asset delivery with a caller-provided, stack-owned assets bucket. It is not a second architecture and it does
+not change the preferred FaceTheory-first `ssg-isr` guidance above.
+
+The example deliberately omits `assetsPath` on `AppTheorySsrSite`; it passes `assetsBucket` and uploads the known JS,
+CSS, and text probe objects with an example-local `BucketDeployment`. The SSR Lambda returns HTML that references
+`/assets/app.js` and `/assets/site.css`, matching Vite/FaceTheory-style absolute asset URLs while avoiding a
+FaceTheory dependency for this smoke target.
+
+Security posture stays on the AppTheory default path:
+
+- the SSR Lambda Function URL remains `AWS_IAM` and is reached through CloudFront Lambda OAC
+- the provided assets bucket blocks public access, enforces SSL, and receives only the AppTheory-generated CloudFront
+  service-principal read grant scoped to the distribution `SourceArn`
+- `/assets/*` and exact `/assets` stay on AppTheory-managed direct S3 OAC behaviors with the standard
+  viewer-request/viewer-response functions for request-id propagation and the no-viewer-`Host` static asset cache policy
+- no legacy OAI comparison path is part of the example
+
+Local deterministic proof:
+
+```bash
+./scripts/verify-ssr-only-provided-assets-synth.sh
+```
+
+Authorized live handoff, when Factory explicitly approves AWS mutation:
+
+```bash
+AWS_PROFILE=Mcp ./scripts/verify-ssr-only-provided-assets-site-smoke.sh
+```
+
+Set `KEEP_STACK=1` only for an explicitly authorized debugging run; otherwise the smoke helper destroys its stack on
+exit.
 
 ## Verification model
 
