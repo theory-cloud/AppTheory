@@ -29,6 +29,7 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryKinesisStream` (Kinesis Data Stream create/wrap surface with encryption and grant helpers)
 - `AppTheoryKinesisStreamMapping` (Kinesis stream → Lambda event-source mapping; partial-batch failures default on)
 - `AppTheoryCloudWatchLogsDestination` (CloudWatch Logs destination → Kinesis with explicit source allowlists)
+- `AppTheoryCloudWatchLogsSubscription` (source log group subscription attachment to a caller-provided destination ARN)
 - `AppTheoryEventBusTable` (opinionated EventBus DynamoDB table + required GSIs + Lambda binding helper)
 - `AppTheoryDynamoTable` (general-purpose DynamoDB table; schema-explicit + consistent defaults)
 - `AppTheoryJobsTable` (opinionated Jobs table for import pipelines; schema + GSIs + TTL)
@@ -46,7 +47,7 @@ For the exact list and prop types, read `cdk/lib/*.d.ts`.
 The supported AppTheory Kinesis ingestion path is:
 
 ```text
-CloudWatch Logs subscription
+AppTheoryCloudWatchLogsSubscription
   -> AppTheoryCloudWatchLogsDestination
   -> AppTheoryKinesisStream
   -> AppTheoryKinesisStreamMapping
@@ -54,9 +55,14 @@ CloudWatch Logs subscription
 ```
 
 Use `AppTheoryKinesisStream` to create or wrap the stream, `AppTheoryKinesisStreamMapping` to connect the stream to the
-consumer Lambda, and `AppTheoryCloudWatchLogsDestination` to expose a fail-closed Logs destination. The destination
-requires `allowedSourceAccounts` and/or `allowedOrganizationIds`; placeholder IDs in examples are examples only and are
-not live account claims.
+consumer Lambda, `AppTheoryCloudWatchLogsDestination` to expose a fail-closed Logs destination, and
+`AppTheoryCloudWatchLogsSubscription` to attach a source log group to the destination ARN. The destination requires
+`allowedSourceAccounts` and/or `allowedOrganizationIds`; placeholder IDs in examples are examples only and are not live
+account claims.
+
+TypeScript uses `new AppTheoryCloudWatchLogsSubscription(...)`; Go uses
+`apptheorycdk.NewAppTheoryCloudWatchLogsSubscription(...)` from
+`github.com/theory-cloud/apptheory/cdk-go/apptheorycdk`.
 
 Keep the handler on the AppTheory runtime entrypoint and decode Kinesis-delivered CloudWatch Logs envelopes with
 `DecodeCloudWatchLogsSubscription` / `decodeCloudWatchLogsSubscription` /

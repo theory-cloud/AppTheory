@@ -4,9 +4,10 @@ This example shows the AppTheory path for CloudWatch Logs subscription records:
 
 1. `AppTheoryKinesisStream` creates the Kinesis Data Stream.
 2. `AppTheoryCloudWatchLogsDestination` exposes a CloudWatch Logs destination with an explicit placeholder source-account and organization allowlist.
-3. `AppTheoryFunction` builds a Go Lambda handler.
-4. `AppTheoryKinesisStreamMapping` wires the stream to the Lambda consumer with partial batch failures enabled.
-5. The Go handler registers an AppTheory Kinesis route and calls `DecodeCloudWatchLogsSubscription` for each record.
+3. `AppTheoryCloudWatchLogsSubscription` attaches the example source log group to that destination.
+4. `AppTheoryFunction` builds a Go Lambda handler.
+5. `AppTheoryKinesisStreamMapping` wires the stream to the Lambda consumer with partial batch failures enabled.
+6. The Go handler registers an AppTheory Kinesis route and calls `DecodeCloudWatchLogsSubscription` for each record.
 
 The account ID `111122223333` and organization ID `o-example1234` are deterministic placeholders for the example. They are not live account claims. Replace them before any real deployment.
 
