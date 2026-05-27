@@ -1,0 +1,1 @@
+apptheory-ssr-only-provided-assets
