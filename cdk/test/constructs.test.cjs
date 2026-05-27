@@ -63,6 +63,10 @@ function writeSnapshot(name, template) {
   fs.writeFileSync(filePath, JSON.stringify(stableJson(template), null, 2) + "\n");
 }
 
+function resourcesOfType(template, type) {
+  return Object.values(template.Resources ?? {}).filter((resource) => resource.Type === type);
+}
+
 function findCachePolicyEntry(resources, commentNeedle) {
   return Object.entries(resources).find(
     ([, resource]) =>
@@ -1853,6 +1857,53 @@ test("AppTheorySsrSite synthesizes expected template", () => {
   }
 });
 
+test("AppTheorySsrSite auto-creates hosted-zone certificate only in explicit us-east-1 stacks", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "123456789012", region: "us-east-1" },
+  });
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+
+  new apptheory.AppTheorySsrSite(stack, "Site", {
+    ssrFunction: fn,
+    domainName: "app.example.com",
+    hostedZone: zone,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const certificates = resourcesOfType(template, "AWS::CertificateManager::Certificate");
+  assert.equal(certificates.length, 1, "Should synthesize one non-deprecated ACM certificate resource");
+  assert.equal(certificates[0].Properties?.DomainName, "app.example.com");
+});
+
+test("AppTheorySsrSite rejects hosted-zone certificate creation for environment-agnostic stacks", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheorySsrSite(stack, "Site", {
+        ssrFunction: fn,
+        domainName: "app.example.com",
+        hostedZone: zone,
+      }),
+    /AppTheorySsrSite cannot create a hosted-zone CloudFront certificate unless the stack region is explicitly us-east-1; stack region is unresolved\. Provide props\.certificateArn/,
+  );
+});
+
 test("AppTheorySsrSite (FaceTheory) synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -3498,6 +3549,53 @@ test("AppTheoryPathRoutedFrontend (domain + Route53) synthesizes expected templa
   }
 });
 
+test("AppTheoryPathRoutedFrontend auto-creates hosted-zone certificate only in explicit us-east-1 stacks", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "123456789012", region: "us-east-1" },
+  });
+
+  const clientBucket = new s3.Bucket(stack, "ClientBucket");
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+
+  new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+    apiOriginUrl: "https://api.example.com",
+    spaOrigins: [{ bucket: clientBucket, pathPattern: "/l/*" }],
+    domain: {
+      domainName: "app.example.com",
+      hostedZone: zone,
+    },
+    enableLogging: false,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const certificates = resourcesOfType(template, "AWS::CertificateManager::Certificate");
+  assert.equal(certificates.length, 1, "Should synthesize one non-deprecated ACM certificate resource");
+  assert.equal(certificates[0].Properties?.DomainName, "app.example.com");
+});
+
+test("AppTheoryPathRoutedFrontend rejects hosted-zone certificate creation for environment-agnostic stacks", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const clientBucket = new s3.Bucket(stack, "ClientBucket");
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryPathRoutedFrontend(stack, "Frontend", {
+        apiOriginUrl: "https://api.example.com",
+        spaOrigins: [{ bucket: clientBucket, pathPattern: "/l/*" }],
+        domain: {
+          domainName: "app.example.com",
+          hostedZone: zone,
+        },
+        enableLogging: false,
+      }),
+    /AppTheoryPathRoutedFrontend cannot create a hosted-zone CloudFront certificate unless the stack region is explicitly us-east-1; stack region is unresolved\. Provide domain\.certificate or domain\.certificateArn/,
+  );
+});
+
 // ============================================================================
 // AppTheoryMediaCdn tests
 // ============================================================================
@@ -3572,6 +3670,48 @@ test("AppTheoryMediaCdn (domain + Route53) synthesizes expected template", () =>
   } else {
     expectSnapshot("media-cdn-domain", template);
   }
+});
+
+test("AppTheoryMediaCdn auto-creates hosted-zone certificate only in explicit us-east-1 stacks", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "123456789012", region: "us-east-1" },
+  });
+
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+
+  new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+    domain: {
+      domainName: "media.example.com",
+      hostedZone: zone,
+    },
+    enableLogging: false,
+    comment: "Media CDN with auto-created hosted-zone certificate",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const certificates = resourcesOfType(template, "AWS::CertificateManager::Certificate");
+  assert.equal(certificates.length, 1, "Should synthesize one non-deprecated ACM certificate resource");
+  assert.equal(certificates[0].Properties?.DomainName, "media.example.com");
+});
+
+test("AppTheoryMediaCdn rejects hosted-zone certificate creation for environment-agnostic stacks", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const zone = new route53.PublicHostedZone(stack, "Zone", { zoneName: "example.com" });
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryMediaCdn(stack, "MediaCdn", {
+        domain: {
+          domainName: "media.example.com",
+          hostedZone: zone,
+        },
+        enableLogging: false,
+      }),
+    /AppTheoryMediaCdn cannot create a hosted-zone CloudFront certificate unless the stack region is explicitly us-east-1; stack region is unresolved\. Provide domain\.certificate or domain\.certificateArn/,
+  );
 });
 
 test("AppTheoryMediaCdn (private media with key group) synthesizes expected template", () => {

@@ -1,4 +1,4 @@
-import { RemovalPolicy } from "aws-cdk-lib";
+import { RemovalPolicy, Stack, Token } from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
@@ -8,6 +8,18 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 
 import { stripTrailingPort, trimRepeatedCharEnd } from "./private/string-utils";
+
+function assertCloudFrontHostedZoneCertificateRegion(scope: Construct, constructName: string): void {
+    const region = Stack.of(scope).region;
+    if (!Token.isUnresolved(region) && region === "us-east-1") {
+        return;
+    }
+
+    const regionDescription = Token.isUnresolved(region) ? "unresolved" : region;
+    throw new Error(
+        `${constructName} cannot create a hosted-zone CloudFront certificate unless the stack region is explicitly us-east-1; stack region is ${regionDescription}. Provide domain.certificate or domain.certificateArn for stacks in other or environment-agnostic regions.`,
+    );
+}
 
 export enum AppTheorySpaRewriteMode {
     /**
@@ -119,6 +131,12 @@ export interface PathRoutedFrontendDomainConfig {
     /**
      * Route53 hosted zone for DNS record creation.
      * When provided, an A record alias will be created for the domain.
+     *
+     * If `domainName` is set without `certificate` or `certificateArn`,
+     * hosted-zone certificate creation is allowed only for stacks whose region
+     * is explicitly `us-east-1`. CloudFront requires viewer certificates in
+     * `us-east-1`; environment-agnostic or other-region stacks must provide an
+     * explicit certificate input.
      */
     readonly hostedZone?: route53.IHostedZone;
 
@@ -383,11 +401,10 @@ export class AppTheoryPathRoutedFrontend extends Construct {
                         props.domain.certificateArn,
                     );
                 } else if (props.domain.hostedZone) {
-                    // Create a DNS-validated certificate
-                    distributionCertificate = new acm.DnsValidatedCertificate(this, "Certificate", {
+                    assertCloudFrontHostedZoneCertificateRegion(this, "AppTheoryPathRoutedFrontend");
+                    distributionCertificate = new acm.Certificate(this, "Certificate", {
                         domainName,
-                        hostedZone: props.domain.hostedZone,
-                        region: "us-east-1",
+                        validation: acm.CertificateValidation.fromDns(props.domain.hostedZone),
                     });
                 } else {
                     throw new Error(
