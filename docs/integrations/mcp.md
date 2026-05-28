@@ -1,3 +1,8 @@
+---
+title: MCP Method Surface
+render_with_liquid: false
+---
+
 # MCP (Model Context Protocol) Server (Go runtime)
 
 This document describes AppTheory's MCP server implementation (`github.com/theory-cloud/apptheory/runtime/mcp`) for

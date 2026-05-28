@@ -1,3 +1,7 @@
+---
+title: MCP Protected Resource
+---
+
 # MCP Protected Resource Metadata (OAuth) - RFC9728
 
 Claude Remote MCP requires an OAuth protected-resource metadata endpoint for discovery.

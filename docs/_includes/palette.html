@@ -1,0 +1,19 @@
+<div class="palette-scrim" data-palette hidden role="dialog" aria-modal="true" aria-label="Search documentation">
+  <div class="palette">
+    <div class="palette__input">
+      {% include icon.html name="search" size="16" %}
+      <input type="text" placeholder="Search pages, headings, or APIs…"
+             autocomplete="off" spellcheck="false" data-palette-input>
+      <kbd>esc</kbd>
+    </div>
+    <div class="palette__list" data-palette-list role="listbox"></div>
+    <div class="palette__foot">
+      <span class="palette__foot__item"><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+      <span class="palette__foot__item"><kbd>↵</kbd> open</span>
+      <span class="palette__foot__item"><kbd>esc</kbd> close</span>
+      <span class="palette__foot__item" style="margin-left:auto;">
+        Powered by <span style="font-family: var(--tc-font-mono);">lunr.js</span>
+      </span>
+    </div>
+  </div>
+</div>

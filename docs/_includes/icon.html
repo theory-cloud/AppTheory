@@ -1,0 +1,61 @@
+{%- comment -%}
+  Inline lucide-style SVG icon.
+  Usage: {% include icon.html name="play" %}
+         {% include icon.html name="play" class="sidebar-link__icon" %}
+{%- endcomment -%}
+{%- assign n = include.name -%}
+{%- assign cls = include.class | default: "" -%}
+{%- assign size = include.size | default: "16" -%}
+<svg class="tc-icon {{ cls }}" width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24"
+     fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+     aria-hidden="true">
+{%- case n -%}
+{%- when "home"            -%}<path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10"/>
+{%- when "play"            -%}<polygon points="6 4 20 12 6 20 6 4"/>
+{%- when "book"            -%}<path d="M4 4h14a2 2 0 0 1 2 2v14H6a2 2 0 0 1-2-2V4z"/><path d="M4 4v14"/><path d="M8 8h8"/>
+{%- when "book-open"       -%}<path d="M3 5h7a3 3 0 0 1 3 3v12"/><path d="M21 5h-7a3 3 0 0 0-3 3v12"/>
+{%- when "compass"         -%}<circle cx="12" cy="12" r="9"/><polygon points="15 9 13 13 9 15 11 11"/>
+{%- when "check"           -%}<polyline points="4 12 10 18 20 6"/>
+{%- when "check-square"    -%}<rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="8 12 11 15 16 9"/>
+{%- when "life-buoy"       -%}<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><line x1="5" y1="5" x2="9" y2="9"/><line x1="15" y1="15" x2="19" y2="19"/><line x1="19" y1="5" x2="15" y2="9"/><line x1="9" y1="15" x2="5" y2="19"/>
+{%- when "arrow-right"     -%}<line x1="4" y1="12" x2="20" y2="12"/><polyline points="14 6 20 12 14 18"/>
+{%- when "tag"             -%}<path d="M3 12V4h8l10 10-8 8z"/><circle cx="8" cy="8" r="1.5"/>
+{%- when "zap"             -%}<polygon points="13 2 4 14 11 14 10 22 20 9 13 9 13 2"/>
+{%- when "list"            -%}<line x1="8" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="0.7"/><circle cx="4" cy="12" r="0.7"/><circle cx="4" cy="18" r="0.7"/>
+{%- when "list-checks"     -%}<polyline points="3 6 5 8 9 4"/><polyline points="3 13 5 15 9 11"/><polyline points="3 20 5 22 9 18"/><line x1="12" y1="6" x2="21" y2="6"/><line x1="12" y1="13" x2="21" y2="13"/><line x1="12" y1="20" x2="21" y2="20"/>
+{%- when "shield"          -%}<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/>
+{%- when "shield-check"    -%}<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><polyline points="9 12 11 14 15 10"/>
+{%- when "lock"            -%}<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>
+{%- when "key"             -%}<circle cx="8" cy="14" r="4"/><path d="M11 11l8-8"/><path d="M17 5l3 3"/>
+{%- when "file-text"       -%}<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="14 3 14 9 20 9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/>
+{%- when "globe"           -%}<circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><path d="M12 3a14 14 0 0 1 0 18"/><path d="M12 3a14 14 0 0 0 0 18"/>
+{%- when "cpu"             -%}<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="2" x2="9" y2="5"/><line x1="15" y1="2" x2="15" y2="5"/><line x1="9" y1="19" x2="9" y2="22"/><line x1="15" y1="19" x2="15" y2="22"/><line x1="2" y1="9" x2="5" y2="9"/><line x1="2" y1="15" x2="5" y2="15"/><line x1="19" y1="9" x2="22" y2="9"/><line x1="19" y1="15" x2="22" y2="15"/>
+{%- when "package"         -%}<path d="M12 3 4 7v10l8 4 8-4V7z"/><path d="M4 7l8 4 8-4"/><line x1="12" y1="11" x2="12" y2="21"/>
+{%- when "layout"          -%}<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="3" y1="9" x2="21" y2="9"/>
+{%- when "layers"          -%}<polygon points="12 3 22 8 12 13 2 8 12 3"/><polyline points="2 13 12 18 22 13"/><polyline points="2 18 12 23 22 18"/>
+{%- when "git-branch"      -%}<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>
+{%- when "activity"        -%}<polyline points="2 12 7 12 10 4 14 20 17 12 22 12"/>
+{%- when "share"           -%}<circle cx="6" cy="12" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><line x1="8.6" y1="10.6" x2="15.4" y2="7.4"/><line x1="8.6" y1="13.4" x2="15.4" y2="16.6"/>
+{%- when "clock"           -%}<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>
+{%- when "hourglass"       -%}<path d="M6 3h12v4l-5 5 5 5v4H6v-4l5-5-5-5z"/>
+{%- when "database"        -%}<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>
+{%- when "shuffle"         -%}<polyline points="16 3 20 3 20 7"/><line x1="20" y1="3" x2="4" y2="19"/><line x1="14" y1="19" x2="20" y2="19"/><line x1="20" y1="13" x2="20" y2="19"/><line x1="4" y1="3" x2="9" y2="8"/>
+{%- when "repeat"          -%}<polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+{%- when "help-circle"     -%}<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.4c-1 .5-1 1.1-1 2.1"/><circle cx="12" cy="17" r="0.7"/>
+{%- when "search"          -%}<circle cx="11" cy="11" r="7"/><line x1="20" y1="20" x2="16.5" y2="16.5"/>
+{%- when "sliders"         -%}<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="9" cy="6" r="2" fill="currentColor"/><circle cx="15" cy="12" r="2" fill="currentColor"/><circle cx="7" cy="18" r="2" fill="currentColor"/>
+{%- when "copy"            -%}<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>
+{%- when "external-link"   -%}<path d="M14 4h6v6"/><line x1="11" y1="13" x2="20" y2="4"/><path d="M20 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h5"/>
+{%- when "chevron-down"    -%}<polyline points="6 9 12 15 18 9"/>
+{%- when "chevron-right"   -%}<polyline points="9 6 15 12 9 18"/>
+{%- when "thumbs-up"       -%}<path d="M4 11h3v9H4z"/><path d="M7 11l3-7a2 2 0 0 1 4 0v4h5a2 2 0 0 1 2 2l-1.5 7a2 2 0 0 1-2 1.5H7"/>
+{%- when "thumbs-down"     -%}<path d="M20 13h-3V4h3z"/><path d="M17 13l-3 7a2 2 0 0 1-4 0v-4H5a2 2 0 0 1-2-2l1.5-7A2 2 0 0 1 6.5 5H17"/>
+{%- when "edit"            -%}<path d="M14 3l7 7-11 11H3v-7z"/>
+{%- when "command"         -%}<path d="M9 6a3 3 0 1 0-3 3h3V6zm0 0v12m0-12h6m-6 12a3 3 0 1 1-3-3h3v3zm6 0a3 3 0 1 0 3-3h-3v3zm0 0V6m0 0a3 3 0 1 1 3 3h-3V6z"/>
+{%- when "github"          -%}<path d="M12 2a10 10 0 0 0-3.16 19.49c.5.1.69-.22.69-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34a2.65 2.65 0 0 0-1.1-1.46c-.9-.61.07-.6.07-.6a2.1 2.1 0 0 1 1.53 1 2.14 2.14 0 0 0 2.92.83 2.13 2.13 0 0 1 .64-1.34c-2.22-.25-4.56-1.11-4.56-4.94a3.87 3.87 0 0 1 1-2.69 3.6 3.6 0 0 1 .1-2.65s.85-.27 2.78 1a9.55 9.55 0 0 1 5.06 0c1.93-1.31 2.78-1 2.78-1a3.6 3.6 0 0 1 .1 2.65 3.87 3.87 0 0 1 1 2.69c0 3.84-2.34 4.69-4.57 4.94a2.39 2.39 0 0 1 .68 1.85v2.74c0 .27.18.59.69.49A10 10 0 0 0 12 2z"/>
+{%- when "go-mark"         -%}<text x="3" y="17" font-family="JetBrains Mono, monospace" font-size="11" stroke="none" fill="currentColor" font-weight="600">Go</text>
+{%- when "ts-mark"         -%}<text x="3" y="17" font-family="JetBrains Mono, monospace" font-size="11" stroke="none" fill="currentColor" font-weight="600">TS</text>
+{%- when "py-mark"         -%}<text x="3" y="17" font-family="JetBrains Mono, monospace" font-size="11" stroke="none" fill="currentColor" font-weight="600">Py</text>
+{%- else                   -%}<circle cx="12" cy="12" r="3"/>
+{%- endcase -%}
+</svg>

@@ -1,0 +1,20 @@
+{%- comment -%}
+  Liquid callout — info | warn | danger.
+  Usage:
+    {% capture body %}Your markdown body here.{% endcapture %}
+    {% include callout.html type="info" title="Heads up" content=body %}
+{%- endcomment -%}
+{%- assign type = include.type | default: "info" -%}
+{%- assign icon_name = "help-circle" -%}
+{%- case type -%}
+  {%- when "info"   -%}{%- assign icon_name = "help-circle" -%}
+  {%- when "warn"   -%}{%- assign icon_name = "shield"      -%}
+  {%- when "danger" -%}{%- assign icon_name = "shield"      -%}
+{%- endcase -%}
+<div class="callout callout--{{ type }}">
+  <span class="callout__icon">{% include icon.html name=icon_name size="13" %}</span>
+  <div class="callout__body">
+    {%- if include.title -%}<p class="callout__title">{{ include.title }}</p>{%- endif -%}
+    {{ include.content | markdownify }}
+  </div>
+</div>

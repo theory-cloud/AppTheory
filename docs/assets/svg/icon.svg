@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Theory Cloud">
+  <title>Theory Cloud</title>
+
+  <defs>
+    <linearGradient id="tc-grad-top" x1="43.78" y1="39.57" x2="131.39" y2="140.96" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2EA7FF"></stop>
+      <stop offset="1" stop-color="#7A5CFF"></stop>
+    </linearGradient>
+    <linearGradient id="tc-grad-bl" x1="-10.28" y1="87.44" x2="77.19" y2="188.67" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2EA7FF"></stop>
+      <stop offset="1" stop-color="#7A5CFF"></stop>
+    </linearGradient>
+    <linearGradient id="tc-grad-br" x1="12.03" y1="62.04" x2="102.74" y2="167.02" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2EA7FF"></stop>
+      <stop offset="1" stop-color="#7A5CFF"></stop>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(15.006 4) scale(0.2866)">
+    <path fill="url(#tc-grad-top)" d="M118.58,0v115.18H.13C3.65,52.64,55.02,2.51,118.58,0Z"></path>
+    <path fill="url(#tc-grad-bl)" d="M65.28,125.01v70.09C29.48,190.73,1.46,161.18,0,125.01h65.28Z"></path>
+    <path fill="url(#tc-grad-br)" d="M75.1,125.01h43.49s0,26.88,0,26.88c0,24.02-19.47,43.49-43.49,43.49h0s0-70.37,0-70.37Z"></path>
+  </g>
+</svg>

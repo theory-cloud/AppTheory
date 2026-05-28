@@ -1,0 +1,179 @@
+# =============================================================
+# AppTheory · Theory Cloud Documentation site
+# Jekyll configuration for GitHub Pages.
+# =============================================================
+
+title: AppTheory
+tagline: Contract-first serverless runtime for AWS Lambda — Go, TypeScript, Python.
+description: >-
+  The contract-first serverless runtime for the Theory Cloud stack. One
+  application model across Go, TypeScript, and Python for HTTP, AppSync,
+  WebSockets, and event-driven workloads on AWS Lambda — with behavioral parity
+  enforced by 128 shared contract test fixtures. Go also provides the MCP
+  Streamable HTTP runtime and OAuth-adjacent helpers used by Remote MCP deployments.
+
+# When deployed via the canonical org repo, the site lives at
+# https://theory-cloud.github.io/apptheory/
+url: "https://theory-cloud.github.io"
+baseurl: "/apptheory"
+
+# Jekyll engine
+markdown: kramdown
+highlighter: rouge
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+  syntax_highlighter_opts:
+    css_class: highlight
+    block:
+      line_numbers: false
+  auto_ids: true
+  toc_levels: 2..4
+  hard_wrap: false
+  smart_quotes: lsquo,rsquo,ldquo,rdquo
+
+plugins:
+  - jekyll-relative-links
+  - jekyll-include-cache
+  - jekyll-sitemap
+  - jekyll-seo-tag
+
+relative_links:
+  enabled: true
+  collections: true
+
+include:
+  - assets
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor
+  - .bundle
+  - .jekyll-cache
+  - .jekyll-metadata
+  - _site
+  - node_modules
+  - "README.md"            # repo-internal index; site landing is index.html
+  - "_concepts.yaml"
+  - "_decisions.yaml"
+  - "_patterns.yaml"
+  - "_contract.yaml"
+  - "development/"             # out_of_scope per docs/_contract.yaml
+  - "planning/"                # out_of_scope per docs/_contract.yaml
+  - "internal/"                # out_of_scope per docs/_contract.yaml
+  - "archive/"                 # out_of_scope per docs/_contract.yaml
+  - "PAY_THEORY_DOCUMENTATION_GUIDE.md"
+
+# Apply the default docs layout to every markdown page automatically,
+# so existing docs/*.md files don't need front matter.
+defaults:
+  - scope:
+      path: ""
+      type: "pages"
+    values:
+      layout: default
+      surface: core
+      sidebar: true
+      toc: true
+      edit_on_github: true
+  - scope:
+      path: "integrations/mcp.md"
+    values:
+      surface: mcp
+  - scope:
+      path: "integrations/remote-mcp.md"
+    values:
+      surface: mcp
+  - scope:
+      path: "integrations/remote-mcp-autheory.md"
+    values:
+      surface: mcp
+  - scope:
+      path: "integrations/agentcore-mcp.md"
+    values:
+      surface: mcp
+  - scope:
+      path: "cdk/mcp-server-remote-mcp.md"
+    values:
+      surface: mcp
+  - scope:
+      path: "cdk/mcp-server-agentcore.md"
+    values:
+      surface: mcp
+  - scope:
+      path: "cdk/mcp-protected-resource.md"
+    values:
+      surface: mcp
+  - scope:
+      path: "index.html"
+    values:
+      layout: home
+      sidebar: true
+      toc: false
+      edit_on_github: false
+
+# =============================================================
+# AppTheory namespace — parameters consumed by layouts/includes.
+# The key is named `tabletheory` for portability: every Theory
+# Cloud framework site uses the same namespace key so the
+# layouts/includes can stay verbatim across frameworks.
+# =============================================================
+tabletheory:
+  surface: core                 # core | mcp | auth | journal
+  framework_name: AppTheory
+  framework_short: apptheory
+  repo: theory-cloud/AppTheory
+  repo_branch: main
+  docs_root: docs
+  version_pill: "v1.x"
+  version_status: prerelease    # stable | prerelease | dev
+  runtimes:
+    - id: go
+      label: Go
+      install: "go get github.com/theory-cloud/apptheory@vX.Y.Z"
+      docs_path: runtimes/go
+    - id: ts
+      label: TypeScript
+      install: "npm i ./theory-cloud-apptheory-X.Y.Z.tgz   # from a GitHub Release asset"
+      docs_path: runtimes/typescript
+    - id: python
+      label: Python
+      install: "python -m pip install ./apptheory-X.Y.Z-py3-none-any.whl   # from a GitHub Release asset"
+      docs_path: runtimes/python
+  surfaces:
+    - id: core
+      name: HTTP APIs
+      domain: lambda-dispatch
+      desc: One unified HandleLambda for Lambda Function URL, API Gateway v2, and ALB — with the same routing, middleware, and error envelope across all three runtimes.
+      url: /features/http-runtime/
+      cta: See the HTTP runtime
+    - id: mcp
+      name: MCP servers
+      domain: streamable-http
+      desc: Go Streamable HTTP transport, sessions, resumable SSE, and OAuth-protected remote MCP — packaged as Lambda-native constructs Claude and Claude Code consume directly.
+      url: /integrations/mcp/
+      cta: See the Go MCP runtime
+    - id: core
+      name: Event workloads
+      domain: lambda-events
+      desc: SQS, EventBridge, DynamoDB Streams, Kinesis, AppSync, and WebSockets — registered through the same app, dispatched through the same entrypoint.
+      url: /features/event-workloads/
+      cta: See event workloads
+  stats:
+    - label: Contract fixtures
+      value: "128"
+      sub: shared across Go · TS · Python
+    - label: Runtimes
+      value: "3"
+      sub: Go · TypeScript · Python
+    - label: Distribution
+      value: GitHub Releases
+      sub: immutable, pinned
+    - label: License
+      value: Apache-2.0
+      sub: open source
+
+# Sitemap defaults
+permalink: pretty
+timezone: UTC

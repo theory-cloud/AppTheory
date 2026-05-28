@@ -1,3 +1,7 @@
+---
+title: Migration Guide
+---
+
 # Migration Guide
 
 Use this guide when moving from Lift or legacy Lambda-handler patterns to AppTheory’s contract-first, cross-language

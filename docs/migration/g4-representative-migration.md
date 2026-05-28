@@ -1,3 +1,7 @@
+---
+title: G4 Representative Migration
+---
+
 # G4 Representative Migration (Go) — Lessons Learned
 
 This document records a representative migration exercise for the `pay-theory/limited` rate limiter into AppTheory’s

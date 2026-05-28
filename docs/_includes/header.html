@@ -1,0 +1,60 @@
+{%- assign current = page.url -%}
+<header class="docs-header" role="banner">
+  <a href="{{ '/' | relative_url }}" class="docs-header__brand" aria-label="{{ site.title }} home">
+    <img src="{{ '/assets/svg/icon.svg' | relative_url }}" alt="">
+    <span class="docs-header__wordmark">Theory&nbsp;Cloud</span>
+  </a>
+
+  <span class="docs-header__divider" aria-hidden="true"></span>
+
+  <span class="docs-header__repo" title="{{ site.tabletheory.repo }}">
+    <span class="slash">/</span><span class="name">{{ site.tabletheory.framework_short }}</span>
+  </span>
+
+  {%- assign surface = page.surface | default: site.tabletheory.surface -%}
+  <span class="surface-chip surface-chip--{{ surface }}" aria-label="Surface: {{ surface }}">
+    <span class="dot" aria-hidden="true"></span>
+    {%- case surface -%}
+      {%- when "core"   -%}Core
+      {%- when "mcp"    -%}MCP
+      {%- when "auth"   -%}Auth
+      {%- when "journal" -%}Journal
+      {%- else          -%}{{ surface | capitalize }}
+    {%- endcase -%}
+  </span>
+
+  <nav class="docs-header__nav" aria-label="Primary">
+    {%- for link in site.data.site-meta.header_nav -%}
+      {%- assign active = false -%}
+      {%- for p in link.active_paths -%}
+        {%- if current == p or current contains p and p != "/" -%}{%- assign active = true -%}{%- endif -%}
+      {%- endfor -%}
+      {%- if link.url == "/" and current == "/" -%}{%- assign active = true -%}{%- endif -%}
+      <a class="{% if active %}active{% endif %}" href="{{ link.url | relative_url }}">{{ link.label }}</a>
+    {%- endfor -%}
+  </nav>
+
+  <span class="docs-header__spacer"></span>
+
+  <div class="docs-header__right">
+    <button class="docs-search-trigger" data-action="open-palette" aria-label="Search documentation">
+      {% include icon.html name="search" %}
+      <span class="label">Search docs</span>
+      <kbd>⌘K</kbd>
+    </button>
+
+    <a class="docs-version" href="https://github.com/{{ site.tabletheory.repo }}/releases" target="_blank" rel="noopener" title="View releases">
+      <span class="dot" aria-hidden="true"></span>
+      {{ site.tabletheory.version_pill }}
+      {% include icon.html name="chevron-down" size="11" %}
+    </a>
+
+    <button class="icon-btn" data-action="open-tweaks" aria-label="Display tweaks">
+      {% include icon.html name="sliders" %}
+    </button>
+
+    <a class="icon-btn" href="https://github.com/{{ site.tabletheory.repo }}" target="_blank" rel="noopener" aria-label="GitHub repository">
+      {% include icon.html name="github" %}
+    </a>
+  </div>
+</header>
