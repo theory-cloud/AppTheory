@@ -7,7 +7,7 @@
 - id: go
   label: Go
   icon: go-mark
-  install: "go get github.com/theory-cloud/apptheory"
+  install: "go get github.com/theory-cloud/apptheory@vX.Y.Z"
   lang: go
   snippet: |
     package main
@@ -16,6 +16,7 @@
         "context"
         "encoding/json"
 
+        "github.com/aws/aws-lambda-go/lambda"
         apptheory "github.com/theory-cloud/apptheory/runtime"
     )
 
@@ -36,7 +37,7 @@
 - id: ts
   label: TypeScript
   icon: ts-mark
-  install: "npm install --save-dev @theory-cloud/apptheory"
+  install: "npm i ./theory-cloud-apptheory-X.Y.Z.tgz   # from a GitHub Release asset"
   lang: typescript
   snippet: |
     import { createApp, text } from "@theory-cloud/apptheory";
@@ -53,7 +54,7 @@
 - id: python
   label: Python
   icon: py-mark
-  install: "pip install apptheory"
+  install: "python -m pip install ./apptheory-X.Y.Z-py3-none-any.whl   # from a GitHub Release asset"
   lang: python
   snippet: |
     from apptheory import create_app, text

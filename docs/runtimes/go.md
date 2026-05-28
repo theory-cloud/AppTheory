@@ -5,13 +5,17 @@ description: The Go implementation of the AppTheory contract — routing, middle
 
 # Go Runtime
 
-The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — the [89 contract fixtures](../reference/contract-fixtures.md) arbitrate when the three runtimes disagree.
+The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — the [128 contract fixtures](../reference/contract-fixtures.md) arbitrate when the three runtimes disagree.
 
 ## Install
 
+The Go toolchain resolves modules from the immutable git tag — no registry is involved beyond Go's standard proxy.
+
 ```bash
-go get github.com/theory-cloud/apptheory
+go get github.com/theory-cloud/apptheory@vX.Y.Z
 ```
+
+Pin a specific release tag from the [releases page](https://github.com/theory-cloud/AppTheory/releases). AppTheory does not publish to the npm or PyPI registries; the Go module is the only language artifact that ships through Go's normal toolchain path.
 
 Module layout (see `api-snapshots/go.txt` for the exact exported surface):
 
@@ -136,11 +140,11 @@ See the [MCP Method Surface](../integrations/mcp.md) for the full Streamable HTT
 
 ## What's verified
 
-The Go runtime passes all 89 contract fixtures on every commit. Any behavioral divergence between Go, TypeScript, and Python is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds in all three runtimes.
+The Go runtime passes all 128 contract fixtures on every commit. Any behavioral divergence between Go, TypeScript, and Python is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds in all three runtimes.
 
 ## Next reads
 
 - [API Reference](../api-reference.md) — full surface table
 - [HTTP Runtime tiers](../features/http-runtime.md) — P0 / P1 / P2
 - [Event Shape Dispatch](../reference/event-shapes.md) — when `HandleLambda` calls what
-- [Contract Fixtures](../reference/contract-fixtures.md) — the 89-fixture covenant
+- [Contract Fixtures](../reference/contract-fixtures.md) — the 128-fixture covenant

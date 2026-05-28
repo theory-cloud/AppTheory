@@ -5,19 +5,15 @@ description: The TypeScript implementation of the AppTheory contract — bundled
 
 # TypeScript Runtime
 
-The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. The [89 contract fixtures](../reference/contract-fixtures.md) arbitrate when Go, TS, and Python disagree.
+The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. The [128 contract fixtures](../reference/contract-fixtures.md) arbitrate when Go, TS, and Python disagree.
 
 ## Install
 
-```bash
-npm install --save-dev @theory-cloud/apptheory
-```
-
-Distribution is **GitHub Releases only.** The npm registry is not used; consumers pin a release-asset tarball:
+Distribution is **GitHub Releases only.** The npm registry is not used; AppTheory does not publish to it. Consumers pin a release-asset tarball downloaded from the [releases page](https://github.com/theory-cloud/AppTheory/releases):
 
 ```bash
-# From a GitHub Release asset
-npm install ./theory-cloud-apptheory-X.Y.Z.tgz
+# After downloading the .tgz asset from the GitHub Release
+npm i ./theory-cloud-apptheory-X.Y.Z.tgz
 ```
 
 The package is ESM and ships TypeScript declarations. Node.js 24+ is required.
@@ -119,7 +115,7 @@ See [CDK Getting Started](../cdk/getting-started.md).
 
 ## What's verified
 
-The TypeScript runtime passes all 89 contract fixtures on every commit, against the same fixture corpus as Go and Python. The `ts/dist/` build output is checked in and gated by `make rubric`.
+The TypeScript runtime passes all 128 contract fixtures on every commit, against the same fixture corpus as Go and Python. The `ts/dist/` build output is checked in and gated by `make rubric`.
 
 ## Next reads
 
