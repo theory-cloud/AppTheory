@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Theory Cloud">
   <title>Theory Cloud (monochrome, light on dark)</title>
-  
+
   <g fill="#F4F8FF" transform="translate(15.006 4) scale(0.2866)">
     <path d="M118.58,0v115.18H.13C3.65,52.64,55.02,2.51,118.58,0Z"></path>
     <path d="M65.28,125.01v70.09C29.48,190.73,1.46,161.18,0,125.01h65.28Z"></path>

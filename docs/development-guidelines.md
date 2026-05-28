@@ -28,7 +28,7 @@ short so contract-only guidance is layout-resistant and does not accumulate user
 ## Maintainer detail
 
 For the detailed docs maintainer workflow, version alignment rules, generated-output checklist, and local verification
-sequence, use [docs/development/docs-maintainer-guide.md](./development/docs-maintainer-guide.md).
+sequence, use [docs/development/docs-maintainer-guide.md](https://github.com/theory-cloud/AppTheory/blob/main/docs/development/docs-maintainer-guide.md) on GitHub. (That file lives under `docs/development/**`, which is out_of_scope per `docs/_contract.yaml` and therefore not published to the Pages site.)
 
 This indirection is intentional: the fixed root contract-only file remains minimal, while the maintainer procedure lives
 under the non-canonical `docs/development/**` tree.

@@ -5,18 +5,14 @@ description: The Python implementation of the AppTheory contract — typed, asyn
 
 # Python Runtime
 
-The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. The [89 contract fixtures](../reference/contract-fixtures.md) arbitrate when Go, TS, and Python disagree.
+The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. The [128 contract fixtures](../reference/contract-fixtures.md) arbitrate when Go, TS, and Python disagree.
 
 ## Install
 
-```bash
-pip install apptheory
-```
-
-Distribution is **GitHub Releases only.** PyPI is not used; consumers pin a release-asset wheel:
+Distribution is **GitHub Releases only.** PyPI is not used; AppTheory does not publish to it. Consumers pin a release-asset wheel downloaded from the [releases page](https://github.com/theory-cloud/AppTheory/releases):
 
 ```bash
-# From a GitHub Release asset
+# After downloading the .whl asset from the GitHub Release
 python -m pip install ./apptheory-X.Y.Z-py3-none-any.whl
 ```
 
@@ -101,7 +97,7 @@ Applies to HTTP error serialization only.
 
 ## What's verified
 
-The Python runtime passes all 89 contract fixtures on every commit, against the same fixture corpus as Go and TypeScript. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
+The Python runtime passes all 128 contract fixtures on every commit, against the same fixture corpus as Go and TypeScript. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
 
 ## Next reads
 
