@@ -25,7 +25,7 @@ def handler(event, ctx):
     return app.handle_lambda(event, ctx)
 ```
 
-You do not import a different entrypoint for SQS vs HTTP vs MCP. The runtime does the dispatch.
+You do not import a different entrypoint for SQS vs HTTP vs AppSync. The runtime does the dispatch. Go MCP servers are mounted as ordinary HTTP routes (`POST` / `GET` / `DELETE` on `/mcp`); MCP is not a separate cross-runtime event-shape heuristic.
 
 ## Detection table
 

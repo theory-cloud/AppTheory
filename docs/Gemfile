@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Jekyll site for TableTheory — Theory Cloud documentation.
+# Jekyll site for AppTheory — Theory Cloud documentation.
 # Built and deployed via .github/workflows/pages.yml using Ruby 3.3.
 # Other Theory Cloud frameworks can copy this file unchanged.
 

@@ -105,7 +105,7 @@ The runtime does **not** fall back to `X-Forwarded-For`. There is no flag to ena
 
 - **Trust models for `Forwarded` / `X-Forwarded-For`** — not handled. Build your own middleware if needed.
 - **GeoIP** — not handled. The contract surface is the IP only.
-- **Rate-limiting by IP** — handled separately by `RateLimitMiddleware`, which can use `SourceIP` as the bucket key.
+- **Rate-limiting by IP** — handled separately from `SourceProvenance`. In Go, `RateLimitMiddleware` can use `SourceIP` as the bucket key; TypeScript and Python callers should apply the same policy through their P2 policy hooks or limiter primitives.
 
 ## Related
 
