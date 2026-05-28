@@ -12,8 +12,8 @@ The runtime is **tiered.** You opt into a tier when you create the app:
 | Runtime | Default | Override |
 | --- | --- | --- |
 | Go | P2 | `apptheory.New(apptheory.WithTier(apptheory.TierP0))` |
-| TypeScript | P2 | `createApp({ tier: TIER_P0 })` |
-| Python | P2 | `create_app(tier=TIER_P0)` |
+| TypeScript | P2 | `createApp({ tier: "p0" })` |
+| Python | P2 | `create_app(tier="p0")` |
 
 The tier is a contract, not a menu. You do not invent a P1.5. If you need a capability from a higher tier without the full tier, check whether it is already available as a discrete primitive at the lower tier — if not, the right answer is to use the tier that contains it.
 
@@ -36,9 +36,9 @@ P0 is appropriate for tightly scoped functions that do their own auth, observabi
 
 P0 plus:
 
-- **Request-id propagation** — `x-request-id` echoed on the response, generated when absent, surfaced on `ctx.RequestID()`.
-- **Tenant extraction** — convention-based tenant resolution from headers or the auth identity, available as `ctx.TenantID()`.
-- **Auth hooks** — pluggable identity resolvers; `ctx.AuthIdentity()` returns the resolved value or fails closed.
+- **Request-id propagation** — `x-request-id` echoed on the response, generated when absent, and surfaced on the runtime context (`ctx.RequestID` in Go, `ctx.requestId` in TypeScript, `ctx.request_id` in Python).
+- **Tenant extraction** — convention-based tenant resolution from headers or the auth identity, available on the runtime context (`TenantID` / `tenantId` / `tenant_id`).
+- **Auth hooks** — pluggable identity resolvers; the resolved identity is exposed on the runtime context (`AuthIdentity` / `authIdentity` / `auth_identity`) or the request fails closed.
 - **CORS** — opt-in preflight handling and response header rewrites.
 - **Guardrails** — request size and execution-time caps that fail closed before the handler runs.
 - **Middleware ordering** — the framework-defined order. You do not insert "before request-id." If the capability needs to run earlier, the tier model needs a new slot, and adding one is a contract change.

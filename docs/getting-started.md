@@ -178,7 +178,7 @@ values return unknown/invalid provenance instead of falling back to forwarding h
 
 ## Next reads
 
-- [Documentation Index](./README.md)
+- [Documentation Index]({{ "/" | relative_url }})
 - [API Reference](./api-reference.md)
 - [Core Patterns](./core-patterns.md)
 - [Testing Guide](./testing-guide.md)

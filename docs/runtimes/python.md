@@ -22,14 +22,10 @@ Python 3.14+ is required.
 
 | Module | Purpose |
 | --- | --- |
-| `apptheory` | Core runtime: `create_app`, `Context`, request/response, event builders. |
-| `apptheory.mcp` | MCP Streamable HTTP server + session storage. |
-| `apptheory.oauth` | OAuth protected-resource metadata + middleware. |
+| `apptheory` | Core Python runtime exports: `create_app`, `Context`, request/response helpers, event builders, testkit helpers, jobs-ledger primitives, logging profiles, and sanitization helpers. |
 | `apptheory.limited` | DynamoDB-backed rate limiter (`DynamoRateLimiter`, `FixedWindowStrategy`, `SlidingWindowStrategy`, `MultiWindowStrategy`). |
-| `apptheory.jobs` | Jobs-ledger primitives (`DynamoJobLedger`). |
-| `apptheory.sanitization` | Safe logging helpers. |
 
-See `api-snapshots/py.txt` for the exact exported surface — that file is the release gate.
+There are no Python MCP or OAuth runtime modules. See `api-snapshots/py.txt` for the exact exported surface — that file is the release gate.
 
 ## Minimal app
 
@@ -51,10 +47,12 @@ def handler(event, ctx):
 ## Tier selection
 
 ```python
-from apptheory import create_app, TIER_P0
+from apptheory import create_app
 
-app = create_app(tier=TIER_P0)
+app = create_app(tier="p0")
 ```
+
+Python tiers are string literals: `"p0"`, `"p1"`, or `"p2"`.
 
 See [HTTP Runtime](../features/http-runtime.md) for what each tier includes.
 
@@ -62,7 +60,7 @@ See [HTTP Runtime](../features/http-runtime.md) for what each tier includes.
 
 ```python
 from datetime import datetime, timezone
-from apptheory import create_test_env, text
+from apptheory import build_apigw_v2_request, create_test_env, text
 
 def test_ping():
     env = create_test_env(now=datetime(2026, 1, 1, tzinfo=timezone.utc))
@@ -71,7 +69,7 @@ def test_ping():
     app = env.app()
     app.get("/ping", lambda ctx: text(200, "pong"))
 
-    event = env.apigw_v2_request("GET", "/ping")
+    event = build_apigw_v2_request("GET", "/ping")
     resp = env.invoke_apigw_v2(app, event)
 
     assert resp.status_code == 200
