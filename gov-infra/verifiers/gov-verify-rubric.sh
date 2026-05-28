@@ -564,7 +564,7 @@ const allowed = {
   packageName: "brace-expansion",
   packageVersion: "5.0.5",
   packagePath: "node_modules/aws-cdk-lib/node_modules/brace-expansion",
-  cdkVersion: "2.254.0",
+  cdkVersion: "2.257.0",
   minimatchVersion: "10.2.5",
 };
 

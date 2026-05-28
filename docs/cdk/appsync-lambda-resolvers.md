@@ -1,3 +1,7 @@
+---
+title: AppSync Lambda Resolvers
+---
+
 # AppSync Lambda Resolvers
 
 Use this guide when AppSync owns the GraphQL API and AppTheory owns the Lambda resolver runtime.

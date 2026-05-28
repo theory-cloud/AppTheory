@@ -19,8 +19,12 @@ type PathRoutedFrontendDomainConfig struct {
 	// Default: false.
 	//
 	CreateAAAARecord *bool `field:"optional" json:"createAAAARecord" yaml:"createAAAARecord"`
-	// Route53 hosted zone for DNS record creation.
+	// Route53 hosted zone for DNS record creation. When provided, an A record alias will be created for the domain.
 	//
-	// When provided, an A record alias will be created for the domain.
+	// If `domainName` is set without `certificate` or `certificateArn`,
+	// hosted-zone certificate creation is allowed only for stacks whose region
+	// is explicitly `us-east-1`. CloudFront requires viewer certificates in
+	// `us-east-1`; environment-agnostic or other-region stacks must provide an
+	// explicit certificate input.
 	HostedZone awsroute53.IHostedZone `field:"optional" json:"hostedZone" yaml:"hostedZone"`
 }

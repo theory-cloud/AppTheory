@@ -1,3 +1,8 @@
+---
+title: Remote MCP
+render_with_liquid: false
+---
+
 # Claude Remote MCP (Streamable HTTP) — AppTheory guide
 
 This guide is for building **Claude Custom Connectors** using **Remote MCP** on top of AppTheory.

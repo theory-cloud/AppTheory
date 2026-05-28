@@ -1,0 +1,25 @@
+<aside class="docs-toc" aria-label="On this page">
+  <p class="docs-toc__title">On this page</p>
+  <div class="docs-toc__list" data-toc-list>
+    {%- comment -%}
+      TOC entries are hydrated client-side by docs.js. It walks the
+      `.prose h2, .prose h3, .prose h4` headings in the rendered page,
+      reads their auto-generated `id` (kramdown auto_ids), and injects
+      `<a class="docs-toc__item" data-level="2|3|4" href="#…">`.
+    {%- endcomment -%}
+  </div>
+
+  <div class="docs-toc__meta">
+    <strong>This page</strong>
+    Live in the repo. Tag <code style="font-family: var(--tc-font-mono); font-size: 11px;">{{ page.id | default: page.path | default: "—" }}</code>.
+    {%- assign source_path = page.path | default: "" -%}
+    {%- if source_path != "" -%}
+      <a class="docs-toc__edit"
+         href="https://github.com/{{ site.tabletheory.repo }}/edit/{{ site.tabletheory.repo_branch }}/{{ site.tabletheory.docs_root }}/{{ source_path }}"
+         target="_blank" rel="noopener">
+        {% include icon.html name="edit" size="12" %}
+        Edit on GitHub
+      </a>
+    {%- endif -%}
+  </div>
+</aside>

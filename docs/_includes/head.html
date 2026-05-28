@@ -1,0 +1,27 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#081226">
+<title>{% if page.title %}{{ page.title | escape }} · {{ site.title }}{% else %}{{ site.title }} · {{ site.tagline | escape }}{% endif %}</title>
+<meta name="description" content="{{ page.description | default: site.description | strip_newlines }}">
+
+<link rel="icon" type="image/svg+xml" href="{{ '/assets/svg/icon.svg' | relative_url }}">
+<link rel="canonical" href="{{ page.url | replace:'index.html','' | absolute_url }}">
+
+<link rel="stylesheet" href="{{ '/assets/css/colors_and_type.css' | relative_url }}">
+<link rel="stylesheet" href="{{ '/assets/css/theme.css'           | relative_url }}">
+<link rel="stylesheet" href="{{ '/assets/css/rouge-theory-cloud.css' | relative_url }}">
+
+{% seo title=false %}
+
+<script>
+  // Surface up baseurl + search index URL for client JS — kept tiny so it can
+  // safely live in the document head without blocking render.
+  window.TT = {
+    baseurl:   "{{ site.baseurl }}",
+    searchUrl: "{{ '/search.json' | relative_url }}",
+    repo:      "{{ site.tabletheory.repo }}",
+    branch:    "{{ site.tabletheory.repo_branch }}",
+    docsRoot:  "{{ site.tabletheory.docs_root }}",
+    surface:   "{{ page.surface | default: site.tabletheory.surface }}"
+  };
+</script>

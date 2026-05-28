@@ -3,6 +3,7 @@ import * as path from "node:path";
 
 import {
   AppTheoryCloudWatchLogsDestination,
+  AppTheoryCloudWatchLogsSubscription,
   AppTheoryFunction,
   AppTheoryKinesisStream,
   AppTheoryKinesisStreamMapping,
@@ -104,14 +105,14 @@ export class KinesisCloudWatchLogsStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    const subscription = new logs.CfnSubscriptionFilter(this, "ExampleSubscriptionFilter", {
-      logGroupName: sourceLogGroup.logGroupName,
+    const subscription = new AppTheoryCloudWatchLogsSubscription(this, "ExampleSubscriptionFilter", {
+      logGroup: sourceLogGroup,
       destinationArn: destination.destinationArn,
       filterName: "apptheory-example-all-events",
-      filterPattern: "",
-      distribution: "ByLogStream",
+      filterPatternText: "",
+      distribution: logs.Distribution.BY_LOG_STREAM,
     });
-    subscription.addDependency(destination.destination);
+    subscription.subscriptionFilter.addDependency(destination.destination);
 
     new cdk.CfnOutput(this, "KinesisStreamName", {
       value: logsStream.streamName,
