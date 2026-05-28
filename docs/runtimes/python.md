@@ -22,8 +22,8 @@ Python 3.14+ is required.
 
 | Module | Purpose |
 | --- | --- |
-| `apptheory` | Core Python runtime exports: `create_app`, `Context`, request/response helpers, event builders, testkit helpers, jobs-ledger primitives, logging profiles, and sanitization helpers. |
-| `apptheory.limited` | DynamoDB-backed rate limiter (`DynamoRateLimiter`, `FixedWindowStrategy`, `SlidingWindowStrategy`, `MultiWindowStrategy`). |
+| `apptheory` | Core Python runtime exports: `create_app`, `Context`, request/response helpers, event builders, testkit helpers, jobs-ledger primitives, logging profiles, and sanitization helpers. Rate-limiter classes are not root exports. |
+| `apptheory.limited` | DynamoDB-backed rate limiter exports (`DynamoRateLimiter`, `FixedWindowStrategy`, `SlidingWindowStrategy`, `MultiWindowStrategy`). |
 
 There are no Python MCP or OAuth runtime modules. See `api-snapshots/py.txt` for the exact exported surface — that file is the release gate.
 
@@ -64,7 +64,7 @@ from apptheory import build_apigw_v2_request, create_test_env, text
 
 def test_ping():
     env = create_test_env(now=datetime(2026, 1, 1, tzinfo=timezone.utc))
-    env.ids.queue("req-1")
+    env.ids.push("req-1")
 
     app = env.app()
     app.get("/ping", lambda ctx: text(200, "pong"))
@@ -72,7 +72,7 @@ def test_ping():
     event = build_apigw_v2_request("GET", "/ping")
     resp = env.invoke_apigw_v2(app, event)
 
-    assert resp.status_code == 200
+    assert resp["statusCode"] == 200
 ```
 
 ## Strict routes
@@ -101,5 +101,5 @@ The Python runtime passes all 128 contract fixtures on every commit, against the
 
 - [API Reference](../api-reference.md)
 - [HTTP Runtime tiers](../features/http-runtime.md)
-- [MCP Method Surface](../integrations/mcp.md)
+- [MCP Method Surface](../integrations/mcp.md) — Go runtime MCP surface
 - [Contract Fixtures](../reference/contract-fixtures.md)

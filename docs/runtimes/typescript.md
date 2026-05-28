@@ -127,5 +127,5 @@ The TypeScript runtime passes all 128 contract fixtures on every commit, against
 
 - [API Reference](../api-reference.md)
 - [HTTP Runtime tiers](../features/http-runtime.md)
-- [MCP Method Surface](../integrations/mcp.md)
+- [MCP Method Surface](../integrations/mcp.md) — Go runtime MCP surface
 - [Contract Fixtures](../reference/contract-fixtures.md)

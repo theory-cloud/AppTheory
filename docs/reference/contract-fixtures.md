@@ -13,9 +13,9 @@ This page explains what the fixtures are, what they cover, and how to evolve the
 
 A contract fixture is a language-neutral description of a scenario:
 
-- An input event (HTTP request, AppSync resolver event, SQS batch, MCP JSON-RPC message, etc.)
-- An app configuration (registered routes, tier, error format, etc.)
-- The expected output (response shape, status, headers, partial-batch failure list, MCP response, etc.)
+- An input event (HTTP request, AppSync resolver event, SQS batch, Kinesis batch, and similar Lambda event shapes)
+- An app configuration (registered routes, tier, error format, event-source bindings, etc.)
+- The expected output (response shape, status, headers, partial-batch failure list, normalized summary, etc.)
 
 Each fixture is loaded by language-specific runners that construct an AppTheory app from the configuration, invoke it with the input, and compare the output to the expected shape. **The fixture is the specification.** The runners are not — they are three independent test harnesses against the same source of truth.
 
@@ -45,8 +45,7 @@ The 128 fixtures span (counts approximate; see `contract-tests/fixtures/` for th
 | EventBridge | Envelope normalization, correlation-id, scheduled-event metadata. |
 | DynamoDB Streams | Partial-batch response, record safe-summary shape. |
 | Kinesis | Partial-batch response, stream routing, fail-closed for unregistered streams, CloudWatch Logs subscription envelope decoding. |
-| MCP | Streamable HTTP transport (`POST/GET/DELETE /mcp`), protocol negotiation, session lifecycle, resumable SSE, JSON-RPC surface (`initialize`, `ping`, `tools/*`, `resources/*`, `prompts/*`, `notifications/*`). |
-| OAuth | Protected-resource metadata, DCR, PKCE, bearer token validation, fail-closed `WWW-Authenticate` challenges. |
+| Remote MCP path dispatch | API Gateway REST proxy path normalization for Remote MCP and protected-resource metadata routes. The shared fixtures do **not** cover MCP JSON-RPC methods, session stores, DCR, PKCE, bearer-token validation, or OAuth challenges. |
 | Sanitization | Token-like value redaction, JSON/XML safe-logging output. |
 
 ## Running the fixtures
@@ -57,13 +56,15 @@ The 128 fixtures span (counts approximate; see `contract-tests/fixtures/` for th
 
 This runs the Go, TypeScript, and Python runners against the full fixture corpus and fails if any runtime produces a divergent output. `make rubric` runs this gate as part of the full repo check, alongside lint, build, API snapshots, and example synthesis.
 
-For single-runtime debugging:
+For single-runtime debugging from the repository root:
 
 ```bash
-go test ./contract-tests/...
-(cd ts && npm run contract)
-(cd py && python -m pytest contract-tests)
+go run ./contract-tests/runners/go
+node contract-tests/runners/ts/run.cjs
+python3 contract-tests/runners/py/run.py
 ```
+
+The TypeScript runner expects dependencies to be installed first; `./scripts/verify-contract-tests.sh` runs `(cd ts && npm ci)` before invoking it.
 
 ## Evolving the contract
 
@@ -96,5 +97,5 @@ Snapshot diffs are intentional signals: a moved snapshot says "a public contract
 
 - [HTTP Runtime](../features/http-runtime.md) — what the HTTP fixtures pin
 - [Event Shape Dispatch](event-shapes.md) — what `HandleLambda` detection fixtures pin
-- [MCP Method Surface](../integrations/mcp.md) — what the MCP fixtures pin
+- [MCP Method Surface](../integrations/mcp.md) — Go runtime MCP behavior; the shared fixtures only pin Remote MCP/protected-resource API Gateway path dispatch
 - [Development Guidelines](../development-guidelines.md) — the contract-only scope

@@ -48,7 +48,7 @@ P0 plus:
 P1 plus:
 
 - **Observability hooks** — structured request log, span hooks, structured access-log fields. See [Logging Profiles](logging-profiles.md).
-- **Rate-limit / load-shed hooks** — `RateLimitMiddleware` integrates with `pkg/limited` (Go) and the equivalents in TypeScript/Python to gate requests against DynamoDB-backed buckets. Credential-derived identifiers (`x-api-key`, `Authorization: Bearer`) are fingerprinted with HMAC-SHA256 before reaching the limiter — raw credentials never land in a rate-limit table.
+- **Rate-limit / load-shed hooks** — the shared P2 contract pins the portable policy-hook outcome: a rejected request returns `app.rate_limited`, `429`, and `Retry-After` while still flowing through observability. Go additionally exports `RateLimitMiddleware`, which integrates with `pkg/limited` and fingerprints default credential-derived identifiers (`x-api-key`, `Authorization: Bearer`) with HMAC-SHA256 before they reach the limiter. TypeScript and Python expose policy hooks plus limiter primitives, but they do not currently ship a `RateLimitMiddleware` equivalent.
 
 P2 is what production applications use unless they have a reason not to. The default is P2 because most consumers should not be assembling these pieces from scratch.
 
