@@ -1,3 +1,7 @@
+---
+title: Remote MCP + Autheory
+---
+
 # Autheory (OAuth Authorization Server) for Claude Remote MCP — AppTheory guide
 
 Claude Custom Connectors (Remote MCP) behave like a **public OAuth client** and require:

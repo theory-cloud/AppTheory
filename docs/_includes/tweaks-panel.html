@@ -1,0 +1,54 @@
+<div class="palette-scrim" data-tweaks hidden role="dialog" aria-modal="true" aria-label="Display tweaks">
+  <div class="palette" style="width: 420px;">
+    <div class="palette__input" style="border-bottom: 1px solid var(--tc-outline-variant);">
+      {% include icon.html name="sliders" %}
+      <input type="text" value="Display tweaks" disabled style="font-weight: 500;">
+      <kbd>esc</kbd>
+    </div>
+
+    <div style="padding: 16px 18px; display: flex; flex-direction: column; gap: 18px;">
+      <div>
+        <p class="tc-label-sm" style="margin: 0 0 8px;">Surface accent</p>
+        <div role="radiogroup" data-tweak-group="surface" style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <button data-tweak-value="core" class="doc-feedback__btn">Core</button>
+          <button data-tweak-value="mcp"  class="doc-feedback__btn">MCP</button>
+          <button data-tweak-value="auth" class="doc-feedback__btn">Auth</button>
+          <button data-tweak-value="auto" class="doc-feedback__btn">Auto (per page)</button>
+        </div>
+      </div>
+
+      <div>
+        <p class="tc-label-sm" style="margin: 0 0 8px;">Density</p>
+        <div role="radiogroup" data-tweak-group="density" style="display: flex; gap: 6px;">
+          <button data-tweak-value="compact"  class="doc-feedback__btn">Compact</button>
+          <button data-tweak-value="default"  class="doc-feedback__btn">Default</button>
+          <button data-tweak-value="spacious" class="doc-feedback__btn">Spacious</button>
+        </div>
+      </div>
+
+      <div>
+        <p class="tc-label-sm" style="margin: 0 0 8px;">Content width</p>
+        <div role="radiogroup" data-tweak-group="width" style="display: flex; gap: 6px;">
+          <button data-tweak-value="narrow"  class="doc-feedback__btn">Narrow</button>
+          <button data-tweak-value="default" class="doc-feedback__btn">Default</button>
+          <button data-tweak-value="wide"    class="doc-feedback__btn">Wide</button>
+        </div>
+      </div>
+
+      <div>
+        <p class="tc-label-sm" style="margin: 0 0 8px;">On this page</p>
+        <div role="radiogroup" data-tweak-group="toc" style="display: flex; gap: 6px;">
+          <button data-tweak-value="visible" class="doc-feedback__btn">Show TOC</button>
+          <button data-tweak-value="hidden"  class="doc-feedback__btn">Hide TOC</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="palette__foot">
+      <span class="palette__foot__item">Preferences persist in this browser.</span>
+      <button data-tweak-reset class="palette__foot__item" style="margin-left: auto; cursor: pointer; background: none; border: 0; color: var(--tc-fg-dim);">
+        Reset
+      </button>
+    </div>
+  </div>
+</div>

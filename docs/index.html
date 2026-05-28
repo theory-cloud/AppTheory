@@ -1,0 +1,183 @@
+---
+layout: home
+title: Welcome
+description: Contract-first serverless runtime for AWS Lambda — one application model across Go, TypeScript, and Python.
+sidebar: true
+toc: false
+edit_on_github: false
+---
+
+<section class="hero">
+  <div class="hero__eyebrow">
+    <span class="dot"></span>
+    Theory Cloud · {{ site.tabletheory.framework_name }}
+  </div>
+  <h1>
+    The <span class="grad">contract-first</span> serverless runtime.
+  </h1>
+  <p>
+    One application model. Three runtimes. {{ site.tabletheory.framework_name }} keeps
+    Go, TypeScript, and Python in lock-step on the shared Lambda contract — routing,
+    middleware, error envelope, AppSync, WebSockets, and event workloads — verified on
+    every commit by 128 shared contract fixtures. The Go runtime also carries the MCP
+    Streamable HTTP surface used by Remote MCP deployments.
+  </p>
+  <div class="hero__actions">
+    <a class="btn btn--primary" href="{{ '/getting-started/' | relative_url }}">
+      {% include icon.html name="play" size="14" %}
+      Get started
+    </a>
+    <a class="btn btn--ghost" href="{{ '/reference/contract-fixtures/' | relative_url }}">
+      {% include icon.html name="list-checks" size="14" %}
+      Contract fixtures
+    </a>
+    <a class="btn btn--ghost" href="https://github.com/{{ site.tabletheory.repo }}" target="_blank" rel="noopener">
+      {% include icon.html name="github" size="14" %}
+      View on GitHub
+    </a>
+  </div>
+</section>
+
+<!-- =============================================================
+     WHERE APPTHEORY SHOWS UP
+     Three real surfaces in the Theory Cloud stack that run on
+     AppTheory today. Each tile links to its canonical doc.
+     ============================================================= -->
+<div class="section-head">
+  <div>
+    <h2>Where AppTheory shows up</h2>
+    <p>Three real Lambda surfaces — one runtime, one contract, one entrypoint behind all of them.</p>
+  </div>
+  <a class="section-head__link" href="{{ '/core-patterns/' | relative_url }}">
+    Core patterns {% include icon.html name="chevron-right" size="12" %}
+  </a>
+</div>
+
+<div class="surface-map">
+  {% for s in site.tabletheory.surfaces %}
+    <a class="surface-tile" href="{{ s.url | relative_url }}" data-surface-tile="{{ s.id }}">
+      <div class="surface-tile__head">
+        <span class="surface-tile__name">{{ s.name }}</span>
+        <span class="surface-chip surface-chip--{{ s.id }}">
+          <span class="dot"></span>{{ s.id | upcase }}
+        </span>
+      </div>
+      <div class="surface-tile__domain">{{ s.domain }}</div>
+      <p class="surface-tile__desc">{{ s.desc }}</p>
+      <div class="surface-tile__foot">
+        <span>{{ s.cta | default: "Read more" }}</span>
+        {% include icon.html name="chevron-right" size="12" %}
+      </div>
+    </a>
+  {% endfor %}
+</div>
+
+<!-- =============================================================
+     RUNTIME TABS — Go / TS / Python install + minimal app
+     ============================================================= -->
+<div class="runtime-block">
+  <div class="section-head" style="border-bottom: 0; margin-bottom: 8px;">
+    <div>
+      <h2>One app. Three runtimes.</h2>
+      <p>Pick a language and ship the same Lambda contract.</p>
+    </div>
+  </div>
+
+  <div class="runtime-block__head" role="tablist" aria-label="Runtime">
+    {% for r in site.data.runtimes %}
+      <button class="runtime-block__tab {% if forloop.first %}active{% endif %}"
+              data-runtime-tab="{{ r.id }}" role="tab"
+              aria-selected="{% if forloop.first %}true{% else %}false{% endif %}">
+        {% include icon.html name=r.icon size="14" %}
+        {{ r.label }}
+      </button>
+    {% endfor %}
+  </div>
+
+  {% for r in site.data.runtimes %}
+    <div class="runtime-block__pane" data-runtime-pane="{{ r.id }}" {% unless forloop.first %}hidden{% endunless %}>
+
+  <p class="tc-body-sm" style="color: var(--tc-fg-dim); font-family: var(--tc-font-mono); margin: 4px 0 12px;">
+    {{ r.install }}
+  </p>
+
+```{{ r.lang }}
+{{ r.snippet }}
+```
+
+    </div>
+  {% endfor %}
+</div>
+
+<script>
+  // Local runtime-tab switcher — small enough to inline.
+  (function () {
+    const tabs  = document.querySelectorAll("[data-runtime-tab]");
+    const panes = document.querySelectorAll("[data-runtime-pane]");
+    tabs.forEach((t) => {
+      t.addEventListener("click", () => {
+        const id = t.dataset.runtimeTab;
+        tabs.forEach((b) => {
+          const on = b.dataset.runtimeTab === id;
+          b.classList.toggle("active", on);
+          b.setAttribute("aria-selected", on ? "true" : "false");
+        });
+        panes.forEach((p) => { p.hidden = p.dataset.runtimePane !== id; });
+      });
+    });
+  })();
+</script>
+
+<!-- =============================================================
+     STATS STRIP
+     ============================================================= -->
+<div class="stats-strip" aria-label="At a glance">
+  {% for s in site.tabletheory.stats %}
+    <div class="stats-strip__cell">
+      <div class="stats-strip__label">{{ s.label }}</div>
+      <div class="stats-strip__value">{{ s.value }}</div>
+      <div class="stats-strip__sub">{{ s.sub }}</div>
+    </div>
+  {% endfor %}
+</div>
+
+<!-- =============================================================
+     QUICK START GRID
+     ============================================================= -->
+<div class="section-head">
+  <div>
+    <h2>Quick starts</h2>
+    <p>The deepest-value sections, ranked by how often new consumers reach for them.</p>
+  </div>
+  <a class="section-head__link" href="{{ '/getting-started/' | relative_url }}">
+    All guides {% include icon.html name="chevron-right" size="12" %}
+  </a>
+</div>
+
+<div class="qs-grid">
+  {% for q in site.data.site-meta.quick_start %}
+    <a class="qs-card" href="{{ q.url | relative_url }}">
+      <span class="qs-card__icon">{% include icon.html name=q.icon size="14" %}</span>
+      <div class="qs-card__title">{{ q.title }}</div>
+      <p class="qs-card__desc">{{ q.desc }}</p>
+    </a>
+  {% endfor %}
+</div>
+
+<!-- =============================================================
+     CLOSING CALL-OUT BAR
+     ============================================================= -->
+<div class="doc-feedback" style="margin-top: 24px;">
+  <div class="doc-feedback__text">
+    <strong>{{ site.tabletheory.framework_name }} is open source.</strong>
+    Apache-2.0, published through immutable GitHub Releases, used in production by Pay Theory.
+  </div>
+  <div class="doc-feedback__actions">
+    <a class="doc-feedback__btn" href="https://github.com/{{ site.tabletheory.repo }}" target="_blank" rel="noopener">
+      {% include icon.html name="github" size="13" %} Star on GitHub
+    </a>
+    <a class="doc-feedback__btn" href="https://github.com/{{ site.tabletheory.repo }}/releases" target="_blank" rel="noopener">
+      {% include icon.html name="tag" size="13" %} Releases
+    </a>
+  </div>
+</div>

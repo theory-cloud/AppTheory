@@ -1,3 +1,7 @@
+---
+title: CDK Getting Started
+---
+
 # CDK Getting Started
 
 Use this guide when you want to deploy an AppTheory application with the jsii CDK package.
