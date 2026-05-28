@@ -1,3 +1,7 @@
+---
+title: Integration Guides
+---
+
 # AppTheory Integration Guides
 
 These pages cover public integration surfaces and deployment shapes built on top of the core AppTheory runtime.

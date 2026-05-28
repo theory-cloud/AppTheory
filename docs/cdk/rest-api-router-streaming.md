@@ -1,3 +1,7 @@
+---
+title: REST API Streaming
+---
+
 # REST API Router + Streaming
 
 `AppTheoryRestApiRouter` is the canonical AppTheory CDK pattern for API Gateway REST API v1 when you need multi-Lambda

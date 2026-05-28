@@ -1,3 +1,7 @@
+---
+title: SSR Site
+---
+
 # FaceTheory-First SSR Site (CloudFront + S3 + Lambda URL)
 
 Use this guide when you want the canonical AppTheory deployment pattern for FaceTheory-style SSR, SSG, and ISR on AWS.
@@ -70,6 +74,16 @@ new AppTheorySsrSite(this, "Site", {
   ssrForwardHeaders: ["x-facetheory-segment"],
 });
 ```
+
+## Custom domains and CloudFront certificates
+
+CloudFront viewer certificates must be in `us-east-1`. For environment-agnostic stacks and stacks outside
+`us-east-1`, provide an explicit `certificateArn` that points at a `us-east-1` ACM certificate.
+
+When `domainName` and `hostedZone` are set without `certificateArn`, `AppTheorySsrSite` uses non-deprecated
+`acm.Certificate` semantics and allows hosted-zone auto-certificate creation only if the stack region is explicitly
+`us-east-1`. Other regions and unresolved regions fail closed during synthesis instead of creating an unsafe same-region
+certificate.
 
 ## FaceTheory data sidecars
 

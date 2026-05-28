@@ -6,7 +6,7 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.254.0",
+    "aws-cdk-lib": "2.257.0",
     "constructs": "10.6.0"
   },
   "dependencyClosure": {
@@ -520,6 +520,19 @@
             },
             "python": {
               "module": "aws_cdk.aws_autoscalingplans"
+            }
+          }
+        },
+        "aws-cdk-lib.aws_awsexternalanthropic": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.AWSExternalAnthropic"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.awsexternalanthropic"
+            },
+            "python": {
+              "module": "aws_cdk.aws_awsexternalanthropic"
             }
           }
         },
@@ -4697,6 +4710,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_autoscalingplans"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_awsexternalanthropic": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.AWSExternalAnthropic"
+            },
+            "go": {
+              "packageName": "interfacesawsawsexternalanthropic"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.awsexternalanthropic"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_awsexternalanthropic"
             }
           }
         },
@@ -8943,7 +8972,7 @@
   },
   "name": "@theory-cloud/apptheory-cdk",
   "readme": {
-    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryRestApiRouter` — REST API v1 multi-Lambda router with full streaming parity + stage controls + domain wiring.\n- `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueue` — SQS queue with optional DLQ (queue-only friendly).\n- `AppTheoryQueueConsumer` — SQS → Lambda event source mapping with full knobs.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring (convenience wrapper over `AppTheoryQueue` + `AppTheoryQueueConsumer`).\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryEventBridgeBus` — custom EventBridge bus with explicit cross-account publish allowlist.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n- `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs + Lambda binding helper).\n- `AppTheoryHttpIngestionEndpoint` — authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer + throttling controls.\n- `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).\n- `AppTheoryLambdaRole` — Lambda execution role helper (baseline + X-Ray + KMS + escape hatches).\n- `AppTheoryPathRoutedFrontend` — CloudFront distribution for multi-SPA routing + API origin (stage domain pattern).\n- `AppTheoryMediaCdn` — CloudFront distribution for an S3-backed media CDN (optional private media via key groups).\n- `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).\n- `AppTheorySsrSite` — SSR site pattern with explicit `ssr-only` / `ssg-isr` modes, shared FaceTheory edge functions, and a signed Function URL fallback path.\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
+    "markdown": "# AppTheory CDK Constructs\n\nTS-first `jsii` constructs for deploying AppTheory apps with consistent defaults across Go/TypeScript/Python.\n\nStatus: early; start with a small “top 20%” set and grow based on real usage.\n\n## Documentation\n\n- CDK docs index: `cdk/docs/README.md`\n- Repo docs index: `docs/README.md`\n\n## Constructs\n\n- `AppTheoryHttpApi` — HTTP API (APIGWv2) + Lambda proxy routes (`/` and `/{proxy+}`).\n- `AppTheoryRestApi` — API Gateway REST API v1 + Lambda proxy routes (supports streaming per-method).\n- `AppTheoryRestApiRouter` — REST API v1 multi-Lambda router with full streaming parity + stage controls + domain wiring.\n- `AppTheoryWebSocketApi` — WebSocket API + routes/permissions (optional connection table + access logging).\n- `AppTheoryFunction` — Lambda wrapper with AppTheory-friendly defaults.\n- `AppTheoryFunctionAlarms` — baseline CloudWatch alarms for a Lambda function.\n- `AppTheoryQueue` — SQS queue with optional DLQ (queue-only friendly).\n- `AppTheoryQueueConsumer` — SQS → Lambda event source mapping with full knobs.\n- `AppTheoryQueueProcessor` — SQS queue + consumer wiring (convenience wrapper over `AppTheoryQueue` + `AppTheoryQueueConsumer`).\n- `AppTheoryEventBridgeHandler` — EventBridge schedule/rule + Lambda target wiring.\n- `AppTheoryEventBridgeBus` — custom EventBridge bus with explicit cross-account publish allowlist.\n- `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.\n- `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs + Lambda binding helper).\n- `AppTheoryKinesisStream` — Kinesis Data Stream create/wrap surface for AppTheory stream consumers.\n- `AppTheoryKinesisStreamMapping` — Kinesis stream → Lambda event source mapping with partial-batch failures enabled by default.\n- `AppTheoryCloudWatchLogsDestination` — CloudWatch Logs destination → Kinesis with explicit source allowlists.\n- `AppTheoryCloudWatchLogsSubscription` — source-side CloudWatch Logs subscription attachment to a caller-provided destination ARN.\n- `AppTheoryHttpIngestionEndpoint` — authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer + throttling controls.\n- `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).\n- `AppTheoryLambdaRole` — Lambda execution role helper (baseline + X-Ray + KMS + escape hatches).\n- `AppTheoryPathRoutedFrontend` — CloudFront distribution for multi-SPA routing + API origin (stage domain pattern).\n- `AppTheoryMediaCdn` — CloudFront distribution for an S3-backed media CDN (optional private media via key groups).\n- `AppTheoryApp` — higher-level “app” pattern (Lambda + HTTP API + optional DynamoDB tables).\n- `AppTheorySsrSite` — SSR site pattern with explicit `ssr-only` / `ssg-isr` modes, shared FaceTheory edge functions, and a signed Function URL fallback path.\n\n## Minimal example\n\n```ts\nimport { Stack } from \"aws-cdk-lib\";\nimport * as lambda from \"aws-cdk-lib/aws-lambda\";\nimport { AppTheoryHttpApi } from \"@theory-cloud/apptheory-cdk\";\n\nconst stack = new Stack();\nconst fn = new lambda.Function(stack, \"Handler\", {\n  runtime: lambda.Runtime.NODEJS_24_X,\n  handler: \"index.handler\",\n  code: lambda.Code.fromAsset(\"dist\"),\n});\n\nnew AppTheoryHttpApi(stack, \"Api\", { handler: fn, apiName: \"my-api\" });\n```\n\n## Development\n\n```bash\ncd cdk\nnpm ci\nnpm test\n```\n"
   },
   "repository": {
     "directory": "cdk",
@@ -8975,7 +9004,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 77
+        "line": 89
       },
       "name": "ApiBypassConfig",
       "properties": [
@@ -8987,7 +9016,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 81
+            "line": 93
           },
           "name": "pathPattern",
           "type": {
@@ -9003,7 +9032,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 86
+            "line": 98
           },
           "name": "cachePolicy",
           "optional": true,
@@ -9019,7 +9048,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 91
+            "line": 103
           },
           "name": "originRequestPolicy",
           "optional": true,
@@ -9036,7 +9065,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 97
+            "line": 109
           },
           "name": "responseHeadersPolicy",
           "optional": true,
@@ -9993,6 +10022,290 @@
         }
       ],
       "symbolId": "lib/cloudwatch-logs-destination:AppTheoryCloudWatchLogsDestinationProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscription": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "This construct wraps `AWS::Logs::SubscriptionFilter` without creating the\ndestination, ingestion pipeline, or IAM role. Callers must provide the exact\nlog group, destination ARN, filter pattern, and any delivery role required by\nthe selected destination type.",
+        "summary": "Source-side CloudWatch Logs subscription filter."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscription",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/cloudwatch-logs-subscription.ts",
+          "line": 112
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscriptionProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/cloudwatch-logs-subscription.ts",
+        "line": 86
+      },
+      "name": "AppTheoryCloudWatchLogsSubscription",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The destination ARN configured on the subscription filter."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 100
+          },
+          "name": "destinationArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The rendered CloudWatch Logs filter pattern text."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 105
+          },
+          "name": "filterPatternText",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The resolved log group name attached by the subscription filter."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 95
+          },
+          "name": "logGroupName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The CloudWatch Logs subscription filter resource."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 90
+          },
+          "name": "subscriptionFilter",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.CfnSubscriptionFilter"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The caller-provided delivery role ARN, if any."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 110
+          },
+          "name": "roleArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/cloudwatch-logs-subscription:AppTheoryCloudWatchLogsSubscription"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscriptionProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for AppTheoryCloudWatchLogsSubscription."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscriptionProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/cloudwatch-logs-subscription.ts",
+        "line": 9
+      },
+      "name": "AppTheoryCloudWatchLogsSubscriptionProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "The ARN may point to a Lambda function, Kinesis stream, Firehose delivery stream,\nor a cross-account CloudWatch Logs destination. AppTheory does not create or\nvalidate the destination-side resources.",
+            "summary": "Destination ARN that receives matching log events."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 31
+          },
+          "name": "destinationArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- CloudWatch Logs default",
+            "summary": "Method used to distribute log events to Kinesis destinations."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 75
+          },
+          "name": "distribution",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.Distribution"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- CloudFormation assigns a name",
+            "summary": "Optional physical subscription filter name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 68
+          },
+          "name": "filterName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Exactly one of `filterPattern` or `filterPatternText` is required.",
+            "summary": "CloudWatch Logs filter pattern."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 38
+          },
+          "name": "filterPattern",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.IFilterPattern"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Use an empty string when the subscription should match all events. Exactly one\nof `filterPattern` or `filterPatternText` is required.",
+            "summary": "Raw CloudWatch Logs filter pattern text."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 46
+          },
+          "name": "filterPatternText",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Exactly one of `logGroup` or `logGroupName` is required.",
+            "summary": "Log group to attach the subscription filter to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 15
+          },
+          "name": "logGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.ILogGroup"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Exactly one of `logGroup` or `logGroupName` is required.",
+            "summary": "Name of an existing log group to attach the subscription filter to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 22
+          },
+          "name": "logGroupName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "At most one of `role` or `roleArn` may be provided. AppTheory never synthesizes\na default delivery role for this source-side construct.",
+            "summary": "Delivery role assumed by CloudWatch Logs when the destination requires one."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 54
+          },
+          "name": "role",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_iam.IRole"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "At most one of `role` or `roleArn` may be provided.",
+            "summary": "ARN of a caller-owned delivery role assumed by CloudWatch Logs."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/cloudwatch-logs-subscription.ts",
+            "line": 61
+          },
+          "name": "roleArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/cloudwatch-logs-subscription:AppTheoryCloudWatchLogsSubscriptionProps"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryCodeBuildJobRunner": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -15745,7 +16058,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/media-cdn.ts",
-          "line": 219
+          "line": 237
         },
         "parameters": [
           {
@@ -15771,7 +16084,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/media-cdn.ts",
-        "line": 188
+        "line": 206
       },
       "name": "AppTheoryMediaCdn",
       "properties": [
@@ -15782,7 +16095,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 197
+            "line": 215
           },
           "name": "bucket",
           "type": {
@@ -15796,7 +16109,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 192
+            "line": 210
           },
           "name": "distribution",
           "type": {
@@ -15810,7 +16123,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 207
+            "line": 225
           },
           "name": "certificate",
           "optional": true,
@@ -15825,7 +16138,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 212
+            "line": 230
           },
           "name": "keyGroup",
           "optional": true,
@@ -15840,7 +16153,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 202
+            "line": 220
           },
           "name": "logsBucket",
           "optional": true,
@@ -15855,7 +16168,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 217
+            "line": 235
           },
           "name": "publicKey",
           "optional": true,
@@ -15873,7 +16186,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/media-cdn.ts",
-        "line": 76
+        "line": 94
       },
       "name": "AppTheoryMediaCdnProps",
       "properties": [
@@ -15886,7 +16199,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 170
+            "line": 188
           },
           "name": "allowedMethods",
           "optional": true,
@@ -15904,7 +16217,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 132
+            "line": 150
           },
           "name": "autoDeleteObjects",
           "optional": true,
@@ -15921,7 +16234,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 81
+            "line": 99
           },
           "name": "bucket",
           "optional": true,
@@ -15937,7 +16250,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 86
+            "line": 104
           },
           "name": "bucketName",
           "optional": true,
@@ -15954,7 +16267,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 154
+            "line": 172
           },
           "name": "cachePolicy",
           "optional": true,
@@ -15970,7 +16283,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 148
+            "line": 166
           },
           "name": "comment",
           "optional": true,
@@ -15986,7 +16299,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 107
+            "line": 125
           },
           "name": "defaultRootObject",
           "optional": true,
@@ -16002,7 +16315,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 91
+            "line": 109
           },
           "name": "domain",
           "optional": true,
@@ -16019,7 +16332,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 113
+            "line": 131
           },
           "name": "enableLogging",
           "optional": true,
@@ -16035,7 +16348,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 164
+            "line": 182
           },
           "name": "errorResponses",
           "optional": true,
@@ -16057,7 +16370,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 119
+            "line": 137
           },
           "name": "logsBucket",
           "optional": true,
@@ -16073,7 +16386,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 159
+            "line": 177
           },
           "name": "originRequestPolicy",
           "optional": true,
@@ -16090,7 +16403,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 143
+            "line": 161
           },
           "name": "priceClass",
           "optional": true,
@@ -16107,7 +16420,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 102
+            "line": 120
           },
           "name": "privateMedia",
           "optional": true,
@@ -16124,7 +16437,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 125
+            "line": 143
           },
           "name": "removalPolicy",
           "optional": true,
@@ -16140,7 +16453,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 96
+            "line": 114
           },
           "name": "responseHeadersPolicy",
           "optional": true,
@@ -16156,7 +16469,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 137
+            "line": 155
           },
           "name": "webAclId",
           "optional": true,
@@ -16178,7 +16491,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/path-routed-frontend.ts",
-          "line": 336
+          "line": 354
         },
         "parameters": [
           {
@@ -16204,7 +16517,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 315
+        "line": 333
       },
       "name": "AppTheoryPathRoutedFrontend",
       "properties": [
@@ -16215,7 +16528,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 319
+            "line": 337
           },
           "name": "distribution",
           "type": {
@@ -16229,7 +16542,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 334
+            "line": 352
           },
           "name": "certificate",
           "optional": true,
@@ -16244,7 +16557,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 329
+            "line": 347
           },
           "name": "logsBucket",
           "optional": true,
@@ -16259,7 +16572,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 324
+            "line": 342
           },
           "name": "spaRewriteFunction",
           "optional": true,
@@ -16277,7 +16590,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 132
+        "line": 150
       },
       "name": "AppTheoryPathRoutedFrontendProps",
       "properties": [
@@ -16289,7 +16602,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 137
+            "line": 155
           },
           "name": "apiOriginUrl",
           "type": {
@@ -16305,7 +16618,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 150
+            "line": 168
           },
           "name": "apiBypassPaths",
           "optional": true,
@@ -16327,7 +16640,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 180
+            "line": 198
           },
           "name": "apiBypassResponseHeadersPolicy",
           "optional": true,
@@ -16343,7 +16656,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 185
+            "line": 203
           },
           "name": "apiOriginRequestPolicy",
           "optional": true,
@@ -16359,7 +16672,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 168
+            "line": 186
           },
           "name": "apiResponseHeadersPolicy",
           "optional": true,
@@ -16377,7 +16690,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 210
+            "line": 228
           },
           "name": "autoDeleteObjects",
           "optional": true,
@@ -16393,7 +16706,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 226
+            "line": 244
           },
           "name": "comment",
           "optional": true,
@@ -16409,7 +16722,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 155
+            "line": 173
           },
           "name": "domain",
           "optional": true,
@@ -16426,7 +16739,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 191
+            "line": 209
           },
           "name": "enableLogging",
           "optional": true,
@@ -16443,7 +16756,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 197
+            "line": 215
           },
           "name": "logsBucket",
           "optional": true,
@@ -16460,7 +16773,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 221
+            "line": 239
           },
           "name": "priceClass",
           "optional": true,
@@ -16477,7 +16790,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 203
+            "line": 221
           },
           "name": "removalPolicy",
           "optional": true,
@@ -16494,7 +16807,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 163
+            "line": 181
           },
           "name": "responseHeadersPolicy",
           "optional": true,
@@ -16511,7 +16824,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 143
+            "line": 161
           },
           "name": "spaOrigins",
           "optional": true,
@@ -16533,7 +16846,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 174
+            "line": 192
           },
           "name": "spaResponseHeadersPolicy",
           "optional": true,
@@ -16549,7 +16862,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 215
+            "line": 233
           },
           "name": "webAclId",
           "optional": true,
@@ -18390,7 +18703,7 @@
           },
           "locationInModule": {
             "filename": "lib/rest-api-router.ts",
-            "line": 386
+            "line": 390
           },
           "name": "addLambdaIntegration",
           "parameters": [
@@ -19862,7 +20175,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 12
+        "line": 24
       },
       "members": [
         {
@@ -19889,7 +20202,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/ssr-site.ts",
-          "line": 552
+          "line": 577
         },
         "parameters": [
           {
@@ -19915,7 +20228,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 538
+        "line": 563
       },
       "name": "AppTheorySsrSite",
       "properties": [
@@ -19923,7 +20236,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 539
+            "line": 564
           },
           "name": "assetsBucket",
           "type": {
@@ -19934,7 +20247,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 540
+            "line": 565
           },
           "name": "assetsKeyPrefix",
           "type": {
@@ -19945,7 +20258,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 541
+            "line": 566
           },
           "name": "assetsManifestKey",
           "type": {
@@ -19956,7 +20269,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 547
+            "line": 572
           },
           "name": "bearerFunctionUrls",
           "type": {
@@ -19972,7 +20285,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 548
+            "line": 573
           },
           "name": "distribution",
           "type": {
@@ -19983,7 +20296,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 550
+            "line": 575
           },
           "name": "responseHeadersPolicy",
           "type": {
@@ -19994,7 +20307,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 546
+            "line": 571
           },
           "name": "ssrUrl",
           "type": {
@@ -20005,7 +20318,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 549
+            "line": 574
           },
           "name": "certificate",
           "optional": true,
@@ -20017,7 +20330,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 542
+            "line": 567
           },
           "name": "htmlStoreBucket",
           "optional": true,
@@ -20029,7 +20342,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 543
+            "line": 568
           },
           "name": "htmlStoreKeyPrefix",
           "optional": true,
@@ -20041,7 +20354,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 544
+            "line": 569
           },
           "name": "isrMetadataTable",
           "optional": true,
@@ -20053,7 +20366,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 545
+            "line": 570
           },
           "name": "logsBucket",
           "optional": true,
@@ -20071,7 +20384,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 514
+        "line": 539
       },
       "name": "AppTheorySsrSiteBearerFunctionUrlOrigin",
       "properties": [
@@ -20084,7 +20397,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 521
+            "line": 546
           },
           "name": "function",
           "type": {
@@ -20100,7 +20413,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 529
+            "line": 554
           },
           "name": "pathPatterns",
           "type": {
@@ -20121,7 +20434,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 535
+            "line": 560
           },
           "name": "invokeMode",
           "optional": true,
@@ -20166,7 +20479,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/ssr-site.ts",
-        "line": 316
+        "line": 328
       },
       "name": "AppTheorySsrSiteProps",
       "properties": [
@@ -20175,7 +20488,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 317
+            "line": 329
           },
           "name": "ssrFunction",
           "type": {
@@ -20192,7 +20505,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 470
+            "line": 482
           },
           "name": "allowViewerTenantHeaders",
           "optional": true,
@@ -20205,7 +20518,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 348
+            "line": 360
           },
           "name": "assetsBucket",
           "optional": true,
@@ -20218,7 +20531,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 350
+            "line": 362
           },
           "name": "assetsKeyPrefix",
           "optional": true,
@@ -20231,7 +20544,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 351
+            "line": 363
           },
           "name": "assetsManifestKey",
           "optional": true,
@@ -20244,7 +20557,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 349
+            "line": 361
           },
           "name": "assetsPath",
           "optional": true,
@@ -20257,7 +20570,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 505
+            "line": 517
           },
           "name": "autoDeleteObjects",
           "optional": true,
@@ -20274,7 +20587,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 411
+            "line": 423
           },
           "name": "bearerFunctionUrlOrigins",
           "optional": true,
@@ -20297,7 +20610,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 432
+            "line": 444
           },
           "name": "cacheTableName",
           "optional": true,
@@ -20307,10 +20620,14 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "remarks": "The certificate must be in `us-east-1` for CloudFront.",
+            "summary": "Existing ACM certificate ARN for the CloudFront distribution."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 509
+            "line": 534
           },
           "name": "certificateArn",
           "optional": true,
@@ -20327,7 +20644,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 384
+            "line": 396
           },
           "name": "directS3PathPatterns",
           "optional": true,
@@ -20345,7 +20662,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 507
+            "line": 519
           },
           "name": "domainName",
           "optional": true,
@@ -20358,7 +20675,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 472
+            "line": 484
           },
           "name": "enableLogging",
           "optional": true,
@@ -20368,10 +20685,14 @@
         },
         {
           "abstract": true,
+          "docs": {
+            "remarks": "When `domainName` is set without `certificateArn`, hosted-zone certificate\ncreation is allowed only for stacks whose region is explicitly `us-east-1`.\nCloudFront requires viewer certificates in `us-east-1`; environment-agnostic\nor other-region stacks must provide `certificateArn`.",
+            "summary": "Route53 hosted zone for DNS records and optional certificate validation."
+          },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 508
+            "line": 528
           },
           "name": "hostedZone",
           "optional": true,
@@ -20388,7 +20709,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 502
+            "line": 514
           },
           "name": "htmlCachePolicy",
           "optional": true,
@@ -20405,7 +20726,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 360
+            "line": 372
           },
           "name": "htmlStoreBucket",
           "optional": true,
@@ -20422,7 +20743,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 366
+            "line": 378
           },
           "name": "htmlStoreKeyPrefix",
           "optional": true,
@@ -20439,7 +20760,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 334
+            "line": 346
           },
           "name": "invokeMode",
           "optional": true,
@@ -20456,7 +20777,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 419
+            "line": 431
           },
           "name": "isrMetadataTable",
           "optional": true,
@@ -20473,7 +20794,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 426
+            "line": 438
           },
           "name": "isrMetadataTableName",
           "optional": true,
@@ -20486,7 +20807,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 473
+            "line": 485
           },
           "name": "logsBucket",
           "optional": true,
@@ -20504,7 +20825,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 328
+            "line": 340
           },
           "name": "mode",
           "optional": true,
@@ -20517,7 +20838,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 504
+            "line": 516
           },
           "name": "removalPolicy",
           "optional": true,
@@ -20534,7 +20855,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 482
+            "line": 494
           },
           "name": "responseHeadersPolicy",
           "optional": true,
@@ -20552,7 +20873,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 491
+            "line": 503
           },
           "name": "ssrCachePolicy",
           "optional": true,
@@ -20569,7 +20890,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 455
+            "line": 467
           },
           "name": "ssrForwardHeaders",
           "optional": true,
@@ -20591,7 +20912,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 396
+            "line": 408
           },
           "name": "ssrPathPatterns",
           "optional": true,
@@ -20614,7 +20935,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 346
+            "line": 358
           },
           "name": "ssrUrlAuthType",
           "optional": true,
@@ -20631,7 +20952,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 376
+            "line": 388
           },
           "name": "staticPathPatterns",
           "optional": true,
@@ -20649,7 +20970,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 511
+            "line": 536
           },
           "name": "webAclId",
           "optional": true,
@@ -20662,7 +20983,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/ssr-site.ts",
-            "line": 435
+            "line": 447
           },
           "name": "wireRuntimeEnv",
           "optional": true,
@@ -21254,7 +21575,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/media-cdn.ts",
-        "line": 13
+        "line": 25
       },
       "name": "MediaCdnDomainConfig",
       "properties": [
@@ -21266,7 +21587,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 17
+            "line": 29
           },
           "name": "domainName",
           "type": {
@@ -21282,7 +21603,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 22
+            "line": 34
           },
           "name": "certificate",
           "optional": true,
@@ -21298,7 +21619,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 27
+            "line": 39
           },
           "name": "certificateArn",
           "optional": true,
@@ -21315,7 +21636,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 39
+            "line": 57
           },
           "name": "createAAAARecord",
           "optional": true,
@@ -21326,13 +21647,13 @@
         {
           "abstract": true,
           "docs": {
-            "remarks": "When provided, an A record alias will be created for the domain.",
-            "summary": "Route53 hosted zone for DNS record creation."
+            "remarks": "If `domainName` is set without `certificate` or `certificateArn`,\nhosted-zone certificate creation is allowed only for stacks whose region\nis explicitly `us-east-1`. CloudFront requires viewer certificates in\n`us-east-1`; environment-agnostic or other-region stacks must provide an\nexplicit certificate input.",
+            "summary": "Route53 hosted zone for DNS record creation. When provided, an A record alias will be created for the domain."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 33
+            "line": 51
           },
           "name": "hostedZone",
           "optional": true,
@@ -21353,7 +21674,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 103
+        "line": 115
       },
       "name": "PathRoutedFrontendDomainConfig",
       "properties": [
@@ -21365,7 +21686,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 107
+            "line": 119
           },
           "name": "domainName",
           "type": {
@@ -21381,7 +21702,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 112
+            "line": 124
           },
           "name": "certificate",
           "optional": true,
@@ -21397,7 +21718,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 117
+            "line": 129
           },
           "name": "certificateArn",
           "optional": true,
@@ -21414,7 +21735,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 129
+            "line": 147
           },
           "name": "createAAAARecord",
           "optional": true,
@@ -21425,13 +21746,13 @@
         {
           "abstract": true,
           "docs": {
-            "remarks": "When provided, an A record alias will be created for the domain.",
-            "summary": "Route53 hosted zone for DNS record creation."
+            "remarks": "If `domainName` is set without `certificate` or `certificateArn`,\nhosted-zone certificate creation is allowed only for stacks whose region\nis explicitly `us-east-1`. CloudFront requires viewer certificates in\n`us-east-1`; environment-agnostic or other-region stacks must provide an\nexplicit certificate input.",
+            "summary": "Route53 hosted zone for DNS record creation. When provided, an A record alias will be created for the domain."
           },
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 123
+            "line": 141
           },
           "name": "hostedZone",
           "optional": true,
@@ -21452,7 +21773,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/media-cdn.ts",
-        "line": 45
+        "line": 63
       },
       "name": "PrivateMediaConfig",
       "properties": [
@@ -21465,7 +21786,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 50
+            "line": 68
           },
           "name": "keyGroup",
           "optional": true,
@@ -21481,7 +21802,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 73
+            "line": 91
           },
           "name": "keyGroupComment",
           "optional": true,
@@ -21498,7 +21819,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 68
+            "line": 86
           },
           "name": "keyGroupName",
           "optional": true,
@@ -21515,7 +21836,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 62
+            "line": 80
           },
           "name": "publicKeyName",
           "optional": true,
@@ -21532,7 +21853,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/media-cdn.ts",
-            "line": 56
+            "line": 74
           },
           "name": "publicKeyPem",
           "optional": true,
@@ -21553,7 +21874,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/path-routed-frontend.ts",
-        "line": 27
+        "line": 39
       },
       "name": "SpaOriginConfig",
       "properties": [
@@ -21565,7 +21886,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 31
+            "line": 43
           },
           "name": "bucket",
           "type": {
@@ -21580,7 +21901,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 37
+            "line": 49
           },
           "name": "pathPattern",
           "type": {
@@ -21596,7 +21917,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 42
+            "line": 54
           },
           "name": "cachePolicy",
           "optional": true,
@@ -21613,7 +21934,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 48
+            "line": 60
           },
           "name": "responseHeadersPolicy",
           "optional": true,
@@ -21631,7 +21952,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 71
+            "line": 83
           },
           "name": "rewriteMode",
           "optional": true,
@@ -21649,7 +21970,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/path-routed-frontend.ts",
-            "line": 61
+            "line": 73
           },
           "name": "stripPrefixBeforeOrigin",
           "optional": true,
@@ -21661,6 +21982,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "1.11.0-rc",
-  "fingerprint": "aw1ofUYthqW84ATWs+F/+UsC2qEWAfDY6RRRLJzOUIE="
+  "version": "1.11.0",
+  "fingerprint": "+7Q7u556/EhZUT1XCwcPc6HBGcpE0FjLjnyrEcIRuI0="
 }

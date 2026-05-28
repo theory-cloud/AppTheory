@@ -1,3 +1,7 @@
+---
+title: Feature Guides
+---
+
 # AppTheory Feature Guides
 
 These pages cover public AppTheory capabilities that extend the core runtime without changing the fixed getting-started

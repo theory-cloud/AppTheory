@@ -1,3 +1,7 @@
+---
+title: Getting Started
+---
+
 # Getting Started with AppTheory
 
 This guide gets a local AppTheory workspace running, shows the smallest deterministic app path in each runtime, and
@@ -174,7 +178,7 @@ values return unknown/invalid provenance instead of falling back to forwarding h
 
 ## Next reads
 
-- [Documentation Index](./README.md)
+- [Documentation Index]({{ "/" | relative_url }})
 - [API Reference](./api-reference.md)
 - [Core Patterns](./core-patterns.md)
 - [Testing Guide](./testing-guide.md)

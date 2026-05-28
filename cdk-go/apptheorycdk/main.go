@@ -100,6 +100,29 @@ func init() {
 		reflect.TypeOf((*AppTheoryCloudWatchLogsDestinationProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscription",
+		reflect.TypeOf((*AppTheoryCloudWatchLogsSubscription)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "destinationArn", GoGetter: "DestinationArn"},
+			_jsii_.MemberProperty{JsiiProperty: "filterPatternText", GoGetter: "FilterPatternText"},
+			_jsii_.MemberProperty{JsiiProperty: "logGroupName", GoGetter: "LogGroupName"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "roleArn", GoGetter: "RoleArn"},
+			_jsii_.MemberProperty{JsiiProperty: "subscriptionFilter", GoGetter: "SubscriptionFilter"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryCloudWatchLogsSubscription{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsSubscriptionProps",
+		reflect.TypeOf((*AppTheoryCloudWatchLogsSubscriptionProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryCodeBuildJobRunner",
 		reflect.TypeOf((*AppTheoryCodeBuildJobRunner)(nil)).Elem(),
 		[]_jsii_.Member{

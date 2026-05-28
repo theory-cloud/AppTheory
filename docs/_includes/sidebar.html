@@ -1,0 +1,39 @@
+{%- assign current = page.url -%}
+<aside class="docs-sidebar" aria-label="Documentation navigation">
+  <div class="docs-sidebar__filter">
+    {% include icon.html name="search" %}
+    <input type="text" placeholder="Filter sidebar…" aria-label="Filter sidebar" data-action="filter-sidebar">
+  </div>
+
+  {%- for group in site.data.nav.groups -%}
+    <div class="sidebar-group" data-group="{{ group.label | slugify }}">
+      <button class="sidebar-group__head" data-action="toggle-group" aria-expanded="true">
+        {% include icon.html name="chevron-down" class="caret" size="10" %}
+        <span>{{ group.label }}</span>
+        <span class="count">{{ group.items | size }}</span>
+      </button>
+      <div class="sidebar-group__body">
+        {%- for item in group.items -%}
+          {%- assign active = false -%}
+          {%- if current == item.url -%}{%- assign active = true -%}{%- endif -%}
+          {%- comment -%} Treat trailing-slash variants as equivalent. {%- endcomment -%}
+          {%- assign u_norm = item.url | append: "" -%}
+          {%- if current == u_norm or current == u_norm | replace_first:"/", "" -%}
+            {%- assign active = true -%}
+          {%- endif -%}
+          <a class="sidebar-link {% if active %}active{% endif %}"
+             href="{{ item.url | relative_url }}"
+             data-nav-id="{{ item.id }}"
+             {% if item.surface %}data-surface-hint="{{ item.surface }}"{% endif %}
+             title="{{ item.title | escape }}">
+            <span class="sidebar-link__icon">{% include icon.html name=item.icon size="14" %}</span>
+            <span>{{ item.title }}</span>
+            {%- if item.tag -%}
+              <span class="sidebar-link__chip" data-tag="{{ item.tag }}">{{ item.tag }}</span>
+            {%- endif -%}
+          </a>
+        {%- endfor -%}
+      </div>
+    </div>
+  {%- endfor -%}
+</aside>

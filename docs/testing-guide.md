@@ -1,3 +1,7 @@
+---
+title: Testing
+---
+
 # AppTheory Testing Guide
 
 AppTheory relies on layered deterministic verification: fast unit tests, package-focused checks, contract fixtures,

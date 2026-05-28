@@ -24,6 +24,14 @@ py/.venv/
 .theory
 .kiro/
 
+# Jekyll build outputs for docs/ GitHub Pages site
+docs/_site/
+docs/.jekyll-cache/
+docs/.jekyll-metadata
+docs/vendor/
+docs/.bundle/
+docs/Gemfile.lock
+
 # GovTheory generated artifacts
 gov-infra/.tools/
 gov-infra/evidence/*-output.log
@@ -33,5 +41,5 @@ gov-infra/evidence/go-coverage-summary.txt
 gov-infra/evidence/ts-coverage-summary.txt
 gov-infra/evidence/py-coverage-summary.txt
 gov-infra/evidence/py-coverage.data
-reference/
+/reference/
 .codex/

@@ -1,0 +1,323 @@
+/* =============================================================
+   Theory Cloud — Colors & Type
+   Dark-first design tokens for the Theory Cloud brand pack.
+   Source: theory_cloud_branding_package.md §6, §7, §27.C, §27.D
+   ============================================================= */
+
+/* ---------- Webfonts ---------- */
+/* Primary sans: Inter (recommended ref in §7).
+   Display sans: Geist (recommended ref in §27.D).
+   Monospace: JetBrains Mono (recommended ref in §7). */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* --------------------------------------------------------------
+     1. BRAND COLOR LOCKS (§27.C)
+     These are the only places these literals should appear; everything
+     downstream references the named token, never the hex.
+     -------------------------------------------------------------- */
+
+  /* Primary palette */
+  --tc-midnight:       #081226;  /* deep base for product + brand surfaces */
+  --tc-core-blue:      #2EA7FF;  /* system intelligence / clarity (primary) */
+  --tc-violet-signal:  #7A5CFF;  /* generative core / memory / energy (secondary) */
+  --tc-ice-white:      #F4F8FF;  /* typography + high-contrast UI text */
+
+  /* Secondary neutrals */
+  --tc-steel:          #6F7D95;  /* neutral UI linework */
+  --tc-mist:           #DCE6F5;  /* soft background tint; quiet body text */
+  --tc-graphite:       #1C2433;  /* light-mode dark text; subtle inverse */
+
+  /* Accent reserve */
+  --tc-phi-gold:       #C9A96B;  /* diagrams, premium moments, phi refs */
+
+  /* System error (calibrated; not defined in the brand doc) */
+  --tc-error:          #FF5A65;
+  --tc-error-container:#4A1720;
+
+  /* --------------------------------------------------------------
+     2. MIDNIGHT ELEVATION RAMP
+     Calibrated from Midnight toward Ice White along a perceptual luma
+     line so M3 surface layers feel like one material.
+     Source: ts/src/tokens/base.ts midnightDepth..midnightLift4
+     -------------------------------------------------------------- */
+  --tc-midnight-depth: #050A1A;  /* surfaceDim / surfaceContainerLowest */
+  --tc-midnight-lift-1:#0B172D;  /* surfaceContainerLow */
+  --tc-midnight-lift-2:#111E38;  /* surfaceContainer — standard panel/card */
+  --tc-midnight-lift-3:#17264A;  /* surfaceContainerHigh — hover/active */
+  --tc-midnight-lift-4:#1D2E5C;  /* surfaceContainerHighest — focused/elevated */
+  --tc-steel-dim:      #3B465C;  /* outlineVariant — quieter linework */
+
+  /* Accent containers (hand-picked tints on Midnight) */
+  --tc-core-blue-container:    #143B5C;
+  --tc-core-blue-fixed:        #7FC7FF;
+  --tc-core-blue-fixed-dim:    #5CB5FF;
+  --tc-core-blue-inverse:      #1274BF;
+  --tc-violet-container:       #2C1F6B;
+  --tc-violet-fixed:           #B6A4FF;
+  --tc-violet-fixed-dim:       #9B85FF;
+  --tc-violet-inverse:         #5A3FDB;
+  --tc-phi-gold-container:     #3B2F16;
+  --tc-phi-gold-fixed:         #E6D09A;
+
+  /* --------------------------------------------------------------
+     3. SEMANTIC ROLES (foreground / background / outline)
+     -------------------------------------------------------------- */
+  --tc-bg:                var(--tc-midnight);
+  --tc-bg-dim:            var(--tc-midnight-depth);
+  --tc-surface:           var(--tc-midnight);
+  --tc-surface-1:         var(--tc-midnight-lift-1);
+  --tc-surface-2:         var(--tc-midnight-lift-2);
+  --tc-surface-3:         var(--tc-midnight-lift-3);
+  --tc-surface-4:         var(--tc-midnight-lift-4);
+  --tc-surface-bright:    var(--tc-midnight-lift-4);
+
+  --tc-fg:                var(--tc-ice-white);  /* primary text on dark */
+  --tc-fg-muted:          var(--tc-mist);       /* secondary text */
+  --tc-fg-dim:            var(--tc-steel);      /* tertiary / disabled */
+  --tc-fg-inverse:        var(--tc-graphite);   /* text on inverse surfaces */
+
+  --tc-outline:           var(--tc-steel);
+  --tc-outline-variant:   var(--tc-steel-dim);
+
+  /* Accent semantic */
+  --tc-accent:            var(--tc-core-blue);
+  --tc-accent-2:          var(--tc-violet-signal);
+  --tc-accent-reserve:    var(--tc-phi-gold);
+
+  /* --------------------------------------------------------------
+     4. SURFACE-TINT SEEDS (§29.F)
+     Core: Core Blue; MCP: Violet Signal; Auth: Steel.
+     Use --tc-surface-tint at the surface level (e.g. body[data-surface="mcp"])
+     to shift the elevation accent without changing primary identity.
+     -------------------------------------------------------------- */
+  --tc-surface-tint:      var(--tc-core-blue);  /* Core default */
+
+  /* --------------------------------------------------------------
+     5. SIGNATURE GRADIENT
+     Core Blue → Violet Signal (§6, §27.C). Use only in hero art,
+     icon highlight moments, motion, and key launch graphics.
+     Avoid in body UI.
+     -------------------------------------------------------------- */
+  --tc-gradient-signature: linear-gradient(135deg, var(--tc-core-blue) 0%, var(--tc-violet-signal) 100%);
+  --tc-gradient-signature-vertical: linear-gradient(180deg, var(--tc-core-blue) 0%, var(--tc-violet-signal) 100%);
+  --tc-gradient-soft: linear-gradient(135deg, rgba(46,167,255,0.18) 0%, rgba(122,92,255,0.18) 100%);
+  --tc-gradient-edge: linear-gradient(180deg, rgba(244,248,255,0.06) 0%, rgba(244,248,255,0) 100%);
+
+  /* --------------------------------------------------------------
+     6. TYPOGRAPHY STACKS (§7, §27.D)
+     -------------------------------------------------------------- */
+  --tc-font-sans:    "Inter", "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --tc-font-display: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --tc-font-mono:    "JetBrains Mono", "Geist Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Weight scale */
+  --tc-w-regular:    400;
+  --tc-w-medium:     500;
+  --tc-w-semibold:   600;
+  --tc-w-bold:       700;
+
+  /* Type scale — display→ui, generous + premium */
+  --tc-fs-display-xl: 80px;  --tc-lh-display-xl: 1.02;  --tc-ls-display-xl: -0.03em;
+  --tc-fs-display-lg: 64px;  --tc-lh-display-lg: 1.04;  --tc-ls-display-lg: -0.025em;
+  --tc-fs-display-md: 48px;  --tc-lh-display-md: 1.06;  --tc-ls-display-md: -0.022em;
+  --tc-fs-h1:         36px;  --tc-lh-h1:         1.12;  --tc-ls-h1:         -0.018em;
+  --tc-fs-h2:         28px;  --tc-lh-h2:         1.18;  --tc-ls-h2:         -0.014em;
+  --tc-fs-h3:         22px;  --tc-lh-h3:         1.24;  --tc-ls-h3:         -0.010em;
+  --tc-fs-h4:         18px;  --tc-lh-h4:         1.32;  --tc-ls-h4:         -0.006em;
+  --tc-fs-body-lg:    17px;  --tc-lh-body-lg:    1.55;  --tc-ls-body-lg:    -0.003em;
+  --tc-fs-body:       15px;  --tc-lh-body:       1.55;  --tc-ls-body:       0;
+  --tc-fs-body-sm:    13px;  --tc-lh-body-sm:    1.5;   --tc-ls-body-sm:    0;
+  --tc-fs-label:      13px;  --tc-lh-label:      1.3;   --tc-ls-label:      0.005em;
+  --tc-fs-label-sm:   11px;  --tc-lh-label-sm:   1.3;   --tc-ls-label-sm:   0.04em;
+  --tc-fs-mono:       13px;  --tc-lh-mono:       1.5;
+
+  /* Eyebrow caps */
+  --tc-fs-eyebrow:    11px;  --tc-ls-eyebrow:    0.16em;
+
+  /* --------------------------------------------------------------
+     7. SHAPE — corner radii (§8, §27.G — rounded, not cartoonish)
+     `xl` matches the 14 px outer radius of the icon mark.
+     -------------------------------------------------------------- */
+  --tc-radius-xs: 2px;
+  --tc-radius-sm: 4px;
+  --tc-radius-md: 8px;
+  --tc-radius-lg: 12px;
+  --tc-radius-xl: 14px;   /* matches icon outer radius */
+  --tc-radius-2xl:20px;
+  --tc-radius-pill: 999px;
+
+  /* --------------------------------------------------------------
+     8. SPACING — 4px base unit (ts/src/tokens/base.ts)
+     -------------------------------------------------------------- */
+  --tc-space-0:   0;
+  --tc-space-1:   4px;
+  --tc-space-2:   8px;
+  --tc-space-3:   12px;
+  --tc-space-4:   16px;
+  --tc-space-5:   20px;
+  --tc-space-6:   24px;
+  --tc-space-8:   32px;
+  --tc-space-10:  40px;
+  --tc-space-12:  48px;
+  --tc-space-16:  64px;
+  --tc-space-20:  80px;
+  --tc-space-24:  96px;
+  --tc-space-32:  128px;
+
+  /* --------------------------------------------------------------
+     9. ELEVATION — restrained, dark-first
+     Shadows are subtle on Midnight; depth comes from the lift ramp
+     more than from drop shadows.
+     -------------------------------------------------------------- */
+  --tc-shadow-sm:  0 1px 2px rgba(0,0,0,0.30);
+  --tc-shadow-md:  0 4px 12px rgba(0,0,0,0.35);
+  --tc-shadow-lg:  0 12px 32px rgba(0,0,0,0.45);
+  --tc-shadow-xl:  0 24px 64px rgba(0,0,0,0.55);
+
+  /* Inner highlight — the "one luminous edge" §17 mood */
+  --tc-inner-edge: inset 0 1px 0 rgba(244,248,255,0.06);
+
+  /* Accent glows — restrained; use only on focal/active states */
+  --tc-glow-blue:   0 0 0 1px rgba(46,167,255,0.40), 0 0 24px rgba(46,167,255,0.18);
+  --tc-glow-violet: 0 0 0 1px rgba(122,92,255,0.40), 0 0 24px rgba(122,92,255,0.18);
+
+  /* Focus ring — Core Blue at 2px (§D logo usage / UI calm) */
+  --tc-focus-ring: 0 0 0 2px var(--tc-bg), 0 0 0 4px var(--tc-core-blue);
+
+  /* --------------------------------------------------------------
+     10. MOTION (§10, §27.H — structure first, intelligence second)
+     -------------------------------------------------------------- */
+  --tc-ease-out:   cubic-bezier(0.22, 1, 0.36, 1);     /* snap into place */
+  --tc-ease-in:    cubic-bezier(0.55, 0, 0.55, 0.2);
+  --tc-ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+  --tc-dur-fast:   120ms;
+  --tc-dur-base:   200ms;
+  --tc-dur-slow:   360ms;
+}
+
+/* --------------------------------------------------------------
+   Surface variants — apply via [data-surface="core|mcp|auth"] on
+   the root or any container to swap the accent tint locally.
+   §29.F Surface Accent Strategy.
+   -------------------------------------------------------------- */
+[data-surface="core"] { --tc-surface-tint: var(--tc-core-blue); }
+[data-surface="mcp"]  {
+  --tc-surface-tint: var(--tc-violet-signal);
+  --tc-accent: var(--tc-violet-signal); /* MCP leans agentic */
+  --tc-accent-2: var(--tc-core-blue);
+}
+[data-surface="auth"] { --tc-surface-tint: var(--tc-steel); }
+[data-surface="journal"] {
+  --tc-surface-tint: var(--tc-phi-gold);
+  --tc-accent-2: var(--tc-phi-gold);
+}
+
+/* =============================================================
+   SEMANTIC TYPE STYLES
+   Use these classes (or copy the rules) wherever you want
+   "the canonical h1," not a one-off.
+   ============================================================= */
+
+.tc-display-xl,
+.tc-display-lg,
+.tc-display-md,
+.tc-h1, .tc-h2, .tc-h3, .tc-h4 {
+  font-family: var(--tc-font-display);
+  color: var(--tc-fg);
+  text-wrap: balance;
+  margin: 0;
+}
+
+.tc-display-xl { font-size: var(--tc-fs-display-xl); line-height: var(--tc-lh-display-xl); letter-spacing: var(--tc-ls-display-xl); font-weight: var(--tc-w-semibold); }
+.tc-display-lg { font-size: var(--tc-fs-display-lg); line-height: var(--tc-lh-display-lg); letter-spacing: var(--tc-ls-display-lg); font-weight: var(--tc-w-semibold); }
+.tc-display-md { font-size: var(--tc-fs-display-md); line-height: var(--tc-lh-display-md); letter-spacing: var(--tc-ls-display-md); font-weight: var(--tc-w-semibold); }
+
+.tc-h1 { font-size: var(--tc-fs-h1); line-height: var(--tc-lh-h1); letter-spacing: var(--tc-ls-h1); font-weight: var(--tc-w-semibold); }
+.tc-h2 { font-size: var(--tc-fs-h2); line-height: var(--tc-lh-h2); letter-spacing: var(--tc-ls-h2); font-weight: var(--tc-w-semibold); }
+.tc-h3 { font-size: var(--tc-fs-h3); line-height: var(--tc-lh-h3); letter-spacing: var(--tc-ls-h3); font-weight: var(--tc-w-medium); }
+.tc-h4 { font-size: var(--tc-fs-h4); line-height: var(--tc-lh-h4); letter-spacing: var(--tc-ls-h4); font-weight: var(--tc-w-medium); }
+
+.tc-body-lg, .tc-body, .tc-body-sm {
+  font-family: var(--tc-font-sans);
+  color: var(--tc-fg);
+  text-wrap: pretty;
+  margin: 0;
+}
+.tc-body-lg { font-size: var(--tc-fs-body-lg); line-height: var(--tc-lh-body-lg); letter-spacing: var(--tc-ls-body-lg); font-weight: var(--tc-w-regular); }
+.tc-body    { font-size: var(--tc-fs-body);    line-height: var(--tc-lh-body);    letter-spacing: var(--tc-ls-body);    font-weight: var(--tc-w-regular); }
+.tc-body-sm { font-size: var(--tc-fs-body-sm); line-height: var(--tc-lh-body-sm); letter-spacing: var(--tc-ls-body-sm); font-weight: var(--tc-w-regular); color: var(--tc-fg-muted); }
+
+.tc-label {
+  font-family: var(--tc-font-sans);
+  font-size: var(--tc-fs-label);
+  line-height: var(--tc-lh-label);
+  letter-spacing: var(--tc-ls-label);
+  font-weight: var(--tc-w-medium);
+  color: var(--tc-fg);
+}
+.tc-label-sm {
+  font-family: var(--tc-font-sans);
+  font-size: var(--tc-fs-label-sm);
+  line-height: var(--tc-lh-label-sm);
+  letter-spacing: var(--tc-ls-label-sm);
+  font-weight: var(--tc-w-medium);
+  color: var(--tc-fg-muted);
+  text-transform: uppercase;
+}
+
+.tc-eyebrow {
+  font-family: var(--tc-font-sans);
+  font-size: var(--tc-fs-eyebrow);
+  letter-spacing: var(--tc-ls-eyebrow);
+  text-transform: uppercase;
+  font-weight: var(--tc-w-semibold);
+  color: var(--tc-fg-dim);
+}
+
+.tc-mono, code, kbd, pre, samp {
+  font-family: var(--tc-font-mono);
+  font-size: var(--tc-fs-mono);
+  line-height: var(--tc-lh-mono);
+  color: var(--tc-fg);
+}
+
+/* Inline code — quiet, on-surface */
+:not(pre) > code {
+  background: var(--tc-surface-2);
+  border: 1px solid var(--tc-outline-variant);
+  border-radius: var(--tc-radius-sm);
+  padding: 1px 6px;
+  font-size: 0.9em;
+}
+
+/* Brand wordmark — text rendering convention */
+.tc-wordmark {
+  font-family: var(--tc-font-display);
+  font-weight: var(--tc-w-medium);
+  letter-spacing: -0.012em;
+  color: var(--tc-fg);
+}
+
+/* Gradient text — for hero moments only */
+.tc-text-gradient {
+  background: var(--tc-gradient-signature);
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+/* =============================================================
+   BASE RESET (opt-in via .tc-root or <body class="tc-root">)
+   ============================================================= */
+.tc-root {
+  background: var(--tc-bg);
+  color: var(--tc-fg);
+  font-family: var(--tc-font-sans);
+  font-size: var(--tc-fs-body);
+  line-height: var(--tc-lh-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}

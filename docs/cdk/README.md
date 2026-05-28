@@ -1,3 +1,8 @@
+---
+title: CDK Overview
+permalink: /cdk/
+---
+
 # AppTheory CDK Guides
 
 `docs/cdk/` is the canonical optional docs surface for AppTheory CDK constructs. Use these guides for deployable

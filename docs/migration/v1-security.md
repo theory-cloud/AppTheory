@@ -1,3 +1,7 @@
+---
+title: v1 Security Migration
+---
+
 # AppTheory v1.0 Security Migration Guide
 
 This guide consolidates the security-hardening changes that intentionally move AppTheory to the v1.0 fail-closed
