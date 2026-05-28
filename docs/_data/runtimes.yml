@@ -27,7 +27,7 @@
             return apptheory.Text(200, "pong"), nil
         })
 
-        // One entrypoint handles HTTP, MCP, AppSync, SQS, EventBridge,
+        // One entrypoint handles HTTP, AppSync, SQS, EventBridge,
         // DynamoDB Streams, Kinesis, and WebSockets.
         lambda.Start(func(ctx context.Context, event json.RawMessage) (any, error) {
             return app.HandleLambda(ctx, event)
@@ -46,7 +46,7 @@
 
     app.get("/ping", () => text(200, "pong"));
 
-    // One entrypoint handles HTTP, MCP, AppSync, SQS, EventBridge,
+    // One entrypoint handles HTTP, AppSync, SQS, EventBridge,
     // DynamoDB Streams, Kinesis, and WebSockets.
     export const handler = async (event: unknown, ctx: unknown) =>
       app.handleLambda(event, ctx);
@@ -65,7 +65,7 @@
     def ping(ctx):
         return text(200, "pong")
 
-    # One entrypoint handles HTTP, MCP, AppSync, SQS, EventBridge,
+    # One entrypoint handles HTTP, AppSync, SQS, EventBridge,
     # DynamoDB Streams, Kinesis, and WebSockets.
     def handler(event, ctx):
         return app.handle_lambda(event, ctx)

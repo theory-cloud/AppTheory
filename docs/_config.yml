@@ -7,9 +7,10 @@ title: AppTheory
 tagline: Contract-first serverless runtime for AWS Lambda — Go, TypeScript, Python.
 description: >-
   The contract-first serverless runtime for the Theory Cloud stack. One
-  application model across Go, TypeScript, and Python — HTTP, MCP, AppSync,
+  application model across Go, TypeScript, and Python for HTTP, AppSync,
   WebSockets, and event-driven workloads on AWS Lambda — with behavioral parity
-  enforced by 128 shared contract test fixtures.
+  enforced by 128 shared contract test fixtures. Go also provides the MCP
+  Streamable HTTP runtime and OAuth-adjacent helpers used by Remote MCP deployments.
 
 # When deployed via the canonical org repo, the site lives at
 # https://theory-cloud.github.io/apptheory/
@@ -150,9 +151,9 @@ tabletheory:
     - id: mcp
       name: MCP servers
       domain: streamable-http
-      desc: Streamable HTTP transport, sessions, resumable SSE, and OAuth-protected remote MCP — packaged as Lambda-native constructs Claude and Claude Code consume directly.
+      desc: Go Streamable HTTP transport, sessions, resumable SSE, and OAuth-protected remote MCP — packaged as Lambda-native constructs Claude and Claude Code consume directly.
       url: /integrations/mcp/
-      cta: See the MCP runtime
+      cta: See the Go MCP runtime
     - id: core
       name: Event workloads
       domain: lambda-events
