@@ -1,3 +1,7 @@
+---
+title: Kinesis + CloudWatch Logs
+---
+
 # Kinesis + CloudWatch Logs
 
 AppTheory's Kinesis ingestion path is a single chain:

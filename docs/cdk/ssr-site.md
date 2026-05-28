@@ -1,3 +1,7 @@
+---
+title: SSR Site
+---
+
 # FaceTheory-First SSR Site (CloudFront + S3 + Lambda URL)
 
 Use this guide when you want the canonical AppTheory deployment pattern for FaceTheory-style SSR, SSG, and ISR on AWS.

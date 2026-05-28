@@ -1,0 +1,167 @@
+# =============================================================
+# AppTheory sidebar navigation
+# =============================================================
+# Each group has a label and a list of items.
+# Each item:
+#   id     — stable identifier (used for prev/next + page lookups)
+#   title  — sidebar label
+#   url    — Jekyll-relative URL (will be prefixed with site.baseurl)
+#   icon   — lucide-style icon id rendered by _includes/icon.html
+#   tag    — optional: new | beta | ga
+#   surface — optional: overrides the page surface (e.g. mcp for the
+#             MCP runtime / Remote-MCP pages)
+#
+# Adding a new page: create the markdown file under docs/ and add an
+# entry here. Update `order` below if it should appear in prev/next.
+# =============================================================
+
+groups:
+  - label: Overview
+    items:
+      - { id: home,                   title: Welcome,                 url: /,                            icon: home }
+      - { id: getting-started,        title: Getting Started,         url: /getting-started/,            icon: play }
+      - { id: api-reference,          title: API Reference,           url: /api-reference/,              icon: book,         tag: ga }
+      - { id: core-patterns,          title: Core Patterns,           url: /core-patterns/,              icon: compass }
+
+  - label: Runtimes
+    items:
+      - { id: runtime-go,             title: Go,                      url: /runtimes/go/,                icon: go-mark,      tag: ga }
+      - { id: runtime-ts,             title: TypeScript,              url: /runtimes/typescript/,        icon: ts-mark,      tag: ga }
+      - { id: runtime-py,             title: Python,                  url: /runtimes/python/,            icon: py-mark,      tag: ga }
+
+  - label: HTTP & Runtime
+    items:
+      - { id: feature-http,           title: HTTP Runtime (P0–P2),    url: /features/http-runtime/,      icon: layers,       tag: ga }
+      - { id: feature-source,         title: Source Provenance,       url: /features/source-provenance/, icon: shield-check }
+      - { id: feature-logging,        title: Logging Profiles,        url: /features/logging-profiles/,  icon: activity }
+      - { id: feature-sanitization,   title: Sanitization,            url: /features/sanitization/,      icon: shield }
+
+  - label: Event Workloads
+    items:
+      - { id: feature-events,         title: Event Workload Contracts, url: /features/event-workloads/,  icon: shuffle,      tag: ga }
+      - { id: feature-jobs,           title: Jobs Ledger,             url: /features/jobs-ledger/,       icon: list-checks }
+
+  - label: MCP
+    items:
+      - { id: int-mcp,                title: MCP Method Surface,      url: /integrations/mcp/,           icon: share,        surface: mcp,  tag: ga }
+      - { id: int-remote-mcp,         title: Remote MCP,              url: /integrations/remote-mcp/,    icon: globe,        surface: mcp }
+      - { id: int-agentcore,          title: AgentCore MCP,           url: /integrations/agentcore-mcp/, icon: cpu,          surface: mcp }
+      - { id: int-remote-autheory,    title: Remote MCP + Autheory,   url: /integrations/remote-mcp-autheory/, icon: key,    surface: mcp }
+
+  - label: CDK
+    items:
+      - { id: cdk-overview,           title: CDK Overview,            url: /cdk/,                                          icon: package }
+      - { id: cdk-getting-started,    title: CDK Getting Started,     url: /cdk/getting-started/,                          icon: play }
+      - { id: cdk-api,                title: CDK API Reference,       url: /cdk/api-reference/,                            icon: book }
+      - { id: cdk-ssr,                title: SSR Site,                url: /cdk/ssr-site/,                                 icon: globe }
+      - { id: cdk-mcp-remote,         title: Remote MCP Server,       url: /cdk/mcp-server-remote-mcp/,                    icon: share,        surface: mcp }
+      - { id: cdk-mcp-agentcore,      title: AgentCore MCP Server,    url: /cdk/mcp-server-agentcore/,                     icon: cpu,          surface: mcp }
+      - { id: cdk-mcp-protected,      title: MCP Protected Resource,  url: /cdk/mcp-protected-resource/,                   icon: lock,         surface: mcp }
+      - { id: cdk-import-pipeline,    title: Import Pipeline,         url: /cdk/import-pipeline/,                          icon: layers }
+      - { id: cdk-kinesis-cwl,        title: Kinesis + CloudWatch Logs, url: /cdk/kinesis-cloudwatch-logs/,                icon: activity }
+      - { id: cdk-rest-streaming,     title: REST API Streaming,      url: /cdk/rest-api-router-streaming/,                icon: zap }
+      - { id: cdk-appsync,            title: AppSync Lambda Resolvers, url: /cdk/appsync-lambda-resolvers/,                icon: git-branch }
+
+  - label: Migration
+    items:
+      - { id: mig-from-lift,          title: From Lift,               url: /migration/from-lift/,                          icon: arrow-right }
+      - { id: mig-v1-security,        title: v1 Security Migration,   url: /migration/v1-security/,                        icon: shield-check }
+      - { id: mig-appsync,            title: AppSync Resolvers,       url: /migration/appsync-lambda-resolvers/,           icon: git-branch }
+
+  - label: Guides
+    items:
+      - { id: testing-guide,          title: Testing,                 url: /testing-guide/,              icon: check }
+      - { id: troubleshooting,        title: Troubleshooting,         url: /troubleshooting/,            icon: life-buoy }
+      - { id: release-process,        title: Release Process,         url: /release-process/,            icon: tag }
+      - { id: development-guidelines, title: Development Guidelines,  url: /development-guidelines/,     icon: check-square }
+
+  - label: Reference
+    items:
+      - { id: ref-contract,           title: Contract Fixtures,       url: /reference/contract-fixtures/, icon: list-checks, tag: ga }
+      - { id: ref-events,             title: Event Shape Dispatch,    url: /reference/event-shapes/,      icon: file-text }
+
+# =============================================================
+# Linear ordering for prev / next pager
+# =============================================================
+order:
+  - home
+  - getting-started
+  - api-reference
+  - core-patterns
+  - runtime-go
+  - runtime-ts
+  - runtime-py
+  - feature-http
+  - feature-source
+  - feature-logging
+  - feature-sanitization
+  - feature-events
+  - feature-jobs
+  - int-mcp
+  - int-remote-mcp
+  - int-agentcore
+  - int-remote-autheory
+  - cdk-overview
+  - cdk-getting-started
+  - cdk-api
+  - cdk-ssr
+  - cdk-mcp-remote
+  - cdk-mcp-agentcore
+  - cdk-mcp-protected
+  - cdk-import-pipeline
+  - cdk-kinesis-cwl
+  - cdk-rest-streaming
+  - cdk-appsync
+  - mig-from-lift
+  - mig-v1-security
+  - mig-appsync
+  - testing-guide
+  - troubleshooting
+  - release-process
+  - development-guidelines
+  - ref-contract
+  - ref-events
+
+# =============================================================
+# URL → page-id map for fast lookups in layouts
+# Used by _includes/sidebar.html to mark active links and by
+# _includes/pager.html for prev/next derivation.
+# =============================================================
+url_to_id:
+  /:                                            home
+  /getting-started/:                            getting-started
+  /api-reference/:                              api-reference
+  /core-patterns/:                              core-patterns
+  /runtimes/go/:                                runtime-go
+  /runtimes/typescript/:                        runtime-ts
+  /runtimes/python/:                            runtime-py
+  /features/http-runtime/:                      feature-http
+  /features/source-provenance/:                 feature-source
+  /features/logging-profiles/:                  feature-logging
+  /features/sanitization/:                      feature-sanitization
+  /features/event-workloads/:                   feature-events
+  /features/jobs-ledger/:                       feature-jobs
+  /integrations/mcp/:                           int-mcp
+  /integrations/remote-mcp/:                    int-remote-mcp
+  /integrations/agentcore-mcp/:                 int-agentcore
+  /integrations/remote-mcp-autheory/:           int-remote-autheory
+  /cdk/:                                        cdk-overview
+  /cdk/getting-started/:                        cdk-getting-started
+  /cdk/api-reference/:                          cdk-api
+  /cdk/ssr-site/:                               cdk-ssr
+  /cdk/mcp-server-remote-mcp/:                  cdk-mcp-remote
+  /cdk/mcp-server-agentcore/:                   cdk-mcp-agentcore
+  /cdk/mcp-protected-resource/:                 cdk-mcp-protected
+  /cdk/import-pipeline/:                        cdk-import-pipeline
+  /cdk/kinesis-cloudwatch-logs/:                cdk-kinesis-cwl
+  /cdk/rest-api-router-streaming/:              cdk-rest-streaming
+  /cdk/appsync-lambda-resolvers/:               cdk-appsync
+  /migration/from-lift/:                        mig-from-lift
+  /migration/v1-security/:                      mig-v1-security
+  /migration/appsync-lambda-resolvers/:         mig-appsync
+  /testing-guide/:                              testing-guide
+  /troubleshooting/:                            troubleshooting
+  /release-process/:                            release-process
+  /development-guidelines/:                     development-guidelines
+  /reference/contract-fixtures/:                ref-contract
+  /reference/event-shapes/:                     ref-events

@@ -1,3 +1,7 @@
+---
+title: Migrating From Lift
+---
+
 # Lift → AppTheory Migration Guide
 
 Goal: provide a predictable migration path from `pay-theory/lift` to AppTheory.

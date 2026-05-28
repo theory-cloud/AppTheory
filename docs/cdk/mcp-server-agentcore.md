@@ -1,3 +1,7 @@
+---
+title: AgentCore MCP Server
+---
+
 # MCP Server for Bedrock AgentCore
 
 This guide shows how to deploy an MCP endpoint for Bedrock AgentCore using AppTheory CDK.

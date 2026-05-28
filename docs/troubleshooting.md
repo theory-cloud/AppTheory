@@ -1,3 +1,7 @@
+---
+title: Troubleshooting
+---
+
 # AppTheory Troubleshooting
 
 This guide maps common symptoms to verified fixes.

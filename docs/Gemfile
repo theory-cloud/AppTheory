@@ -1,0 +1,22 @@
+# frozen_string_literal: true
+
+# Jekyll site for TableTheory — Theory Cloud documentation.
+# Built and deployed via .github/workflows/pages.yml using Ruby 3.3.
+# Other Theory Cloud frameworks can copy this file unchanged.
+
+source "https://rubygems.org"
+
+gem "jekyll", "~> 4.3"
+
+group :jekyll_plugins do
+  gem "jekyll-relative-links", "~> 0.7"
+  gem "jekyll-include-cache",  "~> 0.2"
+  gem "jekyll-sitemap",        "~> 1.4"
+  gem "jekyll-seo-tag",        "~> 2.8"
+end
+
+# Required for Ruby 3.x — formerly bundled with the stdlib.
+gem "webrick", "~> 1.8"
+gem "csv",     "~> 3.3"
+gem "base64",  "~> 0.2"
+gem "logger",  "~> 1.6"
