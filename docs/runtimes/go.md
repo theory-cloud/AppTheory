@@ -103,11 +103,12 @@ func TestHello(t *testing.T) {
 Default route registration is compatibility-oriented and may silently ignore invalid patterns. In tests and CI, prefer the strict variants:
 
 ```go
-app.GetStrict("/users/{id}", h)
-app.HandleStrict("GET", "/users/{id}", h)
+if _, err := app.GetStrict("/users/{id}", h); err != nil {
+    t.Fatal(err)
+}
 ```
 
-`Strict` panics on invalid patterns at registration time so a bad route fails the build instead of silently 404-ing in production.
+Go strict helpers return `(*App, error)` on invalid patterns at registration time so a bad route fails the build instead of silently 404-ing in production. TypeScript strict helpers throw and Python strict helpers raise.
 
 ## HTTP error format
 
@@ -124,16 +125,36 @@ This setting **applies to HTTP only.** AppSync and WebSocket error payloads keep
 ## MCP runtime
 
 ```go
-import "github.com/theory-cloud/apptheory/runtime/mcp"
+import (
+    "context"
+    "encoding/json"
 
-server := mcp.NewServer(mcp.Config{
-    Name:    "example",
-    Version: "1.0.0",
+    apptheory "github.com/theory-cloud/apptheory/runtime"
+    "github.com/theory-cloud/apptheory/runtime/mcp"
+)
+
+srv := mcp.NewServer("example", "1.0.0")
+
+_ = srv.Registry().RegisterTool(mcp.ToolDef{
+    Name:        "echo",
+    Description: "Echo back the provided message.",
+    InputSchema: json.RawMessage(`{"type":"object","properties":{"message":{"type":"string"}},"required":["message"]}`),
+}, func(ctx context.Context, args json.RawMessage) (*mcp.ToolResult, error) {
+    var in struct{ Message string `json:"message"` }
+    if err := json.Unmarshal(args, &in); err != nil {
+        return nil, err
+    }
+    content := []mcp.ContentBlock{
+        {Type: "text", Text: in.Message},
+    }
+    return &mcp.ToolResult{Content: content}, nil
 })
-server.RegisterTool("echo", echoTool)
 
 app := apptheory.New()
-app.HandleMCP("/mcp", server)
+h := srv.Handler()
+app.Post("/mcp", h)
+app.Get("/mcp", h)
+app.Delete("/mcp", h)
 ```
 
 See the [MCP Method Surface](../integrations/mcp.md) for the full Streamable HTTP contract, and [Remote MCP](../integrations/remote-mcp.md) for OAuth-protected deployments.

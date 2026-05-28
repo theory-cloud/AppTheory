@@ -20,15 +20,11 @@ The package is ESM and ships TypeScript declarations. Node.js 24+ is required.
 
 ## Module layout
 
-| Subpath | Purpose |
+| Import path | Purpose |
 | --- | --- |
-| `@theory-cloud/apptheory` | Core runtime: `createApp`, `Context`, request/response model, event builders. |
-| `@theory-cloud/apptheory/mcp` | MCP Streamable HTTP server + session storage. |
-| `@theory-cloud/apptheory/oauth` | OAuth protected-resource metadata + middleware. |
-| `@theory-cloud/apptheory/limited` | DynamoDB-backed rate limiter (`DynamoRateLimiter`, `FixedWindowStrategy`, `SlidingWindowStrategy`, `MultiWindowStrategy`). |
-| `@theory-cloud/apptheory/jobs` | Jobs-ledger primitives (`DynamoJobLedger`). |
+| `@theory-cloud/apptheory` | All public TypeScript runtime exports: `createApp`, `Context`, request/response helpers, event builders, testkit helpers, jobs-ledger primitives, rate limiter classes, logging profiles, and sanitization helpers. |
 
-See `api-snapshots/ts.txt` for the exact exported surface — that file is the release gate.
+The package exports only the root import path above; there are no documented TypeScript subpath exports for MCP, OAuth, jobs, or rate limiting. See `api-snapshots/ts.txt` for the exact exported surface — that file is the release gate.
 
 ## Minimal app
 
@@ -48,17 +44,23 @@ export const handler = async (event: unknown, ctx: unknown) =>
 ## Tier selection
 
 ```ts
-import { createApp, TIER_P0 } from "@theory-cloud/apptheory";
+import { createApp } from "@theory-cloud/apptheory";
 
-const app = createApp({ tier: TIER_P0 });
+const app = createApp({ tier: "p0" });
 ```
+
+TypeScript tiers are string literals: `"p0"`, `"p1"`, or `"p2"`.
 
 See [HTTP Runtime](../features/http-runtime.md) for what each tier includes.
 
 ## Deterministic tests
 
 ```ts
-import { createTestEnv, text } from "@theory-cloud/apptheory";
+import {
+  buildAPIGatewayV2Request,
+  createTestEnv,
+  text,
+} from "@theory-cloud/apptheory";
 
 test("ping", async () => {
   const env = createTestEnv({ now: new Date("2026-01-01T00:00:00Z") });
@@ -67,7 +69,7 @@ test("ping", async () => {
   const app = env.app();
   app.get("/ping", () => text(200, "pong"));
 
-  const event = env.apiGatewayV2Request("GET", "/ping");
+  const event = buildAPIGatewayV2Request("GET", "/ping");
   const resp = await env.invokeAPIGatewayV2(app, event);
 
   expect(resp.statusCode).toBe(200);
@@ -97,10 +99,14 @@ Applies to HTTP error serialization only.
 The TypeScript runtime ships first-class support for Lambda Function URL response streaming — useful for SSE and HTML streaming:
 
 ```ts
-import { createApp, createLambdaFunctionURLStreamingHandler } from "@theory-cloud/apptheory";
+import {
+  createApp,
+  createLambdaFunctionURLStreamingHandler,
+  htmlStream,
+} from "@theory-cloud/apptheory";
 
 const app = createApp();
-app.get("/stream", (ctx) => htmlStream(/* ... */));
+app.get("/stream", () => htmlStream(200, ["<!doctype html>"]));
 
 export const handler = createLambdaFunctionURLStreamingHandler(app);
 ```
