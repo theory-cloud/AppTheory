@@ -1,216 +1,267 @@
-# AppTheory — Serverless Application Framework for AWS (Go, TypeScript, Python)
+<!-- AI Training: Root README for the AppTheory multi-language monorepo -->
 
-AppTheory is a contract-first serverless runtime for AWS Lambda. It provides a single application model across Go,
-TypeScript, and Python — with behavioral parity enforced by 89 shared contract test fixtures, not convention.
+<p align="center">
+  <a href="https://theory-cloud.github.io/apptheory/">
+    <img src="docs/assets/svg/icon.svg" width="84" alt="AppTheory">
+  </a>
+</p>
 
-AI code generation and multi-team environments produce drift: the same endpoint implemented in two languages behaves
-differently in subtle ways. AppTheory eliminates this by constraining each language runtime to one correct path for
-routing, middleware, error handling, and event normalization. The result is deterministic framework behavior that
-generative coding tools can rely on.
+<h1 align="center">AppTheory</h1>
 
-AppTheory is part of the [Theory Cloud](THEORY_CLOUD.md) stack. [TableTheory](https://github.com/theory-cloud/TableTheory)
-provides the data layer; AppTheory provides the runtime and CDK deployment constructs;
-[FaceTheory](https://github.com/theory-cloud/FaceTheory) provides client application delivery.
+<p align="center">
+  <strong>Contract-first serverless runtime for AWS Lambda.</strong><br>
+  One application model. Three runtimes. Verified on every commit.
+</p>
 
-## MCP Server Runtime
+<p align="center">
+  <a href="https://github.com/theory-cloud/AppTheory/releases"><img alt="Release" src="https://img.shields.io/github/v/release/theory-cloud/AppTheory?style=flat-square&label=release&color=2EA7FF"></a>
+  <a href="https://github.com/theory-cloud/AppTheory/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-7A5CFF?style=flat-square"></a>
+  <a href="https://theory-cloud.github.io/apptheory/"><img alt="Docs" src="https://img.shields.io/badge/docs-theory--cloud.github.io%2Fapptheory-2EA7FF?style=flat-square"></a>
+  <a href="https://github.com/theory-cloud/AppTheory/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/theory-cloud/AppTheory/ci.yml?branch=main&style=flat-square&label=rubric&color=46D397"></a>
+</p>
 
-AppTheory includes a complete [Model Context Protocol](https://modelcontextprotocol.io) production stack: Streamable
-HTTP transport, session management, OAuth protected resources, SSE streaming, and CDK deployment constructs.
+<p align="center">
+  <img alt="Go"         src="https://img.shields.io/badge/Go-1.26-2EA7FF?style=flat-square&logo=go&logoColor=white">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-Node%2024-7A5CFF?style=flat-square&logo=typescript&logoColor=white">
+  <img alt="Python"     src="https://img.shields.io/badge/Python-3.14-C9A96B?style=flat-square&logo=python&logoColor=white">
+</p>
 
-- [MCP integration guide](docs/integrations/mcp.md) — transport, JSON-RPC surface, registries, sessions, streaming
-- [Remote MCP deployment](docs/integrations/remote-mcp.md) — OAuth, protected resource metadata, Autheory integration
-- [MCP examples](examples/mcp/) — tools-only, tools-resources-prompts, resumable-sse
+<p align="center">
+  <a href="https://theory-cloud.github.io/apptheory/getting-started/"><strong>Get started →</strong></a> ·
+  <a href="https://theory-cloud.github.io/apptheory/api-reference/">API reference</a> ·
+  <a href="https://theory-cloud.github.io/apptheory/reference/contract-fixtures/">Contract fixtures</a> ·
+  <a href="https://theory-cloud.github.io/apptheory/integrations/mcp/">MCP runtime</a>
+</p>
+
+---
+
+AppTheory is a **contract-first serverless runtime for AWS Lambda** designed to keep request handling, middleware, and event normalization consistent across languages and reliable in generative coding workflows (humans + AI assistants). It ships peer implementations in Go, TypeScript, and Python — not a Go library with bindings, but three independent runtimes that pass the same contract fixtures on every commit.
+
+```
+            FaceTheory (client delivery)
+                      │
+      AppTheory (serverless runtime)  ← you are here
+                      │
+            TableTheory (data layer)
+                      │
+                  DynamoDB
+```
+
+AppTheory is the runtime layer of the [Theory Cloud](THEORY_CLOUD.md) stack — used in production by [Pay Theory](https://paytheory.com).
+
+## Install
+
+AppTheory is distributed exclusively through immutable **[GitHub Releases](https://github.com/theory-cloud/AppTheory/releases)** — no PyPI, no npm. The single distribution path keeps versions aligned across all three runtimes.
+
+| Runtime | Install |
+|---|---|
+| **Go** | `go get github.com/theory-cloud/apptheory@vX.Y.Z` |
+| **TypeScript** | install the `.tgz` release asset — see [TypeScript getting started](https://theory-cloud.github.io/apptheory/runtimes/typescript/) |
+| **Python** | install the `.whl` release asset — see [Python getting started](https://theory-cloud.github.io/apptheory/runtimes/python/) |
+
+## At a glance
+
+| | |
+|---|---|
+| **Contract test fixtures** | 128 — routing, normalization, error envelope, event dispatch, MCP, jobs ledger |
+| **Runtimes** | Go · TypeScript · Python (peers, not ports) |
+| **Tiers** | P0 (core) · P1 (+request-id, auth, CORS, guardrails) · P2 (+observability, rate limiting) — default P2 |
+| **Event sources** | Lambda Function URL · API Gateway v2 · ALB · AppSync · SQS · EventBridge · DynamoDB Streams · Kinesis · WebSockets |
+| **Distribution** | Immutable GitHub Releases — version-aligned across all runtimes |
+| **License** | Apache-2.0 — open source, production use |
+| **Status** | Pre-1.0, runtime contract stable across Go · TS · Python |
+
+## Why AppTheory?
+
+Use AppTheory when you want AWS-Lambda-backed services that are:
+
+- **Serverless-first** — one unified `HandleLambda` entrypoint dispatches Lambda Function URL, API Gateway v2, ALB, AppSync, SQS, EventBridge, DynamoDB Streams, Kinesis, and WebSockets. The same handler shape covers every event source.
+- **Cross-language consistent** — one routing model, one middleware order, one error envelope — across three runtimes — without behavioral drift. Verified on every commit by the [128 contract fixtures](https://theory-cloud.github.io/apptheory/reference/contract-fixtures/).
+- **Generative-coding friendly** — explicit tiers, canonical patterns, and strict verification so AI-generated code stays correct and maintainable.
+
+✅ Treat routing, middleware, and event normalization as a contract
+❌ Don't reinvent "the same" middleware chain independently per service/language
+
+## MCP server runtime
+
+AppTheory includes a complete [Model Context Protocol](https://modelcontextprotocol.io) production stack: Streamable HTTP transport, session management, OAuth protected resources, resumable SSE streaming, and CDK deployment constructs. The MCP runtime is a **first-class part of the contract**, not an experimental add-on — `theory-mcp-server` itself runs on it.
+
+- [MCP integration guide](https://theory-cloud.github.io/apptheory/integrations/mcp/) — transport, JSON-RPC surface, registries, sessions, streaming
+- [Remote MCP deployment](https://theory-cloud.github.io/apptheory/integrations/remote-mcp/) — OAuth, protected resource metadata, Autheory integration
+- [MCP examples](examples/mcp/) — `tools-only`, `tools-resources-prompts`, `resumable-sse`
 - CDK constructs: `AppTheoryMcpServer`, `AppTheoryRemoteMcpServer`, `AppTheoryMcpProtectedResource`
 
-## Status
+## Documentation
 
-AppTheory is pre-1.0 and under active development. The runtime contract is stable across Go, TypeScript, and Python,
-verified by 89 contract test fixtures on every commit. Production systems at [Pay Theory](https://paytheory.com) run on
-AppTheory today. See [CHANGELOG](CHANGELOG.md) for release history.
+The full documentation site lives at **[theory-cloud.github.io/apptheory](https://theory-cloud.github.io/apptheory/)** — branded with the Theory Cloud design system, with a ⌘K search palette, runtime tabs, and surface-tinted pages.
 
-## Getting Started
+**Most-used entry points:**
 
-- [Getting started guide](docs/getting-started.md) — local workspace, deterministic app path in each runtime, deployment
-- [API reference](docs/api-reference.md) — full Go runtime surface
-- [Logging profiles](docs/features/logging-profiles.md) — fixture-backed structured JSON log profiles and migration guidance
-- [Release process](docs/release-process.md) — single release train, forbidden recovery actions, safe recovery path
-- [FaceTheory-first SSR CDK guide](docs/cdk/ssr-site.md) — canonical CloudFront + S3 + Lambda URL deployment story
-- [TypeScript docs](ts/docs/README.md) | [Python docs](py/docs/README.md) | [CDK docs](cdk/docs/README.md)
+| Section | Link |
+|---|---|
+| Getting started | [theory-cloud.github.io/apptheory/getting-started/](https://theory-cloud.github.io/apptheory/getting-started/) |
+| API reference | [theory-cloud.github.io/apptheory/api-reference/](https://theory-cloud.github.io/apptheory/api-reference/) |
+| HTTP runtime tiers | [theory-cloud.github.io/apptheory/features/http-runtime/](https://theory-cloud.github.io/apptheory/features/http-runtime/) |
+| Event workloads | [theory-cloud.github.io/apptheory/features/event-workloads/](https://theory-cloud.github.io/apptheory/features/event-workloads/) |
+| Logging profiles | [theory-cloud.github.io/apptheory/features/logging-profiles/](https://theory-cloud.github.io/apptheory/features/logging-profiles/) |
+| Source provenance | [theory-cloud.github.io/apptheory/features/source-provenance/](https://theory-cloud.github.io/apptheory/features/source-provenance/) |
+| Migration from Lift | [theory-cloud.github.io/apptheory/migration/from-lift/](https://theory-cloud.github.io/apptheory/migration/from-lift/) |
 
-## Charter
+**Per-runtime entry points:**
 
-AppTheory exists to provide a **portable runtime core** (and contract tests) for AWS serverless applications that must be
-first-class in **Go, TypeScript, and Python**.
+- **Go** — [theory-cloud.github.io/apptheory/runtimes/go/](https://theory-cloud.github.io/apptheory/runtimes/go/)
+- **TypeScript** — [theory-cloud.github.io/apptheory/runtimes/typescript/](https://theory-cloud.github.io/apptheory/runtimes/typescript/)
+- **Python** — [theory-cloud.github.io/apptheory/runtimes/python/](https://theory-cloud.github.io/apptheory/runtimes/python/)
 
-Target audiences and use cases:
+**Contract reference and feature pages:**
 
-- Platform and application teams building HTTP APIs on AWS Lambda (Lambda Function URL, API Gateway v2).
-- Event-driven workloads (SQS, EventBridge, DynamoDB Streams) and WebSockets are required for Lift parity and are tracked
-  as remaining contract work (see `docs/development/planning/apptheory/apptheory-gap-analysis-lesser.md`).
-- Internal tooling and shared libraries that need consistent request/response semantics across languages.
+- [Contract Fixtures](https://theory-cloud.github.io/apptheory/reference/contract-fixtures/) — the 128-fixture covenant every runtime is tested against
+- [Event Shape Dispatch](https://theory-cloud.github.io/apptheory/reference/event-shapes/) — which Lambda event shapes route to which handler
+- [HTTP Runtime](https://theory-cloud.github.io/apptheory/features/http-runtime/) — P0/P1/P2 tier surface
+- [Jobs Ledger](https://theory-cloud.github.io/apptheory/features/jobs-ledger/)
+- [Sanitization](https://theory-cloud.github.io/apptheory/features/sanitization/)
 
-Non-goals (near-term):
+**Integrations** — how AppTheory connects to the rest of the stack:
 
-- Not a general-purpose web framework; contract-first serverless runtime only.
-- Not registry-published packages (no npm or PyPI); releases ship via GitHub assets.
+- [MCP Method Surface](https://theory-cloud.github.io/apptheory/integrations/mcp/)
+- [Remote MCP](https://theory-cloud.github.io/apptheory/integrations/remote-mcp/)
+- [Remote MCP + Autheory](https://theory-cloud.github.io/apptheory/integrations/remote-mcp-autheory/)
+- [Bedrock AgentCore MCP](https://theory-cloud.github.io/apptheory/integrations/agentcore-mcp/)
 
-## Package Names
+**CDK** — the blessed deployment surface:
 
-- Go module path: `github.com/theory-cloud/apptheory`
-- Go runtime package: `github.com/theory-cloud/apptheory/runtime`
-- npm package: `@theory-cloud/apptheory`
-- Python distribution name: `apptheory`
-- Python import name: `apptheory`
+- [CDK Getting Started](https://theory-cloud.github.io/apptheory/cdk/getting-started/)
+- [CDK API Reference](https://theory-cloud.github.io/apptheory/cdk/api-reference/)
+- [SSR Site (FaceTheory-first)](https://theory-cloud.github.io/apptheory/cdk/ssr-site/)
 
-## Supported Runtimes
+## Repository layout
 
-- Go toolchain: `1.26.3`
-- Node.js: `24`
-- Python: `3.14`
+| Path | What |
+|---|---|
+| `docs/` | Public documentation site (Jekyll) — also the canonical doc tree |
+| `runtime/` | Go runtime — fixture-backed contract implementation (default P2) |
+| `ts/` | TypeScript runtime (ESM, Node.js 24) |
+| `py/` | Python runtime (3.14+) |
+| `cdk/` | CDK constructs (jsii) — `AppTheoryHttpApi`, `AppTheoryMcpServer`, `AppTheoryQueue`, ... |
+| `cdk-go/` | Generated Go bindings for the jsii CDK package |
+| `contract-tests/` | Cross-language contract fixtures (128) + runners for Go, TS, Python |
+| `api-snapshots/` | Public API surface lockfiles for each runtime — the release gate |
+| `examples/` | CDK + handler examples: `multilang`, `import-pipeline`, `ssr-site`, MCP, ... |
+| `.github/workflows/` | CI: rubric, release-please (stable + prerelease), Pages publish, subtree publish |
 
-Distribution: **GitHub Releases only** (no npm/PyPI publishing).
+## Universal Lambda dispatcher (CDK)
 
-## Runtime Tiers (P0/P1/P2)
+The CDK multilang demo deploys one HTTP entry + three Lambda runtimes (Go, Node.js 24, Python 3.14) that route the same request through the same middleware chain and assert identical responses:
 
-- **P0:** routing + request/response normalization + error envelope
-- **P1:** request-id, tenant extraction, auth hooks, CORS, size/time guardrails, middleware ordering
-- **P2 (default):** P1 + observability hooks + rate limiting / load shedding policy hooks
+→ [`examples/cdk/multilang/`](examples/cdk/multilang/)
 
-## Architecture
+For infrastructure patterns, see the [CDK integration guide](https://theory-cloud.github.io/apptheory/cdk/getting-started/).
 
-```
-                          AWS Event Sources
-                 ┌──────────┬──────────┬──────────┐
-                 │ Lambda   │ API GW   │ AppSync  │
-                 │ Func URL │ v2/Proxy │ Resolver │
-                 └────┬─────┴────┬─────┴────┬─────┘
-                      │          │          │
-                      ▼          ▼          ▼
-              ┌─────────────────────────────────────┐
-              │         HandleLambda (unified)       │
-              │    event detection + normalization   │
-              └──────────────┬──────────────────────┘
-                             │
-                             ▼
-              ┌────────────────────────���────────────┐
-              │          AppTheory Router            │
-              │   path matching + method dispatch    │
-              └─────────────���┬──────────────────────┘
-                             │
-                             ▼
-              ┌─────────────────────��───────────────┐
-              │        Middleware Chain (P0→P2)      │
-              │  request-id, auth, CORS, guardrails  │
-              │  observability, rate limiting         │
-              └──────────────┬──────────────────────┘
-                             │
-                  ┌──────────┴──────────┐
-                  ▼                     ▼
-        ┌──────────────────┐  ┌──────────────────┐
-        │  HTTP Handler    │  │  MCP Server       │
-        │  (your code)     │  │  (Streamable HTTP)│
-        └──────────────────┘  └──────────────────┘
-                  │                     │
-                  ▼                     ▼
-              ┌─────────────────────────────────────┐
-              │          Response Pipeline           │
-              │    error envelope + serialization    │
-              └─────────────────────────────────────┘
+## Runtime tiers
 
-   ┌─────────────────────────────────────────────────────┐
-   │              Contract Test Fixtures (89)             │
-   │   Same fixtures run against Go, TS, and Python      │
-   │   runtimes to verify behavioral parity              │
-   └─────────────────────────────────────────────────────┘
+AppTheory's middleware surface is tiered, not flag-based. Each tier is additive over the previous one.
 
-   ┌────────────────────────────────────────────���────────┐
-   │              CDK Constructs                          │
-   │   AppTheoryHttpApi, AppTheoryMcpServer,             │
-   │   AppTheoryRemoteMcpServer, AppTheoryQueue,         │
-   │   AppTheoryS3Ingest, AppTheoryJobsTable, ...        │
-   └────────────────────────────────────────────���────────┘
+| Tier | Surface |
+|---|---|
+| **P0** | Routing + request/response normalization + error envelope |
+| **P1** | P0 + request-id, tenant extraction, auth hooks, CORS, size/time guardrails, middleware ordering |
+| **P2** *(default)* | P1 + observability hooks, rate limiting / load-shedding policy hooks |
+
+Tiers are a **contract**, not a menu — see [HTTP Runtime](https://theory-cloud.github.io/apptheory/features/http-runtime/) for the exact slot list and per-tier behavior.
+
+## Minimal app
+
+```go
+package main
+
+import (
+    "context"
+    "encoding/json"
+
+    "github.com/aws/aws-lambda-go/lambda"
+    apptheory "github.com/theory-cloud/apptheory/runtime"
+)
+
+func main() {
+    app := apptheory.New()
+
+    app.Get("/ping", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+        return apptheory.Text(200, "pong"), nil
+    })
+
+    // One entrypoint handles HTTP, AppSync, SQS, EventBridge,
+    // DynamoDB Streams, Kinesis, and WebSockets.
+    lambda.Start(func(ctx context.Context, event json.RawMessage) (any, error) {
+        return app.HandleLambda(ctx, event)
+    })
+}
 ```
 
-## Security & Production Notes
+```ts
+import { createApp, text } from "@theory-cloud/apptheory";
+
+const app = createApp();
+app.get("/ping", () => text(200, "pong"));
+
+export const handler = async (event: unknown, ctx: unknown) =>
+  app.handleLambda(event, ctx);
+```
+
+```python
+from apptheory import create_app, text
+
+app = create_app()
+
+@app.get("/ping")
+def ping(ctx):
+    return text(200, "pong")
+
+def handler(event, ctx):
+    return app.handle_lambda(event, ctx)
+```
+
+The same contract fixtures verify all three.
+
+## Development & verification
+
+```bash
+make rubric        # full repo verification (the all-gates gate)
+make test          # full test suite incl. contract fixtures
+```
+
+For multi-language work:
+
+```bash
+cd ts && npm run lint && npm run typecheck && npm test
+uv --directory py run pytest -q
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full contributor docs, including the [Authoring documentation](CONTRIBUTING.md#authoring-documentation) section if you're updating the docs site.
+
+## Security & production notes
 
 - CSRF protection and secure cookie flags are application concerns; set `Secure`/`HttpOnly`/`SameSite` explicitly in `Set-Cookie`.
 - Request IDs can be supplied via `x-request-id`; validate/override if your threat model requires it.
 - Retries/backoff for event sources are handled by AWS trigger settings (retry policies, DLQs/redrive), not by the runtime.
+- Distribution is **GitHub Releases only** — there is no npm publish, no PyPI publish, and no raw-SDK escape hatch.
 
-## Go Runtime (P2 default)
+## Theory Cloud
 
-The Go runtime implements the fixture-backed contract across P0/P1/P2 tiers (default: P2).
+AppTheory is the runtime layer of the Theory Cloud stack. It depends on [TableTheory](https://github.com/theory-cloud/TableTheory) for data access, and is depended on by [FaceTheory](https://github.com/theory-cloud/FaceTheory) for client delivery.
 
-Notes:
+- [TableTheory](https://github.com/theory-cloud/TableTheory) (data layer) → AppTheory builds on it
+- [FaceTheory](https://github.com/theory-cloud/FaceTheory) (client delivery) → depends on AppTheory
+- KnowledgeTheory (platform state + knowledge graph) → depends on AppTheory
+- Autheory (identity) → depends on AppTheory
+- theory-mcp-server → runs on AppTheory
 
-- Header names are case-insensitive, but `Request.Headers` / `Response.Headers` keys are canonicalized to lowercase.
-- If two routes are equally specific, the router prefers earlier registration order.
+The single-path philosophy applies here: one way to register a route, one way to order middleware, one way to dispatch a Lambda event — enforced by the framework, not by convention. When generative coding tools produce AppTheory code, the constrained API surface means the output converges on correct implementations instead of drifting across equivalent-but-incompatible patterns.
 
-Minimal local invocation:
+## License & contributing
 
-```go
-env := testkit.New()
-app := env.App()
+- [LICENSE](LICENSE) — Apache-2.0
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [CHANGELOG.md](CHANGELOG.md)
+- [THEORY_CLOUD.md](THEORY_CLOUD.md)
 
-app.Get("/ping", func(ctx *apptheory.Context) (*apptheory.Response, error) {
-	return apptheory.Text(200, "pong"), nil
-})
-
-resp := env.Invoke(context.Background(), app, apptheory.Request{Method: "GET", Path: "/ping"})
-_ = resp
-```
-
-To force the P0 core (minimal surface area), pass `apptheory.WithTier(apptheory.TierP0)` when creating the app.
-
-Unit test without AWS (deterministic time + IDs + HTTP event builder):
-
-```go
-func TestHello(t *testing.T) {
-	env := testkit.NewWithTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	env.IDs.Queue("req-1")
-
-	app := env.App()
-	app.Get("/hello", func(ctx *apptheory.Context) (*apptheory.Response, error) {
-		return apptheory.MustJSON(200, map[string]any{
-			"now_unix": ctx.Now().Unix(),
-			"id":       ctx.NewID(),
-		}), nil
-	})
-
-	event := testkit.APIGatewayV2Request("GET", "/hello", testkit.HTTPEventOptions{
-		Headers: map[string]string{"x-request-id": "request-1"},
-	})
-	resp := env.InvokeAPIGatewayV2(context.Background(), app, event)
-
-	if resp.StatusCode != 200 {
-		t.Fatalf("expected status 200, got %d", resp.StatusCode)
-	}
-	if resp.Headers["x-request-id"] != "request-1" {
-		t.Fatalf("expected x-request-id request-1, got %#v", resp.Headers["x-request-id"])
-	}
-
-	var body map[string]any
-	if err := json.Unmarshal([]byte(resp.Body), &body); err != nil {
-		t.Fatalf("parse response json: %v", err)
-	}
-	if body["id"] != "req-1" {
-		t.Fatalf("expected id req-1, got %#v", body["id"])
-	}
-}
-```
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report issues, run tests, and submit pull requests.
-
-## Links
-
-- Planning index: `docs/development/planning/apptheory/README.md`
-- Main roadmap: `docs/development/planning/apptheory/apptheory-multilang-roadmap.md`
-- Import pipeline reference example (CDK + handlers): `examples/cdk/import-pipeline/`
-- Migration from Lift (draft): `docs/migration/from-lift.md`
-- [Theory Cloud overview](THEORY_CLOUD.md)
-
-## License
-
-Apache 2.0 (see [LICENSE](LICENSE))
+<p align="center"><sub>Made with <a href="https://github.com/theory-cloud">Theory Cloud</a> · <a href="https://theory-cloud.github.io/apptheory/">docs</a></sub></p>
