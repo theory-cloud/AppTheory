@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.12.0](https://github.com/theory-cloud/AppTheory/compare/v1.11.0...v1.12.0) (2026-05-28)
+
+
+### Features
+
+* **cdk:** add CloudWatch Logs subscription construct ([16d1970](https://github.com/theory-cloud/AppTheory/commit/16d1970e0ce2e760ba6c5470fe576a2a4f52bda7))
+* **cdk:** add CloudWatch Logs subscription construct ([d52271d](https://github.com/theory-cloud/AppTheory/commit/d52271d65cf66d49f1f47fe75a826949382fce8c))
+
+
+### Bug Fixes
+
+* **cdk:** avoid duplicate DynamoDB stream grant ([8f85e1d](https://github.com/theory-cloud/AppTheory/commit/8f85e1d2250e80582e0ee9d7e09e816e82df4a1c))
+* **cdk:** replace deprecated CloudFront certificates ([44f3b98](https://github.com/theory-cloud/AppTheory/commit/44f3b9863ef37d834f943ba5dd5107c0d22e229e))
+* **cdk:** replace deprecated CloudFront certificates ([99a64e9](https://github.com/theory-cloud/AppTheory/commit/99a64e97dc08318b18cff6ab216dc0c4ab8cc4b5))
+* **cdk:** stop deprecated rest compression prop ([8193dc5](https://github.com/theory-cloud/AppTheory/commit/8193dc57763a3627f4b62ac443996c2885b638d5))
+* **cdk:** THE-1672 stop deprecated REST compression prop ([626d8dc](https://github.com/theory-cloud/AppTheory/commit/626d8dc25acbf892f4af97477ad6d6e3d0b12839))
+* **cdk:** update AWS CDK baseline ([0b56111](https://github.com/theory-cloud/AppTheory/commit/0b56111906e51581dd238d049296c74a3cc490f6))
+* **cdk:** update AWS CDK baseline for THE-1671 ([7d081c2](https://github.com/theory-cloud/AppTheory/commit/7d081c2979c44580684dc0ba2484f2f86e4b72d6))
+* **pages:** publish docs site from staging ([2073d6c](https://github.com/theory-cloud/AppTheory/commit/2073d6cce1d9732d9046a8b2bdd5366dce33f40a))
+
+## [1.12.0-rc](https://github.com/theory-cloud/AppTheory/compare/v1.11.0...v1.12.0-rc) (2026-05-28)
+
+
+### Features
+
+* **cdk:** add CloudWatch Logs subscription construct ([16d1970](https://github.com/theory-cloud/AppTheory/commit/16d1970e0ce2e760ba6c5470fe576a2a4f52bda7))
+* **cdk:** add CloudWatch Logs subscription construct ([d52271d](https://github.com/theory-cloud/AppTheory/commit/d52271d65cf66d49f1f47fe75a826949382fce8c))
+
+
+### Bug Fixes
+
+* **cdk:** avoid duplicate DynamoDB stream grant ([8f85e1d](https://github.com/theory-cloud/AppTheory/commit/8f85e1d2250e80582e0ee9d7e09e816e82df4a1c))
+* **cdk:** replace deprecated CloudFront certificates ([44f3b98](https://github.com/theory-cloud/AppTheory/commit/44f3b9863ef37d834f943ba5dd5107c0d22e229e))
+* **cdk:** replace deprecated CloudFront certificates ([99a64e9](https://github.com/theory-cloud/AppTheory/commit/99a64e97dc08318b18cff6ab216dc0c4ab8cc4b5))
+* **cdk:** stop deprecated rest compression prop ([8193dc5](https://github.com/theory-cloud/AppTheory/commit/8193dc57763a3627f4b62ac443996c2885b638d5))
+* **cdk:** THE-1672 stop deprecated REST compression prop ([626d8dc](https://github.com/theory-cloud/AppTheory/commit/626d8dc25acbf892f4af97477ad6d6e3d0b12839))
+* **cdk:** update AWS CDK baseline ([0b56111](https://github.com/theory-cloud/AppTheory/commit/0b56111906e51581dd238d049296c74a3cc490f6))
+* **cdk:** update AWS CDK baseline for THE-1671 ([7d081c2](https://github.com/theory-cloud/AppTheory/commit/7d081c2979c44580684dc0ba2484f2f86e4b72d6))
+* **pages:** publish docs site from staging ([2073d6c](https://github.com/theory-cloud/AppTheory/commit/2073d6cce1d9732d9046a8b2bdd5366dce33f40a))
+
 ## [1.11.0](https://github.com/theory-cloud/AppTheory/compare/v1.10.0...v1.11.0) (2026-05-27)
 
 
