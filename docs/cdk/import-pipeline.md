@@ -1,3 +1,7 @@
+---
+title: Import Pipeline
+---
+
 # Import Pipeline Constructs
 
 This guide collects the canonical AppTheory CDK constructs used by the import-pipeline support pack.

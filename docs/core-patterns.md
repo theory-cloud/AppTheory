@@ -1,3 +1,7 @@
+---
+title: Core Patterns
+---
+
 # AppTheory Core Patterns
 
 This document records the canonical patterns AppTheory expects across languages and documentation surfaces.

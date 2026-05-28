@@ -1,3 +1,7 @@
+---
+title: Remote MCP Server
+---
+
 # Claude Remote MCP (Streamable HTTP) - REST API v1 + Streaming
 
 This guide covers `AppTheoryRemoteMcpServer`, the recommended CDK construct for Claude Custom Connectors using Remote

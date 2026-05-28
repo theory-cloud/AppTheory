@@ -44,15 +44,24 @@ type AppTheorySsrSiteProps struct {
 	// Legacy alias for `isrMetadataTableName`.
 	// Deprecated: prefer `isrMetadataTable` or `isrMetadataTableName`.
 	CacheTableName *string `field:"optional" json:"cacheTableName" yaml:"cacheTableName"`
+	// Existing ACM certificate ARN for the CloudFront distribution.
+	//
+	// The certificate must be in `us-east-1` for CloudFront.
 	CertificateArn *string `field:"optional" json:"certificateArn" yaml:"certificateArn"`
 	// Additional raw S3 object/data path patterns that should bypass extensionless HTML rewrites.
 	//
 	// In `ssg-isr` mode, `/_facetheory/data/*` is added automatically.
 	// Example direct-S3 object path: "/feeds/*".
-	DirectS3PathPatterns *[]*string             `field:"optional" json:"directS3PathPatterns" yaml:"directS3PathPatterns"`
-	DomainName           *string                `field:"optional" json:"domainName" yaml:"domainName"`
-	EnableLogging        *bool                  `field:"optional" json:"enableLogging" yaml:"enableLogging"`
-	HostedZone           awsroute53.IHostedZone `field:"optional" json:"hostedZone" yaml:"hostedZone"`
+	DirectS3PathPatterns *[]*string `field:"optional" json:"directS3PathPatterns" yaml:"directS3PathPatterns"`
+	DomainName           *string    `field:"optional" json:"domainName" yaml:"domainName"`
+	EnableLogging        *bool      `field:"optional" json:"enableLogging" yaml:"enableLogging"`
+	// Route53 hosted zone for DNS records and optional certificate validation.
+	//
+	// When `domainName` is set without `certificateArn`, hosted-zone certificate
+	// creation is allowed only for stacks whose region is explicitly `us-east-1`.
+	// CloudFront requires viewer certificates in `us-east-1`; environment-agnostic
+	// or other-region stacks must provide `certificateArn`.
+	HostedZone awsroute53.IHostedZone `field:"optional" json:"hostedZone" yaml:"hostedZone"`
 	// Cache policy applied to the cacheable HTML behavior in `ssg-isr` mode.
 	//
 	// The default AppTheory policy keys on query strings plus the stable public HTML

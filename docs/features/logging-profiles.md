@@ -1,3 +1,7 @@
+---
+title: Logging Profiles
+---
+
 # Logging profiles
 
 AppTheory logging profiles are the single contract path for profile-backed structured JSON logs across Go,

@@ -1,0 +1,71 @@
+# =============================================================
+# Landing-page runtime tabs — Go / TypeScript / Python snippets.
+# Each block is rendered inside the .runtime-block UI on the home
+# page. `lang` matches the Rouge highlighter id.
+# =============================================================
+
+- id: go
+  label: Go
+  icon: go-mark
+  install: "go get github.com/theory-cloud/apptheory@vX.Y.Z"
+  lang: go
+  snippet: |
+    package main
+
+    import (
+        "context"
+        "encoding/json"
+
+        "github.com/aws/aws-lambda-go/lambda"
+        apptheory "github.com/theory-cloud/apptheory/runtime"
+    )
+
+    func main() {
+        app := apptheory.New()
+
+        app.Get("/ping", func(ctx *apptheory.Context) (*apptheory.Response, error) {
+            return apptheory.Text(200, "pong"), nil
+        })
+
+        // One entrypoint handles HTTP, AppSync, SQS, EventBridge,
+        // DynamoDB Streams, Kinesis, and WebSockets.
+        lambda.Start(func(ctx context.Context, event json.RawMessage) (any, error) {
+            return app.HandleLambda(ctx, event)
+        })
+    }
+
+- id: ts
+  label: TypeScript
+  icon: ts-mark
+  install: "npm i ./theory-cloud-apptheory-X.Y.Z.tgz   # from a GitHub Release asset"
+  lang: typescript
+  snippet: |
+    import { createApp, text } from "@theory-cloud/apptheory";
+
+    const app = createApp();
+
+    app.get("/ping", () => text(200, "pong"));
+
+    // One entrypoint handles HTTP, AppSync, SQS, EventBridge,
+    // DynamoDB Streams, Kinesis, and WebSockets.
+    export const handler = async (event: unknown, ctx: unknown) =>
+      app.handleLambda(event, ctx);
+
+- id: python
+  label: Python
+  icon: py-mark
+  install: "python -m pip install ./apptheory-X.Y.Z-py3-none-any.whl   # from a GitHub Release asset"
+  lang: python
+  snippet: |
+    from apptheory import create_app, text
+
+    app = create_app()
+
+    @app.get("/ping")
+    def ping(ctx):
+        return text(200, "pong")
+
+    # One entrypoint handles HTTP, AppSync, SQS, EventBridge,
+    # DynamoDB Streams, Kinesis, and WebSockets.
+    def handler(event, ctx):
+        return app.handle_lambda(event, ctx)

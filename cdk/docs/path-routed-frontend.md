@@ -113,13 +113,15 @@ new AppTheoryPathRoutedFrontend(stack, 'Frontend', {
   ],
   domain: {
     domainName: 'app.example.com',
-    hostedZone: zone,  // Creates Route53 A record (and optionally AAAA) + DNS-validated cert in us-east-1
+    certificateArn: 'arn:aws:acm:us-east-1:123456789012:certificate/...',
+    hostedZone: zone,  // Creates Route53 A record (and optionally AAAA)
   },
 });
 ```
 
-Note: CloudFront requires ACM certificates in `us-east-1`. When you provide `hostedZone` without a certificate, this
-construct creates a DNS-validated certificate in `us-east-1` automatically.
+Note: CloudFront requires ACM certificates in `us-east-1`. Provide `certificate` or `certificateArn` for
+environment-agnostic stacks and stacks outside `us-east-1`. Hosted-zone auto-certificate creation uses
+non-deprecated `acm.Certificate` semantics and is allowed only when the stack region is explicitly `us-east-1`.
 
 ### 5. Response Headers Policy
 
@@ -198,6 +200,7 @@ const frontend = new AppTheoryPathRoutedFrontend(stack, 'Frontend', {
   ],
   domain: {
     domainName: 'app.example.com',
+    certificateArn: 'arn:aws:acm:us-east-1:123456789012:certificate/...',
     hostedZone: zone,
   },
   comment: 'Multi-SPA frontend distribution',

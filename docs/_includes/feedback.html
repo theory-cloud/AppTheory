@@ -1,0 +1,22 @@
+{%- if page.edit_on_github != false -%}
+{%- assign source_path = page.path | default: "" -%}
+<section class="doc-feedback" aria-label="Page feedback">
+  <p class="doc-feedback__text">
+    <strong>Was this page useful?</strong> Tell us what worked or where we should add detail.
+  </p>
+  <div class="doc-feedback__actions">
+    {%- if source_path != "" -%}
+      <a class="doc-feedback__btn"
+         href="https://github.com/{{ site.tabletheory.repo }}/edit/{{ site.tabletheory.repo_branch }}/{{ site.tabletheory.docs_root }}/{{ source_path }}"
+         target="_blank" rel="noopener">
+        {% include icon.html name="edit" %} Edit page
+      </a>
+    {%- endif -%}
+    <a class="doc-feedback__btn"
+       href="https://github.com/{{ site.tabletheory.repo }}/issues/new?title=Docs%3A%20{{ page.title | default: 'feedback' | url_encode }}"
+       target="_blank" rel="noopener">
+      {% include icon.html name="thumbs-up" %} Open issue
+    </a>
+  </div>
+</section>
+{%- endif -%}

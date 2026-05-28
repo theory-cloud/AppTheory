@@ -1,3 +1,7 @@
+---
+title: AppSync Lambda Resolvers
+---
+
 # AppSync Lambda Resolvers
 
 Use this guide when wiring an AWS AppSync Lambda data source to an AppTheory app.

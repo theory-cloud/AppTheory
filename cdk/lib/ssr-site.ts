@@ -1,4 +1,4 @@
-import { Duration, RemovalPolicy } from "aws-cdk-lib";
+import { Duration, RemovalPolicy, Stack, Token } from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
@@ -197,6 +197,18 @@ function canonicalizeHeaderName(header: string): string {
 function isTenantHeaderName(header: string): boolean {
   const normalized = canonicalizeHeaderName(header).replace(/[^a-z0-9]+/g, "-");
   return normalized === defaultViewerTenantHeader || /(^|-)tenant(-|$)/.test(normalized);
+}
+
+function assertCloudFrontHostedZoneCertificateRegion(scope: Construct): void {
+  const region = Stack.of(scope).region;
+  if (!Token.isUnresolved(region) && region === "us-east-1") {
+    return;
+  }
+
+  const regionDescription = Token.isUnresolved(region) ? "unresolved" : region;
+  throw new Error(
+    `AppTheorySsrSite cannot create a hosted-zone CloudFront certificate unless the stack region is explicitly us-east-1; stack region is ${regionDescription}. Provide props.certificateArn for stacks in other or environment-agnostic regions.`,
+  );
 }
 
 function generateSsrViewerRequestFunctionCode(
@@ -505,7 +517,20 @@ export interface AppTheorySsrSiteProps {
   readonly autoDeleteObjects?: boolean;
 
   readonly domainName?: string;
+  /**
+   * Route53 hosted zone for DNS records and optional certificate validation.
+   *
+   * When `domainName` is set without `certificateArn`, hosted-zone certificate
+   * creation is allowed only for stacks whose region is explicitly `us-east-1`.
+   * CloudFront requires viewer certificates in `us-east-1`; environment-agnostic
+   * or other-region stacks must provide `certificateArn`.
+   */
   readonly hostedZone?: route53.IHostedZone;
+  /**
+   * Existing ACM certificate ARN for the CloudFront distribution.
+   *
+   * The certificate must be in `us-east-1` for CloudFront.
+   */
   readonly certificateArn?: string;
 
   readonly webAclId?: string;
@@ -857,10 +882,10 @@ export class AppTheorySsrSite extends Construct {
       if (certArn) {
         distributionCertificate = acm.Certificate.fromCertificateArn(this, "Certificate", certArn);
       } else if (props.hostedZone) {
-        distributionCertificate = new acm.DnsValidatedCertificate(this, "Certificate", {
+        assertCloudFrontHostedZoneCertificateRegion(this);
+        distributionCertificate = new acm.Certificate(this, "Certificate", {
           domainName,
-          hostedZone: props.hostedZone,
-          region: "us-east-1",
+          validation: acm.CertificateValidation.fromDns(props.hostedZone),
         });
       } else {
         throw new Error("AppTheorySsrSite requires props.certificateArn or props.hostedZone when props.domainName is set");
