@@ -1,3 +1,8 @@
+---
+title: AgentCore MCP
+render_with_liquid: false
+---
+
 # Bedrock AgentCore + AppTheory (MCP Gateway)
 
 This guide explains how to expose an **MCP (Model Context Protocol)** server from an AppTheory Lambda so **Bedrock AgentCore** can call your tools.

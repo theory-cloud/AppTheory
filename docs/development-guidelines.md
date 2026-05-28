@@ -1,3 +1,7 @@
+---
+title: Development Guidelines
+---
+
 # AppTheory Development Guidelines
 
 This page is contract-only. It exists at this fixed root path to mark the maintainer-only boundary of the docs contract,

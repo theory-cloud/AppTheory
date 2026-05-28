@@ -1,3 +1,7 @@
+---
+title: Sanitization
+---
+
 # Sanitization (safe logging + redaction)
 
 AppTheory includes a **portable sanitization toolkit** (Go/TypeScript/Python) intended for **safe-by-default logging** in

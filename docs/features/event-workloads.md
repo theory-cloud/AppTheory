@@ -1,3 +1,7 @@
+---
+title: Event Workload Contracts
+---
+
 # Event workload contracts
 
 AppTheory's non-HTTP Lambda story uses the same single entrypoint as HTTP and AppSync:

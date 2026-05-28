@@ -1,3 +1,7 @@
+---
+title: CDK API Reference
+---
+
 # CDK API Reference
 
 This page is the canonical human-readable overview of the AppTheory CDK surface. For exact prop types and exported

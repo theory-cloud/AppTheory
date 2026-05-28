@@ -1,0 +1,258 @@
+/* =============================================================
+   Theory Cloud — Rouge syntax theme + site-specific overrides.
+   Maps Jekyll/Rouge's HTML output (class="highlight") to the
+   design's .tok-* palette defined in theme.css.
+   ============================================================= */
+
+/* -------------------------------------------------------------
+   Hidden-modal fix.
+
+   theme.css sets `.palette-scrim { display: flex; … }` at the class
+   level — author CSS that overrides the user-agent stylesheet's
+   default `[hidden] { display: none }`. This forces the search
+   palette and the tweaks panel to render visible on load.
+
+   Without this rule, the tweaks modal appears on every page load
+   and the user can't dismiss it because the scrim treats the
+   "click on scrim" handler as a close gesture only when targeting
+   the scrim element itself, not its child controls.
+
+   We restore the expected behavior here so theme.css stays verbatim.
+   ------------------------------------------------------------- */
+.palette-scrim[hidden],
+[data-palette][hidden],
+[data-tweaks][hidden] {
+  display: none !important;
+}
+
+
+/* Rouge wraps highlighted blocks in <figure class="highlight"><pre><code>… */
+.highlight,
+figure.highlight {
+  background: transparent;
+}
+
+/* Make Rouge-emitted <figure> behave like the design's .code-block frame */
+figure.highlight {
+  margin: 20px 0 24px;
+  background: var(--tc-midnight-depth);
+  border: 1px solid var(--tc-outline-variant);
+  border-radius: var(--tc-radius-lg);
+  overflow: hidden;
+  box-shadow: var(--tc-inner-edge);
+  position: relative;
+}
+
+figure.highlight pre {
+  margin: 0;
+  padding: 16px 18px;
+  font-family: var(--tc-font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--tc-fg);
+  overflow-x: auto;
+  background: transparent;
+}
+
+figure.highlight pre code {
+  font-family: inherit;
+  font-size: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+}
+
+/* Optional caption-as-language label (kramdown can emit it) */
+figure.highlight figcaption {
+  font-family: var(--tc-font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--tc-fg-dim);
+  padding: 8px 14px;
+  background: var(--tc-surface-1);
+  border-bottom: 1px solid var(--tc-outline-variant);
+}
+
+/* =============================================================
+   Token mapping — Rouge class → design palette
+   Rouge's class abbreviations come from Pygments token names.
+   See https://rouge-ruby.github.io/docs/ for the full table.
+   ============================================================= */
+
+/* Comments */
+.highlight .c,
+.highlight .ch,
+.highlight .cd,
+.highlight .cm,
+.highlight .cp,
+.highlight .cpf,
+.highlight .c1,
+.highlight .cs    { color: var(--tc-fg-dim); font-style: italic; }
+
+/* Keywords / declarations */
+.highlight .k,
+.highlight .kc,
+.highlight .kd,
+.highlight .kn,
+.highlight .kp,
+.highlight .kr,
+.highlight .kv    { color: var(--tc-violet-fixed); }
+
+/* Reserved type keywords (e.g. `string`, `int`) */
+.highlight .kt    { color: var(--tc-core-blue-fixed); }
+
+/* Strings */
+.highlight .s,
+.highlight .sa,
+.highlight .sb,
+.highlight .sc,
+.highlight .dl,
+.highlight .sd,
+.highlight .s2,
+.highlight .se,
+.highlight .sh,
+.highlight .si,
+.highlight .sx,
+.highlight .sr,
+.highlight .s1,
+.highlight .ss    { color: #9BE3B2; }
+
+/* Numbers */
+.highlight .m,
+.highlight .mb,
+.highlight .mf,
+.highlight .mh,
+.highlight .mi,
+.highlight .il,
+.highlight .mo,
+.highlight .mx    { color: var(--tc-phi-gold-fixed); }
+
+/* Identifiers and names */
+.highlight .n,
+.highlight .na,
+.highlight .nb,
+.highlight .nv,
+.highlight .vc,
+.highlight .vg,
+.highlight .vi,
+.highlight .py    { color: var(--tc-mist); }
+
+/* Types / classes */
+.highlight .nc,
+.highlight .no,
+.highlight .nn,
+.highlight .ni,
+.highlight .ne    { color: var(--tc-core-blue-fixed); }
+
+/* Functions / method names */
+.highlight .nf,
+.highlight .fm,
+.highlight .nt    { color: var(--tc-ice-white); font-weight: 500; }
+
+/* Operators / punctuation */
+.highlight .o,
+.highlight .ow,
+.highlight .p     { color: var(--tc-mist); }
+
+/* Decorators / attributes */
+.highlight .nd    { color: var(--tc-phi-gold-fixed); }
+
+/* Labels / tags (HTML, struct tags rendered as strings, etc.) */
+.highlight .nl,
+.highlight .bp    { color: #FFB8BD; }
+
+/* Errors */
+.highlight .err   { color: #FF8E96; background: rgba(255,90,101,0.08); border-radius: 2px; padding: 0 2px; }
+
+/* Diff/Git markup (used in shell or diff fenced blocks) */
+.highlight .gd    { color: #FF8E96; background: rgba(255,90,101,0.06); display: block; }
+.highlight .gi    { color: #9BE3B2; background: rgba(70,211,151,0.06); display: block; }
+.highlight .gh    { color: var(--tc-core-blue-fixed); font-weight: 600; }
+.highlight .gu    { color: var(--tc-fg-dim); }
+.highlight .gs    { font-weight: 700; }
+.highlight .ge    { font-style: italic; }
+
+/* Generic prompt (shell) */
+.highlight .gp    { color: var(--tc-fg-dim); user-select: none; }
+
+/* Inline highlighted lines (kramdown ::line ranges) */
+.highlight .hll   { background: rgba(46,167,255,0.10); display: block; }
+
+/* =============================================================
+   Code-block header — injected client-side by docs.js
+   The design specifies a head with lang label + copy button;
+   our JS finds figure.highlight and prepends this markup.
+   ============================================================= */
+figure.highlight .code-block__head {
+  display: flex;
+  align-items: center;
+  background: var(--tc-surface-1);
+  border-bottom: 1px solid var(--tc-outline-variant);
+  padding: 0 4px 0 14px;
+  min-height: 36px;
+}
+
+figure.highlight .code-block__lang {
+  font-family: var(--tc-font-mono);
+  font-size: 11px;
+  color: var(--tc-fg-dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+figure.highlight .code-block__spacer { flex: 1; }
+
+figure.highlight .code-block__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+}
+
+figure.highlight .code-block__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--tc-font-mono);
+  font-size: 10.5px;
+  color: var(--tc-fg-dim);
+  padding: 5px 8px;
+  border-radius: var(--tc-radius-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  transition: color var(--tc-dur-fast), background var(--tc-dur-fast);
+}
+
+figure.highlight .code-block__btn:hover {
+  color: var(--tc-fg);
+  background: var(--tc-surface-2);
+}
+
+figure.highlight .code-block__btn svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2;
+}
+
+figure.highlight .code-block__btn.copied { color: #46D397; }
+
+/* Plain <pre><code> blocks (kramdown without highlighter) — same shell */
+.docs-content pre:not(figure pre),
+.home pre:not(figure pre) {
+  margin: 20px 0 24px;
+  padding: 16px 18px;
+  background: var(--tc-midnight-depth);
+  border: 1px solid var(--tc-outline-variant);
+  border-radius: var(--tc-radius-lg);
+  box-shadow: var(--tc-inner-edge);
+  font-family: var(--tc-font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--tc-fg);
+  overflow-x: auto;
+}

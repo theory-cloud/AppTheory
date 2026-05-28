@@ -1,3 +1,7 @@
+---
+title: Getting Started
+---
+
 # Getting Started with AppTheory
 
 This guide gets a local AppTheory workspace running, shows the smallest deterministic app path in each runtime, and

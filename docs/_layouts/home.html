@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  {% include head.html %}
+</head>
+<body>
+
+{%- assign surface = page.surface | default: site.tabletheory.surface -%}
+<div class="docs-app" data-surface="{{ surface }}" data-density="default" data-width="default">
+
+  {% include header.html %}
+
+  <div class="docs-body" data-density="default" data-width="default">
+    {% include sidebar.html %}
+
+    <main class="home" id="content" tabindex="-1">
+      {{ content }}
+    </main>
+  </div>
+</div>
+
+{% include palette.html %}
+{% include tweaks-panel.html %}
+
+<script src="{{ '/assets/js/lunr.min.js' | relative_url }}" defer></script>
+<script src="{{ '/assets/js/docs.js'     | relative_url }}" defer></script>
+<script src="{{ '/assets/js/palette.js'  | relative_url }}" defer></script>
+<script src="{{ '/assets/js/tweaks.js'   | relative_url }}" defer></script>
+</body>
+</html>
