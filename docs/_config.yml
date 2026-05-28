@@ -12,10 +12,11 @@ description: >-
   enforced by 128 shared contract test fixtures. Go also provides the MCP
   Streamable HTTP runtime and OAuth-adjacent helpers used by Remote MCP deployments.
 
-# When deployed via the canonical org repo, the site lives at
-# https://theory-cloud.github.io/apptheory/
-url: "https://theory-cloud.github.io"
-baseurl: "/apptheory"
+# Canonical public docs domain. GitHub still serves the Pages artifact for the
+# project repository, but the custom domain is mounted at the domain root, so
+# generated asset URLs must not carry the repository path as a baseurl.
+url: "https://apptheory.theorycloud.ai"
+baseurl: ""
 
 # Jekyll engine
 markdown: kramdown

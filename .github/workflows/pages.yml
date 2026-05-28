@@ -10,10 +10,12 @@
 #   - pages.yml (this file) ............................... triggers on `staging` ONLY
 #
 # Pages publish is the *narrowest* of the publish workflows: it never fires
-# from `premain`, `main`, pull requests, or feature branches. The site
-# always reflects what's on `staging`. Defensive `if: github.ref == 'refs/heads/staging'`
-# guards on every job make accidental non-staging runs (e.g. via a manual
-# workflow_dispatch from a feature branch) a no-op.
+# from `premain`, `main`, pull requests, or feature branches. The GitHub
+# Pages environment is protected to allow deployments from `staging` only,
+# so the site reflects the integration docs line. Defensive
+# `if: github.ref == 'refs/heads/staging'` guards on every job make accidental
+# non-staging runs (e.g. via a manual workflow_dispatch from another branch) a
+# no-op.
 #
 # This workflow is independent of release.yml / prerelease.yml /
 # quality-gates / contract-tests — it never publishes packages, never mutates
@@ -22,7 +24,7 @@
 name: pages
 
 on:
-  # Staging is the only branch that publishes the Pages site.
+  # Staging is the only branch allowed to publish the Pages site.
   push:
     branches: [staging]
   # Manual re-deploy (e.g. after rotating the Pages environment, or to
@@ -72,7 +74,15 @@ jobs:
           bundle exec jekyll build \
             --source . \
             --destination ./_site \
-            --baseurl "${{ steps.pages.outputs.base_path }}"
+            --baseurl ""
+
+      - name: Verify custom-domain root paths
+        working-directory: docs
+        run: |
+          if grep -R -nE --include='*.html' '(href|src)="/(AppTheory|apptheory)/' ./_site; then
+            echo "Found root-relative links with the repository path; custom-domain assets must resolve from /." >&2
+            exit 1
+          fi
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
@@ -86,7 +96,7 @@ jobs:
     if: github.ref == 'refs/heads/staging'
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: https://apptheory.theorycloud.ai/
     steps:
       - name: Deploy
         id: deployment
