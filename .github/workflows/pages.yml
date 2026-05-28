@@ -7,12 +7,12 @@
 #   - release.yml / release-pr.yml ........................ triggers on `main`
 #   - prerelease.yml / prerelease-pr.yml .................. triggers on `premain`
 #   - theorycloud-apptheory-subtree-publish.yml ........... triggers on `premain` AND `main`
-#   - pages.yml (this file) ............................... triggers on `main` ONLY
+#   - pages.yml (this file) ............................... triggers on `staging` ONLY
 #
 # Pages publish is the *narrowest* of the publish workflows: it never fires
-# from `premain`, `staging`, pull requests, or feature branches. The site
-# always reflects what's on `main`. Defensive `if: github.ref == 'refs/heads/main'`
-# guards on every job make accidental non-main runs (e.g. via a manual
+# from `premain`, `main`, pull requests, or feature branches. The site
+# always reflects what's on `staging`. Defensive `if: github.ref == 'refs/heads/staging'`
+# guards on every job make accidental non-staging runs (e.g. via a manual
 # workflow_dispatch from a feature branch) a no-op.
 #
 # This workflow is independent of release.yml / prerelease.yml /
@@ -22,12 +22,12 @@
 name: pages
 
 on:
-  # Main is the only branch that publishes the Pages site.
+  # Staging is the only branch that publishes the Pages site.
   push:
-    branches: [main]
+    branches: [staging]
   # Manual re-deploy (e.g. after rotating the Pages environment, or to
   # republish after a docs-only fix that doesn't justify a new commit).
-  # Defensive `if:` guards still enforce main-only at the job level.
+  # Defensive `if:` guards still enforce staging-only at the job level.
   workflow_dispatch:
 
 permissions:
@@ -35,7 +35,7 @@ permissions:
   pages: write
   id-token: write
 
-# Coalesce in-flight deploys: if a second `main` push lands before the
+# Coalesce in-flight deploys: if a second `staging` push lands before the
 # previous deploy finishes, queue it (don't cancel) so we never skip a
 # commit's publish.
 concurrency:
@@ -47,8 +47,8 @@ jobs:
     name: Build Jekyll site
     runs-on: ubuntu-latest
     # Belt-and-suspenders: even if someone invokes workflow_dispatch from
-    # a non-main ref, the job no-ops rather than building stale content.
-    if: github.ref == 'refs/heads/main'
+    # a non-staging ref, the job no-ops rather than building stale content.
+    if: github.ref == 'refs/heads/staging'
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -83,7 +83,7 @@ jobs:
     name: Deploy to GitHub Pages
     runs-on: ubuntu-latest
     needs: build
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/staging'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
