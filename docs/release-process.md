@@ -1,3 +1,7 @@
+---
+title: Release Process
+---
+
 # AppTheory Release Process
 
 AppTheory has one release train. The valid cycle is:

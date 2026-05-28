@@ -1,0 +1,51 @@
+{%- assign current = page.url -%}
+{%- assign current_id = site.data.nav.url_to_id[current] -%}
+{%- assign order = site.data.nav.order -%}
+{%- assign idx = -1 -%}
+{%- for id in order -%}
+  {%- if id == current_id -%}{%- assign idx = forloop.index0 -%}{%- endif -%}
+{%- endfor -%}
+
+{%- if idx >= 0 -%}
+  {%- assign prev_idx = idx | minus: 1 -%}
+  {%- assign next_idx = idx | plus: 1 -%}
+  {%- assign last_idx = order | size | minus: 1 -%}
+
+  {%- assign prev_id = nil -%}
+  {%- assign next_id = nil -%}
+  {%- if prev_idx >= 0 -%}{%- assign prev_id = order[prev_idx] -%}{%- endif -%}
+  {%- if next_idx <= last_idx -%}{%- assign next_id = order[next_idx] -%}{%- endif -%}
+
+  {%- assign prev = nil -%}
+  {%- assign next = nil -%}
+  {%- for group in site.data.nav.groups -%}
+    {%- for item in group.items -%}
+      {%- if item.id == prev_id -%}{%- assign prev = item -%}{%- endif -%}
+      {%- if item.id == next_id -%}{%- assign next = item -%}{%- endif -%}
+    {%- endfor -%}
+  {%- endfor -%}
+
+  <nav class="doc-pager" aria-label="Pager">
+    {%- if prev -%}
+      <a class="doc-pager__btn" href="{{ prev.url | relative_url }}">
+        <span class="label">{% include icon.html name="chevron-right" size="12" %} <span style="transform: scaleX(-1); display:inline-block;">{% include icon.html name="chevron-right" size="12" %}</span> Previous</span>
+        <div class="title">{{ prev.title }}</div>
+      </a>
+    {%- else -%}
+      <div class="doc-pager__btn" aria-hidden="true">
+        <span class="label">&nbsp;</span><div class="title empty">&nbsp;</div>
+      </div>
+    {%- endif -%}
+
+    {%- if next -%}
+      <a class="doc-pager__btn next" href="{{ next.url | relative_url }}">
+        <span class="label">Next {% include icon.html name="chevron-right" size="12" %}</span>
+        <div class="title">{{ next.title }}</div>
+      </a>
+    {%- else -%}
+      <div class="doc-pager__btn next" aria-hidden="true">
+        <span class="label">&nbsp;</span><div class="title empty">&nbsp;</div>
+      </div>
+    {%- endif -%}
+  </nav>
+{%- endif -%}

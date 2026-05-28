@@ -1,3 +1,7 @@
+---
+title: Jobs Ledger
+---
+
 # Jobs ledger (job/record status + leases + idempotency)
 
 This document describes AppTheory’s **job ledger primitives** introduced as part of the “import pipeline support pack”

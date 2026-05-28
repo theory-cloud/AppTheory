@@ -1,0 +1,63 @@
+---
+layout: null
+permalink: /search.json
+sitemap: false
+---
+[
+{%- assign first = true -%}
+{%- for page in site.pages -%}
+  {%- assign ext = page.path | split: "." | last -%}
+  {%- if ext != "md" and ext != "html" -%}{%- continue -%}{%- endif -%}
+  {%- if page.path contains "development/" -%}{%- continue -%}{%- endif -%}
+  {%- if page.path contains "_concepts.yaml" or page.path contains "_decisions.yaml" or page.path contains "_patterns.yaml" -%}{%- continue -%}{%- endif -%}
+  {%- if page.path contains "PAY_THEORY_DOCUMENTATION_GUIDE" -%}{%- continue -%}{%- endif -%}
+  {%- if page.url contains "search.json" -%}{%- continue -%}{%- endif -%}
+  {%- if page.url contains "sitemap" -%}{%- continue -%}{%- endif -%}
+
+  {%- comment -%} Resolve the group label for this page from nav data. {%- endcomment -%}
+  {%- assign p_id = site.data.nav.url_to_id[page.url] -%}
+  {%- assign group_label = "Pages" -%}
+  {%- for g in site.data.nav.groups -%}
+    {%- for item in g.items -%}
+      {%- if item.id == p_id -%}{%- assign group_label = g.label -%}{%- endif -%}
+    {%- endfor -%}
+  {%- endfor -%}
+
+  {%- assign content_plain = page.content
+        | strip_html
+        | strip_newlines
+        | replace: '"', '\"'
+        | truncatewords: 80 -%}
+
+  {%- assign title = page.title -%}
+  {%- if title == nil or title == "" -%}
+    {%- assign title = page.path | split: "/" | last | replace: ".md", "" | replace: "-", " " | capitalize -%}
+  {%- endif -%}
+
+  {%- comment -%} Extract h2/h3 headings via a regex-style scan of the markdown source. {%- endcomment -%}
+  {%- assign raw = page.content -%}
+
+{%- if first -%}{%- assign first = false -%}{%- else -%},{%- endif -%}
+{
+  "title":   {{ title    | strip | jsonify }},
+  "url":     {{ page.url | absolute_url | jsonify }},
+  "group":   {{ group_label | jsonify }},
+  "excerpt": {{ content_plain | jsonify }},
+  "headings": [
+    {%- assign hl_lines = raw | newline_to_br | split: "<br />" -%}
+    {%- assign hfirst = true -%}
+    {%- for line in hl_lines -%}
+      {%- assign t = line | strip -%}
+      {%- if t == "" -%}{%- continue -%}{%- endif -%}
+      {%- assign h2 = t | slice: 0,3 -%}
+      {%- assign h3 = t | slice: 0,4 -%}
+      {%- if h2 == "## " or h3 == "### " -%}
+        {%- assign htext = t | replace_first: "### ", "" | replace_first: "## ", "" -%}
+        {%- if hfirst -%}{%- assign hfirst = false -%}{%- else -%},{%- endif -%}
+        {{ htext | strip | jsonify }}
+      {%- endif -%}
+    {%- endfor -%}
+  ]
+}
+{%- endfor -%}
+]

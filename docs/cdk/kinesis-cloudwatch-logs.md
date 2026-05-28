@@ -1,9 +1,13 @@
+---
+title: Kinesis + CloudWatch Logs
+---
+
 # Kinesis + CloudWatch Logs
 
 AppTheory's Kinesis ingestion path is a single chain:
 
 ```text
-CloudWatch Logs subscription
+AppTheoryCloudWatchLogsSubscription
   -> AppTheoryCloudWatchLogsDestination
   -> AppTheoryKinesisStream
   -> AppTheoryKinesisStreamMapping
@@ -24,15 +28,18 @@ path is missing a needed control, grow the AppTheory construct surface.
   `reportBatchItemFailures` to `true` so the runtime can fail individual records without replaying successful records.
 - `AppTheoryCloudWatchLogsDestination` creates the CloudWatch Logs destination, service role, and destination policy. It
   requires `allowedSourceAccounts` and/or `allowedOrganizationIds`; there is no broad default destination policy.
+- `AppTheoryCloudWatchLogsSubscription` creates the source-side subscription filter for one log group, destination ARN,
+  and caller-provided filter pattern. It does not create destinations or delivery roles.
 
-The CloudWatch Logs subscription filter is the source-side attachment that points a log group at
-`destination.destinationArn`. Keep the destination, stream, mapping, and handler on the AppTheory path.
+The subscription construct is the source-side attachment that points a log group at `destination.destinationArn`. Keep
+the subscription, destination, stream, mapping, and handler on the AppTheory path.
 
 ## CDK shape
 
 ```ts
 import {
   AppTheoryCloudWatchLogsDestination,
+  AppTheoryCloudWatchLogsSubscription,
   AppTheoryFunction,
   AppTheoryKinesisStream,
   AppTheoryKinesisStreamMapping,
@@ -70,17 +77,40 @@ const destination = new AppTheoryCloudWatchLogsDestination(this, "LogsDestinatio
   allowedOrganizationIds: [organizationId],
 });
 
-new logs.CfnSubscriptionFilter(this, "SourceSubscription", {
+const subscription = new AppTheoryCloudWatchLogsSubscription(this, "SourceSubscription", {
   logGroupName: "/aws/lambda/source-function",
   destinationArn: destination.destinationArn,
-  filterPattern: "",
-  distribution: "ByLogStream",
+  filterPatternText: "",
+  distribution: logs.Distribution.BY_LOG_STREAM,
 });
+subscription.subscriptionFilter.addDependency(destination.destination);
 ```
 
 `111122223333`, `o-example1234`, and the log group name above are placeholders. They are examples only, not live account
 claims. Replace them with the trusted source accounts, organization IDs, and log groups for the deployment. A destination
 without an explicit source-account or organization allowlist fails closed.
+
+Go CDK code uses the generated bindings from the same release tag:
+
+```go
+import (
+	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
+	"github.com/aws/jsii-runtime-go"
+	apptheorycdk "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk"
+)
+
+subscription := apptheorycdk.NewAppTheoryCloudWatchLogsSubscription(
+	stack,
+	jsii.String("SourceSubscription"),
+	&apptheorycdk.AppTheoryCloudWatchLogsSubscriptionProps{
+		LogGroupName:       jsii.String("/aws/lambda/source-function"),
+		DestinationArn:     destination.DestinationArn(),
+		FilterPatternText: jsii.String(""),
+		Distribution:      awslogs.Distribution_BY_LOG_STREAM,
+	},
+)
+subscription.SubscriptionFilter().AddDependency(destination.Destination())
+```
 
 ## Runtime handler shape
 

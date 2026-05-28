@@ -1,0 +1,8 @@
+{%- comment -%}
+  Reusable copy button template (also constructed dynamically in docs.js
+  but exposed here in case a layout wants to render it server-side).
+{%- endcomment -%}
+<button class="code-block__btn" data-action="copy" type="button">
+  {% include icon.html name="copy" size="12" %}
+  <span>Copy</span>
+</button>

@@ -1,3 +1,7 @@
+---
+title: API Reference
+---
+
 # AppTheory API Reference
 
 This page is the canonical human-readable map of the AppTheory surface. Treat the generated snapshots as the

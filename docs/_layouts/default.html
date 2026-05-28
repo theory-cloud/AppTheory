@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  {% include head.html %}
+</head>
+<body>
+
+{%- assign surface = page.surface | default: site.tabletheory.surface -%}
+<div class="docs-app" data-surface="{{ surface }}" data-density="default" data-width="default">
+
+  {% include header.html %}
+
+  <div class="docs-body" data-density="default" data-width="default">
+    {%- if page.sidebar != false -%}
+      {% include sidebar.html %}
+    {%- endif -%}
+
+    <main class="docs-content" id="content" tabindex="-1">
+
+      {%- comment -%} Breadcrumb {%- endcomment -%}
+      {%- assign nav_id = site.data.nav.url_to_id[page.url] -%}
+      {%- assign group_label = nil -%}
+      {%- for g in site.data.nav.groups -%}
+        {%- for item in g.items -%}
+          {%- if item.id == nav_id -%}{%- assign group_label = g.label -%}{%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      <nav class="doc-breadcrumb" aria-label="Breadcrumb">
+        <a href="{{ '/' | relative_url }}">Docs</a>
+        {%- if group_label -%}
+          <span class="sep">/</span>
+          <span class="current">{{ group_label }}</span>
+        {%- endif -%}
+        {%- if page.title -%}
+          <span class="sep">/</span>
+          <span class="current">{{ page.title }}</span>
+        {%- endif -%}
+      </nav>
+
+      {%- if group_label -%}
+        <div class="doc-eyebrow">
+          <span class="dot" style="width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block;"></span>
+          {{ group_label }}
+        </div>
+      {%- endif -%}
+
+      <article class="prose">
+        {{ content }}
+      </article>
+
+      {% include pager.html %}
+      {% include feedback.html %}
+    </main>
+
+    {%- if page.toc != false -%}
+      {% include toc.html %}
+    {%- endif -%}
+  </div>
+</div>
+
+{% include palette.html %}
+{% include tweaks-panel.html %}
+
+<script src="{{ '/assets/js/lunr.min.js' | relative_url }}" defer></script>
+<script src="{{ '/assets/js/docs.js'     | relative_url }}" defer></script>
+<script src="{{ '/assets/js/palette.js'  | relative_url }}" defer></script>
+<script src="{{ '/assets/js/tweaks.js'   | relative_url }}" defer></script>
+</body>
+</html>

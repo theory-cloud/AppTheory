@@ -24,6 +24,10 @@ Status: early; start with a small “top 20%” set and grow based on real usage
 - `AppTheoryEventBridgeBus` — custom EventBridge bus with explicit cross-account publish allowlist.
 - `AppTheoryDynamoDBStreamMapping` — DynamoDB Streams event source mapping + permissions.
 - `AppTheoryEventBusTable` — DynamoDB table for AppTheory EventBus (`pk`/`sk` schema + required GSIs + Lambda binding helper).
+- `AppTheoryKinesisStream` — Kinesis Data Stream create/wrap surface for AppTheory stream consumers.
+- `AppTheoryKinesisStreamMapping` — Kinesis stream → Lambda event source mapping with partial-batch failures enabled by default.
+- `AppTheoryCloudWatchLogsDestination` — CloudWatch Logs destination → Kinesis with explicit source allowlists.
+- `AppTheoryCloudWatchLogsSubscription` — source-side CloudWatch Logs subscription attachment to a caller-provided destination ARN.
 - `AppTheoryHttpIngestionEndpoint` — authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer + throttling controls.
 - `AppTheoryDynamoTable` — general-purpose DynamoDB table construct (schema-explicit + consistent defaults).
 - `AppTheoryLambdaRole` — Lambda execution role helper (baseline + X-Ray + KMS + escape hatches).

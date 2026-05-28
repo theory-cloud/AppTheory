@@ -1,0 +1,28 @@
+# =============================================================
+# Site-wide metadata consumed by layouts/includes.
+# =============================================================
+
+header_nav:
+  - { label: Docs,         url: /,                                  active_paths: ["/"] }
+  - { label: API,          url: /api-reference/,                    active_paths: ["/api-reference/"] }
+  - { label: Runtimes,     url: /runtimes/go/,                      active_paths: ["/runtimes/"] }
+  - { label: Features,     url: /features/http-runtime/,            active_paths: ["/features/"] }
+  - { label: MCP,          url: /integrations/mcp/,                 active_paths: ["/integrations/"] }
+  - { label: CDK,          url: /cdk/,                              active_paths: ["/cdk/"] }
+  - { label: Reference,    url: /reference/contract-fixtures/,      active_paths: ["/reference/"] }
+
+footer_links:
+  - { label: GitHub,         url: "https://github.com/theory-cloud/AppTheory" }
+  - { label: Releases,       url: "https://github.com/theory-cloud/AppTheory/releases" }
+  - { label: Changelog,      url: "https://github.com/theory-cloud/AppTheory/blob/main/CHANGELOG.md" }
+  - { label: License,        url: "https://github.com/theory-cloud/AppTheory/blob/main/LICENSE" }
+  - { label: Contributing,   url: "https://github.com/theory-cloud/AppTheory/blob/main/CONTRIBUTING.md" }
+
+# Quick-start cards on the landing page
+quick_start:
+  - { title: "Install & init",            desc: "Set up a deterministic local workspace for Go, TS, or Python.",          url: /getting-started/,                  icon: play }
+  - { title: "HTTP runtime tiers",        desc: "P0 → P1 → P2: choose your middleware surface area.",                      url: /features/http-runtime/,            icon: layers }
+  - { title: "Universal Lambda dispatcher", desc: "One HandleLambda for HTTP, AppSync, SQS, and EventBridge.",             url: /api-reference/,                    icon: shuffle }
+  - { title: "MCP server in one Lambda",  desc: "Go Streamable HTTP runtime, sessions, and resumable SSE.",                url: /integrations/mcp/,                 icon: share }
+  - { title: "Source provenance",         desc: "Safe HTTP source IP from provider context — never client headers.",       url: /features/source-provenance/,       icon: shield-check }
+  - { title: "Contract fixtures",         desc: "The 128-fixture covenant every runtime is tested against.",                url: /reference/contract-fixtures/,      icon: list-checks }
