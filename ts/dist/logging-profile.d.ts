@@ -126,6 +126,7 @@ export declare class ProfileLogger implements StructuredLogger {
     entries(): Record<string, unknown>[];
     private clone;
     private log;
+    private retainEntry;
 }
 export declare function encodeLoggingProfileEvent(config: LoggingProfileConfig, environment: Record<string, string> | undefined, event: LoggingProfileEvent): Record<string, unknown>;
 export declare function encodeLoggingProfileEventWithSanitizer(config: LoggingProfileConfig, environment: Record<string, string> | undefined, event: LoggingProfileEvent, sanitizer: LoggingProfileSanitizer | undefined): Record<string, unknown>;

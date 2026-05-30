@@ -47,6 +47,31 @@ func TestNewKinesisJSONRecord_EncodesDeterministicPayloadAndSummary(t *testing.T
 	}
 }
 
+func TestNewKinesisJSONRecord_SanitizesUnsafePartitionKeyInSafeLog(t *testing.T) {
+	t.Parallel()
+
+	partitionKey := "tenant\nforged=true\rcontrol=\x1f key=value\tpercent%"
+	record, err := NewKinesisJSONRecord(KinesisJSONRecordOptions{
+		PartitionKey: partitionKey,
+		Payload:      map[string]any{"ok": true},
+	})
+	if err != nil {
+		t.Fatalf("NewKinesisJSONRecord returned error: %v", err)
+	}
+	if record.PartitionKey != partitionKey {
+		t.Fatalf("partition key should remain API-compatible, got %q", record.PartitionKey)
+	}
+
+	safeLog := record.SafeSummary.SafeLog
+	assertKinesisSafeLogCannotForgeFields(t, safeLog)
+	if !strings.Contains(
+		safeLog,
+		"partition_key=tenant%0Aforged%3Dtrue%0Dcontrol%3D%1F%20key%3Dvalue%09percent%25",
+	) {
+		t.Fatalf("unsafe partition key was not percent-encoded in safe log: %q", safeLog)
+	}
+}
+
 func TestNewKinesisJSONRecord_FailsClosed(t *testing.T) {
 	t.Parallel()
 
@@ -122,6 +147,35 @@ func TestReportKinesisPutRecordsFailures_AlignsByIndexAndOmitsPayloads(t *testin
 	}
 }
 
+func TestReportKinesisPutRecordsFailures_SanitizesPartitionKeyInFailureSafeLog(t *testing.T) {
+	t.Parallel()
+
+	record, err := NewKinesisJSONRecord(KinesisJSONRecordOptions{
+		PartitionKey: "tenant\nerror_code=ForgedException key=value",
+		Payload:      map[string]any{"ok": true},
+	})
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	report, err := ReportKinesisPutRecordsFailures(
+		[]KinesisJSONRecord{record},
+		[]KinesisPutRecordsResultRecord{{ErrorCode: "ProvisionedThroughputExceededException"}},
+	)
+	if err != nil {
+		t.Fatalf("ReportKinesisPutRecordsFailures returned error: %v", err)
+	}
+	if len(report.Failures) != 1 {
+		t.Fatalf("expected one failure: %#v", report)
+	}
+
+	safeLog := report.Failures[0].SafeLog
+	assertKinesisSafeLogCannotForgeFields(t, safeLog)
+	if strings.Contains(safeLog, "error_code=ForgedException") || !strings.Contains(safeLog, "%0Aerror_code%3D") {
+		t.Fatalf("unsafe partition key was not sanitized in failure safe log: %q", safeLog)
+	}
+}
+
 func TestReportKinesisPutRecordsFailures_FailsClosedForShapeDrift(t *testing.T) {
 	t.Parallel()
 
@@ -140,5 +194,15 @@ func TestReportKinesisPutRecordsFailures_FailsClosedForShapeDrift(t *testing.T) 
 		[]KinesisPutRecordsResultRecord{{ErrorMessage: "message without code"}},
 	); err == nil {
 		t.Fatal("expected error message without code to fail")
+	}
+}
+
+func assertKinesisSafeLogCannotForgeFields(t *testing.T, safeLog string) {
+	t.Helper()
+
+	for _, forbidden := range []string{"\n", "\r", "\t", "\x1f", " forged=", " key=value"} {
+		if strings.Contains(safeLog, forbidden) {
+			t.Fatalf("safe log permits forged delimiter or field %q: %q", forbidden, safeLog)
+		}
 	}
 }

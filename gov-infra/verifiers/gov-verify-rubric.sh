@@ -28,6 +28,116 @@ REPORT_PATH="${EVIDENCE_DIR}/gov-rubric-report.json"
 # Always run checks from repo root so relative commands are stable.
 cd "${REPO_ROOT}"
 
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  printf '%s' "$s"
+}
+
+is_valid_report_timestamp() {
+  local value="$1"
+
+  [[ "${value}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "${value}" <<'PY'
+from datetime import datetime
+import sys
+
+value = sys.argv[1]
+try:
+    parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+except ValueError:
+    sys.exit(1)
+
+if parsed.strftime("%Y-%m-%dT%H:%M:%SZ") != value:
+    sys.exit(1)
+PY
+    return $?
+  fi
+
+  # The shape check above excludes JSON metacharacter injection. Calendar
+  # validation is applied when python3 is available, which the verifier's
+  # runtime gates require.
+  return 0
+}
+
+read_existing_report_timestamp() {
+  local report_path="$1"
+
+  [[ -f "${report_path}" ]] || return 0
+
+  python3 - "${report_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("timestamp", "")
+except Exception:
+    value = ""
+if isinstance(value, str):
+    print(value)
+PY
+}
+
+select_report_timestamp_value() {
+  local supplied_timestamp="$1"
+  local existing_timestamp="$2"
+  local generated_timestamp="${3:-}"
+
+  if is_valid_report_timestamp "${supplied_timestamp}"; then
+    printf '%s' "${supplied_timestamp}"
+    return 0
+  fi
+
+  if is_valid_report_timestamp "${existing_timestamp}"; then
+    printf '%s' "${existing_timestamp}"
+    return 0
+  fi
+
+  if [[ -z "${generated_timestamp}" ]]; then
+    generated_timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  fi
+  if ! is_valid_report_timestamp "${generated_timestamp}"; then
+    echo "Internal error: generated report timestamp is invalid: ${generated_timestamp}" >&2
+    return 2
+  fi
+  printf '%s' "${generated_timestamp}"
+}
+
+validate_report_json() {
+  local report_path="$1"
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "BLOCKED: missing required tool for report JSON validation: python3" >&2
+    return 2
+  fi
+
+  python3 - "${report_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"FAIL: generated rubric report is not valid JSON: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+if [[ "${GOV_RUBRIC_TIMESTAMP_HELPER_ONLY:-}" == "1" ]]; then
+  if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    echo "Internal test helper mode is only available when sourced by verifier tests." >&2
+    exit 2
+  fi
+  return 0
+fi
+
 # Optional repo-local tools directory (to enforce pinned tool versions deterministically).
 # Tools are installed here (never system-wide) and put first on PATH.
 GOV_TOOLS_DIR="${GOV_INFRA}/.tools"
@@ -60,20 +170,7 @@ mkdir -p "${EVIDENCE_DIR}"
 
 EXISTING_REPORT_TIMESTAMP=""
 if [[ -f "${REPORT_PATH}" ]]; then
-  EXISTING_REPORT_TIMESTAMP="$({
-    python3 - "${REPORT_PATH}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-try:
-    value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("timestamp", "")
-except Exception:
-    value = ""
-if isinstance(value, str):
-    print(value)
-PY
-  } 2>/dev/null || true)"
+  EXISTING_REPORT_TIMESTAMP="$(read_existing_report_timestamp "${REPORT_PATH}" 2>/dev/null || true)"
 fi
 
 # Clean previous run outputs to prevent stale evidence from being misattributed.
@@ -89,13 +186,7 @@ rm -f \
 
 # Initialize report structure
 REPORT_SCHEMA_VERSION=1
-REPORT_TIMESTAMP="${GOV_REPORT_TIMESTAMP:-}"
-if [[ -z "${REPORT_TIMESTAMP}" ]]; then
-  REPORT_TIMESTAMP="${EXISTING_REPORT_TIMESTAMP}"
-fi
-if [[ -z "${REPORT_TIMESTAMP}" ]]; then
-  REPORT_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-fi
+REPORT_TIMESTAMP="$(select_report_timestamp_value "${GOV_REPORT_TIMESTAMP:-}" "${EXISTING_REPORT_TIMESTAMP}")"
 PASS_COUNT=0
 FAIL_COUNT=0
 BLOCKED_COUNT=0
@@ -105,15 +196,6 @@ declare -a NONPASS_IDS=()
 declare -a NONPASS_STATUSES=()
 declare -a NONPASS_MESSAGES=()
 declare -a NONPASS_EVIDENCE_PATHS=()
-
-json_escape() {
-  local s="$1"
-  s="${s//\\/\\\\}"
-  s="${s//\"/\\\"}"
-  s="${s//$'\n'/\\n}"
-  s="${s//$'\r'/\\r}"
-  printf '%s' "$s"
-}
 
 record_result() {
   local id="$1"
@@ -2495,7 +2577,7 @@ cat > "${REPORT_PATH}" <<EOF
 {
   "\$schema": "https://gov.pai.dev/schemas/gov-rubric-report.schema.json",
   "schemaVersion": ${REPORT_SCHEMA_VERSION},
-  "timestamp": "${REPORT_TIMESTAMP}",
+  "timestamp": "$(json_escape "$REPORT_TIMESTAMP")",
   "pack": {
     "version": "2ba585f48951",
     "digest": "22406dbb1031ebc4dcd83e02912bbc307ab0983629463aa6106b76415e6280af"
@@ -2513,6 +2595,8 @@ cat > "${REPORT_PATH}" <<EOF
   "results": ${RESULTS_JSON}
 }
 EOF
+
+validate_report_json "${REPORT_PATH}"
 
 echo "Report written to: ${REPORT_PATH}"
 echo ""

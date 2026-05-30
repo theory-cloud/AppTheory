@@ -85,6 +85,51 @@ class CloudWatchLogsSubscriptionTests(unittest.TestCase):
         self.assertNotIn(raw_message, safe_summary_json)
         self.assertNotIn("contract log line beta", safe_summary_json)
 
+    def test_decode_cloudwatch_logs_subscription_sanitizes_metadata_in_safe_log(self) -> None:
+        raw_message = "raw log line must stay out owner=customer-secret"
+        payload = gzip.compress(
+            json.dumps(
+                {
+                    "messageType": "DATA_MESSAGE\rmessage_type=FORGED",
+                    "owner": "111122223333\nlog_events=999",
+                    "logGroup": "/aws/lambda/apptheory-contract owner=spoof",
+                    "logStream": "2026/05/26/[$LATEST]contract-a\tcontrol=\x1fafter",
+                    "subscriptionFilters": ["apptheory-contract-filter"],
+                    "logEvents": [{"id": "cwl-event-a1", "timestamp": 1779806400000, "message": raw_message}],
+                }
+            ).encode("utf-8"),
+            mtime=0,
+        )
+
+        decoded = decode_cloudwatch_logs_subscription(
+            {"eventID": "kin-cwl\nowner=spoof", "kinesis": {"data": base64.b64encode(payload).decode("ascii")}}
+        )
+
+        self.assertEqual(decoded["record_id"], "kin-cwl\nowner=spoof")
+        self.assertEqual(decoded["owner"], "111122223333\nlog_events=999")
+
+        safe_log = decoded["safe_summary"]["safe_log"]
+        for forbidden in [
+            "\n",
+            "\r",
+            "\t",
+            "\x1f",
+            "owner=spoof",
+            "log_events=999",
+            "message_type=FORGED",
+            raw_message,
+        ]:
+            self.assertNotIn(forbidden, safe_log)
+        for wanted in [
+            "record_id=kin-cwl%0Aowner%3Dspoof",
+            "owner=111122223333%0Alog_events%3D999",
+            "log_group=/aws/lambda/apptheory-contract%20owner%3Dspoof",
+            "log_stream=2026/05/26/[$LATEST]contract-a%09control%3D%1Fafter",
+            "message_type=DATA_MESSAGE%0Dmessage_type%3DFORGED",
+            "log_events=1",
+        ]:
+            self.assertIn(wanted, safe_log)
+
     def test_decode_failures_do_not_leak_raw_payload_data(self) -> None:
         raw_log_message = "do-not-log-customer-message"
         with self.assertRaisesRegex(RuntimeError, "invalid payload") as gzip_error:
