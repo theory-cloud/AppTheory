@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { gunzipSync } from "node:zlib";
 
 import type { KinesisEventRecord } from "./aws-types.js";
+import { logSafeValue } from "./internal/safe-log.js";
 
 const CLOUDWATCH_LOGS_SUBSCRIPTION_MAX_DECODED_BYTES = 6 * 1024 * 1024;
 const CLOUDWATCH_LOGS_SUBSCRIPTION_DECODE_MESSAGE =
@@ -176,9 +177,11 @@ function cloudWatchLogsSubscriptionSafeSummary(
   const subscriptionFilterCount = decoded.subscription_filters.length;
   const logEventCount = decoded.log_events.length;
   const safeLog =
-    `record_id=${decoded.record_id} owner=${decoded.owner} ` +
-    `log_group=${decoded.log_group} log_stream=${decoded.log_stream} ` +
-    `message_type=${decoded.message_type} log_events=${logEventCount} ` +
+    `record_id=${logSafeValue(decoded.record_id)} ` +
+    `owner=${logSafeValue(decoded.owner)} ` +
+    `log_group=${logSafeValue(decoded.log_group)} ` +
+    `log_stream=${logSafeValue(decoded.log_stream)} ` +
+    `message_type=${logSafeValue(decoded.message_type)} log_events=${logEventCount} ` +
     `subscription_filters=${subscriptionFilterCount}`;
 
   return {

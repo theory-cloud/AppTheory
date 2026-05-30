@@ -218,9 +218,15 @@ func normalizeKinesisExplicitHashKey(value string) (string, error) {
 
 func kinesisJSONRecordSafeSummary(record KinesisJSONRecord) KinesisJSONRecordSummary {
 	dataByteLength := len(record.Data)
-	safeLog := fmt.Sprintf("partition_key=%s data_bytes=%d", record.PartitionKey, dataByteLength)
+	safePartitionKey := logSafeValue(record.PartitionKey)
+	safeLog := fmt.Sprintf("partition_key=%s data_bytes=%d", safePartitionKey, dataByteLength)
 	if record.ExplicitHashKey != "" {
-		safeLog = fmt.Sprintf("partition_key=%s explicit_hash_key=%s data_bytes=%d", record.PartitionKey, record.ExplicitHashKey, dataByteLength)
+		safeLog = fmt.Sprintf(
+			"partition_key=%s explicit_hash_key=%s data_bytes=%d",
+			safePartitionKey,
+			logSafeValue(record.ExplicitHashKey),
+			dataByteLength,
+		)
 	}
 	return KinesisJSONRecordSummary{
 		PartitionKey:    record.PartitionKey,
@@ -304,9 +310,9 @@ func kinesisPutRecordsFailureSafeLog(failure KinesisPutRecordsFailure) string {
 	base := fmt.Sprintf(
 		"kinesis_put_records_failure index=%d partition_key=%s data_bytes=%d error_code=%s error_message_present=%t error_message_bytes=%d",
 		failure.Index,
-		failure.PartitionKey,
+		logSafeValue(failure.PartitionKey),
 		failure.DataByteLength,
-		failure.ErrorCode,
+		logSafeValue(failure.ErrorCode),
 		failure.ErrorMessagePresent,
 		failure.ErrorMessageByteLength,
 	)
@@ -316,10 +322,10 @@ func kinesisPutRecordsFailureSafeLog(failure KinesisPutRecordsFailure) string {
 	return fmt.Sprintf(
 		"kinesis_put_records_failure index=%d partition_key=%s explicit_hash_key=%s data_bytes=%d error_code=%s error_message_present=%t error_message_bytes=%d",
 		failure.Index,
-		failure.PartitionKey,
-		failure.ExplicitHashKey,
+		logSafeValue(failure.PartitionKey),
+		logSafeValue(failure.ExplicitHashKey),
 		failure.DataByteLength,
-		failure.ErrorCode,
+		logSafeValue(failure.ErrorCode),
 		failure.ErrorMessagePresent,
 		failure.ErrorMessageByteLength,
 	)
