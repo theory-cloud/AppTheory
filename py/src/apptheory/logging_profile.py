@@ -244,6 +244,7 @@ class ProfileLoggerOptions(TypedDict, total=False):
 
 
 _DEFAULT_PROFILE_WRITER = object()
+_DEFAULT_PROFILE_RETAINED_ENTRIES = 1024
 
 
 class ProfileLogger:
@@ -327,7 +328,11 @@ class ProfileLogger:
         return not self._root._closed and not self._root._last_error
 
     def get_stats(self) -> dict[str, Any]:
-        return {"entries_logged": self._root._entries_logged, "last_error": self._root._last_error}
+        return {
+            "entries_logged": self._root._entries_logged,
+            "entries_dropped": max(0, self._root._entries_logged - len(self._root._entries)),
+            "last_error": self._root._last_error,
+        }
 
     def entries(self) -> list[dict[str, Any]]:
         return [dict(entry) for entry in self._root._entries]
@@ -375,12 +380,17 @@ class ProfileLogger:
                 event,
                 self._sanitizer,
             )
-            self._root._entries.append(dict(encoded))
+            self._retain_entry(encoded)
             if self._writer is not None:
                 self._writer(json.dumps(encoded, separators=(",", ":")))
             self._root._entries_logged += 1
         except Exception as exc:  # noqa: BLE001 - logger records encoder failures instead of raising from hooks.
             self._root._last_error = str(exc)
+
+    def _retain_entry(self, encoded: dict[str, Any]) -> None:
+        while len(self._root._entries) >= _DEFAULT_PROFILE_RETAINED_ENTRIES:
+            del self._root._entries[0]
+        self._root._entries.append(dict(encoded))
 
 
 def _default_profile_writer(line: str) -> None:

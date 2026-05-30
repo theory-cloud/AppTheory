@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -303,6 +304,68 @@ func TestProfileLogger_ContextMethodsCloseAndErrorState(t *testing.T) {
 
 	if hooks := HooksFromLogger(nil); hooks.Log != nil {
 		t.Fatalf("nil logger hooks should be empty: %#v", hooks)
+	}
+}
+
+func TestProfileLogger_RetentionIsBoundedAndSharedByScopedLoggers(t *testing.T) {
+	cfg, err := DefaultLoggingProfile(LoggingProfileCloudWatchJSON)
+	if err != nil {
+		t.Fatalf("DefaultLoggingProfile: %v", err)
+	}
+	cfg.Enrichment = LoggingProfileEnrichment{Context: map[string]string{
+		"request_id": "request.request_id",
+	}}
+	cfg.RequiredFields = []string{"timestamp", "level", "message"}
+
+	var buf bytes.Buffer
+	logger, err := NewProfileLogger(
+		cfg,
+		WithProfileWriter(&buf),
+		WithProfileClock(func() time.Time { return time.Unix(0, 0).UTC() }),
+	)
+	if err != nil {
+		t.Fatalf("NewProfileLogger: %v", err)
+	}
+
+	total := defaultProfileLoggerRetainedEntries + 2
+	scoped := logger.WithRequestID("req_retention")
+	for i := 0; i < total; i++ {
+		scoped.Info("message-" + strconv.Itoa(i))
+	}
+
+	entries := logger.Entries()
+	if len(entries) != defaultProfileLoggerRetainedEntries {
+		t.Fatalf("expected bounded entries length %d, got %d", defaultProfileLoggerRetainedEntries, len(entries))
+	}
+	if entries[0]["message"] != "message-2" {
+		t.Fatalf("expected oldest retained entry after eviction, got %#v", entries[0])
+	}
+	newestMessage := "message-" + strconv.Itoa(total-1)
+	if entries[len(entries)-1]["message"] != newestMessage {
+		t.Fatalf("expected newest retained entry, got %#v", entries[len(entries)-1])
+	}
+	if entries[0]["request_id"] != "req_retention" {
+		t.Fatalf("scoped logger should share root retention with context, got %#v", entries[0])
+	}
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != total {
+		t.Fatalf("writer should receive all entries independent of retention, got %d lines", len(lines))
+	}
+	var last map[string]any
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
+		t.Fatalf("parse last writer line: %v", err)
+	}
+	if last["message"] != newestMessage {
+		t.Fatalf("writer did not receive newest entry after evictions: %#v", last)
+	}
+
+	stats := logger.GetStats()
+	if stats.EntriesLogged != int64(total) {
+		t.Fatalf("expected EntriesLogged=%d, got %#v", total, stats)
+	}
+	if stats.EntriesDropped != 2 {
+		t.Fatalf("expected EntriesDropped=2, got %#v", stats)
 	}
 }
 

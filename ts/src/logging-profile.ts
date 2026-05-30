@@ -284,6 +284,8 @@ export interface ProfileLoggerOptions {
   clock?: () => Date;
 }
 
+const DEFAULT_PROFILE_RETAINED_ENTRIES = 1024;
+
 interface ProfileLoggerContext {
   fields: LogFields;
   requestId: string;
@@ -408,6 +410,10 @@ export class ProfileLogger implements StructuredLogger {
   getStats(): LogFields {
     return {
       entries_logged: this.root.entriesLogged,
+      entries_dropped: Math.max(
+        0,
+        this.root.entriesLogged - this.root.profileEntries.length,
+      ),
       last_error: this.root.lastError,
     };
   }
@@ -454,12 +460,21 @@ export class ProfileLogger implements StructuredLogger {
         event,
         this.sanitizer,
       );
-      this.root.profileEntries.push({ ...encoded });
+      this.retainEntry(encoded);
       if (this.writer) this.writer(JSON.stringify(encoded));
       this.root.entriesLogged += 1;
     } catch (error) {
       this.root.lastError = errorMessage(error);
     }
+  }
+
+  private retainEntry(encoded: Record<string, unknown>): void {
+    while (
+      this.root.profileEntries.length >= DEFAULT_PROFILE_RETAINED_ENTRIES
+    ) {
+      this.root.profileEntries.shift();
+    }
+    this.root.profileEntries.push({ ...encoded });
   }
 }
 

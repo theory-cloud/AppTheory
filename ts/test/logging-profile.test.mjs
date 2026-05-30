@@ -367,3 +367,32 @@ test("profile logger context methods close and record errors", () => {
   broken.info("missing env");
   assert.match(broken.getStats().last_error, /logging profile required fields missing/);
 });
+
+test("profile logger retention is bounded and shared by scoped loggers", () => {
+  const cfg = defaultLoggingProfile(LOGGING_PROFILE_CLOUDWATCH_JSON);
+  cfg.enrichment = { context: { request_id: "request.request_id" } };
+  cfg.required_fields = ["timestamp", "level", "message"];
+
+  const lines = [];
+  const logger = new ProfileLogger(cfg, {
+    writer: (line) => lines.push(line),
+    clock: () => new Date(0),
+  });
+  const retentionCap = 1024;
+  const total = retentionCap + 2;
+  const scoped = logger.withRequestID("req_retention");
+  for (let index = 0; index < total; index += 1) {
+    scoped.info(`message-${index}`);
+  }
+
+  const entries = logger.entries();
+  assert.equal(entries.length, retentionCap);
+  assert.equal(entries[0].message, "message-2");
+  assert.equal(entries.at(-1).message, `message-${total - 1}`);
+  assert.equal(entries[0].request_id, "req_retention");
+
+  assert.equal(lines.length, total);
+  assert.equal(JSON.parse(lines.at(-1)).message, `message-${total - 1}`);
+  assert.equal(logger.getStats().entries_logged, total);
+  assert.equal(logger.getStats().entries_dropped, 2);
+});
