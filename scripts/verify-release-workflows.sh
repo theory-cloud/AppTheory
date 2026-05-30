@@ -316,15 +316,15 @@ require_not_contains(
     "ref: ${{ github.event.pull_request.head.sha }}",
     "release train promotion verifier must not execute verifier code from the untrusted PR head",
 )
-require_contains(
+require_not_contains(
     ".github/workflows/ci.yml",
     "refs/pull/${PR_NUMBER}/head:${pr_head_data_ref}",
-    "release train promotion verifier must fetch the PR head only as git data",
+    "release train promotion verifier must not fetch untrusted PR head content in CI",
 )
 require_contains(
     ".github/workflows/ci.yml",
-    'fetched_head_sha="$(git rev-parse "${pr_head_data_ref}^{commit}")"',
-    "release train promotion verifier must confirm fetched PR data matches the event head SHA",
+    "GITHUB_TOKEN: ${{ github.token }}",
+    "release train promotion verifier must use the read-only workflow token for compare API ancestry checks",
 )
 require_contains(
     ".github/workflows/ci.yml",
@@ -333,8 +333,18 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
-    '--head-ref "${pr_head_data_ref}"',
-    "release train promotion verifier must pass the fetched PR head data ref explicitly",
+    '--head-sha "${PR_HEAD_SHA}"',
+    "release train promotion verifier must pass the event head SHA without fetching PR head content",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    '--github-repository "${GITHUB_REPOSITORY}"',
+    "release train promotion verifier must identify the protected repository for compare checks",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    '--github-head-repository "${PR_HEAD_REPOSITORY}"',
+    "release train promotion verifier must compare fork PR heads in their source repository",
 )
 require_not_contains(
     ".github/workflows/ci.yml",
@@ -355,6 +365,11 @@ require_contains(
     "scripts/verify-release-train-promotion.sh",
     "does not match trusted {remote}/{branch}",
     "release train promotion verifier must reject forged release branch head content",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    "compare/{ancestor_sha}...{descendant_sha}",
+    "release train promotion verifier must use GitHub compare data for untrusted PR head ancestry",
 )
 require_contains(
     "scripts/verify-release-train-promotion.sh",
