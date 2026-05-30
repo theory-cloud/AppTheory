@@ -471,6 +471,34 @@ class TestLoggingProfile(unittest.TestCase):
         broken.info("missing env")
         self.assertIn("logging profile required fields missing", broken.get_stats()["last_error"])
 
+    def test_profile_logger_retention_is_bounded_and_shared_by_scoped_loggers(self) -> None:
+        cfg = default_logging_profile(LOGGING_PROFILE_CLOUDWATCH_JSON)
+        cfg["enrichment"] = {"context": {"request_id": "request.request_id"}}
+        cfg["required_fields"] = ["timestamp", "level", "message"]
+
+        lines: list[str] = []
+        logger = ProfileLogger(
+            cfg,
+            writer=lines.append,
+            clock=lambda: datetime.fromtimestamp(0, UTC),
+        )
+        retention_cap = 1024
+        total = retention_cap + 2
+        scoped = logger.with_request_id("req_retention")
+        for index in range(total):
+            scoped.info(f"message-{index}")
+
+        entries = logger.entries()
+        self.assertEqual(len(entries), retention_cap)
+        self.assertEqual(entries[0]["message"], "message-2")
+        self.assertEqual(entries[-1]["message"], f"message-{total - 1}")
+        self.assertEqual(entries[0]["request_id"], "req_retention")
+
+        self.assertEqual(len(lines), total)
+        self.assertEqual(json.loads(lines[-1])["message"], f"message-{total - 1}")
+        self.assertEqual(logger.get_stats()["entries_logged"], total)
+        self.assertEqual(logger.get_stats()["entries_dropped"], 2)
+
 
 def _profile_environment() -> dict[str, str]:
     return {
