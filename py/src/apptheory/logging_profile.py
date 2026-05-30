@@ -139,6 +139,8 @@ def validate_logging_profile(config: LoggingProfileConfig) -> None:
 
 def logging_profile_validation_errors(config: LoggingProfileConfig) -> list[str]:
     errors: list[str] = []
+    if not isinstance(config, dict):
+        return ["logging profile: must be an object"]
 
     schema = _trim(config.get("schema_version"))
     if not schema:
@@ -152,29 +154,46 @@ def logging_profile_validation_errors(config: LoggingProfileConfig) -> list[str]
     elif not _is_supported_profile(profile):
         errors.append("profile: unsupported value " + _trim(config.get("profile")))
 
-    encoding = config.get("encoding") or {}
-    format_value = _trim(encoding.get("format")).lower()
-    if not format_value:
-        errors.append("encoding.format: required")
-    elif format_value != "json":
-        errors.append("encoding.format: unsupported value " + _trim(encoding.get("format")))
+    encoding_value = config.get("encoding")
+    if encoding_value is None:
+        encoding: dict[str, Any] | None = {}
+    elif isinstance(encoding_value, dict):
+        encoding = encoding_value
+    else:
+        errors.append("encoding: must be an object")
+        encoding = None
+    if encoding is not None:
+        format_value = _trim(encoding.get("format")).lower()
+        if not format_value:
+            errors.append("encoding.format: required")
+        elif format_value != "json":
+            errors.append("encoding.format: unsupported value " + _trim(encoding.get("format")))
 
-    timestamp_format = _trim(encoding.get("timestamp_format")).lower()
-    if timestamp_format and timestamp_format not in {"rfc3339nano", "rfc3339"}:
-        errors.append("encoding.timestamp_format: unsupported value " + _trim(encoding.get("timestamp_format")))
-    errors.extend(_validate_encoding_output_field("encoding.timestamp_field", encoding.get("timestamp_field")))
-    errors.extend(_validate_encoding_output_field("encoding.level_field", encoding.get("level_field")))
-    errors.extend(_validate_encoding_output_field("encoding.message_field", encoding.get("message_field")))
+        timestamp_format = _trim(encoding.get("timestamp_format")).lower()
+        if timestamp_format and timestamp_format not in {"rfc3339nano", "rfc3339"}:
+            errors.append("encoding.timestamp_format: unsupported value " + _trim(encoding.get("timestamp_format")))
+        errors.extend(_validate_encoding_output_field("encoding.timestamp_field", encoding.get("timestamp_field")))
+        errors.extend(_validate_encoding_output_field("encoding.level_field", encoding.get("level_field")))
+        errors.extend(_validate_encoding_output_field("encoding.message_field", encoding.get("message_field")))
 
     errors.extend(_validate_level_map(config.get("levels")))
     errors.extend(_validate_profile_field_list("required_fields", config.get("required_fields")))
     errors.extend(_validate_profile_field_list("recommended_fields", config.get("recommended_fields")))
     errors.extend(_validate_field_map(config.get("field_map")))
-    enrichment = config.get("enrichment") or {}
-    errors.extend(_validate_static_enrichment(enrichment.get("static")))
-    errors.extend(_validate_context_enrichment(enrichment.get("context")))
-    errors.extend(_validate_error_capture(config.get("error_capture") or {}))
-    errors.extend(_validate_alerting_hints(config.get("alerting_hints") or {}))
+    enrichment_value = config.get("enrichment")
+    if enrichment_value is None:
+        enrichment: dict[str, Any] | None = {}
+    elif isinstance(enrichment_value, dict):
+        enrichment = enrichment_value
+    else:
+        errors.append("enrichment: must be an object")
+        enrichment = None
+    if enrichment is not None:
+        errors.extend(_validate_static_enrichment(enrichment.get("static")))
+        errors.extend(_validate_context_enrichment(enrichment.get("context")))
+    errors.extend(_validate_error_capture(config.get("error_capture")))
+    errors.extend(_validate_sanitization(config.get("sanitization")))
+    errors.extend(_validate_alerting_hints(config.get("alerting_hints")))
     return errors
 
 
@@ -880,20 +899,28 @@ def _paytheory_alert_profile() -> LoggingProfileConfig:
     return cfg
 
 
-def _validate_level_map(levels: dict[str, str] | None) -> list[str]:
+def _validate_level_map(levels: object) -> list[str]:
     errors: list[str] = []
-    for key in sorted(levels or {}):
+    if levels is None:
+        return errors
+    if not isinstance(levels, dict):
+        return ["levels: must be an object"]
+    for key in sorted(levels):
         if key not in {"debug", "info", "warn", "error"}:
             errors.append(f"levels.{key}: unsupported level {key}")
             continue
-        if not _trim((levels or {}).get(key)):
+        if not _trim(levels.get(key)):
             errors.append(f"levels.{key}: required")
     return errors
 
 
-def _validate_profile_field_list(path: str, fields: list[str] | None) -> list[str]:
+def _validate_profile_field_list(path: str, fields: object) -> list[str]:
     errors: list[str] = []
-    for idx, field in enumerate(fields or []):
+    if fields is None:
+        return errors
+    if not isinstance(fields, list):
+        return [f"{path}: must be an array"]
+    for idx, field in enumerate(fields):
         trimmed = _trim(field)
         if not trimmed:
             errors.append(f"{path}[{idx}]: required")
@@ -912,13 +939,17 @@ def _validate_encoding_output_field(path: str, field: str | None) -> list[str]:
     return []
 
 
-def _validate_field_map(field_map: dict[str, str] | None) -> list[str]:
+def _validate_field_map(field_map: object) -> list[str]:
     errors: list[str] = []
-    for key in sorted(field_map or {}):
+    if field_map is None:
+        return errors
+    if not isinstance(field_map, dict):
+        return ["field_map: must be an object"]
+    for key in sorted(field_map):
         canonical = _trim(key)
         if not _is_supported_canonical_field(canonical):
             errors.append(f"field_map.{key}: unsupported source {canonical}")
-        out = _trim((field_map or {}).get(key))
+        out = _trim(field_map.get(key))
         if not out:
             errors.append(f"field_map.{key}: required")
         elif not is_supported_profile_output_field(out):
@@ -926,22 +957,30 @@ def _validate_field_map(field_map: dict[str, str] | None) -> list[str]:
     return errors
 
 
-def _validate_static_enrichment(static: dict[str, str] | None) -> list[str]:
+def _validate_static_enrichment(static: object) -> list[str]:
     errors: list[str] = []
-    for key in sorted(static or {}):
+    if static is None:
+        return errors
+    if not isinstance(static, dict):
+        return ["enrichment.static: must be an object"]
+    for key in sorted(static):
         trimmed = _trim(key)
         if not is_supported_profile_output_field(trimmed):
             errors.append(f"enrichment.static.{key}: unsupported field {trimmed}")
     return errors
 
 
-def _validate_context_enrichment(context: dict[str, str] | None) -> list[str]:
+def _validate_context_enrichment(context: object) -> list[str]:
     errors: list[str] = []
-    for key in sorted(context or {}):
+    if context is None:
+        return errors
+    if not isinstance(context, dict):
+        return ["enrichment.context: must be an object"]
+    for key in sorted(context):
         trimmed = _trim(key)
         if not is_supported_profile_output_field(trimmed):
             errors.append(f"enrichment.context.{key}: unsupported field {trimmed}")
-        source = _trim((context or {}).get(key))
+        source = _trim(context.get(key))
         if not source:
             errors.append(f"enrichment.context.{key}: required")
         elif not _is_supported_context_source(source):
@@ -949,8 +988,12 @@ def _validate_context_enrichment(context: dict[str, str] | None) -> list[str]:
     return errors
 
 
-def _validate_error_capture(capture: LoggingProfileErrorCapture) -> list[str]:
+def _validate_error_capture(capture: object) -> list[str]:
     errors: list[str] = []
+    if capture is None:
+        return errors
+    if not isinstance(capture, dict):
+        return ["error_capture: must be an object"]
     stack_trace_field = _trim(capture.get("stack_trace_field"))
     if stack_trace_field and not is_supported_profile_output_field(stack_trace_field):
         errors.append("error_capture.stack_trace_field: unsupported field " + stack_trace_field)
@@ -965,7 +1008,19 @@ def _validate_error_capture(capture: LoggingProfileErrorCapture) -> list[str]:
     return errors
 
 
-def _validate_alerting_hints(hints: LoggingProfileAlertingHints) -> list[str]:
+def _validate_sanitization(sanitization: object) -> list[str]:
+    if sanitization is None:
+        return []
+    if not isinstance(sanitization, dict):
+        return ["sanitization: must be an object"]
+    return []
+
+
+def _validate_alerting_hints(hints: object) -> list[str]:
+    if hints is None:
+        return []
+    if not isinstance(hints, dict):
+        return ["alerting_hints: must be an object"]
     return [
         *_validate_profile_field_list("alerting_hints.fingerprint_fields", hints.get("fingerprint_fields")),
         *_validate_profile_field_list("alerting_hints.keeper_lookup_fields", hints.get("keeper_lookup_fields")),
