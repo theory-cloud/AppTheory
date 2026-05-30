@@ -62,6 +62,8 @@ type profileLoggerOptions struct {
 	clock       func() time.Time
 }
 
+const defaultProfileLoggerRetainedEntries = 1024
+
 type ProfileLogger struct {
 	root *ProfileLogger
 
@@ -278,7 +280,19 @@ func (l *ProfileLogger) GetStats() LoggerStats {
 		return LoggerStats{}
 	}
 	root := l.rootLogger()
-	return LoggerStats{EntriesLogged: root.entriesLogged.Load(), LastError: l.lastErrorString()}
+	root.mu.Lock()
+	retained := len(root.entries)
+	root.mu.Unlock()
+	entriesLogged := root.entriesLogged.Load()
+	entriesDropped := entriesLogged - int64(retained)
+	if entriesDropped < 0 {
+		entriesDropped = 0
+	}
+	return LoggerStats{
+		EntriesLogged:  entriesLogged,
+		EntriesDropped: entriesDropped,
+		LastError:      l.lastErrorString(),
+	}
 }
 
 func (l *ProfileLogger) Entries() []map[string]any {
@@ -349,6 +363,11 @@ func (l *ProfileLogger) log(level string, message string, fields ...map[string]a
 
 	root := l.rootLogger()
 	root.mu.Lock()
+	for len(root.entries) >= defaultProfileLoggerRetainedEntries {
+		copy(root.entries, root.entries[1:])
+		root.entries[len(root.entries)-1] = nil
+		root.entries = root.entries[:len(root.entries)-1]
+	}
 	root.entries = append(root.entries, copyAnyMap(encoded))
 	root.mu.Unlock()
 

@@ -134,6 +134,31 @@ const functionUrls = resourceValues("AWS::Lambda::Url");
 assert.equal(functionUrls.length, 1, "SSR_ONLY example should expose one SSR Function URL");
 assert.equal(functionUrls[0].Properties?.AuthType, "AWS_IAM", "SSR Function URL must remain AWS_IAM by default");
 
+const ssrFunctions = resourceValues("AWS::Lambda::Function").filter(
+  (resource) => resource.Properties?.Handler === "index.handler" && resource.Properties?.Runtime === "nodejs24.x",
+);
+assert.equal(ssrFunctions.length, 1, "SSR example should synthesize one Node.js SSR function");
+const ssrInlineCode = String(ssrFunctions[0].Properties?.Code?.ZipFile ?? "");
+assert.match(
+  ssrInlineCode,
+  /const escapeHtml = \(value\) => String\(value\)\.replace\(\//,
+  "SSR handler should define an HTML escaping helper for reflected request headers",
+);
+assert.match(
+  ssrInlineCode,
+  /const escapedRequestId = escapeHtml\(requestId\);/,
+  "SSR handler should escape x-request-id before rendering it",
+);
+assert.match(
+  ssrInlineCode,
+  /<p id="request-id">'\s*\+\s*escapedRequestId\s*\+\s*'<\/p>/,
+  "SSR handler should render the escaped request id",
+);
+assert.ok(
+  !/<p id="request-id">'\s*\+\s*requestId\s*\+/.test(ssrInlineCode),
+  "SSR handler must not concatenate the raw viewer-supplied request id into HTML",
+);
+
 const originAccessControls = resourceValues("AWS::CloudFront::OriginAccessControl");
 assert.ok(
   originAccessControls.some(

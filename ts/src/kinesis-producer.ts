@@ -1,5 +1,7 @@
 import { Buffer } from "node:buffer";
 
+import { logSafeValue } from "./internal/safe-log.js";
+
 const KINESIS_JSON_RECORD_INVALID_MESSAGE =
   "apptheory: kinesis json record invalid";
 const KINESIS_PUT_RECORDS_INVALID_MESSAGE =
@@ -200,14 +202,17 @@ function kinesisJsonRecordSafeSummary(
   dataByteLength: number,
   explicitHashKey: string,
 ): KinesisJsonRecordSummary {
+  const safePartitionKey = logSafeValue(partitionKey);
   const summary: KinesisJsonRecordSummary = {
     partition_key: partitionKey,
     data_byte_length: dataByteLength,
-    safe_log: `partition_key=${partitionKey} data_bytes=${dataByteLength}`,
+    safe_log: `partition_key=${safePartitionKey} data_bytes=${dataByteLength}`,
   };
   if (explicitHashKey) {
     summary.explicit_hash_key = explicitHashKey;
-    summary.safe_log = `partition_key=${partitionKey} explicit_hash_key=${explicitHashKey} data_bytes=${dataByteLength}`;
+    summary.safe_log =
+      `partition_key=${safePartitionKey} ` +
+      `explicit_hash_key=${logSafeValue(explicitHashKey)} data_bytes=${dataByteLength}`;
   }
   return summary;
 }
@@ -325,16 +330,19 @@ function kinesisPutRecordsFailureSafeLog(
   if (failure.explicit_hash_key) {
     return (
       `kinesis_put_records_failure index=${failure.index} ` +
-      `partition_key=${failure.partition_key} explicit_hash_key=${failure.explicit_hash_key} ` +
-      `data_bytes=${failure.data_byte_length} error_code=${failure.error_code} ` +
+      `partition_key=${logSafeValue(failure.partition_key)} ` +
+      `explicit_hash_key=${logSafeValue(failure.explicit_hash_key)} ` +
+      `data_bytes=${failure.data_byte_length} ` +
+      `error_code=${logSafeValue(failure.error_code)} ` +
       `error_message_present=${failure.error_message_present} ` +
       `error_message_bytes=${failure.error_message_byte_length}`
     );
   }
   return (
     `kinesis_put_records_failure index=${failure.index} ` +
-    `partition_key=${failure.partition_key} data_bytes=${failure.data_byte_length} ` +
-    `error_code=${failure.error_code} ` +
+    `partition_key=${logSafeValue(failure.partition_key)} ` +
+    `data_bytes=${failure.data_byte_length} ` +
+    `error_code=${logSafeValue(failure.error_code)} ` +
     `error_message_present=${failure.error_message_present} ` +
     `error_message_bytes=${failure.error_message_byte_length}`
   );

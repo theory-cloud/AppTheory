@@ -178,11 +178,11 @@ func cloudWatchLogsSubscriptionSafeSummary(decoded CloudWatchLogsSubscription) C
 	logEventCount := len(decoded.LogEvents)
 	safeLog := fmt.Sprintf(
 		"record_id=%s owner=%s log_group=%s log_stream=%s message_type=%s log_events=%d subscription_filters=%d",
-		decoded.RecordID,
-		decoded.Owner,
-		decoded.LogGroup,
-		decoded.LogStream,
-		decoded.MessageType,
+		logSafeValue(decoded.RecordID),
+		logSafeValue(decoded.Owner),
+		logSafeValue(decoded.LogGroup),
+		logSafeValue(decoded.LogStream),
+		logSafeValue(decoded.MessageType),
 		logEventCount,
 		filterCount,
 	)

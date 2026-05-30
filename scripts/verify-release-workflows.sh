@@ -50,6 +50,20 @@ def require_order_after(path: str, anchor: str, first: str, second: str, descrip
         )
 
 
+def require_step_contains(path: str, step_name: str, needle: str, description: str) -> None:
+    text = Path(path).read_text(encoding="utf-8")
+    marker = f"      - name: {step_name}\n"
+    start_index = text.find(marker)
+    if start_index == -1:
+        raise SystemExit(f"release-workflows: FAIL ({description}; missing step {step_name!r} in {path})")
+    next_step_index = text.find("\n      - ", start_index + len(marker))
+    block = text[start_index : next_step_index if next_step_index != -1 else len(text)]
+    if needle not in block:
+        raise SystemExit(
+            f"release-workflows: FAIL ({description}; missing {needle!r} in {step_name!r} step in {path})"
+        )
+
+
 require_order(
     ".github/workflows/prerelease.yml",
     "Build + verify before prerelease creation",
@@ -294,13 +308,58 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
+    "ref: ${{ github.event.pull_request.base.sha }}",
+    "release train promotion verifier must run from trusted base branch code",
+)
+require_not_contains(
+    ".github/workflows/ci.yml",
     "ref: ${{ github.event.pull_request.head.sha }}",
-    "release train promotion verifier must inspect the PR head commit, not the synthetic merge ref",
+    "release train promotion verifier must not execute verifier code from the untrusted PR head",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "refs/pull/${PR_NUMBER}/head:${pr_head_data_ref}",
+    "release train promotion verifier must fetch the PR head only as git data",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    'fetched_head_sha="$(git rev-parse "${pr_head_data_ref}^{commit}")"',
+    "release train promotion verifier must confirm fetched PR data matches the event head SHA",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "--base-ref HEAD",
+    "release train promotion verifier must treat the trusted checkout as the base ref",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    '--head-ref "${pr_head_data_ref}"',
+    "release train promotion verifier must pass the fetched PR head data ref explicitly",
+)
+require_not_contains(
+    ".github/workflows/ci.yml",
+    "--head-ref HEAD",
+    "release train promotion verifier must not trust the checkout HEAD as release PR head content",
 )
 require_contains(
     ".github/workflows/ci.yml",
     "fetch-depth: 0",
     "release train promotion verifier must have enough git history for ancestry checks",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    'ancestor_branch="premain", descendant_branch=head',
+    "prerelease promotion verifier must topology-check staging to premain promotions",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    "does not match trusted {remote}/{branch}",
+    "release train promotion verifier must reject forged release branch head content",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    "refs/remotes/origin/pr/1/head",
+    "release train promotion self-test must cover fetched PR head data that forges a release branch name",
 )
 require_contains(
     "scripts/verify-release-train-promotion.sh",
@@ -363,6 +422,17 @@ require_contains(
     'gh pr ready "${pr_number}" --undo',
     "release-please PR generation must draft-lock valid open release PRs before artifact setup",
 )
+for workflow, step_name in (
+    (".github/workflows/prerelease-pr.yml", "Release Please (PR only)"),
+    (".github/workflows/release-pr.yml", "Release Please (PR only) (aligned)"),
+    (".github/workflows/release-pr.yml", "Release Please (PR only)"),
+):
+    require_step_contains(
+        workflow,
+        step_name,
+        "GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}",
+        "release-please wrapper steps must authenticate gh CLI with the release token fallback",
+    )
 require_order(
     ".github/workflows/prerelease.yml",
     "Verify branch version sync (release preflight)",
