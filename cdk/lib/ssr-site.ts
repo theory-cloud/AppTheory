@@ -777,10 +777,42 @@ export class AppTheorySsrSite extends Construct {
     const htmlCacheKeyHeaders = Array.from(
       new Set(ssrForwardHeaders.filter((header) => !htmlCacheKeyExcludedHeaders.has(header))),
     );
+    const maxBearerFunctionUrlCacheKeyHeaders = 10;
+    const bearerFunctionUrlOriginForwardHeaders = Array.from(new Set([...baseSsrForwardHeaders, "content-type"]));
+    const isBlockedBearerFunctionUrlCacheKeyHeader = (header: string): boolean =>
+      header === "host" ||
+      header === "forwarded" ||
+      header === "x-real-ip" ||
+      header.startsWith("x-forwarded-") ||
+      isTenantHeaderName(header);
+    const bearerFunctionUrlCacheKeyHeaders = Array.from(
+      new Set(
+        [
+          "authorization",
+          "accept",
+          "origin",
+          "access-control-request-method",
+          "access-control-request-headers",
+          ...extraSsrForwardHeaders.filter(
+            (header) =>
+              !isBlockedBearerFunctionUrlCacheKeyHeader(header) &&
+              !bearerFunctionUrlOriginForwardHeaders.includes(header),
+          ),
+        ].filter((header) => header.length > 0),
+      ),
+    );
 
     if (!props.htmlCachePolicy && htmlCacheKeyHeaders.length > maxDefaultCacheKeyHeaders) {
       throw new Error(
         `AppTheorySsrSite default htmlCachePolicy supports at most ${maxDefaultCacheKeyHeaders} cache-key headers; received ${htmlCacheKeyHeaders.length}`,
+      );
+    }
+    if (
+      bearerFunctionUrlOriginConfigs.length > 0 &&
+      bearerFunctionUrlCacheKeyHeaders.length > maxBearerFunctionUrlCacheKeyHeaders
+    ) {
+      throw new Error(
+        `AppTheorySsrSite bearerFunctionUrlOrigins support at most ${maxBearerFunctionUrlCacheKeyHeaders} cache-key forwarded headers; received ${bearerFunctionUrlCacheKeyHeaders.length}`,
       );
     }
 
@@ -820,6 +852,29 @@ export class AppTheorySsrSite extends Construct {
         enableAcceptEncodingBrotli: true,
         enableAcceptEncodingGzip: true,
       });
+    const bearerFunctionUrlOriginRequestPolicy =
+      bearerFunctionUrlOriginConfigs.length > 0
+        ? new cloudfront.OriginRequestPolicy(this, "BearerFunctionUrlOriginRequestPolicy", {
+            queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.all(),
+            cookieBehavior: cloudfront.OriginRequestCookieBehavior.all(),
+            headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(
+              ...bearerFunctionUrlOriginForwardHeaders,
+            ),
+          })
+        : undefined;
+    const bearerFunctionUrlCachePolicy =
+      bearerFunctionUrlOriginConfigs.length > 0
+        ? new cloudfront.CachePolicy(this, "BearerFunctionUrlCachePolicy", {
+            comment:
+              "AppTheory bearer Function URL API cache policy: caching disabled while forwarding bearer/CORS app headers",
+            minTtl: Duration.seconds(0),
+            defaultTtl: Duration.seconds(0),
+            maxTtl: Duration.seconds(0),
+            cookieBehavior: cloudfront.CacheCookieBehavior.none(),
+            headerBehavior: cloudfront.CacheHeaderBehavior.allowList(...bearerFunctionUrlCacheKeyHeaders),
+            queryStringBehavior: cloudfront.CacheQueryStringBehavior.none(),
+          })
+        : undefined;
 
     assertNoConflictingBehaviorPatterns(
       "direct S3 paths",
@@ -984,8 +1039,8 @@ export class AppTheorySsrSite extends Construct {
         origin: functionUrlOrigin,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        cachePolicy: bearerFunctionUrlCachePolicy,
+        originRequestPolicy: bearerFunctionUrlOriginRequestPolicy,
         responseHeadersPolicy: this.responseHeadersPolicy,
         functionAssociations: createEdgeFunctionAssociations(),
       });
