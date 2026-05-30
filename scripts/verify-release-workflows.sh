@@ -322,10 +322,30 @@ require_contains(
     '--head-ref "${pr_head_data_ref}"',
     "release train promotion verifier must pass the fetched PR head data ref explicitly",
 )
+require_not_contains(
+    ".github/workflows/ci.yml",
+    "--head-ref HEAD",
+    "release train promotion verifier must not trust the checkout HEAD as release PR head content",
+)
 require_contains(
     ".github/workflows/ci.yml",
     "fetch-depth: 0",
     "release train promotion verifier must have enough git history for ancestry checks",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    'ancestor_branch="premain", descendant_branch=head',
+    "prerelease promotion verifier must topology-check staging to premain promotions",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    "does not match trusted {remote}/{branch}",
+    "release train promotion verifier must reject forged release branch head content",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    "refs/remotes/origin/pr/1/head",
+    "release train promotion self-test must cover fetched PR head data that forges a release branch name",
 )
 require_contains(
     "scripts/verify-release-train-promotion.sh",
