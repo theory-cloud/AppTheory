@@ -6,6 +6,8 @@ import json
 import math
 from typing import Any
 
+from apptheory._safe_log import log_safe_value
+
 KinesisJsonRecord = dict[str, Any]
 KinesisJsonRecordSummary = dict[str, Any]
 KinesisPutRecordsFailure = dict[str, Any]
@@ -189,15 +191,17 @@ def _kinesis_json_record_safe_summary(
     data_byte_length: int,
     explicit_hash_key: str,
 ) -> KinesisJsonRecordSummary:
+    safe_partition_key = log_safe_value(partition_key)
     summary: KinesisJsonRecordSummary = {
         "partition_key": partition_key,
         "data_byte_length": data_byte_length,
-        "safe_log": f"partition_key={partition_key} data_bytes={data_byte_length}",
+        "safe_log": f"partition_key={safe_partition_key} data_bytes={data_byte_length}",
     }
     if explicit_hash_key:
         summary["explicit_hash_key"] = explicit_hash_key
         summary["safe_log"] = (
-            f"partition_key={partition_key} explicit_hash_key={explicit_hash_key} data_bytes={data_byte_length}"
+            f"partition_key={safe_partition_key} explicit_hash_key={log_safe_value(explicit_hash_key)} "
+            f"data_bytes={data_byte_length}"
         )
     return summary
 
@@ -273,14 +277,18 @@ def _kinesis_put_records_failure(
 def _kinesis_put_records_failure_safe_log(failure: KinesisPutRecordsFailure) -> str:
     if failure.get("explicit_hash_key"):
         return (
-            f"kinesis_put_records_failure index={failure['index']} partition_key={failure['partition_key']} "
-            f"explicit_hash_key={failure['explicit_hash_key']} data_bytes={failure['data_byte_length']} "
-            f"error_code={failure['error_code']} error_message_present={failure['error_message_present']} "
+            f"kinesis_put_records_failure index={failure['index']} "
+            f"partition_key={log_safe_value(failure['partition_key'])} "
+            f"explicit_hash_key={log_safe_value(failure['explicit_hash_key'])} "
+            f"data_bytes={failure['data_byte_length']} "
+            f"error_code={log_safe_value(failure['error_code'])} "
+            f"error_message_present={failure['error_message_present']} "
             f"error_message_bytes={failure['error_message_byte_length']}"
         )
     return (
-        f"kinesis_put_records_failure index={failure['index']} partition_key={failure['partition_key']} "
-        f"data_bytes={failure['data_byte_length']} error_code={failure['error_code']} "
+        f"kinesis_put_records_failure index={failure['index']} "
+        f"partition_key={log_safe_value(failure['partition_key'])} "
+        f"data_bytes={failure['data_byte_length']} error_code={log_safe_value(failure['error_code'])} "
         f"error_message_present={failure['error_message_present']} "
         f"error_message_bytes={failure['error_message_byte_length']}"
     )

@@ -83,6 +83,64 @@ test("decodeCloudWatchLogsSubscription decodes payload and omits raw messages fr
   assert.equal(safeSummaryJson.includes("contract log line beta"), false);
 });
 
+test("decodeCloudWatchLogsSubscription sanitizes metadata in safe_log", () => {
+  const rawMessage = "raw log line must stay out owner=customer-secret";
+  const decoded = decodeCloudWatchLogsSubscription({
+    eventID: "kin-cwl\nowner=spoof",
+    kinesis: {
+      data: gzipPayload({
+        messageType: "DATA_MESSAGE\rmessage_type=FORGED",
+        owner: "111122223333\nlog_events=999",
+        logGroup: "/aws/lambda/apptheory-contract owner=spoof",
+        logStream: "2026/05/26/[$LATEST]contract-a\tcontrol=\u001fafter",
+        subscriptionFilters: ["apptheory-contract-filter"],
+        logEvents: [
+          {
+            id: "cwl-event-a1",
+            timestamp: 1779806400000,
+            message: rawMessage,
+          },
+        ],
+      }).toString("base64"),
+    },
+  });
+
+  assert.equal(decoded.record_id, "kin-cwl\nowner=spoof");
+  assert.equal(decoded.owner, "111122223333\nlog_events=999");
+
+  const safeLog = decoded.safe_summary.safe_log;
+  for (const forbidden of [
+    "\n",
+    "\r",
+    "\t",
+    "\u001f",
+    "owner=spoof",
+    "log_events=999",
+    "message_type=FORGED",
+    rawMessage,
+  ]) {
+    assert.equal(
+      safeLog.includes(forbidden),
+      false,
+      `safe_log permits forged metadata ${JSON.stringify(forbidden)}: ${safeLog}`,
+    );
+  }
+  for (const wanted of [
+    "record_id=kin-cwl%0Aowner%3Dspoof",
+    "owner=111122223333%0Alog_events%3D999",
+    "log_group=/aws/lambda/apptheory-contract%20owner%3Dspoof",
+    "log_stream=2026/05/26/[$LATEST]contract-a%09control%3D%1Fafter",
+    "message_type=DATA_MESSAGE%0Dmessage_type%3DFORGED",
+    "log_events=1",
+  ]) {
+    assert.equal(
+      safeLog.includes(wanted),
+      true,
+      `safe_log missing sanitized metadata ${wanted}: ${safeLog}`,
+    );
+  }
+});
+
 test("decodeCloudWatchLogsSubscription failures do not leak raw payload data", () => {
   const secret = "do-not-log-customer-message";
 

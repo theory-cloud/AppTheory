@@ -64,6 +64,61 @@ func TestDecodeCloudWatchLogsSubscription_DecodesEnvelopeAndSafeSummary(t *testi
 	}
 }
 
+func TestDecodeCloudWatchLogsSubscription_SanitizesMetadataInSafeLog(t *testing.T) {
+	t.Parallel()
+
+	rawMessage := "raw log line must stay out owner=customer-secret"
+	record := events.KinesisEventRecord{
+		EventID: "kin-cwl\nowner=spoof",
+		Kinesis: events.KinesisRecord{Data: gzipCloudWatchLogsSubscriptionTestPayload(t, map[string]any{
+			"messageType":         "DATA_MESSAGE\rmessage_type=FORGED",
+			"owner":               "111122223333\nlog_events=999",
+			"logGroup":            "/aws/lambda/apptheory-contract owner=spoof",
+			"logStream":           "2026/05/26/[$LATEST]contract-a\tcontrol=\x1fafter",
+			"subscriptionFilters": []string{"apptheory-contract-filter"},
+			"logEvents": []map[string]any{
+				{"id": "cwl-event-a1", "timestamp": int64(1779806400000), "message": rawMessage},
+			},
+		})},
+	}
+
+	decoded, err := DecodeCloudWatchLogsSubscription(record)
+	if err != nil {
+		t.Fatalf("DecodeCloudWatchLogsSubscription returned error: %v", err)
+	}
+	if decoded.RecordID != "kin-cwl\nowner=spoof" || decoded.Owner != "111122223333\nlog_events=999" {
+		t.Fatalf("decoded metadata should remain API-compatible: %#v", decoded)
+	}
+
+	safeLog := decoded.SafeSummary.SafeLog
+	for _, forbidden := range []string{
+		"\n",
+		"\r",
+		"\t",
+		"\x1f",
+		"owner=spoof",
+		"log_events=999",
+		"message_type=FORGED",
+		rawMessage,
+	} {
+		if strings.Contains(safeLog, forbidden) {
+			t.Fatalf("safe log permits forged metadata %q: %q", forbidden, safeLog)
+		}
+	}
+	for _, want := range []string{
+		"record_id=kin-cwl%0Aowner%3Dspoof",
+		"owner=111122223333%0Alog_events%3D999",
+		"log_group=/aws/lambda/apptheory-contract%20owner%3Dspoof",
+		"log_stream=2026/05/26/[$LATEST]contract-a%09control%3D%1Fafter",
+		"message_type=DATA_MESSAGE%0Dmessage_type%3DFORGED",
+		"log_events=1",
+	} {
+		if !strings.Contains(safeLog, want) {
+			t.Fatalf("safe log missing sanitized metadata %q: %q", want, safeLog)
+		}
+	}
+}
+
 func TestDecodeCloudWatchLogsSubscription_FailsClosedWithoutLeakingRawData(t *testing.T) {
 	t.Parallel()
 

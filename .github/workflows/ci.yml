@@ -22,16 +22,39 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
       - name: Verify release train promotion path
         env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          set -euo pipefail
+
+          if [[ ! "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+            echo "release-train-promotion: FAIL (pull request number is not numeric)"
+            exit 1
+          fi
+
+          pr_head_data_ref="refs/remotes/origin/pr/${PR_NUMBER}/head"
+          git fetch --no-tags origin \
+            "+refs/pull/${PR_NUMBER}/head:${pr_head_data_ref}"
+
+          fetched_head_sha="$(git rev-parse "${pr_head_data_ref}^{commit}")"
+          if [[ "${fetched_head_sha}" != "${PR_HEAD_SHA}" ]]; then
+            echo "release-train-promotion: FAIL (fetched PR head does not match event head)"
+            echo "fetched=${fetched_head_sha}"
+            echo "event=${PR_HEAD_SHA}"
+            exit 1
+          fi
+
           scripts/verify-release-train-promotion.sh \
             --base "${PR_BASE_REF}" \
             --head "${PR_HEAD_REF}" \
-            --head-ref HEAD
+            --base-ref HEAD \
+            --head-ref "${pr_head_data_ref}"
 
   prerelease-readiness:
     name: Prerelease readiness (staging → premain)

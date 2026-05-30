@@ -51,6 +51,7 @@ test("logging profile catalog and default variants", () => {
   const legacy = defaultLoggingProfile(LOGGING_PROFILE_LEGACY);
   const local = defaultLoggingProfile(LOGGING_PROFILE_LOCAL_DEV);
   for (const cfg of [paytheory, cloudwatch, legacy, local]) validateLoggingProfile(cfg);
+  validateLoggingProfile(decodeLoggingProfileJSON(JSON.stringify(paytheory)));
   assert.equal(paytheory.encoding.timestamp_field, "ts");
   assert.deepEqual(cloudwatch.required_fields, ["timestamp", "level", "message"]);
   assert.equal(legacy.encoding.level_field, "level");
@@ -118,6 +119,52 @@ test("logging profile validation fails closed deterministically", () => {
       error.errors.includes("encoding.unknown_encoding_option: unsupported option") &&
       error.errors.includes("unknown_top_level: unsupported option"),
   );
+});
+
+test("logging profile malformed composite values fail with validation errors", () => {
+  const cases = [
+    ["encoding", { encoding: true }, "encoding: must be an object"],
+    ["levels", { levels: true }, "levels: must be an object"],
+    ["required_fields", { required_fields: true }, "required_fields: must be an array"],
+    [
+      "recommended_fields",
+      { recommended_fields: { field: "trace_id" } },
+      "recommended_fields: must be an array",
+    ],
+    ["field_map", { field_map: true }, "field_map: must be an object"],
+    ["enrichment", { enrichment: true }, "enrichment: must be an object"],
+    ["enrichment.static", { enrichment: { static: true } }, "enrichment.static: must be an object"],
+    ["enrichment.context", { enrichment: { context: true } }, "enrichment.context: must be an object"],
+    ["error_capture", { error_capture: true }, "error_capture: must be an object"],
+    ["sanitization", { sanitization: true }, "sanitization: must be an object"],
+    ["alerting_hints", { alerting_hints: true }, "alerting_hints: must be an object"],
+    [
+      "alerting_hints.fingerprint_fields",
+      { alerting_hints: { fingerprint_fields: true } },
+      "alerting_hints.fingerprint_fields: must be an array",
+    ],
+    [
+      "alerting_hints.keeper_lookup_fields",
+      { alerting_hints: { keeper_lookup_fields: {} } },
+      "alerting_hints.keeper_lookup_fields: must be an array",
+    ],
+  ];
+
+  for (const [name, patch, expected] of cases) {
+    const cfg = {
+      ...JSON.parse(JSON.stringify(defaultLoggingProfile(LOGGING_PROFILE_PAYTHEORY_ALERT_V1))),
+      ...patch,
+    };
+    assert.ok(loggingProfileValidationErrors(cfg).includes(expected), name);
+    assert.throws(
+      () => validateLoggingProfile(cfg),
+      (error) => error instanceof LoggingProfileValidationError && error.errors.includes(expected),
+    );
+    assert.throws(
+      () => decodeLoggingProfileJSON(JSON.stringify(cfg)),
+      (error) => error instanceof LoggingProfileValidationError && error.errors.includes(expected),
+    );
+  }
 });
 
 test("logging profile encoder emits paytheory alert shape", () => {
@@ -319,4 +366,33 @@ test("profile logger context methods close and record errors", () => {
   });
   broken.info("missing env");
   assert.match(broken.getStats().last_error, /logging profile required fields missing/);
+});
+
+test("profile logger retention is bounded and shared by scoped loggers", () => {
+  const cfg = defaultLoggingProfile(LOGGING_PROFILE_CLOUDWATCH_JSON);
+  cfg.enrichment = { context: { request_id: "request.request_id" } };
+  cfg.required_fields = ["timestamp", "level", "message"];
+
+  const lines = [];
+  const logger = new ProfileLogger(cfg, {
+    writer: (line) => lines.push(line),
+    clock: () => new Date(0),
+  });
+  const retentionCap = 1024;
+  const total = retentionCap + 2;
+  const scoped = logger.withRequestID("req_retention");
+  for (let index = 0; index < total; index += 1) {
+    scoped.info(`message-${index}`);
+  }
+
+  const entries = logger.entries();
+  assert.equal(entries.length, retentionCap);
+  assert.equal(entries[0].message, "message-2");
+  assert.equal(entries.at(-1).message, `message-${total - 1}`);
+  assert.equal(entries[0].request_id, "req_retention");
+
+  assert.equal(lines.length, total);
+  assert.equal(JSON.parse(lines.at(-1)).message, `message-${total - 1}`);
+  assert.equal(logger.getStats().entries_logged, total);
+  assert.equal(logger.getStats().entries_dropped, 2);
 });
