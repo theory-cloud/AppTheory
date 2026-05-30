@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.12.1-rc](https://github.com/theory-cloud/AppTheory/compare/v1.12.0...v1.12.1-rc) (2026-05-30)
+
+
+### Bug Fixes
+
+* **cdk:** harden bearer co-origin header forwarding ([53153cb](https://github.com/theory-cloud/AppTheory/commit/53153cbca3d5f23345ae313805e14478c2cc1455))
+* **cdk:** harden bearer co-origin headers ([27c81bd](https://github.com/theory-cloud/AppTheory/commit/27c81bdab247157bb78b5781e2f863f12c7eff8d))
+* **ci:** authenticate release wrapper gh calls ([e0c8d29](https://github.com/theory-cloud/AppTheory/commit/e0c8d29ce9891cfdbda74cccedf565acfd08cbc4))
+* **ci:** authenticate release wrapper gh calls (THE-1733) ([a241ae2](https://github.com/theory-cloud/AppTheory/commit/a241ae203baaa9c9f714324b74cc85cb8ffd2204))
+* **ci:** pin Pages docs dependencies ([6efe2ee](https://github.com/theory-cloud/AppTheory/commit/6efe2ee89f90edce342c7ba0b4fd329688dd1133))
+* **ci:** pin Pages docs dependencies (THE-1709) ([1bb9f1b](https://github.com/theory-cloud/AppTheory/commit/1bb9f1bd209a1ea2ae13a736b75d5f872f288c4a))
+* **ci:** run release gate verifier from trusted code ([1fb337c](https://github.com/theory-cloud/AppTheory/commit/1fb337ce869eac55aa2456f281b65499635f1e84))
+* **ci:** run release gate verifier from trusted code (THE-1726) ([62a1826](https://github.com/theory-cloud/AppTheory/commit/62a182669eeeb4af5052e25f1fdbe1cfe05cc05a))
+* **deps:** update TableTheory pins to v1.9.1 ([2a344b2](https://github.com/theory-cloud/AppTheory/commit/2a344b206e2e9511ef227cd36dbd2941c7c7be96))
+* **examples:** escape SSR request id reflection ([51b2816](https://github.com/theory-cloud/AppTheory/commit/51b2816f50294a629e984cb49d4521d96e8c21e0))
+* **examples:** escape SSR request id reflection ([9f3d827](https://github.com/theory-cloud/AppTheory/commit/9f3d8279cc064949e4542dd76769f6db025aa6ef))
+* **gov:** validate rubric report timestamp ([d032506](https://github.com/theory-cloud/AppTheory/commit/d0325063d7ea3726a82b6f72499e1e484b83b35d))
+* **gov:** validate rubric report timestamp ([5a33c1b](https://github.com/theory-cloud/AppTheory/commit/5a33c1bf541a3a2675dcb080a5f394f6df3493d2))
+* **observability:** bound profile logger retention ([5b9b6a9](https://github.com/theory-cloud/AppTheory/commit/5b9b6a916de0bec0b627d0c829802e9e1750ef99))
+* **observability:** bound ProfileLogger retention ([22a8b69](https://github.com/theory-cloud/AppTheory/commit/22a8b69190e9c6306d6d395da93e055fa37b25bd))
+* **observability:** include logging profile dist ([affa1ad](https://github.com/theory-cloud/AppTheory/commit/affa1ad917a3a3e6ac77d591c7af7ec96bd846a9))
+* **observability:** validate logging profile value types ([1337a05](https://github.com/theory-cloud/AppTheory/commit/1337a058da1e76aece9bc737d19bab73ff61b957))
+* **observability:** validate logging profile value types ([a84ee55](https://github.com/theory-cloud/AppTheory/commit/a84ee55d88f81327c9f9b9038bed72ee8e3c3869))
+* **pages:** resolve custom-domain asset paths ([ef38bfa](https://github.com/theory-cloud/AppTheory/commit/ef38bfaa864c22f34139cde64c6e5090e2cabd89))
+* **pages:** resolve custom-domain asset paths ([744359b](https://github.com/theory-cloud/AppTheory/commit/744359b38754698d650e8d75966f7db2d67698f6))
+* **release:** verify prerelease promotion topology ([b9401b2](https://github.com/theory-cloud/AppTheory/commit/b9401b20b81ab347e4f72ed2340a3da202bec34f))
+* **runtime:** sanitize kinesis safe log values ([d9edfa9](https://github.com/theory-cloud/AppTheory/commit/d9edfa9f27787736551faf94c4c94581003caabd))
+* **runtime:** sanitize kinesis safe_log values ([1effe03](https://github.com/theory-cloud/AppTheory/commit/1effe03e0cf95c365e2b289c6bdfc1de0108e4fe))
+
 ## [1.12.0](https://github.com/theory-cloud/AppTheory/compare/v1.11.0...v1.12.0) (2026-05-28)
 
 
