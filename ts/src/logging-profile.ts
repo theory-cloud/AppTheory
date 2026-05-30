@@ -147,6 +147,8 @@ export function loggingProfileValidationErrors(
   config: LoggingProfileConfig,
 ): string[] {
   const errors: string[] = [];
+  if (!isRecord(config as unknown))
+    return ["logging profile: must be an object"];
 
   const schema = trimString(config.schema_version);
   if (!schema) {
@@ -162,44 +164,52 @@ export function loggingProfileValidationErrors(
     errors.push(`profile: unsupported value ${trimString(config.profile)}`);
   }
 
-  const encoding = config.encoding ?? {};
-  const format = trimString(encoding.format).toLowerCase();
-  if (!format) {
-    errors.push("encoding.format: required");
-  } else if (format !== "json") {
-    errors.push(
-      `encoding.format: unsupported value ${trimString(encoding.format)}`,
-    );
-  }
+  const encodingValue = config.encoding as unknown;
+  const encoding = objectOrValidationError(
+    errors,
+    "encoding",
+    encodingValue,
+    {},
+  ) as LoggingProfileEncoding | undefined;
+  if (encoding) {
+    const format = trimString(encoding.format).toLowerCase();
+    if (!format) {
+      errors.push("encoding.format: required");
+    } else if (format !== "json") {
+      errors.push(
+        `encoding.format: unsupported value ${trimString(encoding.format)}`,
+      );
+    }
 
-  const timestampFormat = trimString(encoding.timestamp_format).toLowerCase();
-  if (
-    timestampFormat &&
-    timestampFormat !== "rfc3339nano" &&
-    timestampFormat !== "rfc3339"
-  ) {
+    const timestampFormat = trimString(encoding.timestamp_format).toLowerCase();
+    if (
+      timestampFormat &&
+      timestampFormat !== "rfc3339nano" &&
+      timestampFormat !== "rfc3339"
+    ) {
+      errors.push(
+        `encoding.timestamp_format: unsupported value ${trimString(encoding.timestamp_format)}`,
+      );
+    }
     errors.push(
-      `encoding.timestamp_format: unsupported value ${trimString(encoding.timestamp_format)}`,
+      ...validateEncodingOutputField(
+        "encoding.timestamp_field",
+        encoding.timestamp_field,
+      ),
+    );
+    errors.push(
+      ...validateEncodingOutputField(
+        "encoding.level_field",
+        encoding.level_field,
+      ),
+    );
+    errors.push(
+      ...validateEncodingOutputField(
+        "encoding.message_field",
+        encoding.message_field,
+      ),
     );
   }
-  errors.push(
-    ...validateEncodingOutputField(
-      "encoding.timestamp_field",
-      encoding.timestamp_field,
-    ),
-  );
-  errors.push(
-    ...validateEncodingOutputField(
-      "encoding.level_field",
-      encoding.level_field,
-    ),
-  );
-  errors.push(
-    ...validateEncodingOutputField(
-      "encoding.message_field",
-      encoding.message_field,
-    ),
-  );
 
   errors.push(...validateLevelMap(config.levels));
   errors.push(
@@ -212,9 +222,18 @@ export function loggingProfileValidationErrors(
     ),
   );
   errors.push(...validateFieldMap(config.field_map));
-  errors.push(...validateStaticEnrichment(config.enrichment?.static));
-  errors.push(...validateContextEnrichment(config.enrichment?.context));
+  const enrichment = objectOrValidationError(
+    errors,
+    "enrichment",
+    config.enrichment as unknown,
+    {},
+  ) as LoggingProfileEnrichment | undefined;
+  if (enrichment) {
+    errors.push(...validateStaticEnrichment(enrichment.static));
+    errors.push(...validateContextEnrichment(enrichment.context));
+  }
   errors.push(...validateErrorCapture(config.error_capture));
+  errors.push(...validateSanitization(config.sanitization));
   errors.push(...validateAlertingHints(config.alerting_hints));
 
   return errors;
@@ -1060,26 +1079,25 @@ function payTheoryAlertProfile(): LoggingProfileConfig {
   return cfg;
 }
 
-function validateLevelMap(
-  levels: Record<string, string> | undefined,
-): string[] {
+function validateLevelMap(levels: unknown): string[] {
   const errors: string[] = [];
+  if (levels === undefined || levels === null) return errors;
+  if (!isRecord(levels)) return ["levels: must be an object"];
   for (const key of sortedKeys(levels)) {
     if (!optionNameSet("debug", "info", "warn", "error").has(key)) {
       errors.push(`levels.${key}: unsupported level ${key}`);
       continue;
     }
-    if (!trimString(levels?.[key])) errors.push(`levels.${key}: required`);
+    if (!trimString(levels[key])) errors.push(`levels.${key}: required`);
   }
   return errors;
 }
 
-function validateProfileFieldList(
-  path: string,
-  fields: string[] | undefined,
-): string[] {
+function validateProfileFieldList(path: string, fields: unknown): string[] {
   const errors: string[] = [];
-  for (const [index, field] of (fields ?? []).entries()) {
+  if (fields === undefined || fields === null) return errors;
+  if (!Array.isArray(fields)) return [`${path}: must be an array`];
+  for (const [index, field] of fields.entries()) {
     const trimmed = trimString(field);
     if (!trimmed) {
       errors.push(`${path}[${index}]: required`);
@@ -1103,16 +1121,16 @@ function validateEncodingOutputField(
   return [];
 }
 
-function validateFieldMap(
-  fieldMap: Record<string, string> | undefined,
-): string[] {
+function validateFieldMap(fieldMap: unknown): string[] {
   const errors: string[] = [];
+  if (fieldMap === undefined || fieldMap === null) return errors;
+  if (!isRecord(fieldMap)) return ["field_map: must be an object"];
   for (const key of sortedKeys(fieldMap)) {
     const canonical = trimString(key);
     if (!isSupportedCanonicalField(canonical)) {
       errors.push(`field_map.${key}: unsupported source ${canonical}`);
     }
-    const out = trimString(fieldMap?.[key]);
+    const out = trimString(fieldMap[key]);
     if (!out) {
       errors.push(`field_map.${key}: required`);
     } else if (!isSupportedProfileOutputField(out)) {
@@ -1122,10 +1140,10 @@ function validateFieldMap(
   return errors;
 }
 
-function validateStaticEnrichment(
-  staticFields: Record<string, string> | undefined,
-): string[] {
+function validateStaticEnrichment(staticFields: unknown): string[] {
   const errors: string[] = [];
+  if (staticFields === undefined || staticFields === null) return errors;
+  if (!isRecord(staticFields)) return ["enrichment.static: must be an object"];
   for (const key of sortedKeys(staticFields)) {
     const trimmed = trimString(key);
     if (!isSupportedProfileOutputField(trimmed)) {
@@ -1135,16 +1153,17 @@ function validateStaticEnrichment(
   return errors;
 }
 
-function validateContextEnrichment(
-  contextFields: Record<string, string> | undefined,
-): string[] {
+function validateContextEnrichment(contextFields: unknown): string[] {
   const errors: string[] = [];
+  if (contextFields === undefined || contextFields === null) return errors;
+  if (!isRecord(contextFields))
+    return ["enrichment.context: must be an object"];
   for (const key of sortedKeys(contextFields)) {
     const trimmed = trimString(key);
     if (!isSupportedProfileOutputField(trimmed)) {
       errors.push(`enrichment.context.${key}: unsupported field ${trimmed}`);
     }
-    const source = trimString(contextFields?.[key]);
+    const source = trimString(contextFields[key]);
     if (!source) {
       errors.push(`enrichment.context.${key}: required`);
     } else if (!isSupportedContextSource(source)) {
@@ -1154,42 +1173,48 @@ function validateContextEnrichment(
   return errors;
 }
 
-function validateErrorCapture(
-  capture: LoggingProfileErrorCapture | undefined,
-): string[] {
+function validateErrorCapture(capture: unknown): string[] {
   const errors: string[] = [];
-  const stackTraceField = trimString(capture?.stack_trace_field);
+  if (capture === undefined || capture === null) return errors;
+  if (!isRecord(capture)) return ["error_capture: must be an object"];
+  const stackTraceField = trimString(capture["stack_trace_field"]);
   if (stackTraceField && !isSupportedProfileOutputField(stackTraceField)) {
     errors.push(
       `error_capture.stack_trace_field: unsupported field ${stackTraceField}`,
     );
   }
-  const stackHashField = trimString(capture?.stack_hash_field);
+  const stackHashField = trimString(capture["stack_hash_field"]);
   if (stackHashField && !isSupportedProfileOutputField(stackHashField)) {
     errors.push(
       `error_capture.stack_hash_field: unsupported field ${stackHashField}`,
     );
   }
-  const algorithm = trimString(capture?.stack_hash_algorithm).toLowerCase();
+  const algorithm = trimString(capture["stack_hash_algorithm"]).toLowerCase();
   if (algorithm && algorithm !== "sha256") {
     errors.push(
-      `error_capture.stack_hash_algorithm: unsupported value ${trimString(capture?.stack_hash_algorithm)}`,
+      `error_capture.stack_hash_algorithm: unsupported value ${trimString(capture["stack_hash_algorithm"])}`,
     );
   }
   return errors;
 }
 
-function validateAlertingHints(
-  hints: LoggingProfileAlertingHints | undefined,
-): string[] {
+function validateSanitization(sanitization: unknown): string[] {
+  if (sanitization === undefined || sanitization === null) return [];
+  if (!isRecord(sanitization)) return ["sanitization: must be an object"];
+  return [];
+}
+
+function validateAlertingHints(hints: unknown): string[] {
+  if (hints === undefined || hints === null) return [];
+  if (!isRecord(hints)) return ["alerting_hints: must be an object"];
   return [
     ...validateProfileFieldList(
       "alerting_hints.fingerprint_fields",
-      hints?.fingerprint_fields,
+      hints["fingerprint_fields"],
     ),
     ...validateProfileFieldList(
       "alerting_hints.keeper_lookup_fields",
-      hints?.keeper_lookup_fields,
+      hints["keeper_lookup_fields"],
     ),
   ];
 }
@@ -1299,6 +1324,18 @@ function sortedKeys(object: Record<string, unknown> | undefined): string[] {
 
 function trimString(value: unknown): string {
   return String(value ?? "").trim();
+}
+
+function objectOrValidationError(
+  errors: string[],
+  path: string,
+  value: unknown,
+  fallback: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (value === undefined || value === null) return fallback;
+  if (isRecord(value)) return value;
+  errors.push(`${path}: must be an object`);
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
