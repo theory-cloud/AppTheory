@@ -19,6 +19,10 @@ CloudFront read grant is the AppTheory-generated service-principal policy scoped
 `SourceArn`. Direct asset behaviors use AppTheory's static asset cache policy, which does not forward
 the viewer `Host` header to S3/OAC. This example does not use the legacy OAI workaround.
 
+The SSR handler reflects `x-request-id` only after HTML escaping it. Treat all forwarded request
+headers as viewer supplied when rendering deployable examples: preserve the AppTheory request-id
+forwarding behavior, but escape any value before concatenating it into HTML.
+
 ## Local synth
 
 ```bash
