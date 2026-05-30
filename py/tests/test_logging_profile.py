@@ -136,6 +136,52 @@ class TestLoggingProfile(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "root must be an object"):
             decode_logging_profile_json("[]")
 
+    def test_malformed_composite_json_values_fail_with_validation_errors(self) -> None:
+        cases = [
+            ("encoding", {"encoding": True}, "encoding: must be an object"),
+            ("levels", {"levels": True}, "levels: must be an object"),
+            ("required_fields", {"required_fields": True}, "required_fields: must be an array"),
+            (
+                "recommended_fields",
+                {"recommended_fields": {"field": "trace_id"}},
+                "recommended_fields: must be an array",
+            ),
+            ("field_map", {"field_map": True}, "field_map: must be an object"),
+            ("enrichment", {"enrichment": True}, "enrichment: must be an object"),
+            ("enrichment.static", {"enrichment": {"static": True}}, "enrichment.static: must be an object"),
+            ("enrichment.context", {"enrichment": {"context": True}}, "enrichment.context: must be an object"),
+            ("error_capture", {"error_capture": True}, "error_capture: must be an object"),
+            ("sanitization", {"sanitization": True}, "sanitization: must be an object"),
+            ("alerting_hints", {"alerting_hints": True}, "alerting_hints: must be an object"),
+            (
+                "alerting_hints.fingerprint_fields",
+                {"alerting_hints": {"fingerprint_fields": True}},
+                "alerting_hints.fingerprint_fields: must be an array",
+            ),
+            (
+                "alerting_hints.keeper_lookup_fields",
+                {"alerting_hints": {"keeper_lookup_fields": {}}},
+                "alerting_hints.keeper_lookup_fields: must be an array",
+            ),
+        ]
+        for name, patch, expected in cases:
+            with self.subTest(name=name):
+                cfg = json.loads(json.dumps(default_logging_profile(LOGGING_PROFILE_PAYTHEORY_ALERT_V1)))
+                cfg.update(patch)
+                self.assertIn(expected, logging_profile_validation_errors(cfg))
+                with self.assertRaises(LoggingProfileValidationError) as validate_ctx:
+                    validate_logging_profile(cfg)
+                self.assertIn(expected, validate_ctx.exception.errors)
+                with self.assertRaises(LoggingProfileValidationError) as decode_ctx:
+                    decode_logging_profile_json(json.dumps(cfg))
+                self.assertIn(expected, decode_ctx.exception.errors)
+
+    def test_decode_json_valid_profile_still_passes(self) -> None:
+        cfg = default_logging_profile(LOGGING_PROFILE_PAYTHEORY_ALERT_V1)
+        decoded = decode_logging_profile_json(json.dumps(cfg))
+        validate_logging_profile(decoded)
+        self.assertEqual(decoded["profile"], LOGGING_PROFILE_PAYTHEORY_ALERT_V1)
+
     def test_validation_required_and_nested_field_errors(self) -> None:
         cfg = {
             "schema_version": "",
