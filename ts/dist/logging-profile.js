@@ -132,6 +132,7 @@ export function loggingProfileValidationErrors(config) {
     errors.push(...validateAlertingHints(config.alerting_hints));
     return errors;
 }
+const DEFAULT_PROFILE_RETAINED_ENTRIES = 1024;
 export class ProfileLogger {
     root;
     config;
@@ -223,6 +224,7 @@ export class ProfileLogger {
     getStats() {
         return {
             entries_logged: this.root.entriesLogged,
+            entries_dropped: Math.max(0, this.root.entriesLogged - this.root.profileEntries.length),
             last_error: this.root.lastError,
         };
     }
@@ -261,7 +263,7 @@ export class ProfileLogger {
         applyKnownProfileFieldsToEvent(event, merged);
         try {
             const encoded = encodeLoggingProfileEventWithSanitizer(this.config, this.environment, event, this.sanitizer);
-            this.root.profileEntries.push({ ...encoded });
+            this.retainEntry(encoded);
             if (this.writer)
                 this.writer(JSON.stringify(encoded));
             this.root.entriesLogged += 1;
@@ -269,6 +271,12 @@ export class ProfileLogger {
         catch (error) {
             this.root.lastError = errorMessage(error);
         }
+    }
+    retainEntry(encoded) {
+        while (this.root.profileEntries.length >= DEFAULT_PROFILE_RETAINED_ENTRIES) {
+            this.root.profileEntries.shift();
+        }
+        this.root.profileEntries.push({ ...encoded });
     }
 }
 export function encodeLoggingProfileEvent(config, environment, event) {
