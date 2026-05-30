@@ -35,6 +35,23 @@ test("createKinesisJsonRecord encodes deterministic payload bytes and safe summa
   }
 });
 
+test("createKinesisJsonRecord sanitizes unsafe partition keys in safe_log", () => {
+  const partitionKey = "tenant\nforged=true\rcontrol=\u001f key=value\tpercent%";
+  const record = createKinesisJsonRecord({
+    partitionKey,
+    payload: { ok: true },
+  });
+
+  assert.equal(record.partition_key, partitionKey);
+  assertSafeLogCannotForgeFields(record.safe_summary.safe_log);
+  assert.equal(
+    record.safe_summary.safe_log.includes(
+      "partition_key=tenant%0Aforged%3Dtrue%0Dcontrol%3D%1F%20key%3Dvalue%09percent%25",
+    ),
+    true,
+  );
+});
+
 test("createKinesisJsonRecord fails closed for invalid inputs", () => {
   assert.throws(
     () => createKinesisJsonRecord({ partitionKey: "", payload: { ok: true } }),
@@ -100,6 +117,24 @@ test("reportKinesisPutRecordsFailures aligns failures and omits payload bodies",
   );
 });
 
+test("reportKinesisPutRecordsFailures sanitizes partition keys in failure safe_log", () => {
+  const record = createKinesisJsonRecord({
+    partitionKey: "tenant\nerror_code=ForgedException key=value",
+    payload: { ok: true },
+  });
+
+  const report = reportKinesisPutRecordsFailures(
+    [record],
+    [{ error_code: "ProvisionedThroughputExceededException" }],
+  );
+
+  assert.equal(report.failures.length, 1);
+  const safeLog = report.failures[0].safe_log;
+  assertSafeLogCannotForgeFields(safeLog);
+  assert.equal(safeLog.includes("error_code=ForgedException"), false);
+  assert.equal(safeLog.includes("%0Aerror_code%3D"), true);
+});
+
 test("reportKinesisPutRecordsFailures fails closed for shape drift", () => {
   const record = createKinesisJsonRecord({
     partitionKey: "pk-1",
@@ -118,3 +153,20 @@ test("reportKinesisPutRecordsFailures fails closed for shape drift", () => {
     /error message without error code/,
   );
 });
+
+function assertSafeLogCannotForgeFields(safeLog) {
+  for (const forbidden of [
+    "\n",
+    "\r",
+    "\t",
+    "\u001f",
+    " forged=",
+    " key=value",
+  ]) {
+    assert.equal(
+      safeLog.includes(forbidden),
+      false,
+      `safe_log permits forged delimiter or field ${JSON.stringify(forbidden)}: ${safeLog}`,
+    );
+  }
+}
