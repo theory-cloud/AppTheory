@@ -294,8 +294,33 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
+    "ref: ${{ github.event.pull_request.base.sha }}",
+    "release train promotion verifier must run from trusted base branch code",
+)
+require_not_contains(
+    ".github/workflows/ci.yml",
     "ref: ${{ github.event.pull_request.head.sha }}",
-    "release train promotion verifier must inspect the PR head commit, not the synthetic merge ref",
+    "release train promotion verifier must not execute verifier code from the untrusted PR head",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "refs/pull/${PR_NUMBER}/head:${pr_head_data_ref}",
+    "release train promotion verifier must fetch the PR head only as git data",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    'fetched_head_sha="$(git rev-parse "${pr_head_data_ref}^{commit}")"',
+    "release train promotion verifier must confirm fetched PR data matches the event head SHA",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "--base-ref HEAD",
+    "release train promotion verifier must treat the trusted checkout as the base ref",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    '--head-ref "${pr_head_data_ref}"',
+    "release train promotion verifier must pass the fetched PR head data ref explicitly",
 )
 require_contains(
     ".github/workflows/ci.yml",
