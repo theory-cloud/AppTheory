@@ -57,7 +57,40 @@ def fetch_branch(remote: str, branch: str) -> None:
         fail(f"could not fetch {remote}/{branch}; {detail or 'git fetch failed'}")
 
 
+def commit_sha(ref: str) -> str:
+    result = run(["git", "rev-parse", "--verify", f"{ref}^{{commit}}"], check=False)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        fail(f"could not resolve commit for {ref!r}; {detail or 'git rev-parse failed'}")
+    return result.stdout.strip()
+
+
+def trusted_release_ref(remote: str, branch: str) -> str:
+    remote_ref = f"refs/remotes/{remote}/{branch}"
+    fetch_branch(remote, branch)
+    if ref_exists(remote_ref):
+        return remote_ref
+    fail(f"could not resolve trusted {remote}/{branch} after fetch")
+    raise AssertionError("unreachable")
+
+
 def resolve_branch_ref(remote: str, branch: str, explicit_ref: str | None = None) -> str:
+    if branch in RELEASE_BRANCHES:
+        release_ref = trusted_release_ref(remote, branch)
+        if explicit_ref:
+            if not ref_exists(explicit_ref):
+                fail(f"could not resolve explicit ref {explicit_ref!r} for {branch}")
+            explicit_sha = commit_sha(explicit_ref)
+            trusted_sha = commit_sha(release_ref)
+            if explicit_sha != trusted_sha:
+                fail(
+                    f"explicit ref {explicit_ref!r} for protected release branch {branch} "
+                    f"does not match trusted {remote}/{branch}; "
+                    "release-train PRs must use the protected branch head content"
+                )
+            return explicit_ref
+        return release_ref
+
     if explicit_ref:
         if not ref_exists(explicit_ref):
             fail(f"could not resolve explicit ref {explicit_ref!r} for {branch}")
@@ -98,7 +131,7 @@ def classify(base: str, head: str) -> PromotionPlan:
                 "invalid release-train PR "
                 f"{head} → premain; premain only accepts staging → premain prerelease promotions",
             )
-        return PromotionPlan(True, VALID_PROMOTIONS[(head, base)])
+        return PromotionPlan(True, VALID_PROMOTIONS[(head, base)], ancestor_branch="premain", descendant_branch=head)
 
     if base == "main":
         if head != "premain":
@@ -211,10 +244,6 @@ def commit_marker(label: str) -> None:
     run(["git", "commit", "-q", "-m", label])
 
 
-def mirror_origin_ref(branch: str) -> None:
-    run(["git", "update-ref", f"refs/remotes/origin/{branch}", branch])
-
-
 def build_release_train_self_test_repo() -> None:
     run(["git", "init", "-q", "--initial-branch=main"])
     run(["git", "config", "user.email", "apptheory-release-train@example.invalid"])
@@ -228,19 +257,26 @@ def build_release_train_self_test_repo() -> None:
     run(["git", "switch", "-q", "main"])
     commit_marker("main-2")
 
-    run(["git", "switch", "-q", "-c", "staging"])
-    commit_marker("staging")
-
     run(["git", "switch", "-q", "main"])
     run(["git", "switch", "-q", "-c", "premain"])
     commit_marker("premain")
+
+    run(["git", "switch", "-q", "-c", "staging"])
+    commit_marker("staging")
+
+    run(["git", "switch", "-q", "premain"])
+    run(["git", "switch", "-q", "-c", "forged-staging"])
+    commit_marker("forged-staging")
+    run(["git", "update-ref", "refs/remotes/origin/pr/1/head", "forged-staging"])
 
     run(["git", "switch", "-q", "main"])
     run(["git", "switch", "-q", "-c", "feature/with-main"])
     commit_marker("feature-with-current-main")
 
-    for branch in ("main", "staging", "premain", "feature/without-main", "feature/with-main"):
-        mirror_origin_ref(branch)
+    remote_path = Path("origin.git").resolve()
+    run(["git", "init", "-q", "--bare", str(remote_path)])
+    run(["git", "remote", "add", "origin", str(remote_path)])
+    run(["git", "push", "-q", "origin", "main", "staging", "premain", "feature/without-main", "feature/with-main"])
 
 
 def validate_exit(
@@ -284,8 +320,8 @@ def self_test_git_topology() -> None:
     with tempfile.TemporaryDirectory(prefix="apptheory-release-train-") as tmp:
         with pushd(tmp):
             build_release_train_self_test_repo()
-            if is_ancestor("premain", "staging"):
-                raise AssertionError("self-test topology must keep premain divergent from staging")
+            if not is_ancestor("premain", "staging"):
+                raise AssertionError("self-test topology must keep premain as an ancestor of staging")
 
             assert_validation(
                 "premain",
@@ -295,6 +331,16 @@ def self_test_git_topology() -> None:
                 head_ref="staging",
                 contains="staging → premain prerelease promotion",
             )
+            print("release-train-promotion: positive staging → premain topology accepted")
+            assert_validation(
+                "premain",
+                "staging",
+                1,
+                base_ref="premain",
+                head_ref="refs/remotes/origin/pr/1/head",
+                contains="does not match trusted origin/staging",
+            )
+            print("release-train-promotion: negative forged staging head rejected")
             assert_validation(
                 "main",
                 "premain",
@@ -322,7 +368,7 @@ def self_test_git_topology() -> None:
 
 
 def self_test() -> None:
-    assert_plan("premain", "staging", True, None, None)
+    assert_plan("premain", "staging", True, "premain", "staging")
     assert_plan("main", "premain", True, "main", "premain")
     assert_plan("staging", "main", True, "staging", "main")
     assert_plan("staging", "feature/release-fix", True, "main", "feature/release-fix")

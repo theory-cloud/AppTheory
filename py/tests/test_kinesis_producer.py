@@ -30,6 +30,17 @@ class KinesisProducerTests(unittest.TestCase):
             self.assertNotIn(forbidden, summary_json)
             self.assertNotIn(forbidden, record["safe_summary"]["safe_log"])
 
+    def test_create_kinesis_json_record_sanitizes_unsafe_partition_key_in_safe_log(self) -> None:
+        partition_key = "tenant\nforged=true\rcontrol=\x1f key=value\tpercent%"
+        record = create_kinesis_json_record(partition_key=partition_key, payload={"ok": True})
+
+        self.assertEqual(record["partition_key"], partition_key)
+        self._assert_safe_log_cannot_forge_fields(record["safe_summary"]["safe_log"])
+        self.assertIn(
+            "partition_key=tenant%0Aforged%3Dtrue%0Dcontrol%3D%1F%20key%3Dvalue%09percent%25",
+            record["safe_summary"]["safe_log"],
+        )
+
     def test_create_kinesis_json_record_fails_closed_for_invalid_inputs(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "partition key is required"):
             create_kinesis_json_record(partition_key="", payload={"ok": True})
@@ -76,6 +87,23 @@ class KinesisProducerTests(unittest.TestCase):
             self.assertNotIn(forbidden, report_json)
         self.assertIn("failed_record_count=1", report["safe_summary"]["safe_log"])
 
+    def test_report_kinesis_put_records_failures_sanitizes_partition_key_in_failure_safe_log(self) -> None:
+        record = create_kinesis_json_record(
+            partition_key="tenant\nerror_code=ForgedException key=value",
+            payload={"ok": True},
+        )
+
+        report = report_kinesis_put_records_failures(
+            [record],
+            [{"error_code": "ProvisionedThroughputExceededException"}],
+        )
+
+        self.assertEqual(len(report["failures"]), 1)
+        safe_log = report["failures"][0]["safe_log"]
+        self._assert_safe_log_cannot_forge_fields(safe_log)
+        self.assertNotIn("error_code=ForgedException", safe_log)
+        self.assertIn("%0Aerror_code%3D", safe_log)
+
     def test_report_kinesis_put_records_failures_fails_closed_for_shape_drift(self) -> None:
         record = create_kinesis_json_record(partition_key="pk-1", payload={"ok": True})
 
@@ -83,6 +111,10 @@ class KinesisProducerTests(unittest.TestCase):
             report_kinesis_put_records_failures([record], [])
         with self.assertRaisesRegex(RuntimeError, "error message without error code"):
             report_kinesis_put_records_failures([record], [{"error_message": "message without code"}])
+
+    def _assert_safe_log_cannot_forge_fields(self, safe_log: str) -> None:
+        for forbidden in ["\n", "\r", "\t", "\x1f", " forged=", " key=value"]:
+            self.assertNotIn(forbidden, safe_log)
 
 
 if __name__ == "__main__":

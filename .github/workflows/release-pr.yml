@@ -118,6 +118,7 @@ jobs:
         id: release_aligned
         env:
           RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           RELEASE_AS: ${{ steps.version.outputs.release_as }}
         run: |
           # NOTE: release-please-action currently does not apply `release-as` when using
@@ -135,6 +136,7 @@ jobs:
         id: release_default
         env:
           RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           # Wrapper pins release-please@17.1.3 and always passes --draft-pull-request.
           scripts/run-release-please-pr.sh \

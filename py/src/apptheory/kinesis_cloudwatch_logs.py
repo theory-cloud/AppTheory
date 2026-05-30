@@ -10,6 +10,8 @@ import json
 import math
 from typing import Any
 
+from apptheory._safe_log import log_safe_value
+
 CloudWatchLogsSubscription = dict[str, Any]
 CloudWatchLogsSubscriptionLogEvent = dict[str, Any]
 CloudWatchLogsSubscriptionSummary = dict[str, Any]
@@ -113,9 +115,10 @@ def _cloudwatch_logs_subscription_safe_summary(decoded: dict[str, Any]) -> Cloud
     subscription_filter_count = len(decoded.get("subscription_filters") or [])
     log_event_count = len(decoded.get("log_events") or [])
     safe_log = (
-        f"record_id={decoded.get('record_id')} owner={decoded.get('owner')} "
-        f"log_group={decoded.get('log_group')} log_stream={decoded.get('log_stream')} "
-        f"message_type={decoded.get('message_type')} log_events={log_event_count} "
+        f"record_id={log_safe_value(decoded.get('record_id'))} owner={log_safe_value(decoded.get('owner'))} "
+        f"log_group={log_safe_value(decoded.get('log_group'))} "
+        f"log_stream={log_safe_value(decoded.get('log_stream'))} "
+        f"message_type={log_safe_value(decoded.get('message_type'))} log_events={log_event_count} "
         f"subscription_filters={subscription_filter_count}"
     )
     return {
