@@ -30,7 +30,6 @@ docs/.jekyll-cache/
 docs/.jekyll-metadata
 docs/vendor/
 docs/.bundle/
-docs/Gemfile.lock
 
 # GovTheory generated artifacts
 gov-infra/.tools/
