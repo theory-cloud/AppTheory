@@ -50,6 +50,20 @@ def require_order_after(path: str, anchor: str, first: str, second: str, descrip
         )
 
 
+def require_step_contains(path: str, step_name: str, needle: str, description: str) -> None:
+    text = Path(path).read_text(encoding="utf-8")
+    marker = f"      - name: {step_name}\n"
+    start_index = text.find(marker)
+    if start_index == -1:
+        raise SystemExit(f"release-workflows: FAIL ({description}; missing step {step_name!r} in {path})")
+    next_step_index = text.find("\n      - ", start_index + len(marker))
+    block = text[start_index : next_step_index if next_step_index != -1 else len(text)]
+    if needle not in block:
+        raise SystemExit(
+            f"release-workflows: FAIL ({description}; missing {needle!r} in {step_name!r} step in {path})"
+        )
+
+
 require_order(
     ".github/workflows/prerelease.yml",
     "Build + verify before prerelease creation",
@@ -408,6 +422,17 @@ require_contains(
     'gh pr ready "${pr_number}" --undo',
     "release-please PR generation must draft-lock valid open release PRs before artifact setup",
 )
+for workflow, step_name in (
+    (".github/workflows/prerelease-pr.yml", "Release Please (PR only)"),
+    (".github/workflows/release-pr.yml", "Release Please (PR only) (aligned)"),
+    (".github/workflows/release-pr.yml", "Release Please (PR only)"),
+):
+    require_step_contains(
+        workflow,
+        step_name,
+        "GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}",
+        "release-please wrapper steps must authenticate gh CLI with the release token fallback",
+    )
 require_order(
     ".github/workflows/prerelease.yml",
     "Verify branch version sync (release preflight)",
