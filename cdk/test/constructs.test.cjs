@@ -2438,6 +2438,8 @@ test("AppTheorySsrSite composes bearer Function URL co-origins without weakening
   new apptheory.AppTheorySsrSite(stack, "Site", {
     ssrFunction: ssrFn,
     mode: apptheory.AppTheorySsrSiteMode.SSG_ISR,
+    allowViewerTenantHeaders: true,
+    ssrForwardHeaders: ["X-FaceTheory-Segment", "X-FaceTheory-Tenant"],
     bearerFunctionUrlOrigins: [
       {
         function: controlPlaneFn,
@@ -2460,6 +2462,15 @@ test("AppTheorySsrSite composes bearer Function URL co-origins without weakening
       String(resource.Properties?.FunctionConfig?.Comment ?? "").includes("viewer-request"),
   );
   const functionUrls = resourceValues.filter((resource) => resource.Type === "AWS::Lambda::Url");
+  const bearerOriginRequestPolicyEntry = Object.entries(resources).find(
+    ([logicalId, resource]) =>
+      logicalId.includes("BearerFunctionUrlOriginRequestPolicy") &&
+      resource.Type === "AWS::CloudFront::OriginRequestPolicy",
+  );
+  const bearerCachePolicyEntry = Object.entries(resources).find(
+    ([logicalId, resource]) =>
+      logicalId.includes("BearerFunctionUrlCachePolicy") && resource.Type === "AWS::CloudFront::CachePolicy",
+  );
   const lambdaOriginAccessControls = resourceValues.filter(
     (resource) =>
       resource.Type === "AWS::CloudFront::OriginAccessControl" &&
@@ -2480,6 +2491,8 @@ test("AppTheorySsrSite composes bearer Function URL co-origins without weakening
     ["AWS_IAM", "NONE", "NONE"],
   );
   assert.equal(publicUrlPermissions.length, 2);
+  assert.ok(bearerOriginRequestPolicyEntry, "Should synthesize a bearer Function URL origin request policy");
+  assert.ok(bearerCachePolicyEntry, "Should synthesize a bearer Function URL cache policy");
 
   const distributionConfig = distribution.Properties?.DistributionConfig ?? {};
   const origins = distributionConfig.Origins ?? [];
@@ -2509,9 +2522,79 @@ test("AppTheorySsrSite composes bearer Function URL co-origins without weakening
     assert.equal(targetOrigin.CustomOriginConfig?.OriginProtocolPolicy, "https-only");
     assert.equal(targetOrigin.OriginAccessControlId, undefined);
     assert.deepEqual(behavior.AllowedMethods, ["GET", "HEAD", "OPTIONS", "PUT", "PATCH", "POST", "DELETE"]);
-    assert.equal(behavior.CachePolicyId, "4135ea2d-6df8-44a3-9df3-4b5a84be39ad");
-    assert.equal(behavior.OriginRequestPolicyId, "b689b0a8-53d0-40ab-baf2-68738e2966ac");
+    assert.deepEqual(behavior.CachePolicyId, { Ref: bearerCachePolicyEntry[0] });
+    assert.deepEqual(behavior.OriginRequestPolicyId, { Ref: bearerOriginRequestPolicyEntry[0] });
+    assert.notEqual(
+      renderedString(behavior.OriginRequestPolicyId),
+      "b689b0a8-53d0-40ab-baf2-68738e2966ac",
+      "Bearer co-origin behavior must not use ALL_VIEWER_EXCEPT_HOST_HEADER",
+    );
     assert.equal(behavior.FunctionAssociations?.length, 2);
+  }
+
+  const bearerOriginRequestPolicy = bearerOriginRequestPolicyEntry[1];
+  const bearerCachePolicy = bearerCachePolicyEntry[1];
+  const bearerOriginHeaders = [
+    ...(bearerOriginRequestPolicy.Properties?.OriginRequestPolicyConfig?.HeadersConfig?.Headers ?? []),
+  ].sort();
+  const bearerCacheHeaders = [
+    ...(bearerCachePolicy.Properties?.CachePolicyConfig?.ParametersInCacheKeyAndForwardedToOrigin?.HeadersConfig
+      ?.Headers ?? []),
+  ].sort();
+  const bearerForwardedHeaders = new Set([...bearerOriginHeaders, ...bearerCacheHeaders]);
+
+  assert.deepEqual(bearerOriginHeaders, [
+    "cloudfront-forwarded-proto",
+    "cloudfront-viewer-address",
+    "content-type",
+    "x-apptheory-original-host",
+    "x-apptheory-original-uri",
+    "x-facetheory-original-host",
+    "x-facetheory-original-uri",
+    "x-request-id",
+  ]);
+  assert.deepEqual(bearerCacheHeaders, [
+    "accept",
+    "access-control-request-headers",
+    "access-control-request-method",
+    "authorization",
+    "origin",
+    "x-facetheory-segment",
+  ]);
+  assert.equal(
+    bearerOriginRequestPolicy.Properties?.OriginRequestPolicyConfig?.CookiesConfig?.CookieBehavior,
+    "all",
+  );
+  assert.equal(
+    bearerOriginRequestPolicy.Properties?.OriginRequestPolicyConfig?.QueryStringsConfig?.QueryStringBehavior,
+    "all",
+  );
+  assert.equal(bearerCachePolicy.Properties?.CachePolicyConfig?.DefaultTTL, 0);
+  assert.equal(bearerCachePolicy.Properties?.CachePolicyConfig?.MaxTTL, 0);
+  assert.equal(bearerCachePolicy.Properties?.CachePolicyConfig?.MinTTL, 0);
+  for (const blockedHeader of [
+    "forwarded",
+    "host",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-tenant-id",
+    "x-facetheory-tenant",
+  ]) {
+    assert.equal(bearerForwardedHeaders.has(blockedHeader), false, `Should not forward ${blockedHeader}`);
+  }
+  for (const requiredHeader of [
+    "authorization",
+    "content-type",
+    "cloudfront-forwarded-proto",
+    "cloudfront-viewer-address",
+    "x-apptheory-original-host",
+    "x-apptheory-original-uri",
+    "x-facetheory-original-host",
+    "x-facetheory-original-uri",
+    "x-request-id",
+  ]) {
+    assert.equal(bearerForwardedHeaders.has(requiredHeader), true, `Should preserve ${requiredHeader}`);
   }
 
   const functionCode = String(requestFunction.Properties?.FunctionCode ?? "");
