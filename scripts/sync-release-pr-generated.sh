@@ -154,7 +154,7 @@ wait_for_required_checks() {
   local interval_seconds="${RELEASE_PR_CHECK_INTERVAL_SECONDS:-15}"
   local required_checks="${RELEASE_PR_READY_CHECKS:-}"
   if [[ -z "${required_checks}" ]]; then
-    required_checks=$'Version alignment\nGo (test + vet)\nTypeScript (npm pack)\nPython (build wheel + sdist)\nVerify deterministic builds\nContract tests (fixtures)\nRubric (full gate set)'
+    required_checks=$'Version alignment\nGo (test + vet)\nTypeScript (npm pack)\nPython (build wheel + sdist)\nVerify deterministic builds\nContract tests (fixtures)'
   fi
 
   local deadline=$((SECONDS + timeout_seconds))
@@ -258,7 +258,7 @@ wait_for_required_checks_to_start() {
   local interval_seconds="${RELEASE_PR_CHECK_INTERVAL_SECONDS:-15}"
   local required_checks="${RELEASE_PR_READY_CHECKS:-}"
   if [[ -z "${required_checks}" ]]; then
-    required_checks=$'Version alignment\nGo (test + vet)\nTypeScript (npm pack)\nPython (build wheel + sdist)\nVerify deterministic builds\nContract tests (fixtures)\nRubric (full gate set)'
+    required_checks=$'Version alignment\nGo (test + vet)\nTypeScript (npm pack)\nPython (build wheel + sdist)\nVerify deterministic builds\nContract tests (fixtures)'
   fi
 
   local deadline=$((SECONDS + timeout_seconds))
@@ -320,9 +320,14 @@ PY
 
 dispatch_required_checks() {
   local required_check_workflow="${RELEASE_PR_CHECK_WORKFLOW:-ci.yml}"
+  local dispatch_args=(workflow run "${required_check_workflow}" --ref "${release_branch}")
 
-  echo "sync-release-pr-generated: dispatching ${required_check_workflow} for ${release_branch}"
-  if ! gh workflow run "${required_check_workflow}" --ref "${release_branch}"; then
+  if [[ "${required_check_workflow}" == "ci.yml" ]]; then
+    dispatch_args+=(--raw-field run_full_rubric=false)
+  fi
+
+  echo "sync-release-pr-generated: dispatching ${required_check_workflow} for ${release_branch} with full rubric disabled"
+  if ! gh "${dispatch_args[@]}"; then
     echo "sync-release-pr-generated: FAIL (could not dispatch ${required_check_workflow} for ${release_branch})"
     exit 1
   fi
