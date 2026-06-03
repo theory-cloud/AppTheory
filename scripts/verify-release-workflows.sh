@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 python3 - <<'PY'
+import subprocess
 from pathlib import Path
 
 
@@ -66,15 +67,27 @@ def require_step_contains(path: str, step_name: str, needle: str, description: s
 
 require_order(
     ".github/workflows/prerelease.yml",
-    "Build + verify before prerelease creation",
+    "Verify branch version sync (release preflight)",
     "Release Please (Prerelease)",
-    "prerelease must pass rubric before release-please can create a draft release",
+    "prerelease creation must fail closed on stale branch release state before release-please can publish",
 )
 require_order(
     ".github/workflows/release.yml",
-    "Build + verify before stable release creation",
+    "Verify branch version sync (stable release preflight)",
     "Release Please (Stable)",
-    "stable release must pass rubric before release-please can create a draft release",
+    "stable release creation must fail closed on stale branch release state before release-please can publish",
+)
+require_order(
+    ".github/workflows/prerelease.yml",
+    "Release Please (Prerelease)",
+    "Verify prerelease publish postcondition",
+    "prerelease publisher must validate release-please outputs before asset publishing",
+)
+require_order(
+    ".github/workflows/release.yml",
+    "Release Please (Stable)",
+    "Verify stable publish postcondition",
+    "stable publisher must validate release-please outputs before asset publishing",
 )
 for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.yml"):
     require_contains(
@@ -120,6 +133,21 @@ for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.
         'scripts/publish-release-assets.sh "${TAG_NAME}"',
         "release workflows must publish assets through the shared draft-release-safe path",
     )
+    require_not_contains(
+        workflow,
+        "make rubric",
+        "release publisher workflows must use release hygiene and publish postconditions instead of the full rubric",
+    )
+require_contains(
+    ".github/workflows/prerelease.yml",
+    "scripts/verify-release-publish-postcondition.sh prerelease",
+    "prerelease publisher must fail closed when a generated RC release PR merge does not create an RC release",
+)
+require_contains(
+    ".github/workflows/release.yml",
+    "scripts/verify-release-publish-postcondition.sh stable",
+    "stable publisher must fail closed when a generated stable release PR merge does not create a stable release",
+)
 require_contains(
     ".github/workflows/prerelease.yml",
     "Recover existing draft prerelease assets",
@@ -186,14 +214,19 @@ require_contains(
 require_order(
     "scripts/publish-release-assets.sh",
     'scripts/verify-release-branch.sh "${tag}"',
-    "make rubric",
-    "release asset publisher must verify the resolved source before running rubric",
+    "scripts/verify-version-alignment.sh",
+    "release asset publisher must verify the resolved source before version/package checks",
 )
 require_order(
     "scripts/publish-release-assets.sh",
-    "make rubric",
+    "scripts/verify-version-alignment.sh",
     "make build",
-    "release asset publisher must run rubric before building release assets",
+    "release asset publisher must verify version alignment before building release assets",
+)
+require_not_contains(
+    "scripts/publish-release-assets.sh",
+    "make rubric",
+    "release asset publisher must not run the full rubric",
 )
 require_order(
     "scripts/publish-release-assets.sh",
@@ -293,8 +326,28 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
-    "workflow_dispatch: {}",
-    "CI must be dispatchable for bot-authored release PR branch updates",
+    "workflow_dispatch:\n    inputs:\n      run_full_rubric:",
+    "CI must be dispatchable for bot-authored release PR branch updates with explicit rubric control",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "default: true",
+    "manual CI workflow_dispatch must continue to run the full rubric by default",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')",
+    "full rubric must run only on staging PRs and opted-in manual dispatch",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "name: Verify deterministic builds",
+    "CI must keep the standalone deterministic-build job name stable",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'",
+    "deterministic builds must run only on staging PRs",
 )
 require_contains(
     ".github/workflows/ci.yml",
@@ -308,33 +361,59 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
-    "ref: ${{ github.event.pull_request.base.sha }}",
-    "release train promotion verifier must run from trusted base branch code",
+    "ref: refs/heads/staging",
+    "release train promotion verifier must run from trusted protected release gate code",
 )
 require_not_contains(
     ".github/workflows/ci.yml",
     "ref: ${{ github.event.pull_request.head.sha }}",
     "release train promotion verifier must not execute verifier code from the untrusted PR head",
 )
-require_contains(
+require_not_contains(
     ".github/workflows/ci.yml",
     "refs/pull/${PR_NUMBER}/head:${pr_head_data_ref}",
-    "release train promotion verifier must fetch the PR head only as git data",
+    "release train promotion verifier must not fetch untrusted PR head content in CI",
 )
 require_contains(
     ".github/workflows/ci.yml",
-    'fetched_head_sha="$(git rev-parse "${pr_head_data_ref}^{commit}")"',
-    "release train promotion verifier must confirm fetched PR data matches the event head SHA",
+    "GITHUB_TOKEN: ${{ github.token }}",
+    "release train promotion verifier must use the read-only workflow token for compare API ancestry checks",
 )
 require_contains(
     ".github/workflows/ci.yml",
-    "--base-ref HEAD",
-    "release train promotion verifier must treat the trusted checkout as the base ref",
+    "base_ref_args=(--base-ref \"refs/remotes/origin/${PR_BASE_REF}\")",
+    "release train promotion verifier must use fetched protected base refs instead of PR-head checkout data",
 )
 require_contains(
     ".github/workflows/ci.yml",
-    '--head-ref "${pr_head_data_ref}"',
-    "release train promotion verifier must pass the fetched PR head data ref explicitly",
+    'release_ref_depth_args=(--unshallow)',
+    "release train promotion verifier must unshallow trusted protected release branch history",
+)
+for branch in ("staging", "premain", "main"):
+    require_contains(
+        ".github/workflows/ci.yml",
+        f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+        f"release train promotion verifier must fetch protected {branch} history for topology checks",
+    )
+require_contains(
+    ".github/workflows/ci.yml",
+    '--head-sha "${PR_HEAD_SHA}"',
+    "release train promotion verifier must pass the event head SHA without fetching PR head content",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    'pr_title_args=(--pr-title "${PR_TITLE}")',
+    "release train promotion verifier must pass PR titles when trusted verifier code supports title checks",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    '--github-repository "${GITHUB_REPOSITORY}"',
+    "release train promotion verifier must identify the protected repository for compare checks",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    '--github-head-repository "${PR_HEAD_REPOSITORY}"',
+    "release train promotion verifier must compare fork PR heads in their source repository",
 )
 require_not_contains(
     ".github/workflows/ci.yml",
@@ -343,8 +422,8 @@ require_not_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
-    "fetch-depth: 0",
-    "release train promotion verifier must have enough git history for ancestry checks",
+    "persist-credentials: false",
+    "release train promotion checkout must not persist credentials",
 )
 require_contains(
     "scripts/verify-release-train-promotion.sh",
@@ -358,6 +437,11 @@ require_contains(
 )
 require_contains(
     "scripts/verify-release-train-promotion.sh",
+    "compare/{ancestor_sha}...{descendant_sha}",
+    "release train promotion verifier must use GitHub compare data for untrusted PR head ancestry",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
     "refs/remotes/origin/pr/1/head",
     "release train promotion self-test must cover fetched PR head data that forges a release branch name",
 )
@@ -365,6 +449,21 @@ require_contains(
     "scripts/verify-release-train-promotion.sh",
     "staging → premain → main → staging",
     "release train promotion verifier must preserve the single valid branch ordering",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    "release-please--branches--premain",
+    "release train promotion verifier must allow generated premain RC release-please PRs only on premain",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    "release-please--branches--main",
+    "release train promotion verifier must allow generated main stable release-please PRs only on main",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    "main release gate rejects RC-shaped PR titles/versions",
+    "main release promotion gate must reject RC-shaped main PR titles/versions",
 )
 require_contains(
     "scripts/verify-release-gates.sh",
@@ -405,11 +504,16 @@ for workflow in (".github/workflows/prerelease-pr.yml", ".github/workflows/relea
         "scripts/run-release-please-pr.sh",
         "release PR workflows must create release-please PRs through the stale-state-tolerant wrapper",
     )
+require_not_contains(
+    "scripts/run-release-please-pr.sh",
+    'valid release PR already exists',
+    "release-please PR generation must not short-circuit before release-please can refresh stale open PRs",
+)
 require_order(
     "scripts/run-release-please-pr.sh",
-    'if use_existing_open_release_pr "valid release PR already exists"; then',
+    "draft_lock_existing_open_release_pr_before_refresh",
     'npx "${args[@]}"',
-    "release-please PR generation must tolerate already-open draft release PRs before invoking release-please",
+    "release-please PR generation may draft-lock already-open PRs but must still invoke release-please",
 )
 require_order(
     "scripts/run-release-please-pr.sh",
@@ -436,8 +540,43 @@ for workflow, step_name in (
 require_order(
     ".github/workflows/prerelease.yml",
     "Verify branch version sync (release preflight)",
-    "Build + verify before prerelease creation",
-    "prerelease creation must fail closed on stale branch release state before rubric",
+    "Verify release workflow invariants (release preflight)",
+    "prerelease creation must fail closed on stale branch release state before release workflow checks",
+)
+require_contains(
+    ".github/workflows/prerelease-pr.yml",
+    "scripts/verify-release-pr-postcondition.sh prerelease",
+    "prerelease PR generation must fail closed when release-please no-ops",
+)
+require_contains(
+    ".github/workflows/release-pr.yml",
+    "scripts/verify-release-pr-postcondition.sh stable",
+    "stable Release PR generation must fail closed when release-please no-ops",
+)
+require_contains(
+    "scripts/verify-release-pr-postcondition.sh",
+    "parse_version_value",
+    "release PR postcondition verifier must parse annotated VERSION values before shape validation",
+)
+require_contains(
+    "scripts/verify-release-pr-postcondition.sh",
+    "1.12.2-rc # x-release-please-version",
+    "release PR postcondition verifier self-test must cover annotated RC VERSION values",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "--raw-field run_full_rubric=false",
+    "automated release PR CI dispatch must disable the full rubric",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "Rubric (full gate set)",
+    "release PR sync required checks must exclude the full rubric context",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "Verify deterministic builds",
+    "release PR sync required checks must exclude skipped deterministic-build contexts",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
@@ -558,6 +697,8 @@ for forbidden in (
         forbidden,
         "release PR sync must not self-attest protected contexts",
     )
+
+subprocess.run(["bash", "scripts/verify-release-pr-postcondition.sh", "--self-test"], check=True)
 
 print("release-workflows: PASS")
 PY

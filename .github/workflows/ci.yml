@@ -8,7 +8,13 @@ on:
       - staging
       - main
       - premain
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      run_full_rubric:
+        description: "Run Rubric (full gate set)"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -19,42 +25,54 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Checkout trusted release gate code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha }}
+          # Run verifier code from the protected staging lane, never from PR-head content.
+          ref: refs/heads/staging
       - name: Verify release train promotion path
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -euo pipefail
 
-          if [[ ! "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
-            echo "release-train-promotion: FAIL (pull request number is not numeric)"
-            exit 1
+          base_ref_args=()
+          pr_title_args=()
+          if scripts/verify-release-train-promotion.sh --help | grep -q -- "--pr-title"; then
+            pr_title_args=(--pr-title "${PR_TITLE}")
           fi
 
-          pr_head_data_ref="refs/remotes/origin/pr/${PR_NUMBER}/head"
-          git fetch --no-tags origin \
-            "+refs/pull/${PR_NUMBER}/head:${pr_head_data_ref}"
-
-          fetched_head_sha="$(git rev-parse "${pr_head_data_ref}^{commit}")"
-          if [[ "${fetched_head_sha}" != "${PR_HEAD_SHA}" ]]; then
-            echo "release-train-promotion: FAIL (fetched PR head does not match event head)"
-            echo "fetched=${fetched_head_sha}"
-            echo "event=${PR_HEAD_SHA}"
-            exit 1
+          release_ref_depth_args=()
+          if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
+            release_ref_depth_args=(--unshallow)
           fi
+          git fetch --no-tags "${release_ref_depth_args[@]}" origin \
+            "+refs/heads/staging:refs/remotes/origin/staging" \
+            "+refs/heads/premain:refs/remotes/origin/premain" \
+            "+refs/heads/main:refs/remotes/origin/main"
+
+          case "${PR_BASE_REF}" in
+            staging|premain|main)
+              base_ref_args=(--base-ref "refs/remotes/origin/${PR_BASE_REF}")
+              ;;
+          esac
 
           scripts/verify-release-train-promotion.sh \
             --base "${PR_BASE_REF}" \
             --head "${PR_HEAD_REF}" \
-            --base-ref HEAD \
-            --head-ref "${pr_head_data_ref}"
+            "${base_ref_args[@]}" \
+            --head-sha "${PR_HEAD_SHA}" \
+            --github-repository "${GITHUB_REPOSITORY}" \
+            --github-head-repository "${PR_HEAD_REPOSITORY}" \
+            "${pr_title_args[@]}"
 
   prerelease-readiness:
     name: Prerelease readiness (staging → premain)
@@ -106,7 +124,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
-          go-version: "1.26.3"
+          go-version: "1.26.4"
       - name: Test and vet
         run: scripts/verify-go.sh
 
@@ -134,12 +152,13 @@ jobs:
 
   builds:
     name: Verify deterministic builds
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
-          go-version: "1.26.3"
+          go-version: "1.26.4"
       - name: Install golangci-lint (pinned)
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
@@ -158,7 +177,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
-          go-version: "1.26.3"
+          go-version: "1.26.4"
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version: "24"
@@ -172,12 +191,13 @@ jobs:
 
   rubric:
     name: Rubric (full gate set)
+    if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
-          go-version: "1.26.3"
+          go-version: "1.26.4"
       - name: Install golangci-lint (pinned)
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0

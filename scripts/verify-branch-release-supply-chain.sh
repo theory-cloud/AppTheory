@@ -21,6 +21,9 @@ required_files=(
   ".release-please-manifest.premain.json"
   ".release-please-manifest.json"
   "scripts/verify-branch-version-sync.sh"
+  "scripts/verify-ci-rubric-enforced.sh"
+  "scripts/verify-release-pr-postcondition.sh"
+  "scripts/verify-release-publish-postcondition.sh"
   "scripts/publish-release-assets.sh"
 )
 
@@ -47,6 +50,10 @@ if [[ -f ".github/workflows/ci.yml" ]]; then
   }
   grep -Eq '^\s*-\s*main\s*$' ".github/workflows/ci.yml" || {
     echo "branch-release: ci workflow must run on main pushes"
+    failures=$((failures + 1))
+  }
+  grep -Fq "github.event.pull_request.base.ref == 'staging'" ".github/workflows/ci.yml" || {
+    echo "branch-release: full rubric must be scoped to PRs targeting staging"
     failures=$((failures + 1))
   }
 fi
@@ -78,8 +85,12 @@ if [[ -f ".github/workflows/prerelease.yml" ]]; then
     echo "branch-release: prerelease workflow must use release-please outputs (release_created)"
     failures=$((failures + 1))
   }
-  grep -Eq 'make rubric' ".github/workflows/prerelease.yml" || {
-    echo "branch-release: prerelease workflow must build and verify (make rubric)"
+  if grep -Eq 'make rubric' ".github/workflows/prerelease.yml"; then
+    echo "branch-release: prerelease workflow must not run the full rubric"
+    failures=$((failures + 1))
+  fi
+  grep -Eq 'scripts/verify-release-publish-postcondition\.sh prerelease' ".github/workflows/prerelease.yml" || {
+    echo "branch-release: prerelease workflow must verify release publish postconditions"
     failures=$((failures + 1))
   }
   grep -Eq 'scripts/publish-release-assets\.sh' ".github/workflows/prerelease.yml" || {
@@ -123,8 +134,12 @@ if [[ -f ".github/workflows/release.yml" ]]; then
     echo "branch-release: release workflow must use release-please outputs (release_created)"
     failures=$((failures + 1))
   }
-  grep -Eq 'make rubric' ".github/workflows/release.yml" || {
-    echo "branch-release: release workflow must build and verify (make rubric)"
+  if grep -Eq 'make rubric' ".github/workflows/release.yml"; then
+    echo "branch-release: release workflow must not run the full rubric"
+    failures=$((failures + 1))
+  fi
+  grep -Eq 'scripts/verify-release-publish-postcondition\.sh stable' ".github/workflows/release.yml" || {
+    echo "branch-release: release workflow must verify release publish postconditions"
     failures=$((failures + 1))
   }
   grep -Eq 'scripts/publish-release-assets\.sh' ".github/workflows/release.yml" || {
@@ -182,6 +197,10 @@ if [[ -f ".github/workflows/prerelease-pr.yml" ]]; then
   fi
   grep -Fq "scripts/sync-release-pr-generated.sh" ".github/workflows/prerelease-pr.yml" || {
     echo "branch-release: prerelease-pr workflow must sync generated cdk artifacts onto the release PR branch"
+    failures=$((failures + 1))
+  }
+  grep -Fq "scripts/verify-release-pr-postcondition.sh prerelease" ".github/workflows/prerelease-pr.yml" || {
+    echo "branch-release: prerelease-pr workflow must fail if release-please no-ops instead of opening an RC PR"
     failures=$((failures + 1))
   }
 fi
@@ -252,6 +271,10 @@ if [[ -f ".github/workflows/release-pr.yml" ]]; then
   }
   grep -Fq "scripts/sync-release-pr-generated.sh" ".github/workflows/release-pr.yml" || {
     echo "branch-release: release-pr workflow must sync generated cdk artifacts onto the release PR branch"
+    failures=$((failures + 1))
+  }
+  grep -Fq "scripts/verify-release-pr-postcondition.sh stable" ".github/workflows/release-pr.yml" || {
+    echo "branch-release: release-pr workflow must fail if release-please no-ops instead of opening a stable PR"
     failures=$((failures + 1))
   }
   grep -Fq "sync_stable_release_premain_manifest" "scripts/sync-release-pr-generated.sh" || {

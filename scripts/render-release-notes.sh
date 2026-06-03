@@ -69,7 +69,7 @@ Python:
 - Migration roadmap: ${docs_base}/docs/development/planning/apptheory/subroadmaps/SR-MIGRATION.md
 
 ## Verification
-- \`make rubric\`
+- Release branch provenance, version alignment, package builds, and checksum generation completed in the publisher.
 
 Checksums:
 
