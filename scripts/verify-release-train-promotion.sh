@@ -11,17 +11,26 @@ import contextlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
 RELEASE_BRANCHES = {"staging", "premain", "main"}
+PREMAIN_RELEASE_PLEASE_BRANCH = "release-please--branches--premain"
+MAIN_RELEASE_PLEASE_BRANCH = "release-please--branches--main"
+RC_VERSION_RE = re.compile(r"\bv?[0-9]+\.[0-9]+\.[0-9]+-rc(?:\.[0-9]+)?\b", re.IGNORECASE)
 VALID_PROMOTIONS = {
     ("staging", "premain"): "staging → premain prerelease promotion",
     ("premain", "main"): "premain → main stable promotion",
     ("main", "staging"): "main → staging stable back-merge",
+    (PREMAIN_RELEASE_PLEASE_BRANCH, "premain"): "generated premain RC release-please PR",
+    (MAIN_RELEASE_PLEASE_BRANCH, "main"): "generated main stable release-please PR",
 }
 
 
@@ -41,6 +50,20 @@ def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[st
 def fail(message: str) -> None:
     print(f"release-train-promotion: FAIL ({message})")
     raise SystemExit(1)
+
+
+def normalize_sha(value: str, label: str) -> str:
+    candidate = value.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", candidate):
+        fail(f"{label} must be a 40-character git commit SHA")
+    return candidate
+
+
+def normalize_repository(repository: str) -> str:
+    parts = repository.split("/")
+    if len(parts) != 2 or not all(re.fullmatch(r"[A-Za-z0-9_.-]+", part) for part in parts):
+        fail(f"GitHub repository must be in owner/name form, got {repository!r}")
+    return repository
 
 
 def ref_exists(ref: str) -> bool:
@@ -113,6 +136,69 @@ def is_ancestor(ancestor_ref: str, descendant_ref: str) -> bool:
     return run(["git", "merge-base", "--is-ancestor", ancestor_ref, descendant_ref], check=False).returncode == 0
 
 
+def github_api_json(repository: str, path: str) -> dict[str, object]:
+    repository = normalize_repository(repository)
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if not token:
+        fail("GITHUB_TOKEN or GH_TOKEN is required to verify PR head ancestry without fetching it")
+
+    owner, repo = repository.split("/", 1)
+    api_base = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
+    url = (
+        f"{api_base}/repos/"
+        f"{urllib.parse.quote(owner, safe='')}/"
+        f"{urllib.parse.quote(repo, safe='')}/"
+        f"{path}"
+    )
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "apptheory-release-train-verifier",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read(512).decode("utf-8", errors="replace").strip()
+        fail(f"GitHub API request failed with HTTP {exc.code}: {detail or exc.reason}")
+    except urllib.error.URLError as exc:
+        fail(f"GitHub API request failed: {exc.reason}")
+
+    if not isinstance(payload, dict):
+        fail("GitHub API returned an invalid response")
+    return payload
+
+
+def compare_response_is_ancestor(payload: dict[str, object], ancestor_sha: str) -> bool:
+    ancestor_sha = normalize_sha(ancestor_sha, "ancestor SHA")
+    status = payload.get("status")
+    if status not in {"ahead", "identical"}:
+        return False
+
+    base_commit = payload.get("base_commit")
+    merge_base_commit = payload.get("merge_base_commit")
+    if not isinstance(base_commit, dict) or not isinstance(merge_base_commit, dict):
+        return False
+
+    base_sha = base_commit.get("sha")
+    merge_base_sha = merge_base_commit.get("sha")
+    if not isinstance(base_sha, str) or not isinstance(merge_base_sha, str):
+        return False
+
+    return base_sha.lower() == ancestor_sha and merge_base_sha.lower() == ancestor_sha
+
+
+def github_compare_is_ancestor(repository: str, ancestor_sha: str, descendant_sha: str) -> bool:
+    ancestor_sha = normalize_sha(ancestor_sha, "ancestor SHA")
+    descendant_sha = normalize_sha(descendant_sha, "head SHA")
+    payload = github_api_json(repository, f"compare/{ancestor_sha}...{descendant_sha}")
+    return compare_response_is_ancestor(payload, ancestor_sha)
+
+
 def expected_base_for_release_head(head: str) -> str:
     if head == "staging":
         return "premain"
@@ -123,22 +209,32 @@ def expected_base_for_release_head(head: str) -> str:
     raise ValueError(f"{head!r} is not a release branch")
 
 
+def has_rc_version(value: str | None) -> bool:
+    return bool(value and RC_VERSION_RE.search(value))
+
+
 def classify(base: str, head: str) -> PromotionPlan:
     if base == "premain":
+        if head == PREMAIN_RELEASE_PLEASE_BRANCH:
+            return PromotionPlan(True, VALID_PROMOTIONS[(head, base)], ancestor_branch="premain", descendant_branch=head)
         if head != "staging":
             return PromotionPlan(
                 False,
                 "invalid release-train PR "
-                f"{head} → premain; premain only accepts staging → premain prerelease promotions",
+                f"{head} → premain; premain only accepts staging → premain prerelease promotions "
+                f"or {PREMAIN_RELEASE_PLEASE_BRANCH} → premain RC release PRs",
             )
         return PromotionPlan(True, VALID_PROMOTIONS[(head, base)], ancestor_branch="premain", descendant_branch=head)
 
     if base == "main":
+        if head == MAIN_RELEASE_PLEASE_BRANCH:
+            return PromotionPlan(True, VALID_PROMOTIONS[(head, base)], ancestor_branch="main", descendant_branch=head)
         if head != "premain":
             return PromotionPlan(
                 False,
                 "invalid release-train PR "
-                f"{head} → main; main only accepts premain → main stable promotions",
+                f"{head} → main; main only accepts premain → main stable promotions "
+                f"or {MAIN_RELEASE_PLEASE_BRANCH} → main stable release PRs",
             )
         return PromotionPlan(True, VALID_PROMOTIONS[(head, base)], ancestor_branch="main", descendant_branch=head)
 
@@ -170,10 +266,31 @@ def classify(base: str, head: str) -> PromotionPlan:
     return PromotionPlan(True, "non-release-train PR", non_release_pr=True)
 
 
-def validate(base: str, head: str, remote: str, base_ref: str | None, head_ref: str | None) -> None:
+def validate(
+    base: str,
+    head: str,
+    remote: str,
+    base_ref: str | None,
+    head_ref: str | None,
+    head_sha: str | None,
+    github_repository: str | None,
+    github_head_repository: str | None,
+    pr_title: str | None,
+) -> None:
     plan = classify(base, head)
     if not plan.valid:
         fail(plan.message)
+
+    if base == "main" and has_rc_version(pr_title):
+        fail("main release gate rejects RC-shaped PR titles/versions")
+
+    if head == PREMAIN_RELEASE_PLEASE_BRANCH and pr_title and not has_rc_version(pr_title):
+        fail("generated premain release-please PR must advertise an RC-shaped version")
+
+    if head == MAIN_RELEASE_PLEASE_BRANCH and has_rc_version(pr_title):
+        fail("generated main release-please PR must be stable-shaped, not RC-shaped")
+
+    expected_head_sha = normalize_sha(head_sha, "head SHA") if head_sha else None
 
     if plan.non_release_pr:
         print(f"release-train-promotion: PASS ({plan.message}; {head} → {base})")
@@ -195,11 +312,47 @@ def validate(base: str, head: str, remote: str, base_ref: str | None, head_ref: 
         plan.ancestor_branch,
         base_ref if plan.ancestor_branch == base else None,
     )
+
+    if (
+        plan.descendant_branch == head
+        and expected_head_sha is not None
+        and head_ref is None
+        and head not in RELEASE_BRANCHES
+    ):
+        compare_repository = github_head_repository or github_repository
+        if not compare_repository:
+            fail("GitHub repository is required to verify PR head ancestry without fetching it")
+        if not github_compare_is_ancestor(compare_repository, commit_sha(ancestor_ref), expected_head_sha):
+            if base == "staging":
+                fail(
+                    "staging PR branch does not contain the current main baseline; "
+                    "merge origin/main into the PR branch before targeting staging"
+                )
+            fail(
+                f"{plan.ancestor_branch} is not an ancestor of {plan.descendant_branch}; "
+                "recreate the release-train PR from the current branch heads and do not merge around "
+                "staging → premain → main → staging"
+            )
+
+        print(f"release-train-promotion: PASS ({plan.message}; {head} → {base})")
+        return
+
     descendant_ref = resolve_branch_ref(
         remote,
         plan.descendant_branch,
         head_ref if plan.descendant_branch == head else None,
     )
+
+    if plan.descendant_branch == head and expected_head_sha is not None:
+        actual_head_sha = commit_sha(descendant_ref).lower()
+        if actual_head_sha != expected_head_sha:
+            if head in RELEASE_BRANCHES:
+                fail(
+                    f"event head SHA for protected release branch {head} "
+                    f"does not match trusted {remote}/{head}; "
+                    "release-train PRs must use the protected branch head content"
+                )
+            fail(f"event head SHA does not match resolved PR head ref {descendant_ref!r}")
 
     if not is_ancestor(ancestor_ref, descendant_ref):
         if base == "staging" and head not in RELEASE_BRANCHES:
@@ -261,6 +414,14 @@ def build_release_train_self_test_repo() -> None:
     run(["git", "switch", "-q", "-c", "premain"])
     commit_marker("premain")
 
+    run(["git", "switch", "-q", "-c", PREMAIN_RELEASE_PLEASE_BRANCH])
+    commit_marker("chore: release 1.0.1-rc.1")
+
+    run(["git", "switch", "-q", "main"])
+    run(["git", "switch", "-q", "-c", MAIN_RELEASE_PLEASE_BRANCH])
+    commit_marker("chore: release 1.0.1")
+
+    run(["git", "switch", "-q", "premain"])
     run(["git", "switch", "-q", "-c", "staging"])
     commit_marker("staging")
 
@@ -276,7 +437,21 @@ def build_release_train_self_test_repo() -> None:
     remote_path = Path("origin.git").resolve()
     run(["git", "init", "-q", "--bare", str(remote_path)])
     run(["git", "remote", "add", "origin", str(remote_path)])
-    run(["git", "push", "-q", "origin", "main", "staging", "premain", "feature/without-main", "feature/with-main"])
+    run(
+        [
+            "git",
+            "push",
+            "-q",
+            "origin",
+            "main",
+            "staging",
+            "premain",
+            PREMAIN_RELEASE_PLEASE_BRANCH,
+            MAIN_RELEASE_PLEASE_BRANCH,
+            "feature/without-main",
+            "feature/with-main",
+        ]
+    )
 
 
 def validate_exit(
@@ -285,11 +460,25 @@ def validate_exit(
     *,
     base_ref: str | None = None,
     head_ref: str | None = None,
+    head_sha: str | None = None,
+    github_repository: str | None = None,
+    github_head_repository: str | None = None,
+    pr_title: str | None = None,
 ) -> tuple[int, str]:
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
         try:
-            validate(base, head, "origin", base_ref, head_ref)
+            validate(
+                base,
+                head,
+                "origin",
+                base_ref,
+                head_ref,
+                head_sha,
+                github_repository,
+                github_head_repository,
+                pr_title,
+            )
         except SystemExit as exc:
             code = exc.code if isinstance(exc.code, int) else 1
             return code, output.getvalue()
@@ -303,9 +492,22 @@ def assert_validation(
     *,
     base_ref: str | None = None,
     head_ref: str | None = None,
+    head_sha: str | None = None,
+    github_repository: str | None = None,
+    github_head_repository: str | None = None,
+    pr_title: str | None = None,
     contains: str | None = None,
 ) -> None:
-    code, output = validate_exit(base, head, base_ref=base_ref, head_ref=head_ref)
+    code, output = validate_exit(
+        base,
+        head,
+        base_ref=base_ref,
+        head_ref=head_ref,
+        head_sha=head_sha,
+        github_repository=github_repository,
+        github_head_repository=github_head_repository,
+        pr_title=pr_title,
+    )
     if code != expected_exit:
         raise AssertionError(
             f"{head} → {base}: expected exit {expected_exit}, got {code}; output:\n{output}"
@@ -331,6 +533,14 @@ def self_test_git_topology() -> None:
                 head_ref="staging",
                 contains="staging → premain prerelease promotion",
             )
+            assert_validation(
+                "premain",
+                "staging",
+                0,
+                base_ref="premain",
+                head_sha=commit_sha("staging"),
+                contains="staging → premain prerelease promotion",
+            )
             print("release-train-promotion: positive staging → premain topology accepted")
             assert_validation(
                 "premain",
@@ -338,6 +548,14 @@ def self_test_git_topology() -> None:
                 1,
                 base_ref="premain",
                 head_ref="refs/remotes/origin/pr/1/head",
+                contains="does not match trusted origin/staging",
+            )
+            assert_validation(
+                "premain",
+                "staging",
+                1,
+                base_ref="premain",
+                head_sha=commit_sha("refs/remotes/origin/pr/1/head"),
                 contains="does not match trusted origin/staging",
             )
             print("release-train-promotion: negative forged staging head rejected")
@@ -348,6 +566,33 @@ def self_test_git_topology() -> None:
                 base_ref="main",
                 head_ref="premain",
                 contains="premain → main stable promotion",
+            )
+            assert_validation(
+                "premain",
+                PREMAIN_RELEASE_PLEASE_BRANCH,
+                0,
+                base_ref="premain",
+                head_ref=PREMAIN_RELEASE_PLEASE_BRANCH,
+                pr_title="chore: release 1.0.1-rc.1",
+                contains="generated premain RC release-please PR",
+            )
+            assert_validation(
+                "main",
+                MAIN_RELEASE_PLEASE_BRANCH,
+                0,
+                base_ref="main",
+                head_ref=MAIN_RELEASE_PLEASE_BRANCH,
+                pr_title="chore: release 1.0.1",
+                contains="generated main stable release-please PR",
+            )
+            assert_validation(
+                "main",
+                MAIN_RELEASE_PLEASE_BRANCH,
+                1,
+                base_ref="main",
+                head_ref=MAIN_RELEASE_PLEASE_BRANCH,
+                pr_title="chore: release 1.0.1-rc.1",
+                contains="rejects RC-shaped",
             )
             assert_validation(
                 "staging",
@@ -371,12 +616,35 @@ def self_test() -> None:
     assert_plan("premain", "staging", True, "premain", "staging")
     assert_plan("main", "premain", True, "main", "premain")
     assert_plan("staging", "main", True, "staging", "main")
+    assert_plan("premain", PREMAIN_RELEASE_PLEASE_BRANCH, True, "premain", PREMAIN_RELEASE_PLEASE_BRANCH)
+    assert_plan("main", MAIN_RELEASE_PLEASE_BRANCH, True, "main", MAIN_RELEASE_PLEASE_BRANCH)
     assert_plan("staging", "feature/release-fix", True, "main", "feature/release-fix")
     assert_plan("main", "staging", False, None, None)
     assert_plan("premain", "main", False, None, None)
     assert_plan("premain", "feature/release-fix", False, None, None)
     assert_plan("project/apptheory-release-process-reliability", "main", False, None, None)
     assert_plan("project/apptheory-release-process-reliability", "milestone/release-hardening", True, None, None)
+
+    ancestor = "0" * 40
+    descendant = "1" * 40
+    if not compare_response_is_ancestor(
+        {
+            "status": "ahead",
+            "base_commit": {"sha": ancestor},
+            "merge_base_commit": {"sha": ancestor},
+        },
+        ancestor,
+    ):
+        raise AssertionError("GitHub compare ancestry must accept head commits ahead of the baseline")
+    if compare_response_is_ancestor(
+        {
+            "status": "diverged",
+            "base_commit": {"sha": ancestor},
+            "merge_base_commit": {"sha": descendant},
+        },
+        ancestor,
+    ):
+        raise AssertionError("GitHub compare ancestry must reject branches missing the baseline")
 
     self_test_git_topology()
 
@@ -407,6 +675,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--remote", default="origin")
     parser.add_argument("--base-ref", default=None)
     parser.add_argument("--head-ref", default=None)
+    parser.add_argument("--head-sha", default=None)
+    parser.add_argument("--github-repository", default=os.environ.get("GITHUB_REPOSITORY"))
+    parser.add_argument("--github-head-repository", default=None)
+    parser.add_argument("--pr-title", default=None)
     args = parser.parse_args(argv)
 
     if args.self_test:
@@ -416,7 +688,17 @@ def main(argv: list[str]) -> int:
     if not args.base or not args.head:
         fail("base and head branches are required; pass --base/--head or run on a pull_request event")
 
-    validate(args.base, args.head, args.remote, args.base_ref, args.head_ref)
+    validate(
+        args.base,
+        args.head,
+        args.remote,
+        args.base_ref,
+        args.head_ref,
+        args.head_sha,
+        args.github_repository,
+        args.github_head_repository,
+        args.pr_title,
+    )
     return 0
 
 

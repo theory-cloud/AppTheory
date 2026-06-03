@@ -47,6 +47,11 @@ jobs:
             --config-file release-please-config.premain.json \
             --manifest-file .release-please-manifest.premain.json
 
+      - name: Verify generated RC release PR postcondition
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: scripts/verify-release-pr-postcondition.sh prerelease
+
       - name: Detect open release PR
         id: release_pr
         env:
@@ -89,7 +94,7 @@ jobs:
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         if: steps.release_pr.outputs.exists == 'true'
         with:
-          go-version: "1.26.3"
+          go-version: "1.26.4"
 
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         if: steps.release_pr.outputs.exists == 'true'

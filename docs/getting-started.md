@@ -9,7 +9,7 @@ points you at the canonical API and deployment docs.
 
 ## Prerequisites
 
-- Go `1.26.3` (`go.mod`)
+- Go `1.26.4` (`go.mod`)
 - Node.js `>=24` (`ts/package.json` and `cdk/package.json`)
 - Python `>=3.14` (`py/pyproject.toml`)
 - `make` and `git`
