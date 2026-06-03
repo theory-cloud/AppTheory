@@ -38,10 +38,19 @@ require_contains \
   "${ci}" \
   "if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')" \
   "full rubric must run only for PRs targeting staging plus opted-in manual dispatch"
+require_contains "${ci}" "  builds:" "CI must define the standalone deterministic-build job"
+require_contains "${ci}" "name: Verify deterministic builds" \
+  "CI must keep the deterministic-build job name stable for branch protection visibility"
+require_contains \
+  "${ci}" \
+  "if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'" \
+  "deterministic builds must run only for PRs targeting staging"
 require_contains "scripts/sync-release-pr-generated.sh" "--raw-field run_full_rubric=false" \
   "automated generated release PR CI dispatch must opt out of the full rubric"
 require_not_contains "scripts/sync-release-pr-generated.sh" "Rubric (full gate set)" \
   "generated release PR required checks must exclude the full rubric"
+require_not_contains "scripts/sync-release-pr-generated.sh" "Verify deterministic builds" \
+  "generated release PR required checks must exclude skipped deterministic builds"
 
 for release_path in \
   ".github/workflows/prerelease.yml" \
@@ -49,6 +58,10 @@ for release_path in \
   "scripts/publish-release-assets.sh" \
   "scripts/render-release-notes.sh"; do
   require_not_contains "${release_path}" "make rubric" "full rubric must not run in release build/publish paths"
+  require_not_contains "${release_path}" "Verify deterministic builds" \
+    "deterministic builds must not be a release build/publish path"
+  require_not_contains "${release_path}" "scripts/verify-builds.sh" \
+    "release build/publish paths must not run deterministic builds"
 done
 
 require_contains ".github/workflows/prerelease.yml" "scripts/verify-release-publish-postcondition.sh prerelease" \
