@@ -120,9 +120,24 @@ use_existing_open_release_pr() {
   return 0
 }
 
-if use_existing_open_release_pr "valid release PR already exists"; then
-  exit 0
-fi
+draft_lock_existing_open_release_pr_before_refresh() {
+  local pr_json
+  pr_json="$(detect_open_release_pr)"
+  if [[ -z "${pr_json}" ]]; then
+    return 0
+  fi
+
+  local pr_number
+  pr_number="$(jq -r '.number' <<<"${pr_json}")"
+  if [[ -z "${pr_number}" || "${pr_number}" == "null" ]]; then
+    return 0
+  fi
+
+  draft_lock_release_pr "${pr_number}"
+  echo "release-please-pr: found open ${target_branch} release PR #${pr_number}; refreshing it through release-please"
+}
+
+draft_lock_existing_open_release_pr_before_refresh
 
 args=(
   -y
