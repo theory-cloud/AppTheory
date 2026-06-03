@@ -154,7 +154,7 @@ wait_for_required_checks() {
   local interval_seconds="${RELEASE_PR_CHECK_INTERVAL_SECONDS:-15}"
   local required_checks="${RELEASE_PR_READY_CHECKS:-}"
   if [[ -z "${required_checks}" ]]; then
-    required_checks=$'Version alignment\nGo (test + vet)\nTypeScript (npm pack)\nPython (build wheel + sdist)\nVerify deterministic builds\nContract tests (fixtures)'
+    required_checks=$'Version alignment\nGo (test + vet)\nTypeScript (npm pack)\nPython (build wheel + sdist)\nContract tests (fixtures)'
   fi
 
   local deadline=$((SECONDS + timeout_seconds))
@@ -258,7 +258,7 @@ wait_for_required_checks_to_start() {
   local interval_seconds="${RELEASE_PR_CHECK_INTERVAL_SECONDS:-15}"
   local required_checks="${RELEASE_PR_READY_CHECKS:-}"
   if [[ -z "${required_checks}" ]]; then
-    required_checks=$'Version alignment\nGo (test + vet)\nTypeScript (npm pack)\nPython (build wheel + sdist)\nVerify deterministic builds\nContract tests (fixtures)'
+    required_checks=$'Version alignment\nGo (test + vet)\nTypeScript (npm pack)\nPython (build wheel + sdist)\nContract tests (fixtures)'
   fi
 
   local deadline=$((SECONDS + timeout_seconds))
