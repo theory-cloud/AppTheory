@@ -196,7 +196,7 @@ echo "release-assets: source ${source_commit} for ${tag}"
 } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 
 export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
-make rubric
+scripts/verify-version-alignment.sh
 make build
 scripts/generate-checksums.sh
 scripts/render-release-notes.sh "${tag}"

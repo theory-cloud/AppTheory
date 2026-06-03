@@ -11,7 +11,7 @@ AppTheory is a multi-language monorepo (Go/TypeScript/Python) with a shared runt
 - Release artifacts are generated into `dist/` (not committed).
 
 ## Build, Test, and Development Commands
-Toolchains: Go `1.26.3` (see `go.mod`), Node `>=24`, Python `>=3.14`.
+Toolchains: Go `1.26.4` (see `go.mod`), Node `>=24`, Python `>=3.14`.
 
 - `make fmt`: format Go code (`gofmt`).
 - `make lint`: run Go/TS/Python linters.
@@ -36,6 +36,9 @@ Version bumps must keep `VERSION`, `ts/package.json`, `cdk/package.json`, `py/py
 - Release automation is driven by Conventional Commits; if a change must ship, use `feat:` / `fix:` (avoid milestone-only prefixes like `M1:`).
 - Branch management is a strict release train: `staging` → `premain` (release candidate) → `main` (stable release) → `staging` (back-merge). Do not skip a leg, merge around a leg, or leave `staging` behind `main`; this order is critical to avoid release and generated-artifact conflicts.
 - Work lands in `staging` first. `premain` only receives promoted `staging` changes for RCs, `main` only receives promoted `premain` changes for stable releases, and every stable `main` release must be brought back into `staging` before the next staging PR or promotion.
+- Full rubric belongs only on PRs targeting `staging` and optional manual `workflow_dispatch`; `premain`/`main` lanes run release hygiene, release-branch, build/package, and publish postcondition checks instead.
+- Every PR merged to `premain` is release-candidate intent and must lead to an open generated `release-please--branches--premain` RC PR; every PR merged to `main` is stable release intent and must lead to an open generated `release-please--branches--main` stable PR.
+- Do not create manual tags, reset protected branches, push directly to `staging`/`premain`/`main`, or add post-release CI sync/backmerge automation. After a stable `main` release, the next operator step is a human PR from `main` back to `staging`.
 - Staging PRs must *ALWAYS* contain current `main`. Before opening or merging any PR whose base is `staging`, verify `origin/main` is an ancestor of the PR head (for example, `git merge-base --is-ancestor origin/main HEAD`); if not, merge `origin/main` into the PR branch first.
 - PRs to `staging` must verify version alignment across both release and release-candidate manifests: `.release-please-manifest.json` and `.release-please-manifest.premain.json`. The premain Release Please state must stay in sync with the stable manifest whenever `main` advances.
 - After any stable release on `main`, the next `staging` PR must reset `.release-please-manifest.premain.json` to the latest stable version from `.release-please-manifest.json` before promoting `staging` to `premain`; stale prerelease tracks fail the release lane.

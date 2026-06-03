@@ -22,10 +22,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 RELEASE_BRANCHES = {"staging", "premain", "main"}
+PREMAIN_RELEASE_PLEASE_BRANCH = "release-please--branches--premain"
+MAIN_RELEASE_PLEASE_BRANCH = "release-please--branches--main"
+RC_VERSION_RE = re.compile(r"\bv?[0-9]+\.[0-9]+\.[0-9]+-rc(?:\.[0-9]+)?\b", re.IGNORECASE)
 VALID_PROMOTIONS = {
     ("staging", "premain"): "staging → premain prerelease promotion",
     ("premain", "main"): "premain → main stable promotion",
     ("main", "staging"): "main → staging stable back-merge",
+    (PREMAIN_RELEASE_PLEASE_BRANCH, "premain"): "generated premain RC release-please PR",
+    (MAIN_RELEASE_PLEASE_BRANCH, "main"): "generated main stable release-please PR",
 }
 
 
@@ -204,22 +209,32 @@ def expected_base_for_release_head(head: str) -> str:
     raise ValueError(f"{head!r} is not a release branch")
 
 
+def has_rc_version(value: str | None) -> bool:
+    return bool(value and RC_VERSION_RE.search(value))
+
+
 def classify(base: str, head: str) -> PromotionPlan:
     if base == "premain":
+        if head == PREMAIN_RELEASE_PLEASE_BRANCH:
+            return PromotionPlan(True, VALID_PROMOTIONS[(head, base)], ancestor_branch="premain", descendant_branch=head)
         if head != "staging":
             return PromotionPlan(
                 False,
                 "invalid release-train PR "
-                f"{head} → premain; premain only accepts staging → premain prerelease promotions",
+                f"{head} → premain; premain only accepts staging → premain prerelease promotions "
+                f"or {PREMAIN_RELEASE_PLEASE_BRANCH} → premain RC release PRs",
             )
         return PromotionPlan(True, VALID_PROMOTIONS[(head, base)], ancestor_branch="premain", descendant_branch=head)
 
     if base == "main":
+        if head == MAIN_RELEASE_PLEASE_BRANCH:
+            return PromotionPlan(True, VALID_PROMOTIONS[(head, base)], ancestor_branch="main", descendant_branch=head)
         if head != "premain":
             return PromotionPlan(
                 False,
                 "invalid release-train PR "
-                f"{head} → main; main only accepts premain → main stable promotions",
+                f"{head} → main; main only accepts premain → main stable promotions "
+                f"or {MAIN_RELEASE_PLEASE_BRANCH} → main stable release PRs",
             )
         return PromotionPlan(True, VALID_PROMOTIONS[(head, base)], ancestor_branch="main", descendant_branch=head)
 
@@ -260,10 +275,20 @@ def validate(
     head_sha: str | None,
     github_repository: str | None,
     github_head_repository: str | None,
+    pr_title: str | None,
 ) -> None:
     plan = classify(base, head)
     if not plan.valid:
         fail(plan.message)
+
+    if base == "main" and has_rc_version(pr_title):
+        fail("main release gate rejects RC-shaped PR titles/versions")
+
+    if head == PREMAIN_RELEASE_PLEASE_BRANCH and pr_title and not has_rc_version(pr_title):
+        fail("generated premain release-please PR must advertise an RC-shaped version")
+
+    if head == MAIN_RELEASE_PLEASE_BRANCH and has_rc_version(pr_title):
+        fail("generated main release-please PR must be stable-shaped, not RC-shaped")
 
     expected_head_sha = normalize_sha(head_sha, "head SHA") if head_sha else None
 
@@ -389,6 +414,14 @@ def build_release_train_self_test_repo() -> None:
     run(["git", "switch", "-q", "-c", "premain"])
     commit_marker("premain")
 
+    run(["git", "switch", "-q", "-c", PREMAIN_RELEASE_PLEASE_BRANCH])
+    commit_marker("chore: release 1.0.1-rc.1")
+
+    run(["git", "switch", "-q", "main"])
+    run(["git", "switch", "-q", "-c", MAIN_RELEASE_PLEASE_BRANCH])
+    commit_marker("chore: release 1.0.1")
+
+    run(["git", "switch", "-q", "premain"])
     run(["git", "switch", "-q", "-c", "staging"])
     commit_marker("staging")
 
@@ -404,7 +437,21 @@ def build_release_train_self_test_repo() -> None:
     remote_path = Path("origin.git").resolve()
     run(["git", "init", "-q", "--bare", str(remote_path)])
     run(["git", "remote", "add", "origin", str(remote_path)])
-    run(["git", "push", "-q", "origin", "main", "staging", "premain", "feature/without-main", "feature/with-main"])
+    run(
+        [
+            "git",
+            "push",
+            "-q",
+            "origin",
+            "main",
+            "staging",
+            "premain",
+            PREMAIN_RELEASE_PLEASE_BRANCH,
+            MAIN_RELEASE_PLEASE_BRANCH,
+            "feature/without-main",
+            "feature/with-main",
+        ]
+    )
 
 
 def validate_exit(
@@ -416,6 +463,7 @@ def validate_exit(
     head_sha: str | None = None,
     github_repository: str | None = None,
     github_head_repository: str | None = None,
+    pr_title: str | None = None,
 ) -> tuple[int, str]:
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
@@ -429,6 +477,7 @@ def validate_exit(
                 head_sha,
                 github_repository,
                 github_head_repository,
+                pr_title,
             )
         except SystemExit as exc:
             code = exc.code if isinstance(exc.code, int) else 1
@@ -446,6 +495,7 @@ def assert_validation(
     head_sha: str | None = None,
     github_repository: str | None = None,
     github_head_repository: str | None = None,
+    pr_title: str | None = None,
     contains: str | None = None,
 ) -> None:
     code, output = validate_exit(
@@ -456,6 +506,7 @@ def assert_validation(
         head_sha=head_sha,
         github_repository=github_repository,
         github_head_repository=github_head_repository,
+        pr_title=pr_title,
     )
     if code != expected_exit:
         raise AssertionError(
@@ -517,6 +568,33 @@ def self_test_git_topology() -> None:
                 contains="premain → main stable promotion",
             )
             assert_validation(
+                "premain",
+                PREMAIN_RELEASE_PLEASE_BRANCH,
+                0,
+                base_ref="premain",
+                head_ref=PREMAIN_RELEASE_PLEASE_BRANCH,
+                pr_title="chore: release 1.0.1-rc.1",
+                contains="generated premain RC release-please PR",
+            )
+            assert_validation(
+                "main",
+                MAIN_RELEASE_PLEASE_BRANCH,
+                0,
+                base_ref="main",
+                head_ref=MAIN_RELEASE_PLEASE_BRANCH,
+                pr_title="chore: release 1.0.1",
+                contains="generated main stable release-please PR",
+            )
+            assert_validation(
+                "main",
+                MAIN_RELEASE_PLEASE_BRANCH,
+                1,
+                base_ref="main",
+                head_ref=MAIN_RELEASE_PLEASE_BRANCH,
+                pr_title="chore: release 1.0.1-rc.1",
+                contains="rejects RC-shaped",
+            )
+            assert_validation(
                 "staging",
                 "feature/with-main",
                 0,
@@ -538,6 +616,8 @@ def self_test() -> None:
     assert_plan("premain", "staging", True, "premain", "staging")
     assert_plan("main", "premain", True, "main", "premain")
     assert_plan("staging", "main", True, "staging", "main")
+    assert_plan("premain", PREMAIN_RELEASE_PLEASE_BRANCH, True, "premain", PREMAIN_RELEASE_PLEASE_BRANCH)
+    assert_plan("main", MAIN_RELEASE_PLEASE_BRANCH, True, "main", MAIN_RELEASE_PLEASE_BRANCH)
     assert_plan("staging", "feature/release-fix", True, "main", "feature/release-fix")
     assert_plan("main", "staging", False, None, None)
     assert_plan("premain", "main", False, None, None)
@@ -598,6 +678,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--head-sha", default=None)
     parser.add_argument("--github-repository", default=os.environ.get("GITHUB_REPOSITORY"))
     parser.add_argument("--github-head-repository", default=None)
+    parser.add_argument("--pr-title", default=None)
     args = parser.parse_args(argv)
 
     if args.self_test:
@@ -616,6 +697,7 @@ def main(argv: list[str]) -> int:
         args.head_sha,
         args.github_repository,
         args.github_head_repository,
+        args.pr_title,
     )
     return 0
 
