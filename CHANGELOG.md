@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.12.2](https://github.com/theory-cloud/AppTheory/compare/v1.12.1...v1.12.2) (2026-06-03)
+
+
+### Bug Fixes
+
+* **ci:** avoid untrusted PR head fetch ([f5c0bc0](https://github.com/theory-cloud/AppTheory/commit/f5c0bc0ae997295008bc8a30b16eb1ad48c93e2c))
+* **ci:** keep release gate backward compatible ([cb21be7](https://github.com/theory-cloud/AppTheory/commit/cb21be77cc8b23588c06379b189f9d2cda2f01ae))
+* **ci:** keep release gate title check backward compatible ([883774e](https://github.com/theory-cloud/AppTheory/commit/883774eff76842b7b0f6f56a170bb5ceae8a5c8f))
+* **ci:** unshallow release train topology checks ([2a8d55b](https://github.com/theory-cloud/AppTheory/commit/2a8d55b0e1f50c3982ab79bc0d6066649ce1e023))
+* **ci:** unshallow release train topology checks ([5694fb8](https://github.com/theory-cloud/AppTheory/commit/5694fb8f44218cc1f2e2e6b0fa0e0e47740f8d13))
+* **release:** limit deterministic build gate to staging ([b5e206b](https://github.com/theory-cloud/AppTheory/commit/b5e206b6d1b4467e91219141747534f6a9f4ad73))
+* **release:** normalize AppTheory release gates and update TableTheory ([62ac7fb](https://github.com/theory-cloud/AppTheory/commit/62ac7fb127998079b264ccaf67c592482e0774dd))
+* **release:** normalize AppTheory release gates and update TableTheory ([421788a](https://github.com/theory-cloud/AppTheory/commit/421788a4eadd309cf076b2a35fe35dd2322b46c1))
+* **release:** recover release PR hygiene gates ([980c9a5](https://github.com/theory-cloud/AppTheory/commit/980c9a56aa091452d1396f4ca226e8b76a774407))
+* **release:** recover release PR hygiene gates ([1e30ade](https://github.com/theory-cloud/AppTheory/commit/1e30ade6c02946a7b50cd061088069232746ad3a))
+* **release:** restore premain ancestry and gate builds ([419d5c8](https://github.com/theory-cloud/AppTheory/commit/419d5c8dddeb2afdfce7fd2502c699697099ed8e))
+
+## [1.12.2-rc](https://github.com/theory-cloud/AppTheory/compare/v1.12.1...v1.12.2-rc) (2026-06-03)
+
+
+### Bug Fixes
+
+* **ci:** avoid untrusted PR head fetch ([f5c0bc0](https://github.com/theory-cloud/AppTheory/commit/f5c0bc0ae997295008bc8a30b16eb1ad48c93e2c))
+* **ci:** keep release gate backward compatible ([cb21be7](https://github.com/theory-cloud/AppTheory/commit/cb21be77cc8b23588c06379b189f9d2cda2f01ae))
+* **ci:** keep release gate title check backward compatible ([883774e](https://github.com/theory-cloud/AppTheory/commit/883774eff76842b7b0f6f56a170bb5ceae8a5c8f))
+* **ci:** unshallow release train topology checks ([2a8d55b](https://github.com/theory-cloud/AppTheory/commit/2a8d55b0e1f50c3982ab79bc0d6066649ce1e023))
+* **ci:** unshallow release train topology checks ([5694fb8](https://github.com/theory-cloud/AppTheory/commit/5694fb8f44218cc1f2e2e6b0fa0e0e47740f8d13))
+* **release:** limit deterministic build gate to staging ([b5e206b](https://github.com/theory-cloud/AppTheory/commit/b5e206b6d1b4467e91219141747534f6a9f4ad73))
+* **release:** normalize AppTheory release gates and update TableTheory ([62ac7fb](https://github.com/theory-cloud/AppTheory/commit/62ac7fb127998079b264ccaf67c592482e0774dd))
+* **release:** normalize AppTheory release gates and update TableTheory ([421788a](https://github.com/theory-cloud/AppTheory/commit/421788a4eadd309cf076b2a35fe35dd2322b46c1))
+* **release:** recover release PR hygiene gates ([980c9a5](https://github.com/theory-cloud/AppTheory/commit/980c9a56aa091452d1396f4ca226e8b76a774407))
+* **release:** recover release PR hygiene gates ([1e30ade](https://github.com/theory-cloud/AppTheory/commit/1e30ade6c02946a7b50cd061088069232746ad3a))
+* **release:** restore premain ancestry and gate builds ([419d5c8](https://github.com/theory-cloud/AppTheory/commit/419d5c8dddeb2afdfce7fd2502c699697099ed8e))
+
 ## [1.12.1](https://github.com/theory-cloud/AppTheory/compare/v1.12.0...v1.12.1) (2026-05-30)
 
 
