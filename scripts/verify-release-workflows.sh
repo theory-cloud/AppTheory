@@ -370,6 +370,11 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
+    'pr_title_args=(--pr-title "${PR_TITLE}")',
+    "release train promotion verifier must pass PR titles when trusted verifier code supports title checks",
+)
+require_contains(
+    ".github/workflows/ci.yml",
     '--github-repository "${GITHUB_REPOSITORY}"',
     "release train promotion verifier must identify the protected repository for compare checks",
 )

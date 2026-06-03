@@ -39,6 +39,11 @@ jobs:
           set -euo pipefail
 
           base_ref_args=()
+          pr_title_args=()
+          if scripts/verify-release-train-promotion.sh --help | grep -q -- "--pr-title"; then
+            pr_title_args=(--pr-title "${PR_TITLE}")
+          fi
+
           case "${PR_BASE_REF}" in
             staging|premain|main)
               git fetch --no-tags origin \
@@ -54,7 +59,7 @@ jobs:
             --head-sha "${PR_HEAD_SHA}" \
             --github-repository "${GITHUB_REPOSITORY}" \
             --github-head-repository "${PR_HEAD_REPOSITORY}" \
-            --pr-title "${PR_TITLE}"
+            "${pr_title_args[@]}"
 
   prerelease-readiness:
     name: Prerelease readiness (staging → premain)
