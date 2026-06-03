@@ -365,6 +365,17 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
+    'release_ref_depth_args=(--unshallow)',
+    "release train promotion verifier must unshallow trusted protected release branch history",
+)
+for branch in ("staging", "premain", "main"):
+    require_contains(
+        ".github/workflows/ci.yml",
+        f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+        f"release train promotion verifier must fetch protected {branch} history for topology checks",
+    )
+require_contains(
+    ".github/workflows/ci.yml",
     '--head-sha "${PR_HEAD_SHA}"',
     "release train promotion verifier must pass the event head SHA without fetching PR head content",
 )
