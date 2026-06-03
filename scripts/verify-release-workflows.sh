@@ -341,6 +341,16 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
+    "name: Verify deterministic builds",
+    "CI must keep the standalone deterministic-build job name stable",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'",
+    "deterministic builds must run only on staging PRs",
+)
+require_contains(
+    ".github/workflows/ci.yml",
     "Release train promotion gate",
     "CI must gate release train promotion PRs before release state can advance",
 )
@@ -562,6 +572,11 @@ require_not_contains(
     "scripts/sync-release-pr-generated.sh",
     "Rubric (full gate set)",
     "release PR sync required checks must exclude the full rubric context",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "Verify deterministic builds",
+    "release PR sync required checks must exclude skipped deterministic-build contexts",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
