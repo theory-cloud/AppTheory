@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 python3 - <<'PY'
+import subprocess
 from pathlib import Path
 
 
@@ -325,8 +326,28 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
-    "workflow_dispatch: {}",
-    "CI must be dispatchable for bot-authored release PR branch updates",
+    "workflow_dispatch:\n    inputs:\n      run_full_rubric:",
+    "CI must be dispatchable for bot-authored release PR branch updates with explicit rubric control",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "default: true",
+    "manual CI workflow_dispatch must continue to run the full rubric by default",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "if: (github.event_name == 'workflow_dispatch' && (inputs.run_full_rubric == true || inputs.run_full_rubric == 'true')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging')",
+    "full rubric must run only on staging PRs and opted-in manual dispatch",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "name: Verify deterministic builds",
+    "CI must keep the standalone deterministic-build job name stable",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'staging'",
+    "deterministic builds must run only on staging PRs",
 )
 require_contains(
     ".github/workflows/ci.yml",
@@ -483,11 +504,16 @@ for workflow in (".github/workflows/prerelease-pr.yml", ".github/workflows/relea
         "scripts/run-release-please-pr.sh",
         "release PR workflows must create release-please PRs through the stale-state-tolerant wrapper",
     )
+require_not_contains(
+    "scripts/run-release-please-pr.sh",
+    'valid release PR already exists',
+    "release-please PR generation must not short-circuit before release-please can refresh stale open PRs",
+)
 require_order(
     "scripts/run-release-please-pr.sh",
-    'if use_existing_open_release_pr "valid release PR already exists"; then',
+    "draft_lock_existing_open_release_pr_before_refresh",
     'npx "${args[@]}"',
-    "release-please PR generation must tolerate already-open draft release PRs before invoking release-please",
+    "release-please PR generation may draft-lock already-open PRs but must still invoke release-please",
 )
 require_order(
     "scripts/run-release-please-pr.sh",
@@ -526,6 +552,31 @@ require_contains(
     ".github/workflows/release-pr.yml",
     "scripts/verify-release-pr-postcondition.sh stable",
     "stable Release PR generation must fail closed when release-please no-ops",
+)
+require_contains(
+    "scripts/verify-release-pr-postcondition.sh",
+    "parse_version_value",
+    "release PR postcondition verifier must parse annotated VERSION values before shape validation",
+)
+require_contains(
+    "scripts/verify-release-pr-postcondition.sh",
+    "1.12.2-rc # x-release-please-version",
+    "release PR postcondition verifier self-test must cover annotated RC VERSION values",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "--raw-field run_full_rubric=false",
+    "automated release PR CI dispatch must disable the full rubric",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "Rubric (full gate set)",
+    "release PR sync required checks must exclude the full rubric context",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "Verify deterministic builds",
+    "release PR sync required checks must exclude skipped deterministic-build contexts",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
@@ -646,6 +697,8 @@ for forbidden in (
         forbidden,
         "release PR sync must not self-attest protected contexts",
     )
+
+subprocess.run(["bash", "scripts/verify-release-pr-postcondition.sh", "--self-test"], check=True)
 
 print("release-workflows: PASS")
 PY
