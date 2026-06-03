@@ -44,10 +44,17 @@ jobs:
             pr_title_args=(--pr-title "${PR_TITLE}")
           fi
 
+          release_ref_depth_args=()
+          if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
+            release_ref_depth_args=(--unshallow)
+          fi
+          git fetch --no-tags "${release_ref_depth_args[@]}" origin \
+            "+refs/heads/staging:refs/remotes/origin/staging" \
+            "+refs/heads/premain:refs/remotes/origin/premain" \
+            "+refs/heads/main:refs/remotes/origin/main"
+
           case "${PR_BASE_REF}" in
             staging|premain|main)
-              git fetch --no-tags origin \
-                "+refs/heads/${PR_BASE_REF}:refs/remotes/origin/${PR_BASE_REF}"
               base_ref_args=(--base-ref "refs/remotes/origin/${PR_BASE_REF}")
               ;;
           esac
