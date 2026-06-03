@@ -22,14 +22,17 @@ Release flow (TableTheory pattern):
 
 - **staging → premain**: merge a PR from `staging` into `premain` to start the prerelease pipeline.
   - The `Prerelease PR (premain)` workflow opens/updates a **release-please PR** (branch `release-please--branches--premain`).
+  - If no generated RC PR is open after that workflow, the lane fails; Release Please no-op is not a successful skip.
   - **Merging the release-please PR** is what cuts the RC tag + GitHub prerelease.
 - **premain → main**: merge a PR from `premain` into `main` to promote an RC line to stable.
   - The `Release PR (main)` workflow aligns stable releases to the premain RC baseline (via `release-as`), then opens the stable
     release-please PR.
+  - If no generated stable PR is open after that workflow, the lane fails; Release Please no-op is not a successful skip.
   - **Merging the stable release-please PR** cuts the stable tag + GitHub release.
 - The release-pr workflows ignore pushes whose head commit is the merged `release-please--branches--*` branch, so cutting a
   release does not immediately open the next release PR again.
-- **post-release sync**: back-merge `main` into `staging` (and `premain` as needed) so the next cycle starts from the latest stable baseline.
+- **post-release sync**: open a human PR from `main` into `staging` so the next cycle starts from the latest stable baseline.
+  There is no CI direct-push sync/backmerge automation.
 
 Important: release automation is driven by **Conventional Commits**. Commits typed as `fix:` / `feat:` are treated as user-facing
 and will advance the release line; `chore:` commits may be ignored by release-please. If a change must ship, prefer `fix(<scope>): ...`
@@ -43,8 +46,8 @@ must ship in the next RC/release, use conventional commits such as `feat(M1): ..
 
 - If a prerelease/release PR was merged but no new `vX.Y.Z-rc...` (or `vX.Y.Z`) tag exists, check the corresponding GitHub Actions run:
   `Prerelease (premain)` or `Release (main)`.
-- The release workflows may delete failed *draft* releases/tags to avoid leaving broken remnants; after fixing the underlying build/gate,
-  re-run the workflow (or merge the next release-please PR) to cut a new RC/release.
+- The release workflows may recover failed *draft* release assets, but they do not create manual tags or mutate published releases.
+  After fixing the underlying build/gate, re-run the workflow or merge the next generated Release Please PR.
 
 ## Branch/version invariants (enforced)
 
@@ -54,10 +57,12 @@ AppTheory follows the TableTheory invariant set so prereleases cannot get “stu
   - `.release-please-manifest.json` on `premain` must match `main`.
   - The prerelease track in `.release-please-manifest.premain.json` must not be behind `main`’s stable semver base.
 
-These are enforced in the rubric via:
+These are enforced by release hygiene and the staging rubric via:
 
 - `bash scripts/verify-branch-release-supply-chain.sh`
 - `bash scripts/verify-branch-version-sync.sh`
+- `bash scripts/verify-ci-rubric-enforced.sh`
+- `bash scripts/verify-release-workflows.sh`
 
 ## Version scheme
 
@@ -121,8 +126,8 @@ Go:
 To reproduce release assets from a tag:
 
 - Checkout the tag: `git checkout vX.Y.Z` (or `vX.Y.Z-rc.N`).
-- Run `make rubric` to build the TS tarball + Python wheel/sdist and run verification.
-- Optional: run `make verify-builds` to build twice and compare checksums (reproducibility check).
+- Fetch `origin/main`, `origin/premain`, and tags, then run `scripts/verify-release-branch.sh vX.Y.Z`.
+- Run `scripts/verify-version-alignment.sh` and `make build` to build the TS tarballs and Python wheel/sdists.
 - Run `scripts/generate-checksums.sh` to produce `dist/SHA256SUMS.txt`.
 
 Artifacts are written to `dist/`.
