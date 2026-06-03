@@ -39,6 +39,18 @@ jobs:
         if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
         run: git fetch origin main premain --force
 
+      - name: Verify branch version sync (stable release preflight)
+        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
+        run: scripts/verify-branch-version-sync.sh
+
+      - name: Verify release supply chain (stable release preflight)
+        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
+        run: bash scripts/verify-branch-release-supply-chain.sh
+
+      - name: Verify release workflow invariants (stable release preflight)
+        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
+        run: bash scripts/verify-release-workflows.sh
+
       - name: Set SOURCE_DATE_EPOCH (stable release preflight)
         if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
@@ -46,7 +58,7 @@ jobs:
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
         with:
-          go-version: "1.26.3"
+          go-version: "1.26.4"
 
       - name: Install golangci-lint (pinned) (stable release preflight)
         if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
@@ -62,14 +74,10 @@ jobs:
         with:
           python-version: "3.14.3"
 
-      - name: Build + verify before stable release creation
-        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
-        run: make rubric
-
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         if: startsWith(github.ref, 'refs/tags/') || inputs.tag_name != ''
         with:
-          go-version: "1.26.3"
+          go-version: "1.26.4"
 
       - name: Install golangci-lint (pinned) (for tag-triggered assets)
         if: startsWith(github.ref, 'refs/tags/') || inputs.tag_name != ''
@@ -104,6 +112,13 @@ jobs:
           # Prevent release-please from opening the *next* release PR on release commits.
           # PR generation runs in release-pr.yml.
           skip-github-pull-request: true
+
+      - name: Verify stable publish postcondition
+        if: github.ref == 'refs/heads/main' && inputs.tag_name == ''
+        env:
+          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
+        run: scripts/verify-release-publish-postcondition.sh stable "${RELEASE_CREATED}" "${TAG_NAME}"
 
       - name: Build, upload, and publish release assets
         if: steps.release.outputs.release_created == 'true'

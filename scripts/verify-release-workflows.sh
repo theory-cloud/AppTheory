@@ -66,15 +66,27 @@ def require_step_contains(path: str, step_name: str, needle: str, description: s
 
 require_order(
     ".github/workflows/prerelease.yml",
-    "Build + verify before prerelease creation",
+    "Verify branch version sync (release preflight)",
     "Release Please (Prerelease)",
-    "prerelease must pass rubric before release-please can create a draft release",
+    "prerelease creation must fail closed on stale branch release state before release-please can publish",
 )
 require_order(
     ".github/workflows/release.yml",
-    "Build + verify before stable release creation",
+    "Verify branch version sync (stable release preflight)",
     "Release Please (Stable)",
-    "stable release must pass rubric before release-please can create a draft release",
+    "stable release creation must fail closed on stale branch release state before release-please can publish",
+)
+require_order(
+    ".github/workflows/prerelease.yml",
+    "Release Please (Prerelease)",
+    "Verify prerelease publish postcondition",
+    "prerelease publisher must validate release-please outputs before asset publishing",
+)
+require_order(
+    ".github/workflows/release.yml",
+    "Release Please (Stable)",
+    "Verify stable publish postcondition",
+    "stable publisher must validate release-please outputs before asset publishing",
 )
 for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.yml"):
     require_contains(
@@ -120,6 +132,21 @@ for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.
         'scripts/publish-release-assets.sh "${TAG_NAME}"',
         "release workflows must publish assets through the shared draft-release-safe path",
     )
+    require_not_contains(
+        workflow,
+        "make rubric",
+        "release publisher workflows must use release hygiene and publish postconditions instead of the full rubric",
+    )
+require_contains(
+    ".github/workflows/prerelease.yml",
+    "scripts/verify-release-publish-postcondition.sh prerelease",
+    "prerelease publisher must fail closed when a generated RC release PR merge does not create an RC release",
+)
+require_contains(
+    ".github/workflows/release.yml",
+    "scripts/verify-release-publish-postcondition.sh stable",
+    "stable publisher must fail closed when a generated stable release PR merge does not create a stable release",
+)
 require_contains(
     ".github/workflows/prerelease.yml",
     "Recover existing draft prerelease assets",
@@ -186,14 +213,19 @@ require_contains(
 require_order(
     "scripts/publish-release-assets.sh",
     'scripts/verify-release-branch.sh "${tag}"',
-    "make rubric",
-    "release asset publisher must verify the resolved source before running rubric",
+    "scripts/verify-version-alignment.sh",
+    "release asset publisher must verify the resolved source before version/package checks",
 )
 require_order(
     "scripts/publish-release-assets.sh",
-    "make rubric",
+    "scripts/verify-version-alignment.sh",
     "make build",
-    "release asset publisher must run rubric before building release assets",
+    "release asset publisher must verify version alignment before building release assets",
+)
+require_not_contains(
+    "scripts/publish-release-assets.sh",
+    "make rubric",
+    "release asset publisher must not run the full rubric",
 )
 require_order(
     "scripts/publish-release-assets.sh",
@@ -308,8 +340,8 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
-    "ref: ${{ github.event.pull_request.base.sha }}",
-    "release train promotion verifier must run from trusted base branch code",
+    "ref: refs/heads/staging",
+    "release train promotion verifier must run from trusted protected release gate code",
 )
 require_not_contains(
     ".github/workflows/ci.yml",
@@ -328,13 +360,18 @@ require_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
-    "--base-ref HEAD",
-    "release train promotion verifier must treat the trusted checkout as the base ref",
+    "base_ref_args=(--base-ref \"refs/remotes/origin/${PR_BASE_REF}\")",
+    "release train promotion verifier must use fetched protected base refs instead of PR-head checkout data",
 )
 require_contains(
     ".github/workflows/ci.yml",
     '--head-sha "${PR_HEAD_SHA}"',
     "release train promotion verifier must pass the event head SHA without fetching PR head content",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    'pr_title_args=(--pr-title "${PR_TITLE}")',
+    "release train promotion verifier must pass PR titles when trusted verifier code supports title checks",
 )
 require_contains(
     ".github/workflows/ci.yml",
@@ -353,8 +390,8 @@ require_not_contains(
 )
 require_contains(
     ".github/workflows/ci.yml",
-    "fetch-depth: 0",
-    "release train promotion verifier must have enough git history for ancestry checks",
+    "persist-credentials: false",
+    "release train promotion checkout must not persist credentials",
 )
 require_contains(
     "scripts/verify-release-train-promotion.sh",
@@ -380,6 +417,21 @@ require_contains(
     "scripts/verify-release-train-promotion.sh",
     "staging → premain → main → staging",
     "release train promotion verifier must preserve the single valid branch ordering",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    "release-please--branches--premain",
+    "release train promotion verifier must allow generated premain RC release-please PRs only on premain",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    "release-please--branches--main",
+    "release train promotion verifier must allow generated main stable release-please PRs only on main",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    "main release gate rejects RC-shaped PR titles/versions",
+    "main release promotion gate must reject RC-shaped main PR titles/versions",
 )
 require_contains(
     "scripts/verify-release-gates.sh",
@@ -451,8 +503,18 @@ for workflow, step_name in (
 require_order(
     ".github/workflows/prerelease.yml",
     "Verify branch version sync (release preflight)",
-    "Build + verify before prerelease creation",
-    "prerelease creation must fail closed on stale branch release state before rubric",
+    "Verify release workflow invariants (release preflight)",
+    "prerelease creation must fail closed on stale branch release state before release workflow checks",
+)
+require_contains(
+    ".github/workflows/prerelease-pr.yml",
+    "scripts/verify-release-pr-postcondition.sh prerelease",
+    "prerelease PR generation must fail closed when release-please no-ops",
+)
+require_contains(
+    ".github/workflows/release-pr.yml",
+    "scripts/verify-release-pr-postcondition.sh stable",
+    "stable Release PR generation must fail closed when release-please no-ops",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
