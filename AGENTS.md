@@ -1,3 +1,7 @@
+# AppTheory Steward Bootstrap
+
+This repository's stewardship agent is the published `apptheory` Theory Cloud namespace agent. It is materialized into git-ignored host installs under `.codex/`, `.claude/`, and `.agents/`; the namespace is the source of truth, so these directories are not hand-edited and should be re-materialized to change agent behavior. See `.codex/steward.md` for the steward's full identity and skills.
+
 # Repository Guidelines
 
 ## Project Structure & Module Organization
