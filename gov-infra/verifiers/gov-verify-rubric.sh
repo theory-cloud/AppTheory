@@ -130,6 +130,145 @@ except Exception as exc:
 PY
 }
 
+validate_gov_rubric_report_v1() {
+  local report_path="$1"
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "BLOCKED: missing required tool for report schema validation: python3" >&2
+    return 2
+  fi
+
+  python3 - "${report_path}" <<'PY'
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+report_path = Path(sys.argv[1])
+try:
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"FAIL: generated rubric report is not valid JSON: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+allowed_top_level = {"$schema", "schemaVersion", "timestamp", "pack", "project", "summary", "results"}
+allowed_result_keys = {"id", "category", "status", "message", "evidencePath"}
+allowed_categories = {
+    "Quality",
+    "Consistency",
+    "Completeness",
+    "Security",
+    "Compliance",
+    "Maintainability",
+    "Docs",
+}
+allowed_statuses = {"PASS", "FAIL", "BLOCKED"}
+id_pattern = re.compile(r"^(QUA|CON|COM|SEC|CMP|MAI|DOC)-[0-9]+$")
+
+errors = []
+
+extra = set(report) - allowed_top_level
+missing = {"schemaVersion", "timestamp", "pack", "project", "summary", "results"} - set(report)
+if extra:
+    errors.append(f"top-level additional properties are not allowed: {sorted(extra)}")
+if missing:
+    errors.append(f"missing required top-level properties: {sorted(missing)}")
+
+if report.get("$schema") != "https://gov.pai.dev/schemas/gov-rubric-report.schema.json":
+    errors.append("unexpected $schema value")
+if report.get("schemaVersion") != 1:
+    errors.append("schemaVersion must be 1")
+
+pack = report.get("pack")
+if not isinstance(pack, dict):
+    errors.append("pack must be an object")
+else:
+    if set(pack) != {"version", "digest"}:
+        errors.append("pack must contain exactly version and digest")
+    if not isinstance(pack.get("version"), str) or not isinstance(pack.get("digest"), str):
+        errors.append("pack.version and pack.digest must be strings")
+
+project = report.get("project")
+if not isinstance(project, dict):
+    errors.append("project must be an object")
+else:
+    if set(project) != {"name", "slug"}:
+        errors.append("project must contain exactly name and slug")
+    if not isinstance(project.get("name"), str) or not isinstance(project.get("slug"), str):
+        errors.append("project.name and project.slug must be strings")
+    elif not re.fullmatch(r"[a-z0-9-]+", project["slug"]):
+        errors.append("project.slug must match ^[a-z0-9-]+$")
+
+summary = report.get("summary")
+if not isinstance(summary, dict):
+    errors.append("summary must be an object")
+else:
+    if set(summary) != {"status", "pass", "fail", "blocked"}:
+        errors.append("summary must contain exactly status, pass, fail, and blocked")
+    if summary.get("status") not in allowed_statuses:
+        errors.append("summary.status must be PASS, FAIL, or BLOCKED")
+    for key in ("pass", "fail", "blocked"):
+        if not isinstance(summary.get(key), int) or summary.get(key) < 0:
+            errors.append(f"summary.{key} must be a non-negative integer")
+
+results = report.get("results")
+if not isinstance(results, list):
+    errors.append("results must be an array")
+else:
+    pass_count = fail_count = blocked_count = 0
+    for index, result in enumerate(results):
+        if not isinstance(result, dict):
+            errors.append(f"results[{index}] must be an object")
+            continue
+        extra = set(result) - allowed_result_keys
+        missing = {"id", "category", "status"} - set(result)
+        if extra:
+            errors.append(f"results[{index}] has additional properties: {sorted(extra)}")
+        if missing:
+            errors.append(f"results[{index}] missing required properties: {sorted(missing)}")
+
+        result_id = result.get("id")
+        if not isinstance(result_id, str) or not id_pattern.fullmatch(result_id):
+            errors.append(f"results[{index}].id is not gov_rubric_report.v1-compatible: {result_id!r}")
+        category = result.get("category")
+        if category not in allowed_categories:
+            errors.append(f"results[{index}].category is not gov_rubric_report.v1-compatible: {category!r}")
+        status = result.get("status")
+        if status not in allowed_statuses:
+            errors.append(f"results[{index}].status must be PASS, FAIL, or BLOCKED")
+        elif status == "PASS":
+            pass_count += 1
+        elif status == "FAIL":
+            fail_count += 1
+        elif status == "BLOCKED":
+            blocked_count += 1
+
+        evidence_path = result.get("evidencePath")
+        if evidence_path is not None:
+            if not isinstance(evidence_path, str):
+                errors.append(f"results[{index}].evidencePath must be a string when present")
+            elif os.path.isabs(evidence_path):
+                errors.append(f"results[{index}].evidencePath must be repo-relative, got absolute path")
+
+    if isinstance(summary, dict):
+        if summary.get("pass") != pass_count:
+            errors.append(f"summary.pass={summary.get('pass')} does not match results PASS count {pass_count}")
+        if summary.get("fail") != fail_count:
+            errors.append(f"summary.fail={summary.get('fail')} does not match results FAIL count {fail_count}")
+        if summary.get("blocked") != blocked_count:
+            errors.append(
+                f"summary.blocked={summary.get('blocked')} does not match results BLOCKED count {blocked_count}"
+            )
+
+if errors:
+    print("FAIL: generated rubric report does not match gov_rubric_report.v1:", file=sys.stderr)
+    for err in errors:
+        print(f"- {err}", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
 if [[ "${GOV_RUBRIC_TIMESTAMP_HELPER_ONLY:-}" == "1" ]]; then
   if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     echo "Internal test helper mode is only available when sourced by verifier tests." >&2
@@ -197,12 +336,23 @@ declare -a NONPASS_STATUSES=()
 declare -a NONPASS_MESSAGES=()
 declare -a NONPASS_EVIDENCE_PATHS=()
 
+repo_relative_path() {
+  local path="$1"
+  if [[ "${path}" == "${REPO_ROOT}/"* ]]; then
+    printf '%s' "${path#"${REPO_ROOT}/"}"
+  else
+    printf '%s' "${path}"
+  fi
+}
+
 record_result() {
   local id="$1"
   local category="$2"
   local status="$3"
   local message="$4"
   local evidence_path="$5"
+  local report_evidence_path
+  report_evidence_path="$(repo_relative_path "${evidence_path}")"
 
   case "$status" in
     PASS) ((PASS_COUNT++)) || true ;;
@@ -212,7 +362,7 @@ record_result() {
   esac
 
   RESULTS+=(
-    "{\"id\":\"$(json_escape "$id")\",\"category\":\"$(json_escape "$category")\",\"status\":\"$(json_escape "$status")\",\"message\":\"$(json_escape "$message")\",\"evidencePath\":\"$(json_escape "$evidence_path")\"}"
+    "{\"id\":\"$(json_escape "$id")\",\"category\":\"$(json_escape "$category")\",\"status\":\"$(json_escape "$status")\",\"message\":\"$(json_escape "$message")\",\"evidencePath\":\"$(json_escape "$report_evidence_path")\"}"
   )
 
   if [[ "$status" != "PASS" ]]; then
@@ -1391,6 +1541,18 @@ check_doc_integrity() {
     echo "FAIL: pack.json projectSlug mismatch" >&2
     return 1
   }
+  grep -q '"commitSha": "3ec561ac6d516fce6a5ca955b1b02132926a2ac3"' "${pack}" || {
+    echo "FAIL: pack.json source.commitSha mismatch for current packVersion" >&2
+    return 1
+  }
+  grep -q '"branch": "main"' "${pack}" || {
+    echo "FAIL: pack.json source.branch mismatch for current packVersion" >&2
+    return 1
+  }
+  grep -q '"profile_version": "verified-2026-06-07-apptheory-no-gemini"' "${pack}" || {
+    echo "FAIL: pack.json profile_version marker mismatch" >&2
+    return 1
+  }
 
   echo "doc-integrity: PASS"
 }
@@ -2536,9 +2698,7 @@ run_check "SEC-4" "Security" "$CMD_P0"
 check_file_exists "CMP-1" "Compliance" "${PLANNING_DIR}/apptheory-controls-matrix.md"
 check_file_exists "CMP-2" "Compliance" "${PLANNING_DIR}/apptheory-evidence-plan.md"
 check_file_exists "CMP-3" "Compliance" "${PLANNING_DIR}/apptheory-threat-model.md"
-
-# === Release Lifecycle (REL) ===
-run_check "REL-1" "Release" "$CMD_RELEASE_LIFECYCLE"
+run_check "CMP-4" "Compliance" "$CMD_RELEASE_LIFECYCLE"
 
 # === Maintainability (MAI) ===
 run_check "MAI-1" "Maintainability" "$CMD_FILE_BUDGET"
@@ -2597,6 +2757,7 @@ cat > "${REPORT_PATH}" <<EOF
 EOF
 
 validate_report_json "${REPORT_PATH}"
+validate_gov_rubric_report_v1 "${REPORT_PATH}"
 
 echo "Report written to: ${REPORT_PATH}"
 echo ""
