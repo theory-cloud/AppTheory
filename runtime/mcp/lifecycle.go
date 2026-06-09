@@ -21,11 +21,11 @@ const (
 )
 
 var (
-	errToolLifecycleInvalidArguments = errors.New(lifecycleInvalidToolArgumentsMessage)
-	errToolLifecycleMissingArguments = errors.New(lifecycleMissingToolArgumentsMessage)
-	errToolLifecycleNoArgs           = errors.New(lifecycleNoArgsMessage)
-	errToolLifecycleValidation       = errors.New(lifecycleValidationMessage)
-	errToolLifecycleInternal         = errors.New(lifecycleInternalMessage)
+	errToolLifecycleInvalidArguments = errors.New("invalid tool arguments")
+	errToolLifecycleMissingArguments = errors.New("missing tool arguments")
+	errToolLifecycleNoArgs           = errors.New("tool accepts no arguments")
+	errToolLifecycleValidation       = errors.New("validation failed")
+	errToolLifecycleInternal         = errors.New("internal tool lifecycle error")
 )
 
 // ToolLifecycleOutcome describes the sanitized result class for a wrapped MCP
@@ -176,31 +176,8 @@ func runToolLifecycle[Args any](
 
 	result, err = handler(runCtx, args)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || runCtx.Err() == context.DeadlineExceeded {
-			outcome = ToolLifecycleOutcomeTimeout
-			jsonrpcCode = CodeServerError
-			return nil, context.DeadlineExceeded
-		}
-		if errors.Is(err, context.Canceled) || runCtx.Err() == context.Canceled {
-			outcome = ToolLifecycleOutcomeContextCanceled
-			jsonrpcCode = CodeServerError
-			return nil, context.Canceled
-		}
-		if options.HandleError != nil {
-			if handled, ok := options.HandleError(runCtx, err); ok {
-				outcome = ToolLifecycleOutcomeHandledError
-				if handled == nil {
-					handled = &ToolResult{IsError: true}
-				}
-				if handled.IsError {
-					resultMarkedError = true
-				}
-				return handled, nil
-			}
-		}
-		outcome = ToolLifecycleOutcomeUnhandledError
-		jsonrpcCode = CodeInternalError
-		return nil, lifecycleInternalError()
+		result, outcome, jsonrpcCode, resultMarkedError, err = handleToolLifecycleError(runCtx, err, options.HandleError)
+		return result, err
 	}
 	if runCtx.Err() == context.DeadlineExceeded {
 		outcome = ToolLifecycleOutcomeTimeout
@@ -211,6 +188,28 @@ func runToolLifecycle[Args any](
 		resultMarkedError = true
 	}
 	return result, nil
+}
+
+func handleToolLifecycleError(
+	ctx context.Context,
+	err error,
+	handle func(context.Context, error) (*ToolResult, bool),
+) (*ToolResult, ToolLifecycleOutcome, int, bool, error) {
+	if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
+		return nil, ToolLifecycleOutcomeTimeout, CodeServerError, false, context.DeadlineExceeded
+	}
+	if errors.Is(err, context.Canceled) || ctx.Err() == context.Canceled {
+		return nil, ToolLifecycleOutcomeContextCanceled, CodeServerError, false, context.Canceled
+	}
+	if handle != nil {
+		if handled, ok := handle(ctx, err); ok {
+			if handled == nil {
+				handled = &ToolResult{IsError: true}
+			}
+			return handled, ToolLifecycleOutcomeHandledError, 0, handled.IsError, nil
+		}
+	}
+	return nil, ToolLifecycleOutcomeUnhandledError, CodeInternalError, false, lifecycleInternalError()
 }
 
 func bindToolLifecycleArgs[Args any](ctx context.Context, raw json.RawMessage, options ToolLifecycleOptions[Args]) (Args, error) {
@@ -261,14 +260,18 @@ func bindToolLifecycleArgs[Args any](ctx context.Context, raw json.RawMessage, o
 
 func callToolLifecycleStart(ctx context.Context, hook func(context.Context, ToolLifecycleStart), event ToolLifecycleStart) {
 	defer func() {
-		_ = recover()
+		if recovered := recover(); recovered != nil {
+			return
+		}
 	}()
 	hook(ctx, event)
 }
 
 func callToolLifecycleFinish(ctx context.Context, hook func(context.Context, ToolLifecycleFinish), event ToolLifecycleFinish) {
 	defer func() {
-		_ = recover()
+		if recovered := recover(); recovered != nil {
+			return
+		}
 	}()
 	hook(ctx, event)
 }
