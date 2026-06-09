@@ -135,12 +135,12 @@ Important caveat:
   support is what gives `DynamoStreamStore` the strongest `DeleteSession`/`Append` race protection after spill writes
 - `MCP_STREAM_TTL_MINUTES` is the runtime replay window; expired event records are unreplayable before inline or spilled
   data is read, even if DynamoDB TTL and S3 lifecycle have not physically cleaned up yet
-- the construct also provisions a private, encrypted S3 spill bucket for large logical stream event payloads; DynamoDB
-  remains the replay index and stores the object pointer, byte count, and hash
+- the construct also provisions a private, S3-managed encrypted S3 spill bucket for large logical stream event payloads;
+  DynamoDB remains the replay index and stores the object pointer, byte count, and hash
 - `streamSpillInlineMaxBytes` defaults to `32768` and must not exceed the DynamoDB-safe inline ceiling of `358400`;
   larger logical events spill to S3 instead of risking DynamoDB item-size failures
-- MCP clients still receive normal JSON-RPC SSE messages. The spill bucket is never exposed through presigned URLs or a
-  client-visible chunking protocol.
+- MCP clients still receive normal JSON-RPC SSE messages. The spill bucket is accessed only through AppTheory's
+  private object-store helper and is never exposed through presigned URLs or a client-visible chunking protocol.
 
 Task table behavior:
 

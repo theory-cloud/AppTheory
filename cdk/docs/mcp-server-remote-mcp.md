@@ -29,7 +29,7 @@ Claude Remote MCP requires real incremental streaming for tool calls (SSE). On A
   - session table (matches `runtime/mcp` Dynamo session store schema)
   - stream/event table (used by durable resumable SSE once the app wires a persistent `StreamStore`)
   - task table (used by the MCP task runtime once the app wires a persistent `TaskStore`)
-  - encrypted private S3 spill bucket for large logical stream event payloads when stream storage is enabled
+  - S3-managed encrypted private S3 spill bucket for large logical stream event payloads when stream storage is enabled
 
 If you are using OAuth for Claude connectors on the default `/mcp` route, also add:
 
@@ -138,12 +138,13 @@ in-flight tool context when still running; terminal task state is not rewritten.
 
 Large tool responses stay inside the same logical stream contract. `AppTheoryRemoteMcpServer` injects
 `MCP_STREAM_SPILL_BUCKET` and related threshold variables so `mcp.NewDynamoStreamStore(db)` stores small events inline
-and spills larger payloads to private S3 objects. The inline threshold defaults to `32768` and is bounded to the
+and spills larger payloads to private S3 objects through AppTheory's object-store helper. The inline threshold defaults to
+`32768` and is bounded to the
 DynamoDB-safe inline ceiling of `358400`. `MCP_STREAM_TTL_MINUTES` remains the runtime replay window: expired event
 records are not resolved or emitted even if DynamoDB TTL or S3 lifecycle cleanup has not run yet. Clients still resume
-with `Last-Event-ID`; do not add tool-specific chunking or object-link workarounds. Replay reads for spilled events are
-bounded by the recorded event byte count and `MCP_STREAM_MAX_EVENT_BYTES` before AppTheory verifies the byte count and
-SHA-256 hash.
+with `Last-Event-ID`; do not add tool-specific chunking, presigned URLs, or object-link workarounds. Replay reads for
+spilled events are bounded by the recorded event byte count and `MCP_STREAM_MAX_EVENT_BYTES` before AppTheory verifies
+the byte count and SHA-256 hash.
 
 Tool execution is hardened the same way in local and deployed Remote MCP: buffered and streaming tool panics become
 sanitized JSON-RPC internal errors. Panic text is server-log material, not part of the client contract.
