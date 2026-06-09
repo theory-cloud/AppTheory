@@ -16,7 +16,8 @@ func (*contractStore) Delete(context.Context, DeleteInput) error         { retur
 
 func TestValidateStoreInputs(t *testing.T) {
 	ref := ObjectRef{Bucket: "bucket-a", Key: "key", VersionID: "version-1"}
-	if err := validatePutInput(PutInput{Ref: ref, Payload: []byte("payload")}); err != nil {
+	putRef := ObjectRef{Bucket: "bucket-a", Key: "key"}
+	if err := validatePutInput(PutInput{Ref: putRef, Payload: []byte("payload")}); err != nil {
 		t.Fatalf("validatePutInput() error = %v", err)
 	}
 	if err := validateGetInput(GetInput{Ref: ref, MaxBytes: 1}); err != nil {
@@ -30,6 +31,9 @@ func TestValidateStoreInputs(t *testing.T) {
 func TestValidateStoreInputsFailClosed(t *testing.T) {
 	if err := validatePutInput(PutInput{Ref: ObjectRef{Bucket: "bucket-a"}}); !errors.Is(err, ErrInvalidObjectRef) {
 		t.Fatalf("validatePutInput() error = %v, want ErrInvalidObjectRef", err)
+	}
+	if err := validatePutInput(PutInput{Ref: ObjectRef{Bucket: "bucket-a", Key: "key", VersionID: "v1"}}); !errors.Is(err, ErrInvalidObjectRef) {
+		t.Fatalf("validatePutInput() version error = %v, want ErrInvalidObjectRef", err)
 	}
 	if err := validateGetInput(GetInput{Ref: ObjectRef{Bucket: "bucket-a", Key: "key"}}); !errors.Is(err, ErrInvalidGetLimit) {
 		t.Fatalf("validateGetInput() error = %v, want ErrInvalidGetLimit", err)

@@ -55,7 +55,13 @@ type DeleteInput struct {
 }
 
 func validatePutInput(input PutInput) error {
-	return input.Ref.Validate()
+	if err := input.Ref.Validate(); err != nil {
+		return err
+	}
+	if input.Ref.VersionID != "" {
+		return ErrInvalidObjectRef
+	}
+	return nil
 }
 
 func validateGetInput(input GetInput) error {
