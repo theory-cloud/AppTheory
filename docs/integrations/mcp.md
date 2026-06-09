@@ -143,8 +143,9 @@ The MCP runtime fails closed around tool execution and durable replay:
   server-side and are not returned to clients
 - `DynamoSessionStore.Put` is an upsert, so sliding-session refreshes update the existing session data and TTL instead
   of failing when a session row already exists
-- S3-spilled stream events are read through bounded readers before replay validation; the read cap uses the recorded
-  event byte count and the configured maximum event size before size/hash validation
+- S3-spilled stream events are read through AppTheory's private object-store helper with bounded reads before replay
+  validation; the read cap uses the recorded event byte count and the configured maximum event size before size/hash
+  validation
 
 ### Capabilities advertisement (`initialize`)
 
@@ -608,8 +609,9 @@ Stream persistence note:
   `expiresAt <= now` as unreplayable even if DynamoDB TTL has not physically removed the item yet.
 - large logical stream events use the same MCP client contract: when `MCP_STREAM_SPILL_BUCKET` is set, events larger
   than `MCP_STREAM_SPILL_INLINE_MAX_BYTES` (default `32768`, clamped to the DynamoDB-safe inline ceiling of `358400`)
-  are stored as encrypted private S3 objects while DynamoDB keeps the logical event id, stream id, object pointer, byte
-  count, and SHA-256 hash; replay rehydrates the payload before emitting the same JSON-RPC SSE message
+  are stored as S3-managed encrypted private S3 objects through AppTheory's object-store helper while DynamoDB keeps the
+  logical event id, stream id, object pointer, byte count, and SHA-256 hash; replay rehydrates the payload before
+  emitting the same JSON-RPC SSE message
 - S3 lifecycle expiration is a best-effort cleanup backstop for spilled payload objects, not minute-level replay access
   enforcement; the runtime enforces replay access from the DynamoDB `expiresAt` value before reading inline or spilled
   event data.
