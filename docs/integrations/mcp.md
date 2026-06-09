@@ -195,6 +195,10 @@ All three conditions must hold:
 Example:
 
 ```go
+type slowReportArgs struct {
+  ReportID string `json:"reportId"`
+}
+
 srv := mcp.NewServer("my-mcp-server", "dev",
   mcp.WithTaskRuntime(mcp.TaskRuntimeOptions{
     Store: mcp.NewDynamoTaskStore(db),
@@ -205,8 +209,15 @@ _ = srv.Registry().RegisterTool(mcp.ToolDef{
   Name:        "slow-report",
   Description: "Generate a report asynchronously.",
   Execution:   &mcp.ToolExecution{TaskSupport: mcp.TaskSupportOptional},
-  InputSchema: json.RawMessage(`{"type":"object"}`),
-}, runSlowReport)
+  InputSchema: json.RawMessage(`{
+    "type":"object",
+    "properties":{"reportId":{"type":"string"}},
+    "required":["reportId"]
+  }`),
+}, mcp.WrapTool(mcp.ToolLifecycleOptions[slowReportArgs]{
+  Name:       "slow-report",
+  StrictJSON: true,
+}, runSlowReport))
 ```
 
 Tool support is fail-closed:
@@ -317,9 +328,14 @@ fallback hook.
 
 ## Tools
 
-Register tools on the tool registry:
+Register tools on the tool registry. Production tools should use the lifecycle wrapper and then register the wrapped
+handler; the wrapper is not a second registry or dispatcher.
 
 ```go
+type echoArgs struct {
+  Message string `json:"message"`
+}
+
 _ = srv.Registry().RegisterTool(mcp.ToolDef{
   Name:        "echo",
   Description: "Echo back the provided message.",
@@ -328,16 +344,42 @@ _ = srv.Registry().RegisterTool(mcp.ToolDef{
     "properties": { "message": { "type":"string" } },
     "required": ["message"]
   }`),
-}, func(ctx context.Context, args json.RawMessage) (*mcp.ToolResult, error) {
-  var in struct{ Message string `json:"message"` }
-  if err := json.Unmarshal(args, &in); err != nil {
-    return nil, err
-  }
+}, mcp.WrapTool(mcp.ToolLifecycleOptions[echoArgs]{
+  Name:       "echo",
+  StrictJSON: true,
+  Validate: func(ctx context.Context, in echoArgs) error {
+    if strings.TrimSpace(in.Message) == "" {
+      return errors.New("message is required")
+    }
+    return nil
+  },
+}, func(ctx context.Context, in echoArgs) (*mcp.ToolResult, error) {
   return &mcp.ToolResult{
     Content: []mcp.ContentBlock{{Type: "text", Text: in.Message}},
   }, nil
-})
+}))
 ```
+
+### Tool lifecycle wrapper
+
+`mcp.WrapTool[Args]` and `mcp.WrapStreamingTool[Args]` are the blessed lifecycle adapters for product MCP tools. They
+compose over `RegisterTool` and `RegisterStreamingTool`; buffered JSON calls, Streamable HTTP SSE calls, and task
+execution still route through `ToolRegistry.Call` / `ToolRegistry.CallStreaming`.
+
+Use `mcp.ToolLifecycleOptions[Args]` to keep lifecycle behavior in one place:
+
+- `Name`: safe tool name used in lifecycle telemetry
+- `NoArgs`: accepts omitted, `null`, or `{}` arguments and rejects extra fields
+- `StrictJSON`: rejects unknown fields and trailing JSON values for typed tool arguments
+- `Validate`: maps validation failures to JSON-RPC invalid params with a sanitized message
+- `HandleError`: maps expected product errors to a safe `ToolResult{IsError:true}` when appropriate
+- `Timeout`: derives a per-tool context timeout and maps deadline expiry to AppTheory's existing safe timeout error
+- `Telemetry`: emits start/finish hooks with name, timestamps, duration, outcome, JSON-RPC code, and `isError` status
+- `Clock`: supplies deterministic time for telemetry tests
+
+Telemetry payloads intentionally exclude raw arguments, bearer tokens, raw unhandled errors, and panic values. Validation
+and no-arg failures return JSON-RPC `CodeInvalidParams`; unhandled errors and panics return sanitized internal errors.
+Handled product failures should be converted to safe tool results through `HandleError`.
 
 `ToolDef` exposes more than the minimal name + schema shape:
 
@@ -383,16 +425,23 @@ For streaming tools, AppTheory responds as SSE:
 Register a streaming tool with `RegisterStreamingTool`:
 
 ```go
+type longTaskArgs struct {
+  Steps int `json:"steps"`
+}
+
 _ = srv.Registry().RegisterStreamingTool(mcp.ToolDef{
   Name:        "long_task",
   Description: "Example long-running task with progress.",
   InputSchema: json.RawMessage(`{"type":"object"}`),
-}, func(ctx context.Context, args json.RawMessage, emit func(mcp.SSEEvent)) (*mcp.ToolResult, error) {
+}, mcp.WrapStreamingTool(mcp.ToolLifecycleOptions[longTaskArgs]{
+  Name:       "long_task",
+  StrictJSON: true,
+}, func(ctx context.Context, args longTaskArgs, emit func(mcp.SSEEvent)) (*mcp.ToolResult, error) {
   emit(mcp.SSEEvent{Data: map[string]any{"progress": 1, "total": 10, "message": "started"}})
   // ... do work ...
   emit(mcp.SSEEvent{Data: map[string]any{"progress": 10, "total": 10, "message": "done"}})
   return &mcp.ToolResult{Content: []mcp.ContentBlock{{Type: "text", Text: "ok"}}}, nil
-})
+}))
 ```
 
 Important deployment note:
