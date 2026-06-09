@@ -777,9 +777,9 @@ func (d *DynamoStreamStore) spillStreamData(
 	expiresAt int64,
 	sha256Hex string,
 ) (string, error) {
-	if s3Store, ok := d.spillStore.(*dynamoStreamS3SpillStore); ok {
-		key := s3Store.objectKey(sessionID, eventID)
-		if err := s3Store.put(ctx, key, payload, expiresAt, sha256Hex); err != nil {
+	if keyer, ok := d.spillStore.(interface{ objectKey(string, string) string }); ok {
+		key := keyer.objectKey(sessionID, eventID)
+		if err := d.spillStore.put(ctx, key, payload, expiresAt, sha256Hex); err != nil {
 			return "", err
 		}
 		return key, nil

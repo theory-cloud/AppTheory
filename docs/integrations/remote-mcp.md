@@ -30,17 +30,20 @@ import (
 func buildApp() *apptheory.App {
   srv := mcp.NewServer("ExampleServer", "dev")
 
+  type echoArgs struct {
+    Message string `json:"message"`
+  }
+
   _ = srv.Registry().RegisterTool(mcp.ToolDef{
     Name: "echo",
     Description: "Echo back the provided message.",
     InputSchema: json.RawMessage(`{"type":"object","properties":{"message":{"type":"string"}},"required":["message"]}`),
-  }, func(ctx context.Context, args json.RawMessage) (*mcp.ToolResult, error) {
-    var in struct{ Message string `json:"message"` }
-    if err := json.Unmarshal(args, &in); err != nil {
-      return nil, err
-    }
+  }, mcp.WrapTool(mcp.ToolLifecycleOptions[echoArgs]{
+    Name:       "echo",
+    StrictJSON: true,
+  }, func(ctx context.Context, in echoArgs) (*mcp.ToolResult, error) {
     return &mcp.ToolResult{Content: []mcp.ContentBlock{{Type: "text", Text: in.Message}}}, nil
-  })
+  }))
 
   app := apptheory.New()
   h := srv.Handler()
@@ -170,14 +173,17 @@ in-flight tool context when that task is still running. If the work has already 
 rewritten.
 
 `AppTheoryRemoteMcpServer` also provisions the canonical private S3 spill bucket whenever `enableStreamTable` is true.
-The Dynamo stream store keeps small logical events inline in DynamoDB and spills larger events to S3 using the injected
-`MCP_STREAM_SPILL_BUCKET` configuration. The inline spill threshold is bounded to AppTheory's DynamoDB-safe ceiling so
+The Dynamo stream store keeps small logical events inline in DynamoDB and spills larger events to private S3 objects
+through AppTheory's internal object-store helper using the injected `MCP_STREAM_SPILL_BUCKET` and
+`MCP_STREAM_SPILL_PREFIX` configuration. Spill writes use S3-managed server-side encryption; there are no Remote MCP KMS
+construct props in this contract. The inline spill threshold is bounded to AppTheory's DynamoDB-safe ceiling so
 oversized inline writes fail closed into S3 spill instead of DynamoDB item-size errors. Clients still see one JSON-RPC
 SSE message per logical event, and resume/replay continues to use `Last-Event-ID`; there is no client-visible chunk or
 presigned URL protocol.
 
-Replay reads for S3-spilled events are bounded before validation: AppTheory caps the S3 body read by the recorded event
-byte count and `MCP_STREAM_MAX_EVENT_BYTES`, then verifies the recorded byte count and SHA-256 hash. Oversized,
+Replay reads for S3-spilled events go through the same private object-store helper and are bounded before validation:
+AppTheory caps the S3 body read by the recorded event byte count and `MCP_STREAM_MAX_EVENT_BYTES`, then verifies the
+recorded byte count and SHA-256 hash. Oversized,
 truncated, or tampered spill objects fail closed instead of being streamed to the client.
 
 `MCP_STREAM_TTL_MINUTES` is the runtime replay window. `DynamoStreamStore` rejects expired event records before

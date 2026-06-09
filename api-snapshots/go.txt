@@ -685,6 +685,84 @@ func NormalizeStage(string) string
 
 func ResourceName(string, string, string, string) string
 
+## github.com/theory-cloud/apptheory/pkg/objectstore
+
+const S3EncryptionBucketDefault S3EncryptionMode = "bucket-default"
+
+const S3EncryptionKMS S3EncryptionMode = "kms"
+
+const S3EncryptionS3Managed S3EncryptionMode = "s3-managed"
+
+var ErrInvalidEncryptionConfig = errors.New("objectstore: invalid encryption config")
+
+var ErrInvalidGetLimit = errors.New("objectstore: max bytes must be positive")
+
+var ErrInvalidObjectRef = errors.New("objectstore: invalid object ref")
+
+var ErrInvalidStoreConfig = errors.New("objectstore: invalid store config")
+
+var ErrObjectNotFound = errors.New("objectstore: object not found")
+
+var ErrObjectTooLarge = errors.New("objectstore: object exceeds max bytes")
+
+type DeleteInput struct {
+	Ref ObjectRef
+}
+
+type GetInput struct {
+	Ref      ObjectRef
+	MaxBytes int64
+}
+
+type GetOutput struct {
+	Ref         ObjectRef
+	Payload     []byte
+	ContentType string
+	Metadata    map[string]string
+}
+
+type ObjectRef struct {
+	Bucket    string
+	Key       string
+	VersionID string
+}
+
+type PutInput struct {
+	Ref         ObjectRef
+	Payload     []byte
+	ContentType string
+	Metadata    map[string]string
+}
+
+type S3EncryptionConfig struct {
+	Mode     S3EncryptionMode
+	KMSKeyID string
+}
+
+type S3EncryptionMode string
+
+type S3StoreConfig struct {
+	Encryption S3EncryptionConfig
+}
+
+type Store interface {
+	Put(context.Context, PutInput) (ObjectRef, error)
+	Get(context.Context, GetInput) (*GetOutput, error)
+	Delete(context.Context, DeleteInput) error
+}
+
+func NewS3Store(context.Context, S3StoreConfig) (Store, error)
+
+func ParseObjectRef(string) (ObjectRef, error)
+
+func (*s3Store) Delete(context.Context, DeleteInput) error
+
+func (*s3Store) Get(context.Context, GetInput) (*GetOutput, error)
+
+func (*s3Store) Put(context.Context, PutInput) (ObjectRef, error)
+
+func (ObjectRef) Validate() error
+
 ## github.com/theory-cloud/apptheory/pkg/observability
 
 const LoggingProfileCloudWatchJSON = "cloudwatch-json"
@@ -2243,6 +2321,20 @@ const TaskSupportOptional TaskSupport = "optional"
 
 const TaskSupportRequired TaskSupport = "required"
 
+const ToolLifecycleOutcomeContextCanceled ToolLifecycleOutcome = "context_canceled"
+
+const ToolLifecycleOutcomeHandledError ToolLifecycleOutcome = "handled_error"
+
+const ToolLifecycleOutcomeInvalidParams ToolLifecycleOutcome = "invalid_params"
+
+const ToolLifecycleOutcomePanic ToolLifecycleOutcome = "panic"
+
+const ToolLifecycleOutcomeSuccess ToolLifecycleOutcome = "success"
+
+const ToolLifecycleOutcomeTimeout ToolLifecycleOutcome = "timeout"
+
+const ToolLifecycleOutcomeUnhandledError ToolLifecycleOutcome = "unhandled_error"
+
 var ErrEventNotFound = errors.New("event not found")
 
 var ErrSessionNotFound = errors.New("session not found")
@@ -2620,6 +2712,39 @@ type ToolExecution struct {
 
 type ToolHandler func(context.Context, json.RawMessage) (*ToolResult, error)
 
+type ToolLifecycleFinish struct {
+	Name              string               `json:"name"`
+	StartedAt         time.Time            `json:"startedAt"`
+	FinishedAt        time.Time            `json:"finishedAt"`
+	Duration          time.Duration        `json:"duration"`
+	Outcome           ToolLifecycleOutcome `json:"outcome"`
+	JSONRPCErrorCode  int                  `json:"jsonrpcErrorCode,omitempty"`
+	ResultMarkedError bool                 `json:"resultMarkedError,omitempty"`
+}
+
+type ToolLifecycleOptions[Args any] struct {
+	Name        string
+	Timeout     time.Duration
+	NoArgs      bool
+	StrictJSON  bool
+	Validate    func(context.Context, Args) error
+	HandleError func(context.Context, error) (*ToolResult, bool)
+	Telemetry   ToolLifecycleTelemetry
+	Clock       apptheory.Clock
+}
+
+type ToolLifecycleOutcome string
+
+type ToolLifecycleStart struct {
+	Name      string    `json:"name"`
+	StartedAt time.Time `json:"startedAt"`
+}
+
+type ToolLifecycleTelemetry struct {
+	Start  func(context.Context, ToolLifecycleStart)
+	Finish func(context.Context, ToolLifecycleFinish)
+}
+
 type ToolRegistry struct {
 	mu    sync.RWMutex
 	tools []registeredTool
@@ -2693,6 +2818,13 @@ func WithStreamIDGenerator(apptheory.IDGenerator) MemoryStreamStoreOption
 func WithStreamStore(StreamStore) ServerOption
 
 func WithTaskRuntime(TaskRuntimeOptions) ServerOption
+
+func WrapStreamingTool[Args any](
+	ToolLifecycleOptions[Args],
+	func(context.Context, Args, func(SSEEvent)) (*ToolResult, error),
+) StreamingToolHandler
+
+func WrapTool[Args any](ToolLifecycleOptions[Args], func(context.Context, Args) (*ToolResult, error)) ToolHandler
 
 func (*DynamoSessionStore) Delete(context.Context, string) error
 
@@ -3371,3 +3503,43 @@ type TokenResponse struct {
 func NewClaudePublicClient(*http.Client) *ClaudePublicClient
 
 func (*ClaudePublicClient) Authorize(context.Context, AuthorizeOptions) (*Discovery, *DCRResult, *TokenResponse, *TokenResponse, error)
+
+## github.com/theory-cloud/apptheory/testkit/objectstore
+
+const OperationDelete Operation = "Delete"
+
+const OperationGet Operation = "Get"
+
+const OperationPut Operation = "Put"
+
+type Call struct {
+	Operation   Operation
+	Ref         store.ObjectRef
+	MaxBytes    int64
+	ContentType string
+	Metadata    map[string]string
+	Payload     []byte
+}
+
+type FakeStore struct {
+	mu       sync.Mutex
+	seq      int64
+	latest   map[objectName]string
+	objects  map[objectVersion]storedObject
+	calls    []Call
+	failures map[Operation]error
+}
+
+type Operation string
+
+func NewStore() *FakeStore
+
+func (*FakeStore) Calls() []Call
+
+func (*FakeStore) Delete(context.Context, store.DeleteInput) error
+
+func (*FakeStore) Get(context.Context, store.GetInput) (*store.GetOutput, error)
+
+func (*FakeStore) Put(context.Context, store.PutInput) (store.ObjectRef, error)
+
+func (*FakeStore) SetError(Operation, error)

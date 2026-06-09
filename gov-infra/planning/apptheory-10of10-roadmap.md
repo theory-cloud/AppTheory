@@ -1,8 +1,8 @@
-# AppTheory: 10/10 Roadmap (Rubric v1.5.0)
+# AppTheory: 10/10 Roadmap (Rubric v1.5.1)
 
 This roadmap maps milestones directly to rubric IDs with measurable acceptance criteria and verification commands.
 
-## Current scorecard (Rubric v1.5.0)
+## Current scorecard (Rubric v1.5.1)
 Scoring note: a check is only treated as “passing” if it is both green **and** enforced by a trustworthy verifier
 (pinned tooling, schema-valid configs, and no “green by dilution” shortcuts). Completeness failures invalidate “green by
 drift”.
@@ -15,8 +15,7 @@ Until `bash gov-infra/verifiers/gov-verify-rubric.sh` is run in CI and archived,
 | Consistency | unknown | CON-1, CON-2, CON-3 (not yet validated) |
 | Completeness | unknown | COM-1..COM-6 (not yet validated) |
 | Security | unknown | SEC-1..SEC-4 (not yet validated) |
-| Compliance Readiness | in-scope | CMP-1..CMP-3 (files exist once committed) |
-| Release Lifecycle | unknown | REL-1 (not yet validated) |
+| Compliance Readiness | unknown | CMP-1..CMP-4 (not yet validated) |
 | Maintainability | unknown | MAI-1..MAI-3 (not yet validated) |
 | Docs | unknown | DOC-1..DOC-6 (not yet validated) |
 
@@ -60,7 +59,7 @@ Evidence (refresh whenever behavior changes):
 | CMP-1 | planned | M0 |
 | CMP-2 | planned | M0 |
 | CMP-3 | planned | M0 |
-| REL-1 | unknown | M0 |
+| CMP-4 | unknown | M0 |
 | MAI-1 | unknown | M4 |
 | MAI-2 | unknown | M4 |
 | MAI-3 | unknown | M5 |
@@ -81,7 +80,7 @@ main roadmap readable:
 ## Milestones (sequenced)
 
 ### M0 — Freeze rubric + planning artifacts (anti-drift baseline)
-**Closes:** CMP-1, CMP-2, CMP-3, DOC-1, DOC-2, DOC-3, DOC-4, DOC-5, DOC-6, COM-1, COM-2, COM-3
+**Closes:** CMP-1, CMP-2, CMP-3, CMP-4, DOC-1, DOC-2, DOC-3, DOC-4, DOC-5, DOC-6, COM-1, COM-2, COM-3
 
 **Goal:** prevent goalpost drift by making the definition of “good” explicit and versioned.
 
