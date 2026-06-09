@@ -687,12 +687,47 @@ func ResourceName(string, string, string, string) string
 
 ## github.com/theory-cloud/apptheory/pkg/objectstore
 
+var ErrInvalidGetLimit = errors.New("objectstore: max bytes must be positive")
+
 var ErrInvalidObjectRef = errors.New("objectstore: invalid object ref")
+
+var ErrObjectNotFound = errors.New("objectstore: object not found")
+
+var ErrObjectTooLarge = errors.New("objectstore: object exceeds max bytes")
+
+type DeleteInput struct {
+	Ref ObjectRef
+}
+
+type GetInput struct {
+	Ref      ObjectRef
+	MaxBytes int64
+}
+
+type GetOutput struct {
+	Ref         ObjectRef
+	Payload     []byte
+	ContentType string
+	Metadata    map[string]string
+}
 
 type ObjectRef struct {
 	Bucket    string
 	Key       string
 	VersionID string
+}
+
+type PutInput struct {
+	Ref         ObjectRef
+	Payload     []byte
+	ContentType string
+	Metadata    map[string]string
+}
+
+type Store interface {
+	Put(context.Context, PutInput) (ObjectRef, error)
+	Get(context.Context, GetInput) (*GetOutput, error)
+	Delete(context.Context, DeleteInput) error
 }
 
 func ParseObjectRef(string) (ObjectRef, error)
