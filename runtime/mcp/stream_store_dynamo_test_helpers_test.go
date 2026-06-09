@@ -67,6 +67,15 @@ func (s *fakeDynamoStreamSpillStore) delete(_ context.Context, key string) error
 	return nil
 }
 
+func (s *fakeDynamoStreamSpillStore) set(key string, data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	payload := make([]byte, len(data))
+	copy(payload, data)
+	s.objects[key] = payload
+}
+
 func (s *fakeDynamoStreamSpillStore) exists(key string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
