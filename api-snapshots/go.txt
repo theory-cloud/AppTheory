@@ -685,6 +685,20 @@ func NormalizeStage(string) string
 
 func ResourceName(string, string, string, string) string
 
+## github.com/theory-cloud/apptheory/pkg/objectstore
+
+var ErrInvalidObjectRef = errors.New("objectstore: invalid object ref")
+
+type ObjectRef struct {
+	Bucket    string
+	Key       string
+	VersionID string
+}
+
+func ParseObjectRef(string) (ObjectRef, error)
+
+func (ObjectRef) Validate() error
+
 ## github.com/theory-cloud/apptheory/pkg/observability
 
 const LoggingProfileCloudWatchJSON = "cloudwatch-json"
