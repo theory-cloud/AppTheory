@@ -16,6 +16,7 @@ contract.
 - [Logging Profiles](./logging-profiles.md)
 - [Jobs Ledger](./jobs-ledger.md)
 - [Event Workload Contracts](./event-workloads.md)
+- [Object Store Helper](./object-store.md)
 
 ## Boundary
 
