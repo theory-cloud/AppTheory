@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/require"
 
 	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
@@ -96,32 +95,6 @@ func (s *fakeDynamoStreamSpillStore) mustGet(t *testing.T, key string) []byte {
 	payload, err := s.get(context.Background(), key, 0)
 	require.NoError(t, err)
 	return payload
-}
-
-type fakeDynamoStreamS3Client struct{}
-
-func (fakeDynamoStreamS3Client) PutObject(
-	context.Context,
-	*s3.PutObjectInput,
-	...func(*s3.Options),
-) (*s3.PutObjectOutput, error) {
-	return &s3.PutObjectOutput{}, nil
-}
-
-func (fakeDynamoStreamS3Client) GetObject(
-	context.Context,
-	*s3.GetObjectInput,
-	...func(*s3.Options),
-) (*s3.GetObjectOutput, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (fakeDynamoStreamS3Client) DeleteObject(
-	context.Context,
-	*s3.DeleteObjectInput,
-	...func(*s3.Options),
-) (*s3.DeleteObjectOutput, error) {
-	return &s3.DeleteObjectOutput{}, nil
 }
 
 type fakeMCPTableDB struct {

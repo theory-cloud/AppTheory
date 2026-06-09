@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/stretchr/testify/require"
+
+	"github.com/theory-cloud/apptheory/pkg/objectstore"
+	objectstoretest "github.com/theory-cloud/apptheory/testkit/objectstore"
 )
 
 func TestDynamoStreamStore_CreateSubscribeReplayAndDeleteSession(t *testing.T) {
@@ -656,28 +658,28 @@ func TestDynamoStreamStore_InlineSpillThresholdClampsToSafeDynamoSize(t *testing
 
 func TestDynamoStreamS3SpillStore_RetriesClientInitAfterCanceledContext(t *testing.T) {
 	attempts := 0
-	store := &dynamoStreamS3SpillStore{
+	store := &dynamoStreamObjectSpillStore{
 		bucket: "bucket",
-		loadClient: func(ctx context.Context) (dynamoStreamS3Client, error) {
+		loadStore: func(ctx context.Context) (objectstore.Store, error) {
 			attempts++
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			return fakeDynamoStreamS3Client{}, nil
+			return objectstoretest.NewStore(), nil
 		},
 	}
 
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := store.s3Client(canceled)
+	_, err := store.objectStore(canceled)
 	require.ErrorIs(t, err, context.Canceled)
-	require.Nil(t, store.client)
+	require.Nil(t, store.store)
 
-	client, err := store.s3Client(context.Background())
+	backend, err := store.objectStore(context.Background())
 	require.NoError(t, err)
-	require.NotNil(t, client)
-	require.NotNil(t, store.client)
+	require.NotNil(t, backend)
+	require.NotNil(t, store.store)
 	require.Equal(t, 2, attempts)
 }
 
@@ -880,21 +882,26 @@ func TestDynamoStreamStore_StreamRecordDataValidationBranches(t *testing.T) {
 }
 
 func TestDynamoStreamStore_SpillStreamDataS3BranchAndWaitCancel(t *testing.T) {
-	client := &recordingDynamoStreamS3Client{}
+	backend := objectstoretest.NewStore()
 	store, ok := NewDynamoStreamStore(newFakeMCPTableDB()).(*DynamoStreamStore)
 	require.True(t, ok)
-	store.spillStore = &dynamoStreamS3SpillStore{
+	store.spillStore = &dynamoStreamObjectSpillStore{
 		bucket: "bucket-a",
 		prefix: "prefix-a",
-		loadClient: func(context.Context) (dynamoStreamS3Client, error) {
-			return client, nil
+		loadStore: func(context.Context) (objectstore.Store, error) {
+			return backend, nil
 		},
 	}
 
 	ref, err := store.spillStreamData(context.Background(), "sess-1", "event-1", []byte(`{"ok":true}`), 123, dynamoStreamPayloadSHA256([]byte(`{"ok":true}`)))
 	require.NoError(t, err)
 	require.Contains(t, ref, "prefix-a/sessions/")
-	require.Equal(t, ref, aws.ToString(client.putInput.Key))
+
+	calls := backend.Calls()
+	require.Len(t, calls, 1)
+	require.Equal(t, objectstoretest.OperationPut, calls[0].Operation)
+	require.Equal(t, ref, calls[0].Ref.Key)
+	require.Equal(t, "bucket-a", calls[0].Ref.Bucket)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
