@@ -315,6 +315,22 @@ idempotency, and leases.
 Guide: [Jobs Ledger](./features/jobs-ledger.md)
 Reference stack: `examples/cdk/import-pipeline/`
 
+### Object store helper (Go)
+
+AppTheory includes a narrow Go object-store helper for framework-owned byte payload storage. It is not a general storage
+SDK.
+
+- Go: `pkg/objectstore`
+- Testkit: `testkit/objectstore`
+- Object refs: strict `s3://bucket/key` parsing into `ObjectRef{Bucket, Key, VersionID}` with no default bucket/key and
+  no query or fragment support.
+- Store contract: `Put`, bounded `Get` with required `MaxBytes`, and `Delete` only.
+- S3 implementation: `NewS3Store(ctx, S3StoreConfig{...})` uses AWS SDK v2 config loading while keeping the S3 client
+  seam private/test-only.
+- Encryption: bucket-default, S3-managed, and KMS modes fail closed on contradictory or missing KMS configuration.
+
+Guide: [Object Store Helper](./features/object-store.md)
+
 ## Migration and configuration notes
 
 Confirmed migration surface:

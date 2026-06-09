@@ -298,6 +298,14 @@ func (s *Server) runTaskTool(ctx context.Context, record TaskRecord, args json.R
 		if ctx.Err() != nil {
 			return
 		}
+		if rpcErr, ok := toolLifecycleRPCError(err); ok {
+			s.finishTask(ctx, record, nil, rpcErr)
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: formatToolTimeoutMessage(record.ToolName)})
+			return
+		}
 		s.finishTask(ctx, record, nil, &RPCError{Code: CodeServerError, Message: err.Error()})
 		return
 	}
