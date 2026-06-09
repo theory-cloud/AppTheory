@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/stretchr/testify/require"
+
+	"github.com/theory-cloud/apptheory/pkg/objectstore"
+	objectstoretest "github.com/theory-cloud/apptheory/testkit/objectstore"
 )
 
 func TestDynamoStreamStore_CreateSubscribeReplayAndDeleteSession(t *testing.T) {
@@ -461,6 +463,121 @@ func TestDynamoStreamStore_SpillsLargeEventsToS3AndRehydrates(t *testing.T) {
 	requireStreamClosed(t, ch)
 }
 
+func TestDynamoStreamStore_TamperedSpillObjectsFailClosedOnReplay(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func([]byte) []byte
+	}{
+		{
+			name: "oversized",
+			mutate: func(payload []byte) []byte {
+				return append(append([]byte(nil), payload...), 'x')
+			},
+		},
+		{
+			name: "truncated",
+			mutate: func(payload []byte) []byte {
+				return append([]byte(nil), payload[:len(payload)-1]...)
+			},
+		},
+		{
+			name: "tampered same length",
+			mutate: func(payload []byte) []byte {
+				out := append([]byte(nil), payload...)
+				out[len(out)-2] = '0'
+				return out
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newFakeMCPTableDB()
+			spill := newFakeDynamoStreamSpillStore()
+			store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+			require.True(t, ok)
+			store.spillStore = spill
+			store.inlineMaxBytes = 1
+			store.pollInterval = time.Millisecond
+			store.idGen = staticIDGenerator{id: "stream-1"}
+
+			payload := json.RawMessage(`{"seq":123}`)
+			streamID, err := store.Create(context.Background(), "sess-1")
+			require.NoError(t, err)
+			eventID, err := store.Append(context.Background(), "sess-1", streamID, payload)
+			require.NoError(t, err)
+			require.NoError(t, store.Close(context.Background(), "sess-1", streamID))
+
+			record, ok := db.getStreamRecord("sess-1", eventID)
+			require.True(t, ok)
+			require.Equal(t, int64(len(payload)), record.DataBytes)
+			require.Equal(t, dynamoStreamPayloadSHA256(payload), record.DataSHA256)
+			spill.set(record.DataRef, tt.mutate(payload))
+
+			ch, err := store.Subscribe(context.Background(), "sess-1", streamID, "")
+			require.NoError(t, err)
+			requireStreamClosed(t, ch)
+		})
+	}
+}
+
+func TestDynamoStreamStore_ValidSpillReplayPreservesEventBytesAndHash(t *testing.T) {
+	db := newFakeMCPTableDB()
+	spill := newFakeDynamoStreamSpillStore()
+	writer, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	require.True(t, ok)
+	replayer, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	require.True(t, ok)
+	writer.spillStore = spill
+	replayer.spillStore = spill
+	writer.inlineMaxBytes = 1
+	replayer.inlineMaxBytes = 1
+	writer.idGen = staticIDGenerator{id: "stream-1"}
+
+	payload := json.RawMessage(`{"kind":"progress","seq":123}`)
+	streamID, err := writer.Create(context.Background(), "sess-1")
+	require.NoError(t, err)
+	eventID, err := writer.Append(context.Background(), "sess-1", streamID, payload)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close(context.Background(), "sess-1", streamID))
+
+	record, ok := db.getStreamRecord("sess-1", eventID)
+	require.True(t, ok)
+	require.Equal(t, dynamoStreamDataStorageS3, record.DataStorage)
+	require.Equal(t, int64(len(payload)), record.DataBytes)
+	require.Equal(t, dynamoStreamPayloadSHA256(payload), record.DataSHA256)
+
+	ch, err := replayer.Subscribe(context.Background(), "sess-1", streamID, "")
+	require.NoError(t, err)
+	ev := requireStreamEvent(t, ch)
+	require.Equal(t, eventID, ev.ID)
+	require.Equal(t, []byte(payload), []byte(ev.Data))
+	require.JSONEq(t, string(payload), string(ev.Data))
+	requireStreamClosed(t, ch)
+}
+
+func TestDynamoStreamStore_FailedSpilledAppendCleansObject(t *testing.T) {
+	db := newFakeMCPTableDB()
+	spill := newFakeDynamoStreamSpillStore()
+	store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
+	require.True(t, ok)
+	store.spillStore = spill
+	store.inlineMaxBytes = 1
+	store.idGen = staticIDGenerator{id: "stream-1"}
+
+	streamID, err := store.Create(context.Background(), "sess-1")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	spill.beforePut = func(_ string) { cancel() }
+
+	_, err = store.Append(ctx, "sess-1", streamID, json.RawMessage(`{"seq":1}`))
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, spill.count())
+	require.Equal(t, 1, db.countNonSessionStreamRecords("sess-1"))
+}
+
 func TestDynamoStreamStore_SubscribeSkipsExpiredInlineEvents(t *testing.T) {
 	db := newFakeMCPTableDB()
 	store, ok := NewDynamoStreamStore(db).(*DynamoStreamStore)
@@ -656,28 +773,28 @@ func TestDynamoStreamStore_InlineSpillThresholdClampsToSafeDynamoSize(t *testing
 
 func TestDynamoStreamS3SpillStore_RetriesClientInitAfterCanceledContext(t *testing.T) {
 	attempts := 0
-	store := &dynamoStreamS3SpillStore{
+	store := &dynamoStreamObjectSpillStore{
 		bucket: "bucket",
-		loadClient: func(ctx context.Context) (dynamoStreamS3Client, error) {
+		loadStore: func(ctx context.Context) (objectstore.Store, error) {
 			attempts++
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			return fakeDynamoStreamS3Client{}, nil
+			return objectstoretest.NewStore(), nil
 		},
 	}
 
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := store.s3Client(canceled)
+	_, err := store.objectStore(canceled)
 	require.ErrorIs(t, err, context.Canceled)
-	require.Nil(t, store.client)
+	require.Nil(t, store.store)
 
-	client, err := store.s3Client(context.Background())
+	backend, err := store.objectStore(context.Background())
 	require.NoError(t, err)
-	require.NotNil(t, client)
-	require.NotNil(t, store.client)
+	require.NotNil(t, backend)
+	require.NotNil(t, store.store)
 	require.Equal(t, 2, attempts)
 }
 
@@ -880,21 +997,26 @@ func TestDynamoStreamStore_StreamRecordDataValidationBranches(t *testing.T) {
 }
 
 func TestDynamoStreamStore_SpillStreamDataS3BranchAndWaitCancel(t *testing.T) {
-	client := &recordingDynamoStreamS3Client{}
+	backend := objectstoretest.NewStore()
 	store, ok := NewDynamoStreamStore(newFakeMCPTableDB()).(*DynamoStreamStore)
 	require.True(t, ok)
-	store.spillStore = &dynamoStreamS3SpillStore{
+	store.spillStore = &dynamoStreamObjectSpillStore{
 		bucket: "bucket-a",
 		prefix: "prefix-a",
-		loadClient: func(context.Context) (dynamoStreamS3Client, error) {
-			return client, nil
+		loadStore: func(context.Context) (objectstore.Store, error) {
+			return backend, nil
 		},
 	}
 
 	ref, err := store.spillStreamData(context.Background(), "sess-1", "event-1", []byte(`{"ok":true}`), 123, dynamoStreamPayloadSHA256([]byte(`{"ok":true}`)))
 	require.NoError(t, err)
 	require.Contains(t, ref, "prefix-a/sessions/")
-	require.Equal(t, ref, aws.ToString(client.putInput.Key))
+
+	calls := backend.Calls()
+	require.Len(t, calls, 1)
+	require.Equal(t, objectstoretest.OperationPut, calls[0].Operation)
+	require.Equal(t, ref, calls[0].Ref.Key)
+	require.Equal(t, "bucket-a", calls[0].Ref.Bucket)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

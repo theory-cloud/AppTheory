@@ -11,6 +11,10 @@ import (
 	"github.com/theory-cloud/apptheory/runtime/mcp"
 )
 
+type countdownArgs struct {
+	Steps int `json:"steps"`
+}
+
 func buildServer() *mcp.Server {
 	srv := mcp.NewServer("resumable-sse", "dev",
 		// On Lambda, cap the initial keepalive listener before the function deadline.
@@ -25,11 +29,10 @@ func buildServer() *mcp.Server {
 		Name:        "countdown",
 		Description: "Emits progress events then returns a result.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"steps":{"type":"integer","minimum":1}}}`),
-	}, func(ctx context.Context, args json.RawMessage, emit func(mcp.SSEEvent)) (*mcp.ToolResult, error) {
-		var in struct {
-			Steps int `json:"steps"`
-		}
-		_ = json.Unmarshal(args, &in)
+	}, mcp.WrapStreamingTool(mcp.ToolLifecycleOptions[countdownArgs]{
+		Name:       "countdown",
+		StrictJSON: true,
+	}, func(ctx context.Context, in countdownArgs, emit func(mcp.SSEEvent)) (*mcp.ToolResult, error) {
 		if in.Steps <= 0 {
 			in.Steps = 3
 		}
@@ -52,7 +55,7 @@ func buildServer() *mcp.Server {
 		return &mcp.ToolResult{
 			Content: []mcp.ContentBlock{{Type: "text", Text: "done"}},
 		}, nil
-	})
+	}))
 
 	return srv
 }
