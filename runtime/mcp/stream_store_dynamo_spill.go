@@ -1,21 +1,17 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/theory-cloud/apptheory/pkg/objectstore"
 )
 
 const (
@@ -36,19 +32,13 @@ type dynamoStreamSpillStore interface {
 	delete(ctx context.Context, key string) error
 }
 
-type dynamoStreamS3SpillStore struct {
+type dynamoStreamObjectSpillStore struct {
 	bucket string
 	prefix string
 
-	mu         sync.Mutex
-	client     dynamoStreamS3Client
-	loadClient func(context.Context) (dynamoStreamS3Client, error)
-}
-
-type dynamoStreamS3Client interface {
-	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
-	GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
-	DeleteObject(ctx context.Context, params *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
+	mu        sync.Mutex
+	store     objectstore.Store
+	loadStore func(context.Context) (objectstore.Store, error)
 }
 
 func newDynamoStreamSpillStoreFromEnv() dynamoStreamSpillStore {
@@ -62,26 +52,25 @@ func newDynamoStreamSpillStoreFromEnv() dynamoStreamSpillStore {
 		prefix = defaultDynamoStreamSpillPrefix
 	}
 
-	return &dynamoStreamS3SpillStore{
+	return &dynamoStreamObjectSpillStore{
 		bucket: bucket,
 		prefix: prefix,
 	}
 }
 
-func (s *dynamoStreamS3SpillStore) put(ctx context.Context, key string, data []byte, expiresAt int64, sha256Hex string) error {
+func (s *dynamoStreamObjectSpillStore) put(ctx context.Context, key string, data []byte, expiresAt int64, sha256Hex string) error {
 	if s == nil {
 		return errors.New("stream spill store not configured")
 	}
-	client, err := s.s3Client(ctx)
+	store, err := s.objectStore(ctx)
 	if err != nil {
 		return err
 	}
 
-	_, err = client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:      aws.String(s.bucket),
-		Key:         aws.String(key),
-		Body:        bytes.NewReader(data),
-		ContentType: aws.String("application/json"),
+	_, err = store.Put(ctx, objectstore.PutInput{
+		Ref:         objectstore.ObjectRef{Bucket: s.bucket, Key: key},
+		Payload:     data,
+		ContentType: "application/json",
 		Metadata: map[string]string{
 			"expires-at": strconv.FormatInt(expiresAt, 10),
 			"sha256":     sha256Hex,
@@ -90,90 +79,73 @@ func (s *dynamoStreamS3SpillStore) put(ctx context.Context, key string, data []b
 	return err
 }
 
-func (s *dynamoStreamS3SpillStore) get(ctx context.Context, key string, maxBytes int) ([]byte, error) {
+func (s *dynamoStreamObjectSpillStore) get(ctx context.Context, key string, maxBytes int) ([]byte, error) {
 	if s == nil {
 		return nil, errors.New("stream spill store not configured")
 	}
-	client, err := s.s3Client(ctx)
+	store, err := s.objectStore(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	out, err := client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if closeErr := out.Body.Close(); closeErr != nil {
-			// The payload has already been read or the read path will return its own
-			// error. Close failures do not alter the stream event contract.
-			return
-		}
-	}()
 
 	if maxBytes <= 0 {
 		maxBytes = dynamoStreamMaxEventBytes()
 	}
-	payload, err := io.ReadAll(io.LimitReader(out.Body, int64(maxBytes)+1))
+	out, err := store.Get(ctx, objectstore.GetInput{
+		Ref:      objectstore.ObjectRef{Bucket: s.bucket, Key: key},
+		MaxBytes: int64(maxBytes),
+	})
 	if err != nil {
+		if errors.Is(err, objectstore.ErrObjectTooLarge) {
+			return nil, fmt.Errorf("stream spill object exceeds max event bytes")
+		}
 		return nil, err
 	}
-	if len(payload) > maxBytes {
-		return nil, fmt.Errorf("stream spill object exceeds max event bytes")
-	}
-
+	payload := make([]byte, len(out.Payload))
+	copy(payload, out.Payload)
 	return payload, nil
 }
 
-func (s *dynamoStreamS3SpillStore) delete(ctx context.Context, key string) error {
+func (s *dynamoStreamObjectSpillStore) delete(ctx context.Context, key string) error {
 	if s == nil {
 		return errors.New("stream spill store not configured")
 	}
-	client, err := s.s3Client(ctx)
+	store, err := s.objectStore(ctx)
 	if err != nil {
 		return err
 	}
 
-	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
-	})
-	return err
+	return store.Delete(ctx, objectstore.DeleteInput{Ref: objectstore.ObjectRef{Bucket: s.bucket, Key: key}})
 }
 
-func (s *dynamoStreamS3SpillStore) s3Client(ctx context.Context) (dynamoStreamS3Client, error) {
+func (s *dynamoStreamObjectSpillStore) objectStore(ctx context.Context) (objectstore.Store, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.client != nil {
-		return s.client, nil
+	if s.store != nil {
+		return s.store, nil
 	}
 
-	loadClient := s.loadClient
-	if loadClient == nil {
-		loadClient = newDynamoStreamS3Client
+	loadStore := s.loadStore
+	if loadStore == nil {
+		loadStore = newDynamoStreamObjectStore
 	}
-	client, err := loadClient(ctx)
+	store, err := loadStore(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	s.client = client
-	return s.client, nil
+	s.store = store
+	return s.store, nil
 }
 
-func newDynamoStreamS3Client(ctx context.Context) (dynamoStreamS3Client, error) {
-	cfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return s3.NewFromConfig(cfg), nil
+func newDynamoStreamObjectStore(ctx context.Context) (objectstore.Store, error) {
+	return objectstore.NewS3Store(ctx, objectstore.S3StoreConfig{
+		Encryption: objectstore.S3EncryptionConfig{Mode: objectstore.S3EncryptionS3Managed},
+	})
 }
 
-func (s *dynamoStreamS3SpillStore) objectKey(sessionID, eventID string) string {
+func (s *dynamoStreamObjectSpillStore) objectKey(sessionID, eventID string) string {
 	sessionHash := dynamoStreamPayloadSHA256([]byte(sessionID))
 	name := fmt.Sprintf("sessions/%s/events/%s.json", sessionHash, eventID)
 	prefix := strings.Trim(s.prefix, "/")
