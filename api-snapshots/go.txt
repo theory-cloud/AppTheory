@@ -2243,6 +2243,20 @@ const TaskSupportOptional TaskSupport = "optional"
 
 const TaskSupportRequired TaskSupport = "required"
 
+const ToolLifecycleOutcomeContextCanceled ToolLifecycleOutcome = "context_canceled"
+
+const ToolLifecycleOutcomeHandledError ToolLifecycleOutcome = "handled_error"
+
+const ToolLifecycleOutcomeInvalidParams ToolLifecycleOutcome = "invalid_params"
+
+const ToolLifecycleOutcomePanic ToolLifecycleOutcome = "panic"
+
+const ToolLifecycleOutcomeSuccess ToolLifecycleOutcome = "success"
+
+const ToolLifecycleOutcomeTimeout ToolLifecycleOutcome = "timeout"
+
+const ToolLifecycleOutcomeUnhandledError ToolLifecycleOutcome = "unhandled_error"
+
 var ErrEventNotFound = errors.New("event not found")
 
 var ErrSessionNotFound = errors.New("session not found")
@@ -2620,6 +2634,39 @@ type ToolExecution struct {
 
 type ToolHandler func(context.Context, json.RawMessage) (*ToolResult, error)
 
+type ToolLifecycleFinish struct {
+	Name              string               `json:"name"`
+	StartedAt         time.Time            `json:"startedAt"`
+	FinishedAt        time.Time            `json:"finishedAt"`
+	Duration          time.Duration        `json:"duration"`
+	Outcome           ToolLifecycleOutcome `json:"outcome"`
+	JSONRPCErrorCode  int                  `json:"jsonrpcErrorCode,omitempty"`
+	ResultMarkedError bool                 `json:"resultMarkedError,omitempty"`
+}
+
+type ToolLifecycleOptions[Args any] struct {
+	Name        string
+	Timeout     time.Duration
+	NoArgs      bool
+	StrictJSON  bool
+	Validate    func(context.Context, Args) error
+	HandleError func(context.Context, error) (*ToolResult, bool)
+	Telemetry   ToolLifecycleTelemetry
+	Clock       apptheory.Clock
+}
+
+type ToolLifecycleOutcome string
+
+type ToolLifecycleStart struct {
+	Name      string    `json:"name"`
+	StartedAt time.Time `json:"startedAt"`
+}
+
+type ToolLifecycleTelemetry struct {
+	Start  func(context.Context, ToolLifecycleStart)
+	Finish func(context.Context, ToolLifecycleFinish)
+}
+
 type ToolRegistry struct {
 	mu    sync.RWMutex
 	tools []registeredTool
@@ -2693,6 +2740,13 @@ func WithStreamIDGenerator(apptheory.IDGenerator) MemoryStreamStoreOption
 func WithStreamStore(StreamStore) ServerOption
 
 func WithTaskRuntime(TaskRuntimeOptions) ServerOption
+
+func WrapStreamingTool[Args any](
+	ToolLifecycleOptions[Args],
+	func(context.Context, Args, func(SSEEvent)) (*ToolResult, error),
+) StreamingToolHandler
+
+func WrapTool[Args any](ToolLifecycleOptions[Args], func(context.Context, Args) (*ToolResult, error)) ToolHandler
 
 func (*DynamoSessionStore) Delete(context.Context, string) error
 
