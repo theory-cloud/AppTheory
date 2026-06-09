@@ -17,6 +17,22 @@ type lifecycleTelemetryRecorder struct {
 	finishes []ToolLifecycleFinish
 }
 
+type lifecycleSequenceClock struct {
+	mu     sync.Mutex
+	values []time.Time
+}
+
+func (c *lifecycleSequenceClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.values) == 0 {
+		return time.Unix(0, 0)
+	}
+	next := c.values[0]
+	c.values = c.values[1:]
+	return next
+}
+
 func (r *lifecycleTelemetryRecorder) telemetry() ToolLifecycleTelemetry {
 	return ToolLifecycleTelemetry{
 		Start: func(_ context.Context, ev ToolLifecycleStart) {
@@ -392,6 +408,208 @@ func TestWrapToolLifecycle_TimeoutMapsToSafeTimeout(t *testing.T) {
 	assertLifecycleOutcomes(t, rec.finishOutcomes(), ToolLifecycleOutcomeTimeout)
 }
 
+func TestWrapToolLifecycle_EdgeCasesStaySanitized(t *testing.T) {
+	type args struct {
+		Message string `json:"message"`
+	}
+
+	t.Run("missing arguments", func(t *testing.T) {
+		rec := &lifecycleTelemetryRecorder{}
+		handler := WrapTool(ToolLifecycleOptions[args]{Name: "edge", Telemetry: rec.telemetry()}, func(context.Context, args) (*ToolResult, error) {
+			t.Fatal("handler should not run")
+			return nil, nil
+		})
+		_, err := handler(context.Background(), nil)
+		assertLifecycleRPCError(t, err, CodeInvalidParams, lifecycleMissingToolArgumentsMessage)
+		assertLifecycleOutcomes(t, rec.finishOutcomes(), ToolLifecycleOutcomeInvalidParams)
+	})
+
+	t.Run("non-object arguments", func(t *testing.T) {
+		handler := WrapTool(ToolLifecycleOptions[args]{Name: "edge"}, func(context.Context, args) (*ToolResult, error) {
+			t.Fatal("handler should not run")
+			return nil, nil
+		})
+		_, err := handler(context.Background(), json.RawMessage(`["bearer-secret-123"]`))
+		assertLifecycleRPCError(t, err, CodeInvalidParams, lifecycleInvalidToolArgumentsMessage)
+		if strings.Contains(err.Error(), "bearer-secret-123") {
+			t.Fatalf("non-object args leaked raw input: %v", err)
+		}
+	})
+
+	t.Run("strict trailing json", func(t *testing.T) {
+		handler := WrapTool(ToolLifecycleOptions[args]{Name: "edge", StrictJSON: true}, func(context.Context, args) (*ToolResult, error) {
+			t.Fatal("handler should not run")
+			return nil, nil
+		})
+		_, err := handler(context.Background(), json.RawMessage(`{"message":"ok"} {}`))
+		assertLifecycleRPCError(t, err, CodeInvalidParams, lifecycleInvalidToolArgumentsMessage)
+	})
+
+	t.Run("non-strict invalid json", func(t *testing.T) {
+		handler := WrapTool(ToolLifecycleOptions[map[string]any]{Name: "edge"}, func(context.Context, map[string]any) (*ToolResult, error) {
+			t.Fatal("handler should not run")
+			return nil, nil
+		})
+		_, err := handler(context.Background(), json.RawMessage(`{"message":`))
+		assertLifecycleRPCError(t, err, CodeInvalidParams, lifecycleInvalidToolArgumentsMessage)
+	})
+
+	t.Run("validation failure", func(t *testing.T) {
+		handler := WrapTool(ToolLifecycleOptions[args]{
+			Name: "edge",
+			Validate: func(context.Context, args) error {
+				return errors.New("validation bearer-secret-123")
+			},
+		}, func(context.Context, args) (*ToolResult, error) {
+			t.Fatal("handler should not run")
+			return nil, nil
+		})
+		_, err := handler(context.Background(), json.RawMessage(`{"message":"ok"}`))
+		assertLifecycleRPCError(t, err, CodeInvalidParams, lifecycleValidationMessage)
+		if strings.Contains(err.Error(), "bearer-secret-123") {
+			t.Fatalf("validation error leaked raw text: %v", err)
+		}
+	})
+
+	t.Run("no args validation failure", func(t *testing.T) {
+		handler := WrapTool(ToolLifecycleOptions[struct{}]{
+			Name:   "edge",
+			NoArgs: true,
+			Validate: func(context.Context, struct{}) error {
+				return errors.New("validation bearer-secret-123")
+			},
+		}, func(context.Context, struct{}) (*ToolResult, error) {
+			t.Fatal("handler should not run")
+			return nil, nil
+		})
+		_, err := handler(context.Background(), json.RawMessage(`null`))
+		assertLifecycleRPCError(t, err, CodeInvalidParams, lifecycleValidationMessage)
+	})
+
+	t.Run("no args invalid json", func(t *testing.T) {
+		handler := WrapTool(ToolLifecycleOptions[struct{}]{
+			Name:   "edge",
+			NoArgs: true,
+		}, func(context.Context, struct{}) (*ToolResult, error) {
+			t.Fatal("handler should not run")
+			return nil, nil
+		})
+		_, err := handler(context.Background(), json.RawMessage(`{`))
+		assertLifecycleRPCError(t, err, CodeInvalidParams, lifecycleNoArgsMessage)
+	})
+
+	t.Run("successful isError result is reported", func(t *testing.T) {
+		rec := &lifecycleTelemetryRecorder{}
+		handler := WrapTool(ToolLifecycleOptions[args]{
+			Name:      "edge",
+			Telemetry: rec.telemetry(),
+		}, func(context.Context, args) (*ToolResult, error) {
+			return &ToolResult{IsError: true}, nil
+		})
+		result, err := handler(context.Background(), json.RawMessage(`{"message":"ok"}`))
+		if err != nil {
+			t.Fatalf("isError result returned error: %v", err)
+		}
+		if result == nil || !result.IsError {
+			t.Fatalf("expected isError result, got %#v", result)
+		}
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		if len(rec.finishes) != 1 || !rec.finishes[0].ResultMarkedError {
+			t.Fatalf("expected ResultMarkedError telemetry, got %+v", rec.finishes)
+		}
+	})
+
+	t.Run("context canceled", func(t *testing.T) {
+		rec := &lifecycleTelemetryRecorder{}
+		handler := WrapTool(ToolLifecycleOptions[args]{Name: "edge", Telemetry: rec.telemetry()}, func(context.Context, args) (*ToolResult, error) {
+			return nil, context.Canceled
+		})
+		_, err := handler(context.Background(), json.RawMessage(`{"message":"ok"}`))
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context canceled, got %v", err)
+		}
+		assertLifecycleOutcomes(t, rec.finishOutcomes(), ToolLifecycleOutcomeContextCanceled)
+	})
+
+	t.Run("handle error nil result", func(t *testing.T) {
+		rec := &lifecycleTelemetryRecorder{}
+		handler := WrapTool(ToolLifecycleOptions[args]{
+			Name:      "edge",
+			Telemetry: rec.telemetry(),
+			HandleError: func(context.Context, error) (*ToolResult, bool) {
+				return nil, true
+			},
+		}, func(context.Context, args) (*ToolResult, error) {
+			return nil, errors.New("handled bearer-secret-123")
+		})
+		result, err := handler(context.Background(), json.RawMessage(`{"message":"ok"}`))
+		if err != nil {
+			t.Fatalf("handled nil result error: %v", err)
+		}
+		if result == nil || !result.IsError {
+			t.Fatalf("expected synthesized isError result, got %#v", result)
+		}
+		assertLifecycleOutcomes(t, rec.finishOutcomes(), ToolLifecycleOutcomeHandledError)
+	})
+
+	t.Run("telemetry hook panics are contained", func(t *testing.T) {
+		handler := WrapTool(ToolLifecycleOptions[args]{
+			Name:  "edge",
+			Clock: fixedClock(time.Unix(100, 0)),
+			Telemetry: ToolLifecycleTelemetry{
+				Start: func(context.Context, ToolLifecycleStart) {
+					panic("start bearer-secret-123")
+				},
+				Finish: func(context.Context, ToolLifecycleFinish) {
+					panic("finish bearer-secret-123")
+				},
+			},
+		}, func(context.Context, args) (*ToolResult, error) {
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
+		})
+		if _, err := handler(context.Background(), json.RawMessage(`{"message":"ok"}`)); err != nil {
+			t.Fatalf("telemetry panic should not fail tool: %v", err)
+		}
+	})
+
+	t.Run("negative clock duration clamps to zero", func(t *testing.T) {
+		rec := &lifecycleTelemetryRecorder{}
+		handler := WrapTool(ToolLifecycleOptions[args]{
+			Name:      "edge",
+			Clock:     &lifecycleSequenceClock{values: []time.Time{time.Unix(200, 0), time.Unix(100, 0)}},
+			Telemetry: rec.telemetry(),
+		}, func(context.Context, args) (*ToolResult, error) {
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
+		})
+		if _, err := handler(context.Background(), json.RawMessage(`{"message":"ok"}`)); err != nil {
+			t.Fatalf("negative clock case failed: %v", err)
+		}
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		if len(rec.finishes) != 1 || rec.finishes[0].Duration != 0 {
+			t.Fatalf("expected clamped zero duration, got %+v", rec.finishes)
+		}
+	})
+
+	t.Run("deadline after nil handler error", func(t *testing.T) {
+		rec := &lifecycleTelemetryRecorder{}
+		handler := WrapTool(ToolLifecycleOptions[args]{
+			Name:      "edge",
+			Timeout:   time.Nanosecond,
+			Telemetry: rec.telemetry(),
+		}, func(ctx context.Context, _ args) (*ToolResult, error) {
+			<-ctx.Done()
+			return &ToolResult{Content: []ContentBlock{{Type: "text", Text: "late"}}}, nil
+		})
+		_, err := handler(context.Background(), json.RawMessage(`{"message":"ok"}`))
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("expected deadline, got %v", err)
+		}
+		assertLifecycleOutcomes(t, rec.finishOutcomes(), ToolLifecycleOutcomeTimeout)
+	})
+}
+
 func toolLifecycleCallRequest(id int, name, args string, task bool) *Request {
 	params := map[string]any{"name": name}
 	if args != "" {
@@ -456,6 +674,17 @@ func waitForTaskTerminal(t *testing.T, store TaskStore, sessionID, taskID string
 			t.Fatalf("task did not reach terminal status; latest status %s", record.Task.Status)
 		case <-ticker.C:
 		}
+	}
+}
+
+func assertLifecycleRPCError(t *testing.T, err error, code int, message string) {
+	t.Helper()
+	rpcErr, ok := toolLifecycleRPCError(err)
+	if !ok {
+		t.Fatalf("expected lifecycle RPC error, got %v", err)
+	}
+	if rpcErr.Code != code || rpcErr.Message != message {
+		t.Fatalf("RPC error: got %+v, want code=%d message=%q", rpcErr, code, message)
 	}
 }
 
