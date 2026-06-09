@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 func TestS3StorePutGetDelete(t *testing.T) {
@@ -182,4 +183,102 @@ type trackingReadCloser struct {
 func (r *trackingReadCloser) Close() error {
 	*r.closed = true
 	return nil
+}
+
+func TestS3StoreEncryption(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    S3StoreConfig
+		wantSSE   types.ServerSideEncryption
+		wantKMSID string
+	}{
+		{name: "bucket default", config: S3StoreConfig{}, wantSSE: ""},
+		{
+			name:    "s3 managed",
+			config:  S3StoreConfig{Encryption: S3EncryptionConfig{Mode: S3EncryptionS3Managed}},
+			wantSSE: types.ServerSideEncryptionAes256,
+		},
+		{
+			name:      "kms",
+			config:    S3StoreConfig{Encryption: S3EncryptionConfig{Mode: S3EncryptionKMS, KMSKeyID: "arn:aws:kms:us-east-1:123456789012:key/abc"}},
+			wantSSE:   types.ServerSideEncryptionAwsKms,
+			wantKMSID: "arn:aws:kms:us-east-1:123456789012:key/abc",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &recordingS3Client{}
+			store, err := newS3StoreWithClient(client, tt.config)
+			if err != nil {
+				t.Fatalf("newS3StoreWithClient() error = %v", err)
+			}
+			_, err = store.Put(context.Background(), PutInput{
+				Ref:     ObjectRef{Bucket: "bucket-a", Key: "key"},
+				Payload: []byte("payload"),
+			})
+			if err != nil {
+				t.Fatalf("Put() error = %v", err)
+			}
+			if client.putInput.ServerSideEncryption != tt.wantSSE {
+				t.Fatalf("ServerSideEncryption = %q, want %q", client.putInput.ServerSideEncryption, tt.wantSSE)
+			}
+			if aws.ToString(client.putInput.SSEKMSKeyId) != tt.wantKMSID {
+				t.Fatalf("SSEKMSKeyId = %q, want %q", aws.ToString(client.putInput.SSEKMSKeyId), tt.wantKMSID)
+			}
+		})
+	}
+}
+
+func TestS3StoreEncryptionFailClosed(t *testing.T) {
+	tests := []struct {
+		name   string
+		config S3StoreConfig
+	}{
+		{
+			name:   "kms mode without key",
+			config: S3StoreConfig{Encryption: S3EncryptionConfig{Mode: S3EncryptionKMS}},
+		},
+		{
+			name:   "kms mode with blank key",
+			config: S3StoreConfig{Encryption: S3EncryptionConfig{Mode: S3EncryptionKMS, KMSKeyID: " "}},
+		},
+		{
+			name:   "s3 managed with kms key",
+			config: S3StoreConfig{Encryption: S3EncryptionConfig{Mode: S3EncryptionS3Managed, KMSKeyID: "key"}},
+		},
+		{
+			name:   "bucket default with kms key",
+			config: S3StoreConfig{Encryption: S3EncryptionConfig{Mode: S3EncryptionBucketDefault, KMSKeyID: "key"}},
+		},
+		{
+			name:   "unknown mode",
+			config: S3StoreConfig{Encryption: S3EncryptionConfig{Mode: S3EncryptionMode("custom")}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &recordingS3Client{}
+			store, err := newS3StoreWithClient(client, tt.config)
+			if !errors.Is(err, ErrInvalidEncryptionConfig) {
+				t.Fatalf("newS3StoreWithClient() error = %v, want ErrInvalidEncryptionConfig", err)
+			}
+			if store != nil {
+				t.Fatalf("newS3StoreWithClient() returned store for invalid config")
+			}
+			if len(client.operations) != 0 {
+				t.Fatalf("invalid encryption config reached S3 client: %#v", client.operations)
+			}
+		})
+	}
+}
+
+func TestNewS3StoreEncryptionValidationPrecedesAWSConfig(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := NewS3Store(ctx, S3StoreConfig{Encryption: S3EncryptionConfig{Mode: S3EncryptionKMS}})
+	if !errors.Is(err, ErrInvalidEncryptionConfig) {
+		t.Fatalf("NewS3Store() error = %v, want ErrInvalidEncryptionConfig", err)
+	}
 }
