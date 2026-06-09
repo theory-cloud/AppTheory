@@ -5,20 +5,48 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // ErrInvalidStoreConfig is returned when an object-store implementation is misconfigured.
 var ErrInvalidStoreConfig = errors.New("objectstore: invalid store config")
 
+// ErrInvalidEncryptionConfig is returned when S3 encryption options are contradictory or incomplete.
+var ErrInvalidEncryptionConfig = errors.New("objectstore: invalid encryption config")
+
+// S3EncryptionMode selects the server-side encryption headers emitted for S3 PutObject.
+type S3EncryptionMode string
+
+const (
+	// S3EncryptionBucketDefault emits no server-side encryption headers and relies on bucket policy/defaults.
+	S3EncryptionBucketDefault S3EncryptionMode = "bucket-default"
+	// S3EncryptionS3Managed emits the S3-managed AES256 server-side encryption header.
+	S3EncryptionS3Managed S3EncryptionMode = "s3-managed"
+	// S3EncryptionKMS emits AWS KMS server-side encryption headers with a required key ID.
+	S3EncryptionKMS S3EncryptionMode = "kms"
+)
+
+// S3EncryptionConfig configures fail-closed S3 server-side encryption headers.
+type S3EncryptionConfig struct {
+	Mode     S3EncryptionMode
+	KMSKeyID string
+}
+
 // S3StoreConfig configures the narrow S3-backed Store implementation.
-type S3StoreConfig struct{}
+type S3StoreConfig struct {
+	Encryption S3EncryptionConfig
+}
 
 // NewS3Store loads AWS SDK v2 configuration and returns the S3-backed Store.
 func NewS3Store(ctx context.Context, storeConfig S3StoreConfig) (Store, error) {
+	if _, err := normalizeS3StoreConfig(storeConfig); err != nil {
+		return nil, err
+	}
 	cfg, err := awsconfig.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, err
@@ -27,7 +55,8 @@ func NewS3Store(ctx context.Context, storeConfig S3StoreConfig) (Store, error) {
 }
 
 type s3Store struct {
-	client s3StoreClient
+	client     s3StoreClient
+	encryption S3EncryptionConfig
 }
 
 type s3StoreClient interface {
@@ -36,11 +65,15 @@ type s3StoreClient interface {
 	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 
-func newS3StoreWithClient(client s3StoreClient, _ S3StoreConfig) (*s3Store, error) {
+func newS3StoreWithClient(client s3StoreClient, storeConfig S3StoreConfig) (*s3Store, error) {
+	normalized, err := normalizeS3StoreConfig(storeConfig)
+	if err != nil {
+		return nil, err
+	}
 	if client == nil {
 		return nil, ErrInvalidStoreConfig
 	}
-	return &s3Store{client: client}, nil
+	return &s3Store{client: client, encryption: normalized.Encryption}, nil
 }
 
 func (s *s3Store) Put(ctx context.Context, input PutInput) (ObjectRef, error) {
@@ -62,6 +95,7 @@ func (s *s3Store) Put(ctx context.Context, input PutInput) (ObjectRef, error) {
 	if len(input.Metadata) > 0 {
 		params.Metadata = cloneMetadata(input.Metadata)
 	}
+	applyS3Encryption(params, s.encryption)
 
 	out, err := s.client.PutObject(ctx, params)
 	if err != nil {
@@ -143,6 +177,44 @@ func (s *s3Store) requireClient() error {
 		return ErrInvalidStoreConfig
 	}
 	return nil
+}
+
+func normalizeS3StoreConfig(storeConfig S3StoreConfig) (S3StoreConfig, error) {
+	mode := storeConfig.Encryption.Mode
+	if mode == "" {
+		mode = S3EncryptionBucketDefault
+	}
+	kmsKeyID := storeConfig.Encryption.KMSKeyID
+	if kmsKeyID != strings.TrimSpace(kmsKeyID) {
+		return S3StoreConfig{}, ErrInvalidEncryptionConfig
+	}
+
+	switch mode {
+	case S3EncryptionBucketDefault, S3EncryptionS3Managed:
+		if kmsKeyID != "" {
+			return S3StoreConfig{}, ErrInvalidEncryptionConfig
+		}
+	case S3EncryptionKMS:
+		if kmsKeyID == "" {
+			return S3StoreConfig{}, ErrInvalidEncryptionConfig
+		}
+	default:
+		return S3StoreConfig{}, ErrInvalidEncryptionConfig
+	}
+
+	storeConfig.Encryption.Mode = mode
+	storeConfig.Encryption.KMSKeyID = kmsKeyID
+	return storeConfig, nil
+}
+
+func applyS3Encryption(params *s3.PutObjectInput, encryption S3EncryptionConfig) {
+	switch encryption.Mode {
+	case S3EncryptionS3Managed:
+		params.ServerSideEncryption = types.ServerSideEncryptionAes256
+	case S3EncryptionKMS:
+		params.ServerSideEncryption = types.ServerSideEncryptionAwsKms
+		params.SSEKMSKeyId = aws.String(encryption.KMSKeyID)
+	}
 }
 
 func readBounded(body io.Reader, maxBytes int64) ([]byte, error) {
