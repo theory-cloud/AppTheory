@@ -790,6 +790,9 @@ func (s *Server) toolCallError(ctx context.Context, reqID any, toolName string, 
 	if strings.HasPrefix(err.Error(), "tool not found:") {
 		return NewErrorResponse(reqID, CodeInvalidParams, err.Error())
 	}
+	if resp, ok := toolLifecycleErrorResponse(reqID, err); ok {
+		return resp
+	}
 
 	// Check for context deadline exceeded (timeout).
 	if ctx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) {
@@ -797,7 +800,7 @@ func (s *Server) toolCallError(ctx context.Context, reqID any, toolName string, 
 			"tool", toolName,
 			"error", err,
 		)
-		return NewErrorResponse(reqID, CodeServerError, fmt.Sprintf("tool %q timed out", toolName))
+		return NewErrorResponse(reqID, CodeServerError, formatToolTimeoutMessage(toolName))
 	}
 
 	s.logger.ErrorContext(ctx, "tool error",
