@@ -3474,3 +3474,43 @@ type TokenResponse struct {
 func NewClaudePublicClient(*http.Client) *ClaudePublicClient
 
 func (*ClaudePublicClient) Authorize(context.Context, AuthorizeOptions) (*Discovery, *DCRResult, *TokenResponse, *TokenResponse, error)
+
+## github.com/theory-cloud/apptheory/testkit/objectstore
+
+const OperationDelete Operation = "Delete"
+
+const OperationGet Operation = "Get"
+
+const OperationPut Operation = "Put"
+
+type Call struct {
+	Operation   Operation
+	Ref         store.ObjectRef
+	MaxBytes    int64
+	ContentType string
+	Metadata    map[string]string
+	Payload     []byte
+}
+
+type FakeStore struct {
+	mu       sync.Mutex
+	seq      int64
+	latest   map[objectName]string
+	objects  map[objectVersion]storedObject
+	calls    []Call
+	failures map[Operation]error
+}
+
+type Operation string
+
+func NewStore() *FakeStore
+
+func (*FakeStore) Calls() []Call
+
+func (*FakeStore) Delete(context.Context, store.DeleteInput) error
+
+func (*FakeStore) Get(context.Context, store.GetInput) (*store.GetOutput, error)
+
+func (*FakeStore) Put(context.Context, store.PutInput) (store.ObjectRef, error)
+
+func (*FakeStore) SetError(Operation, error)
