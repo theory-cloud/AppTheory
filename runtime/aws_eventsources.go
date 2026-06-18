@@ -370,7 +370,7 @@ func (a *App) kinesisHandlerForEvent(event events.KinesisEvent) KinesisHandler {
 
 var kinesisBatchSpec = newBatchEventSpec[events.KinesisEventRecord, events.KinesisBatchItemFailure, events.KinesisEventResponse](
 	"apptheory: invalid kinesis record type",
-	func(record events.KinesisEventRecord) string { return record.EventID },
+	func(record events.KinesisEventRecord) string { return record.Kinesis.SequenceNumber },
 )
 
 // ServeKinesis routes a Kinesis event to the registered stream handler and returns a partial batch failure response.
@@ -673,7 +673,7 @@ func (a *App) dynamoDBHandlerForEvent(event events.DynamoDBEvent) DynamoDBStream
 
 var dynamoDBBatchSpec = newBatchEventSpec[events.DynamoDBEventRecord, events.DynamoDBBatchItemFailure, events.DynamoDBEventResponse](
 	"apptheory: invalid dynamodb record type",
-	func(record events.DynamoDBEventRecord) string { return record.EventID },
+	func(record events.DynamoDBEventRecord) string { return record.Change.SequenceNumber },
 )
 
 // ServeDynamoDBStream routes a DynamoDB Streams event to the registered table handler and returns a partial batch failure response.
