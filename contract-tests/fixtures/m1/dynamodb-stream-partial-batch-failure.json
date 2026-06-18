@@ -36,7 +36,6 @@
     }
   },
   "expect": {
-    "output_json": { "batchItemFailures": [{ "itemIdentifier": "evt-2" }] }
+    "output_json": { "batchItemFailures": [{ "itemIdentifier": "2" }] }
   }
 }
-
