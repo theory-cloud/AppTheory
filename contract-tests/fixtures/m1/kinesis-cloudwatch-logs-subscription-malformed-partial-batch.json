@@ -139,7 +139,7 @@
     "output_json": {
       "batchItemFailures": [
         {
-          "itemIdentifier": "kin-cwl-malformed-1"
+          "itemIdentifier": "1002"
         }
       ]
     }

@@ -69,7 +69,7 @@ func TestBuildAppReportsDecodeFailuresByRecord(t *testing.T) {
 		}},
 	}))
 
-	if len(out.BatchItemFailures) != 1 || out.BatchItemFailures[0].ItemIdentifier != "bad-record" {
+	if len(out.BatchItemFailures) != 1 || out.BatchItemFailures[0].ItemIdentifier != "0" {
 		t.Fatalf("expected malformed record to be reported as a partial batch failure, got %#v", out.BatchItemFailures)
 	}
 }
@@ -88,7 +88,7 @@ func TestBuildAppFailsClosedWhenStreamNameIsMissing(t *testing.T) {
 		},
 	}))
 
-	if len(out.BatchItemFailures) != 1 || out.BatchItemFailures[0].ItemIdentifier != "unrouted-record" {
+	if len(out.BatchItemFailures) != 1 || out.BatchItemFailures[0].ItemIdentifier != "0" {
 		t.Fatalf("expected missing stream route to fail closed, got %#v", out.BatchItemFailures)
 	}
 }

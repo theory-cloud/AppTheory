@@ -1,7 +1,7 @@
 <!-- AI Training: Root README for the AppTheory multi-language monorepo -->
 
 <p align="center">
-  <a href="https://theory-cloud.github.io/apptheory/">
+  <a href="https://apptheory.theorycloud.ai/">
     <img src="docs/assets/svg/icon.svg" width="84" alt="AppTheory">
   </a>
 </p>
@@ -16,7 +16,7 @@
 <p align="center">
   <a href="https://github.com/theory-cloud/AppTheory/releases"><img alt="Release" src="https://img.shields.io/github/v/release/theory-cloud/AppTheory?style=flat-square&label=release&color=2EA7FF"></a>
   <a href="https://github.com/theory-cloud/AppTheory/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-7A5CFF?style=flat-square"></a>
-  <a href="https://theory-cloud.github.io/apptheory/"><img alt="Docs" src="https://img.shields.io/badge/docs-theory--cloud.github.io%2Fapptheory-2EA7FF?style=flat-square"></a>
+  <a href="https://apptheory.theorycloud.ai/"><img alt="Docs" src="https://img.shields.io/badge/docs-apptheory.theorycloud.ai-2EA7FF?style=flat-square"></a>
   <a href="https://github.com/theory-cloud/AppTheory/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/theory-cloud/AppTheory/ci.yml?branch=main&style=flat-square&label=rubric&color=46D397"></a>
 </p>
 
@@ -27,10 +27,10 @@
 </p>
 
 <p align="center">
-  <a href="https://theory-cloud.github.io/apptheory/getting-started/"><strong>Get started →</strong></a> ·
-  <a href="https://theory-cloud.github.io/apptheory/api-reference/">API reference</a> ·
-  <a href="https://theory-cloud.github.io/apptheory/reference/contract-fixtures/">Contract fixtures</a> ·
-  <a href="https://theory-cloud.github.io/apptheory/integrations/mcp/">MCP runtime</a>
+  <a href="https://apptheory.theorycloud.ai/getting-started/"><strong>Get started →</strong></a> ·
+  <a href="https://apptheory.theorycloud.ai/api-reference/">API reference</a> ·
+  <a href="https://apptheory.theorycloud.ai/reference/contract-fixtures/">Contract fixtures</a> ·
+  <a href="https://apptheory.theorycloud.ai/integrations/mcp/">MCP runtime</a>
 </p>
 
 ---
@@ -56,8 +56,8 @@ AppTheory is distributed exclusively through immutable **[GitHub Releases](https
 | Runtime | Install |
 |---|---|
 | **Go** | `go get github.com/theory-cloud/apptheory@vX.Y.Z` |
-| **TypeScript** | install the `.tgz` release asset — see [TypeScript getting started](https://theory-cloud.github.io/apptheory/runtimes/typescript/) |
-| **Python** | install the `.whl` release asset — see [Python getting started](https://theory-cloud.github.io/apptheory/runtimes/python/) |
+| **TypeScript** | install the `.tgz` release asset — see [TypeScript getting started](https://apptheory.theorycloud.ai/runtimes/typescript/) |
+| **Python** | install the `.whl` release asset — see [Python getting started](https://apptheory.theorycloud.ai/runtimes/python/) |
 
 ## At a glance
 
@@ -76,7 +76,7 @@ AppTheory is distributed exclusively through immutable **[GitHub Releases](https
 Use AppTheory when you want AWS-Lambda-backed services that are:
 
 - **Serverless-first** — one unified `HandleLambda` entrypoint dispatches Lambda Function URL, API Gateway v2, ALB, AppSync, SQS, EventBridge, DynamoDB Streams, Kinesis, and WebSockets. The same handler shape covers every event source.
-- **Cross-language consistent** — one routing model, one middleware order, one error envelope — across three runtimes — without behavioral drift. Verified on every commit by the [128 contract fixtures](https://theory-cloud.github.io/apptheory/reference/contract-fixtures/).
+- **Cross-language consistent** — one routing model, one middleware order, one error envelope — across three runtimes — without behavioral drift. Verified on every commit by the [128 contract fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/).
 - **Generative-coding friendly** — explicit tiers, canonical patterns, and strict verification so AI-generated code stays correct and maintainable.
 
 ✅ Treat routing, middleware, and event normalization as a contract
@@ -86,53 +86,53 @@ Use AppTheory when you want AWS-Lambda-backed services that are:
 
 AppTheory includes a complete [Model Context Protocol](https://modelcontextprotocol.io) production stack: Streamable HTTP transport, session management, OAuth protected resources, resumable SSE streaming, and CDK deployment constructs. The MCP runtime is a **first-class part of the contract**, not an experimental add-on — `theory-mcp-server` itself runs on it.
 
-- [MCP integration guide](https://theory-cloud.github.io/apptheory/integrations/mcp/) — transport, JSON-RPC surface, registries, sessions, streaming
-- [Remote MCP deployment](https://theory-cloud.github.io/apptheory/integrations/remote-mcp/) — OAuth, protected resource metadata, Autheory integration
+- [MCP integration guide](https://apptheory.theorycloud.ai/integrations/mcp/) — transport, JSON-RPC surface, registries, sessions, streaming
+- [Remote MCP deployment](https://apptheory.theorycloud.ai/integrations/remote-mcp/) — OAuth, protected resource metadata, Autheory integration
 - [MCP examples](examples/mcp/) — `tools-only`, `tools-resources-prompts`, `resumable-sse`
 - CDK constructs: `AppTheoryMcpServer`, `AppTheoryRemoteMcpServer`, `AppTheoryMcpProtectedResource`
 
 ## Documentation
 
-The full documentation site lives at **[theory-cloud.github.io/apptheory](https://theory-cloud.github.io/apptheory/)** — branded with the Theory Cloud design system, with a ⌘K search palette, runtime tabs, and surface-tinted pages.
+The full documentation site lives at **[apptheory.theorycloud.ai](https://apptheory.theorycloud.ai/)**. It is published from the `staging` integration branch; stable release authority remains the versioned packages, release notes, and API snapshots.
 
 **Most-used entry points:**
 
 | Section | Link |
 |---|---|
-| Getting started | [theory-cloud.github.io/apptheory/getting-started/](https://theory-cloud.github.io/apptheory/getting-started/) |
-| API reference | [theory-cloud.github.io/apptheory/api-reference/](https://theory-cloud.github.io/apptheory/api-reference/) |
-| HTTP runtime tiers | [theory-cloud.github.io/apptheory/features/http-runtime/](https://theory-cloud.github.io/apptheory/features/http-runtime/) |
-| Event workloads | [theory-cloud.github.io/apptheory/features/event-workloads/](https://theory-cloud.github.io/apptheory/features/event-workloads/) |
-| Logging profiles | [theory-cloud.github.io/apptheory/features/logging-profiles/](https://theory-cloud.github.io/apptheory/features/logging-profiles/) |
-| Source provenance | [theory-cloud.github.io/apptheory/features/source-provenance/](https://theory-cloud.github.io/apptheory/features/source-provenance/) |
-| Migration from Lift | [theory-cloud.github.io/apptheory/migration/from-lift/](https://theory-cloud.github.io/apptheory/migration/from-lift/) |
+| Getting started | [apptheory.theorycloud.ai/getting-started/](https://apptheory.theorycloud.ai/getting-started/) |
+| API reference | [apptheory.theorycloud.ai/api-reference/](https://apptheory.theorycloud.ai/api-reference/) |
+| HTTP runtime tiers | [apptheory.theorycloud.ai/features/http-runtime/](https://apptheory.theorycloud.ai/features/http-runtime/) |
+| Event workloads | [apptheory.theorycloud.ai/features/event-workloads/](https://apptheory.theorycloud.ai/features/event-workloads/) |
+| Logging profiles | [apptheory.theorycloud.ai/features/logging-profiles/](https://apptheory.theorycloud.ai/features/logging-profiles/) |
+| Source provenance | [apptheory.theorycloud.ai/features/source-provenance/](https://apptheory.theorycloud.ai/features/source-provenance/) |
+| Migration from Lift | [apptheory.theorycloud.ai/migration/from-lift/](https://apptheory.theorycloud.ai/migration/from-lift/) |
 
 **Per-runtime entry points:**
 
-- **Go** — [theory-cloud.github.io/apptheory/runtimes/go/](https://theory-cloud.github.io/apptheory/runtimes/go/)
-- **TypeScript** — [theory-cloud.github.io/apptheory/runtimes/typescript/](https://theory-cloud.github.io/apptheory/runtimes/typescript/)
-- **Python** — [theory-cloud.github.io/apptheory/runtimes/python/](https://theory-cloud.github.io/apptheory/runtimes/python/)
+- **Go** — [apptheory.theorycloud.ai/runtimes/go/](https://apptheory.theorycloud.ai/runtimes/go/)
+- **TypeScript** — [apptheory.theorycloud.ai/runtimes/typescript/](https://apptheory.theorycloud.ai/runtimes/typescript/)
+- **Python** — [apptheory.theorycloud.ai/runtimes/python/](https://apptheory.theorycloud.ai/runtimes/python/)
 
 **Contract reference and feature pages:**
 
-- [Contract Fixtures](https://theory-cloud.github.io/apptheory/reference/contract-fixtures/) — the 128-fixture covenant every runtime is tested against
-- [Event Shape Dispatch](https://theory-cloud.github.io/apptheory/reference/event-shapes/) — which Lambda event shapes route to which handler
-- [HTTP Runtime](https://theory-cloud.github.io/apptheory/features/http-runtime/) — P0/P1/P2 tier surface
-- [Jobs Ledger](https://theory-cloud.github.io/apptheory/features/jobs-ledger/)
-- [Sanitization](https://theory-cloud.github.io/apptheory/features/sanitization/)
+- [Contract Fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/) — the 128-fixture covenant every runtime is tested against
+- [Event Shape Dispatch](https://apptheory.theorycloud.ai/reference/event-shapes/) — which Lambda event shapes route to which handler
+- [HTTP Runtime](https://apptheory.theorycloud.ai/features/http-runtime/) — P0/P1/P2 tier surface
+- [Jobs Ledger](https://apptheory.theorycloud.ai/features/jobs-ledger/)
+- [Sanitization](https://apptheory.theorycloud.ai/features/sanitization/)
 
 **Integrations** — how AppTheory connects to the rest of the stack:
 
-- [MCP Method Surface](https://theory-cloud.github.io/apptheory/integrations/mcp/)
-- [Remote MCP](https://theory-cloud.github.io/apptheory/integrations/remote-mcp/)
-- [Remote MCP + Autheory](https://theory-cloud.github.io/apptheory/integrations/remote-mcp-autheory/)
-- [Bedrock AgentCore MCP](https://theory-cloud.github.io/apptheory/integrations/agentcore-mcp/)
+- [MCP Method Surface](https://apptheory.theorycloud.ai/integrations/mcp/)
+- [Remote MCP](https://apptheory.theorycloud.ai/integrations/remote-mcp/)
+- [Remote MCP + Autheory](https://apptheory.theorycloud.ai/integrations/remote-mcp-autheory/)
+- [Bedrock AgentCore MCP](https://apptheory.theorycloud.ai/integrations/agentcore-mcp/)
 
 **CDK** — the blessed deployment surface:
 
-- [CDK Getting Started](https://theory-cloud.github.io/apptheory/cdk/getting-started/)
-- [CDK API Reference](https://theory-cloud.github.io/apptheory/cdk/api-reference/)
-- [SSR Site (FaceTheory-first)](https://theory-cloud.github.io/apptheory/cdk/ssr-site/)
+- [CDK Getting Started](https://apptheory.theorycloud.ai/cdk/getting-started/)
+- [CDK API Reference](https://apptheory.theorycloud.ai/cdk/api-reference/)
+- [SSR Site (FaceTheory-first)](https://apptheory.theorycloud.ai/cdk/ssr-site/)
 
 ## Repository layout
 
@@ -155,7 +155,7 @@ The CDK multilang demo deploys one HTTP entry + three Lambda runtimes (Go, Node.
 
 → [`examples/cdk/multilang/`](examples/cdk/multilang/)
 
-For infrastructure patterns, see the [CDK integration guide](https://theory-cloud.github.io/apptheory/cdk/getting-started/).
+For infrastructure patterns, see the [CDK integration guide](https://apptheory.theorycloud.ai/cdk/getting-started/).
 
 ## Runtime tiers
 
@@ -167,7 +167,7 @@ AppTheory's middleware surface is tiered, not flag-based. Each tier is additive 
 | **P1** | P0 + request-id, tenant extraction, auth hooks, CORS, size/time guardrails, middleware ordering |
 | **P2** *(default)* | P1 + observability hooks, rate limiting / load-shedding policy hooks |
 
-Tiers are a **contract**, not a menu — see [HTTP Runtime](https://theory-cloud.github.io/apptheory/features/http-runtime/) for the exact slot list and per-tier behavior.
+Tiers are a **contract**, not a menu — see [HTTP Runtime](https://apptheory.theorycloud.ai/features/http-runtime/) for the exact slot list and per-tier behavior.
 
 ## Minimal app
 
@@ -264,4 +264,4 @@ The single-path philosophy applies here: one way to register a route, one way to
 - [CHANGELOG.md](CHANGELOG.md)
 - [THEORY_CLOUD.md](THEORY_CLOUD.md)
 
-<p align="center"><sub>Made with <a href="https://github.com/theory-cloud">Theory Cloud</a> · <a href="https://theory-cloud.github.io/apptheory/">docs</a></sub></p>
+<p align="center"><sub>Made with <a href="https://github.com/theory-cloud">Theory Cloud</a> · <a href="https://apptheory.theorycloud.ai/">docs</a></sub></p>

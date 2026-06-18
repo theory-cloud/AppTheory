@@ -1078,9 +1078,9 @@ class App:
 
             observation = _dynamodb_stream_observation(evt_ctx, record)
             if record_error is not None:
-                event_id = str(record.get("eventID") or "").strip()
-                if event_id:
-                    failures.append({"itemIdentifier": event_id})
+                sequence_number = _dynamodb_stream_sequence_number(record)
+                if sequence_number:
+                    failures.append({"itemIdentifier": sequence_number})
                 _record_event_observability(self._observability, observation, "error", "app.internal")
                 continue
             _record_event_observability(self._observability, observation, "success", "")
@@ -1111,9 +1111,9 @@ class App:
             for record in records:
                 if not isinstance(record, dict):
                     continue
-                event_id = str(record.get("eventID") or "").strip()
-                if event_id:
-                    failures.append({"itemIdentifier": event_id})
+                sequence_number = _kinesis_sequence_number(record)
+                if sequence_number:
+                    failures.append({"itemIdentifier": sequence_number})
             return {"batchItemFailures": failures}
 
         evt_ctx = self._event_context(ctx)
@@ -1125,9 +1125,9 @@ class App:
             try:
                 _resolve(wrapped(evt_ctx, record))
             except Exception:  # noqa: BLE001
-                event_id = str(record.get("eventID") or "").strip()
-                if event_id:
-                    failures.append({"itemIdentifier": event_id})
+                sequence_number = _kinesis_sequence_number(record)
+                if sequence_number:
+                    failures.append({"itemIdentifier": sequence_number})
 
         return {"batchItemFailures": failures}
 
@@ -1788,6 +1788,16 @@ def _remaining_ms(ctx: Any | None) -> int:
 
 def _event_workload_failed_error() -> RuntimeError:
     return RuntimeError(_EVENT_WORKLOAD_FAILED_MESSAGE)
+
+
+def _kinesis_sequence_number(record: dict[str, Any]) -> str:
+    kinesis = record.get("kinesis") if isinstance(record.get("kinesis"), dict) else {}
+    return str(kinesis.get("sequenceNumber") or "").strip()
+
+
+def _dynamodb_stream_sequence_number(record: dict[str, Any]) -> str:
+    change = record.get("dynamodb") if isinstance(record.get("dynamodb"), dict) else {}
+    return str(change.get("SequenceNumber") or "").strip()
 
 
 def _is_safe_event_error(exc: Exception) -> bool:
