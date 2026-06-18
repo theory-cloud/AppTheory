@@ -654,7 +654,7 @@ export class App {
         const handler = this._kinesisHandlerForEvent(event);
         if (!handler) {
             const failures = records
-                .map((r) => String(r?.eventID ?? "").trim())
+                .map(kinesisRecordSequenceNumber)
                 .filter(Boolean)
                 .map((id) => ({ itemIdentifier: id }));
             return { batchItemFailures: failures };
@@ -672,7 +672,7 @@ export class App {
             }
             if (recordError) {
                 failures.push({
-                    itemIdentifier: String(record?.eventID ?? ""),
+                    itemIdentifier: kinesisRecordSequenceNumber(record),
                 });
             }
         }
@@ -788,7 +788,7 @@ export class App {
             const observation = dynamoDBStreamObservation(eventCtx, record);
             if (recordError) {
                 failures.push({
-                    itemIdentifier: String(record?.eventID ?? ""),
+                    itemIdentifier: dynamoDBStreamSequenceNumber(record),
                 });
                 recordEventObservability(this._observability, observation, "error", "app.internal");
                 continue;
@@ -1161,6 +1161,15 @@ const EVENT_TRIGGER_EVENTBRIDGE = "eventbridge";
 const EVENT_TRIGGER_DYNAMODB_STREAM = "dynamodb_stream";
 function eventWorkloadFailedError() {
     return new Error(EVENT_WORKLOAD_FAILED_MESSAGE);
+}
+function kinesisRecordSequenceNumber(record) {
+    return String(record?.kinesis?.sequenceNumber ?? "").trim();
+}
+function dynamoDBStreamSequenceNumber(record) {
+    const change = record?.dynamodb;
+    if (!change || typeof change !== "object")
+        return "";
+    return String(change["SequenceNumber"] ?? "").trim();
 }
 function sanitizeEventWorkloadError(err) {
     if (isSafeEventError(err)) {
