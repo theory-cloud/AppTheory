@@ -99,7 +99,7 @@
     "output_json": {
       "batchItemFailures": [
         {
-          "itemIdentifier": "stream-evt-2"
+          "itemIdentifier": "000000000000000002"
         }
       ]
     }
