@@ -72,7 +72,7 @@
     "output_json": {
       "batchItemFailures": [
         {
-          "itemIdentifier": "stream-obs-2"
+          "itemIdentifier": "000000000000000102"
         }
       ]
     },

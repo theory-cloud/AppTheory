@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.13.0](https://github.com/theory-cloud/AppTheory/compare/v1.12.2...v1.13.0) (2026-06-09)
+
+
+### Features
+
+* **mcp:** add MCP tool lifecycle wrapper ([313dbc7](https://github.com/theory-cloud/AppTheory/commit/313dbc748524a550feb077752f566d40f978bfa6))
+* **mcp:** add MCP tool lifecycle wrapper (THE-2034/THE-2047/THE-2048/THE-2049) ([211662a](https://github.com/theory-cloud/AppTheory/commit/211662af4fe6cd9544ec6262ac32d3eae7729547))
+* **mcp:** use objectstore for stream spill ([34977b2](https://github.com/theory-cloud/AppTheory/commit/34977b2787dada89c6a0eecca5ddd518fb04e447))
+* **objectstore:** add deterministic fake store ([45fd881](https://github.com/theory-cloud/AppTheory/commit/45fd881bf816f976928496c448423a798a0f8ea4))
+* **objectstore:** add helper and MCP spill adoption ([30d908e](https://github.com/theory-cloud/AppTheory/commit/30d908e991512a1129f1e13db32441407fd7916f))
+* **objectstore:** add minimal S3 store ([da4cf3e](https://github.com/theory-cloud/AppTheory/commit/da4cf3e2ffc931ba55b122dff9900e115fdea403))
+* **objectstore:** add strict object refs ([c54b61f](https://github.com/theory-cloud/AppTheory/commit/c54b61fa68eedf0bf0d4f75106348f000ff2a0ce))
+* **objectstore:** define bounded store contract ([a7562bc](https://github.com/theory-cloud/AppTheory/commit/a7562bc633bb986264ee29bac63bbfd21f5188d6))
+* **objectstore:** fail closed S3 encryption ([a69be15](https://github.com/theory-cloud/AppTheory/commit/a69be15e41e09ff14511911027c53eed79126ecc))
+
+
+### Bug Fixes
+
+* **deps:** pin TableTheory v1.10.0 ([f09d760](https://github.com/theory-cloud/AppTheory/commit/f09d760e18dcd76e920aef32c0d4b82239a198bf))
+* **deps:** pin TableTheory v1.10.0 ([7059663](https://github.com/theory-cloud/AppTheory/commit/7059663ab72e2c547d245e1ec3c4f6a5ddd3ef39))
+* **mcp:** keep lifecycle wrapper lint-clean ([810e74e](https://github.com/theory-cloud/AppTheory/commit/810e74e0a17466db19a443b558d8b6d5227fc0eb))
+
 ## [1.13.0-rc](https://github.com/theory-cloud/AppTheory/compare/v1.12.2...v1.13.0-rc) (2026-06-09)
 
 
