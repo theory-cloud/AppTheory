@@ -99,7 +99,7 @@ func TestServeSQS_IsolatesEventContextValuesPerRecord(t *testing.T) {
 func TestServeKinesis_BatchFailures(t *testing.T) {
 	app := New()
 	app.Kinesis("stream1", func(_ *EventContext, record events.KinesisEventRecord) error {
-		if record.EventID == "bad" {
+		if record.EventID == "bad-event-id" {
 			return errors.New("fail")
 		}
 		return nil
@@ -107,11 +107,20 @@ func TestServeKinesis_BatchFailures(t *testing.T) {
 
 	out := app.ServeKinesis(context.Background(), events.KinesisEvent{
 		Records: []events.KinesisEventRecord{
-			{EventID: "ok", EventSourceArn: "arn:aws:kinesis:us-east-1:123:stream/stream1"},
-			{EventID: "bad", EventSourceArn: "arn:aws:kinesis:us-east-1:123:stream/stream1"},
+			{
+				EventID:        "ok-event-id",
+				EventSourceArn: "arn:aws:kinesis:us-east-1:123:stream/stream1",
+				Kinesis:        events.KinesisRecord{SequenceNumber: "49661350000000000000000000000000000000000000000000000001"},
+			},
+			{
+				EventID:        "bad-event-id",
+				EventSourceArn: "arn:aws:kinesis:us-east-1:123:stream/stream1",
+				Kinesis:        events.KinesisRecord{SequenceNumber: "49661350000000000000000000000000000000000000000000000002"},
+			},
 		},
 	})
-	if len(out.BatchItemFailures) != 1 || out.BatchItemFailures[0].ItemIdentifier != "bad" {
+	if len(out.BatchItemFailures) != 1 ||
+		out.BatchItemFailures[0].ItemIdentifier != "49661350000000000000000000000000000000000000000000000002" {
 		t.Fatalf("unexpected failures: %#v", out.BatchItemFailures)
 	}
 }
@@ -202,7 +211,7 @@ func TestServeEventBridge_SelectsByRuleAndPattern(t *testing.T) {
 func TestServeDynamoDBStream_BatchFailures(t *testing.T) {
 	app := New()
 	app.DynamoDB("tbl", func(_ *EventContext, record events.DynamoDBEventRecord) error {
-		if record.EventID == "bad" {
+		if record.EventID == "bad-event-id" {
 			return errors.New("fail")
 		}
 		return nil
@@ -210,11 +219,19 @@ func TestServeDynamoDBStream_BatchFailures(t *testing.T) {
 
 	out := app.ServeDynamoDBStream(context.Background(), events.DynamoDBEvent{
 		Records: []events.DynamoDBEventRecord{
-			{EventID: "ok", EventSourceArn: "arn:aws:dynamodb:us-east-1:123:table/tbl/stream/2020"},
-			{EventID: "bad", EventSourceArn: "arn:aws:dynamodb:us-east-1:123:table/tbl/stream/2020"},
+			{
+				EventID:        "ok-event-id",
+				EventSourceArn: "arn:aws:dynamodb:us-east-1:123:table/tbl/stream/2020",
+				Change:         events.DynamoDBStreamRecord{SequenceNumber: "100000000000000000001"},
+			},
+			{
+				EventID:        "bad-event-id",
+				EventSourceArn: "arn:aws:dynamodb:us-east-1:123:table/tbl/stream/2020",
+				Change:         events.DynamoDBStreamRecord{SequenceNumber: "100000000000000000002"},
+			},
 		},
 	})
-	if len(out.BatchItemFailures) != 1 || out.BatchItemFailures[0].ItemIdentifier != "bad" {
+	if len(out.BatchItemFailures) != 1 || out.BatchItemFailures[0].ItemIdentifier != "100000000000000000002" {
 		t.Fatalf("unexpected failures: %#v", out.BatchItemFailures)
 	}
 }
