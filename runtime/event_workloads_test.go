@@ -216,7 +216,7 @@ func TestServeDynamoDBStream_RecordsPerRecordObservability(t *testing.T) {
 			Change:         events.DynamoDBStreamRecord{SequenceNumber: "2", StreamViewType: "NEW_AND_OLD_IMAGES"},
 		},
 	}})
-	if len(out.BatchItemFailures) != 1 || out.BatchItemFailures[0].ItemIdentifier != "stream-2" {
+	if len(out.BatchItemFailures) != 1 || out.BatchItemFailures[0].ItemIdentifier != "2" {
 		t.Fatalf("unexpected batch failures: %#v", out.BatchItemFailures)
 	}
 	if len(logs) != 2 {

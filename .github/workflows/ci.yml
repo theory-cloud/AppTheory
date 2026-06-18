@@ -74,6 +74,22 @@ jobs:
             --github-head-repository "${PR_HEAD_REPOSITORY}" \
             "${pr_title_args[@]}"
 
+  release-security-gates:
+    name: Release/security gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify release/security invariants
+        run: |
+          bash scripts/verify-branch-release-supply-chain.sh
+          bash scripts/verify-release-train-promotion.sh --self-test
+          bash scripts/verify-ci-rubric-enforced.sh
+          bash scripts/verify-release-workflows.sh
+          bash scripts/verify-release-cycle.sh
+
   prerelease-readiness:
     name: Prerelease readiness (staging → premain)
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'

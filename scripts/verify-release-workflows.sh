@@ -462,8 +462,43 @@ require_contains(
 )
 require_contains(
     "scripts/verify-release-train-promotion.sh",
+    "must originate from trusted repository",
+    "release train promotion verifier must reject forked generated release-please branch spoofing",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    "event head SHA is required to verify generated release-please branch",
+    "release train promotion verifier must require exact release-please head SHA provenance",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
+    "does not match trusted origin/release-please--branches--premain",
+    "release train promotion self-test must reject forged release-please head SHA",
+)
+require_contains(
+    "scripts/verify-release-train-promotion.sh",
     "main release gate rejects RC-shaped PR titles/versions",
     "main release promotion gate must reject RC-shaped main PR titles/versions",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "name: Release/security gates",
+    "CI must expose release/security gates as a stable non-skipped branch-protection context",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "bash scripts/verify-release-train-promotion.sh --self-test",
+    "CI release/security gates must exercise release train provenance self-tests",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "bash scripts/verify-ci-rubric-enforced.sh",
+    "CI release/security gates must verify rubric enforcement separately from the full rubric",
+)
+require_contains(
+    "scripts/verify-release-gates.sh",
+    "bash ./scripts/verify-release-train-promotion.sh --self-test",
+    "full release gates must include release train provenance self-tests",
 )
 require_contains(
     "scripts/verify-release-gates.sh",
