@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.13.1](https://github.com/theory-cloud/AppTheory/compare/v1.13.0...v1.13.1) (2026-06-19)
+
+
+### Bug Fixes
+
+* address staging CI rubric failures ([ad30fa1](https://github.com/theory-cloud/AppTheory/commit/ad30fa124fdb7c8da6563070e34ce93dba5d7b83))
+* **ci:** defer draft release PR required checks ([6c176d7](https://github.com/theory-cloud/AppTheory/commit/6c176d77ec3d04f3b24b611ab33e8dcae2324ad1))
+* **deps:** pin TableTheory v1.10.1 ([346feba](https://github.com/theory-cloud/AppTheory/commit/346feba05d771378292594f2e0011a00661003a6))
+* **release:** accept valid stable back-merge topology ([efa808b](https://github.com/theory-cloud/AppTheory/commit/efa808b7730b1d9db144f743597cbd108e3cc0c7))
+* **release:** harden graduation gates ([7bb69c9](https://github.com/theory-cloud/AppTheory/commit/7bb69c9560dbdb968286e40a1371043d67d63677))
+* **release:** ignore skipped checks after success ([00919a9](https://github.com/theory-cloud/AppTheory/commit/00919a97734944b1fb98dad33a90de850fa49fd6))
+* **release:** ignore skipped checks after success ([4402977](https://github.com/theory-cloud/AppTheory/commit/4402977a9ba3fed047d66274859be1c2eba8862b))
+* **release:** serialize release PR artifact sync ([b639646](https://github.com/theory-cloud/AppTheory/commit/b63964645aa2e179aed21555595ed7a6ea8acac5))
+* **release:** validate main promotions from merge content ([d44dacf](https://github.com/theory-cloud/AppTheory/commit/d44dacf6d7574400a2b5505eae54d642cd2ec631))
+* remediate stream batch IDs and release gates ([75edcf7](https://github.com/theory-cloud/AppTheory/commit/75edcf7ddd1d967e01a08ca9504f5204c5133205))
+
+## [1.13.1-rc.1](https://github.com/theory-cloud/AppTheory/compare/v1.13.1-rc...v1.13.1-rc.1) (2026-06-19)
+
+
+### Bug Fixes
+
+* **ci:** defer draft release PR required checks ([6c176d7](https://github.com/theory-cloud/AppTheory/commit/6c176d77ec3d04f3b24b611ab33e8dcae2324ad1))
+* **release:** accept valid stable back-merge topology ([efa808b](https://github.com/theory-cloud/AppTheory/commit/efa808b7730b1d9db144f743597cbd108e3cc0c7))
+* **release:** harden graduation gates ([7bb69c9](https://github.com/theory-cloud/AppTheory/commit/7bb69c9560dbdb968286e40a1371043d67d63677))
+* **release:** serialize release PR artifact sync ([b639646](https://github.com/theory-cloud/AppTheory/commit/b63964645aa2e179aed21555595ed7a6ea8acac5))
+* **release:** validate main promotions from merge content ([d44dacf](https://github.com/theory-cloud/AppTheory/commit/d44dacf6d7574400a2b5505eae54d642cd2ec631))
+
 ## [1.13.1-rc](https://github.com/theory-cloud/AppTheory/compare/v1.13.0...v1.13.1-rc) (2026-06-18)
 
 

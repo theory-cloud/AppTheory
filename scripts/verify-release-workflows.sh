@@ -807,6 +807,7 @@ for forbidden in (
 
 subprocess.run(["bash", "scripts/verify-branch-version-sync.sh", "--self-test"], check=True)
 subprocess.run(["bash", "scripts/verify-release-pr-postcondition.sh", "--self-test"], check=True)
+subprocess.run(["bash", "scripts/sync-release-pr-generated.sh", "--self-test"], check=True)
 
 print("release-workflows: PASS")
 PY
