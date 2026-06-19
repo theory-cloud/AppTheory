@@ -3,9 +3,213 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+default_required_checks() {
+  cat <<'EOF'
+Version alignment
+Go (test + vet)
+TypeScript (npm pack)
+Python (build wheel + sdist)
+Contract tests (fixtures)
+EOF
+}
+
+release_pr_required_checks() {
+  if [[ -n "${RELEASE_PR_READY_CHECKS:-}" ]]; then
+    printf '%s\n' "${RELEASE_PR_READY_CHECKS}"
+    return 0
+  fi
+  default_required_checks
+}
+
+classify_required_checks() {
+  python3 - <<'PY'
+import json
+import os
+
+PASS_BUCKETS = {"pass", "success", "neutral"}
+PENDING_BUCKETS = {"pending", "skipping", ""}
+
+
+def load_checks() -> list[dict]:
+    try:
+        data = json.loads(os.environ.get("CHECKS_JSON") or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def normalize_bucket(record: dict) -> str:
+    bucket = record.get("bucket", "")
+    if bucket is None:
+        return ""
+    return str(bucket)
+
+
+checks = load_checks()
+required = [line for line in os.environ["REQUIRED_CHECKS"].splitlines() if line]
+records_by_name = {name: [] for name in required}
+
+for check in checks:
+    name = check.get("name", "")
+    if name in records_by_name:
+        records_by_name[name].append(check)
+
+missing = []
+pending = []
+failed = []
+
+for name in required:
+    records = records_by_name[name]
+    if not records:
+        missing.append(name)
+        continue
+
+    buckets = [normalize_bucket(record) for record in records]
+    failing_buckets = sorted({bucket for bucket in buckets if bucket not in PASS_BUCKETS | PENDING_BUCKETS})
+    if failing_buckets:
+        failed.append(f"{name}={'+'.join(failing_buckets)}")
+        continue
+
+    if any(bucket in PASS_BUCKETS for bucket in buckets):
+        continue
+
+    waiting_buckets = sorted({bucket or "pending" for bucket in buckets})
+    pending.append(f"{name}={'+'.join(waiting_buckets) if waiting_buckets else 'pending'}")
+
+if failed:
+    print("fail")
+    print("failed: " + ", ".join(failed))
+elif missing or pending:
+    print("pending")
+    if missing:
+        print("missing: " + ", ".join(missing))
+    if pending:
+        print("pending: " + ", ".join(pending))
+else:
+    print("pass")
+PY
+}
+
+run_required_check_classifier_self_test() {
+  local required_check=$'Required Check'
+
+  run_case() {
+    local label="$1"
+    local description="$2"
+    local expected="$3"
+    local checks_json="$4"
+    local status_file
+    status_file="$(mktemp)"
+
+    CHECKS_JSON="${checks_json}" REQUIRED_CHECKS="${required_check}" classify_required_checks >"${status_file}"
+
+    local status
+    status="$(head -n 1 "${status_file}")"
+    local details
+    details="$(tail -n +2 "${status_file}")"
+    rm -f "${status_file}"
+
+    if [[ "${status}" != "${expected}" ]]; then
+      echo "sync-release-pr-generated self-test: FAIL ${label} (${description}); expected ${expected}, got ${status}" >&2
+      if [[ -n "${details}" ]]; then
+        echo "${details}" >&2
+      fi
+      exit 1
+    fi
+
+    echo "sync-release-pr-generated self-test: PASS ${label} (${description}) -> ${status}"
+    if [[ -n "${details}" ]]; then
+      echo "${details}"
+    fi
+  }
+
+  local skipped_newer_success_older
+  skipped_newer_success_older="$(cat <<'JSON'
+[
+  {
+    "name": "Required Check",
+    "bucket": "pass",
+    "startedAt": "2026-06-19T00:00:00Z",
+    "completedAt": "2026-06-19T00:01:00Z",
+    "headSha": "synthetic"
+  },
+  {
+    "name": "Required Check",
+    "bucket": "skipping",
+    "startedAt": "2026-06-19T00:02:00Z",
+    "completedAt": "2026-06-19T00:02:01Z",
+    "headSha": "synthetic"
+  }
+]
+JSON
+)"
+  run_case "A" "skipped newer + success older is satisfied" "pass" "${skipped_newer_success_older}"
+
+  local skipped_only
+  skipped_only="$(cat <<'JSON'
+[
+  {
+    "name": "Required Check",
+    "bucket": "skipping",
+    "startedAt": "2026-06-19T00:02:00Z",
+    "completedAt": "2026-06-19T00:02:01Z",
+    "headSha": "synthetic"
+  }
+]
+JSON
+)"
+  run_case "B" "skipped only is not satisfied" "pending" "${skipped_only}"
+
+  local failure_instance
+  failure_instance="$(cat <<'JSON'
+[
+  {
+    "name": "Required Check",
+    "bucket": "pass",
+    "startedAt": "2026-06-19T00:00:00Z",
+    "completedAt": "2026-06-19T00:01:00Z",
+    "headSha": "synthetic"
+  },
+  {
+    "name": "Required Check",
+    "bucket": "failure",
+    "startedAt": "2026-06-19T00:03:00Z",
+    "completedAt": "2026-06-19T00:03:01Z",
+    "headSha": "synthetic"
+  }
+]
+JSON
+)"
+  run_case "C" "any failure instance fails" "fail" "${failure_instance}"
+
+  local success_only
+  success_only="$(cat <<'JSON'
+[
+  {
+    "name": "Required Check",
+    "bucket": "pass",
+    "startedAt": "2026-06-19T00:00:00Z",
+    "completedAt": "2026-06-19T00:01:00Z",
+    "headSha": "synthetic"
+  }
+]
+JSON
+)"
+  run_case "D" "success only is satisfied" "pass" "${success_only}"
+
+  echo "sync-release-pr-generated self-test: PASS"
+}
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  run_required_check_classifier_self_test
+  exit 0
+fi
+
 release_branch="${1:-}"
 if [[ -z "${release_branch}" ]]; then
-  echo "sync-release-pr-generated: FAIL (usage: $0 <release-branch>)" >&2
+  echo "sync-release-pr-generated: FAIL (usage: $0 <release-branch>|--self-test)" >&2
   exit 1
 fi
 
@@ -191,10 +395,8 @@ PY
 wait_for_required_checks() {
   local timeout_seconds="${RELEASE_PR_CHECK_TIMEOUT_SECONDS:-2400}"
   local interval_seconds="${RELEASE_PR_CHECK_INTERVAL_SECONDS:-15}"
-  local required_checks="${RELEASE_PR_READY_CHECKS:-}"
-  if [[ -z "${required_checks}" ]]; then
-    required_checks=$'Version alignment\nGo (test + vet)\nTypeScript (npm pack)\nPython (build wheel + sdist)\nContract tests (fixtures)'
-  fi
+  local required_checks
+  required_checks="$(release_pr_required_checks)"
 
   local deadline=$((SECONDS + timeout_seconds))
 
@@ -204,53 +406,7 @@ wait_for_required_checks() {
 
     local status_file
     status_file="$(mktemp)"
-    CHECKS_JSON="${checks_json}" REQUIRED_CHECKS="${required_checks}" python3 - >"${status_file}" <<'PY'
-import json
-import os
-
-checks = json.loads(os.environ.get("CHECKS_JSON") or "[]")
-required = [line for line in os.environ["REQUIRED_CHECKS"].splitlines() if line]
-
-latest = {}
-for check in checks:
-    name = check.get("name", "")
-    if name not in required:
-        continue
-    # Manual reruns and workflow_dispatch can attach multiple check runs to the
-    # same PR head. Keep the newest status per required check.
-    timestamp = check.get("startedAt") or check.get("completedAt") or ""
-    if name not in latest or timestamp >= latest[name][0]:
-        latest[name] = (timestamp, check)
-
-missing = []
-pending = []
-failed = []
-
-for name in required:
-    record = latest.get(name)
-    if record is None:
-        missing.append(name)
-        continue
-    bucket = record[1].get("bucket", "")
-    if bucket == "pass":
-        continue
-    if bucket in {"pending", "skipping", ""}:
-        pending.append(f"{name}={bucket or 'pending'}")
-        continue
-    failed.append(f"{name}={bucket}")
-
-if failed:
-    print("fail")
-    print("failed: " + ", ".join(failed))
-elif missing or pending:
-    print("pending")
-    if missing:
-        print("missing: " + ", ".join(missing))
-    if pending:
-        print("pending: " + ", ".join(pending))
-else:
-    print("pass")
-PY
+    CHECKS_JSON="${checks_json}" REQUIRED_CHECKS="${required_checks}" classify_required_checks >"${status_file}"
 
     local status
     status="$(head -n 1 "${status_file}")"
@@ -295,10 +451,8 @@ PY
 wait_for_required_checks_to_start() {
   local timeout_seconds="${RELEASE_PR_CHECK_START_TIMEOUT_SECONDS:-300}"
   local interval_seconds="${RELEASE_PR_CHECK_INTERVAL_SECONDS:-15}"
-  local required_checks="${RELEASE_PR_READY_CHECKS:-}"
-  if [[ -z "${required_checks}" ]]; then
-    required_checks=$'Version alignment\nGo (test + vet)\nTypeScript (npm pack)\nPython (build wheel + sdist)\nContract tests (fixtures)'
-  fi
+  local required_checks
+  required_checks="$(release_pr_required_checks)"
 
   local deadline=$((SECONDS + timeout_seconds))
 
