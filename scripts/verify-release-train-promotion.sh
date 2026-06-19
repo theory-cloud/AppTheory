@@ -293,7 +293,13 @@ def classify(base: str, head: str) -> PromotionPlan:
                     "invalid release-train PR "
                     f"{head} → staging; staging only accepts main → staging release back-merges from release branches",
                 )
-            return PromotionPlan(True, VALID_PROMOTIONS[(head, base)], ancestor_branch="staging", descendant_branch=head)
+            # A stable back-merge is allowed to reconcile a current staging head
+            # that has moved ahead of main after the stable release was cut. The
+            # protected invariant is that main remains connected to the premain
+            # train line; requiring the transient staging tip itself to be an
+            # ancestor of main falsely rejects legitimate back-merges while not
+            # adding protection against merge-around-the-train paths.
+            return PromotionPlan(True, VALID_PROMOTIONS[(head, base)], ancestor_branch="premain", descendant_branch=head)
 
         return PromotionPlan(
             True,
@@ -364,6 +370,9 @@ def validate(
     assert plan.ancestor_branch is not None
     assert plan.descendant_branch is not None
 
+    if base_ref and base in RELEASE_BRANCHES and plan.ancestor_branch != base:
+        resolve_branch_ref(remote, base, base_ref)
+
     ancestor_ref = resolve_branch_ref(
         remote,
         plan.ancestor_branch,
@@ -416,6 +425,25 @@ def validate(
             fail(f"event head SHA does not match resolved PR head ref {descendant_ref!r}")
 
     if not is_ancestor(ancestor_ref, descendant_ref):
+        if (
+            base == "staging"
+            and head == "main"
+            and plan.ancestor_branch == "premain"
+            and plan.descendant_branch == "main"
+            and is_ancestor(descendant_ref, ancestor_ref)
+        ):
+            print(f"release-train-promotion: PASS ({plan.message}; {head} → {base})")
+            return
+        if (
+            base == "staging"
+            and head == "main"
+            and plan.ancestor_branch == "premain"
+            and plan.descendant_branch == "main"
+        ):
+            fail(
+                "premain and main have diverged; recreate the release-train PR from the current "
+                "branch heads and do not merge around staging → premain → main → staging"
+            )
         if base == "staging" and head not in RELEASE_BRANCHES:
             fail(
                 "staging PR branch does not contain the current main baseline; "
@@ -715,11 +743,63 @@ def self_test_git_topology() -> None:
                 contains="current main baseline",
             )
 
+            run(["git", "switch", "-q", "main"])
+            run(["git", "merge", "-q", "--ff-only", "premain"])
+            commit_marker("main-stable-release")
+            run(["git", "push", "-q", "--force", "origin", "main"])
+            if is_ancestor("staging", "main"):
+                raise AssertionError("self-test back-merge must allow staging to diverge from main")
+            if not is_ancestor("premain", "main"):
+                raise AssertionError("self-test stable main must descend from premain")
+            assert_validation(
+                "staging",
+                "main",
+                0,
+                base_ref="staging",
+                head_ref="main",
+                head_sha=commit_sha("main"),
+                contains="main → staging stable back-merge",
+            )
+            print("release-train-promotion: positive main → staging back-merge topology accepted")
+
+            run(["git", "switch", "-q", "premain"])
+            run(["git", "merge", "-q", "--ff-only", "main"])
+            commit_marker("premain-next-rc")
+            run(["git", "push", "-q", "--force", "origin", "premain"])
+            run(["git", "fetch", "-q", "origin", "premain"])
+            if not is_ancestor("main", "premain"):
+                raise AssertionError("self-test current premain should be allowed to advance after main")
+            assert_validation(
+                "staging",
+                "main",
+                0,
+                base_ref="staging",
+                head_ref="main",
+                head_sha=commit_sha("main"),
+                contains="main → staging stable back-merge",
+            )
+            print("release-train-promotion: positive main → staging back-merge with advanced premain accepted")
+
+            run(["git", "switch", "-q", "--detach", "main~2"])
+            run(["git", "switch", "-q", "-c", "main-around-premain"])
+            commit_marker("main-around-premain")
+            run(["git", "push", "-q", "--force", "origin", "main-around-premain:main"])
+            run(["git", "fetch", "-q", "origin", "main"])
+            assert_validation(
+                "staging",
+                "main",
+                1,
+                base_ref="staging",
+                head_sha=commit_sha("refs/remotes/origin/main"),
+                contains="premain and main have diverged",
+            )
+            print("release-train-promotion: negative main → staging merge-around topology rejected")
+
 
 def self_test() -> None:
     assert_plan("premain", "staging", True, "premain", "staging")
     assert_plan("main", "premain", True, "main", "premain")
-    assert_plan("staging", "main", True, "staging", "main")
+    assert_plan("staging", "main", True, "premain", "main")
     assert_plan("premain", PREMAIN_RELEASE_PLEASE_BRANCH, True, "premain", PREMAIN_RELEASE_PLEASE_BRANCH)
     assert_plan("main", MAIN_RELEASE_PLEASE_BRANCH, True, "main", MAIN_RELEASE_PLEASE_BRANCH)
     assert_plan("staging", "feature/release-fix", True, "main", "feature/release-fix")
