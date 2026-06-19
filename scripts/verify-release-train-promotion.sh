@@ -137,6 +137,14 @@ def is_ancestor(ancestor_ref: str, descendant_ref: str) -> bool:
     return run(["git", "merge-base", "--is-ancestor", ancestor_ref, descendant_ref], check=False).returncode == 0
 
 
+def target_has_no_extra_non_merge_content(ancestor_ref: str, descendant_ref: str) -> bool:
+    # Direction is source..target: count non-merge commits reachable from the
+    # target branch but not the source branch. Merge commits alone may diverge
+    # topologically, but any non-merge content on the target means merge-around.
+    result = run(["git", "rev-list", "--no-merges", "--count", f"{descendant_ref}..{ancestor_ref}"])
+    return result.stdout.strip() == "0"
+
+
 def github_api_json(repository: str, path: str) -> dict[str, object]:
     repository = normalize_repository(repository)
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
@@ -449,6 +457,13 @@ def validate(
                 "staging PR branch does not contain the current main baseline; "
                 "merge origin/main into the PR branch before targeting staging"
             )
+        if (
+            plan.ancestor_branch in RELEASE_BRANCHES
+            and plan.descendant_branch in RELEASE_BRANCHES
+            and target_has_no_extra_non_merge_content(ancestor_ref, descendant_ref)
+        ):
+            print(f"release-train-promotion: PASS ({plan.message}; {head} → {base})")
+            return
         fail(
             f"{plan.ancestor_branch} is not an ancestor of {plan.descendant_branch}; "
             "recreate the release-train PR from the current branch heads and do not merge around "
@@ -613,6 +628,14 @@ def self_test_git_topology() -> None:
             build_release_train_self_test_repo()
             if not is_ancestor("premain", "staging"):
                 raise AssertionError("self-test topology must keep premain as an ancestor of staging")
+            original_premain = commit_sha("premain")
+            original_staging = commit_sha("staging")
+
+            def restore_staging_premain() -> None:
+                run(["git", "switch", "-q", "main"])
+                run(["git", "branch", "-f", "premain", original_premain])
+                run(["git", "branch", "-f", "staging", original_staging])
+                run(["git", "push", "-q", "--force", "origin", "premain", "staging"])
 
             assert_validation(
                 "premain",
@@ -631,6 +654,44 @@ def self_test_git_topology() -> None:
                 contains="staging → premain prerelease promotion",
             )
             print("release-train-promotion: positive staging → premain topology accepted")
+            run(["git", "switch", "-q", "premain"])
+            run(["git", "merge", "-q", "--no-ff", "-m", "merge staging into premain", "staging"])
+            run(["git", "push", "-q", "--force", "origin", "premain"])
+            run(["git", "switch", "-q", "staging"])
+            commit_marker("staging-after-premain-merge")
+            run(["git", "push", "-q", "--force", "origin", "staging"])
+            if is_ancestor("premain", "staging"):
+                raise AssertionError("benign merge divergence must not preserve literal premain → staging ancestry")
+            benign_count = run(["git", "rev-list", "--no-merges", "--count", "staging..premain"]).stdout.strip()
+            if benign_count != "0":
+                raise AssertionError(f"benign merge divergence should leave no extra target content, got {benign_count}")
+            assert_validation(
+                "premain",
+                "staging",
+                0,
+                base_ref="premain",
+                head_ref="staging",
+                contains="staging → premain prerelease promotion",
+            )
+            print("release-train-promotion: positive staging → premain benign merge divergence accepted")
+            restore_staging_premain()
+
+            run(["git", "switch", "-q", "premain"])
+            commit_marker("rogue-premain-direct")
+            run(["git", "push", "-q", "--force", "origin", "premain"])
+            rogue_count = run(["git", "rev-list", "--no-merges", "--count", "staging..premain"]).stdout.strip()
+            if rogue_count == "0":
+                raise AssertionError("rogue target commit should leave extra non-merge content")
+            assert_validation(
+                "premain",
+                "staging",
+                1,
+                base_ref="premain",
+                head_ref="staging",
+                contains="premain is not an ancestor of staging",
+            )
+            print("release-train-promotion: negative staging → premain rogue target content rejected")
+            restore_staging_premain()
             assert_validation(
                 "premain",
                 "staging",
