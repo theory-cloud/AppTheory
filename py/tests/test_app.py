@@ -769,11 +769,12 @@ class TestApp(unittest.TestCase):
                     "eventSource": "aws:dynamodb",
                     "eventSourceARN": "arn:aws:dynamodb:us-east-1:000000000000:table/t/stream/1",
                     "eventID": "e1",
+                    "dynamodb": {"SequenceNumber": "seq-e1"},
                 },
             ]
         }
         out2 = app.handle_lambda(ddb)
-        self.assertEqual(out2, {"batchItemFailures": [{"itemIdentifier": "e1"}]})
+        self.assertEqual(out2, {"batchItemFailures": [{"itemIdentifier": "seq-e1"}]})
 
         kin = {
             "Records": [
@@ -781,11 +782,12 @@ class TestApp(unittest.TestCase):
                     "eventSource": "aws:kinesis",
                     "eventSourceARN": "arn:aws:kinesis:us-east-1:000000000000:stream/s",
                     "eventID": "k1",
+                    "kinesis": {"sequenceNumber": "seq-k1"},
                 },
             ]
         }
         out3 = app.handle_lambda(kin)
-        self.assertEqual(out3, {"batchItemFailures": [{"itemIdentifier": "k1"}]})
+        self.assertEqual(out3, {"batchItemFailures": [{"itemIdentifier": "seq-k1"}]})
 
         sns = {
             "Records": [

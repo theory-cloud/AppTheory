@@ -26,8 +26,39 @@ require_not_contains() {
   fi
 }
 
+require_job_without_if() {
+  local path="$1"
+  local job="$2"
+  local description="$3"
+
+  if awk -v job="  ${job}:" '
+    $0 == job { in_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
+    in_job && /^    if:/ { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "${path}"; then
+    fail "${description}; job-level if is not allowed"
+  fi
+}
+
 ci=".github/workflows/ci.yml"
 
+require_contains "${ci}" "  release-security-gates:" \
+  "CI must define non-skipped release/security gates independent of the full rubric"
+require_contains "${ci}" "name: Release/security gates" \
+  "CI must keep the release/security gate check name stable for branch protection visibility"
+require_job_without_if "${ci}" "release-security-gates" \
+  "release/security gates must not be skipped by branch or dispatch conditions"
+require_contains "${ci}" "bash scripts/verify-branch-release-supply-chain.sh" \
+  "release/security gates must verify release supply-chain workflow wiring"
+require_contains "${ci}" "bash scripts/verify-release-train-promotion.sh --self-test" \
+  "release/security gates must exercise release train provenance self-tests"
+require_contains "${ci}" "bash scripts/verify-ci-rubric-enforced.sh" \
+  "release/security gates must verify CI rubric enforcement invariants"
+require_contains "${ci}" "bash scripts/verify-release-workflows.sh" \
+  "release/security gates must verify release workflow invariants"
+require_contains "${ci}" "bash scripts/verify-release-cycle.sh" \
+  "release/security gates must verify deterministic release-cycle fixtures"
 require_contains "${ci}" "  rubric:" "CI must define the full rubric job"
 require_contains "${ci}" "run: make rubric" "CI rubric job must run make rubric"
 require_contains "${ci}" "run_full_rubric:" \

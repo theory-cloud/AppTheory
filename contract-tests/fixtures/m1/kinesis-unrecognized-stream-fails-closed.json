@@ -47,10 +47,9 @@
   "expect": {
     "output_json": {
       "batchItemFailures": [
-        { "itemIdentifier": "kin-1" },
-        { "itemIdentifier": "kin-2" }
+        { "itemIdentifier": "1" },
+        { "itemIdentifier": "2" }
       ]
     }
   }
 }
-

@@ -24,6 +24,7 @@ from pathlib import Path
 RELEASE_BRANCHES = {"staging", "premain", "main"}
 PREMAIN_RELEASE_PLEASE_BRANCH = "release-please--branches--premain"
 MAIN_RELEASE_PLEASE_BRANCH = "release-please--branches--main"
+RELEASE_PLEASE_BRANCHES = {PREMAIN_RELEASE_PLEASE_BRANCH, MAIN_RELEASE_PLEASE_BRANCH}
 RC_VERSION_RE = re.compile(r"\bv?[0-9]+\.[0-9]+\.[0-9]+-rc(?:\.[0-9]+)?\b", re.IGNORECASE)
 VALID_PROMOTIONS = {
     ("staging", "premain"): "staging → premain prerelease promotion",
@@ -199,6 +200,52 @@ def github_compare_is_ancestor(repository: str, ancestor_sha: str, descendant_sh
     return compare_response_is_ancestor(payload, ancestor_sha)
 
 
+def trusted_release_please_head_ref(
+    head: str,
+    remote: str,
+    head_ref: str | None,
+    expected_head_sha: str | None,
+    github_repository: str | None,
+    github_head_repository: str | None,
+) -> str:
+    if head not in RELEASE_PLEASE_BRANCHES:
+        raise AssertionError(f"{head!r} is not a release-please branch")
+    if not github_repository:
+        fail("GitHub repository is required to verify generated release-please branch provenance")
+    if not github_head_repository:
+        fail("GitHub head repository is required to verify generated release-please branch provenance")
+    if expected_head_sha is None:
+        fail(f"event head SHA is required to verify generated release-please branch {head}")
+
+    repository = normalize_repository(github_repository)
+    head_repository = normalize_repository(github_head_repository)
+    if repository.lower() != head_repository.lower():
+        fail(
+            f"generated release-please PR head {head} must originate from trusted repository "
+            f"{repository}; got {head_repository}"
+        )
+
+    trusted_ref = trusted_release_ref(remote, head)
+    trusted_sha = commit_sha(trusted_ref).lower()
+    if expected_head_sha != trusted_sha:
+        fail(
+            f"event head SHA for generated release-please branch {head} "
+            f"does not match trusted {remote}/{head}"
+        )
+
+    if head_ref is not None:
+        if not ref_exists(head_ref):
+            fail(f"could not resolve explicit ref {head_ref!r} for generated release-please branch {head}")
+        explicit_sha = commit_sha(head_ref).lower()
+        if explicit_sha != trusted_sha:
+            fail(
+                f"explicit ref {head_ref!r} for generated release-please branch {head} "
+                f"does not match trusted {remote}/{head}"
+            )
+
+    return trusted_ref
+
+
 def expected_base_for_release_head(head: str) -> str:
     if head == "staging":
         return "premain"
@@ -291,6 +338,16 @@ def validate(
         fail("generated main release-please PR must be stable-shaped, not RC-shaped")
 
     expected_head_sha = normalize_sha(head_sha, "head SHA") if head_sha else None
+    trusted_release_please_ref = None
+    if head in RELEASE_PLEASE_BRANCHES:
+        trusted_release_please_ref = trusted_release_please_head_ref(
+            head,
+            remote,
+            head_ref,
+            expected_head_sha,
+            github_repository,
+            github_head_repository,
+        )
 
     if plan.non_release_pr:
         print(f"release-train-promotion: PASS ({plan.message}; {head} → {base})")
@@ -318,6 +375,7 @@ def validate(
         and expected_head_sha is not None
         and head_ref is None
         and head not in RELEASE_BRANCHES
+        and trusted_release_please_ref is None
     ):
         compare_repository = github_head_repository or github_repository
         if not compare_repository:
@@ -337,11 +395,14 @@ def validate(
         print(f"release-train-promotion: PASS ({plan.message}; {head} → {base})")
         return
 
-    descendant_ref = resolve_branch_ref(
-        remote,
-        plan.descendant_branch,
-        head_ref if plan.descendant_branch == head else None,
-    )
+    if trusted_release_please_ref is not None and plan.descendant_branch == head:
+        descendant_ref = trusted_release_please_ref
+    else:
+        descendant_ref = resolve_branch_ref(
+            remote,
+            plan.descendant_branch,
+            head_ref if plan.descendant_branch == head else None,
+        )
 
     if plan.descendant_branch == head and expected_head_sha is not None:
         actual_head_sha = commit_sha(descendant_ref).lower()
@@ -573,8 +634,45 @@ def self_test_git_topology() -> None:
                 0,
                 base_ref="premain",
                 head_ref=PREMAIN_RELEASE_PLEASE_BRANCH,
+                head_sha=commit_sha(PREMAIN_RELEASE_PLEASE_BRANCH),
+                github_repository="theory-cloud/AppTheory",
+                github_head_repository="theory-cloud/AppTheory",
                 pr_title="chore: release 1.0.1-rc.1",
                 contains="generated premain RC release-please PR",
+            )
+            assert_validation(
+                "premain",
+                PREMAIN_RELEASE_PLEASE_BRANCH,
+                1,
+                base_ref="premain",
+                head_sha=commit_sha(PREMAIN_RELEASE_PLEASE_BRANCH),
+                github_repository="theory-cloud/AppTheory",
+                github_head_repository="fork-owner/AppTheory",
+                pr_title="chore: release 1.0.1-rc.1",
+                contains="must originate from trusted repository",
+            )
+            assert_validation(
+                "premain",
+                PREMAIN_RELEASE_PLEASE_BRANCH,
+                1,
+                base_ref="premain",
+                head_sha=commit_sha("refs/remotes/origin/pr/1/head"),
+                github_repository="theory-cloud/AppTheory",
+                github_head_repository="theory-cloud/AppTheory",
+                pr_title="chore: release 1.0.1-rc.1",
+                contains="does not match trusted origin/release-please--branches--premain",
+            )
+            assert_validation(
+                "premain",
+                PREMAIN_RELEASE_PLEASE_BRANCH,
+                1,
+                base_ref="premain",
+                head_ref="refs/remotes/origin/pr/1/head",
+                head_sha=commit_sha(PREMAIN_RELEASE_PLEASE_BRANCH),
+                github_repository="theory-cloud/AppTheory",
+                github_head_repository="theory-cloud/AppTheory",
+                pr_title="chore: release 1.0.1-rc.1",
+                contains="explicit ref 'refs/remotes/origin/pr/1/head' for generated release-please branch",
             )
             assert_validation(
                 "main",
@@ -582,6 +680,9 @@ def self_test_git_topology() -> None:
                 0,
                 base_ref="main",
                 head_ref=MAIN_RELEASE_PLEASE_BRANCH,
+                head_sha=commit_sha(MAIN_RELEASE_PLEASE_BRANCH),
+                github_repository="theory-cloud/AppTheory",
+                github_head_repository="theory-cloud/AppTheory",
                 pr_title="chore: release 1.0.1",
                 contains="generated main stable release-please PR",
             )
@@ -591,6 +692,9 @@ def self_test_git_topology() -> None:
                 1,
                 base_ref="main",
                 head_ref=MAIN_RELEASE_PLEASE_BRANCH,
+                head_sha=commit_sha(MAIN_RELEASE_PLEASE_BRANCH),
+                github_repository="theory-cloud/AppTheory",
+                github_head_repository="theory-cloud/AppTheory",
                 pr_title="chore: release 1.0.1-rc.1",
                 contains="rejects RC-shaped",
             )
