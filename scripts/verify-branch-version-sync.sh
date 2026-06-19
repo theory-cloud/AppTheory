@@ -10,6 +10,12 @@ set -euo pipefail
 # - `premain` receives that baseline only through `staging` -> `premain` promotions
 # If `staging` or `premain` drift from the latest stable baseline on `main`,
 # prereleases can get stuck on an old major/minor track.
+#
+# Pull requests are validated from the checked-out content. In particular, a
+# premain -> main PR is checked as the PR merge content, not by re-reading the
+# live origin/premain tip. The merge content is where the current main stable
+# manifest is preserved while the premain prerelease track is promoted; the
+# subsequent main -> staging -> premain edges reset the protected premain tip.
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   # `scripts/verify-builds.sh` runs rubric in git-less working copies; this verifier needs git metadata.
@@ -42,6 +48,95 @@ git_fetch_retry() {
     i=$((i + 1))
   done
 }
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  script_path="${BASH_SOURCE[0]}"
+  tmp_dir="$(mktemp -d)"
+  cleanup() {
+    rm -rf "${tmp_dir}"
+  }
+  trap cleanup EXIT
+
+  mkdir -p "${tmp_dir}/repo/scripts"
+  cp "${script_path}" "${tmp_dir}/repo/scripts/verify-branch-version-sync.sh"
+
+  cd "${tmp_dir}/repo"
+  git init --quiet --initial-branch=main
+  git config user.email "apptheory-branch-version-sync@example.invalid"
+  git config user.name "AppTheory Branch Version Sync Self Test"
+
+  write_manifests() {
+    local stable="$1"
+    local premain="$2"
+    printf '{\n  ".": "%s"\n}\n' "${stable}" >.release-please-manifest.json
+    printf '{\n  ".": "%s"\n}\n' "${premain}" >.release-please-manifest.premain.json
+  }
+
+  commit_manifests() {
+    local message="$1"
+    git add .release-please-manifest.json .release-please-manifest.premain.json
+    git commit --quiet -m "${message}"
+  }
+
+  write_manifests "1.13.0" "1.13.0"
+  commit_manifests "main stable baseline"
+
+  remote_path="${tmp_dir}/origin.git"
+  git init --quiet --bare "${remote_path}"
+  git remote add origin "${remote_path}"
+  git push --quiet origin main
+
+  git switch --quiet -c premain
+  write_manifests "1.12.2" "1.13.1-rc"
+  commit_manifests "stale premain stable manifest"
+  git push --quiet origin premain
+
+  git switch --quiet main
+
+  run_self_test_case() {
+    local label="$1"
+    local expected_exit="$2"
+    local expected_output="$3"
+    local output
+    set +e
+    output="$(
+      GITHUB_BASE_REF=main \
+      GITHUB_HEAD_REF=premain \
+      GIT_FETCH_RETRIES=1 \
+      GIT_FETCH_RETRY_SLEEP_SECS=0 \
+      bash scripts/verify-branch-version-sync.sh 2>&1
+    )"
+    local status=$?
+    set -e
+    if [[ "${status}" != "${expected_exit}" ]]; then
+      echo "branch-version-sync: self-test FAIL (${label}; expected exit ${expected_exit}, got ${status})"
+      echo "${output}"
+      exit 1
+    fi
+    if [[ "${output}" != *"${expected_output}"* ]]; then
+      echo "branch-version-sync: self-test FAIL (${label}; missing ${expected_output@Q})"
+      echo "${output}"
+      exit 1
+    fi
+    echo "branch-version-sync: self-test ${label} PASS"
+  }
+
+  # Valid premain -> main PR merge content keeps main's stable manifest while
+  # promoting premain's prerelease track. The live origin/premain stable
+  # manifest is intentionally stale in this fixture; the gate must not read it
+  # for main-promotion mode.
+  write_manifests "1.13.0" "1.13.1-rc"
+  run_self_test_case "main-promotion merge content" 0 "branch-version-sync: PASS"
+
+  write_manifests "1.12.2" "1.13.1-rc"
+  run_self_test_case "stale stable manifest rejected" 1 ".release-please-manifest.json 1.12.2 != origin/main 1.13.0"
+
+  write_manifests "1.13.0" "1.12.2-rc"
+  run_self_test_case "behind prerelease track rejected" 1 "prerelease track 1.12.2-rc is behind main 1.13.0"
+
+  echo "branch-version-sync: self-test PASS"
+  exit 0
+fi
 
 base_ref="${GITHUB_BASE_REF:-}"
 head_ref="${GITHUB_HEAD_REF:-}"
@@ -105,11 +200,13 @@ subject_label="premain"
 premain_stable=""
 premain_version=""
 
-if [[ "${mode}" == "premain" || "${mode}" == "staging-promotion" || "${mode}" == "staging" ]]; then
+if [[ "${mode}" == "premain" || "${mode}" == "staging-promotion" || "${mode}" == "staging" || "${mode}" == "main-promotion" ]]; then
   if [[ "${mode}" == "staging-promotion" ]]; then
     subject_label="staging->premain promotion"
   elif [[ "${mode}" == "staging" ]]; then
     subject_label="staging"
+  elif [[ "${mode}" == "main-promotion" ]]; then
+    subject_label="premain->main promotion"
   fi
   premain_stable="$(
     python3 - <<'PY'
@@ -129,31 +226,6 @@ data = json.loads(
     Path(".release-please-manifest.premain.json").read_text(encoding="utf-8")
 )
 print(data.get(".", ""))
-PY
-  )"
-else
-  git_fetch_retry origin premain
-
-  premain_stable="$(
-    python3 - <<'PY'
-import json
-import subprocess
-
-data = subprocess.check_output(
-    ["git", "show", "origin/premain:.release-please-manifest.json"], text=True
-)
-print(json.loads(data).get(".", ""))
-PY
-  )"
-  premain_version="$(
-    python3 - <<'PY'
-import json
-import subprocess
-
-data = subprocess.check_output(
-    ["git", "show", "origin/premain:.release-please-manifest.premain.json"], text=True
-)
-print(json.loads(data).get(".", ""))
 PY
   )"
 fi
