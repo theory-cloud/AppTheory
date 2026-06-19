@@ -37,6 +37,41 @@ pr_state_line() {
     2>/dev/null || true
 }
 
+required_checks_passed=false
+synced_head=""
+
+exit_if_benign_merged_release_pr() {
+  local context="$1"
+  local current_pr_line="${2:-}"
+  if [[ -z "${current_pr_line}" ]]; then
+    current_pr_line="$(pr_state_line)"
+  fi
+  if [[ -z "${current_pr_line}" ]]; then
+    return 1
+  fi
+
+  local current_pr_state
+  local current_pr_head
+  current_pr_state="${current_pr_line%%$'\t'*}"
+  current_pr_head="${current_pr_line##*$'\t'}"
+
+  if [[ "${current_pr_state}" != "MERGED" ]]; then
+    return 1
+  fi
+
+  if [[ "${required_checks_passed}" != "true" || -z "${synced_head}" ]]; then
+    return 1
+  fi
+
+  if [[ "${current_pr_head}" != "${synced_head}" ]]; then
+    echo "sync-release-pr-generated: FAIL (PR #${pr_number} merged ${context}; expected head ${synced_head}, found ${current_pr_head})"
+    exit 1
+  fi
+
+  echo "sync-release-pr-generated: PASS (${release_branch} already merged after generated artifacts and required checks matched ${synced_head})"
+  exit 0
+}
+
 ensure_release_pr_is_draft() {
   local context="$1"
   local current_pr_line
@@ -53,6 +88,7 @@ ensure_release_pr_is_draft() {
   current_pr_is_draft="${current_pr_is_draft%%$'\t'*}"
 
   if [[ "${current_pr_state}" != "OPEN" ]]; then
+    exit_if_benign_merged_release_pr "${context}" "${current_pr_line}" || true
     echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} ${context})"
     exit 1
   fi
@@ -93,9 +129,12 @@ collect_check_records() {
   current_pr_state="${current_pr_line%%$'\t'*}"
   current_pr_head="${current_pr_line##*$'\t'}"
 
-  if [[ "${current_pr_state}" != "OPEN" ]]; then
+  if [[ "${current_pr_state}" != "OPEN" && "${current_pr_state}" != "MERGED" ]]; then
     echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} while reading checks)" >&2
     return 1
+  fi
+  if [[ "${current_pr_state}" == "MERGED" ]]; then
+    echo "sync-release-pr-generated: PR #${pr_number} merged while reading checks; verifying required checks on ${current_pr_head}" >&2
   fi
 
   local repo
@@ -353,6 +392,7 @@ wait_for_pr_head() {
     current_pr_head="${current_pr_line##*$'\t'}"
 
     if [[ "${current_pr_state}" != "OPEN" ]]; then
+      exit_if_benign_merged_release_pr "before head ${expected_head} was visible" "${current_pr_line}" || true
       echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} before head ${expected_head} was visible)"
       exit 1
     fi
@@ -388,6 +428,7 @@ require_pr_head() {
   current_pr_head="${current_pr_line##*$'\t'}"
 
   if [[ "${current_pr_state}" != "OPEN" ]]; then
+    exit_if_benign_merged_release_pr "${context}" "${current_pr_line}" || true
     echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} ${context})"
     exit 1
   fi
@@ -465,11 +506,16 @@ require_pr_head "${synced_head}" "before dispatching independent required checks
 dispatch_required_checks
 wait_for_required_checks_to_start
 wait_for_required_checks
+required_checks_passed=true
 
 require_pr_head "${synced_head}" "after required checks passed"
 ensure_release_pr_is_draft "before marking generated-artifact-synced PR ready"
 require_pr_head "${synced_head}" "before marking generated-artifact-synced PR ready"
-gh pr ready "${pr_number}"
+if ! gh pr ready "${pr_number}"; then
+  exit_if_benign_merged_release_pr "while marking generated-artifact-synced PR ready" || true
+  echo "sync-release-pr-generated: FAIL (PR #${pr_number} could not be marked ready after generated artifacts and required checks matched ${synced_head})"
+  exit 1
+fi
 
 current_pr_line="$(pr_state_line)"
 if [[ -z "${current_pr_line}" ]]; then
@@ -481,6 +527,7 @@ current_pr_is_draft="${current_pr_line#*$'\t'}"
 current_pr_is_draft="${current_pr_is_draft%%$'\t'*}"
 current_pr_head="${current_pr_line##*$'\t'}"
 if [[ "${current_pr_state}" != "OPEN" ]]; then
+  exit_if_benign_merged_release_pr "after marking ready" "${current_pr_line}" || true
   echo "sync-release-pr-generated: FAIL (PR #${pr_number} is ${current_pr_state} after marking ready)"
   exit 1
 fi
