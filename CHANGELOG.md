@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.13.1](https://github.com/theory-cloud/AppTheory/compare/v1.13.0...v1.13.1) (2026-06-19)
+
+
+### Bug Fixes
+
+* address staging CI rubric failures ([ad30fa1](https://github.com/theory-cloud/AppTheory/commit/ad30fa124fdb7c8da6563070e34ce93dba5d7b83))
+* **deps:** pin TableTheory v1.10.1 ([346feba](https://github.com/theory-cloud/AppTheory/commit/346feba05d771378292594f2e0011a00661003a6))
+* remediate stream batch IDs and release gates ([75edcf7](https://github.com/theory-cloud/AppTheory/commit/75edcf7ddd1d967e01a08ca9504f5204c5133205))
+
 ## [1.13.1-rc](https://github.com/theory-cloud/AppTheory/compare/v1.13.0...v1.13.1-rc) (2026-06-18)
 
 
