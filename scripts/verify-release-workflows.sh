@@ -5,6 +5,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 python3 - <<'PY'
 import subprocess
+import re
 from pathlib import Path
 
 
@@ -65,6 +66,20 @@ def require_step_contains(path: str, step_name: str, needle: str, description: s
         )
 
 
+def require_job_contains(path: str, job_name: str, needle: str, description: str) -> None:
+    text = Path(path).read_text(encoding="utf-8")
+    match = re.search(
+        rf"(?ms)^  {re.escape(job_name)}:\n(?P<block>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        text,
+    )
+    if not match:
+        raise SystemExit(f"release-workflows: FAIL ({description}; missing job {job_name!r} in {path})")
+    if needle not in match.group("block"):
+        raise SystemExit(
+            f"release-workflows: FAIL ({description}; missing {needle!r} in {job_name!r} job in {path})"
+        )
+
+
 require_order(
     ".github/workflows/prerelease.yml",
     "Verify branch version sync (release preflight)",
@@ -111,6 +126,53 @@ for workflow in (".github/workflows/prerelease.yml", ".github/workflows/release.
         "concurrency:",
         "permissions:",
         "release publisher concurrency must be declared before jobs so the whole publisher workflow is serialized",
+    )
+release_pr_concurrency = {
+    ".github/workflows/prerelease-pr.yml": (
+        "concurrency:\n"
+        "  group: release-pr-${{ github.repository }}-release-please--branches--premain\n"
+        "  cancel-in-progress: false"
+    ),
+    ".github/workflows/release-pr.yml": (
+        "concurrency:\n"
+        "  group: release-pr-${{ github.repository }}-release-please--branches--main\n"
+        "  cancel-in-progress: false"
+    ),
+}
+for workflow, snippet in release_pr_concurrency.items():
+    require_contains(
+        workflow,
+        snippet,
+        "generated release PR workflows must serialize per release PR without cancelling an active sync",
+    )
+    require_not_contains(
+        workflow,
+        "cancel-in-progress: true",
+        "generated release PR workflows must queue overlapping runs instead of cancelling an active sync",
+    )
+    require_order(
+        workflow,
+        "workflow_dispatch",
+        "concurrency:",
+        "generated release PR concurrency must apply at workflow scope, including workflow_dispatch reruns",
+    )
+    require_order(
+        workflow,
+        "concurrency:",
+        "jobs:",
+        "generated release PR concurrency must be declared before jobs so PR sync is serialized",
+    )
+release_please_draft_guard = (
+    "if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || "
+    "(github.event.pull_request.head.ref != 'release-please--branches--premain' && "
+    "github.event.pull_request.head.ref != 'release-please--branches--main')"
+)
+for job in ("version-alignment", "go", "ts", "py", "contract-tests"):
+    require_job_contains(
+        ".github/workflows/ci.yml",
+        job,
+        release_please_draft_guard,
+        "required CI checks must not evaluate draft release-please heads before generated artifacts are synced",
     )
 require_not_contains(
     ".github/workflows/release.yml",
@@ -713,8 +775,18 @@ require_order_after(
 require_order(
     "scripts/sync-release-pr-generated.sh",
     'require_pr_head "${synced_head}" "after required checks passed"',
-    'gh pr ready "${pr_number}"\n\n',
+    'if ! gh pr ready "${pr_number}"; then',
     "release PR must wait for required checks before becoming ready",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    'current_pr_state}" != "OPEN" && "${current_pr_state}" != "MERGED"',
+    "release PR sync must keep checking required contexts if an externally merged release PR is already terminal",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "already merged after generated artifacts and required checks matched",
+    "release PR sync must treat an externally merged synced PR as a benign terminal state after checks pass",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
@@ -733,6 +805,7 @@ for forbidden in (
         "release PR sync must not self-attest protected contexts",
     )
 
+subprocess.run(["bash", "scripts/verify-branch-version-sync.sh", "--self-test"], check=True)
 subprocess.run(["bash", "scripts/verify-release-pr-postcondition.sh", "--self-test"], check=True)
 
 print("release-workflows: PASS")
