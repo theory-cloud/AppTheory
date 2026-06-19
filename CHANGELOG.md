@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.13.2-rc](https://github.com/theory-cloud/AppTheory/compare/v1.13.1...v1.13.2-rc) (2026-06-19)
+
+
+### Bug Fixes
+
+* **release:** accept benign merge-commit train divergence ([68efccf](https://github.com/theory-cloud/AppTheory/commit/68efccf8ffc81ed9a095f0190e35dc97c0645cd5))
+* **release:** accept benign train topology divergence ([cbb5f85](https://github.com/theory-cloud/AppTheory/commit/cbb5f852f1f33787dbd2d2256f46693597871bff))
+* **release:** treat release-please no-op as legitimate ([74f2920](https://github.com/theory-cloud/AppTheory/commit/74f29205ab3682cd9b501248b67a0135a34307cb))
+* **release:** treat release-please no-op as legitimate ([58f4849](https://github.com/theory-cloud/AppTheory/commit/58f4849b5a192317879ca42e75c276c73550bdf2))
+
 ## [1.13.1](https://github.com/theory-cloud/AppTheory/compare/v1.13.0...v1.13.1) (2026-06-19)
 
 
