@@ -113,6 +113,7 @@ function validRecord(overrides = {}) {
     updated_at: new Date(1000),
     expires_at: new Date(3_601_000),
     generation: 1,
+    last_action: MicroVMCommand.Create,
     last_command_id: "req-record",
     auth_subject: "subject-1",
     ...overrides,
@@ -127,6 +128,7 @@ function validStatus(overrides = {}) {
     state: MicroVMState.Requested,
     desired_state: MicroVMState.Requested,
     lifecycle_state: MicroVMState.Requested,
+    last_action: MicroVMCommand.Create,
     last_transition: new Date(1000),
     registry_version: 1,
     ...overrides,
@@ -330,6 +332,7 @@ test("microvm controller, registry, record, and request contracts fail closed", 
   for (const record of [
     validRecord({ session_id: "" }),
     validRecord({ created_at: new Date(Number.NaN) }),
+    validRecord({ last_action: "" }),
     validRecord({ state: "unknown" }),
     validRecord({ metadata: { "bearer-token": "secret" } }),
   ]) {
@@ -341,6 +344,7 @@ test("microvm controller, registry, record, and request contracts fail closed", 
 
   for (const status of [
     validStatus({ session_id: "" }),
+    validStatus({ last_action: "" }),
     validStatus({ state: "unknown" }),
   ]) {
     assert.throws(
