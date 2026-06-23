@@ -17,7 +17,7 @@ contract.
 - [Jobs Ledger](./jobs-ledger.md)
 - [Event Workload Contracts](./event-workloads.md)
 - [Object Store Helper](./object-store.md)
-- [Lambda MicroVM Contract Foundation](./lambda-microvm-contract-foundation.md)
+- [First-class AWS Lambda MicroVM Support](./lambda-microvm-contract-foundation.md)
 
 ## Boundary
 
