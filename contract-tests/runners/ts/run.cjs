@@ -129,7 +129,7 @@ function decodeLoggingProfileValidationErrors(runtime, profile) {
 }
 
 function listFixtureFiles(fixturesRoot) {
-  const tiers = ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14"];
+  const tiers = ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15"];
   const files = [];
   for (const tier of tiers) {
     const dir = path.join(fixturesRoot, tier);
@@ -683,6 +683,228 @@ function compareHeaders(expectedHeaders, actualHeaders) {
   return deepEqual(e, a);
 }
 
+const MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm";
+const MICROVM_CONTRACT_VERSION = "m15.microvm/v1";
+const MICROVM_REQUIRED_LIFECYCLE_HOOKS = ["prepare_image", "start", "readiness", "stop", "teardown", "failure"];
+const MICROVM_REQUIRED_LIFECYCLE_STATES = [
+  "requested",
+  "image_preparing",
+  "image_prepared",
+  "starting",
+  "started",
+  "readiness_probing",
+  "ready",
+  "stopping",
+  "stopped",
+  "tearing_down",
+  "terminated",
+  "failed",
+];
+const MICROVM_REQUIRED_CONTROLLER_COMMANDS = ["create", "start", "stop", "status", "session"];
+const MICROVM_REQUIRED_ENVELOPE_FIELDS = ["command", "request_id", "tenant_id", "auth_context"];
+const MICROVM_REQUIRED_SESSION_FIELDS = [
+  "tenant_id",
+  "namespace",
+  "session_id",
+  "state",
+  "desired_state",
+  "image_ref",
+  "controller_id",
+  "created_at",
+  "updated_at",
+  "expires_at",
+  "generation",
+  "last_command_id",
+  "auth_subject",
+];
+
+function compareMicroVMContractFixture(fixture) {
+  const actual = validateMicroVMContractFixture(fixture.setup?.microvm_contract);
+  const expected = fixture.expect?.microvm_contract_validation;
+  if (!expected) {
+    return {
+      ok: false,
+      reason: "missing expect.microvm_contract_validation",
+      expected_microvm_contract_validation: null,
+      actual_microvm_contract_validation: actual,
+    };
+  }
+  if (deepEqual(actual, expected)) return { ok: true };
+  return {
+    ok: false,
+    reason: "microvm_contract_validation mismatch",
+    expected_microvm_contract_validation: expected,
+    actual_microvm_contract_validation: actual,
+  };
+}
+
+function validateMicroVMContractFixture(contract) {
+  if (!contract || typeof contract !== "object" || Array.isArray(contract)) {
+    return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract fixture missing");
+  }
+
+  const kind = String(contract.kind ?? "").trim();
+  const version = String(contract.version ?? "").trim();
+  if (String(contract.contract ?? "").trim() !== MICROVM_CONTRACT_NAME || version !== MICROVM_CONTRACT_VERSION) {
+    return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract must be named and versioned");
+  }
+  if (kind !== "lifecycle" && kind !== "controller_session") {
+    return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract kind is unsupported");
+  }
+
+  const escapeHatches = contract.escape_hatches ?? {};
+  if (escapeHatches.raw_aws_sdk === true) {
+    return {
+      valid: false,
+      kind,
+      version,
+      error_code: "m15.microvm.raw_sdk_escape_hatch",
+      error_message: "apptheory: microvm contract forbids raw AWS SDK escape hatch",
+    };
+  }
+  if (escapeHatches.raw_lifecycle_hook_bypass === true) {
+    return {
+      valid: false,
+      kind,
+      version,
+      error_code: "m15.microvm.lifecycle_bypass",
+      error_message: "apptheory: microvm contract forbids raw lifecycle hook bypass",
+    };
+  }
+
+  const controller = contract.controller ?? {};
+  if (kind === "controller_session" && !microVMControllerAuthDefaultsDeny(controller.auth ?? {})) {
+    return {
+      valid: false,
+      kind,
+      version,
+      error_code: "m15.microvm.unauthenticated_controller",
+      error_message: "apptheory: microvm controller must default to authenticated deny",
+    };
+  }
+
+  if (kind === "lifecycle") {
+    const err = validateMicroVMLifecycle(contract.lifecycle ?? {});
+    if (err) return invalidMicroVMContract("m15.microvm.lifecycle_incomplete", err);
+  } else {
+    const controllerErr = validateMicroVMController(controller);
+    if (controllerErr) return invalidMicroVMContract("m15.microvm.controller_incomplete", controllerErr);
+    const registryErr = validateMicroVMSessionRegistry(contract.session_registry ?? {});
+    if (registryErr) return invalidMicroVMContract("m15.microvm.session_registry_incomplete", registryErr);
+  }
+
+  return { valid: true, kind, version };
+}
+
+function invalidMicroVMContract(errorCode, errorMessage) {
+  return { valid: false, error_code: errorCode, error_message: errorMessage };
+}
+
+function microVMControllerAuthDefaultsDeny(auth) {
+  return auth.required === true && String(auth.default ?? "").trim().toLowerCase() === "deny";
+}
+
+function validateMicroVMLifecycle(lifecycle) {
+  const hooks = Array.isArray(lifecycle.hooks) ? lifecycle.hooks : [];
+  const hookNames = hooks.map((hook) => String(hook?.name ?? ""));
+  const missingHooks = missingStrings(MICROVM_REQUIRED_LIFECYCLE_HOOKS, hookNames);
+  if (missingHooks.length > 0) return `apptheory: microvm lifecycle missing hooks: ${missingHooks.join(",")}`;
+
+  const missingStates = missingStrings(MICROVM_REQUIRED_LIFECYCLE_STATES, lifecycle.states ?? []);
+  if (missingStates.length > 0) return `apptheory: microvm lifecycle missing states: ${missingStates.join(",")}`;
+
+  const missingTerminal = missingStrings(["terminated", "failed"], lifecycle.terminal_states ?? []);
+  if (missingTerminal.length > 0) {
+    return `apptheory: microvm lifecycle missing terminal states: ${missingTerminal.join(",")}`;
+  }
+
+  const transitionHooks = new Set();
+  for (const transition of lifecycle.transitions ?? []) {
+    if (!String(transition?.from ?? "").trim() || !String(transition?.to ?? "").trim()) {
+      return "apptheory: microvm lifecycle transition states must be explicit";
+    }
+    const hook = String(transition?.hook ?? "").trim();
+    if (hook) transitionHooks.add(hook);
+  }
+  for (const hook of MICROVM_REQUIRED_LIFECYCLE_HOOKS) {
+    if (!transitionHooks.has(hook)) return `apptheory: microvm lifecycle missing transition for hook ${hook}`;
+  }
+
+  for (const hook of hooks) {
+    if (
+      !String(hook?.name ?? "").trim() ||
+      !String(hook?.phase ?? "").trim() ||
+      !String(hook?.state ?? "").trim() ||
+      !String(hook?.success_state ?? "").trim() ||
+      !String(hook?.failure_state ?? "").trim()
+    ) {
+      return "apptheory: microvm lifecycle hooks must name phase, active state, success state, and failure state";
+    }
+  }
+  return "";
+}
+
+function validateMicroVMController(controller) {
+  if (!microVMControllerAuthDefaultsDeny(controller.auth ?? {})) {
+    return "apptheory: microvm controller must default to authenticated deny";
+  }
+  const envelope = controller.envelope ?? {};
+  const missingEnvelope = missingStrings(MICROVM_REQUIRED_ENVELOPE_FIELDS, envelope.required_fields ?? []);
+  if (missingEnvelope.length > 0) {
+    return `apptheory: microvm controller envelope missing fields: ${missingEnvelope.join(",")}`;
+  }
+  const missingForbidden = missingStrings(["raw_sdk_client", "bearer_token"], envelope.forbidden_fields ?? []);
+  if (missingForbidden.length > 0) {
+    return `apptheory: microvm controller envelope missing forbidden fields: ${missingForbidden.join(",")}`;
+  }
+  const commands = Array.isArray(controller.commands) ? controller.commands : [];
+  const missingCommands = missingStrings(
+    MICROVM_REQUIRED_CONTROLLER_COMMANDS,
+    commands.map((command) => String(command?.name ?? "")),
+  );
+  if (missingCommands.length > 0) return `apptheory: microvm controller missing commands: ${missingCommands.join(",")}`;
+
+  for (const command of commands) {
+    const name = String(command?.name ?? "").trim();
+    if (!name || !String(command?.method ?? "").trim() || !String(command?.path ?? "").trim()) {
+      return "apptheory: microvm controller commands must define name, method, and path";
+    }
+    if (!Array.isArray(command.request_fields) || command.request_fields.length === 0 || !Array.isArray(command.response_fields) || command.response_fields.length === 0) {
+      return `apptheory: microvm controller command ${name} must define request and response fields`;
+    }
+  }
+  return "";
+}
+
+function validateMicroVMSessionRegistry(registry) {
+  if (String(registry.pattern ?? "").trim() !== "tabletheory-single-table") {
+    return "apptheory: microvm session registry must use tabletheory-single-table guidance";
+  }
+  const missingTenantBinding = missingStrings(["tenant_id", "namespace"], registry.tenant_binding ?? []);
+  if (missingTenantBinding.length > 0) {
+    return `apptheory: microvm session registry missing tenant binding: ${missingTenantBinding.join(",")}`;
+  }
+  const missingFields = missingStrings(MICROVM_REQUIRED_SESSION_FIELDS, registry.required_fields ?? []);
+  if (missingFields.length > 0) return `apptheory: microvm session registry missing fields: ${missingFields.join(",")}`;
+
+  const missingStates = missingStrings(MICROVM_REQUIRED_LIFECYCLE_STATES, registry.state_values ?? []);
+  if (missingStates.length > 0) return `apptheory: microvm session registry missing states: ${missingStates.join(",")}`;
+
+  const missingForbidden = missingStrings(
+    ["raw_aws_credentials", "raw_lifecycle_hook_payload", "bearer_token"],
+    registry.forbidden_fields ?? [],
+  );
+  if (missingForbidden.length > 0) {
+    return `apptheory: microvm session registry missing forbidden fields: ${missingForbidden.join(",")}`;
+  }
+  return "";
+}
+
+function missingStrings(required, got) {
+  const seen = new Set((Array.isArray(got) ? got : []).map((value) => String(value ?? "").trim()).filter(Boolean));
+  return required.filter((value) => !seen.has(value)).sort();
+}
+
 async function runFixture(fixture) {
   const tier = String(fixture.tier ?? "").trim().toLowerCase();
 
@@ -730,6 +952,9 @@ async function runFixture(fixture) {
   if (tier === "m14") {
     const { actual } = await runFixtureM14(fixture);
     return compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
+  }
+  if (tier === "m15") {
+    return compareMicroVMContractFixture(fixture);
   }
 
   const enableP1 = ["p1", "p2"].includes(tier);
@@ -2935,6 +3160,13 @@ async function main() {
       } else if ("expected_profile_logs" in result) {
         console.error(`  expected.profile_logs: ${stableStringify(result.expected_profile_logs)}`);
         console.error(`  got.profile_logs: ${stableStringify(result.actual_profile_logs)}`);
+      } else if ("expected_microvm_contract_validation" in result) {
+        console.error(
+          `  expected.microvm_contract_validation: ${stableStringify(result.expected_microvm_contract_validation)}`,
+        );
+        console.error(
+          `  got.microvm_contract_validation: ${stableStringify(result.actual_microvm_contract_validation)}`,
+        );
       } else {
         console.error(`  expected: ${stableStringify(result.expected)}`);
         console.error(`  got: ${stableStringify(debugActualForExpected(result.actual, result.expected))}`);

@@ -12,13 +12,14 @@ File layout:
 - `contract-tests/fixtures/m3/` — API Gateway REST v1 (+ SSE)
 - `contract-tests/fixtures/m12/` — Lift parity completion extensions (middleware/ctx bag/naming/SSE streaming)
 - `contract-tests/fixtures/m14/` — FaceTheory enablement (streaming contract, catch-all routing, SSR helpers)
+- `contract-tests/fixtures/m15/` — Lambda MicroVM contract foundation (validation-only lifecycle/controller/session vocabulary)
 
 Each fixture is a single JSON object.
 
 ## Common shape
 
-- `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*` prefixes).
-- `tier` (string): `p0` / `p1` / `p2` / `m1` / `m2` / `m3` / `m12`.
+- `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*`, `m14.*`, `m15.*` prefixes).
+- `tier` (string): `p0` / `p1` / `p2` / `m1` / `m2` / `m3` / `m12` / `m14` / `m15`.
 - `name` (string): short human-friendly name.
 - `setup.routes` (array): route table for the fixture runner.
   - `method` (string): HTTP method (e.g. `GET`).
@@ -202,6 +203,23 @@ service, function, request ID, trace ID, error type/code, stack hash, and normal
 Validation-only fixtures use `expect.profile_validation_errors` and may omit `input.request`; runtimes must fail
 closed with deterministic validation messages for unsupported schema versions, profile names, encodings, config options,
 field names, context sources, or stack hash algorithms.
+
+## M15 Lambda MicroVM contract-foundation fixtures
+
+M15 fixtures pin the additive `apptheory.lambda_microvm` / `m15.microvm/v1` contract vocabulary before runtime or CDK
+implementation work. They are validation-only fixtures: passing them proves the lifecycle/controller/session vocabulary is
+parseable and fail-closed, not that a deployable MicroVM surface exists.
+
+The lifecycle fixture requires the hooks `prepare_image`, `start`, `readiness`, `stop`, `teardown`, and `failure`; the
+portable states include image-preparation, start, readiness, stop, teardown, `terminated`, and `failed` states. The
+controller/session fixture requires `create`, `start`, `stop`, `status`, and `session` command envelopes with `command`,
+`request_id`, `tenant_id`, and `auth_context` fields, plus TableTheory-patterned durable session-record guidance.
+
+Denial fixtures intentionally describe invalid contracts and expect the runners to reject them with deterministic error
+codes for raw AWS SDK escape hatches, raw lifecycle hook bypasses, and unauthenticated controller defaults. Later MicroVM
+runtime and CDK milestones must grow from these fixtures; they must not introduce raw AWS SDK escape hatches or private
+lifecycle-hook bypasses.
+
 
 ## Bytes in JSON
 

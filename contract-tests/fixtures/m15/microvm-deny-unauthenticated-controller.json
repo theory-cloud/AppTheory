@@ -1,0 +1,32 @@
+{
+  "id": "m15.microvm.denies.unauthenticated_controller_default",
+  "tier": "m15",
+  "name": "Lambda MicroVM contract rejects unauthenticated controller defaults",
+  "setup": {
+    "microvm_contract": {
+      "contract": "apptheory.lambda_microvm",
+      "version": "m15.microvm/v1",
+      "kind": "controller_session",
+      "escape_hatches": {
+        "raw_aws_sdk": false,
+        "raw_lifecycle_hook_bypass": false
+      },
+      "controller": {
+        "auth": {
+          "required": false,
+          "default": "allow"
+        }
+      }
+    }
+  },
+  "input": {},
+  "expect": {
+    "microvm_contract_validation": {
+      "valid": false,
+      "kind": "controller_session",
+      "version": "m15.microvm/v1",
+      "error_code": "m15.microvm.unauthenticated_controller",
+      "error_message": "apptheory: microvm controller must default to authenticated deny"
+    }
+  }
+}

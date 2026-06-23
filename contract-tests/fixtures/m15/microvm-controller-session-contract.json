@@ -1,0 +1,111 @@
+{
+  "id": "m15.microvm.controller_session.v1",
+  "tier": "m15",
+  "name": "Lambda MicroVM controller and durable session contract vocabulary v1",
+  "setup": {
+    "microvm_contract": {
+      "contract": "apptheory.lambda_microvm",
+      "version": "m15.microvm/v1",
+      "kind": "controller_session",
+      "escape_hatches": {
+        "raw_aws_sdk": false,
+        "raw_lifecycle_hook_bypass": false
+      },
+      "controller": {
+        "auth": {
+          "required": true,
+          "default": "deny"
+        },
+        "envelope": {
+          "required_fields": ["command", "request_id", "tenant_id", "auth_context"],
+          "safe_error_fields": ["code", "message", "request_id"],
+          "forbidden_fields": ["aws_access_key_id", "aws_secret_access_key", "raw_sdk_client", "bearer_token"]
+        },
+        "commands": [
+          {
+            "name": "create",
+            "method": "POST",
+            "path": "/microvms",
+            "request_fields": ["image_ref", "network_connector_ref", "session_spec"],
+            "response_fields": ["session_id", "state", "registry_version"]
+          },
+          {
+            "name": "start",
+            "method": "POST",
+            "path": "/microvms/{session_id}/start",
+            "request_fields": ["session_id"],
+            "response_fields": ["session_id", "state", "desired_state"]
+          },
+          {
+            "name": "stop",
+            "method": "POST",
+            "path": "/microvms/{session_id}/stop",
+            "request_fields": ["session_id"],
+            "response_fields": ["session_id", "state", "desired_state"]
+          },
+          {
+            "name": "status",
+            "method": "GET",
+            "path": "/microvms/{session_id}/status",
+            "request_fields": ["session_id"],
+            "response_fields": ["session_id", "state", "lifecycle_state", "last_transition"]
+          },
+          {
+            "name": "session",
+            "method": "GET",
+            "path": "/microvms/{session_id}",
+            "request_fields": ["session_id"],
+            "response_fields": ["session_id", "tenant_id", "namespace", "state", "registry_version"]
+          }
+        ]
+      },
+      "session_registry": {
+        "pattern": "tabletheory-single-table",
+        "tenant_binding": ["tenant_id", "namespace"],
+        "required_fields": [
+          "tenant_id",
+          "namespace",
+          "session_id",
+          "state",
+          "desired_state",
+          "image_ref",
+          "controller_id",
+          "created_at",
+          "updated_at",
+          "expires_at",
+          "generation",
+          "last_command_id",
+          "auth_subject"
+        ],
+        "state_values": [
+          "requested",
+          "image_preparing",
+          "image_prepared",
+          "starting",
+          "started",
+          "readiness_probing",
+          "ready",
+          "stopping",
+          "stopped",
+          "tearing_down",
+          "terminated",
+          "failed"
+        ],
+        "forbidden_fields": [
+          "raw_aws_credentials",
+          "raw_lifecycle_hook_payload",
+          "bearer_token",
+          "session_token_plaintext"
+        ]
+      }
+    }
+  },
+  "input": {},
+  "expect": {
+    "microvm_contract_validation": {
+      "valid": true,
+      "kind": "controller_session",
+      "version": "m15.microvm/v1"
+    }
+  }
+}

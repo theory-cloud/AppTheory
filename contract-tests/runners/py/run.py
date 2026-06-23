@@ -58,7 +58,7 @@ def stable_json(value: Any) -> str:
 
 def list_fixture_files(fixtures_root: Path) -> list[Path]:
     files: list[Path] = []
-    for tier in ("p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14"):
+    for tier in ("p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15"):
         tier_dir = fixtures_root / tier
         if not tier_dir.exists():
             continue
@@ -765,6 +765,234 @@ def decode_logging_profile_validation_errors(runtime: Any, profile: Any) -> list
     return []
 
 
+MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm"
+MICROVM_CONTRACT_VERSION = "m15.microvm/v1"
+MICROVM_REQUIRED_LIFECYCLE_HOOKS = ["prepare_image", "start", "readiness", "stop", "teardown", "failure"]
+MICROVM_REQUIRED_LIFECYCLE_STATES = [
+    "requested",
+    "image_preparing",
+    "image_prepared",
+    "starting",
+    "started",
+    "readiness_probing",
+    "ready",
+    "stopping",
+    "stopped",
+    "tearing_down",
+    "terminated",
+    "failed",
+]
+MICROVM_REQUIRED_CONTROLLER_COMMANDS = ["create", "start", "stop", "status", "session"]
+MICROVM_REQUIRED_ENVELOPE_FIELDS = ["command", "request_id", "tenant_id", "auth_context"]
+MICROVM_REQUIRED_SESSION_FIELDS = [
+    "tenant_id",
+    "namespace",
+    "session_id",
+    "state",
+    "desired_state",
+    "image_ref",
+    "controller_id",
+    "created_at",
+    "updated_at",
+    "expires_at",
+    "generation",
+    "last_command_id",
+    "auth_subject",
+]
+
+
+def compare_microvm_contract_fixture(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, dict[str, Any], dict[str, Any], _DummyEffectsApp]:
+    actual = validate_microvm_contract_fixture((fixture.get("setup") or {}).get("microvm_contract"))
+    expected = (fixture.get("expect") or {}).get("microvm_contract_validation")
+    if not isinstance(expected, dict):
+        return (
+            False,
+            "missing expect.microvm_contract_validation",
+            actual,
+            {"microvm_contract_validation": None},
+            _DummyEffectsApp(),
+        )
+    if actual == expected:
+        return True, "", actual, expected, _DummyEffectsApp()
+    return False, "microvm_contract_validation mismatch", actual, expected, _DummyEffectsApp()
+
+
+def validate_microvm_contract_fixture(contract: Any) -> dict[str, Any]:
+    if not isinstance(contract, dict):
+        return invalid_microvm_contract(
+            "m15.microvm.invalid_contract",
+            "apptheory: microvm contract fixture missing",
+        )
+
+    kind = str(contract.get("kind", "")).strip()
+    version = str(contract.get("version", "")).strip()
+    if str(contract.get("contract", "")).strip() != MICROVM_CONTRACT_NAME or version != MICROVM_CONTRACT_VERSION:
+        return invalid_microvm_contract(
+            "m15.microvm.invalid_contract",
+            "apptheory: microvm contract must be named and versioned",
+        )
+    if kind not in {"lifecycle", "controller_session"}:
+        return invalid_microvm_contract(
+            "m15.microvm.invalid_contract",
+            "apptheory: microvm contract kind is unsupported",
+        )
+
+    escape_hatches = contract.get("escape_hatches") or {}
+    if escape_hatches.get("raw_aws_sdk") is True:
+        return {
+            "valid": False,
+            "kind": kind,
+            "version": version,
+            "error_code": "m15.microvm.raw_sdk_escape_hatch",
+            "error_message": "apptheory: microvm contract forbids raw AWS SDK escape hatch",
+        }
+    if escape_hatches.get("raw_lifecycle_hook_bypass") is True:
+        return {
+            "valid": False,
+            "kind": kind,
+            "version": version,
+            "error_code": "m15.microvm.lifecycle_bypass",
+            "error_message": "apptheory: microvm contract forbids raw lifecycle hook bypass",
+        }
+
+    controller = contract.get("controller") or {}
+    if kind == "controller_session" and not microvm_controller_auth_defaults_deny(controller.get("auth") or {}):
+        return {
+            "valid": False,
+            "kind": kind,
+            "version": version,
+            "error_code": "m15.microvm.unauthenticated_controller",
+            "error_message": "apptheory: microvm controller must default to authenticated deny",
+        }
+
+    if kind == "lifecycle":
+        err = validate_microvm_lifecycle(contract.get("lifecycle") or {})
+        if err:
+            return invalid_microvm_contract("m15.microvm.lifecycle_incomplete", err)
+    else:
+        err = validate_microvm_controller(controller)
+        if err:
+            return invalid_microvm_contract("m15.microvm.controller_incomplete", err)
+        err = validate_microvm_session_registry(contract.get("session_registry") or {})
+        if err:
+            return invalid_microvm_contract("m15.microvm.session_registry_incomplete", err)
+
+    return {"valid": True, "kind": kind, "version": version}
+
+
+def invalid_microvm_contract(error_code: str, error_message: str) -> dict[str, Any]:
+    return {"valid": False, "error_code": error_code, "error_message": error_message}
+
+
+def microvm_controller_auth_defaults_deny(auth: dict[str, Any]) -> bool:
+    return auth.get("required") is True and str(auth.get("default", "")).strip().lower() == "deny"
+
+
+def validate_microvm_lifecycle(lifecycle: dict[str, Any]) -> str:
+    hooks = lifecycle.get("hooks") if isinstance(lifecycle.get("hooks"), list) else []
+    hook_names = [str(hook.get("name", "")) for hook in hooks if isinstance(hook, dict)]
+    missing_hooks = missing_strings(MICROVM_REQUIRED_LIFECYCLE_HOOKS, hook_names)
+    if missing_hooks:
+        return f"apptheory: microvm lifecycle missing hooks: {','.join(missing_hooks)}"
+
+    missing_states = missing_strings(MICROVM_REQUIRED_LIFECYCLE_STATES, lifecycle.get("states") or [])
+    if missing_states:
+        return f"apptheory: microvm lifecycle missing states: {','.join(missing_states)}"
+
+    missing_terminal = missing_strings(["terminated", "failed"], lifecycle.get("terminal_states") or [])
+    if missing_terminal:
+        return f"apptheory: microvm lifecycle missing terminal states: {','.join(missing_terminal)}"
+
+    transition_hooks: set[str] = set()
+    for transition in lifecycle.get("transitions") or []:
+        if not isinstance(transition, dict):
+            continue
+        if not str(transition.get("from", "")).strip() or not str(transition.get("to", "")).strip():
+            return "apptheory: microvm lifecycle transition states must be explicit"
+        hook = str(transition.get("hook", "")).strip()
+        if hook:
+            transition_hooks.add(hook)
+    for hook in MICROVM_REQUIRED_LIFECYCLE_HOOKS:
+        if hook not in transition_hooks:
+            return f"apptheory: microvm lifecycle missing transition for hook {hook}"
+
+    for hook in hooks:
+        if not isinstance(hook, dict):
+            return "apptheory: microvm lifecycle hooks must be objects"
+        if (
+            not str(hook.get("name", "")).strip()
+            or not str(hook.get("phase", "")).strip()
+            or not str(hook.get("state", "")).strip()
+            or not str(hook.get("success_state", "")).strip()
+            or not str(hook.get("failure_state", "")).strip()
+        ):
+            return "apptheory: microvm lifecycle hooks must name phase, active state, success state, and failure state"
+    return ""
+
+
+def validate_microvm_controller(controller: dict[str, Any]) -> str:
+    if not microvm_controller_auth_defaults_deny(controller.get("auth") or {}):
+        return "apptheory: microvm controller must default to authenticated deny"
+
+    envelope = controller.get("envelope") or {}
+    missing_envelope = missing_strings(MICROVM_REQUIRED_ENVELOPE_FIELDS, envelope.get("required_fields") or [])
+    if missing_envelope:
+        return f"apptheory: microvm controller envelope missing fields: {','.join(missing_envelope)}"
+
+    missing_forbidden = missing_strings(["raw_sdk_client", "bearer_token"], envelope.get("forbidden_fields") or [])
+    if missing_forbidden:
+        return f"apptheory: microvm controller envelope missing forbidden fields: {','.join(missing_forbidden)}"
+
+    commands = controller.get("commands") if isinstance(controller.get("commands"), list) else []
+    command_names = [str(command.get("name", "")) for command in commands if isinstance(command, dict)]
+    missing_commands = missing_strings(MICROVM_REQUIRED_CONTROLLER_COMMANDS, command_names)
+    if missing_commands:
+        return f"apptheory: microvm controller missing commands: {','.join(missing_commands)}"
+
+    for command in commands:
+        if not isinstance(command, dict):
+            return "apptheory: microvm controller commands must be objects"
+        name = str(command.get("name", "")).strip()
+        if not name or not str(command.get("method", "")).strip() or not str(command.get("path", "")).strip():
+            return "apptheory: microvm controller commands must define name, method, and path"
+        if not command.get("request_fields") or not command.get("response_fields"):
+            return f"apptheory: microvm controller command {name} must define request and response fields"
+    return ""
+
+
+def validate_microvm_session_registry(registry: dict[str, Any]) -> str:
+    if str(registry.get("pattern", "")).strip() != "tabletheory-single-table":
+        return "apptheory: microvm session registry must use tabletheory-single-table guidance"
+
+    missing_tenant_binding = missing_strings(["tenant_id", "namespace"], registry.get("tenant_binding") or [])
+    if missing_tenant_binding:
+        return f"apptheory: microvm session registry missing tenant binding: {','.join(missing_tenant_binding)}"
+
+    missing_fields = missing_strings(MICROVM_REQUIRED_SESSION_FIELDS, registry.get("required_fields") or [])
+    if missing_fields:
+        return f"apptheory: microvm session registry missing fields: {','.join(missing_fields)}"
+
+    missing_states = missing_strings(MICROVM_REQUIRED_LIFECYCLE_STATES, registry.get("state_values") or [])
+    if missing_states:
+        return f"apptheory: microvm session registry missing states: {','.join(missing_states)}"
+
+    missing_forbidden = missing_strings(
+        ["raw_aws_credentials", "raw_lifecycle_hook_payload", "bearer_token"],
+        registry.get("forbidden_fields") or [],
+    )
+    if missing_forbidden:
+        return f"apptheory: microvm session registry missing forbidden fields: {','.join(missing_forbidden)}"
+    return ""
+
+
+def missing_strings(required: list[str], got: Any) -> list[str]:
+    values = got if isinstance(got, list) else []
+    seen = {str(value).strip() for value in values if str(value).strip()}
+    return sorted(value for value in required if value not in seen)
+
+
 def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     tier = str(fixture.get("tier", "")).strip().lower()
     if tier == "p0":
@@ -788,6 +1016,8 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
         return run_fixture_m12(fixture)
     if tier == "m14":
         return run_fixture_m14(fixture)
+    if tier == "m15":
+        return compare_microvm_contract_fixture(fixture)
 
     setup = fixture.get("setup", {})
     input_ = fixture.get("input", {})
@@ -2831,6 +3061,9 @@ def main() -> int:
             if "profile_logs" in expect_obj:
                 print(f"  expected.profile_logs: {stable_json(expect_obj.get('profile_logs'))}", file=sys.stderr)
                 print(f"  got.profile_logs: {stable_json(actual.get('profile_logs'))}", file=sys.stderr)
+        elif "microvm_contract_validation" in expect_obj:
+            print(f"  expected.microvm_contract_validation: {stable_json(expected)}", file=sys.stderr)
+            print(f"  got.microvm_contract_validation: {stable_json(actual)}", file=sys.stderr)
         else:
             print(f"  expected: {stable_json(expected)}", file=sys.stderr)
             print(f"  got: {stable_json(debug_actual_for_expected(actual, expected))}", file=sys.stderr)
