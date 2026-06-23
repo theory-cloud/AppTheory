@@ -40,6 +40,7 @@ groups:
     items:
       - { id: feature-events,         title: Event Workload Contracts, url: /features/event-workloads/,  icon: shuffle,      tag: ga }
       - { id: feature-jobs,           title: Jobs Ledger,             url: /features/jobs-ledger/,       icon: list-checks }
+      - { id: feature-microvm-contract, title: MicroVM Contract,       url: /features/lambda-microvm-contract-foundation/, icon: cpu, tag: new }
 
   - label: MCP
     items:
@@ -97,6 +98,7 @@ order:
   - feature-sanitization
   - feature-events
   - feature-jobs
+  - feature-microvm-contract
   - int-mcp
   - int-remote-mcp
   - int-agentcore
@@ -141,6 +143,7 @@ url_to_id:
   /features/sanitization/:                      feature-sanitization
   /features/event-workloads/:                   feature-events
   /features/jobs-ledger/:                       feature-jobs
+  /features/lambda-microvm-contract-foundation/: feature-microvm-contract
   /integrations/mcp/:                           int-mcp
   /integrations/remote-mcp/:                    int-remote-mcp
   /integrations/agentcore-mcp/:                 int-agentcore

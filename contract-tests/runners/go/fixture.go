@@ -33,6 +33,7 @@ type FixtureSetup struct {
 	SNS             []FixtureSNSRoute         `json:"sns,omitempty"`
 	EventBridge     []FixtureEventBridgeRoute `json:"eventbridge,omitempty"`
 	DynamoDB        []FixtureDynamoDBRoute    `json:"dynamodb,omitempty"`
+	MicroVMContract json.RawMessage           `json:"microvm_contract,omitempty"`
 }
 
 type FixtureCORSConfig struct {
@@ -119,6 +120,15 @@ type FixtureExpect struct {
 	ProfileLogs                []map[string]any                   `json:"profile_logs,omitempty"`
 	ProfileValidationErrors    []string                           `json:"profile_validation_errors,omitempty"`
 	LoggingProfileCatalog      map[string]any                     `json:"logging_profile_catalog,omitempty"`
+	MicroVMContractValidation  *FixtureMicroVMContractValidation  `json:"microvm_contract_validation,omitempty"`
+}
+
+type FixtureMicroVMContractValidation struct {
+	Valid        bool   `json:"valid"`
+	Kind         string `json:"kind,omitempty"`
+	Version      string `json:"version,omitempty"`
+	ErrorCode    string `json:"error_code,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
 }
 
 type FixtureError struct {
@@ -208,7 +218,7 @@ type FixtureSpanRecord struct {
 
 func loadFixtures(fixturesRoot string) ([]Fixture, error) {
 	var files []string
-	for _, tier := range []string{"p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14"} {
+	for _, tier := range []string{"p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15"} {
 		matches, err := filepath.Glob(filepath.Join(fixturesRoot, tier, "*.json"))
 		if err != nil {
 			return nil, fmt.Errorf("glob %s fixtures: %w", tier, err)
