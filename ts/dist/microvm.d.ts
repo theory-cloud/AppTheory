@@ -94,3 +94,208 @@ export declare class MicroVMLifecycleAdapter {
 }
 export declare function createMicroVMLifecycleAdapter(options?: MicroVMLifecycleAdapterOptions): MicroVMLifecycleAdapter;
 export declare function isMicroVMTerminalState(state: MicroVMLifecycleState | string): boolean;
+export declare const MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER = "m15.microvm.unauthenticated_controller";
+export declare const MICROVM_ERROR_CONTROLLER_INCOMPLETE = "m15.microvm.controller_incomplete";
+export declare const MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE = "m15.microvm.session_registry_incomplete";
+export declare const MICROVM_ERROR_INVALID_CONTROLLER_REQUEST = "m15.microvm.invalid_controller_request";
+export declare const MICROVM_ERROR_CONTROLLER_COMMAND_FAILED = "m15.microvm.controller_command_failed";
+export declare const MICROVM_CONTROLLER_AUTH_DEFAULT_DENY = "deny";
+export type MicroVMContractKind = "lifecycle" | "controller_session";
+export declare const MicroVMCommand: {
+    readonly Create: "create";
+    readonly Start: "start";
+    readonly Stop: "stop";
+    readonly Status: "status";
+    readonly Session: "session";
+};
+export type MicroVMCommandName = (typeof MicroVMCommand)[keyof typeof MicroVMCommand];
+export interface MicroVMControllerAuthContract {
+    required: boolean;
+    default: string;
+}
+export interface MicroVMControllerEnvelopeContract {
+    required_fields: string[];
+    safe_error_fields: string[];
+    forbidden_fields: string[];
+}
+export interface MicroVMControllerCommandContract {
+    name: MicroVMCommandName | string;
+    method: string;
+    path: string;
+    request_fields: string[];
+    response_fields: string[];
+}
+export interface MicroVMControllerContract {
+    auth: MicroVMControllerAuthContract;
+    envelope: MicroVMControllerEnvelopeContract;
+    commands: MicroVMControllerCommandContract[];
+}
+export interface MicroVMSessionRegistryContract {
+    pattern: string;
+    tenant_binding: string[];
+    required_fields: string[];
+    state_values: string[];
+    forbidden_fields: string[];
+}
+export interface MicroVMAuthContext {
+    subject: string;
+    tenant_id: string;
+    namespace?: string;
+    entitlements?: string[];
+    metadata?: Record<string, string>;
+}
+export interface MicroVMSessionSpec {
+    metadata?: Record<string, string>;
+}
+export interface MicroVMControllerRequest {
+    command: MicroVMCommandName | string;
+    request_id: string;
+    tenant_id: string;
+    namespace: string;
+    auth_context: MicroVMAuthContext;
+    session_id?: string;
+    image_ref?: string;
+    network_connector_ref?: string;
+    session_spec?: MicroVMSessionSpec;
+}
+export interface MicroVMControllerResponse {
+    command: MicroVMCommandName | string;
+    request_id: string;
+    tenant_id: string;
+    namespace: string;
+    session_id: string;
+    state?: MicroVMLifecycleState | string;
+    desired_state?: MicroVMLifecycleState | string;
+    lifecycle_state?: MicroVMLifecycleState | string;
+    last_transition?: Date;
+    registry_version?: number;
+    error?: MicroVMSafeError;
+}
+export interface MicroVMCreateSessionInput {
+    request_id: string;
+    tenant_id: string;
+    namespace: string;
+    session_id: string;
+    image_ref: string;
+    network_connector_ref: string;
+    session_spec: MicroVMSessionSpec;
+    controller_id: string;
+    auth_subject: string;
+    now: Date;
+}
+export interface MicroVMSessionCommandInput {
+    request_id: string;
+    tenant_id: string;
+    namespace: string;
+    session_id: string;
+    controller_id: string;
+    auth_subject: string;
+    desired_state: MicroVMLifecycleState | string;
+    now: Date;
+}
+export interface MicroVMSessionQueryInput {
+    request_id: string;
+    tenant_id: string;
+    namespace: string;
+    session_id: string;
+    auth_subject: string;
+}
+export interface MicroVMSessionKey {
+    tenant_id: string;
+    namespace: string;
+    session_id: string;
+}
+export interface MicroVMSessionRecord {
+    tenant_id: string;
+    namespace: string;
+    session_id: string;
+    state: MicroVMLifecycleState | string;
+    desired_state: MicroVMLifecycleState | string;
+    image_ref: string;
+    network_connector_ref?: string;
+    controller_id: string;
+    created_at: Date;
+    updated_at: Date;
+    expires_at: Date;
+    generation: number;
+    last_command_id: string;
+    auth_subject: string;
+    metadata?: Record<string, string>;
+}
+export interface MicroVMSessionStatus {
+    tenant_id: string;
+    namespace: string;
+    session_id: string;
+    state: MicroVMLifecycleState | string;
+    desired_state: MicroVMLifecycleState | string;
+    lifecycle_state: MicroVMLifecycleState | string;
+    last_transition: Date;
+    registry_version: number;
+}
+export interface MicroVMClient {
+    create: (input: MicroVMCreateSessionInput) => Promise<MicroVMSessionRecord>;
+    start: (input: MicroVMSessionCommandInput) => Promise<MicroVMSessionRecord>;
+    stop: (input: MicroVMSessionCommandInput) => Promise<MicroVMSessionRecord>;
+    status: (input: MicroVMSessionQueryInput) => Promise<MicroVMSessionStatus>;
+    session: (input: MicroVMSessionQueryInput) => Promise<MicroVMSessionRecord>;
+}
+export interface MicroVMClock {
+    now: () => Date;
+}
+export interface MicroVMIDGenerator {
+    newID: () => string;
+}
+export interface MicroVMControllerOptions {
+    controller_id?: string;
+    clock?: MicroVMClock;
+    ids?: MicroVMIDGenerator;
+}
+export interface MicroVMClientCall {
+    command: MicroVMCommandName | string;
+    request_id: string;
+    tenant_id: string;
+    namespace: string;
+    session_id: string;
+}
+export interface AWSLambdaMicroVMClientOptions {
+    region?: string;
+}
+export declare function defaultMicroVMControllerContract(): MicroVMControllerContract;
+export declare function defaultMicroVMSessionRegistryContract(): MicroVMSessionRegistryContract;
+export declare function validateMicroVMControllerContract(contract: MicroVMControllerContract): void;
+export declare function validateMicroVMSessionRegistryContract(registry: MicroVMSessionRegistryContract): void;
+export declare function validateMicroVMSessionRecord(record: MicroVMSessionRecord): void;
+export declare function validateMicroVMSessionStatus(status: MicroVMSessionStatus): void;
+export declare function microVMSessionKey(record: MicroVMSessionRecord): MicroVMSessionKey;
+export declare class MicroVMController {
+    private readonly client;
+    private readonly controllerID;
+    private readonly clock;
+    private readonly ids;
+    constructor(client: MicroVMClient, options?: MicroVMControllerOptions);
+    handle(request: MicroVMControllerRequest): Promise<MicroVMControllerResponse>;
+    private handleCreate;
+    private handleCommand;
+    private handleStatus;
+    private handleSession;
+}
+export declare function createMicroVMController(client: MicroVMClient, options?: MicroVMControllerOptions): MicroVMController;
+export declare function validateMicroVMControllerRequest(request: MicroVMControllerRequest): MicroVMSafeError | null;
+export declare class FakeMicroVMClient implements MicroVMClient {
+    private currentTime;
+    private readonly sessions;
+    private readonly recordedCalls;
+    constructor(now?: Date);
+    setNow(now: Date): void;
+    calls(): MicroVMClientCall[];
+    create(input: MicroVMCreateSessionInput): Promise<MicroVMSessionRecord>;
+    start(input: MicroVMSessionCommandInput): Promise<MicroVMSessionRecord>;
+    stop(input: MicroVMSessionCommandInput): Promise<MicroVMSessionRecord>;
+    status(input: MicroVMSessionQueryInput): Promise<MicroVMSessionStatus>;
+    session(input: MicroVMSessionQueryInput): Promise<MicroVMSessionRecord>;
+    private transition;
+    private lookup;
+    private recordCall;
+}
+export declare function createFakeMicroVMClient(now?: Date): FakeMicroVMClient;
+export declare function createAWSLambdaMicroVMClient(options?: AWSLambdaMicroVMClientOptions): Promise<MicroVMClient>;

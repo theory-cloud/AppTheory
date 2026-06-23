@@ -772,9 +772,9 @@ async function validateMicroVMContractFixture(contract, runtime) {
     const err = await validateMicroVMLifecycle(runtime, contract.lifecycle ?? {});
     if (err) return invalidMicroVMContract("m15.microvm.lifecycle_incomplete", err);
   } else {
-    const controllerErr = validateMicroVMController(controller);
+    const controllerErr = await validateMicroVMController(runtime, controller);
     if (controllerErr) return invalidMicroVMContract("m15.microvm.controller_incomplete", controllerErr);
-    const registryErr = validateMicroVMSessionRegistry(contract.session_registry ?? {});
+    const registryErr = validateMicroVMSessionRegistry(runtime, contract.session_registry ?? {});
     if (registryErr) return invalidMicroVMContract("m15.microvm.session_registry_incomplete", registryErr);
   }
 
@@ -840,62 +840,93 @@ function validateMicroVMEscapeHatches(runtime, kind, version, escapeHatches) {
     };
   }
 }
-function validateMicroVMController(controller) {
-  if (!microVMControllerAuthDefaultsDeny(controller.auth ?? {})) {
-    return "apptheory: microvm controller must default to authenticated deny";
+async function validateMicroVMController(runtime, controller) {
+  try {
+    runtime.validateMicroVMControllerContract(controller);
+    await exerciseRuntimeController(runtime);
+    return "";
+  } catch (err) {
+    return err?.message ?? String(err);
   }
-  const envelope = controller.envelope ?? {};
-  const missingEnvelope = missingStrings(MICROVM_REQUIRED_ENVELOPE_FIELDS, envelope.required_fields ?? []);
-  if (missingEnvelope.length > 0) {
-    return `apptheory: microvm controller envelope missing fields: ${missingEnvelope.join(",")}`;
-  }
-  const missingForbidden = missingStrings(["raw_sdk_client", "bearer_token"], envelope.forbidden_fields ?? []);
-  if (missingForbidden.length > 0) {
-    return `apptheory: microvm controller envelope missing forbidden fields: ${missingForbidden.join(",")}`;
-  }
-  const commands = Array.isArray(controller.commands) ? controller.commands : [];
-  const missingCommands = missingStrings(
-    MICROVM_REQUIRED_CONTROLLER_COMMANDS,
-    commands.map((command) => String(command?.name ?? "")),
-  );
-  if (missingCommands.length > 0) return `apptheory: microvm controller missing commands: ${missingCommands.join(",")}`;
-
-  for (const command of commands) {
-    const name = String(command?.name ?? "").trim();
-    if (!name || !String(command?.method ?? "").trim() || !String(command?.path ?? "").trim()) {
-      return "apptheory: microvm controller commands must define name, method, and path";
-    }
-    if (!Array.isArray(command.request_fields) || command.request_fields.length === 0 || !Array.isArray(command.response_fields) || command.response_fields.length === 0) {
-      return `apptheory: microvm controller command ${name} must define request and response fields`;
-    }
-  }
-  return "";
 }
 
-function validateMicroVMSessionRegistry(registry) {
-  if (String(registry.pattern ?? "").trim() !== "tabletheory-single-table") {
-    return "apptheory: microvm session registry must use tabletheory-single-table guidance";
-  }
-  const missingTenantBinding = missingStrings(["tenant_id", "namespace"], registry.tenant_binding ?? []);
-  if (missingTenantBinding.length > 0) {
-    return `apptheory: microvm session registry missing tenant binding: ${missingTenantBinding.join(",")}`;
-  }
-  const missingFields = missingStrings(MICROVM_REQUIRED_SESSION_FIELDS, registry.required_fields ?? []);
-  if (missingFields.length > 0) return `apptheory: microvm session registry missing fields: ${missingFields.join(",")}`;
+async function exerciseRuntimeController(runtime) {
+  const client = runtime.createFakeMicroVMClient(new Date(0));
+  const controller = runtime.createMicroVMController(client, {
+    controller_id: "controller-fixture",
+    ids: { newID: () => "session-fixture" },
+  });
+  const create = await controller.handle(runtimeControllerRequest(runtime.MicroVMCommand.Create, "m15-create", ""));
+  if (create.error) return Promise.reject(create.error);
+  requireCreateResponse(create);
 
-  const missingStates = missingStrings(MICROVM_REQUIRED_LIFECYCLE_STATES, registry.state_values ?? []);
-  if (missingStates.length > 0) return `apptheory: microvm session registry missing states: ${missingStates.join(",")}`;
+  const start = await controller.handle(runtimeControllerRequest(runtime.MicroVMCommand.Start, "m15-start", create.session_id));
+  if (start.error) return Promise.reject(start.error);
+  requireStartStopResponse("start", start, create.session_id, "started");
 
-  const missingForbidden = missingStrings(
-    ["raw_aws_credentials", "raw_lifecycle_hook_payload", "bearer_token"],
-    registry.forbidden_fields ?? [],
-  );
-  if (missingForbidden.length > 0) {
-    return `apptheory: microvm session registry missing forbidden fields: ${missingForbidden.join(",")}`;
-  }
-  return "";
+  const status = await controller.handle(runtimeControllerRequest(runtime.MicroVMCommand.Status, "m15-status", create.session_id));
+  if (status.error) return Promise.reject(status.error);
+  requireStatusResponse(status, create.session_id);
+
+  const session = await controller.handle(runtimeControllerRequest(runtime.MicroVMCommand.Session, "m15-session", create.session_id));
+  if (session.error) return Promise.reject(session.error);
+  requireSessionResponse(session, create.session_id);
+
+  const stop = await controller.handle(runtimeControllerRequest(runtime.MicroVMCommand.Stop, "m15-stop", create.session_id));
+  if (stop.error) return Promise.reject(stop.error);
+  requireStartStopResponse("stop", stop, create.session_id, "stopped");
 }
 
+function requireCreateResponse(response) {
+  if (!response.session_id || response.state !== "requested" || !response.registry_version) {
+    throw new Error("apptheory: microvm controller create response incomplete");
+  }
+}
+
+function requireStartStopResponse(name, response, sessionID, desiredState) {
+  if (response.session_id !== sessionID || !response.state || response.desired_state !== desiredState) {
+    throw new Error(`apptheory: microvm controller ${name} response incomplete`);
+  }
+}
+
+function requireStatusResponse(response, sessionID) {
+  if (response.session_id !== sessionID || !response.lifecycle_state || !response.last_transition) {
+    throw new Error("apptheory: microvm controller status response incomplete");
+  }
+}
+
+function requireSessionResponse(response, sessionID) {
+  if (response.session_id !== sessionID || !response.tenant_id || !response.namespace || !response.registry_version) {
+    throw new Error("apptheory: microvm controller session response incomplete");
+  }
+}
+
+function runtimeControllerRequest(command, requestID, sessionID) {
+  const request = {
+    command,
+    request_id: requestID,
+    tenant_id: "tenant-fixture",
+    namespace: "namespace-fixture",
+    auth_context: {
+      subject: "subject-fixture",
+      tenant_id: "tenant-fixture",
+    },
+    session_id: sessionID,
+  };
+  if (command === "create") {
+    request.image_ref = "image-fixture";
+    request.network_connector_ref = "network-fixture";
+  }
+  return request;
+}
+function validateMicroVMSessionRegistry(runtime, registry) {
+  try {
+    runtime.validateMicroVMSessionRegistryContract(registry);
+    return "";
+  } catch (err) {
+    return err?.message ?? String(err);
+  }
+}
 function missingStrings(required, got) {
   const seen = new Set((Array.isArray(got) ? got : []).map((value) => String(value ?? "").trim()).filter(Boolean));
   return required.filter((value) => !seen.has(value)).sort();
