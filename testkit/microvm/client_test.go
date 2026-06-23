@@ -73,3 +73,68 @@ func request(command runtimemicrovm.Command, requestID string, sessionID string)
 	}
 	return req
 }
+
+func TestFakeClientStopDuplicateAndMissing(t *testing.T) {
+	client := NewFakeClient()
+	client.SetNow(time.Unix(200, 0).UTC())
+
+	input := runtimemicrovm.CreateSessionInput{
+		RequestID:           "req-create",
+		TenantID:            "tenant-1",
+		Namespace:           "namespace-1",
+		SessionID:           "session-1",
+		ImageRef:            "image-ref",
+		NetworkConnectorRef: "network-ref",
+		ControllerID:        "controller-1",
+		AuthSubject:         "subject-1",
+	}
+	record, err := client.Create(context.Background(), input)
+	require.NoError(t, err)
+	require.Equal(t, runtimemicrovm.StateRequested, record.State)
+	_, err = client.Create(context.Background(), input)
+	require.Error(t, err)
+
+	stopped, err := client.Stop(context.Background(), runtimemicrovm.SessionCommandInput{
+		RequestID:    "req-stop",
+		TenantID:     "tenant-1",
+		Namespace:    "namespace-1",
+		SessionID:    "session-1",
+		ControllerID: "controller-1",
+		AuthSubject:  "subject-1",
+		DesiredState: runtimemicrovm.StateStopped,
+	})
+	require.NoError(t, err)
+	require.Equal(t, runtimemicrovm.StateStopping, stopped.State)
+
+	_, err = client.Session(context.Background(), runtimemicrovm.SessionQueryInput{
+		RequestID: "req-missing",
+		TenantID:  "tenant-1",
+		Namespace: "namespace-1",
+		SessionID: "missing",
+	})
+	require.Error(t, err)
+
+	client.SetNow(time.Time{})
+	require.NotEmpty(t, client.Calls())
+}
+
+func TestFakeClientInvalidCreateAndHelpers(t *testing.T) {
+	client := NewFakeClientWithTime(time.Time{})
+	_, err := client.Create(context.Background(), runtimemicrovm.CreateSessionInput{
+		RequestID: "req-create",
+		TenantID:  "tenant-1",
+		Namespace: "namespace-1",
+		SessionID: "session-1",
+		ImageRef:  "image-ref",
+		SessionSpec: runtimemicrovm.SessionSpec{
+			Metadata: map[string]string{"bearer_token": "secret"},
+		},
+		ControllerID: "controller-1",
+		AuthSubject:  "subject-1",
+	})
+	require.Error(t, err)
+
+	require.False(t, coalesceTime(time.Time{}, time.Time{}).IsZero())
+	record := cloneRecord(runtimemicrovm.SessionRecord{})
+	require.Nil(t, record.Metadata)
+}

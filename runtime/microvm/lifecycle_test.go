@@ -113,3 +113,47 @@ func recordLifecycleCall(calls *[]LifecycleEvent) LifecycleHandler {
 		return nil
 	}
 }
+
+func TestLifecycleAdapterValidationFailures(t *testing.T) {
+	contract := DefaultLifecycleContract()
+	contract.Hooks[0].Phase = ""
+	_, err := NewLifecycleAdapter(WithLifecycleContract(contract))
+	require.Error(t, err)
+
+	contract = DefaultLifecycleContract()
+	contract.States = []LifecycleState{StateRequested}
+	require.Error(t, ValidateLifecycleContract(contract))
+
+	contract = DefaultLifecycleContract()
+	contract.TerminalStates = []LifecycleState{StateTerminated}
+	require.Error(t, ValidateLifecycleContract(contract))
+
+	contract = DefaultLifecycleContract()
+	contract.Transitions = contract.Transitions[:1]
+	require.Error(t, ValidateLifecycleContract(contract))
+
+	adapter, err := NewLifecycleAdapter()
+	require.NoError(t, err)
+	result, err := adapter.Handle(context.Background(), LifecycleEvent{
+		RequestID: "req-1",
+		TenantID:  "tenant-1",
+		Namespace: "ns-1",
+		SessionID: "session-1",
+		Hook:      HookStart,
+		State:     StateRequested,
+	})
+	require.Error(t, err)
+	require.NotNil(t, result.Error)
+
+	result, err = (*LifecycleAdapter)(nil).Handle(context.Background(), LifecycleEvent{RequestID: "req-1"})
+	require.Error(t, err)
+	require.Equal(t, StateFailed, result.State)
+}
+
+func TestLifecycleHelpers(t *testing.T) {
+	require.False(t, IsTerminalState(StateReady))
+	require.True(t, forbiddenFieldName("x-amz-security-token"))
+	require.False(t, forbiddenFieldName("safe"))
+	require.Equal(t, "fallback", SafeError{Code: "fallback"}.Error())
+	require.Equal(t, ErrorCodeControllerCommandFailed, asSafeError(errors.New("raw"), "req-1").Code)
+}
