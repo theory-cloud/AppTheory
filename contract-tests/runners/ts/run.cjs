@@ -129,7 +129,7 @@ function decodeLoggingProfileValidationErrors(runtime, profile) {
 }
 
 function listFixtureFiles(fixturesRoot) {
-  const tiers = ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14"];
+  const tiers = ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15"];
   const files = [];
   for (const tier of tiers) {
     const dir = path.join(fixturesRoot, tier);
@@ -683,6 +683,331 @@ function compareHeaders(expectedHeaders, actualHeaders) {
   return deepEqual(e, a);
 }
 
+const MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm";
+const MICROVM_CONTRACT_VERSION = "m15.microvm/v1";
+const MICROVM_REQUIRED_LIFECYCLE_HOOKS = ["prepare_image", "start", "readiness", "stop", "teardown", "failure"];
+const MICROVM_REQUIRED_LIFECYCLE_STATES = [
+  "requested",
+  "image_preparing",
+  "image_prepared",
+  "starting",
+  "started",
+  "readiness_probing",
+  "ready",
+  "stopping",
+  "stopped",
+  "tearing_down",
+  "terminated",
+  "failed",
+];
+const MICROVM_REQUIRED_CONTROLLER_COMMANDS = ["create", "start", "stop", "status", "session"];
+const MICROVM_REQUIRED_ENVELOPE_FIELDS = ["command", "request_id", "tenant_id", "auth_context"];
+const MICROVM_REQUIRED_SESSION_FIELDS = [
+  "tenant_id",
+  "namespace",
+  "session_id",
+  "state",
+  "desired_state",
+  "image_ref",
+  "controller_id",
+  "created_at",
+  "updated_at",
+  "expires_at",
+  "generation",
+  "last_command_id",
+  "auth_subject",
+];
+
+async function compareMicroVMContractFixture(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const actual = await validateMicroVMContractFixture(fixture.setup?.microvm_contract, runtime);
+  const expected = fixture.expect?.microvm_contract_validation;
+  if (!expected) {
+    return {
+      ok: false,
+      reason: "missing expect.microvm_contract_validation",
+      expected_microvm_contract_validation: null,
+      actual_microvm_contract_validation: actual,
+    };
+  }
+  if (deepEqual(actual, expected)) return { ok: true };
+  return {
+    ok: false,
+    reason: "microvm_contract_validation mismatch",
+    expected_microvm_contract_validation: expected,
+    actual_microvm_contract_validation: actual,
+  };
+}
+
+async function validateMicroVMContractFixture(contract, runtime) {
+  if (!contract || typeof contract !== "object" || Array.isArray(contract)) {
+    return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract fixture missing");
+  }
+
+  const kind = String(contract.kind ?? "").trim();
+  const version = String(contract.version ?? "").trim();
+  if (String(contract.contract ?? "").trim() !== MICROVM_CONTRACT_NAME || version !== MICROVM_CONTRACT_VERSION) {
+    return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract must be named and versioned");
+  }
+  if (kind !== "lifecycle" && kind !== "controller_session") {
+    return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract kind is unsupported");
+  }
+
+  const escapeHatches = contract.escape_hatches ?? {};
+  const escapeHatchError = validateMicroVMEscapeHatches(runtime, kind, version, escapeHatches);
+  if (escapeHatchError) return escapeHatchError;
+
+  const controller = contract.controller ?? {};
+  if (kind === "controller_session" && !microVMControllerAuthDefaultsDeny(controller.auth ?? {})) {
+    return {
+      valid: false,
+      kind,
+      version,
+      error_code: "m15.microvm.unauthenticated_controller",
+      error_message: "apptheory: microvm controller must default to authenticated deny",
+    };
+  }
+
+  if (kind === "lifecycle") {
+    const err = await validateMicroVMLifecycle(runtime, contract.lifecycle ?? {});
+    if (err) return invalidMicroVMContract("m15.microvm.lifecycle_incomplete", err);
+  } else {
+    const controllerErr = await validateMicroVMController(runtime, controller);
+    if (controllerErr) return invalidMicroVMContract("m15.microvm.controller_incomplete", controllerErr);
+    const registryErr = await validateMicroVMSessionRegistry(runtime, contract.session_registry ?? {});
+    if (registryErr) return invalidMicroVMContract("m15.microvm.session_registry_incomplete", registryErr);
+  }
+
+  return { valid: true, kind, version };
+}
+
+function invalidMicroVMContract(errorCode, errorMessage) {
+  return { valid: false, error_code: errorCode, error_message: errorMessage };
+}
+
+function microVMControllerAuthDefaultsDeny(auth) {
+  return auth.required === true && String(auth.default ?? "").trim().toLowerCase() === "deny";
+}
+
+async function validateMicroVMLifecycle(runtime, lifecycle) {
+  try {
+    runtime.validateMicroVMLifecycleContract(lifecycle);
+    const handlers = {};
+    for (const hook of MICROVM_REQUIRED_LIFECYCLE_HOOKS) handlers[hook] = () => undefined;
+    const adapter = runtime.createMicroVMLifecycleAdapter({ contract: lifecycle, handlers });
+    let state = "requested";
+    for (const hook of ["prepare_image", "start", "readiness", "stop", "teardown"]) {
+      const result = await adapter.handle({
+        request_id: "m15-lifecycle-fixture",
+        tenant_id: "tenant-fixture",
+        namespace: "namespace-fixture",
+        session_id: "session-fixture",
+        hook,
+        state,
+      });
+      if (result.error) return result.error.message;
+      state = String(result.state ?? "");
+    }
+    if (state !== "terminated") return `apptheory: microvm lifecycle adapter terminated at ${state}`;
+
+    const failure = await adapter.handle({
+      request_id: "m15-lifecycle-fixture-failure",
+      tenant_id: "tenant-fixture",
+      namespace: "namespace-fixture",
+      session_id: "session-fixture",
+      hook: "failure",
+      state: "starting",
+    });
+    if (failure.error) return failure.error.message;
+    if (failure.state !== "failed") return `apptheory: microvm lifecycle failure hook produced ${failure.state}`;
+    return "";
+  } catch (err) {
+    return err?.message ?? String(err);
+  }
+}
+
+function validateMicroVMEscapeHatches(runtime, kind, version, escapeHatches) {
+  try {
+    runtime.validateMicroVMEscapeHatches(escapeHatches ?? {});
+    return null;
+  } catch (err) {
+    return {
+      valid: false,
+      kind,
+      version,
+      error_code: String(err?.code ?? "m15.microvm.invalid_contract"),
+      error_message: err?.message ?? String(err),
+    };
+  }
+}
+async function validateMicroVMController(runtime, controller) {
+  try {
+    runtime.validateMicroVMControllerContract(controller);
+    await exerciseRuntimeController(runtime);
+    return "";
+  } catch (err) {
+    return err?.message ?? String(err);
+  }
+}
+
+async function exerciseRuntimeController(runtime) {
+  const client = runtime.createFakeMicroVMClient(new Date(0));
+  const controller = runtime.createMicroVMController(client, {
+    controller_id: "controller-fixture",
+    ids: { newID: () => "session-fixture" },
+  });
+  const create = await controller.handle(runtimeControllerRequest(runtime.MicroVMCommand.Create, "m15-create", ""));
+  if (create.error) return Promise.reject(create.error);
+  requireCreateResponse(create);
+
+  const start = await controller.handle(runtimeControllerRequest(runtime.MicroVMCommand.Start, "m15-start", create.session_id));
+  if (start.error) return Promise.reject(start.error);
+  requireStartStopResponse("start", start, create.session_id, "started");
+
+  const status = await controller.handle(runtimeControllerRequest(runtime.MicroVMCommand.Status, "m15-status", create.session_id));
+  if (status.error) return Promise.reject(status.error);
+  requireStatusResponse(status, create.session_id);
+
+  const session = await controller.handle(runtimeControllerRequest(runtime.MicroVMCommand.Session, "m15-session", create.session_id));
+  if (session.error) return Promise.reject(session.error);
+  requireSessionResponse(session, create.session_id);
+
+  const stop = await controller.handle(runtimeControllerRequest(runtime.MicroVMCommand.Stop, "m15-stop", create.session_id));
+  if (stop.error) return Promise.reject(stop.error);
+  requireStartStopResponse("stop", stop, create.session_id, "stopped");
+}
+
+function requireCreateResponse(response) {
+  if (!response.session_id || response.state !== "requested" || !response.registry_version) {
+    throw new Error("apptheory: microvm controller create response incomplete");
+  }
+}
+
+function requireStartStopResponse(name, response, sessionID, desiredState) {
+  if (response.session_id !== sessionID || !response.state || response.desired_state !== desiredState) {
+    throw new Error(`apptheory: microvm controller ${name} response incomplete`);
+  }
+}
+
+function requireStatusResponse(response, sessionID) {
+  if (response.session_id !== sessionID || !response.lifecycle_state || !response.last_transition) {
+    throw new Error("apptheory: microvm controller status response incomplete");
+  }
+}
+
+function requireSessionResponse(response, sessionID) {
+  if (response.session_id !== sessionID || !response.tenant_id || !response.namespace || !response.registry_version) {
+    throw new Error("apptheory: microvm controller session response incomplete");
+  }
+}
+
+function runtimeControllerRequest(command, requestID, sessionID) {
+  const request = {
+    command,
+    request_id: requestID,
+    tenant_id: "tenant-fixture",
+    namespace: "namespace-fixture",
+    auth_context: {
+      subject: "subject-fixture",
+      tenant_id: "tenant-fixture",
+    },
+    session_id: sessionID,
+  };
+  if (command === "create") {
+    request.image_ref = "image-fixture";
+    request.network_connector_ref = "network-fixture";
+  }
+  return request;
+}
+async function validateMicroVMSessionRegistry(runtime, registry) {
+  try {
+    runtime.validateMicroVMSessionRegistryContract(registry);
+    await exerciseRuntimeSessionRegistry(runtime);
+    return "";
+  } catch (err) {
+    return err?.message ?? String(err);
+  }
+}
+
+async function exerciseRuntimeSessionRegistry(runtime) {
+  const now = new Date("1970-01-01T00:01:40.000Z");
+  const record = {
+    tenant_id: "tenant-fixture",
+    namespace: "namespace-fixture",
+    session_id: "session-fixture",
+    state: "starting",
+    desired_state: "started",
+    endpoint: "https://microvm.example.test/session-fixture",
+    microvm_id: "microvm-fixture",
+    image_ref: "image-fixture",
+    network_connector_ref: "network-fixture",
+    controller_id: "controller-fixture",
+    created_at: now,
+    updated_at: new Date(now.valueOf() + 60_000),
+    expires_at: new Date(now.valueOf() + 3_600_000),
+    generation: 3,
+    last_action: "start",
+    last_command_id: "m15-registry",
+    auth_subject: "subject-fixture",
+    metadata: { safe: "ok" },
+  };
+  const registryRecord = runtime.microVMSessionRecordToRegistryRecord(record);
+  if (
+    registryRecord.pk !== runtime.microVMSessionRegistryPartitionKey(record.tenant_id, record.namespace) ||
+    registryRecord.sk !== runtime.microVMSessionRegistrySortKey(record.session_id) ||
+    registryRecord.ttl !== Math.trunc(record.expires_at.valueOf() / 1000) ||
+    registryRecord.endpoint !== record.endpoint ||
+    registryRecord.microvm_id !== record.microvm_id ||
+    registryRecord.last_action !== "start"
+  ) {
+    throw new Error("apptheory: microvm session registry canonical record incomplete");
+  }
+  const roundTrip = runtime.microVMSessionFromRegistryRecord(registryRecord);
+  if (
+    roundTrip.endpoint !== record.endpoint ||
+    roundTrip.microvm_id !== record.microvm_id ||
+    roundTrip.last_action !== record.last_action
+  ) {
+    throw new Error("apptheory: microvm session registry round trip incomplete");
+  }
+  const store = runtime.createMemoryMicroVMSessionRegistry();
+  const stored = await store.put(record);
+  if (stored.last_action !== "start") {
+    throw new Error("apptheory: microvm memory registry lost last action");
+  }
+  const client = runtime.createMicroVMRegistryClient(store, { ttl_ms: 30 * 60 * 1000 });
+  const created = await client.create({
+    request_id: "m15-registry-create",
+    tenant_id: "tenant-fixture",
+    namespace: "namespace-fixture",
+    session_id: "session-registry-client",
+    image_ref: "image-fixture",
+    network_connector_ref: "network-fixture",
+    session_spec: { metadata: { safe: "ok" } },
+    controller_id: "controller-fixture",
+    auth_subject: "subject-fixture",
+    now,
+  });
+  if (created.last_action !== "create" || created.expires_at.valueOf() - created.created_at.valueOf() !== 30 * 60 * 1000) {
+    throw new Error("apptheory: microvm registry client create record incomplete");
+  }
+  const status = await client.status({
+    request_id: "m15-registry-status",
+    tenant_id: created.tenant_id,
+    namespace: created.namespace,
+    session_id: created.session_id,
+    auth_subject: created.auth_subject,
+  });
+  if (status.last_action !== "create" || status.registry_version !== created.generation) {
+    throw new Error("apptheory: microvm registry client status incomplete");
+  }
+}
+
+function missingStrings(required, got) {
+  const seen = new Set((Array.isArray(got) ? got : []).map((value) => String(value ?? "").trim()).filter(Boolean));
+  return required.filter((value) => !seen.has(value)).sort();
+}
+
 async function runFixture(fixture) {
   const tier = String(fixture.tier ?? "").trim().toLowerCase();
 
@@ -730,6 +1055,9 @@ async function runFixture(fixture) {
   if (tier === "m14") {
     const { actual } = await runFixtureM14(fixture);
     return compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
+  }
+  if (tier === "m15") {
+    return await compareMicroVMContractFixture(fixture);
   }
 
   const enableP1 = ["p1", "p2"].includes(tier);
@@ -2935,6 +3263,13 @@ async function main() {
       } else if ("expected_profile_logs" in result) {
         console.error(`  expected.profile_logs: ${stableStringify(result.expected_profile_logs)}`);
         console.error(`  got.profile_logs: ${stableStringify(result.actual_profile_logs)}`);
+      } else if ("expected_microvm_contract_validation" in result) {
+        console.error(
+          `  expected.microvm_contract_validation: ${stableStringify(result.expected_microvm_contract_validation)}`,
+        );
+        console.error(
+          `  got.microvm_contract_validation: ${stableStringify(result.actual_microvm_contract_validation)}`,
+        );
       } else {
         console.error(`  expected: ${stableStringify(result.expected)}`);
         console.error(`  got: ${stableStringify(debugActualForExpected(result.actual, result.expected))}`);

@@ -156,3 +156,38 @@ patterns:
         consequences:
           - "Double processing"
           - "Inconsistent job state"
+
+  lambda_microvm_golden_path:
+    name: "Use the AppTheory MicroVM golden path end to end"
+    problem: "MicroVM lifecycle, controller, network, and session-state behavior drifts when teams hand-roll pieces around the framework."
+    solution: "Use AppTheory lifecycle adapters, constrained MicroVM controllers, the TableTheory-shaped session registry, and the AppTheory CDK network/image/controller constructs together. Controller routes stay authorizer-protected and fail closed by default."
+    correct_example: |
+      # CORRECT: compose the blessed AppTheory surfaces.
+      AppTheoryMicrovmNetworkConnector -> AppTheoryMicrovmImage -> AppTheoryMicrovmController
+      controller handler -> MicroVMController + TableTheoryMicroVMSessionRegistry
+      lifecycle handlers -> MicroVMLifecycleAdapter
+    anti_patterns:
+      - name: "Raw MicroVM control plane calls"
+        why: "Raw SDK clients bypass AppTheory's constrained command envelope, sanitized errors, tenant binding, and registry validation."
+        incorrect_example: |
+          # INCORRECT
+          lambdaClient.runMicrovm(rawRequest)
+        consequences:
+          - "Cross-language behavior drift"
+          - "Unbounded AWS credential or bearer-token exposure"
+      - name: "Unauthenticated controller routes"
+        why: "The controller contract requires auth.required=true and default=deny; demo authorizers are not production proof."
+        incorrect_example: |
+          # INCORRECT
+          new AppTheoryMicrovmController(stack, "Controller", { controller, microvmImage, egressNetworkConnectors })
+        consequences:
+          - "Fail-open controller access"
+          - "Tenant-bound session state bypass"
+      - name: "Ad-hoc session tables"
+        why: "Controller/session routes must use the canonical TableTheory/DynamoDB pk/sk/ttl registry shape."
+        incorrect_example: |
+          # INCORRECT
+          putItem({ id: sessionId, status: "ready" })
+        consequences:
+          - "Session lookup drift"
+          - "TTL and tenant-bound key mismatch"

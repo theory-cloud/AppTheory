@@ -184,6 +184,36 @@ concepts:
       - docs/features/jobs-ledger.md
       - examples/cdk/import-pipeline/README.md
 
+  lambda_microvm_support:
+    type: component
+    purpose: "Fixture-backed AWS Lambda MicroVM lifecycle, controller, durable session registry, and CDK deployment primitive."
+    provides:
+      - sanitized_microvm_lifecycle_hooks
+      - constrained_microvm_controller
+      - protected_controller_routes
+      - tenant_bound_session_registry
+      - cdk_network_connector_image_controller_constructs
+      - evidence_bounded_synth_example
+    configuration:
+      - contract-tests/fixtures/m15/
+      - runtime/microvm/
+      - ts/src/microvm.ts
+      - py/src/apptheory/microvm.py
+      - cdk/lib/microvm-network-connector.ts
+      - cdk/lib/microvm-image.ts
+      - cdk/lib/microvm-controller.ts
+      - examples/cdk/microvm-controller/
+    docs:
+      - docs/features/lambda-microvm-contract-foundation.md
+      - docs/cdk/lambda-microvm.md
+      - docs/reference/contract-fixtures.md
+    failure_modes:
+      - "Raw AWS SDK escape hatches bypass the constrained controller/client contract."
+      - "Raw lifecycle hook payloads bypass sanitized MicroVMLifecycleEvent handling."
+      - "Unauthenticated controller routes violate the fail-closed auth posture."
+      - "Ad-hoc session storage drifts from the TableTheory/DynamoDB pk/sk/ttl registry shape."
+      - "Hidden VPC/account/network mutation violates the caller-provided network boundary."
+
   import_pipeline_support_pack:
     type: workflow
     purpose: "AWS-native import pipeline primitives (S3 ingest + job ledger + optional batch runner) intended to be assembled into production workloads."

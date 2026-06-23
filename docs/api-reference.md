@@ -331,6 +331,26 @@ SDK.
 
 Guide: [Object Store Helper](./features/object-store.md)
 
+### AWS Lambda MicroVM support
+
+The M15 MicroVM surface is fixture-backed across Go, TypeScript, and Python. It is a constrained AppTheory primitive,
+not a raw AWS SDK escape hatch.
+
+- Go: `runtime/microvm` exports lifecycle adapters, constrained controllers, safe session records, TableTheory session
+  registry helpers, and test fakes.
+- TypeScript: `MicroVMLifecycleAdapter`, `MicroVMController`, `TableTheoryMicroVMSessionRegistry`,
+  `createAWSLambdaMicroVMClient`, `createMicroVMLifecycleAdapter`, `createMicroVMController`, and related validators.
+- Python: `MicroVMLifecycleAdapter`, `MicroVMController`, `TableTheoryMicroVMSessionRegistry`,
+  `create_aws_lambda_microvm_client`, `create_microvm_lifecycle_adapter`, `create_microvm_controller`, and related
+  validators.
+
+The golden path requires sanitized lifecycle events, protected controller routes, and the TableTheory/DynamoDB-style
+session registry with `pk`, `sk`, and `ttl`. It does not provide live deployment proof, customer workload proof,
+generalized account vending, unauthenticated controllers, raw SDK access, or raw lifecycle hook bypasses.
+
+Guide: [First-class AWS Lambda MicroVM Support](./features/lambda-microvm-contract-foundation.md)
+CDK guide: [Lambda MicroVM CDK Constructs](./cdk/lambda-microvm.md)
+
 ## Migration and configuration notes
 
 Confirmed migration surface:
@@ -391,6 +411,9 @@ includes:
 - `AppTheoryKinesisStream`
 - `AppTheoryKinesisStreamMapping`
 - `AppTheoryCloudWatchLogsDestination`
+- `AppTheoryMicrovmNetworkConnector`
+- `AppTheoryMicrovmImage`
+- `AppTheoryMicrovmController`
 
 Start with:
 
@@ -398,6 +421,7 @@ Start with:
 - [CDK API Reference](./cdk/api-reference.md)
 - [Kinesis + CloudWatch Logs](./cdk/kinesis-cloudwatch-logs.md)
 - [CDK Import Pipeline Guides](./cdk/import-pipeline.md)
+- [Lambda MicroVM CDK Constructs](./cdk/lambda-microvm.md)
 
 Package-local docs remain available under `ts/docs/`, `py/docs/`, and `cdk/docs/` for language-specific examples, but
 they should not be treated as the canonical external root.
