@@ -860,10 +860,10 @@ def validate_microvm_contract_fixture(contract: Any) -> dict[str, Any]:
         if err:
             return invalid_microvm_contract("m15.microvm.lifecycle_incomplete", err)
     else:
-        err = validate_microvm_controller(controller)
+        err = validate_microvm_controller(runtime, controller)
         if err:
             return invalid_microvm_contract("m15.microvm.controller_incomplete", err)
-        err = validate_microvm_session_registry(contract.get("session_registry") or {})
+        err = validate_microvm_session_registry(runtime, contract.get("session_registry") or {})
         if err:
             return invalid_microvm_contract("m15.microvm.session_registry_incomplete", err)
 
@@ -934,60 +934,91 @@ def validate_microvm_escape_hatches(runtime: Any, kind: str, version: str, escap
             "error_message": str(getattr(exc, "message", str(exc))),
         }
 
-def validate_microvm_controller(controller: dict[str, Any]) -> str:
-    if not microvm_controller_auth_defaults_deny(controller.get("auth") or {}):
-        return "apptheory: microvm controller must default to authenticated deny"
-
-    envelope = controller.get("envelope") or {}
-    missing_envelope = missing_strings(MICROVM_REQUIRED_ENVELOPE_FIELDS, envelope.get("required_fields") or [])
-    if missing_envelope:
-        return f"apptheory: microvm controller envelope missing fields: {','.join(missing_envelope)}"
-
-    missing_forbidden = missing_strings(["raw_sdk_client", "bearer_token"], envelope.get("forbidden_fields") or [])
-    if missing_forbidden:
-        return f"apptheory: microvm controller envelope missing forbidden fields: {','.join(missing_forbidden)}"
-
-    commands = controller.get("commands") if isinstance(controller.get("commands"), list) else []
-    command_names = [str(command.get("name", "")) for command in commands if isinstance(command, dict)]
-    missing_commands = missing_strings(MICROVM_REQUIRED_CONTROLLER_COMMANDS, command_names)
-    if missing_commands:
-        return f"apptheory: microvm controller missing commands: {','.join(missing_commands)}"
-
-    for command in commands:
-        if not isinstance(command, dict):
-            return "apptheory: microvm controller commands must be objects"
-        name = str(command.get("name", "")).strip()
-        if not name or not str(command.get("method", "")).strip() or not str(command.get("path", "")).strip():
-            return "apptheory: microvm controller commands must define name, method, and path"
-        if not command.get("request_fields") or not command.get("response_fields"):
-            return f"apptheory: microvm controller command {name} must define request and response fields"
-    return ""
+def validate_microvm_controller(runtime: Any, controller: dict[str, Any]) -> str:
+    try:
+        runtime.validate_microvm_controller_contract(controller)
+        exercise_microvm_controller(runtime)
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        return str(exc)
 
 
-def validate_microvm_session_registry(registry: dict[str, Any]) -> str:
-    if str(registry.get("pattern", "")).strip() != "tabletheory-single-table":
-        return "apptheory: microvm session registry must use tabletheory-single-table guidance"
-
-    missing_tenant_binding = missing_strings(["tenant_id", "namespace"], registry.get("tenant_binding") or [])
-    if missing_tenant_binding:
-        return f"apptheory: microvm session registry missing tenant binding: {','.join(missing_tenant_binding)}"
-
-    missing_fields = missing_strings(MICROVM_REQUIRED_SESSION_FIELDS, registry.get("required_fields") or [])
-    if missing_fields:
-        return f"apptheory: microvm session registry missing fields: {','.join(missing_fields)}"
-
-    missing_states = missing_strings(MICROVM_REQUIRED_LIFECYCLE_STATES, registry.get("state_values") or [])
-    if missing_states:
-        return f"apptheory: microvm session registry missing states: {','.join(missing_states)}"
-
-    missing_forbidden = missing_strings(
-        ["raw_aws_credentials", "raw_lifecycle_hook_payload", "bearer_token"],
-        registry.get("forbidden_fields") or [],
+def exercise_microvm_controller(runtime: Any) -> None:
+    client = runtime.create_fake_microvm_client(now=1.0)
+    controller = runtime.create_microvm_controller(
+        client,
+        controller_id="controller-fixture",
+        id_generator=lambda: "session-fixture",
     )
-    if missing_forbidden:
-        return f"apptheory: microvm session registry missing forbidden fields: {','.join(missing_forbidden)}"
-    return ""
+    create = controller.handle(runtime_controller_request(runtime.COMMAND_CREATE, "m15-create", ""))
+    if create.error:
+        raise create.error
+    require_create_response(create)
 
+    start = controller.handle(runtime_controller_request(runtime.COMMAND_START, "m15-start", create.session_id))
+    if start.error:
+        raise start.error
+    require_start_stop_response("start", start, create.session_id, "started")
+
+    status = controller.handle(runtime_controller_request(runtime.COMMAND_STATUS, "m15-status", create.session_id))
+    if status.error:
+        raise status.error
+    require_status_response(status, create.session_id)
+
+    session = controller.handle(runtime_controller_request(runtime.COMMAND_SESSION, "m15-session", create.session_id))
+    if session.error:
+        raise session.error
+    require_session_response(session, create.session_id)
+
+    stop = controller.handle(runtime_controller_request(runtime.COMMAND_STOP, "m15-stop", create.session_id))
+    if stop.error:
+        raise stop.error
+    require_start_stop_response("stop", stop, create.session_id, "stopped")
+
+
+def require_create_response(response: Any) -> None:
+    if not response.session_id or response.state != "requested" or not response.registry_version:
+        raise RuntimeError("apptheory: microvm controller create response incomplete")
+
+
+def require_start_stop_response(name: str, response: Any, session_id: str, desired_state: str) -> None:
+    if response.session_id != session_id or not response.state or response.desired_state != desired_state:
+        raise RuntimeError(f"apptheory: microvm controller {name} response incomplete")
+
+
+def require_status_response(response: Any, session_id: str) -> None:
+    if response.session_id != session_id or not response.lifecycle_state or not response.last_transition:
+        raise RuntimeError("apptheory: microvm controller status response incomplete")
+
+
+def require_session_response(response: Any, session_id: str) -> None:
+    if response.session_id != session_id or not response.tenant_id or not response.namespace or not response.registry_version:
+        raise RuntimeError("apptheory: microvm controller session response incomplete")
+
+
+def runtime_controller_request(command: str, request_id: str, session_id: str) -> dict[str, Any]:
+    request: dict[str, Any] = {
+        "command": command,
+        "request_id": request_id,
+        "tenant_id": "tenant-fixture",
+        "namespace": "namespace-fixture",
+        "auth_context": {
+            "subject": "subject-fixture",
+            "tenant_id": "tenant-fixture",
+        },
+        "session_id": session_id,
+    }
+    if command == "create":
+        request["image_ref"] = "image-fixture"
+        request["network_connector_ref"] = "network-fixture"
+    return request
+
+def validate_microvm_session_registry(runtime: Any, registry: dict[str, Any]) -> str:
+    try:
+        runtime.validate_microvm_session_registry_contract(registry)
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        return str(exc)
 
 def missing_strings(required: list[str], got: Any) -> list[str]:
     values = got if isinstance(got, list) else []
