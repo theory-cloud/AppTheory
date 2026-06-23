@@ -71,3 +71,17 @@ concepts:
       - optional_operator_role_creation
     related_docs:
       - cdk/docs/microvm-network-connector.md
+
+  microvm_image:
+    type: construct
+    purpose: "Lambda MicroVM image backed by AWS::Lambda::MicrovmImage."
+    provides:
+      - code_artifact_uri
+      - base_image_version
+      - lifecycle_hooks
+      - logging_configuration
+      - resource_requirements
+      - environment_variables
+      - network_connector_references
+    related_docs:
+      - cdk/docs/microvm-image.md

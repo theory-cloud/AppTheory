@@ -19,6 +19,7 @@ import (
 // controller behavior stays in the AppTheory runtime contract.
 type AppTheoryMicrovmNetworkConnector interface {
 	constructs.Construct
+	IAppTheoryMicrovmNetworkConnector
 	// The underlying CloudFormation network connector resource.
 	NetworkConnector() awscdk.CfnResource
 	// The network connector ARN.
@@ -51,6 +52,7 @@ type AppTheoryMicrovmNetworkConnector interface {
 // The jsii proxy struct for AppTheoryMicrovmNetworkConnector
 type jsiiProxy_AppTheoryMicrovmNetworkConnector struct {
 	internal.Type__constructsConstruct
+	jsiiProxy_IAppTheoryMicrovmNetworkConnector
 }
 
 func (j *jsiiProxy_AppTheoryMicrovmNetworkConnector) NetworkConnector() awscdk.CfnResource {

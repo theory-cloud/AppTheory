@@ -1,0 +1,154 @@
+{
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>"
+    }
+  },
+  "Resources": {
+    "ConnectorNetworkConnectorB4F2FB5F": {
+      "Properties": {
+        "Configuration": {
+          "VpcEgressConfiguration": {
+            "AssociatedComputeResourceTypes": [
+              "MicroVm"
+            ],
+            "NetworkProtocol": "IPv4",
+            "SecurityGroupIds": [
+              "sg-0123456789abcdef0"
+            ],
+            "SubnetIds": [
+              "subnet-0123456789abcdef0",
+              "subnet-0fedcba9876543210"
+            ]
+          }
+        },
+        "Name": "apptheory_microvm_connector",
+        "OperatorRole": "arn:aws:iam::123456789012:role/MicrovmOperatorRole",
+        "Tags": [
+          {
+            "Key": "Framework",
+            "Value": "AppTheory"
+          },
+          {
+            "Key": "Component",
+            "Value": "MicrovmNetworkConnector"
+          }
+        ]
+      },
+      "Type": "AWS::Lambda::NetworkConnector"
+    },
+    "ImageMicrovmImage9E388E6A": {
+      "Properties": {
+        "AdditionalOsCapabilities": [
+          "ALL"
+        ],
+        "BaseImageArn": "arn:aws:lambda:us-east-1:123456789012:microvm-image/base",
+        "BaseImageVersion": "1",
+        "BuildRoleArn": "arn:aws:iam::123456789012:role/MicrovmBuildRole",
+        "CodeArtifact": {
+          "Uri": "s3://apptheory-artifacts/microvm/app.tar"
+        },
+        "CpuConfigurations": [
+          {
+            "Architecture": "ARM_64"
+          }
+        ],
+        "Description": "AppTheory test MicroVM image",
+        "EgressNetworkConnectors": [
+          {
+            "Ref": "ConnectorNetworkConnectorB4F2FB5F"
+          }
+        ],
+        "EnvironmentVariables": [
+          {
+            "Key": "APP_ENV",
+            "Value": "test"
+          },
+          {
+            "Key": "APPTHEORY_TIER",
+            "Value": "P2"
+          }
+        ],
+        "Hooks": {
+          "MicrovmHooks": {
+            "Resume": "DISABLED",
+            "ResumeTimeoutInSeconds": 5,
+            "Run": "ENABLED",
+            "RunTimeoutInSeconds": 30,
+            "Suspend": "ENABLED",
+            "SuspendTimeoutInSeconds": 10,
+            "Terminate": "ENABLED",
+            "TerminateTimeoutInSeconds": 15
+          },
+          "MicrovmImageHooks": {
+            "Ready": "ENABLED",
+            "ReadyTimeoutInSeconds": 120,
+            "Validate": "ENABLED",
+            "ValidateTimeoutInSeconds": 300
+          },
+          "Port": 8080
+        },
+        "Logging": {
+          "CloudWatch": {
+            "LogGroup": "/aws/lambda/microvm/apptheory",
+            "LogStream": "image-build"
+          }
+        },
+        "Name": "apptheory-microvm-image",
+        "Resources": [
+          {
+            "MinimumMemoryInMiB": 2048
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Framework",
+            "Value": "AppTheory"
+          },
+          {
+            "Key": "Component",
+            "Value": "MicrovmImage"
+          },
+          {
+            "Key": "Environment",
+            "Value": "test"
+          },
+          {
+            "Key": "Owner",
+            "Value": "apptheory"
+          }
+        ]
+      },
+      "Type": "AWS::Lambda::MicrovmImage"
+    }
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5"
+                  ],
+                  {
+                    "Ref": "BootstrapVersion"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+        }
+      ]
+    }
+  }
+}

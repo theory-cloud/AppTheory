@@ -4464,6 +4464,236 @@ test("AppTheoryMicrovmNetworkConnector fails closed on invalid props", () => {
   }
 });
 
+function importedMicrovmConnector(stack) {
+  const network = importedMicrovmNetworkContext(stack);
+  const operatorRole = iam.Role.fromRoleArn(
+    stack,
+    "ImportedMicrovmOperatorRole",
+    "arn:aws:iam::123456789012:role/MicrovmOperatorRole",
+    { mutable: false },
+  );
+  return new apptheory.AppTheoryMicrovmNetworkConnector(stack, "Connector", {
+    ...network,
+    connectorName: "apptheory_microvm_connector",
+    operatorRole,
+  });
+}
+
+function microvmImageProps(connector, overrides = {}) {
+  return {
+    name: "apptheory-microvm-image",
+    description: "AppTheory test MicroVM image",
+    baseImageArn: "arn:aws:lambda:us-east-1:123456789012:microvm-image/base",
+    baseImageVersion: "1",
+    buildRoleArn: "arn:aws:iam::123456789012:role/MicrovmBuildRole",
+    codeArtifact: { uri: "s3://apptheory-artifacts/microvm/app.tar" },
+    egressNetworkConnectors: [connector],
+    hooks: {
+      port: 8080,
+      microvmImageHooks: {
+        ready: apptheory.AppTheoryMicrovmHookMode.ENABLED,
+        readyTimeoutInSeconds: 120,
+        validate: apptheory.AppTheoryMicrovmHookMode.ENABLED,
+        validateTimeoutInSeconds: 300,
+      },
+      microvmHooks: {
+        resume: apptheory.AppTheoryMicrovmHookMode.DISABLED,
+        resumeTimeoutInSeconds: 5,
+        run: apptheory.AppTheoryMicrovmHookMode.ENABLED,
+        runTimeoutInSeconds: 30,
+        suspend: apptheory.AppTheoryMicrovmHookMode.ENABLED,
+        suspendTimeoutInSeconds: 10,
+        terminate: apptheory.AppTheoryMicrovmHookMode.ENABLED,
+        terminateTimeoutInSeconds: 15,
+      },
+    },
+    logging: {
+      cloudWatch: {
+        logGroup: "/aws/lambda/microvm/apptheory",
+        logStream: "image-build",
+      },
+    },
+    resources: [{ minimumMemoryInMiB: 2048 }],
+    environmentVariables: [
+      { key: "APP_ENV", value: "test" },
+      { key: "APPTHEORY_TIER", value: "P2" },
+    ],
+    tags: {
+      Environment: "test",
+      Owner: "apptheory",
+    },
+    ...overrides,
+  };
+}
+
+test("AppTheoryMicrovmImage synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const connector = importedMicrovmConnector(stack);
+
+  const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+
+  assert.ok(image.microvmImageName, "Should expose the image Ref token");
+  assert.ok(image.microvmImageArn, "Should expose the image ARN token");
+  assert.ok(image.microvmImageState, "Should expose the image state token");
+  assert.ok(image.latestActiveImageVersion, "Should expose the latest active image version token");
+  assert.ok(image.latestFailedImageVersion, "Should expose the latest failed image version token");
+  assert.ok(image.createdAt, "Should expose the created timestamp token");
+  assert.ok(image.updatedAt, "Should expose the updated timestamp token");
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const images = resourcesOfType(template, "AWS::Lambda::MicrovmImage");
+  assert.equal(images.length, 1, "Should synthesize one Lambda MicroVM image");
+  const props = images[0].Properties;
+  assert.deepEqual(props.AdditionalOsCapabilities, ["ALL"]);
+  assert.deepEqual(props.CpuConfigurations, [{ Architecture: "ARM_64" }]);
+  assert.equal(props.CodeArtifact.Uri, "s3://apptheory-artifacts/microvm/app.tar");
+  assert.equal(props.BaseImageArn, "arn:aws:lambda:us-east-1:123456789012:microvm-image/base");
+  assert.equal(props.BaseImageVersion, "1");
+  assert.equal(props.BuildRoleArn, "arn:aws:iam::123456789012:role/MicrovmBuildRole");
+  assert.equal(props.Hooks.Port, 8080);
+  assert.equal(props.Hooks.MicrovmImageHooks.Ready, "ENABLED");
+  assert.equal(props.Hooks.MicrovmHooks.Run, "ENABLED");
+  assert.equal(props.Logging.CloudWatch.LogGroup, "/aws/lambda/microvm/apptheory");
+  assert.deepEqual(props.Resources, [{ MinimumMemoryInMiB: 2048 }]);
+  assert.equal(props.EnvironmentVariables.length, 2);
+  assert.ok(props.EgressNetworkConnectors[0].Ref.includes("NetworkConnector"));
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("microvm-image", template);
+  } else {
+    expectSnapshot("microvm-image", template);
+  }
+});
+
+test("AppTheoryMicrovmImage supports disabled logging", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const connector = importedMicrovmConnector(stack);
+
+  new apptheory.AppTheoryMicrovmImage(
+    stack,
+    "Image",
+    microvmImageProps(connector, {
+      logging: { disabled: true },
+      environmentVariables: undefined,
+      hooks: {
+        microvmImageHooks: { validate: apptheory.AppTheoryMicrovmHookMode.ENABLED },
+      },
+    }),
+  );
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const images = resourcesOfType(template, "AWS::Lambda::MicrovmImage");
+  assert.equal(images.length, 1, "Should synthesize one Lambda MicroVM image");
+  assert.deepEqual(images[0].Properties.Logging, { Disabled: true });
+  assert.deepEqual(images[0].Properties.EnvironmentVariables, []);
+});
+
+test("AppTheoryMicrovmImage fails closed on invalid props", () => {
+  const app = new cdk.App();
+
+  {
+    const stack = new cdk.Stack(app, "MissingPropsStack");
+    assert.throws(() => new apptheory.AppTheoryMicrovmImage(stack, "Image"), /requires props/);
+  }
+
+  {
+    const stack = new cdk.Stack(app, "MissingConnectorsStack");
+    const connector = importedMicrovmConnector(stack);
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmImage(
+          stack,
+          "Image",
+          microvmImageProps(connector, { egressNetworkConnectors: [] }),
+        ),
+      /at least 1 egressNetworkConnectors entry/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "AmbiguousLoggingStack");
+    const connector = importedMicrovmConnector(stack);
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmImage(
+          stack,
+          "Image",
+          microvmImageProps(connector, {
+            logging: { cloudWatch: { logGroup: "/aws/lambda/test" }, disabled: true },
+          }),
+        ),
+      /logging must specify exactly one/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "DisabledFalseStack");
+    const connector = importedMicrovmConnector(stack);
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmImage(
+          stack,
+          "Image",
+          microvmImageProps(connector, { logging: { disabled: false } }),
+        ),
+      /logging.disabled must be true/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "TooManyResourcesStack");
+    const connector = importedMicrovmConnector(stack);
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmImage(
+          stack,
+          "Image",
+          microvmImageProps(connector, {
+            resources: [{ minimumMemoryInMiB: 2048 }, { minimumMemoryInMiB: 4096 }],
+          }),
+        ),
+      /supports exactly 1 resources entry/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "InvalidHookModeStack");
+    const connector = importedMicrovmConnector(stack);
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmImage(
+          stack,
+          "Image",
+          microvmImageProps(connector, {
+            hooks: { microvmImageHooks: { ready: "ON" } },
+          }),
+        ),
+      /hooks.microvmImageHooks.ready must be ENABLED or DISABLED/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "DuplicateEnvStack");
+    const connector = importedMicrovmConnector(stack);
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmImage(
+          stack,
+          "Image",
+          microvmImageProps(connector, {
+            environmentVariables: [
+              { key: "DUPLICATE", value: "one" },
+              { key: "DUPLICATE", value: "two" },
+            ],
+          }),
+        ),
+      /duplicate environmentVariables key values/,
+    );
+  }
+});
+
 // ============================================================================
 // AppTheoryMcpServer tests
 // ============================================================================

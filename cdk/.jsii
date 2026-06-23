@@ -16480,6 +16480,890 @@
       ],
       "symbolId": "lib/media-cdn:AppTheoryMediaCdnProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmHookMode": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "summary": "Lifecycle hook mode for Lambda MicroVM image hooks."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmHookMode",
+      "kind": "enum",
+      "locationInModule": {
+        "filename": "lib/microvm-image.ts",
+        "line": 29
+      },
+      "members": [
+        {
+          "docs": {
+            "summary": "Disable the lifecycle hook."
+          },
+          "name": "DISABLED"
+        },
+        {
+          "docs": {
+            "summary": "Enable the lifecycle hook."
+          },
+          "name": "ENABLED"
+        }
+      ],
+      "name": "AppTheoryMicrovmHookMode",
+      "symbolId": "lib/microvm-image:AppTheoryMicrovmHookMode"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImage": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "This construct is intentionally deployment-only: it creates the CloudFormation\n`AWS::Lambda::MicrovmImage` resource from caller-provided code artifact, base image,\nbuild role, lifecycle hooks, logging configuration, resource requirements, and\nAppTheory MicroVM network-connector references. Runtime controller behavior stays in\nthe AppTheory runtime contract.",
+        "summary": "AppTheory CDK construct for AWS Lambda MicroVM images."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImage",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/microvm-image.ts",
+          "line": 346
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/microvm-image.ts",
+        "line": 305
+      },
+      "name": "AppTheoryMicrovmImage",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The timestamp when the image was created."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 339
+          },
+          "name": "createdAt",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The latest active image version."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 329
+          },
+          "name": "latestActiveImageVersion",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The latest failed image version, if any."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 334
+          },
+          "name": "latestFailedImageVersion",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The underlying CloudFormation MicroVM image resource."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 309
+          },
+          "name": "microvmImage",
+          "type": {
+            "fqn": "aws-cdk-lib.CfnResource"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The ARN of the MicroVM image."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 319
+          },
+          "name": "microvmImageArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The MicroVM image name returned by Ref."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 314
+          },
+          "name": "microvmImageName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The current image state."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 324
+          },
+          "name": "microvmImageState",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The timestamp when the image was last updated."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 344
+          },
+          "name": "updatedAt",
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-image:AppTheoryMicrovmImage"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageBuildHooks": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Lifecycle hooks invoked during MicroVM image build events."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageBuildHooks",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-image.ts",
+        "line": 81
+      },
+      "name": "AppTheoryMicrovmImageBuildHooks",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Whether the ready hook is enabled."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 85
+          },
+          "name": "ready",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmHookMode"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The maximum time in seconds for the ready hook to complete."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 90
+          },
+          "name": "readyTimeoutInSeconds",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Whether the validate hook is enabled."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 95
+          },
+          "name": "validate",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmHookMode"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The maximum time in seconds for the validate hook to complete."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 100
+          },
+          "name": "validateTimeoutInSeconds",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-image:AppTheoryMicrovmImageBuildHooks"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCloudWatchLogging": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "CloudWatch Logs configuration for AWS::Lambda::MicrovmImage logging."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCloudWatchLogging",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-image.ts",
+        "line": 171
+      },
+      "name": "AppTheoryMicrovmImageCloudWatchLogging",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The name of the CloudWatch Logs log group to send logs to."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 175
+          },
+          "name": "logGroup",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The name of the CloudWatch Logs log stream within the log group."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 180
+          },
+          "name": "logStream",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-image:AppTheoryMicrovmImageCloudWatchLogging"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCodeArtifact": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Code artifact location for AWS::Lambda::MicrovmImage."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCodeArtifact",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-image.ts",
+        "line": 44
+      },
+      "name": "AppTheoryMicrovmImageCodeArtifact",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The URI of the code artifact, such as an Amazon S3 path or Amazon ECR image URI."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 48
+          },
+          "name": "uri",
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-image:AppTheoryMicrovmImageCodeArtifact"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCpuArchitecture": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "summary": "CPU architectures supported by Lambda MicroVM images."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCpuArchitecture",
+      "kind": "enum",
+      "locationInModule": {
+        "filename": "lib/microvm-image.ts",
+        "line": 19
+      },
+      "members": [
+        {
+          "docs": {
+            "summary": "ARM64 MicroVM image architecture."
+          },
+          "name": "ARM_64"
+        }
+      ],
+      "name": "AppTheoryMicrovmImageCpuArchitecture",
+      "symbolId": "lib/microvm-image:AppTheoryMicrovmImageCpuArchitecture"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCpuConfiguration": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "CPU configuration for AWS::Lambda::MicrovmImage."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCpuConfiguration",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-image.ts",
+        "line": 54
+      },
+      "name": "AppTheoryMicrovmImageCpuConfiguration",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "AppTheoryMicrovmImageCpuArchitecture.ARM_64",
+            "summary": "The CPU architecture."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 60
+          },
+          "name": "architecture",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCpuArchitecture"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-image:AppTheoryMicrovmImageCpuConfiguration"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageEnvironmentVariable": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Environment variable for AWS::Lambda::MicrovmImage."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageEnvironmentVariable",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-image.ts",
+        "line": 66
+      },
+      "name": "AppTheoryMicrovmImageEnvironmentVariable",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Environment variable key."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 70
+          },
+          "name": "key",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Environment variable value."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 75
+          },
+          "name": "value",
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-image:AppTheoryMicrovmImageEnvironmentVariable"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageHooks": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Hook configuration for AWS::Lambda::MicrovmImage."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageHooks",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-image.ts",
+        "line": 151
+      },
+      "name": "AppTheoryMicrovmImageHooks",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Lifecycle hooks for MicroVM events."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 155
+          },
+          "name": "microvmHooks",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmRuntimeHooks"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Lifecycle hooks for MicroVM image build events."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 160
+          },
+          "name": "microvmImageHooks",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageBuildHooks"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The port number on which the hooks listener runs."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 165
+          },
+          "name": "port",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-image:AppTheoryMicrovmImageHooks"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageLogging": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Logging configuration for AWS::Lambda::MicrovmImage."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageLogging",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-image.ts",
+        "line": 186
+      },
+      "name": "AppTheoryMicrovmImageLogging",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Configuration for sending logs to Amazon CloudWatch Logs."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 190
+          },
+          "name": "cloudWatch",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCloudWatchLogging"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Set to true to disable MicroVM logging."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 195
+          },
+          "name": "disabled",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-image:AppTheoryMicrovmImageLogging"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageOsCapability": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "summary": "Additional OS capabilities supported by Lambda MicroVM images."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageOsCapability",
+      "kind": "enum",
+      "locationInModule": {
+        "filename": "lib/microvm-image.ts",
+        "line": 9
+      },
+      "members": [
+        {
+          "docs": {
+            "summary": "Grants all currently supported MicroVM OS capabilities."
+          },
+          "name": "ALL"
+        }
+      ],
+      "name": "AppTheoryMicrovmImageOsCapability",
+      "symbolId": "lib/microvm-image:AppTheoryMicrovmImageOsCapability"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for AppTheoryMicrovmImage."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-image.ts",
+        "line": 211
+      },
+      "name": "AppTheoryMicrovmImageProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The ARN of the base MicroVM image used."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 225
+          },
+          "name": "baseImageArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The specific version of the base MicroVM image."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 230
+          },
+          "name": "baseImageVersion",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The ARN of the IAM build role."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 235
+          },
+          "name": "buildRoleArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The code artifact for this version."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 240
+          },
+          "name": "codeArtifact",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCodeArtifact"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The description of the version."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 220
+          },
+          "name": "description",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Pass `AppTheoryMicrovmNetworkConnector` instances or compatible connector references.\nAt least one connector reference is required and no more than 10 may be supplied.",
+            "summary": "The list of egress network connectors available to the MicroVM at runtime."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 248
+          },
+          "name": "egressNetworkConnectors",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Lifecycle hook configuration for MicroVMs and MicroVM images."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 253
+          },
+          "name": "hooks",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageHooks"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Specify exactly one of `cloudWatch` or `disabled: true`.",
+            "summary": "Configuration for MicroVM logging output."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 260
+          },
+          "name": "logging",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageLogging"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The name of the MicroVM image."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 215
+          },
+          "name": "name",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "AWS::Lambda::MicrovmImage currently accepts exactly one Resources entry.",
+            "summary": "The resource requirements for the MicroVM."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 267
+          },
+          "name": "resources",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageResources"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[AppTheoryMicrovmImageOsCapability.ALL]",
+            "summary": "Additional OS capabilities granted to the MicroVM runtime environment."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 274
+          },
+          "name": "additionalOsCapabilities",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageOsCapability"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[{ architecture: AppTheoryMicrovmImageCpuArchitecture.ARM_64 }]",
+            "summary": "The list of supported CPU configurations for the MicroVM."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 281
+          },
+          "name": "cpuConfigurations",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCpuConfiguration"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[]",
+            "summary": "Environment variables set in the MicroVM runtime environment."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 288
+          },
+          "name": "environmentVariables",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageEnvironmentVariable"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Additional CloudFormation tags to apply to the MicroVM image."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 293
+          },
+          "name": "tags",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "map"
+            }
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-image:AppTheoryMicrovmImageProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageResources": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Resource requirements for AWS::Lambda::MicrovmImage."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageResources",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-image.ts",
+        "line": 201
+      },
+      "name": "AppTheoryMicrovmImageResources",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The minimum amount of memory in MiB to allocate to the MicroVM."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 205
+          },
+          "name": "minimumMemoryInMiB",
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-image:AppTheoryMicrovmImageResources"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -16491,7 +17375,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/microvm-network-connector.ts",
-          "line": 128
+          "line": 138
         },
         "parameters": [
           {
@@ -16514,10 +17398,13 @@
           }
         ]
       },
+      "interfaces": [
+        "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector"
+      ],
       "kind": "class",
       "locationInModule": {
         "filename": "lib/microvm-network-connector.ts",
-        "line": 92
+        "line": 102
       },
       "name": "AppTheoryMicrovmNetworkConnector",
       "properties": [
@@ -16528,7 +17415,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 116
+            "line": 126
           },
           "name": "networkConnector",
           "type": {
@@ -16542,9 +17429,10 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 121
+            "line": 131
           },
           "name": "networkConnectorArn",
+          "overrides": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector",
           "type": {
             "primitive": "string"
           }
@@ -16556,7 +17444,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 126
+            "line": 136
           },
           "name": "networkConnectorState",
           "type": {
@@ -16570,7 +17458,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 111
+            "line": 121
           },
           "name": "operatorRole",
           "type": {
@@ -16584,7 +17472,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 106
+            "line": 116
           },
           "name": "securityGroupIds",
           "type": {
@@ -16603,7 +17491,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 101
+            "line": 111
           },
           "name": "subnetIds",
           "type": {
@@ -16622,7 +17510,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 96
+            "line": 106
           },
           "name": "vpc",
           "type": {
@@ -16642,7 +17530,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-network-connector.ts",
-        "line": 24
+        "line": 34
       },
       "name": "AppTheoryMicrovmNetworkConnectorProps",
       "properties": [
@@ -16655,7 +17543,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 47
+            "line": 57
           },
           "name": "securityGroups",
           "type": {
@@ -16676,7 +17564,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 38
+            "line": 48
           },
           "name": "subnets",
           "type": {
@@ -16697,7 +17585,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 31
+            "line": 41
           },
           "name": "vpc",
           "type": {
@@ -16713,7 +17601,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 54
+            "line": 64
           },
           "name": "connectorName",
           "optional": true,
@@ -16730,7 +17618,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 61
+            "line": 71
           },
           "name": "networkProtocol",
           "optional": true,
@@ -16747,7 +17635,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 69
+            "line": 79
           },
           "name": "operatorRole",
           "optional": true,
@@ -16764,7 +17652,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 76
+            "line": 86
           },
           "name": "operatorRoleName",
           "optional": true,
@@ -16780,7 +17668,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 81
+            "line": 91
           },
           "name": "tags",
           "optional": true,
@@ -16823,6 +17711,151 @@
       ],
       "name": "AppTheoryMicrovmNetworkProtocol",
       "symbolId": "lib/microvm-network-connector:AppTheoryMicrovmNetworkProtocol"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmRuntimeHooks": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Lifecycle hooks invoked during MicroVM events."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmRuntimeHooks",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-image.ts",
+        "line": 106
+      },
+      "name": "AppTheoryMicrovmRuntimeHooks",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Whether the resume hook is enabled."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 110
+          },
+          "name": "resume",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmHookMode"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The maximum time in seconds for the resume hook to complete."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 115
+          },
+          "name": "resumeTimeoutInSeconds",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Whether the run hook is enabled."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 120
+          },
+          "name": "run",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmHookMode"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The maximum time in seconds for the run hook to complete."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 125
+          },
+          "name": "runTimeoutInSeconds",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Whether the suspend hook is enabled."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 130
+          },
+          "name": "suspend",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmHookMode"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The maximum time in seconds for the suspend hook to complete."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 135
+          },
+          "name": "suspendTimeoutInSeconds",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Whether the terminate hook is enabled."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 140
+          },
+          "name": "terminate",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmHookMode"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The maximum time in seconds for the terminate hook to complete."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 145
+          },
+          "name": "terminateTimeoutInSeconds",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-image:AppTheoryMicrovmRuntimeHooks"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontend": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -21909,6 +22942,37 @@
       ],
       "symbolId": "lib/websocket-api:AppTheoryWebSocketApiProps"
     },
+    "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "summary": "Reference to a Lambda MicroVM network connector usable by MicroVM image constructs."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-network-connector.ts",
+        "line": 24
+      },
+      "name": "IAppTheoryMicrovmNetworkConnector",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The network connector ARN."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 28
+          },
+          "name": "networkConnectorArn",
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-network-connector:IAppTheoryMicrovmNetworkConnector"
+    },
     "@theory-cloud/apptheory-cdk.MediaCdnDomainConfig": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "datatype": true,
@@ -22327,5 +23391,5 @@
     }
   },
   "version": "1.13.2",
-  "fingerprint": "KOKxXkPUwHf6B4MVS53TCZ+JdjJyUZ+VkT/HhYBEJSg="
+  "fingerprint": "iB5AmUcuKTJA3fa6GPm2fgCVE1C77j5Tc1oahdwpIuc="
 }

@@ -16,6 +16,15 @@ export declare enum AppTheoryMicrovmNetworkProtocol {
     DUAL_STACK = "DualStack"
 }
 /**
+ * Reference to a Lambda MicroVM network connector usable by MicroVM image constructs.
+ */
+export interface IAppTheoryMicrovmNetworkConnector {
+    /**
+     * The network connector ARN.
+     */
+    readonly networkConnectorArn: string;
+}
+/**
  * Properties for AppTheoryMicrovmNetworkConnector.
  */
 export interface AppTheoryMicrovmNetworkConnectorProps {
@@ -78,7 +87,7 @@ export interface AppTheoryMicrovmNetworkConnectorProps {
  * the IAM role Lambda uses to manage connector ENIs. Runtime MicroVM lifecycle and
  * controller behavior stays in the AppTheory runtime contract.
  */
-export declare class AppTheoryMicrovmNetworkConnector extends Construct {
+export declare class AppTheoryMicrovmNetworkConnector extends Construct implements IAppTheoryMicrovmNetworkConnector {
     /**
      * The caller-provided VPC boundary for this connector.
      */

@@ -19,6 +19,16 @@ export enum AppTheoryMicrovmNetworkProtocol {
 }
 
 /**
+ * Reference to a Lambda MicroVM network connector usable by MicroVM image constructs.
+ */
+export interface IAppTheoryMicrovmNetworkConnector {
+  /**
+   * The network connector ARN.
+   */
+  readonly networkConnectorArn: string;
+}
+
+/**
  * Properties for AppTheoryMicrovmNetworkConnector.
  */
 export interface AppTheoryMicrovmNetworkConnectorProps {
@@ -89,7 +99,7 @@ export interface AppTheoryMicrovmNetworkConnectorProps {
  * the IAM role Lambda uses to manage connector ENIs. Runtime MicroVM lifecycle and
  * controller behavior stays in the AppTheory runtime contract.
  */
-export class AppTheoryMicrovmNetworkConnector extends Construct {
+export class AppTheoryMicrovmNetworkConnector extends Construct implements IAppTheoryMicrovmNetworkConnector {
   /**
    * The caller-provided VPC boundary for this connector.
    */

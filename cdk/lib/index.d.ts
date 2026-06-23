@@ -32,6 +32,7 @@ export * from "./path-routed-frontend";
 export * from "./media-cdn";
 export * from "./lambda-role";
 export * from "./microvm-network-connector";
+export * from "./microvm-image";
 export * from "./mcp-server";
 export * from "./mcp-protected-resource";
 export * from "./remote-mcp-server";

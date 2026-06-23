@@ -27,6 +27,7 @@ contract:
     - cdk/docs/codebuild-job-runner.md
     - cdk/docs/jobs-table.md
     - cdk/docs/lambda-role.md
+    - cdk/docs/microvm-image.md
     - cdk/docs/path-routed-frontend.md
     - cdk/docs/media-cdn.md
     - examples/cdk/import-pipeline/README.md

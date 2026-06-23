@@ -35,6 +35,7 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryJobsTable` (opinionated Jobs table for import pipelines; schema + GSIs + TTL)
 - `AppTheoryLambdaRole` (Lambda execution role helper; baseline + X-Ray + KMS + escape hatches)
 - `AppTheoryMicrovmNetworkConnector` (Lambda MicroVM VPC egress connector; caller-provided VPC, subnets, and security groups)
+- `AppTheoryMicrovmImage` (Lambda MicroVM image; code artifact, base image, hooks, logging, resources, environment variables, and connector references)
 - `AppTheoryPathRoutedFrontend` (CloudFront distribution: multi-SPA routing + API origin + SPA rewrite)
 - `AppTheoryMediaCdn` (CloudFront distribution: S3-backed media CDN; optional private media via key groups)
 - `AppTheorySsrSite` (FaceTheory-first CloudFront + S3 + Lambda URL SSR/SSG/ISR deployment; see `docs/cdk/ssr-site.md`)
@@ -92,3 +93,26 @@ new AppTheoryMicrovmNetworkConnector(this, "MicrovmEgress", {
 ```
 
 Package-local guide: `cdk/docs/microvm-network-connector.md`.
+
+## Lambda MicroVM image
+
+`AppTheoryMicrovmImage` creates the CloudFormation `AWS::Lambda::MicrovmImage` resource for Lambda MicroVM images.
+It requires caller-provided code artifact URI, base image ARN/version, build role ARN, hook configuration, logging
+configuration, one resources entry, and one to ten `AppTheoryMicrovmNetworkConnector` references.
+
+```ts
+new AppTheoryMicrovmImage(this, "MicrovmImage", {
+  name: "my-microvm-image",
+  description: "My AppTheory MicroVM image",
+  baseImageArn: "arn:aws:lambda:us-east-1:123456789012:microvm-image/base",
+  baseImageVersion: "1",
+  buildRoleArn: "arn:aws:iam::123456789012:role/MicrovmBuildRole",
+  codeArtifact: { uri: "s3://my-artifacts/microvm/app.tar" },
+  egressNetworkConnectors: [connector],
+  hooks: { microvmImageHooks: { validate: AppTheoryMicrovmHookMode.ENABLED } },
+  logging: { cloudWatch: { logGroup: "/aws/lambda/microvm/my-service" } },
+  resources: [{ minimumMemoryInMiB: 2048 }],
+});
+```
+
+Package-local guide: `cdk/docs/microvm-image.md`.
