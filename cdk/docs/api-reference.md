@@ -34,6 +34,7 @@ AppTheory CDK exports constructs such as:
 - `AppTheoryDynamoTable` (general-purpose DynamoDB table; schema-explicit + consistent defaults)
 - `AppTheoryJobsTable` (opinionated Jobs table for import pipelines; schema + GSIs + TTL)
 - `AppTheoryLambdaRole` (Lambda execution role helper; baseline + X-Ray + KMS + escape hatches)
+- `AppTheoryMicrovmNetworkConnector` (Lambda MicroVM VPC egress connector; caller-provided VPC, subnets, and security groups)
 - `AppTheoryPathRoutedFrontend` (CloudFront distribution: multi-SPA routing + API origin + SPA rewrite)
 - `AppTheoryMediaCdn` (CloudFront distribution: S3-backed media CDN; optional private media via key groups)
 - `AppTheorySsrSite` (FaceTheory-first CloudFront + S3 + Lambda URL SSR/SSG/ISR deployment; see `docs/cdk/ssr-site.md`)
@@ -70,3 +71,24 @@ Keep the handler on the AppTheory runtime entrypoint and decode Kinesis-delivere
 
 Canonical guide: `docs/cdk/kinesis-cloudwatch-logs.md`.
 Canonical example: `examples/cdk/kinesis-cloudwatch-logs`.
+
+## Lambda MicroVM network connector
+
+`AppTheoryMicrovmNetworkConnector` creates the CloudFormation `AWS::Lambda::NetworkConnector` resource for
+Lambda MicroVM VPC egress. The construct requires caller-owned VPC, subnet, and security group context and never
+creates a VPC or falls back to a default security group.
+
+When `operatorRole` is omitted, AppTheory creates a Lambda-trusted operator role with the EC2 network-interface
+permissions required by the connector. If `operatorRole` is supplied, the role is passed through unchanged; the
+caller is responsible for its trust policy and permissions.
+
+```ts
+new AppTheoryMicrovmNetworkConnector(this, "MicrovmEgress", {
+  vpc,
+  subnets: vpc.privateSubnets,
+  securityGroups: [microvmEgressSecurityGroup],
+  connectorName: "my_microvm_egress",
+});
+```
+
+Package-local guide: `cdk/docs/microvm-network-connector.md`.

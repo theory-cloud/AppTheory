@@ -60,3 +60,14 @@ concepts:
     purpose: "Opinionated DynamoDB Jobs table backing the jobs ledger schema (pk/sk + GSIs + TTL)."
     related_docs:
       - cdk/docs/jobs-table.md
+
+  microvm_network_connector:
+    type: construct
+    purpose: "Lambda MicroVM VPC egress connector backed by AWS::Lambda::NetworkConnector."
+    provides:
+      - caller_provided_vpc_boundary
+      - caller_provided_subnets
+      - caller_provided_security_groups
+      - optional_operator_role_creation
+    related_docs:
+      - cdk/docs/microvm-network-connector.md

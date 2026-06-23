@@ -610,6 +610,39 @@ func init() {
 		reflect.TypeOf((*AppTheoryMediaCdnProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector",
+		reflect.TypeOf((*AppTheoryMicrovmNetworkConnector)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "networkConnector", GoGetter: "NetworkConnector"},
+			_jsii_.MemberProperty{JsiiProperty: "networkConnectorArn", GoGetter: "NetworkConnectorArn"},
+			_jsii_.MemberProperty{JsiiProperty: "networkConnectorState", GoGetter: "NetworkConnectorState"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "operatorRole", GoGetter: "OperatorRole"},
+			_jsii_.MemberProperty{JsiiProperty: "securityGroupIds", GoGetter: "SecurityGroupIds"},
+			_jsii_.MemberProperty{JsiiProperty: "subnetIds", GoGetter: "SubnetIds"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberProperty{JsiiProperty: "vpc", GoGetter: "Vpc"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryMicrovmNetworkConnector{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorProps",
+		reflect.TypeOf((*AppTheoryMicrovmNetworkConnectorProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkProtocol",
+		reflect.TypeOf((*AppTheoryMicrovmNetworkProtocol)(nil)).Elem(),
+		map[string]interface{}{
+			"IPV4":       AppTheoryMicrovmNetworkProtocol_IPV4,
+			"DUAL_STACK": AppTheoryMicrovmNetworkProtocol_DUAL_STACK,
+		},
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontend",
 		reflect.TypeOf((*AppTheoryPathRoutedFrontend)(nil)).Elem(),
 		[]_jsii_.Member{

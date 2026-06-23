@@ -16480,6 +16480,350 @@
       ],
       "symbolId": "lib/media-cdn:AppTheoryMediaCdnProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "This construct is intentionally deployment-only: it creates the CloudFormation\n`AWS::Lambda::NetworkConnector` resource and, unless an operator role is supplied,\nthe IAM role Lambda uses to manage connector ENIs. Runtime MicroVM lifecycle and\ncontroller behavior stays in the AppTheory runtime contract.",
+        "summary": "AppTheory CDK construct for AWS Lambda MicroVM VPC egress network connectors."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/microvm-network-connector.ts",
+          "line": 128
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/microvm-network-connector.ts",
+        "line": 92
+      },
+      "name": "AppTheoryMicrovmNetworkConnector",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The underlying CloudFormation network connector resource."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 116
+          },
+          "name": "networkConnector",
+          "type": {
+            "fqn": "aws-cdk-lib.CfnResource"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The network connector ARN."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 121
+          },
+          "name": "networkConnectorArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The CloudFormation state attribute for the network connector."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 126
+          },
+          "name": "networkConnectorState",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The IAM role passed to AWS::Lambda::NetworkConnector as OperatorRole."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 111
+          },
+          "name": "operatorRole",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_iam.IRole"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The caller-provided security group IDs used by the connector."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 106
+          },
+          "name": "securityGroupIds",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "docs": {
+            "summary": "The caller-provided subnet IDs used by the connector."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 101
+          },
+          "name": "subnetIds",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "docs": {
+            "summary": "The caller-provided VPC boundary for this connector."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 96
+          },
+          "name": "vpc",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_ec2.IVpc"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-network-connector:AppTheoryMicrovmNetworkConnector"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for AppTheoryMicrovmNetworkConnector."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-network-connector.ts",
+        "line": 24
+      },
+      "name": "AppTheoryMicrovmNetworkConnectorProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "AppTheory requires explicit security group context instead of falling back to a VPC\ndefault security group. At least one security group is required and no more than five\nmay be supplied.",
+            "summary": "Caller-provided security groups attached to connector ENIs."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 47
+          },
+          "name": "securityGroups",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_ec2.ISecurityGroup"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "At least one subnet is required and no more than 16 may be supplied.",
+            "summary": "Caller-provided subnets where Lambda provisions connector ENIs."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 38
+          },
+          "name": "subnets",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_ec2.ISubnet"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "AppTheory does not synthesize a VPC for MicroVM egress. The VPC boundary is part of\nthe application's deployment contract.",
+            "summary": "Caller-provided VPC that owns the subnets and security groups used by the connector."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 31
+          },
+          "name": "vpc",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_ec2.IVpc"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "When omitted, CloudFormation assigns the physical name.",
+            "summary": "Optional physical network connector name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 54
+          },
+          "name": "connectorName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "AppTheoryMicrovmNetworkProtocol.IPV4",
+            "summary": "Network protocol for VPC egress."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 61
+          },
+          "name": "networkProtocol",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkProtocol"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "When omitted, AppTheory creates a role with the MicroVM network-connector ENI policy.\nCaller-provided roles must already trust Lambda and include the required EC2 permissions.",
+            "summary": "Existing operator role for Lambda to assume while managing connector ENIs."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 69
+          },
+          "name": "operatorRole",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_iam.IRole"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Cannot be used with operatorRole.",
+            "summary": "Optional name for the operator role when AppTheory creates it."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 76
+          },
+          "name": "operatorRoleName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Additional CloudFormation tags to apply to the connector."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 81
+          },
+          "name": "tags",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "map"
+            }
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-network-connector:AppTheoryMicrovmNetworkConnectorProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkProtocol": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "summary": "Network protocols supported by Lambda MicroVM VPC egress connectors."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkProtocol",
+      "kind": "enum",
+      "locationInModule": {
+        "filename": "lib/microvm-network-connector.ts",
+        "line": 9
+      },
+      "members": [
+        {
+          "docs": {
+            "summary": "IPv4-only VPC egress."
+          },
+          "name": "IPV4"
+        },
+        {
+          "docs": {
+            "summary": "Dual-stack IPv4/IPv6 VPC egress."
+          },
+          "name": "DUAL_STACK"
+        }
+      ],
+      "name": "AppTheoryMicrovmNetworkProtocol",
+      "symbolId": "lib/microvm-network-connector:AppTheoryMicrovmNetworkProtocol"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontend": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -21983,5 +22327,5 @@
     }
   },
   "version": "1.13.2",
-  "fingerprint": "wawYPCrHrROd7ZubwxtuTmJ1M3Cl/S9KTO4buIwKDvg="
+  "fingerprint": "KOKxXkPUwHf6B4MVS53TCZ+JdjJyUZ+VkT/HhYBEJSg="
 }

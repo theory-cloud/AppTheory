@@ -4270,6 +4270,200 @@ test("AppTheoryLambdaRole (with additional statements) synthesizes expected temp
   }
 });
 
+function importedMicrovmNetworkContext(stack) {
+  const vpc = ec2.Vpc.fromVpcAttributes(stack, "ImportedVpc", {
+    vpcId: "vpc-0123456789abcdef0",
+    availabilityZones: ["us-east-1a", "us-east-1b"],
+    privateSubnetIds: ["subnet-0123456789abcdef0", "subnet-0fedcba9876543210"],
+  });
+  return {
+    vpc,
+    subnets: vpc.privateSubnets,
+    securityGroups: [
+      ec2.SecurityGroup.fromSecurityGroupId(stack, "ConnectorSecurityGroup", "sg-0123456789abcdef0", {
+        mutable: false,
+      }),
+    ],
+  };
+}
+
+test("AppTheoryMicrovmNetworkConnector synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const network = importedMicrovmNetworkContext(stack);
+
+  const connector = new apptheory.AppTheoryMicrovmNetworkConnector(stack, "Connector", {
+    ...network,
+    connectorName: "apptheory_microvm_connector",
+    operatorRoleName: "apptheory-microvm-network-operator",
+    networkProtocol: apptheory.AppTheoryMicrovmNetworkProtocol.DUAL_STACK,
+    tags: {
+      Environment: "test",
+      Owner: "apptheory",
+    },
+  });
+
+  assert.ok(connector.networkConnectorArn, "Should expose the connector ARN token");
+  assert.ok(connector.networkConnectorState, "Should expose the connector state token");
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const connectors = resourcesOfType(template, "AWS::Lambda::NetworkConnector");
+  assert.equal(connectors.length, 1, "Should synthesize one Lambda network connector");
+  assert.deepEqual(connectors[0].Properties.Configuration.VpcEgressConfiguration.AssociatedComputeResourceTypes, [
+    "MicroVm",
+  ]);
+  assert.deepEqual(connectors[0].Properties.Configuration.VpcEgressConfiguration.SubnetIds, [
+    "subnet-0123456789abcdef0",
+    "subnet-0fedcba9876543210",
+  ]);
+  assert.deepEqual(connectors[0].Properties.Configuration.VpcEgressConfiguration.SecurityGroupIds, [
+    "sg-0123456789abcdef0",
+  ]);
+
+  const policyActions = iamPolicyActions(template);
+  assert.ok(policyActions.includes("ec2:CreateNetworkInterface"));
+  assert.ok(policyActions.includes("ec2:CreateTags"));
+  assert.ok(policyActions.includes("ec2:DescribeSubnets"));
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("microvm-network-connector", template);
+  } else {
+    expectSnapshot("microvm-network-connector", template);
+  }
+});
+
+test("AppTheoryMicrovmNetworkConnector can use a caller-provided operator role", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const network = importedMicrovmNetworkContext(stack);
+  const operatorRole = iam.Role.fromRoleArn(
+    stack,
+    "ImportedOperatorRole",
+    "arn:aws:iam::123456789012:role/MicrovmOperatorRole",
+    { mutable: false },
+  );
+
+  new apptheory.AppTheoryMicrovmNetworkConnector(stack, "Connector", {
+    ...network,
+    connectorName: "provided_role_connector",
+    operatorRole,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(resourcesOfType(template, "AWS::IAM::Role").length, 0, "Should not create an operator role");
+  assert.equal(resourcesOfType(template, "AWS::IAM::Policy").length, 0, "Should not mutate the imported role");
+  const connectors = resourcesOfType(template, "AWS::Lambda::NetworkConnector");
+  assert.equal(connectors.length, 1, "Should synthesize one Lambda network connector");
+  assert.equal(connectors[0].Properties.OperatorRole, "arn:aws:iam::123456789012:role/MicrovmOperatorRole");
+});
+
+test("AppTheoryMicrovmNetworkConnector normalizes Go jsii protocol enum values", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const network = importedMicrovmNetworkContext(stack);
+
+  new apptheory.AppTheoryMicrovmNetworkConnector(stack, "Connector", {
+    ...network,
+    connectorName: "go_protocol_connector",
+    networkProtocol: "DUAL_STACK",
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const connectors = resourcesOfType(template, "AWS::Lambda::NetworkConnector");
+  assert.equal(connectors.length, 1, "Should synthesize one Lambda network connector");
+  assert.equal(connectors[0].Properties.Configuration.VpcEgressConfiguration.NetworkProtocol, "DualStack");
+});
+
+test("AppTheoryMicrovmNetworkConnector fails closed on invalid props", () => {
+  const app = new cdk.App();
+
+  {
+    const stack = new cdk.Stack(app, "MissingVpcStack");
+    const network = importedMicrovmNetworkContext(stack);
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmNetworkConnector(stack, "Connector", {
+          subnets: network.subnets,
+          securityGroups: network.securityGroups,
+        }),
+      /requires props\.vpc/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "MissingSubnetsStack");
+    const network = importedMicrovmNetworkContext(stack);
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmNetworkConnector(stack, "Connector", {
+          vpc: network.vpc,
+          subnets: [],
+          securityGroups: network.securityGroups,
+        }),
+      /at least 1 subnets entry/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "MissingSecurityGroupsStack");
+    const network = importedMicrovmNetworkContext(stack);
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmNetworkConnector(stack, "Connector", {
+          vpc: network.vpc,
+          subnets: network.subnets,
+          securityGroups: [],
+        }),
+      /at least 1 securityGroups entry/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "AmbiguousRoleStack");
+    const network = importedMicrovmNetworkContext(stack);
+    const operatorRole = iam.Role.fromRoleArn(
+      stack,
+      "ImportedOperatorRole",
+      "arn:aws:iam::123456789012:role/MicrovmOperatorRole",
+    );
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmNetworkConnector(stack, "Connector", {
+          ...network,
+          operatorRole,
+          operatorRoleName: "not-allowed",
+        }),
+      /operatorRoleName cannot be used with operatorRole/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "InvalidNameStack");
+    const network = importedMicrovmNetworkContext(stack);
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmNetworkConnector(stack, "Connector", {
+          ...network,
+          connectorName: "invalid name with spaces",
+        }),
+      /connectorName must be 1-64 characters/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "InvalidProtocolStack");
+    const network = importedMicrovmNetworkContext(stack);
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmNetworkConnector(stack, "Connector", {
+          ...network,
+          networkProtocol: "IPv6Only",
+        }),
+      /networkProtocol must be IPv4 or DualStack/,
+    );
+  }
+});
+
 // ============================================================================
 // AppTheoryMcpServer tests
 // ============================================================================
