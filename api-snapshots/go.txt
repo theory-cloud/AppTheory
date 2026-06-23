@@ -2928,6 +2928,140 @@ func (dynamoTaskRecord) TableName() string
 
 func (sessionRecord) TableName() string
 
+## github.com/theory-cloud/apptheory/runtime/microvm
+
+const ContractName = "apptheory.lambda_microvm"
+
+const ContractVersion = "m15.microvm/v1"
+
+const ErrorCodeForbiddenField = "m15.microvm.forbidden_field"
+
+const ErrorCodeInvalidContract = "m15.microvm.invalid_contract"
+
+const ErrorCodeInvalidLifecycleEvent = "m15.microvm.invalid_lifecycle_event"
+
+const ErrorCodeLifecycleBypass = "m15.microvm.lifecycle_bypass"
+
+const ErrorCodeLifecycleHookFailed = "m15.microvm.lifecycle_hook_failed"
+
+const ErrorCodeLifecycleIncomplete = "m15.microvm.lifecycle_incomplete"
+
+const ErrorCodeRawSDKEscapeHatch = "m15.microvm.raw_sdk_escape_hatch"
+
+const HookFailure LifecycleHook = "failure"
+
+const HookPrepareImage LifecycleHook = "prepare_image"
+
+const HookReadiness LifecycleHook = "readiness"
+
+const HookStart LifecycleHook = "start"
+
+const HookStop LifecycleHook = "stop"
+
+const HookTeardown LifecycleHook = "teardown"
+
+const StateFailed LifecycleState = "failed"
+
+const StateImagePrepared LifecycleState = "image_prepared"
+
+const StateImagePreparing LifecycleState = "image_preparing"
+
+const StateReadinessProbing LifecycleState = "readiness_probing"
+
+const StateReady LifecycleState = "ready"
+
+const StateRequested LifecycleState = "requested"
+
+const StateStarted LifecycleState = "started"
+
+const StateStarting LifecycleState = "starting"
+
+const StateStopped LifecycleState = "stopped"
+
+const StateStopping LifecycleState = "stopping"
+
+const StateTearingDown LifecycleState = "tearing_down"
+
+const StateTerminated LifecycleState = "terminated"
+
+type LifecycleAdapter struct {
+	contract LifecycleContract
+	handlers map[LifecycleHook]LifecycleHandler
+}
+
+type LifecycleContract struct {
+	Hooks          []LifecycleHookSpec   `json:"hooks"`
+	States         []LifecycleState      `json:"states"`
+	TerminalStates []LifecycleState      `json:"terminal_states"`
+	Transitions    []LifecycleTransition `json:"transitions"`
+}
+
+type LifecycleEvent struct {
+	RequestID string            `json:"request_id"`
+	TenantID  string            `json:"tenant_id"`
+	Namespace string            `json:"namespace"`
+	SessionID string            `json:"session_id"`
+	Hook      LifecycleHook     `json:"hook"`
+	State     LifecycleState    `json:"state"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
+}
+
+type LifecycleHandler func(context.Context, LifecycleEvent) error
+
+type LifecycleHook string
+
+type LifecycleHookSpec struct {
+	Name         LifecycleHook  `json:"name"`
+	Phase        string         `json:"phase"`
+	State        LifecycleState `json:"state"`
+	SuccessState LifecycleState `json:"success_state"`
+	FailureState LifecycleState `json:"failure_state"`
+}
+
+type LifecycleOption func(*LifecycleAdapter)
+
+type LifecycleResult struct {
+	RequestID     string            `json:"request_id"`
+	TenantID      string            `json:"tenant_id"`
+	Namespace     string            `json:"namespace"`
+	SessionID     string            `json:"session_id"`
+	Hook          LifecycleHook     `json:"hook"`
+	PreviousState LifecycleState    `json:"previous_state"`
+	State         LifecycleState    `json:"state"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
+	Error         *SafeError        `json:"error,omitempty"`
+}
+
+type LifecycleState string
+
+type LifecycleTransition struct {
+	From LifecycleState `json:"from"`
+	Hook LifecycleHook  `json:"hook"`
+	To   LifecycleState `json:"to"`
+}
+
+type SafeError struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
+func DefaultLifecycleContract() LifecycleContract
+
+func IsTerminalState(LifecycleState) bool
+
+func NewLifecycleAdapter(...LifecycleOption) (*LifecycleAdapter, error)
+
+func ValidateLifecycleContract(LifecycleContract) error
+
+func WithLifecycleContract(LifecycleContract) LifecycleOption
+
+func WithLifecycleHandler(LifecycleHook, LifecycleHandler) LifecycleOption
+
+func (*LifecycleAdapter) Handle(context.Context, LifecycleEvent) (LifecycleResult, error)
+
+func (SafeError) Error() string
+
 ## github.com/theory-cloud/apptheory/runtime/oauth
 
 const ContextKeyBearerToken = "oauth.bearer_token"

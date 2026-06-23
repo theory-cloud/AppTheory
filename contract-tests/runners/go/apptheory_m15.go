@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
 	"strings"
+
+	runtimemicrovm "github.com/theory-cloud/apptheory/runtime/microvm"
 )
 
 const (
@@ -24,7 +27,6 @@ const (
 )
 
 var (
-	requiredMicroVMLifecycleHooks  = []string{"prepare_image", "start", "readiness", "stop", "teardown", "failure"}
 	requiredMicroVMLifecycleStates = []string{
 		"requested",
 		"image_preparing",
@@ -225,47 +227,102 @@ func controllerAuthDefaultsDeny(auth microVMControllerAuth) bool {
 }
 
 func validateMicroVMLifecycle(lifecycle microVMLifecycleContract) error {
-	if missing := missingStrings(requiredMicroVMLifecycleHooks, lifecycleHookNames(lifecycle.Hooks)); len(missing) > 0 {
-		return fmt.Errorf("apptheory: microvm lifecycle missing hooks: %s", strings.Join(missing, ","))
-	}
-	if missing := missingStrings(requiredMicroVMLifecycleStates, lifecycle.States); len(missing) > 0 {
-		return fmt.Errorf("apptheory: microvm lifecycle missing states: %s", strings.Join(missing, ","))
-	}
-	if missing := missingStrings([]string{"terminated", "failed"}, lifecycle.TerminalStates); len(missing) > 0 {
-		return fmt.Errorf("apptheory: microvm lifecycle missing terminal states: %s", strings.Join(missing, ","))
-	}
-	if err := validateMicroVMLifecycleTransitions(lifecycle.Transitions); err != nil {
+	contract := runtimeLifecycleContract(lifecycle)
+	if err := runtimemicrovm.ValidateLifecycleContract(contract); err != nil {
 		return err
 	}
-	return validateMicroVMLifecycleHookFields(lifecycle.Hooks)
-}
 
-func validateMicroVMLifecycleTransitions(transitions []microVMLifecycleTransition) error {
-	transitionHooks := map[string]struct{}{}
-	for _, transition := range transitions {
-		if strings.TrimSpace(transition.From) == "" || strings.TrimSpace(transition.To) == "" {
-			return fmt.Errorf("apptheory: microvm lifecycle transition states must be explicit")
-		}
-		if strings.TrimSpace(transition.Hook) != "" {
-			transitionHooks[strings.TrimSpace(transition.Hook)] = struct{}{}
-		}
+	adapter, err := runtimemicrovm.NewLifecycleAdapter(
+		runtimemicrovm.WithLifecycleContract(contract),
+		runtimemicrovm.WithLifecycleHandler(runtimemicrovm.HookPrepareImage, noopRuntimeLifecycleHandler),
+		runtimemicrovm.WithLifecycleHandler(runtimemicrovm.HookStart, noopRuntimeLifecycleHandler),
+		runtimemicrovm.WithLifecycleHandler(runtimemicrovm.HookReadiness, noopRuntimeLifecycleHandler),
+		runtimemicrovm.WithLifecycleHandler(runtimemicrovm.HookStop, noopRuntimeLifecycleHandler),
+		runtimemicrovm.WithLifecycleHandler(runtimemicrovm.HookTeardown, noopRuntimeLifecycleHandler),
+		runtimemicrovm.WithLifecycleHandler(runtimemicrovm.HookFailure, noopRuntimeLifecycleHandler),
+	)
+	if err != nil {
+		return err
 	}
-	for _, hook := range requiredMicroVMLifecycleHooks {
-		if _, ok := transitionHooks[hook]; !ok {
-			return fmt.Errorf("apptheory: microvm lifecycle missing transition for hook %s", hook)
+
+	state := runtimemicrovm.StateRequested
+	for _, hook := range []runtimemicrovm.LifecycleHook{
+		runtimemicrovm.HookPrepareImage,
+		runtimemicrovm.HookStart,
+		runtimemicrovm.HookReadiness,
+		runtimemicrovm.HookStop,
+		runtimemicrovm.HookTeardown,
+	} {
+		result, handleErr := adapter.Handle(context.Background(), runtimemicrovm.LifecycleEvent{
+			RequestID: "m15-lifecycle-fixture",
+			TenantID:  "tenant-fixture",
+			Namespace: "namespace-fixture",
+			SessionID: "session-fixture",
+			Hook:      hook,
+			State:     state,
+		})
+		if handleErr != nil {
+			return handleErr
 		}
+		state = result.State
+	}
+	if state != runtimemicrovm.StateTerminated {
+		return fmt.Errorf("apptheory: microvm lifecycle adapter terminated at %s", state)
+	}
+
+	failure, err := adapter.Handle(context.Background(), runtimemicrovm.LifecycleEvent{
+		RequestID: "m15-lifecycle-fixture-failure",
+		TenantID:  "tenant-fixture",
+		Namespace: "namespace-fixture",
+		SessionID: "session-fixture",
+		Hook:      runtimemicrovm.HookFailure,
+		State:     runtimemicrovm.StateStarting,
+	})
+	if err != nil {
+		return err
+	}
+	if failure.State != runtimemicrovm.StateFailed {
+		return fmt.Errorf("apptheory: microvm lifecycle failure hook produced %s", failure.State)
 	}
 	return nil
 }
 
-func validateMicroVMLifecycleHookFields(hooks []microVMLifecycleHook) error {
-	for _, hook := range hooks {
-		if strings.TrimSpace(hook.Name) == "" || strings.TrimSpace(hook.Phase) == "" || strings.TrimSpace(hook.State) == "" || strings.TrimSpace(hook.SuccessState) == "" || strings.TrimSpace(hook.FailureState) == "" {
-			return fmt.Errorf("apptheory: microvm lifecycle hooks must name phase, active state, success state, and failure state")
-		}
+func runtimeLifecycleContract(lifecycle microVMLifecycleContract) runtimemicrovm.LifecycleContract {
+	hooks := make([]runtimemicrovm.LifecycleHookSpec, 0, len(lifecycle.Hooks))
+	for _, hook := range lifecycle.Hooks {
+		hooks = append(hooks, runtimemicrovm.LifecycleHookSpec{
+			Name:         runtimemicrovm.LifecycleHook(hook.Name),
+			Phase:        hook.Phase,
+			State:        runtimemicrovm.LifecycleState(hook.State),
+			SuccessState: runtimemicrovm.LifecycleState(hook.SuccessState),
+			FailureState: runtimemicrovm.LifecycleState(hook.FailureState),
+		})
 	}
-	return nil
+	states := make([]runtimemicrovm.LifecycleState, 0, len(lifecycle.States))
+	for _, state := range lifecycle.States {
+		states = append(states, runtimemicrovm.LifecycleState(state))
+	}
+	terminalStates := make([]runtimemicrovm.LifecycleState, 0, len(lifecycle.TerminalStates))
+	for _, state := range lifecycle.TerminalStates {
+		terminalStates = append(terminalStates, runtimemicrovm.LifecycleState(state))
+	}
+	transitions := make([]runtimemicrovm.LifecycleTransition, 0, len(lifecycle.Transitions))
+	for _, transition := range lifecycle.Transitions {
+		transitions = append(transitions, runtimemicrovm.LifecycleTransition{
+			From: runtimemicrovm.LifecycleState(transition.From),
+			Hook: runtimemicrovm.LifecycleHook(transition.Hook),
+			To:   runtimemicrovm.LifecycleState(transition.To),
+		})
+	}
+	return runtimemicrovm.LifecycleContract{
+		Hooks:          hooks,
+		States:         states,
+		TerminalStates: terminalStates,
+		Transitions:    transitions,
+	}
 }
+
+func noopRuntimeLifecycleHandler(context.Context, runtimemicrovm.LifecycleEvent) error { return nil }
 
 func validateMicroVMController(controller microVMControllerContract) error {
 	if !controllerAuthDefaultsDeny(controller.Auth) {
@@ -308,14 +365,6 @@ func validateMicroVMSessionRegistry(registry microVMSessionRegistrySpec) error {
 		return fmt.Errorf("apptheory: microvm session registry missing forbidden fields: %s", strings.Join(missing, ","))
 	}
 	return nil
-}
-
-func lifecycleHookNames(hooks []microVMLifecycleHook) []string {
-	out := make([]string, 0, len(hooks))
-	for _, hook := range hooks {
-		out = append(out, hook.Name)
-	}
-	return out
 }
 
 func controllerCommandNames(commands []microVMControllerCommand) []string {
