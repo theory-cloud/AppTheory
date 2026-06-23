@@ -20,6 +20,7 @@ patterns and treat `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts` as the 
 - [MCP Protected Resource Metadata](./mcp-protected-resource.md)
 - [Import Pipeline Constructs](./import-pipeline.md)
 - [Kinesis + CloudWatch Logs](./kinesis-cloudwatch-logs.md)
+- [Lambda MicroVM CDK Constructs](./lambda-microvm.md)
 
 ## Scope
 
@@ -33,5 +34,6 @@ These pages cover the canonical user-facing CDK patterns for:
 - import-pipeline infrastructure primitives
 - EventBridge bus and rule-target transport primitives
 - Kinesis stream, stream mapping, and CloudWatch Logs destination transport primitives
+- Lambda MicroVM network connector, image, protected controller, and durable session-registry wiring
 
 Package-local authoring docs may still exist outside `docs/cdk/`, but canonical external guidance lives here.

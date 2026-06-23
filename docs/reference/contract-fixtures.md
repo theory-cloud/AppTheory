@@ -1,11 +1,11 @@
 ---
 title: Contract Fixtures
-description: The 128 shared fixtures that arbitrate behavior across Go, TypeScript, and Python.
+description: The 133 shared fixtures that arbitrate behavior across Go, TypeScript, and Python.
 ---
 
 # Contract Fixtures
 
-AppTheory ships **128 contract test fixtures** in `contract-tests/fixtures/` that define the language-neutral behavior every runtime must produce. The Go, TypeScript, and Python runtimes are each independently verified against the same fixture corpus on every commit.
+AppTheory ships **133 contract test fixtures** in `contract-tests/fixtures/` that define the language-neutral behavior every runtime must produce. The Go, TypeScript, and Python runtimes are each independently verified against the same fixture corpus on every commit.
 
 This page explains what the fixtures are, what they cover, and how to evolve them safely.
 
@@ -27,7 +27,7 @@ When the contract needs to grow, the fixture grows first. When the fixture grows
 
 ## Categories
 
-The 128 fixtures span (counts approximate; see `contract-tests/fixtures/` for the canonical inventory):
+The 133 fixtures span (counts approximate; see `contract-tests/fixtures/` for the canonical inventory):
 
 | Category | Covers |
 | --- | --- |
@@ -47,6 +47,7 @@ The 128 fixtures span (counts approximate; see `contract-tests/fixtures/` for th
 | Kinesis | Partial-batch response, stream routing, fail-closed for unregistered streams, CloudWatch Logs subscription envelope decoding. |
 | Remote MCP path dispatch | API Gateway REST proxy path normalization for Remote MCP and protected-resource metadata routes. The shared fixtures do **not** cover MCP JSON-RPC methods, session stores, DCR, PKCE, bearer-token validation, or OAuth challenges. |
 | Sanitization | Token-like value redaction, JSON/XML safe-logging output. |
+| Lambda MicroVM support | M15 lifecycle hooks/states, controller command envelopes, TableTheory-patterned session-record guidance, and denial fixtures for raw SDK escape hatches, lifecycle bypass, and unauthenticated controller defaults. The feature line is evidence-bounded to fixture-backed runtime/CDK/example docs, not live deployment or unauthenticated-controller proof. |
 
 ## Running the fixtures
 
@@ -97,5 +98,7 @@ Snapshot diffs are intentional signals: a moved snapshot says "a public contract
 
 - [HTTP Runtime](../features/http-runtime.md) — what the HTTP fixtures pin
 - [Event Shape Dispatch](event-shapes.md) — what `HandleLambda` detection fixtures pin
+- [First-class AWS Lambda MicroVM Support](../features/lambda-microvm-contract-foundation.md) — the M15 MicroVM
+  golden path and evidence boundary
 - [MCP Method Surface](../integrations/mcp.md) — Go runtime MCP behavior; the shared fixtures only pin Remote MCP/protected-resource API Gateway path dispatch
 - [Development Guidelines](../development-guidelines.md) — the contract-only scope

@@ -1,0 +1,102 @@
+{
+  "id": "m15.microvm.lifecycle.v1",
+  "tier": "m15",
+  "name": "Lambda MicroVM lifecycle contract vocabulary v1",
+  "setup": {
+    "microvm_contract": {
+      "contract": "apptheory.lambda_microvm",
+      "version": "m15.microvm/v1",
+      "kind": "lifecycle",
+      "escape_hatches": {
+        "raw_aws_sdk": false,
+        "raw_lifecycle_hook_bypass": false
+      },
+      "lifecycle": {
+        "hooks": [
+          {
+            "name": "prepare_image",
+            "phase": "image_preparation",
+            "state": "image_preparing",
+            "success_state": "image_prepared",
+            "failure_state": "failed"
+          },
+          {
+            "name": "start",
+            "phase": "start",
+            "state": "starting",
+            "success_state": "started",
+            "failure_state": "failed"
+          },
+          {
+            "name": "readiness",
+            "phase": "readiness",
+            "state": "readiness_probing",
+            "success_state": "ready",
+            "failure_state": "failed"
+          },
+          {
+            "name": "stop",
+            "phase": "stop",
+            "state": "stopping",
+            "success_state": "stopped",
+            "failure_state": "failed"
+          },
+          {
+            "name": "teardown",
+            "phase": "teardown",
+            "state": "tearing_down",
+            "success_state": "terminated",
+            "failure_state": "failed"
+          },
+          {
+            "name": "failure",
+            "phase": "failure",
+            "state": "failed",
+            "success_state": "failed",
+            "failure_state": "failed"
+          }
+        ],
+        "states": [
+          "requested",
+          "image_preparing",
+          "image_prepared",
+          "starting",
+          "started",
+          "readiness_probing",
+          "ready",
+          "stopping",
+          "stopped",
+          "tearing_down",
+          "terminated",
+          "failed"
+        ],
+        "terminal_states": ["terminated", "failed"],
+        "transitions": [
+          {"from": "requested", "hook": "prepare_image", "to": "image_preparing"},
+          {"from": "image_preparing", "hook": "prepare_image", "to": "image_prepared"},
+          {"from": "image_prepared", "hook": "start", "to": "starting"},
+          {"from": "starting", "hook": "start", "to": "started"},
+          {"from": "started", "hook": "readiness", "to": "readiness_probing"},
+          {"from": "readiness_probing", "hook": "readiness", "to": "ready"},
+          {"from": "ready", "hook": "stop", "to": "stopping"},
+          {"from": "stopping", "hook": "stop", "to": "stopped"},
+          {"from": "stopped", "hook": "teardown", "to": "tearing_down"},
+          {"from": "tearing_down", "hook": "teardown", "to": "terminated"},
+          {"from": "image_preparing", "hook": "failure", "to": "failed"},
+          {"from": "starting", "hook": "failure", "to": "failed"},
+          {"from": "readiness_probing", "hook": "failure", "to": "failed"},
+          {"from": "stopping", "hook": "failure", "to": "failed"},
+          {"from": "tearing_down", "hook": "failure", "to": "failed"}
+        ]
+      }
+    }
+  },
+  "input": {},
+  "expect": {
+    "microvm_contract_validation": {
+      "valid": true,
+      "kind": "lifecycle",
+      "version": "m15.microvm/v1"
+    }
+  }
+}

@@ -40,6 +40,7 @@ groups:
     items:
       - { id: feature-events,         title: Event Workload Contracts, url: /features/event-workloads/,  icon: shuffle,      tag: ga }
       - { id: feature-jobs,           title: Jobs Ledger,             url: /features/jobs-ledger/,       icon: list-checks }
+      - { id: feature-microvm-contract, title: Lambda MicroVM,         url: /features/lambda-microvm-contract-foundation/, icon: cpu, tag: new }
 
   - label: MCP
     items:
@@ -59,6 +60,7 @@ groups:
       - { id: cdk-mcp-protected,      title: MCP Protected Resource,  url: /cdk/mcp-protected-resource/,                   icon: lock,         surface: mcp }
       - { id: cdk-import-pipeline,    title: Import Pipeline,         url: /cdk/import-pipeline/,                          icon: layers }
       - { id: cdk-kinesis-cwl,        title: Kinesis + CloudWatch Logs, url: /cdk/kinesis-cloudwatch-logs/,                icon: activity }
+      - { id: cdk-microvm,            title: Lambda MicroVM,          url: /cdk/lambda-microvm/,                          icon: cpu,          tag: new }
       - { id: cdk-rest-streaming,     title: REST API Streaming,      url: /cdk/rest-api-router-streaming/,                icon: zap }
       - { id: cdk-appsync,            title: AppSync Lambda Resolvers, url: /cdk/appsync-lambda-resolvers/,                icon: git-branch }
 
@@ -97,6 +99,7 @@ order:
   - feature-sanitization
   - feature-events
   - feature-jobs
+  - feature-microvm-contract
   - int-mcp
   - int-remote-mcp
   - int-agentcore
@@ -110,6 +113,7 @@ order:
   - cdk-mcp-protected
   - cdk-import-pipeline
   - cdk-kinesis-cwl
+  - cdk-microvm
   - cdk-rest-streaming
   - cdk-appsync
   - mig-from-lift
@@ -141,6 +145,7 @@ url_to_id:
   /features/sanitization/:                      feature-sanitization
   /features/event-workloads/:                   feature-events
   /features/jobs-ledger/:                       feature-jobs
+  /features/lambda-microvm-contract-foundation/: feature-microvm-contract
   /integrations/mcp/:                           int-mcp
   /integrations/remote-mcp/:                    int-remote-mcp
   /integrations/agentcore-mcp/:                 int-agentcore
@@ -154,6 +159,7 @@ url_to_id:
   /cdk/mcp-protected-resource/:                 cdk-mcp-protected
   /cdk/import-pipeline/:                        cdk-import-pipeline
   /cdk/kinesis-cloudwatch-logs/:                cdk-kinesis-cwl
+  /cdk/lambda-microvm/:                         cdk-microvm
   /cdk/rest-api-router-streaming/:              cdk-rest-streaming
   /cdk/appsync-lambda-resolvers/:               cdk-appsync
   /migration/from-lift/:                        mig-from-lift

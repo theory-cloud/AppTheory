@@ -17,6 +17,7 @@ examples=(
   "examples/cdk/import-pipeline|AppTheoryImportPipelineDemo"
   "examples/cdk/kinesis-cloudwatch-logs|AppTheoryKinesisCloudWatchLogsDemo"
   "examples/cdk/multilang|AppTheoryMultilangDemo"
+  "examples/cdk/microvm-controller|AppTheoryMicrovmControllerDemo"
   "examples/cdk/ssr-site|AppTheorySsrSiteDemo"
   "examples/cdk/ssr-only-provided-assets-site|AppTheorySsrOnlyProvidedAssetsSiteDemo"
   "examples/cdk/lesser-parity|LesserParityExample"
