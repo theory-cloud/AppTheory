@@ -718,8 +718,9 @@ const MICROVM_REQUIRED_SESSION_FIELDS = [
   "auth_subject",
 ];
 
-function compareMicroVMContractFixture(fixture) {
-  const actual = validateMicroVMContractFixture(fixture.setup?.microvm_contract);
+async function compareMicroVMContractFixture(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const actual = await validateMicroVMContractFixture(fixture.setup?.microvm_contract, runtime);
   const expected = fixture.expect?.microvm_contract_validation;
   if (!expected) {
     return {
@@ -738,7 +739,7 @@ function compareMicroVMContractFixture(fixture) {
   };
 }
 
-function validateMicroVMContractFixture(contract) {
+async function validateMicroVMContractFixture(contract, runtime) {
   if (!contract || typeof contract !== "object" || Array.isArray(contract)) {
     return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract fixture missing");
   }
@@ -753,24 +754,8 @@ function validateMicroVMContractFixture(contract) {
   }
 
   const escapeHatches = contract.escape_hatches ?? {};
-  if (escapeHatches.raw_aws_sdk === true) {
-    return {
-      valid: false,
-      kind,
-      version,
-      error_code: "m15.microvm.raw_sdk_escape_hatch",
-      error_message: "apptheory: microvm contract forbids raw AWS SDK escape hatch",
-    };
-  }
-  if (escapeHatches.raw_lifecycle_hook_bypass === true) {
-    return {
-      valid: false,
-      kind,
-      version,
-      error_code: "m15.microvm.lifecycle_bypass",
-      error_message: "apptheory: microvm contract forbids raw lifecycle hook bypass",
-    };
-  }
+  const escapeHatchError = validateMicroVMEscapeHatches(runtime, kind, version, escapeHatches);
+  if (escapeHatchError) return escapeHatchError;
 
   const controller = contract.controller ?? {};
   if (kind === "controller_session" && !microVMControllerAuthDefaultsDeny(controller.auth ?? {})) {
@@ -784,7 +769,7 @@ function validateMicroVMContractFixture(contract) {
   }
 
   if (kind === "lifecycle") {
-    const err = validateMicroVMLifecycle(contract.lifecycle ?? {});
+    const err = await validateMicroVMLifecycle(runtime, contract.lifecycle ?? {});
     if (err) return invalidMicroVMContract("m15.microvm.lifecycle_incomplete", err);
   } else {
     const controllerErr = validateMicroVMController(controller);
@@ -804,46 +789,57 @@ function microVMControllerAuthDefaultsDeny(auth) {
   return auth.required === true && String(auth.default ?? "").trim().toLowerCase() === "deny";
 }
 
-function validateMicroVMLifecycle(lifecycle) {
-  const hooks = Array.isArray(lifecycle.hooks) ? lifecycle.hooks : [];
-  const hookNames = hooks.map((hook) => String(hook?.name ?? ""));
-  const missingHooks = missingStrings(MICROVM_REQUIRED_LIFECYCLE_HOOKS, hookNames);
-  if (missingHooks.length > 0) return `apptheory: microvm lifecycle missing hooks: ${missingHooks.join(",")}`;
-
-  const missingStates = missingStrings(MICROVM_REQUIRED_LIFECYCLE_STATES, lifecycle.states ?? []);
-  if (missingStates.length > 0) return `apptheory: microvm lifecycle missing states: ${missingStates.join(",")}`;
-
-  const missingTerminal = missingStrings(["terminated", "failed"], lifecycle.terminal_states ?? []);
-  if (missingTerminal.length > 0) {
-    return `apptheory: microvm lifecycle missing terminal states: ${missingTerminal.join(",")}`;
-  }
-
-  const transitionHooks = new Set();
-  for (const transition of lifecycle.transitions ?? []) {
-    if (!String(transition?.from ?? "").trim() || !String(transition?.to ?? "").trim()) {
-      return "apptheory: microvm lifecycle transition states must be explicit";
+async function validateMicroVMLifecycle(runtime, lifecycle) {
+  try {
+    runtime.validateMicroVMLifecycleContract(lifecycle);
+    const handlers = {};
+    for (const hook of MICROVM_REQUIRED_LIFECYCLE_HOOKS) handlers[hook] = () => undefined;
+    const adapter = runtime.createMicroVMLifecycleAdapter({ contract: lifecycle, handlers });
+    let state = "requested";
+    for (const hook of ["prepare_image", "start", "readiness", "stop", "teardown"]) {
+      const result = await adapter.handle({
+        request_id: "m15-lifecycle-fixture",
+        tenant_id: "tenant-fixture",
+        namespace: "namespace-fixture",
+        session_id: "session-fixture",
+        hook,
+        state,
+      });
+      if (result.error) return result.error.message;
+      state = String(result.state ?? "");
     }
-    const hook = String(transition?.hook ?? "").trim();
-    if (hook) transitionHooks.add(hook);
-  }
-  for (const hook of MICROVM_REQUIRED_LIFECYCLE_HOOKS) {
-    if (!transitionHooks.has(hook)) return `apptheory: microvm lifecycle missing transition for hook ${hook}`;
-  }
+    if (state !== "terminated") return `apptheory: microvm lifecycle adapter terminated at ${state}`;
 
-  for (const hook of hooks) {
-    if (
-      !String(hook?.name ?? "").trim() ||
-      !String(hook?.phase ?? "").trim() ||
-      !String(hook?.state ?? "").trim() ||
-      !String(hook?.success_state ?? "").trim() ||
-      !String(hook?.failure_state ?? "").trim()
-    ) {
-      return "apptheory: microvm lifecycle hooks must name phase, active state, success state, and failure state";
-    }
+    const failure = await adapter.handle({
+      request_id: "m15-lifecycle-fixture-failure",
+      tenant_id: "tenant-fixture",
+      namespace: "namespace-fixture",
+      session_id: "session-fixture",
+      hook: "failure",
+      state: "starting",
+    });
+    if (failure.error) return failure.error.message;
+    if (failure.state !== "failed") return `apptheory: microvm lifecycle failure hook produced ${failure.state}`;
+    return "";
+  } catch (err) {
+    return err?.message ?? String(err);
   }
-  return "";
 }
 
+function validateMicroVMEscapeHatches(runtime, kind, version, escapeHatches) {
+  try {
+    runtime.validateMicroVMEscapeHatches(escapeHatches ?? {});
+    return null;
+  } catch (err) {
+    return {
+      valid: false,
+      kind,
+      version,
+      error_code: String(err?.code ?? "m15.microvm.invalid_contract"),
+      error_message: err?.message ?? String(err),
+    };
+  }
+}
 function validateMicroVMController(controller) {
   if (!microVMControllerAuthDefaultsDeny(controller.auth ?? {})) {
     return "apptheory: microvm controller must default to authenticated deny";
@@ -954,7 +950,7 @@ async function runFixture(fixture) {
     return compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
   }
   if (tier === "m15") {
-    return compareMicroVMContractFixture(fixture);
+    return await compareMicroVMContractFixture(fixture);
   }
 
   const enableP1 = ["p1", "p2"].includes(tier);
