@@ -839,23 +839,11 @@ def validate_microvm_contract_fixture(contract: Any) -> dict[str, Any]:
             "apptheory: microvm contract kind is unsupported",
         )
 
+    runtime = _load_apptheory_runtime()
     escape_hatches = contract.get("escape_hatches") or {}
-    if escape_hatches.get("raw_aws_sdk") is True:
-        return {
-            "valid": False,
-            "kind": kind,
-            "version": version,
-            "error_code": "m15.microvm.raw_sdk_escape_hatch",
-            "error_message": "apptheory: microvm contract forbids raw AWS SDK escape hatch",
-        }
-    if escape_hatches.get("raw_lifecycle_hook_bypass") is True:
-        return {
-            "valid": False,
-            "kind": kind,
-            "version": version,
-            "error_code": "m15.microvm.lifecycle_bypass",
-            "error_message": "apptheory: microvm contract forbids raw lifecycle hook bypass",
-        }
+    escape_hatch_error = validate_microvm_escape_hatches(runtime, kind, version, escape_hatches)
+    if escape_hatch_error:
+        return escape_hatch_error
 
     controller = contract.get("controller") or {}
     if kind == "controller_session" and not microvm_controller_auth_defaults_deny(controller.get("auth") or {}):
@@ -891,46 +879,60 @@ def microvm_controller_auth_defaults_deny(auth: dict[str, Any]) -> bool:
 
 
 def validate_microvm_lifecycle(lifecycle: dict[str, Any]) -> str:
-    hooks = lifecycle.get("hooks") if isinstance(lifecycle.get("hooks"), list) else []
-    hook_names = [str(hook.get("name", "")) for hook in hooks if isinstance(hook, dict)]
-    missing_hooks = missing_strings(MICROVM_REQUIRED_LIFECYCLE_HOOKS, hook_names)
-    if missing_hooks:
-        return f"apptheory: microvm lifecycle missing hooks: {','.join(missing_hooks)}"
+    runtime = _load_apptheory_runtime()
+    try:
+        runtime.validate_microvm_lifecycle_contract(lifecycle)
+        handlers = {hook: (lambda _event: None) for hook in MICROVM_REQUIRED_LIFECYCLE_HOOKS}
+        adapter = runtime.create_microvm_lifecycle_adapter(contract=lifecycle, handlers=handlers)
+        state = "requested"
+        for hook in ["prepare_image", "start", "readiness", "stop", "teardown"]:
+            result = adapter.handle(
+                {
+                    "request_id": "m15-lifecycle-fixture",
+                    "tenant_id": "tenant-fixture",
+                    "namespace": "namespace-fixture",
+                    "session_id": "session-fixture",
+                    "hook": hook,
+                    "state": state,
+                }
+            )
+            if result.error:
+                return result.error.message
+            state = str(result.state or "")
+        if state != "terminated":
+            return f"apptheory: microvm lifecycle adapter terminated at {state}"
 
-    missing_states = missing_strings(MICROVM_REQUIRED_LIFECYCLE_STATES, lifecycle.get("states") or [])
-    if missing_states:
-        return f"apptheory: microvm lifecycle missing states: {','.join(missing_states)}"
+        failure = adapter.handle(
+            {
+                "request_id": "m15-lifecycle-fixture-failure",
+                "tenant_id": "tenant-fixture",
+                "namespace": "namespace-fixture",
+                "session_id": "session-fixture",
+                "hook": "failure",
+                "state": "starting",
+            }
+        )
+        if failure.error:
+            return failure.error.message
+        if failure.state != "failed":
+            return f"apptheory: microvm lifecycle failure hook produced {failure.state}"
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        return str(exc)
 
-    missing_terminal = missing_strings(["terminated", "failed"], lifecycle.get("terminal_states") or [])
-    if missing_terminal:
-        return f"apptheory: microvm lifecycle missing terminal states: {','.join(missing_terminal)}"
 
-    transition_hooks: set[str] = set()
-    for transition in lifecycle.get("transitions") or []:
-        if not isinstance(transition, dict):
-            continue
-        if not str(transition.get("from", "")).strip() or not str(transition.get("to", "")).strip():
-            return "apptheory: microvm lifecycle transition states must be explicit"
-        hook = str(transition.get("hook", "")).strip()
-        if hook:
-            transition_hooks.add(hook)
-    for hook in MICROVM_REQUIRED_LIFECYCLE_HOOKS:
-        if hook not in transition_hooks:
-            return f"apptheory: microvm lifecycle missing transition for hook {hook}"
-
-    for hook in hooks:
-        if not isinstance(hook, dict):
-            return "apptheory: microvm lifecycle hooks must be objects"
-        if (
-            not str(hook.get("name", "")).strip()
-            or not str(hook.get("phase", "")).strip()
-            or not str(hook.get("state", "")).strip()
-            or not str(hook.get("success_state", "")).strip()
-            or not str(hook.get("failure_state", "")).strip()
-        ):
-            return "apptheory: microvm lifecycle hooks must name phase, active state, success state, and failure state"
-    return ""
-
+def validate_microvm_escape_hatches(runtime: Any, kind: str, version: str, escape_hatches: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        runtime.validate_microvm_escape_hatches(escape_hatches or {})
+        return None
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "valid": False,
+            "kind": kind,
+            "version": version,
+            "error_code": str(getattr(exc, "code", "m15.microvm.invalid_contract")),
+            "error_message": str(getattr(exc, "message", str(exc))),
+        }
 
 def validate_microvm_controller(controller: dict[str, Any]) -> str:
     if not microvm_controller_auth_defaults_deny(controller.get("auth") or {}):
@@ -1030,7 +1032,7 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
         return False, f"status: expected {expected.get('status')}, got {actual.status}", actual, expected, app
 
     if bool(expected.get("is_base64")) != actual.is_base64:
-        return False, f"is_base64 mismatch", actual, expected, app
+        return False, "is_base64 mismatch", actual, expected, app
 
     if (expected.get("cookies") or []) != actual.cookies:
         return False, "cookies mismatch", actual, expected, app
