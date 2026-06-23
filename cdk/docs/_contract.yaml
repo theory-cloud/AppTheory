@@ -28,6 +28,7 @@ contract:
     - cdk/docs/jobs-table.md
     - cdk/docs/lambda-role.md
     - cdk/docs/microvm-image.md
+    - cdk/docs/microvm-controller.md
     - cdk/docs/path-routed-frontend.md
     - cdk/docs/media-cdn.md
     - examples/cdk/import-pipeline/README.md

@@ -4,6 +4,16 @@ import { Construct } from "constructs";
 import type { IAppTheoryMicrovmNetworkConnector } from "./microvm-network-connector";
 
 /**
+ * Reference to a Lambda MicroVM image usable by MicroVM controller constructs.
+ */
+export interface IAppTheoryMicrovmImage {
+  /**
+   * The ARN of the MicroVM image.
+   */
+  readonly microvmImageArn: string;
+}
+
+/**
  * Additional OS capabilities supported by Lambda MicroVM images.
  */
 export enum AppTheoryMicrovmImageOsCapability {
@@ -302,7 +312,7 @@ export interface AppTheoryMicrovmImageProps {
  * AppTheory MicroVM network-connector references. Runtime controller behavior stays in
  * the AppTheory runtime contract.
  */
-export class AppTheoryMicrovmImage extends Construct {
+export class AppTheoryMicrovmImage extends Construct implements IAppTheoryMicrovmImage {
   /**
    * The underlying CloudFormation MicroVM image resource.
    */

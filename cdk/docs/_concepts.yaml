@@ -85,3 +85,15 @@ concepts:
       - network_connector_references
     related_docs:
       - cdk/docs/microvm-image.md
+
+  microvm_controller:
+    type: construct
+    purpose: "Protected Lambda MicroVM controller deployment surface with controller Lambda and durable session registry table."
+    provides:
+      - authenticated_controller_routes
+      - controller_lambda_packaging_surface
+      - tabletheory_shaped_session_registry_table
+      - microvm_image_scoped_iam_grants
+      - fail_closed_auth_environment
+    related_docs:
+      - cdk/docs/microvm-controller.md

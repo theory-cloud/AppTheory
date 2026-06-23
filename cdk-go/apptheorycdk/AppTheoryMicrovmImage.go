@@ -18,6 +18,7 @@ import (
 // the AppTheory runtime contract.
 type AppTheoryMicrovmImage interface {
 	constructs.Construct
+	IAppTheoryMicrovmImage
 	// The timestamp when the image was created.
 	CreatedAt() *string
 	// The latest active image version.
@@ -52,6 +53,7 @@ type AppTheoryMicrovmImage interface {
 // The jsii proxy struct for AppTheoryMicrovmImage
 type jsiiProxy_AppTheoryMicrovmImage struct {
 	internal.Type__constructsConstruct
+	jsiiProxy_IAppTheoryMicrovmImage
 }
 
 func (j *jsiiProxy_AppTheoryMicrovmImage) CreatedAt() *string {

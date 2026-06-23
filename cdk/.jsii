@@ -16480,6 +16480,613 @@
       ],
       "symbolId": "lib/media-cdn:AppTheoryMediaCdnProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmController": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "The construct provisions the protected HTTP API routes from the M15 controller contract,\nthe controller Lambda, the canonical durable session registry table, IAM grants, and\nfail-closed auth environment wiring. Runtime command handling remains in the AppTheory\nruntime contract; this construct only wires the deployment path.",
+        "summary": "AppTheory CDK construct for the first-class Lambda MicroVM controller deployment surface."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmController",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/microvm-controller.ts",
+          "line": 280
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmControllerProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/microvm-controller.ts",
+        "line": 244
+      },
+      "name": "AppTheoryMicrovmController",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The underlying HTTP API Gateway v2 API."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 248
+          },
+          "name": "api",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.HttpApi"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The controller Lambda function created by this construct."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 263
+          },
+          "name": "controllerFunction",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.Function"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The controller base endpoint (`/microvms`)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 273
+          },
+          "name": "endpoint",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "Lambda request authorizer attached to every controller route."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 258
+          },
+          "name": "routeAuthorizer",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2_authorizers.HttpLambdaAuthorizer"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The durable TableTheory-shaped session registry DynamoDB table."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 268
+          },
+          "name": "sessionTable",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.Table"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The API Gateway stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 253
+          },
+          "name": "stage",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.IStage"
+          }
+        },
+        {
+          "docs": {
+            "summary": "The access log group (if access logging is enabled)."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 278
+          },
+          "name": "accessLogGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.ILogGroup"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-controller:AppTheoryMicrovmController"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmControllerFunctionProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "remarks": "AppTheory creates the Lambda function so it can wire the canonical session table,\nMicroVM image/network references, and fail-closed auth environment consistently.\nThe caller supplies only the handler package details and any ordinary Lambda\nFunctionProps.",
+        "summary": "Packaging and runtime configuration for the AppTheory MicroVM controller Lambda."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmControllerFunctionProps",
+      "interfaces": [
+        "aws-cdk-lib.aws_lambda.FunctionProps"
+      ],
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-controller.ts",
+        "line": 91
+      },
+      "name": "AppTheoryMicrovmControllerFunctionProps",
+      "symbolId": "lib/microvm-controller:AppTheoryMicrovmControllerFunctionProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmControllerProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Props for AppTheoryMicrovmController."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmControllerProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-controller.ts",
+        "line": 96
+      },
+      "name": "AppTheoryMicrovmControllerProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "The construct fails closed when this is omitted; unauthenticated controller routes\nare not synthesized.",
+            "summary": "Lambda request authorizer required for every controller route."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 111
+          },
+          "name": "authorizer",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "The handler code must use AppTheory's MicroVM runtime/controller primitives.\nThis construct does not implement a product control-plane service.",
+            "summary": "Controller Lambda packaging and configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 103
+          },
+          "name": "controller",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmControllerFunctionProps"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "At least one connector reference is required and no more than 10 may be supplied.",
+            "summary": "Egress network connectors the controller is permitted to pass to Lambda MicroVMs."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 123
+          },
+          "name": "egressNetworkConnectors",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The MicroVM image the controller is permitted to run."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 116
+          },
+          "name": "microvmImage",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmImage"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Optional API name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 140
+          },
+          "name": "apiName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "Duration.seconds(0)",
+            "remarks": "Defaults to disabled so stale auth cannot silently broaden controller access.",
+            "summary": "Lambda authorizer result cache TTL."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 233
+          },
+          "name": "authorizerCacheTtl",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"Authorization\"",
+            "summary": "Header used as the identity source for controller authorization."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 217
+          },
+          "name": "authorizerHeaderName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Friendly authorizer name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 224
+          },
+          "name": "authorizerName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Whether point-in-time recovery should be enabled for the session registry table."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 182
+          },
+          "name": "enableSessionTablePointInTimeRecovery",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "When supplied, AppTheory grants the controller Lambda iam:PassRole for this role\nand exposes the ARN as APPTHEORY_MICROVM_EXECUTION_ROLE_ARN.",
+            "summary": "Optional MicroVM execution role passed to RunMicrovm."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 133
+          },
+          "name": "executionRole",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_iam.IRole"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "PAY_PER_REQUEST",
+            "summary": "Billing mode for the session registry table."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 161
+          },
+          "name": "sessionTableBillingMode",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.BillingMode"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "- AWS default (no deletion protection)",
+            "summary": "Whether deletion protection should be enabled for the session registry table."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 175
+          },
+          "name": "sessionTableDeletionProtection",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "AWS_MANAGED",
+            "summary": "Session registry table encryption setting."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 189
+          },
+          "name": "sessionTableEncryption",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_dynamodb.TableEncryption"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Required when sessionTableEncryption is CUSTOMER_MANAGED.",
+            "summary": "Customer-managed KMS key for the session registry table."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 196
+          },
+          "name": "sessionTableEncryptionKey",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_kms.IKey"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (CloudFormation-generated)",
+            "summary": "Name for the durable MicroVM session registry DynamoDB table."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 154
+          },
+          "name": "sessionTableName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "5",
+            "summary": "Provisioned read capacity when sessionTableBillingMode is PROVISIONED."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 203
+          },
+          "name": "sessionTableReadCapacity",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "RemovalPolicy.RETAIN",
+            "summary": "Removal policy for the session registry table."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 168
+          },
+          "name": "sessionTableRemovalPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.RemovalPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "5",
+            "summary": "Provisioned write capacity when sessionTableBillingMode is PROVISIONED."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 210
+          },
+          "name": "sessionTableWriteCapacity",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (default HTTP API stage)",
+            "summary": "Optional stage configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 147
+          },
+          "name": "stage",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmControllerStageOptions"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-controller:AppTheoryMicrovmControllerProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmControllerStageOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Stage configuration for the MicroVM controller HTTP API."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmControllerStageOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-controller.ts",
+        "line": 45
+      },
+      "name": "AppTheoryMicrovmControllerStageOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Enable CloudWatch access logging for the stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 58
+          },
+          "name": "accessLogging",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "logs.RetentionDays.ONE_MONTH",
+            "remarks": "Only applies when accessLogging is true.",
+            "summary": "Retention period for auto-created access log group."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 66
+          },
+          "name": "accessLogRetention",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.RetentionDays"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"$default\"",
+            "summary": "Stage name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 51
+          },
+          "name": "stageName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no throttling)",
+            "summary": "Throttling burst limit for the stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 80
+          },
+          "name": "throttlingBurstLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined (no throttling)",
+            "summary": "Throttling rate limit (requests per second) for the stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 73
+          },
+          "name": "throttlingRateLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-controller:AppTheoryMicrovmControllerStageOptions"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryMicrovmHookMode": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "docs": {
@@ -16489,7 +17096,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 29
+        "line": 39
       },
       "members": [
         {
@@ -16519,7 +17126,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/microvm-image.ts",
-          "line": 346
+          "line": 356
         },
         "parameters": [
           {
@@ -16542,10 +17149,13 @@
           }
         ]
       },
+      "interfaces": [
+        "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmImage"
+      ],
       "kind": "class",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 305
+        "line": 315
       },
       "name": "AppTheoryMicrovmImage",
       "properties": [
@@ -16556,7 +17166,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 339
+            "line": 349
           },
           "name": "createdAt",
           "type": {
@@ -16570,7 +17180,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 329
+            "line": 339
           },
           "name": "latestActiveImageVersion",
           "type": {
@@ -16584,7 +17194,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 334
+            "line": 344
           },
           "name": "latestFailedImageVersion",
           "type": {
@@ -16598,7 +17208,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 309
+            "line": 319
           },
           "name": "microvmImage",
           "type": {
@@ -16612,9 +17222,10 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 319
+            "line": 329
           },
           "name": "microvmImageArn",
+          "overrides": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmImage",
           "type": {
             "primitive": "string"
           }
@@ -16626,7 +17237,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 314
+            "line": 324
           },
           "name": "microvmImageName",
           "type": {
@@ -16640,7 +17251,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 324
+            "line": 334
           },
           "name": "microvmImageState",
           "type": {
@@ -16654,7 +17265,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 344
+            "line": 354
           },
           "name": "updatedAt",
           "type": {
@@ -16674,7 +17285,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 81
+        "line": 91
       },
       "name": "AppTheoryMicrovmImageBuildHooks",
       "properties": [
@@ -16686,7 +17297,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 85
+            "line": 95
           },
           "name": "ready",
           "optional": true,
@@ -16702,7 +17313,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 90
+            "line": 100
           },
           "name": "readyTimeoutInSeconds",
           "optional": true,
@@ -16718,7 +17329,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 95
+            "line": 105
           },
           "name": "validate",
           "optional": true,
@@ -16734,7 +17345,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 100
+            "line": 110
           },
           "name": "validateTimeoutInSeconds",
           "optional": true,
@@ -16755,7 +17366,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 171
+        "line": 181
       },
       "name": "AppTheoryMicrovmImageCloudWatchLogging",
       "properties": [
@@ -16767,7 +17378,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 175
+            "line": 185
           },
           "name": "logGroup",
           "optional": true,
@@ -16783,7 +17394,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 180
+            "line": 190
           },
           "name": "logStream",
           "optional": true,
@@ -16804,7 +17415,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 44
+        "line": 54
       },
       "name": "AppTheoryMicrovmImageCodeArtifact",
       "properties": [
@@ -16816,7 +17427,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 48
+            "line": 58
           },
           "name": "uri",
           "type": {
@@ -16835,7 +17446,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 19
+        "line": 29
       },
       "members": [
         {
@@ -16858,7 +17469,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 54
+        "line": 64
       },
       "name": "AppTheoryMicrovmImageCpuConfiguration",
       "properties": [
@@ -16871,7 +17482,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 60
+            "line": 70
           },
           "name": "architecture",
           "optional": true,
@@ -16892,7 +17503,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 66
+        "line": 76
       },
       "name": "AppTheoryMicrovmImageEnvironmentVariable",
       "properties": [
@@ -16904,7 +17515,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 70
+            "line": 80
           },
           "name": "key",
           "type": {
@@ -16919,7 +17530,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 75
+            "line": 85
           },
           "name": "value",
           "type": {
@@ -16939,7 +17550,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 151
+        "line": 161
       },
       "name": "AppTheoryMicrovmImageHooks",
       "properties": [
@@ -16951,7 +17562,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 155
+            "line": 165
           },
           "name": "microvmHooks",
           "optional": true,
@@ -16967,7 +17578,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 160
+            "line": 170
           },
           "name": "microvmImageHooks",
           "optional": true,
@@ -16983,7 +17594,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 165
+            "line": 175
           },
           "name": "port",
           "optional": true,
@@ -17004,7 +17615,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 186
+        "line": 196
       },
       "name": "AppTheoryMicrovmImageLogging",
       "properties": [
@@ -17016,7 +17627,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 190
+            "line": 200
           },
           "name": "cloudWatch",
           "optional": true,
@@ -17032,7 +17643,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 195
+            "line": 205
           },
           "name": "disabled",
           "optional": true,
@@ -17052,7 +17663,7 @@
       "kind": "enum",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 9
+        "line": 19
       },
       "members": [
         {
@@ -17075,7 +17686,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 211
+        "line": 221
       },
       "name": "AppTheoryMicrovmImageProps",
       "properties": [
@@ -17087,7 +17698,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 225
+            "line": 235
           },
           "name": "baseImageArn",
           "type": {
@@ -17102,7 +17713,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 230
+            "line": 240
           },
           "name": "baseImageVersion",
           "type": {
@@ -17117,7 +17728,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 235
+            "line": 245
           },
           "name": "buildRoleArn",
           "type": {
@@ -17132,7 +17743,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 240
+            "line": 250
           },
           "name": "codeArtifact",
           "type": {
@@ -17147,7 +17758,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 220
+            "line": 230
           },
           "name": "description",
           "type": {
@@ -17163,7 +17774,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 248
+            "line": 258
           },
           "name": "egressNetworkConnectors",
           "type": {
@@ -17183,7 +17794,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 253
+            "line": 263
           },
           "name": "hooks",
           "type": {
@@ -17199,7 +17810,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 260
+            "line": 270
           },
           "name": "logging",
           "type": {
@@ -17214,7 +17825,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 215
+            "line": 225
           },
           "name": "name",
           "type": {
@@ -17230,7 +17841,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 267
+            "line": 277
           },
           "name": "resources",
           "type": {
@@ -17251,7 +17862,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 274
+            "line": 284
           },
           "name": "additionalOsCapabilities",
           "optional": true,
@@ -17273,7 +17884,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 281
+            "line": 291
           },
           "name": "cpuConfigurations",
           "optional": true,
@@ -17295,7 +17906,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 288
+            "line": 298
           },
           "name": "environmentVariables",
           "optional": true,
@@ -17316,7 +17927,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 293
+            "line": 303
           },
           "name": "tags",
           "optional": true,
@@ -17342,7 +17953,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 201
+        "line": 211
       },
       "name": "AppTheoryMicrovmImageResources",
       "properties": [
@@ -17354,7 +17965,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 205
+            "line": 215
           },
           "name": "minimumMemoryInMiB",
           "type": {
@@ -17722,7 +18333,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-image.ts",
-        "line": 106
+        "line": 116
       },
       "name": "AppTheoryMicrovmRuntimeHooks",
       "properties": [
@@ -17734,7 +18345,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 110
+            "line": 120
           },
           "name": "resume",
           "optional": true,
@@ -17750,7 +18361,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 115
+            "line": 125
           },
           "name": "resumeTimeoutInSeconds",
           "optional": true,
@@ -17766,7 +18377,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 120
+            "line": 130
           },
           "name": "run",
           "optional": true,
@@ -17782,7 +18393,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 125
+            "line": 135
           },
           "name": "runTimeoutInSeconds",
           "optional": true,
@@ -17798,7 +18409,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 130
+            "line": 140
           },
           "name": "suspend",
           "optional": true,
@@ -17814,7 +18425,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 135
+            "line": 145
           },
           "name": "suspendTimeoutInSeconds",
           "optional": true,
@@ -17830,7 +18441,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 140
+            "line": 150
           },
           "name": "terminate",
           "optional": true,
@@ -17846,7 +18457,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-image.ts",
-            "line": 145
+            "line": 155
           },
           "name": "terminateTimeoutInSeconds",
           "optional": true,
@@ -22942,6 +23553,37 @@
       ],
       "symbolId": "lib/websocket-api:AppTheoryWebSocketApiProps"
     },
+    "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmImage": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "summary": "Reference to a Lambda MicroVM image usable by MicroVM controller constructs."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmImage",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-image.ts",
+        "line": 9
+      },
+      "name": "IAppTheoryMicrovmImage",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The ARN of the MicroVM image."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-image.ts",
+            "line": 13
+          },
+          "name": "microvmImageArn",
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-image:IAppTheoryMicrovmImage"
+    },
     "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "docs": {
@@ -23391,5 +24033,5 @@
     }
   },
   "version": "1.13.2",
-  "fingerprint": "iB5AmUcuKTJA3fa6GPm2fgCVE1C77j5Tc1oahdwpIuc="
+  "fingerprint": "YnPfsKIXsAIB3KvpCFZP24ZzSe5xXNCuB1cn2GJSKSY="
 }

@@ -116,3 +116,26 @@ new AppTheoryMicrovmImage(this, "MicrovmImage", {
 ```
 
 Package-local guide: `cdk/docs/microvm-image.md`.
+
+## Lambda MicroVM controller
+
+`AppTheoryMicrovmController` creates the protected HTTP API route set for the M15 MicroVM controller contract, the
+controller Lambda from caller-supplied Lambda packaging props, and the durable session registry table using the
+canonical TableTheory `pk`/`sk` + `ttl` shape. It requires a Lambda request authorizer; unauthenticated routes are not
+synthesized.
+
+```ts
+new AppTheoryMicrovmController(this, "MicrovmController", {
+  controller: {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromAsset("dist/microvm-controller"),
+  },
+  authorizer,
+  microvmImage: image,
+  egressNetworkConnectors: [connector],
+  sessionTableName: "my-microvm-sessions",
+});
+```
+
+Package-local guide: `cdk/docs/microvm-controller.md`.

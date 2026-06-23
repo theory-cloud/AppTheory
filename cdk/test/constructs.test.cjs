@@ -4694,6 +4694,201 @@ test("AppTheoryMicrovmImage fails closed on invalid props", () => {
   }
 });
 
+function microvmControllerLambdaProps(overrides = {}) {
+  return {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    environment: {
+      APP_ENV: "test",
+    },
+    ...overrides,
+  };
+}
+
+function microvmAuthorizer(stack) {
+  return new lambda.Function(stack, "AuthorizerFn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ isAuthorized: true });"),
+  });
+}
+
+test("AppTheoryMicrovmController synthesizes protected controller deployment", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const connector = importedMicrovmConnector(stack);
+  const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+  const authorizer = microvmAuthorizer(stack);
+  const executionRole = new iam.Role(stack, "MicrovmExecutionRole", {
+    assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
+  });
+
+  const controller = new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+    controller: microvmControllerLambdaProps(),
+    authorizer,
+    microvmImage: image,
+    egressNetworkConnectors: [connector],
+    executionRole,
+    apiName: "apptheory-microvm-controller",
+    sessionTableName: "apptheory-microvm-sessions",
+    stage: {
+      stageName: "prod",
+      accessLogging: true,
+      throttlingRateLimit: 25,
+      throttlingBurstLimit: 50,
+    },
+  });
+
+  assert.ok(controller.endpoint, "Should expose controller base endpoint");
+  assert.ok(controller.controllerFunction.functionArn, "Should expose controller Lambda");
+  assert.ok(controller.sessionTable.tableArn, "Should expose durable session registry table");
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const routes = resourcesOfType(template, "AWS::ApiGatewayV2::Route");
+  assert.deepEqual(
+    routes.map((route) => route.Properties.RouteKey).sort(),
+    [
+      "GET /microvms/{session_id}",
+      "GET /microvms/{session_id}/status",
+      "POST /microvms",
+      "POST /microvms/{session_id}/start",
+      "POST /microvms/{session_id}/stop",
+    ].sort(),
+  );
+  for (const route of routes) {
+    assert.equal(route.Properties.AuthorizationType, "CUSTOM", "Controller route should be custom-authorized");
+    assert.ok(route.Properties.AuthorizerId, "Controller route should reference the authorizer");
+  }
+
+  assertions.Template.fromStack(stack).hasResourceProperties("AWS::DynamoDB::Table", {
+    TableName: "apptheory-microvm-sessions",
+    KeySchema: [
+      { AttributeName: "pk", KeyType: "HASH" },
+      { AttributeName: "sk", KeyType: "RANGE" },
+    ],
+    TimeToLiveSpecification: { AttributeName: "ttl", Enabled: true },
+  });
+
+  const functions = resourcesOfType(template, "AWS::Lambda::Function");
+  const controllerFunction = functions.find((resource) => {
+    const env = resource.Properties?.Environment?.Variables ?? {};
+    return env.APPTHEORY_MICROVM_CONTRACT_NAME === "apptheory.lambda_microvm";
+  });
+  assert.ok(controllerFunction, "Should synthesize controller Lambda with AppTheory MicroVM env");
+  const env = controllerFunction.Properties.Environment.Variables;
+  assert.equal(env.APP_ENV, "test");
+  assert.equal(env.APPTHEORY_MICROVM_CONTRACT_VERSION, "m15.microvm/v1");
+  assert.equal(env.APPTHEORY_MICROVM_CONTROLLER_AUTH_REQUIRED, "true");
+  assert.equal(env.APPTHEORY_MICROVM_CONTROLLER_AUTH_DEFAULT, "deny");
+  assert.ok(renderedString(env.APPTHEORY_MICROVM_SESSION_REGISTRY_TABLE).includes("SessionTable"));
+  assert.ok(renderedString(env.APPTHEORY_MICROVM_IMAGE_REF).includes("MicrovmImage"));
+  assert.ok(renderedString(env.APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS).includes("NetworkConnector"));
+  assert.ok(renderedString(env.APPTHEORY_MICROVM_EXECUTION_ROLE_ARN).includes("MicrovmExecutionRole"));
+
+  const policyActions = iamPolicyActions(template);
+  assert.ok(policyActions.includes("dynamodb:PutItem"));
+  assert.ok(policyActions.includes("lambda:RunMicrovm"));
+  assert.ok(policyActions.includes("lambda:CreateMicrovmAuthToken"));
+  assert.ok(policyActions.includes("lambda:PassNetworkConnector"));
+  assert.ok(policyActions.includes("iam:PassRole"));
+
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("microvm-controller", template);
+  } else {
+    expectSnapshot("microvm-controller", template);
+  }
+});
+
+test("AppTheoryMicrovmController fails closed on invalid props", () => {
+  const app = new cdk.App();
+
+  {
+    const stack = new cdk.Stack(app, "MissingAuthStack");
+    const connector = importedMicrovmConnector(stack);
+    const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+          controller: microvmControllerLambdaProps(),
+          microvmImage: image,
+          egressNetworkConnectors: [connector],
+        }),
+      /requires props\.authorizer/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "MissingConnectorsStack");
+    const connector = importedMicrovmConnector(stack);
+    const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+          controller: microvmControllerLambdaProps(),
+          authorizer: microvmAuthorizer(stack),
+          microvmImage: image,
+          egressNetworkConnectors: [],
+        }),
+      /at least 1 egressNetworkConnectors entry/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "ReservedEnvStack");
+    const connector = importedMicrovmConnector(stack);
+    const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+          controller: microvmControllerLambdaProps({
+            environment: {
+              APPTHEORY_MICROVM_CONTROLLER_AUTH_DEFAULT: "allow",
+            },
+          }),
+          authorizer: microvmAuthorizer(stack),
+          microvmImage: image,
+          egressNetworkConnectors: [connector],
+        }),
+      /cannot override reserved APPTHEORY_MICROVM_CONTROLLER_AUTH_DEFAULT/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "CustomerManagedEncryptionStack");
+    const connector = importedMicrovmConnector(stack);
+    const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+          controller: microvmControllerLambdaProps(),
+          authorizer: microvmAuthorizer(stack),
+          microvmImage: image,
+          egressNetworkConnectors: [connector],
+          sessionTableEncryption: dynamodb.TableEncryption.CUSTOMER_MANAGED,
+        }),
+      /requires sessionTableEncryptionKey/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "MissingHeaderStack");
+    const connector = importedMicrovmConnector(stack);
+    const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+          controller: microvmControllerLambdaProps(),
+          authorizer: microvmAuthorizer(stack),
+          microvmImage: image,
+          egressNetworkConnectors: [connector],
+          authorizerHeaderName: " ",
+        }),
+      /authorizerHeaderName is required/,
+    );
+  }
+});
+
 // ============================================================================
 // AppTheoryMcpServer tests
 // ============================================================================
