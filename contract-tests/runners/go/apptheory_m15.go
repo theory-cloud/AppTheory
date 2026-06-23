@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
-	"sort"
 	"strings"
 
 	runtimemicrovm "github.com/theory-cloud/apptheory/runtime/microvm"
+	microvmtest "github.com/theory-cloud/apptheory/testkit/microvm"
 )
 
 const (
@@ -24,40 +25,6 @@ const (
 	microVMErrLifecycleIncomplete       = "m15.microvm.lifecycle_incomplete"
 	microVMErrControllerIncomplete      = "m15.microvm.controller_incomplete"
 	microVMErrSessionRegistryIncomplete = "m15.microvm.session_registry_incomplete"
-)
-
-var (
-	requiredMicroVMLifecycleStates = []string{
-		"requested",
-		"image_preparing",
-		"image_prepared",
-		"starting",
-		"started",
-		"readiness_probing",
-		"ready",
-		"stopping",
-		"stopped",
-		"tearing_down",
-		"terminated",
-		"failed",
-	}
-	requiredMicroVMControllerCommands = []string{"create", "start", "stop", "status", "session"}
-	requiredMicroVMEnvelopeFields     = []string{"command", "request_id", "tenant_id", "auth_context"}
-	requiredMicroVMSessionFields      = []string{
-		"tenant_id",
-		"namespace",
-		"session_id",
-		"state",
-		"desired_state",
-		"image_ref",
-		"controller_id",
-		"created_at",
-		"updated_at",
-		"expires_at",
-		"generation",
-		"last_command_id",
-		"auth_subject",
-	}
 )
 
 type microVMContractFixture struct {
@@ -197,25 +164,28 @@ func validateMicroVMEscapeHatches(
 	actual FixtureMicroVMContractValidation,
 	escapeHatches microVMEscapeHatches,
 ) *FixtureMicroVMContractValidation {
-	if escapeHatches.RawAWSSDK {
-		return &FixtureMicroVMContractValidation{
-			Valid:        false,
-			Kind:         actual.Kind,
-			Version:      actual.Version,
-			ErrorCode:    microVMErrRawSDKEscapeHatch,
-			ErrorMessage: "apptheory: microvm contract forbids raw AWS SDK escape hatch",
-		}
+	err := runtimemicrovm.ValidateEscapeHatches(runtimemicrovm.EscapeHatches{
+		RawAWSSDK:              escapeHatches.RawAWSSDK,
+		RawLifecycleHookBypass: escapeHatches.RawLifecycleHookBypass,
+	})
+	if err == nil {
+		return nil
 	}
-	if escapeHatches.RawLifecycleHookBypass {
-		return &FixtureMicroVMContractValidation{
-			Valid:        false,
-			Kind:         actual.Kind,
-			Version:      actual.Version,
-			ErrorCode:    microVMErrLifecycleBypass,
-			ErrorMessage: "apptheory: microvm contract forbids raw lifecycle hook bypass",
-		}
+	var safe runtimemicrovm.SafeError
+	if !errors.As(err, &safe) {
+		return fixtureMicroVMValidationRef(invalidMicroVMContract(microVMErrInvalidContract, err.Error()))
 	}
-	return nil
+	return &FixtureMicroVMContractValidation{
+		Valid:        false,
+		Kind:         actual.Kind,
+		Version:      actual.Version,
+		ErrorCode:    safe.Code,
+		ErrorMessage: safe.Message,
+	}
+}
+
+func fixtureMicroVMValidationRef(validation FixtureMicroVMContractValidation) *FixtureMicroVMContractValidation {
+	return &validation
 }
 
 func invalidMicroVMContract(code, message string) FixtureMicroVMContractValidation {
@@ -325,70 +295,148 @@ func runtimeLifecycleContract(lifecycle microVMLifecycleContract) runtimemicrovm
 func noopRuntimeLifecycleHandler(context.Context, runtimemicrovm.LifecycleEvent) error { return nil }
 
 func validateMicroVMController(controller microVMControllerContract) error {
-	if !controllerAuthDefaultsDeny(controller.Auth) {
-		return fmt.Errorf("apptheory: microvm controller must default to authenticated deny")
+	contract := runtimeControllerContract(controller)
+	if err := runtimemicrovm.ValidateControllerContract(contract); err != nil {
+		return err
 	}
-	if missing := missingStrings(requiredMicroVMEnvelopeFields, controller.Envelope.RequiredFields); len(missing) > 0 {
-		return fmt.Errorf("apptheory: microvm controller envelope missing fields: %s", strings.Join(missing, ","))
-	}
-	if missing := missingStrings([]string{"raw_sdk_client", "bearer_token"}, controller.Envelope.ForbiddenFields); len(missing) > 0 {
-		return fmt.Errorf("apptheory: microvm controller envelope missing forbidden fields: %s", strings.Join(missing, ","))
-	}
-	if missing := missingStrings(requiredMicroVMControllerCommands, controllerCommandNames(controller.Commands)); len(missing) > 0 {
-		return fmt.Errorf("apptheory: microvm controller missing commands: %s", strings.Join(missing, ","))
-	}
+	return exerciseRuntimeController()
+}
+
+func runtimeControllerContract(controller microVMControllerContract) runtimemicrovm.ControllerContract {
+	commands := make([]runtimemicrovm.ControllerCommandContract, 0, len(controller.Commands))
 	for _, command := range controller.Commands {
-		if strings.TrimSpace(command.Name) == "" || strings.TrimSpace(command.Method) == "" || strings.TrimSpace(command.Path) == "" {
-			return fmt.Errorf("apptheory: microvm controller commands must define name, method, and path")
-		}
-		if len(command.RequestFields) == 0 || len(command.ResponseFields) == 0 {
-			return fmt.Errorf("apptheory: microvm controller command %s must define request and response fields", command.Name)
-		}
+		commands = append(commands, runtimemicrovm.ControllerCommandContract{
+			Name:           runtimemicrovm.Command(command.Name),
+			Method:         command.Method,
+			Path:           command.Path,
+			RequestFields:  append([]string(nil), command.RequestFields...),
+			ResponseFields: append([]string(nil), command.ResponseFields...),
+		})
+	}
+	return runtimemicrovm.ControllerContract{
+		Auth: runtimemicrovm.ControllerAuthContract{
+			Required: controller.Auth.Required,
+			Default:  controller.Auth.Default,
+		},
+		Envelope: runtimemicrovm.ControllerEnvelopeContract{
+			RequiredFields:  append([]string(nil), controller.Envelope.RequiredFields...),
+			SafeErrorFields: append([]string(nil), controller.Envelope.SafeErrorFields...),
+			ForbiddenFields: append([]string(nil), controller.Envelope.ForbiddenFields...),
+		},
+		Commands: commands,
+	}
+}
+
+func exerciseRuntimeController() error {
+	client := microvmtest.NewFakeClient()
+	controller, err := runtimemicrovm.NewController(
+		client,
+		runtimemicrovm.WithControllerID("controller-fixture"),
+		runtimemicrovm.WithControllerIDGenerator(microVMFixtureIDs{}),
+	)
+	if err != nil {
+		return err
+	}
+
+	create, err := controller.Handle(context.Background(), runtimeControllerRequest(runtimemicrovm.CommandCreate, "m15-create", ""))
+	if err != nil {
+		return err
+	}
+	if err := requireCreateResponse(create); err != nil {
+		return err
+	}
+	return exerciseRuntimeControllerCommands(controller, create.SessionID)
+}
+
+func exerciseRuntimeControllerCommands(controller *runtimemicrovm.Controller, sessionID string) error {
+	start, err := controller.Handle(context.Background(), runtimeControllerRequest(runtimemicrovm.CommandStart, "m15-start", sessionID))
+	if err != nil {
+		return err
+	}
+	if validationErr := requireStartStopResponse("start", start, sessionID, runtimemicrovm.StateStarted); validationErr != nil {
+		return validationErr
+	}
+
+	status, err := controller.Handle(context.Background(), runtimeControllerRequest(runtimemicrovm.CommandStatus, "m15-status", sessionID))
+	if err != nil {
+		return err
+	}
+	if validationErr := requireStatusResponse(status, sessionID); validationErr != nil {
+		return validationErr
+	}
+
+	session, err := controller.Handle(context.Background(), runtimeControllerRequest(runtimemicrovm.CommandSession, "m15-session", sessionID))
+	if err != nil {
+		return err
+	}
+	if validationErr := requireSessionResponse(session, sessionID); validationErr != nil {
+		return validationErr
+	}
+
+	stop, err := controller.Handle(context.Background(), runtimeControllerRequest(runtimemicrovm.CommandStop, "m15-stop", sessionID))
+	if err != nil {
+		return err
+	}
+	return requireStartStopResponse("stop", stop, sessionID, runtimemicrovm.StateStopped)
+}
+
+func requireCreateResponse(response runtimemicrovm.ControllerResponse) error {
+	if response.SessionID == "" || response.State != runtimemicrovm.StateRequested || response.RegistryVersion == 0 {
+		return fmt.Errorf("apptheory: microvm controller create response incomplete")
 	}
 	return nil
 }
+
+func requireStartStopResponse(name string, response runtimemicrovm.ControllerResponse, sessionID string, desired runtimemicrovm.LifecycleState) error {
+	if response.SessionID != sessionID || response.State == "" || response.DesiredState != desired {
+		return fmt.Errorf("apptheory: microvm controller %s response incomplete", name)
+	}
+	return nil
+}
+
+func requireStatusResponse(response runtimemicrovm.ControllerResponse, sessionID string) error {
+	if response.SessionID != sessionID || response.LifecycleState == "" || response.LastTransition.IsZero() {
+		return fmt.Errorf("apptheory: microvm controller status response incomplete")
+	}
+	return nil
+}
+
+func requireSessionResponse(response runtimemicrovm.ControllerResponse, sessionID string) error {
+	if response.SessionID != sessionID || response.TenantID == "" || response.Namespace == "" || response.RegistryVersion == 0 {
+		return fmt.Errorf("apptheory: microvm controller session response incomplete")
+	}
+	return nil
+}
+
+func runtimeControllerRequest(command runtimemicrovm.Command, requestID string, sessionID string) runtimemicrovm.ControllerRequest {
+	request := runtimemicrovm.ControllerRequest{
+		Command:   command,
+		RequestID: requestID,
+		TenantID:  "tenant-fixture",
+		Namespace: "namespace-fixture",
+		AuthContext: runtimemicrovm.AuthContext{
+			Subject:  "subject-fixture",
+			TenantID: "tenant-fixture",
+		},
+		SessionID: sessionID,
+	}
+	if command == runtimemicrovm.CommandCreate {
+		request.ImageRef = "image-fixture"
+		request.NetworkConnectorRef = "network-fixture"
+	}
+	return request
+}
+
+type microVMFixtureIDs struct{}
+
+func (microVMFixtureIDs) NewID() string { return "session-fixture" }
 
 func validateMicroVMSessionRegistry(registry microVMSessionRegistrySpec) error {
-	if strings.TrimSpace(registry.Pattern) != "tabletheory-single-table" {
-		return fmt.Errorf("apptheory: microvm session registry must use tabletheory-single-table guidance")
-	}
-	if missing := missingStrings([]string{"tenant_id", "namespace"}, registry.TenantBinding); len(missing) > 0 {
-		return fmt.Errorf("apptheory: microvm session registry missing tenant binding: %s", strings.Join(missing, ","))
-	}
-	if missing := missingStrings(requiredMicroVMSessionFields, registry.RequiredFields); len(missing) > 0 {
-		return fmt.Errorf("apptheory: microvm session registry missing fields: %s", strings.Join(missing, ","))
-	}
-	if missing := missingStrings(requiredMicroVMLifecycleStates, registry.StateValues); len(missing) > 0 {
-		return fmt.Errorf("apptheory: microvm session registry missing states: %s", strings.Join(missing, ","))
-	}
-	if missing := missingStrings([]string{"raw_aws_credentials", "raw_lifecycle_hook_payload", "bearer_token"}, registry.ForbiddenFields); len(missing) > 0 {
-		return fmt.Errorf("apptheory: microvm session registry missing forbidden fields: %s", strings.Join(missing, ","))
-	}
-	return nil
-}
-
-func controllerCommandNames(commands []microVMControllerCommand) []string {
-	out := make([]string, 0, len(commands))
-	for _, command := range commands {
-		out = append(out, command.Name)
-	}
-	return out
-}
-
-func missingStrings(required []string, got []string) []string {
-	seen := make(map[string]struct{}, len(got))
-	for _, value := range got {
-		trimmed := strings.TrimSpace(value)
-		if trimmed != "" {
-			seen[trimmed] = struct{}{}
-		}
-	}
-	var missing []string
-	for _, value := range required {
-		if _, ok := seen[value]; !ok {
-			missing = append(missing, value)
-		}
-	}
-	sort.Strings(missing)
-	return missing
+	return runtimemicrovm.ValidateSessionRegistryContract(runtimemicrovm.SessionRegistryContract{
+		Pattern:         registry.Pattern,
+		TenantBinding:   append([]string(nil), registry.TenantBinding...),
+		RequiredFields:  append([]string(nil), registry.RequiredFields...),
+		StateValues:     append([]string(nil), registry.StateValues...),
+		ForbiddenFields: append([]string(nil), registry.ForbiddenFields...),
+	})
 }
