@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
 	runtimemicrovm "github.com/theory-cloud/apptheory/runtime/microvm"
 )
 
