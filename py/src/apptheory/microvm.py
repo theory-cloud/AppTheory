@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -663,6 +664,9 @@ MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE = "m15.microvm.session_registry_incomp
 MICROVM_ERROR_INVALID_CONTROLLER_REQUEST = "m15.microvm.invalid_controller_request"
 MICROVM_ERROR_CONTROLLER_COMMAND_FAILED = "m15.microvm.controller_command_failed"
 MICROVM_CONTROLLER_AUTH_DEFAULT_DENY = "deny"
+MICROVM_SESSION_REGISTRY_MODEL_NAME = "MicroVMSessionRegistryRecord"
+MICROVM_SESSION_REGISTRY_TABLE_NAME = "apptheory-microvm-sessions"
+MICROVM_SESSION_REGISTRY_TABLE_ENV = "APPTHEORY_MICROVM_SESSION_REGISTRY_TABLE"
 
 COMMAND_CREATE = "create"
 COMMAND_START = "start"
@@ -671,6 +675,43 @@ COMMAND_STATUS = "status"
 COMMAND_SESSION = "session"
 
 MicroVMCommand = Literal["create", "start", "stop", "status", "session"]
+
+
+def _registry_theorydb_meta(
+    name: str,
+    *,
+    roles: list[str] | None = None,
+    omitempty: bool = False,
+) -> dict[str, Any]:
+    return {
+        "theorydb": {
+            "name": name,
+            "roles": list(roles or []),
+            "omitempty": bool(omitempty),
+            "set": False,
+            "json": False,
+            "binary": False,
+            "encrypted": False,
+            "converter": None,
+            "ignore": False,
+        }
+    }
+
+
+def _registry_s(name: str, *, roles: list[str] | None = None, omitempty: bool = False) -> Any:
+    return field(default="", metadata=_registry_theorydb_meta(name, roles=roles, omitempty=omitempty))
+
+
+def _registry_n(name: str, *, roles: list[str] | None = None, omitempty: bool = False) -> Any:
+    return field(default=0, metadata=_registry_theorydb_meta(name, roles=roles, omitempty=omitempty))
+
+
+def _registry_f(name: str, *, omitempty: bool = False) -> Any:
+    return field(default=0.0, metadata=_registry_theorydb_meta(name, omitempty=omitempty))
+
+
+def _registry_m(name: str, *, omitempty: bool = False) -> Any:
+    return field(default=None, metadata=_registry_theorydb_meta(name, omitempty=omitempty))
 
 
 @dataclass(slots=True)
@@ -748,6 +789,9 @@ class MicroVMControllerResponse:
     state: str = ""
     desired_state: str = ""
     lifecycle_state: str = ""
+    endpoint: str = ""
+    microvm_id: str = ""
+    last_action: str = ""
     last_transition: float = 0.0
     registry_version: int = 0
     error: MicroVMSafeError | None = None
@@ -804,6 +848,9 @@ class MicroVMSessionRecord:
     last_command_id: str
     auth_subject: str
     network_connector_ref: str = ""
+    endpoint: str = ""
+    microvm_id: str = ""
+    last_action: str = ""
     metadata: dict[str, str] | None = None
 
 
@@ -817,6 +864,43 @@ class MicroVMSessionStatus:
     lifecycle_state: str
     last_transition: float
     registry_version: int
+    endpoint: str = ""
+    microvm_id: str = ""
+    last_action: str = ""
+
+
+@dataclass(slots=True)
+class MicroVMSessionRegistryRecord:
+    pk: str = _registry_s("pk", roles=["pk"])
+    sk: str = _registry_s("sk", roles=["sk"])
+    tenant_id: str = _registry_s("tenant_id")
+    namespace: str = _registry_s("namespace")
+    session_id: str = _registry_s("session_id")
+    state: str = _registry_s("state")
+    desired_state: str = _registry_s("desired_state")
+    endpoint: str = _registry_s("endpoint", omitempty=True)
+    microvm_id: str = _registry_s("microvm_id", omitempty=True)
+    image_ref: str = _registry_s("image_ref")
+    network_connector_ref: str = _registry_s("network_connector_ref")
+    controller_id: str = _registry_s("controller_id")
+    created_at: float = _registry_f("created_at")
+    updated_at: float = _registry_f("updated_at")
+    expires_at: float = _registry_f("expires_at")
+    ttl: int = _registry_n("ttl", roles=["ttl"])
+    generation: int = _registry_n("generation")
+    version: int = _registry_n("version", roles=["version"])
+    last_action: str = _registry_s("last_action")
+    last_command_id: str = _registry_s("last_command_id")
+    auth_subject: str = _registry_s("auth_subject")
+    metadata: dict[str, str] | None = field(
+        default=None,
+        metadata=_registry_theorydb_meta("metadata", omitempty=True),
+    )
+
+
+type _MicroVMSessionRegistryKeyInput = (
+    tuple[str, str, str] | MicroVMSessionRecord | MicroVMSessionRegistryRecord | dict[str, Any]
+)
 
 
 @dataclass(slots=True)
@@ -842,35 +926,52 @@ def default_microvm_controller_contract() -> MicroVMControllerContract:
                 "POST",
                 "/microvms",
                 ["image_ref", "network_connector_ref", "session_spec"],
-                ["session_id", "state", "registry_version"],
+                ["session_id", "state", "registry_version", "endpoint", "microvm_id", "last_action"],
             ),
             MicroVMControllerCommandContract(
                 COMMAND_START,
                 "POST",
                 "/microvms/{session_id}/start",
                 ["session_id"],
-                ["session_id", "state", "desired_state"],
+                ["session_id", "state", "desired_state", "endpoint", "microvm_id", "last_action"],
             ),
             MicroVMControllerCommandContract(
                 COMMAND_STOP,
                 "POST",
                 "/microvms/{session_id}/stop",
                 ["session_id"],
-                ["session_id", "state", "desired_state"],
+                ["session_id", "state", "desired_state", "endpoint", "microvm_id", "last_action"],
             ),
             MicroVMControllerCommandContract(
                 COMMAND_STATUS,
                 "GET",
                 "/microvms/{session_id}/status",
                 ["session_id"],
-                ["session_id", "state", "lifecycle_state", "last_transition"],
+                [
+                    "session_id",
+                    "state",
+                    "lifecycle_state",
+                    "last_transition",
+                    "endpoint",
+                    "microvm_id",
+                    "last_action",
+                ],
             ),
             MicroVMControllerCommandContract(
                 COMMAND_SESSION,
                 "GET",
                 "/microvms/{session_id}",
                 ["session_id"],
-                ["session_id", "tenant_id", "namespace", "state", "registry_version"],
+                [
+                    "session_id",
+                    "tenant_id",
+                    "namespace",
+                    "state",
+                    "registry_version",
+                    "endpoint",
+                    "microvm_id",
+                    "last_action",
+                ],
             ),
         ],
     )
@@ -881,17 +982,25 @@ def default_microvm_session_registry_contract() -> MicroVMSessionRegistryContrac
         pattern="tabletheory-single-table",
         tenant_binding=["tenant_id", "namespace"],
         required_fields=[
+            "pk",
+            "sk",
             "tenant_id",
             "namespace",
             "session_id",
             "state",
             "desired_state",
+            "endpoint",
+            "microvm_id",
             "image_ref",
+            "network_connector_ref",
             "controller_id",
             "created_at",
             "updated_at",
             "expires_at",
+            "ttl",
             "generation",
+            "version",
+            "last_action",
             "last_command_id",
             "auth_subject",
         ],
@@ -976,9 +1085,7 @@ def validate_microvm_session_registry_contract(registry: MicroVMSessionRegistryC
             f"apptheory: microvm session registry missing tenant binding: {','.join(missing_tenant)}",
             "",
         )
-    missing_fields = _missing_strings(
-        default_microvm_session_registry_contract().required_fields, coerced.required_fields
-    )
+    missing_fields = _missing_strings(_required_session_registry_contract_fields(), coerced.required_fields)
     if missing_fields:
         raise _safe_error(
             MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
@@ -1012,7 +1119,9 @@ def validate_microvm_session_record(record: MicroVMSessionRecord) -> None:
         or not normalized.state
         or not normalized.desired_state
         or not normalized.image_ref
+        or not normalized.network_connector_ref
         or not normalized.controller_id
+        or not normalized.last_action
         or not normalized.last_command_id
         or not normalized.auth_subject
     ):
@@ -1030,6 +1139,12 @@ def validate_microvm_session_record(record: MicroVMSessionRecord) -> None:
         raise _safe_error(
             MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
             "apptheory: microvm session record registry fields are incomplete",
+            normalized.last_command_id,
+        )
+    if not _valid_microvm_command(normalized.last_action):
+        raise _safe_error(
+            MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+            "apptheory: microvm session record last action is unsupported",
             normalized.last_command_id,
         )
     if not _valid_lifecycle_state(normalized.state) or not _valid_lifecycle_state(normalized.desired_state):
@@ -1052,6 +1167,7 @@ def validate_microvm_session_status(status: MicroVMSessionStatus) -> None:
         or not normalized.state
         or not normalized.desired_state
         or not normalized.lifecycle_state
+        or not normalized.last_action
         or normalized.last_transition <= 0
         or normalized.registry_version <= 0
     ):
@@ -1070,10 +1186,308 @@ def validate_microvm_session_status(status: MicroVMSessionStatus) -> None:
             "apptheory: microvm session status state is unsupported",
             "",
         )
+    if not _valid_microvm_command(normalized.last_action):
+        raise _safe_error(
+            MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+            "apptheory: microvm session status last action is unsupported",
+            "",
+        )
 
 
 def microvm_session_key(record: MicroVMSessionRecord) -> tuple[str, str, str]:
     return (str(record.tenant_id).strip(), str(record.namespace).strip(), str(record.session_id).strip())
+
+
+def microvm_session_registry_table_name() -> str:
+    return (
+        str(os.environ.get(MICROVM_SESSION_REGISTRY_TABLE_ENV, "") or "").strip() or MICROVM_SESSION_REGISTRY_TABLE_NAME
+    )
+
+
+def microvm_session_registry_partition_key(tenant_id: str, namespace: str) -> str:
+    tenant = str(tenant_id or "").strip()
+    ns = str(namespace or "").strip()
+    if not tenant or not ns:
+        return ""
+    return f"TENANT#{tenant}#NAMESPACE#{ns}"
+
+
+def microvm_session_registry_sort_key(session_id: str) -> str:
+    session = str(session_id or "").strip()
+    if not session:
+        return ""
+    return f"SESSION#{session}"
+
+
+def microvm_session_registry_model_definition(*, table_name: str | None = None) -> Any:
+    try:
+        from theorydb_py import ModelDefinition  # type: ignore[import-not-found]
+
+        return ModelDefinition.from_dataclass(
+            MicroVMSessionRegistryRecord,
+            table_name=str(table_name or "").strip() or None,
+        )
+    except Exception as exc:
+        raise _safe_error(
+            MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+            "apptheory: microvm session registry requires TableTheory model support",
+            "",
+        ) from exc
+
+
+def validate_microvm_session_registry_record(record: MicroVMSessionRegistryRecord | dict[str, Any]) -> None:
+    normalized = _normalize_session_registry_record(record)
+    validate_microvm_session_record(_session_record_from_registry_no_validate(normalized))
+    if not normalized.pk or not normalized.sk or normalized.ttl <= 0 or normalized.version <= 0:
+        raise _safe_error(
+            MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+            "apptheory: microvm session registry keys are incomplete",
+            normalized.last_command_id,
+        )
+    if normalized.pk != microvm_session_registry_partition_key(
+        normalized.tenant_id, normalized.namespace
+    ) or normalized.sk != microvm_session_registry_sort_key(normalized.session_id):
+        raise _safe_error(
+            MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+            "apptheory: microvm session registry tenant/session key mismatch",
+            normalized.last_command_id,
+        )
+    if normalized.ttl != int(normalized.expires_at):
+        raise _safe_error(
+            MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+            "apptheory: microvm session registry ttl mismatch",
+            normalized.last_command_id,
+        )
+    metadata_err = _validate_safe_metadata(normalized.metadata, normalized.last_command_id)
+    if metadata_err:
+        raise metadata_err
+
+
+def microvm_session_record_to_registry_record(record: MicroVMSessionRecord) -> MicroVMSessionRegistryRecord:
+    normalized = _normalize_session_record(record)
+    validate_microvm_session_record(normalized)
+    registry = MicroVMSessionRegistryRecord(
+        pk=microvm_session_registry_partition_key(normalized.tenant_id, normalized.namespace),
+        sk=microvm_session_registry_sort_key(normalized.session_id),
+        tenant_id=normalized.tenant_id,
+        namespace=normalized.namespace,
+        session_id=normalized.session_id,
+        state=normalized.state,
+        desired_state=normalized.desired_state,
+        endpoint=normalized.endpoint,
+        microvm_id=normalized.microvm_id,
+        image_ref=normalized.image_ref,
+        network_connector_ref=normalized.network_connector_ref,
+        controller_id=normalized.controller_id,
+        created_at=normalized.created_at,
+        updated_at=normalized.updated_at,
+        expires_at=normalized.expires_at,
+        ttl=int(normalized.expires_at),
+        generation=normalized.generation,
+        version=normalized.generation,
+        last_action=normalized.last_action,
+        last_command_id=normalized.last_command_id,
+        auth_subject=normalized.auth_subject,
+        metadata=_clone_string_map(normalized.metadata),
+    )
+    validate_microvm_session_registry_record(registry)
+    return registry
+
+
+def microvm_session_from_registry_record(record: MicroVMSessionRegistryRecord | dict[str, Any]) -> MicroVMSessionRecord:
+    normalized = _normalize_session_registry_record(record)
+    validate_microvm_session_registry_record(normalized)
+    out = _session_record_from_registry_no_validate(normalized)
+    validate_microvm_session_record(out)
+    return out
+
+
+class MemoryMicroVMSessionRegistry:
+    def __init__(self) -> None:
+        self._records: dict[tuple[str, str], MicroVMSessionRegistryRecord] = {}
+
+    def put(self, record: MicroVMSessionRecord) -> MicroVMSessionRecord:
+        registry = microvm_session_record_to_registry_record(record)
+        self._records[_registry_record_key(registry)] = _clone_session_registry_record(registry)
+        return microvm_session_from_registry_record(registry)
+
+    def get(self, key: _MicroVMSessionRegistryKeyInput) -> MicroVMSessionRecord:
+        normalized = _normalize_session_registry_key(key)
+        record = self._records.get(_registry_key_tuple(normalized))
+        if record is None:
+            raise _safe_error(
+                MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+                "apptheory: microvm session registry record not found",
+                "",
+            )
+        return microvm_session_from_registry_record(_clone_session_registry_record(record))
+
+    def delete(self, key: _MicroVMSessionRegistryKeyInput) -> None:
+        normalized = _normalize_session_registry_key(key)
+        self._records.pop(_registry_key_tuple(normalized), None)
+
+
+def create_memory_microvm_session_registry() -> MemoryMicroVMSessionRegistry:
+    return MemoryMicroVMSessionRegistry()
+
+
+class TableTheoryMicroVMSessionRegistry:
+    def __init__(self, table: Any | None = None, *, table_name: str | None = None) -> None:
+        if table is None:
+            try:
+                from theorydb_py import Table  # type: ignore[import-not-found]
+
+                table = Table(
+                    microvm_session_registry_model_definition(),
+                    table_name=str(table_name or "").strip() or microvm_session_registry_table_name(),
+                )
+            except Exception as exc:
+                if isinstance(exc, MicroVMSafeError):
+                    raise exc
+                raise _safe_error(
+                    MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+                    "apptheory: microvm session registry requires TableTheory table support",
+                    "",
+                ) from exc
+        self._table = table
+
+    def put(self, record: MicroVMSessionRecord) -> MicroVMSessionRecord:
+        registry = microvm_session_record_to_registry_record(record)
+        try:
+            put = getattr(self._table, "put", None) or getattr(self._table, "save", None)
+            if not callable(put):
+                raise RuntimeError("table put unavailable")
+            put(registry)
+            return microvm_session_from_registry_record(registry)
+        except Exception as exc:
+            if isinstance(exc, MicroVMSafeError):
+                raise exc
+            raise _session_registry_operation_error(registry.last_command_id) from None
+
+    def get(self, key: _MicroVMSessionRegistryKeyInput) -> MicroVMSessionRecord:
+        normalized = _normalize_session_registry_key(key)
+        try:
+            get = getattr(self._table, "get", None)
+            if not callable(get):
+                raise RuntimeError("table get unavailable")
+            item = get(
+                microvm_session_registry_partition_key(normalized[0], normalized[1]),
+                microvm_session_registry_sort_key(normalized[2]),
+            )
+            if item is None:
+                raise _safe_error(
+                    MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+                    "apptheory: microvm session registry record not found",
+                    "",
+                )
+            return microvm_session_from_registry_record(item)
+        except Exception as exc:
+            if isinstance(exc, MicroVMSafeError):
+                raise exc
+            raise _session_registry_operation_error("") from None
+
+    def delete(self, key: _MicroVMSessionRegistryKeyInput) -> None:
+        normalized = _normalize_session_registry_key(key)
+        try:
+            delete = getattr(self._table, "delete", None)
+            if not callable(delete):
+                raise RuntimeError("table delete unavailable")
+            delete(
+                microvm_session_registry_partition_key(normalized[0], normalized[1]),
+                microvm_session_registry_sort_key(normalized[2]),
+            )
+        except Exception as exc:
+            if isinstance(exc, MicroVMSafeError):
+                raise exc
+            raise _session_registry_operation_error("") from None
+
+
+def create_tabletheory_microvm_session_registry(
+    table: Any | None = None, *, table_name: str | None = None
+) -> TableTheoryMicroVMSessionRegistry:
+    return TableTheoryMicroVMSessionRegistry(table=table, table_name=table_name)
+
+
+class MicroVMRegistryClient:
+    def __init__(self, registry: Any, *, ttl_seconds: int = 3600) -> None:
+        if registry is None:
+            raise _safe_error(
+                MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+                "apptheory: microvm registry client requires a session registry",
+                "",
+            )
+        self._registry = registry
+        self._ttl_seconds = int(ttl_seconds) if int(ttl_seconds or 0) > 0 else 3600
+
+    def create(self, input_: MicroVMCreateSessionInput) -> MicroVMSessionRecord:
+        now = float(input_.now or 0) if float(input_.now or 0) > 0 else 1.0
+        record = MicroVMSessionRecord(
+            tenant_id=input_.tenant_id,
+            namespace=input_.namespace,
+            session_id=input_.session_id,
+            state=STATE_REQUESTED,
+            desired_state=STATE_REQUESTED,
+            endpoint="",
+            microvm_id="",
+            image_ref=input_.image_ref,
+            network_connector_ref=input_.network_connector_ref,
+            controller_id=input_.controller_id,
+            created_at=now,
+            updated_at=now,
+            expires_at=now + self._ttl_seconds,
+            generation=1,
+            last_action=COMMAND_CREATE,
+            last_command_id=input_.request_id,
+            auth_subject=input_.auth_subject,
+            metadata=_clone_string_map(input_.session_spec.metadata),
+        )
+        return self._registry.put(record)
+
+    def start(self, input_: MicroVMSessionCommandInput) -> MicroVMSessionRecord:
+        return self._transition(input_, COMMAND_START, STATE_STARTING, input_.desired_state)
+
+    def stop(self, input_: MicroVMSessionCommandInput) -> MicroVMSessionRecord:
+        return self._transition(input_, COMMAND_STOP, STATE_STOPPING, input_.desired_state)
+
+    def status(self, input_: MicroVMSessionQueryInput) -> MicroVMSessionStatus:
+        record = self.session(input_)
+        status = MicroVMSessionStatus(
+            tenant_id=record.tenant_id,
+            namespace=record.namespace,
+            session_id=record.session_id,
+            state=record.state,
+            desired_state=record.desired_state,
+            lifecycle_state=record.state,
+            endpoint=record.endpoint,
+            microvm_id=record.microvm_id,
+            last_action=record.last_action,
+            last_transition=record.updated_at,
+            registry_version=record.generation,
+        )
+        validate_microvm_session_status(status)
+        return status
+
+    def session(self, input_: MicroVMSessionQueryInput) -> MicroVMSessionRecord:
+        return self._registry.get((input_.tenant_id, input_.namespace, input_.session_id))
+
+    def _transition(
+        self, input_: MicroVMSessionCommandInput, action: str, state: str, desired_state: str
+    ) -> MicroVMSessionRecord:
+        record = self._registry.get((input_.tenant_id, input_.namespace, input_.session_id))
+        next_record = _clone_session_record(record)
+        next_record.state = state
+        next_record.desired_state = desired_state
+        next_record.controller_id = input_.controller_id
+        next_record.auth_subject = input_.auth_subject
+        next_record.last_action = action
+        next_record.last_command_id = input_.request_id
+        next_record.updated_at = float(input_.now or 0) if float(input_.now or 0) > 0 else next_record.updated_at
+        next_record.generation += 1
+        return self._registry.put(next_record)
+
+
+def create_microvm_registry_client(registry: Any, *, ttl_seconds: int = 3600) -> MicroVMRegistryClient:
+    return MicroVMRegistryClient(registry, ttl_seconds=ttl_seconds)
 
 
 class MicroVMController:
@@ -1274,6 +1688,8 @@ class FakeMicroVMClient:
             session_id=input_.session_id,
             state=STATE_REQUESTED,
             desired_state=STATE_REQUESTED,
+            endpoint="",
+            microvm_id="",
             image_ref=input_.image_ref,
             network_connector_ref=input_.network_connector_ref,
             controller_id=input_.controller_id,
@@ -1281,6 +1697,7 @@ class FakeMicroVMClient:
             updated_at=now,
             expires_at=now + 3600,
             generation=1,
+            last_action=COMMAND_CREATE,
             last_command_id=input_.request_id,
             auth_subject=input_.auth_subject,
             metadata=_clone_string_map(input_.session_spec.metadata),
@@ -1308,6 +1725,9 @@ class FakeMicroVMClient:
             state=record.state,
             desired_state=record.desired_state,
             lifecycle_state=record.state,
+            endpoint=record.endpoint,
+            microvm_id=record.microvm_id,
+            last_action=record.last_action,
             last_transition=record.updated_at,
             registry_version=record.generation,
         )
@@ -1326,6 +1746,7 @@ class FakeMicroVMClient:
         next_record.desired_state = desired
         next_record.controller_id = input_.controller_id
         next_record.auth_subject = input_.auth_subject
+        next_record.last_action = command
         next_record.last_command_id = input_.request_id
         next_record.updated_at = float(input_.now or self._now or 1.0)
         next_record.generation += 1
@@ -1525,6 +1946,30 @@ def _normalize_command(command: str) -> str:
     return str(command or "").strip()
 
 
+def _valid_microvm_command(command: str) -> bool:
+    return _normalize_command(command) in {COMMAND_CREATE, COMMAND_START, COMMAND_STOP, COMMAND_STATUS, COMMAND_SESSION}
+
+
+def _required_session_registry_contract_fields() -> list[str]:
+    # Keep the original M15 vocabulary fixture compatible; durable TableTheory keys/TTL
+    # are enforced by registry-record validation and runner coverage.
+    return [
+        "tenant_id",
+        "namespace",
+        "session_id",
+        "state",
+        "desired_state",
+        "image_ref",
+        "controller_id",
+        "created_at",
+        "updated_at",
+        "expires_at",
+        "generation",
+        "last_command_id",
+        "auth_subject",
+    ]
+
+
 def _valid_lifecycle_state(state: str) -> bool:
     return str(state or "").strip() in set(_required_lifecycle_states())
 
@@ -1599,6 +2044,9 @@ def _normalize_session_record(record: MicroVMSessionRecord) -> MicroVMSessionRec
         updated_at=float(record.updated_at or 0),
         expires_at=float(record.expires_at or 0),
         generation=int(record.generation or 0),
+        endpoint=str(record.endpoint or "").strip(),
+        microvm_id=str(record.microvm_id or "").strip(),
+        last_action=_normalize_command(record.last_action),
         last_command_id=str(record.last_command_id or "").strip(),
         auth_subject=str(record.auth_subject or "").strip(),
         metadata=_clone_string_map(record.metadata),
@@ -1615,6 +2063,139 @@ def _normalize_session_status(status: MicroVMSessionStatus) -> MicroVMSessionSta
         lifecycle_state=_normalize_state(status.lifecycle_state),
         last_transition=float(status.last_transition or 0),
         registry_version=int(status.registry_version or 0),
+        endpoint=str(status.endpoint or "").strip(),
+        microvm_id=str(status.microvm_id or "").strip(),
+        last_action=_normalize_command(status.last_action),
+    )
+
+
+def _normalize_session_registry_record(
+    record: MicroVMSessionRegistryRecord | dict[str, Any],
+) -> MicroVMSessionRegistryRecord:
+    if isinstance(record, MicroVMSessionRegistryRecord):
+        raw: dict[str, Any] = {
+            "pk": record.pk,
+            "sk": record.sk,
+            "tenant_id": record.tenant_id,
+            "namespace": record.namespace,
+            "session_id": record.session_id,
+            "state": record.state,
+            "desired_state": record.desired_state,
+            "endpoint": record.endpoint,
+            "microvm_id": record.microvm_id,
+            "image_ref": record.image_ref,
+            "network_connector_ref": record.network_connector_ref,
+            "controller_id": record.controller_id,
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
+            "expires_at": record.expires_at,
+            "ttl": record.ttl,
+            "generation": record.generation,
+            "version": record.version,
+            "last_action": record.last_action,
+            "last_command_id": record.last_command_id,
+            "auth_subject": record.auth_subject,
+            "metadata": record.metadata,
+        }
+    else:
+        raw = record if isinstance(record, dict) else {}
+    return MicroVMSessionRegistryRecord(
+        pk=str(raw.get("pk", "") or "").strip(),
+        sk=str(raw.get("sk", "") or "").strip(),
+        tenant_id=str(raw.get("tenant_id", "") or "").strip(),
+        namespace=str(raw.get("namespace", "") or "").strip(),
+        session_id=str(raw.get("session_id", "") or "").strip(),
+        state=_normalize_state(str(raw.get("state", "") or "")),
+        desired_state=_normalize_state(str(raw.get("desired_state", "") or "")),
+        endpoint=str(raw.get("endpoint", "") or "").strip(),
+        microvm_id=str(raw.get("microvm_id", "") or "").strip(),
+        image_ref=str(raw.get("image_ref", "") or "").strip(),
+        network_connector_ref=str(raw.get("network_connector_ref", "") or "").strip(),
+        controller_id=str(raw.get("controller_id", "") or "").strip(),
+        created_at=float(raw.get("created_at", 0) or 0),
+        updated_at=float(raw.get("updated_at", 0) or 0),
+        expires_at=float(raw.get("expires_at", 0) or 0),
+        ttl=int(raw.get("ttl", 0) or 0),
+        generation=int(raw.get("generation", 0) or 0),
+        version=int(raw.get("version", 0) or 0),
+        last_action=_normalize_command(str(raw.get("last_action", "") or "")),
+        last_command_id=str(raw.get("last_command_id", "") or "").strip(),
+        auth_subject=str(raw.get("auth_subject", "") or "").strip(),
+        metadata=_clone_string_map(raw.get("metadata") if isinstance(raw.get("metadata"), dict) else None),
+    )
+
+
+def _session_record_from_registry_no_validate(record: MicroVMSessionRegistryRecord) -> MicroVMSessionRecord:
+    return MicroVMSessionRecord(
+        tenant_id=record.tenant_id,
+        namespace=record.namespace,
+        session_id=record.session_id,
+        state=record.state,
+        desired_state=record.desired_state,
+        image_ref=record.image_ref,
+        network_connector_ref=record.network_connector_ref,
+        controller_id=record.controller_id,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        expires_at=record.expires_at,
+        generation=record.generation,
+        endpoint=record.endpoint,
+        microvm_id=record.microvm_id,
+        last_action=record.last_action,
+        last_command_id=record.last_command_id,
+        auth_subject=record.auth_subject,
+        metadata=_clone_string_map(record.metadata),
+    )
+
+
+def _clone_session_registry_record(record: MicroVMSessionRegistryRecord) -> MicroVMSessionRegistryRecord:
+    return _normalize_session_registry_record(record)
+
+
+def _normalize_session_registry_key(
+    key: _MicroVMSessionRegistryKeyInput,
+) -> tuple[str, str, str]:
+    if isinstance(key, tuple):
+        values = [str(item or "").strip() for item in key]
+        tenant_id = values[0] if len(values) > 0 else ""
+        namespace = values[1] if len(values) > 1 else ""
+        session_id = values[2] if len(values) > 2 else ""
+    elif isinstance(key, MicroVMSessionRecord):
+        tenant_id, namespace, session_id = microvm_session_key(key)
+    elif isinstance(key, MicroVMSessionRegistryRecord):
+        tenant_id = str(key.tenant_id or "").strip()
+        namespace = str(key.namespace or "").strip()
+        session_id = str(key.session_id or "").strip()
+    else:
+        raw = key if isinstance(key, dict) else {}
+        tenant_id = str(raw.get("tenant_id", "") or "").strip()
+        namespace = str(raw.get("namespace", "") or "").strip()
+        session_id = str(raw.get("session_id", "") or "").strip()
+    if not tenant_id or not namespace or not session_id:
+        raise _safe_error(
+            MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+            "apptheory: microvm session key is incomplete",
+            "",
+        )
+    return (tenant_id, namespace, session_id)
+
+
+def _registry_key_tuple(key: tuple[str, str, str]) -> tuple[str, str]:
+    return (
+        microvm_session_registry_partition_key(key[0], key[1]),
+        microvm_session_registry_sort_key(key[2]),
+    )
+
+
+def _registry_record_key(record: MicroVMSessionRegistryRecord) -> tuple[str, str]:
+    return (record.pk, record.sk)
+
+
+def _session_registry_operation_error(request_id: str) -> MicroVMSafeError:
+    return _safe_error(
+        MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+        "apptheory: microvm session registry operation failed",
+        request_id,
     )
 
 
@@ -1641,6 +2222,9 @@ def _response_from_session(
         state=normalized.state,
         desired_state=normalized.desired_state,
         lifecycle_state=normalized.state,
+        endpoint=normalized.endpoint,
+        microvm_id=normalized.microvm_id,
+        last_action=normalized.last_action,
         last_transition=normalized.updated_at,
         registry_version=normalized.generation,
     )
@@ -1657,6 +2241,9 @@ def _response_from_status(request: MicroVMControllerRequest, status: MicroVMSess
         state=normalized.state,
         desired_state=normalized.desired_state,
         lifecycle_state=normalized.lifecycle_state,
+        endpoint=normalized.endpoint,
+        microvm_id=normalized.microvm_id,
+        last_action=normalized.last_action,
         last_transition=normalized.last_transition,
         registry_version=normalized.registry_version,
     )
@@ -1745,6 +2332,8 @@ def _session_record_from_aws_output(
         session_id=_string_field(output, "sessionId") or session_id,
         state=_string_field(output, "state") or state,
         desired_state=_string_field(output, "desiredState") or desired_state,
+        endpoint=_string_field(output, "endpoint"),
+        microvm_id=_string_field(output, "microvmId"),
         image_ref=_string_field(output, "imageRef") or image_ref,
         network_connector_ref=_string_field(output, "networkConnectorRef") or network_connector_ref,
         controller_id=_string_field(output, "controllerId") or controller_id,
@@ -1752,6 +2341,7 @@ def _session_record_from_aws_output(
         updated_at=_number_field(output, "updatedAt") or now,
         expires_at=_number_field(output, "expiresAt") or now + 3600,
         generation=_number_field(output, "generation") or 1,
+        last_action=_string_field(output, "lastAction") or _default_microvm_last_action(state, desired_state),
         last_command_id=request_id,
         auth_subject=auth_subject,
     )
@@ -1766,9 +2356,24 @@ def _session_status_from_aws_output(input_: MicroVMSessionQueryInput, output: An
         state=_string_field(output, "state") or STATE_REQUESTED,
         desired_state=_string_field(output, "desiredState") or STATE_REQUESTED,
         lifecycle_state=_string_field(output, "lifecycleState") or _string_field(output, "state") or STATE_REQUESTED,
+        endpoint=_string_field(output, "endpoint"),
+        microvm_id=_string_field(output, "microvmId"),
+        last_action=_string_field(output, "lastAction") or COMMAND_STATUS,
         last_transition=_number_field(output, "lastTransition") or 1,
         registry_version=_number_field(output, "registryVersion") or 1,
     )
+
+
+def _default_microvm_last_action(state: str, desired_state: str) -> str:
+    normalized_state = _normalize_state(state)
+    normalized_desired = _normalize_state(desired_state)
+    if normalized_state == STATE_REQUESTED and normalized_desired == STATE_REQUESTED:
+        return COMMAND_CREATE
+    if normalized_desired == STATE_STARTED:
+        return COMMAND_START
+    if normalized_desired == STATE_STOPPED:
+        return COMMAND_STOP
+    return COMMAND_SESSION
 
 
 def _string_field(value: Any, key: str) -> str:
@@ -1780,5 +2385,5 @@ def _number_field(value: Any, key: str) -> int:
     raw = value.get(key, 0) if isinstance(value, dict) else getattr(value, key, 0)
     try:
         return int(raw or 0)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return 0

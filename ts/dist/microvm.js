@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { defineModel } from "@theory-cloud/tabletheory-ts";
 export const MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm";
 export const MICROVM_CONTRACT_VERSION = "m15.microvm/v1";
 export const MICROVM_ERROR_INVALID_CONTRACT = "m15.microvm.invalid_contract";
@@ -454,7 +455,7 @@ function cloneMicroVMLifecycleEvent(event) {
     };
     const metadata = cloneStringMap(event.metadata);
     if (metadata)
-        out.metadata = metadata;
+        out["metadata"] = metadata;
     return out;
 }
 function normalizeMicroVMLifecycleHook(hook) {
@@ -559,6 +560,9 @@ export const MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE = "m15.microvm.session_re
 export const MICROVM_ERROR_INVALID_CONTROLLER_REQUEST = "m15.microvm.invalid_controller_request";
 export const MICROVM_ERROR_CONTROLLER_COMMAND_FAILED = "m15.microvm.controller_command_failed";
 export const MICROVM_CONTROLLER_AUTH_DEFAULT_DENY = "deny";
+export const MICROVM_SESSION_REGISTRY_MODEL_NAME = "MicroVMSessionRegistryRecord";
+export const MICROVM_SESSION_REGISTRY_TABLE_NAME = "apptheory-microvm-sessions";
+export const MICROVM_SESSION_REGISTRY_TABLE_ENV = "APPTHEORY_MICROVM_SESSION_REGISTRY_TABLE";
 export const MicroVMCommand = {
     Create: "create",
     Start: "start",
@@ -585,21 +589,42 @@ export function defaultMicroVMControllerContract() {
                 method: "POST",
                 path: "/microvms",
                 request_fields: ["image_ref", "network_connector_ref", "session_spec"],
-                response_fields: ["session_id", "state", "registry_version"],
+                response_fields: [
+                    "session_id",
+                    "state",
+                    "registry_version",
+                    "endpoint",
+                    "microvm_id",
+                    "last_action",
+                ],
             },
             {
                 name: MicroVMCommand.Start,
                 method: "POST",
                 path: "/microvms/{session_id}/start",
                 request_fields: ["session_id"],
-                response_fields: ["session_id", "state", "desired_state"],
+                response_fields: [
+                    "session_id",
+                    "state",
+                    "desired_state",
+                    "endpoint",
+                    "microvm_id",
+                    "last_action",
+                ],
             },
             {
                 name: MicroVMCommand.Stop,
                 method: "POST",
                 path: "/microvms/{session_id}/stop",
                 request_fields: ["session_id"],
-                response_fields: ["session_id", "state", "desired_state"],
+                response_fields: [
+                    "session_id",
+                    "state",
+                    "desired_state",
+                    "endpoint",
+                    "microvm_id",
+                    "last_action",
+                ],
             },
             {
                 name: MicroVMCommand.Status,
@@ -611,6 +636,9 @@ export function defaultMicroVMControllerContract() {
                     "state",
                     "lifecycle_state",
                     "last_transition",
+                    "endpoint",
+                    "microvm_id",
+                    "last_action",
                 ],
             },
             {
@@ -624,6 +652,9 @@ export function defaultMicroVMControllerContract() {
                     "namespace",
                     "state",
                     "registry_version",
+                    "endpoint",
+                    "microvm_id",
+                    "last_action",
                 ],
             },
         ],
@@ -634,17 +665,25 @@ export function defaultMicroVMSessionRegistryContract() {
         pattern: "tabletheory-single-table",
         tenant_binding: ["tenant_id", "namespace"],
         required_fields: [
+            "pk",
+            "sk",
             "tenant_id",
             "namespace",
             "session_id",
             "state",
             "desired_state",
+            "endpoint",
+            "microvm_id",
             "image_ref",
+            "network_connector_ref",
             "controller_id",
             "created_at",
             "updated_at",
             "expires_at",
+            "ttl",
             "generation",
+            "version",
+            "last_action",
             "last_command_id",
             "auth_subject",
         ],
@@ -702,7 +741,7 @@ export function validateMicroVMSessionRegistryContract(registry) {
     if (missingTenantBinding.length > 0) {
         throw safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, `apptheory: microvm session registry missing tenant binding: ${missingTenantBinding.join(",")}`, "");
     }
-    const missingFields = missingStrings(defaultMicroVMSessionRegistryContract().required_fields, registry.required_fields ?? []);
+    const missingFields = missingStrings(requiredMicroVMSessionRegistryContractFields(), registry.required_fields ?? []);
     if (missingFields.length > 0) {
         throw safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, `apptheory: microvm session registry missing fields: ${missingFields.join(",")}`, "");
     }
@@ -723,7 +762,9 @@ export function validateMicroVMSessionRecord(record) {
         !normalized.state ||
         !normalized.desired_state ||
         !normalized.image_ref ||
+        !normalized.network_connector_ref ||
         !normalized.controller_id ||
+        !normalized.last_action ||
         !normalized.last_command_id ||
         !normalized.auth_subject) {
         throw safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, "apptheory: microvm session record is incomplete", normalized.last_command_id);
@@ -733,6 +774,9 @@ export function validateMicroVMSessionRecord(record) {
         !validDate(normalized.expires_at) ||
         normalized.generation <= 0) {
         throw safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, "apptheory: microvm session record registry fields are incomplete", normalized.last_command_id);
+    }
+    if (!validMicroVMCommand(normalized.last_action)) {
+        throw safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, "apptheory: microvm session record last action is unsupported", normalized.last_command_id);
     }
     if (!validMicroVMLifecycleState(normalized.state) ||
         !validMicroVMLifecycleState(normalized.desired_state)) {
@@ -750,6 +794,7 @@ export function validateMicroVMSessionStatus(status) {
         !normalized.state ||
         !normalized.desired_state ||
         !normalized.lifecycle_state ||
+        !normalized.last_action ||
         !validDate(normalized.last_transition) ||
         normalized.registry_version <= 0) {
         throw safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, "apptheory: microvm session status is incomplete", "");
@@ -759,6 +804,9 @@ export function validateMicroVMSessionStatus(status) {
         !validMicroVMLifecycleState(normalized.lifecycle_state)) {
         throw safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, "apptheory: microvm session status state is unsupported", "");
     }
+    if (!validMicroVMCommand(normalized.last_action)) {
+        throw safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, "apptheory: microvm session status last action is unsupported", "");
+    }
 }
 export function microVMSessionKey(record) {
     return {
@@ -766,6 +814,284 @@ export function microVMSessionKey(record) {
         namespace: String(record.namespace ?? "").trim(),
         session_id: String(record.session_id ?? "").trim(),
     };
+}
+export function microVMSessionRegistryTableName() {
+    return (String(process.env[MICROVM_SESSION_REGISTRY_TABLE_ENV] ?? "").trim() ||
+        MICROVM_SESSION_REGISTRY_TABLE_NAME);
+}
+export function microVMSessionRegistryPartitionKey(tenantID, namespace) {
+    const tenant = String(tenantID ?? "").trim();
+    const ns = String(namespace ?? "").trim();
+    return tenant && ns ? `TENANT#${tenant}#NAMESPACE#${ns}` : "";
+}
+export function microVMSessionRegistrySortKey(sessionID) {
+    const session = String(sessionID ?? "").trim();
+    return session ? `SESSION#${session}` : "";
+}
+export function microVMSessionRegistryModel(tableName = microVMSessionRegistryTableName()) {
+    return defineModel({
+        name: MICROVM_SESSION_REGISTRY_MODEL_NAME,
+        table: { name: tableName },
+        keys: {
+            partition: { attribute: "pk", type: "S" },
+            sort: { attribute: "sk", type: "S" },
+        },
+        attributes: [
+            { attribute: "pk", type: "S", roles: ["pk"] },
+            { attribute: "sk", type: "S", roles: ["sk"] },
+            { attribute: "tenant_id", type: "S", required: true },
+            { attribute: "namespace", type: "S", required: true },
+            { attribute: "session_id", type: "S", required: true },
+            { attribute: "state", type: "S", required: true },
+            { attribute: "desired_state", type: "S", required: true },
+            { attribute: "endpoint", type: "S", optional: true, omit_empty: true },
+            { attribute: "microvm_id", type: "S", optional: true, omit_empty: true },
+            { attribute: "image_ref", type: "S", required: true },
+            { attribute: "network_connector_ref", type: "S", required: true },
+            { attribute: "controller_id", type: "S", required: true },
+            { attribute: "created_at", type: "S", required: true },
+            { attribute: "updated_at", type: "S", required: true },
+            { attribute: "expires_at", type: "S", required: true },
+            { attribute: "ttl", type: "N", roles: ["ttl"] },
+            { attribute: "generation", type: "N", required: true },
+            { attribute: "version", type: "N", roles: ["version"] },
+            { attribute: "last_action", type: "S", required: true },
+            { attribute: "last_command_id", type: "S", required: true },
+            { attribute: "auth_subject", type: "S", required: true },
+            { attribute: "metadata", type: "M", optional: true, omit_empty: true },
+        ],
+    });
+}
+export function validateMicroVMSessionRegistryRecord(record) {
+    const normalized = normalizeMicroVMSessionRegistryRecord(record);
+    validateMicroVMSessionRecord(microVMSessionFromRegistryRecordNoValidate(normalized));
+    if (!normalized.pk ||
+        !normalized.sk ||
+        normalized.ttl <= 0 ||
+        normalized.version <= 0) {
+        throw safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, "apptheory: microvm session registry keys are incomplete", normalized.last_command_id);
+    }
+    if (normalized.pk !==
+        microVMSessionRegistryPartitionKey(normalized.tenant_id, normalized.namespace) ||
+        normalized.sk !== microVMSessionRegistrySortKey(normalized.session_id)) {
+        throw safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, "apptheory: microvm session registry tenant/session key mismatch", normalized.last_command_id);
+    }
+    if (normalized.ttl !== Math.trunc(normalized.expires_at.getTime() / 1000)) {
+        throw safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, "apptheory: microvm session registry ttl mismatch", normalized.last_command_id);
+    }
+    const metadataErr = validateSafeMicroVMMetadata(normalized.metadata, normalized.last_command_id);
+    if (metadataErr)
+        throw metadataErr;
+}
+export function microVMSessionRecordToRegistryRecord(record) {
+    const normalized = normalizeMicroVMSessionRecord(record);
+    validateMicroVMSessionRecord(normalized);
+    const registry = {
+        pk: microVMSessionRegistryPartitionKey(normalized.tenant_id, normalized.namespace),
+        sk: microVMSessionRegistrySortKey(normalized.session_id),
+        tenant_id: normalized.tenant_id,
+        namespace: normalized.namespace,
+        session_id: normalized.session_id,
+        state: normalized.state,
+        desired_state: normalized.desired_state,
+        endpoint: normalized.endpoint ?? "",
+        microvm_id: normalized.microvm_id ?? "",
+        image_ref: normalized.image_ref,
+        network_connector_ref: normalized.network_connector_ref,
+        controller_id: normalized.controller_id,
+        created_at: cloneMicroVMDate(normalized.created_at),
+        updated_at: cloneMicroVMDate(normalized.updated_at),
+        expires_at: cloneMicroVMDate(normalized.expires_at),
+        ttl: Math.trunc(normalized.expires_at.getTime() / 1000),
+        generation: normalized.generation,
+        version: normalized.generation,
+        last_action: normalized.last_action,
+        last_command_id: normalized.last_command_id,
+        auth_subject: normalized.auth_subject,
+    };
+    const metadata = cloneStringMap(normalized.metadata);
+    if (metadata)
+        registry.metadata = metadata;
+    validateMicroVMSessionRegistryRecord(registry);
+    return registry;
+}
+export function microVMSessionFromRegistryRecord(record) {
+    const normalized = normalizeMicroVMSessionRegistryRecord(record);
+    validateMicroVMSessionRegistryRecord(normalized);
+    return microVMSessionFromRegistryRecordNoValidate(normalized);
+}
+export class MemoryMicroVMSessionRegistry {
+    records = new Map();
+    async put(record) {
+        const registry = microVMSessionRecordToRegistryRecord(record);
+        this.records.set(microVMSessionRegistryRecordKey(registry), cloneMicroVMSessionRegistryRecord(registry));
+        return microVMSessionFromRegistryRecord(registry);
+    }
+    async get(key) {
+        const normalized = normalizeMicroVMSessionKey(key);
+        validateMicroVMSessionKey(normalized);
+        const record = this.records.get(microVMSessionRegistryRecordKeyFromKey(normalized));
+        if (!record) {
+            throw safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, "apptheory: microvm session registry record not found", "");
+        }
+        return microVMSessionFromRegistryRecord(cloneMicroVMSessionRegistryRecord(record));
+    }
+    async delete(key) {
+        const normalized = normalizeMicroVMSessionKey(key);
+        validateMicroVMSessionKey(normalized);
+        this.records.delete(microVMSessionRegistryRecordKeyFromKey(normalized));
+    }
+}
+export function createMemoryMicroVMSessionRegistry() {
+    return new MemoryMicroVMSessionRegistry();
+}
+export class TableTheoryMicroVMSessionRegistry {
+    db;
+    modelName;
+    constructor(db, options = {}) {
+        if (!db) {
+            throw safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, "apptheory: microvm session registry requires TableTheory client", "");
+        }
+        this.db = db;
+        this.modelName =
+            String(options.model_name ?? "").trim() ||
+                MICROVM_SESSION_REGISTRY_MODEL_NAME;
+        if (options.auto_register !== false && this.db.register) {
+            this.db.register(microVMSessionRegistryModel(String(options.table_name ?? "").trim() ||
+                microVMSessionRegistryTableName()));
+        }
+    }
+    async put(record) {
+        const registry = microVMSessionRecordToRegistryRecord(record);
+        try {
+            await this.db.save(this.modelName, registryRecordToTableItem(registry));
+            return microVMSessionFromRegistryRecord(registry);
+        }
+        catch (err) {
+            throw asMicroVMSessionRegistryError(err, registry.last_command_id);
+        }
+    }
+    async get(key) {
+        const normalized = normalizeMicroVMSessionKey(key);
+        validateMicroVMSessionKey(normalized);
+        try {
+            const item = await this.db.get(this.modelName, {
+                pk: microVMSessionRegistryPartitionKey(normalized.tenant_id, normalized.namespace),
+                sk: microVMSessionRegistrySortKey(normalized.session_id),
+            });
+            return microVMSessionFromRegistryRecord(registryRecordFromTableItem(item));
+        }
+        catch (err) {
+            throw asMicroVMSessionRegistryError(err, "");
+        }
+    }
+    async delete(key) {
+        const normalized = normalizeMicroVMSessionKey(key);
+        validateMicroVMSessionKey(normalized);
+        try {
+            await this.db.delete(this.modelName, {
+                pk: microVMSessionRegistryPartitionKey(normalized.tenant_id, normalized.namespace),
+                sk: microVMSessionRegistrySortKey(normalized.session_id),
+            });
+        }
+        catch (err) {
+            throw asMicroVMSessionRegistryError(err, "");
+        }
+    }
+}
+export function createTableTheoryMicroVMSessionRegistry(db, options = {}) {
+    return new TableTheoryMicroVMSessionRegistry(db, options);
+}
+export class MicroVMRegistryClient {
+    registry;
+    ttlMs;
+    constructor(registry, options = {}) {
+        if (!registry) {
+            throw safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, "apptheory: microvm registry client requires a session registry", "");
+        }
+        this.registry = registry;
+        const ttlMs = Math.trunc(Number(options.ttl_ms) || 0);
+        this.ttlMs = ttlMs > 0 ? ttlMs : 60 * 60 * 1000;
+    }
+    async create(input) {
+        const now = coalesceMicroVMTime(input.now, new Date(0));
+        const record = {
+            tenant_id: input.tenant_id,
+            namespace: input.namespace,
+            session_id: input.session_id,
+            state: MicroVMState.Requested,
+            desired_state: MicroVMState.Requested,
+            endpoint: "",
+            microvm_id: "",
+            image_ref: input.image_ref,
+            network_connector_ref: input.network_connector_ref,
+            controller_id: input.controller_id,
+            created_at: now,
+            updated_at: now,
+            expires_at: new Date(now.valueOf() + this.ttlMs),
+            generation: 1,
+            last_action: MicroVMCommand.Create,
+            last_command_id: input.request_id,
+            auth_subject: input.auth_subject,
+        };
+        const metadata = cloneStringMap(input.session_spec.metadata);
+        if (metadata)
+            record.metadata = metadata;
+        return await this.registry.put(record);
+    }
+    async start(input) {
+        return await this.transition(input, MicroVMCommand.Start, MicroVMState.Starting, MicroVMState.Started);
+    }
+    async stop(input) {
+        return await this.transition(input, MicroVMCommand.Stop, MicroVMState.Stopping, MicroVMState.Stopped);
+    }
+    async status(input) {
+        const record = await this.session(input);
+        const status = {
+            tenant_id: record.tenant_id,
+            namespace: record.namespace,
+            session_id: record.session_id,
+            state: record.state,
+            desired_state: record.desired_state,
+            lifecycle_state: record.state,
+            endpoint: record.endpoint ?? "",
+            microvm_id: record.microvm_id ?? "",
+            last_action: record.last_action,
+            last_transition: record.updated_at,
+            registry_version: record.generation,
+        };
+        validateMicroVMSessionStatus(status);
+        return status;
+    }
+    async session(input) {
+        return await this.registry.get({
+            tenant_id: input.tenant_id,
+            namespace: input.namespace,
+            session_id: input.session_id,
+        });
+    }
+    async transition(input, action, state, desiredState) {
+        const record = await this.registry.get({
+            tenant_id: input.tenant_id,
+            namespace: input.namespace,
+            session_id: input.session_id,
+        });
+        const next = {
+            ...record,
+            state,
+            desired_state: desiredState,
+            controller_id: input.controller_id,
+            auth_subject: input.auth_subject,
+            last_action: action,
+            last_command_id: input.request_id,
+            updated_at: coalesceMicroVMTime(input.now, new Date(0)),
+            generation: record.generation + 1,
+        };
+        return await this.registry.put(next);
+    }
+}
+export function createMicroVMRegistryClient(registry, options = {}) {
+    return new MicroVMRegistryClient(registry, options);
 }
 export class MicroVMController {
     client;
@@ -941,18 +1267,19 @@ export class FakeMicroVMClient {
             session_id: input.session_id,
             state: MicroVMState.Requested,
             desired_state: MicroVMState.Requested,
+            endpoint: "",
+            microvm_id: "",
             image_ref: input.image_ref,
+            network_connector_ref: input.network_connector_ref,
             controller_id: input.controller_id,
             created_at: now,
             updated_at: now,
             expires_at: new Date(now.valueOf() + 60 * 60 * 1000),
             generation: 1,
+            last_action: MicroVMCommand.Create,
             last_command_id: input.request_id,
             auth_subject: input.auth_subject,
         };
-        if (input.network_connector_ref) {
-            record.network_connector_ref = input.network_connector_ref;
-        }
         const metadata = cloneStringMap(input.session_spec.metadata);
         if (metadata)
             record.metadata = metadata;
@@ -979,6 +1306,9 @@ export class FakeMicroVMClient {
             state: record.state,
             desired_state: record.desired_state,
             lifecycle_state: record.state,
+            endpoint: record.endpoint ?? "",
+            microvm_id: record.microvm_id ?? "",
+            last_action: record.last_action,
             last_transition: record.updated_at,
             registry_version: record.generation,
         };
@@ -996,6 +1326,7 @@ export class FakeMicroVMClient {
             desired_state: desiredState,
             controller_id: input.controller_id,
             auth_subject: input.auth_subject,
+            last_action: command,
             last_command_id: input.request_id,
             updated_at: coalesceMicroVMTime(input.now, this.currentTime),
             generation: record.generation + 1,
@@ -1174,6 +1505,28 @@ function requiredMicroVMControllerCommands() {
 function isRequiredMicroVMCommand(command) {
     return requiredMicroVMControllerCommands().includes(command);
 }
+function validMicroVMCommand(command) {
+    return requiredMicroVMControllerCommands().includes(normalizeMicroVMCommand(command));
+}
+function requiredMicroVMSessionRegistryContractFields() {
+    // Keep the original M15 vocabulary fixture compatible; durable TableTheory
+    // keys/TTL are enforced by registry-record validation and runner coverage.
+    return [
+        "tenant_id",
+        "namespace",
+        "session_id",
+        "state",
+        "desired_state",
+        "image_ref",
+        "controller_id",
+        "created_at",
+        "updated_at",
+        "expires_at",
+        "generation",
+        "last_command_id",
+        "auth_subject",
+    ];
+}
 function validMicroVMLifecycleState(state) {
     return requiredMicroVMLifecycleStates().includes(normalizeMicroVMLifecycleState(state));
 }
@@ -1235,6 +1588,9 @@ function responseFromMicroVMSession(request, record) {
         state: normalized.state,
         desired_state: normalized.desired_state,
         lifecycle_state: normalized.state,
+        endpoint: normalized.endpoint ?? "",
+        microvm_id: normalized.microvm_id ?? "",
+        last_action: normalized.last_action,
         last_transition: normalized.updated_at,
         registry_version: normalized.generation,
     };
@@ -1250,6 +1606,9 @@ function responseFromMicroVMStatus(request, status) {
         state: normalized.state,
         desired_state: normalized.desired_state,
         lifecycle_state: normalized.lifecycle_state,
+        endpoint: normalized.endpoint ?? "",
+        microvm_id: normalized.microvm_id ?? "",
+        last_action: normalized.last_action,
         last_transition: normalized.last_transition,
         registry_version: normalized.registry_version,
     };
@@ -1278,18 +1637,19 @@ function normalizeMicroVMSessionRecord(record) {
         session_id: String(record.session_id ?? "").trim(),
         state: normalizeMicroVMLifecycleState(record.state),
         desired_state: normalizeMicroVMLifecycleState(record.desired_state),
+        endpoint: String(record.endpoint ?? "").trim(),
+        microvm_id: String(record.microvm_id ?? "").trim(),
         image_ref: String(record.image_ref ?? "").trim(),
+        network_connector_ref: String(record.network_connector_ref ?? "").trim(),
         controller_id: String(record.controller_id ?? "").trim(),
         created_at: cloneMicroVMDate(record.created_at),
         updated_at: cloneMicroVMDate(record.updated_at),
         expires_at: cloneMicroVMDate(record.expires_at),
         generation: Math.trunc(Number(record.generation) || 0),
+        last_action: normalizeMicroVMCommand(record.last_action),
         last_command_id: String(record.last_command_id ?? "").trim(),
         auth_subject: String(record.auth_subject ?? "").trim(),
     };
-    const networkConnectorRef = String(record.network_connector_ref ?? "").trim();
-    if (networkConnectorRef)
-        out.network_connector_ref = networkConnectorRef;
     const metadata = cloneStringMap(record.metadata);
     if (metadata)
         out.metadata = metadata;
@@ -1303,12 +1663,182 @@ function normalizeMicroVMSessionStatus(status) {
         state: normalizeMicroVMLifecycleState(status.state),
         desired_state: normalizeMicroVMLifecycleState(status.desired_state),
         lifecycle_state: normalizeMicroVMLifecycleState(status.lifecycle_state),
+        endpoint: String(status.endpoint ?? "").trim(),
+        microvm_id: String(status.microvm_id ?? "").trim(),
+        last_action: normalizeMicroVMCommand(status.last_action),
         last_transition: cloneMicroVMDate(status.last_transition),
         registry_version: Math.trunc(Number(status.registry_version) || 0),
     };
 }
 function cloneMicroVMSessionRecord(record) {
     return normalizeMicroVMSessionRecord(record);
+}
+function normalizeMicroVMSessionRegistryRecord(record) {
+    const out = {
+        pk: String(record.pk ?? "").trim(),
+        sk: String(record.sk ?? "").trim(),
+        tenant_id: String(record.tenant_id ?? "").trim(),
+        namespace: String(record.namespace ?? "").trim(),
+        session_id: String(record.session_id ?? "").trim(),
+        state: normalizeMicroVMLifecycleState(record.state),
+        desired_state: normalizeMicroVMLifecycleState(record.desired_state),
+        endpoint: String(record.endpoint ?? "").trim(),
+        microvm_id: String(record.microvm_id ?? "").trim(),
+        image_ref: String(record.image_ref ?? "").trim(),
+        network_connector_ref: String(record.network_connector_ref ?? "").trim(),
+        controller_id: String(record.controller_id ?? "").trim(),
+        created_at: cloneMicroVMDate(record.created_at),
+        updated_at: cloneMicroVMDate(record.updated_at),
+        expires_at: cloneMicroVMDate(record.expires_at),
+        ttl: Math.trunc(Number(record.ttl) || 0),
+        generation: Math.trunc(Number(record.generation) || 0),
+        version: Math.trunc(Number(record.version) || 0),
+        last_action: normalizeMicroVMCommand(record.last_action),
+        last_command_id: String(record.last_command_id ?? "").trim(),
+        auth_subject: String(record.auth_subject ?? "").trim(),
+    };
+    const metadata = cloneStringMap(record.metadata);
+    if (metadata)
+        out.metadata = metadata;
+    return out;
+}
+function cloneMicroVMSessionRegistryRecord(record) {
+    return normalizeMicroVMSessionRegistryRecord(record);
+}
+function microVMSessionFromRegistryRecordNoValidate(record) {
+    const out = {
+        tenant_id: record.tenant_id,
+        namespace: record.namespace,
+        session_id: record.session_id,
+        state: record.state,
+        desired_state: record.desired_state,
+        endpoint: record.endpoint,
+        microvm_id: record.microvm_id,
+        image_ref: record.image_ref,
+        network_connector_ref: record.network_connector_ref,
+        controller_id: record.controller_id,
+        created_at: cloneMicroVMDate(record.created_at),
+        updated_at: cloneMicroVMDate(record.updated_at),
+        expires_at: cloneMicroVMDate(record.expires_at),
+        generation: record.generation,
+        last_action: record.last_action,
+        last_command_id: record.last_command_id,
+        auth_subject: record.auth_subject,
+    };
+    const metadata = cloneStringMap(record.metadata);
+    if (metadata)
+        out.metadata = metadata;
+    return out;
+}
+function normalizeMicroVMSessionKey(key) {
+    return {
+        tenant_id: String(key.tenant_id ?? "").trim(),
+        namespace: String(key.namespace ?? "").trim(),
+        session_id: String(key.session_id ?? "").trim(),
+    };
+}
+function validateMicroVMSessionKey(key) {
+    if (!key.tenant_id || !key.namespace || !key.session_id) {
+        throw safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, "apptheory: microvm session key is incomplete", "");
+    }
+}
+function microVMSessionRegistryRecordKey(record) {
+    return `${record.pk}\u0000${record.sk}`;
+}
+function microVMSessionRegistryRecordKeyFromKey(key) {
+    return `${microVMSessionRegistryPartitionKey(key.tenant_id, key.namespace)}\u0000${microVMSessionRegistrySortKey(key.session_id)}`;
+}
+function registryRecordToTableItem(record) {
+    const normalized = normalizeMicroVMSessionRegistryRecord(record);
+    const out = {
+        pk: normalized.pk,
+        sk: normalized.sk,
+        tenant_id: normalized.tenant_id,
+        namespace: normalized.namespace,
+        session_id: normalized.session_id,
+        state: normalized.state,
+        desired_state: normalized.desired_state,
+        endpoint: normalized.endpoint,
+        microvm_id: normalized.microvm_id,
+        image_ref: normalized.image_ref,
+        network_connector_ref: normalized.network_connector_ref,
+        controller_id: normalized.controller_id,
+        created_at: normalized.created_at.toISOString(),
+        updated_at: normalized.updated_at.toISOString(),
+        expires_at: normalized.expires_at.toISOString(),
+        ttl: normalized.ttl,
+        generation: normalized.generation,
+        version: normalized.version,
+        last_action: normalized.last_action,
+        last_command_id: normalized.last_command_id,
+        auth_subject: normalized.auth_subject,
+    };
+    const metadata = cloneStringMap(normalized.metadata);
+    if (metadata)
+        out["metadata"] = metadata;
+    return out;
+}
+function registryRecordFromTableItem(item) {
+    const record = {
+        pk: stringRecordField(item, "pk"),
+        sk: stringRecordField(item, "sk"),
+        tenant_id: stringRecordField(item, "tenant_id"),
+        namespace: stringRecordField(item, "namespace"),
+        session_id: stringRecordField(item, "session_id"),
+        state: stringRecordField(item, "state"),
+        desired_state: stringRecordField(item, "desired_state"),
+        endpoint: stringRecordField(item, "endpoint"),
+        microvm_id: stringRecordField(item, "microvm_id"),
+        image_ref: stringRecordField(item, "image_ref"),
+        network_connector_ref: stringRecordField(item, "network_connector_ref"),
+        controller_id: stringRecordField(item, "controller_id"),
+        created_at: dateRecordField(item, "created_at"),
+        updated_at: dateRecordField(item, "updated_at"),
+        expires_at: dateRecordField(item, "expires_at"),
+        ttl: numberRecordField(item, "ttl"),
+        generation: numberRecordField(item, "generation"),
+        version: numberRecordField(item, "version"),
+        last_action: stringRecordField(item, "last_action"),
+        last_command_id: stringRecordField(item, "last_command_id"),
+        auth_subject: stringRecordField(item, "auth_subject"),
+    };
+    const metadata = recordMapField(item, "metadata");
+    if (metadata)
+        record.metadata = metadata;
+    return record;
+}
+function asMicroVMSessionRegistryError(err, requestID) {
+    if (err instanceof MicroVMSafeError) {
+        return err.request_id ? err : safeError(err.code, err.message, requestID);
+    }
+    return safeError(MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE, "apptheory: microvm session registry operation failed", requestID);
+}
+function stringRecordField(item, key) {
+    return String(item[key] ?? "").trim();
+}
+function numberRecordField(item, key) {
+    const raw = Number(item[key] ?? 0);
+    return Number.isFinite(raw) ? Math.trunc(raw) : 0;
+}
+function dateRecordField(item, key) {
+    return cloneMicroVMDateFromUnknown(item[key]);
+}
+function recordMapField(item, key) {
+    const raw = item[key];
+    return raw && typeof raw === "object" && !Array.isArray(raw)
+        ? cloneStringMap(raw)
+        : undefined;
+}
+function cloneMicroVMDateFromUnknown(value) {
+    if (value instanceof Date) {
+        return cloneMicroVMDate(value);
+    }
+    if (typeof value === "string" || typeof value === "number") {
+        const parsed = new Date(value);
+        if (validDate(parsed))
+            return parsed;
+    }
+    return new Date(Number.NaN);
 }
 function microVMSessionRecordKey(record) {
     return microVMSessionKeyString(record.tenant_id, record.namespace, record.session_id);
@@ -1340,8 +1870,9 @@ function randomMicroVMSessionID() {
 function getSDKConstructor(sdk, names) {
     for (const name of names) {
         const candidate = sdk[name];
-        if (typeof candidate === "function")
+        if (typeof candidate === "function") {
             return candidate;
+        }
     }
     throw safeError(MICROVM_ERROR_CONTROLLER_INCOMPLETE, "apptheory: microvm AWS SDK lacks Lambda MicroVM support", "");
 }
@@ -1363,22 +1894,39 @@ function sessionRecordFromAWSOutput(input, output, state, desiredState) {
         session_id: stringField(output, "sessionId") || input.session_id,
         state: stringField(output, "state") || state,
         desired_state: stringField(output, "desiredState") || desiredState,
+        endpoint: stringField(output, "endpoint"),
+        microvm_id: stringField(output, "microvmId"),
         image_ref: stringField(output, "imageRef") || input.image_ref,
+        network_connector_ref: stringField(output, "networkConnectorRef") || input.network_connector_ref,
         controller_id: stringField(output, "controllerId") || input.controller_id,
         created_at: createdAt,
         updated_at: updatedAt,
         expires_at: expiresAt,
         generation: numberField(output, "generation") || 1,
+        last_action: stringField(output, "lastAction") ||
+            defaultMicroVMLastAction(state, desiredState),
         last_command_id: input.request_id,
         auth_subject: input.auth_subject,
     };
-    const networkConnectorRef = stringField(output, "networkConnectorRef") || input.network_connector_ref;
-    if (networkConnectorRef)
-        record.network_connector_ref = networkConnectorRef;
     const metadata = cloneStringMap(input.session_spec.metadata);
     if (metadata)
         record.metadata = metadata;
     return record;
+}
+function defaultMicroVMLastAction(state, desiredState) {
+    const normalizedState = normalizeMicroVMLifecycleState(state);
+    const normalizedDesired = normalizeMicroVMLifecycleState(desiredState);
+    if (normalizedState === MicroVMState.Requested &&
+        normalizedDesired === MicroVMState.Requested) {
+        return MicroVMCommand.Create;
+    }
+    if (normalizedDesired === MicroVMState.Started) {
+        return MicroVMCommand.Start;
+    }
+    if (normalizedDesired === MicroVMState.Stopped) {
+        return MicroVMCommand.Stop;
+    }
+    return MicroVMCommand.Session;
 }
 function sessionStatusFromAWSOutput(input, output) {
     return {
@@ -1390,6 +1938,9 @@ function sessionStatusFromAWSOutput(input, output) {
         lifecycle_state: stringField(output, "lifecycleState") ||
             stringField(output, "state") ||
             MicroVMState.Requested,
+        endpoint: stringField(output, "endpoint"),
+        microvm_id: stringField(output, "microvmId"),
+        last_action: stringField(output, "lastAction") || MicroVMCommand.Status,
         last_transition: dateField(output, "lastTransition") ?? new Date(),
         registry_version: numberField(output, "registryVersion") || 1,
     };

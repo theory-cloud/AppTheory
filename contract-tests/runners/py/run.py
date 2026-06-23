@@ -1016,9 +1016,83 @@ def runtime_controller_request(command: str, request_id: str, session_id: str) -
 def validate_microvm_session_registry(runtime: Any, registry: dict[str, Any]) -> str:
     try:
         runtime.validate_microvm_session_registry_contract(registry)
+        exercise_microvm_session_registry(runtime)
         return ""
     except Exception as exc:  # noqa: BLE001
         return str(exc)
+
+
+def exercise_microvm_session_registry(runtime: Any) -> None:
+    record = runtime.MicroVMSessionRecord(
+        tenant_id="tenant-fixture",
+        namespace="namespace-fixture",
+        session_id="session-fixture",
+        state="starting",
+        desired_state="started",
+        endpoint="https://microvm.example.test/session-fixture",
+        microvm_id="microvm-fixture",
+        image_ref="image-fixture",
+        network_connector_ref="network-fixture",
+        controller_id="controller-fixture",
+        created_at=100.0,
+        updated_at=160.0,
+        expires_at=3700.0,
+        generation=3,
+        last_action="start",
+        last_command_id="m15-registry",
+        auth_subject="subject-fixture",
+        metadata={"safe": "ok"},
+    )
+    registry_record = runtime.microvm_session_record_to_registry_record(record)
+    if (
+        registry_record.pk != runtime.microvm_session_registry_partition_key(record.tenant_id, record.namespace)
+        or registry_record.sk != runtime.microvm_session_registry_sort_key(record.session_id)
+        or registry_record.ttl != int(record.expires_at)
+        or registry_record.endpoint != record.endpoint
+        or registry_record.microvm_id != record.microvm_id
+        or registry_record.last_action != "start"
+    ):
+        raise RuntimeError("apptheory: microvm session registry canonical record incomplete")
+    round_trip = runtime.microvm_session_from_registry_record(registry_record)
+    if (
+        round_trip.endpoint != record.endpoint
+        or round_trip.microvm_id != record.microvm_id
+        or round_trip.last_action != record.last_action
+    ):
+        raise RuntimeError("apptheory: microvm session registry round trip incomplete")
+    store = runtime.create_memory_microvm_session_registry()
+    stored = store.put(record)
+    if stored.last_action != "start":
+        raise RuntimeError("apptheory: microvm memory registry lost last action")
+    client = runtime.create_microvm_registry_client(store, ttl_seconds=1800)
+    created = client.create(
+        runtime.MicroVMCreateSessionInput(
+            request_id="m15-registry-create",
+            tenant_id="tenant-fixture",
+            namespace="namespace-fixture",
+            session_id="session-registry-client",
+            image_ref="image-fixture",
+            network_connector_ref="network-fixture",
+            session_spec=runtime.MicroVMSessionSpec(metadata={"safe": "ok"}),
+            controller_id="controller-fixture",
+            auth_subject="subject-fixture",
+            now=100.0,
+        )
+    )
+    if created.last_action != "create" or created.expires_at - created.created_at != 1800:
+        raise RuntimeError("apptheory: microvm registry client create record incomplete")
+    status = client.status(
+        runtime.MicroVMSessionQueryInput(
+            request_id="m15-registry-status",
+            tenant_id=created.tenant_id,
+            namespace=created.namespace,
+            session_id=created.session_id,
+            auth_subject=created.auth_subject,
+        )
+    )
+    if status.last_action != "create" or status.registry_version != created.generation:
+        raise RuntimeError("apptheory: microvm registry client status incomplete")
+
 
 def missing_strings(required: list[str], got: Any) -> list[str]:
     values = got if isinstance(got, list) else []

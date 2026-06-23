@@ -95,35 +95,35 @@ func DefaultControllerContract() ControllerContract {
 				Method:         "POST",
 				Path:           "/microvms",
 				RequestFields:  []string{"image_ref", "network_connector_ref", "session_spec"},
-				ResponseFields: []string{"session_id", "state", "registry_version"},
+				ResponseFields: []string{"session_id", "state", "registry_version", "endpoint", "microvm_id", "last_action"},
 			},
 			{
 				Name:           CommandStart,
 				Method:         "POST",
 				Path:           "/microvms/{session_id}/start",
 				RequestFields:  []string{"session_id"},
-				ResponseFields: []string{"session_id", "state", "desired_state"},
+				ResponseFields: []string{"session_id", "state", "desired_state", "endpoint", "microvm_id", "last_action"},
 			},
 			{
 				Name:           CommandStop,
 				Method:         "POST",
 				Path:           "/microvms/{session_id}/stop",
 				RequestFields:  []string{"session_id"},
-				ResponseFields: []string{"session_id", "state", "desired_state"},
+				ResponseFields: []string{"session_id", "state", "desired_state", "endpoint", "microvm_id", "last_action"},
 			},
 			{
 				Name:           CommandStatus,
 				Method:         "GET",
 				Path:           "/microvms/{session_id}/status",
 				RequestFields:  []string{"session_id"},
-				ResponseFields: []string{"session_id", "state", "lifecycle_state", "last_transition"},
+				ResponseFields: []string{"session_id", "state", "lifecycle_state", "last_transition", "endpoint", "microvm_id", "last_action"},
 			},
 			{
 				Name:           CommandSession,
 				Method:         "GET",
 				Path:           "/microvms/{session_id}",
 				RequestFields:  []string{"session_id"},
-				ResponseFields: []string{"session_id", "tenant_id", "namespace", "state", "registry_version"},
+				ResponseFields: []string{"session_id", "tenant_id", "namespace", "state", "registry_version", "endpoint", "microvm_id", "last_action"},
 			},
 		},
 	}
@@ -140,17 +140,25 @@ func DefaultSessionRegistryContract() SessionRegistryContract {
 		Pattern:       "tabletheory-single-table",
 		TenantBinding: []string{"tenant_id", "namespace"},
 		RequiredFields: []string{
+			"pk",
+			"sk",
 			"tenant_id",
 			"namespace",
 			"session_id",
 			"state",
 			"desired_state",
+			"endpoint",
+			"microvm_id",
 			"image_ref",
+			"network_connector_ref",
 			"controller_id",
 			"created_at",
 			"updated_at",
 			"expires_at",
+			"ttl",
 			"generation",
+			"version",
+			"last_action",
 			"last_command_id",
 			"auth_subject",
 		},
@@ -200,7 +208,7 @@ func ValidateSessionRegistryContract(registry SessionRegistryContract) error {
 	if missing := missingStrings([]string{"tenant_id", "namespace"}, registry.TenantBinding); len(missing) > 0 {
 		return safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry missing tenant binding: "+strings.Join(missing, ","), "")
 	}
-	if missing := missingStrings(DefaultSessionRegistryContract().RequiredFields, registry.RequiredFields); len(missing) > 0 {
+	if missing := missingStrings(requiredSessionRegistryContractFields(), registry.RequiredFields); len(missing) > 0 {
 		return safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry missing fields: "+strings.Join(missing, ","), "")
 	}
 	stateValues := make([]string, 0, len(requiredLifecycleStates()))
@@ -214,6 +222,26 @@ func ValidateSessionRegistryContract(registry SessionRegistryContract) error {
 		return safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry missing forbidden fields: "+strings.Join(missing, ","), "")
 	}
 	return nil
+}
+
+func requiredSessionRegistryContractFields() []string {
+	// Keep the original M15 vocabulary fixture compatible; durable TableTheory keys/TTL
+	// are enforced by SessionRegistryRecord validation and runner coverage.
+	return []string{
+		"tenant_id",
+		"namespace",
+		"session_id",
+		"state",
+		"desired_state",
+		"image_ref",
+		"controller_id",
+		"created_at",
+		"updated_at",
+		"expires_at",
+		"generation",
+		"last_command_id",
+		"auth_subject",
+	}
 }
 
 func controllerAuthDefaultsDeny(auth ControllerAuthContract) bool {

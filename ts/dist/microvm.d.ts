@@ -1,3 +1,4 @@
+import { type Model } from "@theory-cloud/tabletheory-ts";
 export declare const MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm";
 export declare const MICROVM_CONTRACT_VERSION = "m15.microvm/v1";
 export declare const MICROVM_ERROR_INVALID_CONTRACT = "m15.microvm.invalid_contract";
@@ -100,6 +101,9 @@ export declare const MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE = "m15.microvm.se
 export declare const MICROVM_ERROR_INVALID_CONTROLLER_REQUEST = "m15.microvm.invalid_controller_request";
 export declare const MICROVM_ERROR_CONTROLLER_COMMAND_FAILED = "m15.microvm.controller_command_failed";
 export declare const MICROVM_CONTROLLER_AUTH_DEFAULT_DENY = "deny";
+export declare const MICROVM_SESSION_REGISTRY_MODEL_NAME = "MicroVMSessionRegistryRecord";
+export declare const MICROVM_SESSION_REGISTRY_TABLE_NAME = "apptheory-microvm-sessions";
+export declare const MICROVM_SESSION_REGISTRY_TABLE_ENV = "APPTHEORY_MICROVM_SESSION_REGISTRY_TABLE";
 export type MicroVMContractKind = "lifecycle" | "controller_session";
 export declare const MicroVMCommand: {
     readonly Create: "create";
@@ -167,6 +171,9 @@ export interface MicroVMControllerResponse {
     state?: MicroVMLifecycleState | string;
     desired_state?: MicroVMLifecycleState | string;
     lifecycle_state?: MicroVMLifecycleState | string;
+    endpoint?: string;
+    microvm_id?: string;
+    last_action?: MicroVMCommandName | string;
     last_transition?: Date;
     registry_version?: number;
     error?: MicroVMSafeError;
@@ -211,13 +218,16 @@ export interface MicroVMSessionRecord {
     session_id: string;
     state: MicroVMLifecycleState | string;
     desired_state: MicroVMLifecycleState | string;
+    endpoint?: string;
+    microvm_id?: string;
     image_ref: string;
-    network_connector_ref?: string;
+    network_connector_ref: string;
     controller_id: string;
     created_at: Date;
     updated_at: Date;
     expires_at: Date;
     generation: number;
+    last_action: MicroVMCommandName | string;
     last_command_id: string;
     auth_subject: string;
     metadata?: Record<string, string>;
@@ -229,8 +239,54 @@ export interface MicroVMSessionStatus {
     state: MicroVMLifecycleState | string;
     desired_state: MicroVMLifecycleState | string;
     lifecycle_state: MicroVMLifecycleState | string;
+    endpoint?: string;
+    microvm_id?: string;
+    last_action: MicroVMCommandName | string;
     last_transition: Date;
     registry_version: number;
+}
+export interface MicroVMSessionRegistryRecord {
+    pk: string;
+    sk: string;
+    tenant_id: string;
+    namespace: string;
+    session_id: string;
+    state: MicroVMLifecycleState | string;
+    desired_state: MicroVMLifecycleState | string;
+    endpoint: string;
+    microvm_id: string;
+    image_ref: string;
+    network_connector_ref: string;
+    controller_id: string;
+    created_at: Date;
+    updated_at: Date;
+    expires_at: Date;
+    ttl: number;
+    generation: number;
+    version: number;
+    last_action: MicroVMCommandName | string;
+    last_command_id: string;
+    auth_subject: string;
+    metadata?: Record<string, string>;
+}
+export interface MicroVMSessionRegistry {
+    put: (record: MicroVMSessionRecord) => Promise<MicroVMSessionRecord>;
+    get: (key: MicroVMSessionKey) => Promise<MicroVMSessionRecord>;
+    delete: (key: MicroVMSessionKey) => Promise<void>;
+}
+export interface MicroVMTableTheoryClient {
+    register?: (...models: Model[]) => unknown;
+    save: (modelName: string, item: Record<string, unknown>) => Promise<void>;
+    get: (modelName: string, key: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    delete: (modelName: string, key: Record<string, unknown>) => Promise<void>;
+}
+export interface TableTheoryMicroVMSessionRegistryOptions {
+    model_name?: string;
+    table_name?: string;
+    auto_register?: boolean;
+}
+export interface MicroVMRegistryClientOptions {
+    ttl_ms?: number;
 }
 export interface MicroVMClient {
     create: (input: MicroVMCreateSessionInput) => Promise<MicroVMSessionRecord>;
@@ -267,6 +323,41 @@ export declare function validateMicroVMSessionRegistryContract(registry: MicroVM
 export declare function validateMicroVMSessionRecord(record: MicroVMSessionRecord): void;
 export declare function validateMicroVMSessionStatus(status: MicroVMSessionStatus): void;
 export declare function microVMSessionKey(record: MicroVMSessionRecord): MicroVMSessionKey;
+export declare function microVMSessionRegistryTableName(): string;
+export declare function microVMSessionRegistryPartitionKey(tenantID: string, namespace: string): string;
+export declare function microVMSessionRegistrySortKey(sessionID: string): string;
+export declare function microVMSessionRegistryModel(tableName?: string): Model;
+export declare function validateMicroVMSessionRegistryRecord(record: MicroVMSessionRegistryRecord): void;
+export declare function microVMSessionRecordToRegistryRecord(record: MicroVMSessionRecord): MicroVMSessionRegistryRecord;
+export declare function microVMSessionFromRegistryRecord(record: MicroVMSessionRegistryRecord): MicroVMSessionRecord;
+export declare class MemoryMicroVMSessionRegistry implements MicroVMSessionRegistry {
+    private readonly records;
+    put(record: MicroVMSessionRecord): Promise<MicroVMSessionRecord>;
+    get(key: MicroVMSessionKey): Promise<MicroVMSessionRecord>;
+    delete(key: MicroVMSessionKey): Promise<void>;
+}
+export declare function createMemoryMicroVMSessionRegistry(): MemoryMicroVMSessionRegistry;
+export declare class TableTheoryMicroVMSessionRegistry implements MicroVMSessionRegistry {
+    private readonly db;
+    private readonly modelName;
+    constructor(db: MicroVMTableTheoryClient, options?: TableTheoryMicroVMSessionRegistryOptions);
+    put(record: MicroVMSessionRecord): Promise<MicroVMSessionRecord>;
+    get(key: MicroVMSessionKey): Promise<MicroVMSessionRecord>;
+    delete(key: MicroVMSessionKey): Promise<void>;
+}
+export declare function createTableTheoryMicroVMSessionRegistry(db: MicroVMTableTheoryClient, options?: TableTheoryMicroVMSessionRegistryOptions): TableTheoryMicroVMSessionRegistry;
+export declare class MicroVMRegistryClient implements MicroVMClient {
+    private readonly registry;
+    private readonly ttlMs;
+    constructor(registry: MicroVMSessionRegistry, options?: MicroVMRegistryClientOptions);
+    create(input: MicroVMCreateSessionInput): Promise<MicroVMSessionRecord>;
+    start(input: MicroVMSessionCommandInput): Promise<MicroVMSessionRecord>;
+    stop(input: MicroVMSessionCommandInput): Promise<MicroVMSessionRecord>;
+    status(input: MicroVMSessionQueryInput): Promise<MicroVMSessionStatus>;
+    session(input: MicroVMSessionQueryInput): Promise<MicroVMSessionRecord>;
+    private transition;
+}
+export declare function createMicroVMRegistryClient(registry: MicroVMSessionRegistry, options?: MicroVMRegistryClientOptions): MicroVMRegistryClient;
 export declare class MicroVMController {
     private readonly client;
     private readonly controllerID;

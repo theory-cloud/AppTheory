@@ -77,6 +77,7 @@ func (c *FakeClient) Create(_ context.Context, input runtimemicrovm.CreateSessio
 		UpdatedAt:           now,
 		ExpiresAt:           now.Add(time.Hour),
 		Generation:          1,
+		LastAction:          runtimemicrovm.CommandCreate,
 		LastCommandID:       input.RequestID,
 		AuthSubject:         input.AuthSubject,
 		Metadata:            input.SessionSpec.Metadata,
@@ -118,6 +119,9 @@ func (c *FakeClient) Status(_ context.Context, input runtimemicrovm.SessionQuery
 		State:           record.State,
 		DesiredState:    record.DesiredState,
 		LifecycleState:  record.State,
+		Endpoint:        record.Endpoint,
+		MicroVMID:       record.MicroVMID,
+		LastAction:      record.LastAction,
 		LastTransition:  record.UpdatedAt,
 		RegistryVersion: record.Generation,
 	}, nil
@@ -152,6 +156,7 @@ func (c *FakeClient) transition(
 	record.DesiredState = desired
 	record.ControllerID = input.ControllerID
 	record.AuthSubject = input.AuthSubject
+	record.LastAction = command
 	record.LastCommandID = input.RequestID
 	record.UpdatedAt = coalesceTime(input.Now, c.now)
 	record.Generation++

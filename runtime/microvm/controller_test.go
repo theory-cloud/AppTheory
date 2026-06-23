@@ -116,6 +116,7 @@ func (c *stubClient) Create(_ context.Context, input CreateSessionInput) (Sessio
 		UpdatedAt:           input.Now,
 		ExpiresAt:           input.Now.Add(time.Hour),
 		Generation:          1,
+		LastAction:          CommandCreate,
 		LastCommandID:       input.RequestID,
 		AuthSubject:         input.AuthSubject,
 		Metadata:            input.SessionSpec.Metadata,
@@ -134,6 +135,7 @@ func (c *stubClient) Start(_ context.Context, input SessionCommandInput) (Sessio
 	record.DesiredState = input.DesiredState
 	record.UpdatedAt = input.Now
 	record.Generation++
+	record.LastAction = CommandStart
 	record.LastCommandID = input.RequestID
 	record.AuthSubject = input.AuthSubject
 	c.record = record
@@ -150,6 +152,7 @@ func (c *stubClient) Stop(_ context.Context, input SessionCommandInput) (Session
 	record.DesiredState = input.DesiredState
 	record.UpdatedAt = input.Now
 	record.Generation++
+	record.LastAction = CommandStop
 	record.LastCommandID = input.RequestID
 	record.AuthSubject = input.AuthSubject
 	c.record = record
@@ -167,6 +170,9 @@ func (c stubClient) Status(context.Context, SessionQueryInput) (SessionStatus, e
 		State:           c.record.State,
 		DesiredState:    c.record.DesiredState,
 		LifecycleState:  c.record.State,
+		Endpoint:        c.record.Endpoint,
+		MicroVMID:       c.record.MicroVMID,
+		LastAction:      c.record.LastAction,
 		LastTransition:  c.record.UpdatedAt,
 		RegistryVersion: c.record.Generation,
 	}, nil
@@ -320,19 +326,21 @@ func TestSessionRegistryValidationFailures(t *testing.T) {
 func TestSessionValidationAndKeys(t *testing.T) {
 	now := time.Unix(1, 0).UTC()
 	record := SessionRecord{
-		TenantID:      "tenant-1",
-		Namespace:     "namespace-1",
-		SessionID:     "session-1",
-		State:         StateRequested,
-		DesiredState:  StateRequested,
-		ImageRef:      "image-ref",
-		ControllerID:  "controller-1",
-		CreatedAt:     now,
-		UpdatedAt:     now,
-		ExpiresAt:     now.Add(time.Hour),
-		Generation:    1,
-		LastCommandID: "req-1",
-		AuthSubject:   "subject-1",
+		TenantID:            "tenant-1",
+		Namespace:           "namespace-1",
+		SessionID:           "session-1",
+		State:               StateRequested,
+		DesiredState:        StateRequested,
+		ImageRef:            "image-ref",
+		NetworkConnectorRef: "network-ref",
+		ControllerID:        "controller-1",
+		CreatedAt:           now,
+		UpdatedAt:           now,
+		ExpiresAt:           now.Add(time.Hour),
+		Generation:          1,
+		LastAction:          CommandCreate,
+		LastCommandID:       "req-1",
+		AuthSubject:         "subject-1",
 	}
 	require.NoError(t, ValidateSessionRecord(record))
 	require.Equal(t, SessionKey{TenantID: "tenant-1", Namespace: "namespace-1", SessionID: "session-1"}, record.Key())
@@ -360,6 +368,7 @@ func TestSessionValidationAndKeys(t *testing.T) {
 		State:           StateStarting,
 		DesiredState:    StateStarted,
 		LifecycleState:  StateStarting,
+		LastAction:      CommandStart,
 		LastTransition:  now,
 		RegistryVersion: 2,
 	}

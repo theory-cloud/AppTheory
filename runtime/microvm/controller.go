@@ -73,6 +73,9 @@ type ControllerResponse struct {
 	State           LifecycleState `json:"state,omitempty"`
 	DesiredState    LifecycleState `json:"desired_state,omitempty"`
 	LifecycleState  LifecycleState `json:"lifecycle_state,omitempty"`
+	Endpoint        string         `json:"endpoint,omitempty"`
+	MicroVMID       string         `json:"microvm_id,omitempty"`
+	LastAction      Command        `json:"last_action,omitempty"`
 	LastTransition  time.Time      `json:"last_transition,omitempty"`
 	RegistryVersion int64          `json:"registry_version,omitempty"`
 	Error           *SafeError     `json:"error,omitempty"`
@@ -378,6 +381,9 @@ func responseFromSession(request ControllerRequest, record SessionRecord) Contro
 		State:           record.State,
 		DesiredState:    record.DesiredState,
 		LifecycleState:  record.State,
+		Endpoint:        record.Endpoint,
+		MicroVMID:       record.MicroVMID,
+		LastAction:      record.LastAction,
 		LastTransition:  record.UpdatedAt,
 		RegistryVersion: record.Generation,
 	}
@@ -393,6 +399,9 @@ func responseFromStatus(request ControllerRequest, status SessionStatus) Control
 		State:           status.State,
 		DesiredState:    status.DesiredState,
 		LifecycleState:  status.LifecycleState,
+		Endpoint:        status.Endpoint,
+		MicroVMID:       status.MicroVMID,
+		LastAction:      status.LastAction,
 		LastTransition:  status.LastTransition,
 		RegistryVersion: status.RegistryVersion,
 	}

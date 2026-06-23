@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	runtimemicrovm "github.com/theory-cloud/apptheory/runtime/microvm"
 	microvmtest "github.com/theory-cloud/apptheory/testkit/microvm"
@@ -432,11 +433,123 @@ type microVMFixtureIDs struct{}
 func (microVMFixtureIDs) NewID() string { return "session-fixture" }
 
 func validateMicroVMSessionRegistry(registry microVMSessionRegistrySpec) error {
-	return runtimemicrovm.ValidateSessionRegistryContract(runtimemicrovm.SessionRegistryContract{
+	if err := runtimemicrovm.ValidateSessionRegistryContract(runtimemicrovm.SessionRegistryContract{
 		Pattern:         registry.Pattern,
 		TenantBinding:   append([]string(nil), registry.TenantBinding...),
 		RequiredFields:  append([]string(nil), registry.RequiredFields...),
 		StateValues:     append([]string(nil), registry.StateValues...),
 		ForbiddenFields: append([]string(nil), registry.ForbiddenFields...),
+	}); err != nil {
+		return err
+	}
+	return exerciseRuntimeSessionRegistry()
+}
+
+func exerciseRuntimeSessionRegistry() error {
+	record := runtimeRegistryFixtureRecord()
+	if err := validateRuntimeSessionRegistryRecord(record); err != nil {
+		return err
+	}
+	store := runtimemicrovm.NewMemorySessionRegistry()
+	if err := exerciseRuntimeMemoryRegistry(store, record); err != nil {
+		return err
+	}
+	return exerciseRuntimeRegistryClient(store, record.CreatedAt)
+}
+
+func runtimeRegistryFixtureRecord() runtimemicrovm.SessionRecord {
+	now := time.Unix(100, 0).UTC()
+	return runtimemicrovm.SessionRecord{
+		TenantID:            "tenant-fixture",
+		Namespace:           "namespace-fixture",
+		SessionID:           "session-fixture",
+		State:               runtimemicrovm.StateStarting,
+		DesiredState:        runtimemicrovm.StateStarted,
+		Endpoint:            "https://microvm.example.test/session-fixture",
+		MicroVMID:           "microvm-fixture",
+		ImageRef:            "image-fixture",
+		NetworkConnectorRef: "network-fixture",
+		ControllerID:        "controller-fixture",
+		CreatedAt:           now,
+		UpdatedAt:           now.Add(time.Minute),
+		ExpiresAt:           now.Add(time.Hour),
+		Generation:          3,
+		LastAction:          runtimemicrovm.CommandStart,
+		LastCommandID:       "m15-registry",
+		AuthSubject:         "subject-fixture",
+		Metadata:            map[string]string{"safe": "ok"},
+	}
+}
+
+func validateRuntimeSessionRegistryRecord(record runtimemicrovm.SessionRecord) error {
+	registryRecord, err := runtimemicrovm.SessionRecordToRegistryRecord(record)
+	if err != nil {
+		return err
+	}
+	if registryRecord.PK != runtimemicrovm.SessionRegistryPartitionKey(record.TenantID, record.Namespace) ||
+		registryRecord.SK != runtimemicrovm.SessionRegistrySortKey(record.SessionID) ||
+		registryRecord.TTL != record.ExpiresAt.Unix() ||
+		registryRecord.Endpoint != record.Endpoint ||
+		registryRecord.MicroVMID != record.MicroVMID ||
+		registryRecord.LastAction != runtimemicrovm.CommandStart {
+		return fmt.Errorf("apptheory: microvm session registry canonical record incomplete")
+	}
+	roundTrip, err := runtimemicrovm.SessionRecordFromRegistryRecord(registryRecord)
+	if err != nil {
+		return err
+	}
+	if roundTrip.Endpoint != record.Endpoint || roundTrip.MicroVMID != record.MicroVMID || roundTrip.LastAction != record.LastAction {
+		return fmt.Errorf("apptheory: microvm session registry round trip incomplete")
+	}
+	return nil
+}
+
+func exerciseRuntimeMemoryRegistry(store runtimemicrovm.SessionRegistry, record runtimemicrovm.SessionRecord) error {
+	stored, err := store.Put(context.Background(), record)
+	if err != nil {
+		return err
+	}
+	if stored.LastAction != runtimemicrovm.CommandStart {
+		return fmt.Errorf("apptheory: microvm memory registry lost last action")
+	}
+	return nil
+}
+
+func exerciseRuntimeRegistryClient(store runtimemicrovm.SessionRegistry, now time.Time) error {
+	client, err := runtimemicrovm.NewRegistryClient(store, runtimemicrovm.WithRegistryClientTTL(30*time.Minute))
+	if err != nil {
+		return err
+	}
+	created, err := client.Create(context.Background(), runtimemicrovm.CreateSessionInput{
+		RequestID:           "m15-registry-create",
+		TenantID:            "tenant-fixture",
+		Namespace:           "namespace-fixture",
+		SessionID:           "session-registry-client",
+		ImageRef:            "image-fixture",
+		NetworkConnectorRef: "network-fixture",
+		SessionSpec:         runtimemicrovm.SessionSpec{Metadata: map[string]string{"safe": "ok"}},
+		ControllerID:        "controller-fixture",
+		AuthSubject:         "subject-fixture",
+		Now:                 now,
 	})
+	if err != nil {
+		return err
+	}
+	if created.LastAction != runtimemicrovm.CommandCreate || created.ExpiresAt.Sub(created.CreatedAt) != 30*time.Minute {
+		return fmt.Errorf("apptheory: microvm registry client create record incomplete")
+	}
+	status, err := client.Status(context.Background(), runtimemicrovm.SessionQueryInput{
+		RequestID:   "m15-registry-status",
+		TenantID:    created.TenantID,
+		Namespace:   created.Namespace,
+		SessionID:   created.SessionID,
+		AuthSubject: created.AuthSubject,
+	})
+	if err != nil {
+		return err
+	}
+	if status.LastAction != runtimemicrovm.CommandCreate || status.RegistryVersion != created.Generation {
+		return fmt.Errorf("apptheory: microvm registry client status incomplete")
+	}
+	return nil
 }

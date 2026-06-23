@@ -774,7 +774,7 @@ async function validateMicroVMContractFixture(contract, runtime) {
   } else {
     const controllerErr = await validateMicroVMController(runtime, controller);
     if (controllerErr) return invalidMicroVMContract("m15.microvm.controller_incomplete", controllerErr);
-    const registryErr = validateMicroVMSessionRegistry(runtime, contract.session_registry ?? {});
+    const registryErr = await validateMicroVMSessionRegistry(runtime, contract.session_registry ?? {});
     if (registryErr) return invalidMicroVMContract("m15.microvm.session_registry_incomplete", registryErr);
   }
 
@@ -919,14 +919,90 @@ function runtimeControllerRequest(command, requestID, sessionID) {
   }
   return request;
 }
-function validateMicroVMSessionRegistry(runtime, registry) {
+async function validateMicroVMSessionRegistry(runtime, registry) {
   try {
     runtime.validateMicroVMSessionRegistryContract(registry);
+    await exerciseRuntimeSessionRegistry(runtime);
     return "";
   } catch (err) {
     return err?.message ?? String(err);
   }
 }
+
+async function exerciseRuntimeSessionRegistry(runtime) {
+  const now = new Date("1970-01-01T00:01:40.000Z");
+  const record = {
+    tenant_id: "tenant-fixture",
+    namespace: "namespace-fixture",
+    session_id: "session-fixture",
+    state: "starting",
+    desired_state: "started",
+    endpoint: "https://microvm.example.test/session-fixture",
+    microvm_id: "microvm-fixture",
+    image_ref: "image-fixture",
+    network_connector_ref: "network-fixture",
+    controller_id: "controller-fixture",
+    created_at: now,
+    updated_at: new Date(now.valueOf() + 60_000),
+    expires_at: new Date(now.valueOf() + 3_600_000),
+    generation: 3,
+    last_action: "start",
+    last_command_id: "m15-registry",
+    auth_subject: "subject-fixture",
+    metadata: { safe: "ok" },
+  };
+  const registryRecord = runtime.microVMSessionRecordToRegistryRecord(record);
+  if (
+    registryRecord.pk !== runtime.microVMSessionRegistryPartitionKey(record.tenant_id, record.namespace) ||
+    registryRecord.sk !== runtime.microVMSessionRegistrySortKey(record.session_id) ||
+    registryRecord.ttl !== Math.trunc(record.expires_at.valueOf() / 1000) ||
+    registryRecord.endpoint !== record.endpoint ||
+    registryRecord.microvm_id !== record.microvm_id ||
+    registryRecord.last_action !== "start"
+  ) {
+    throw new Error("apptheory: microvm session registry canonical record incomplete");
+  }
+  const roundTrip = runtime.microVMSessionFromRegistryRecord(registryRecord);
+  if (
+    roundTrip.endpoint !== record.endpoint ||
+    roundTrip.microvm_id !== record.microvm_id ||
+    roundTrip.last_action !== record.last_action
+  ) {
+    throw new Error("apptheory: microvm session registry round trip incomplete");
+  }
+  const store = runtime.createMemoryMicroVMSessionRegistry();
+  const stored = await store.put(record);
+  if (stored.last_action !== "start") {
+    throw new Error("apptheory: microvm memory registry lost last action");
+  }
+  const client = runtime.createMicroVMRegistryClient(store, { ttl_ms: 30 * 60 * 1000 });
+  const created = await client.create({
+    request_id: "m15-registry-create",
+    tenant_id: "tenant-fixture",
+    namespace: "namespace-fixture",
+    session_id: "session-registry-client",
+    image_ref: "image-fixture",
+    network_connector_ref: "network-fixture",
+    session_spec: { metadata: { safe: "ok" } },
+    controller_id: "controller-fixture",
+    auth_subject: "subject-fixture",
+    now,
+  });
+  if (created.last_action !== "create" || created.expires_at.valueOf() - created.created_at.valueOf() !== 30 * 60 * 1000) {
+    throw new Error("apptheory: microvm registry client create record incomplete");
+  }
+  const status = await client.status({
+    request_id: "m15-registry-status",
+    tenant_id: created.tenant_id,
+    namespace: created.namespace,
+    session_id: created.session_id,
+    auth_subject: created.auth_subject,
+  });
+  if (status.last_action !== "create" || status.registry_version !== created.generation) {
+    throw new Error("apptheory: microvm registry client status incomplete");
+  }
+}
+
 function missingStrings(required, got) {
   const seen = new Set((Array.isArray(got) ? got : []).map((value) => String(value ?? "").trim()).filter(Boolean));
   return required.filter((value) => !seen.has(value)).sort();

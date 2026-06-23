@@ -89,6 +89,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
             updated_at=1.0,
             expires_at=3601.0,
             generation=1,
+            last_action=app.COMMAND_CREATE,
             last_command_id="req-record",
             auth_subject="subject-1",
         )
@@ -104,6 +105,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
             state=app.STATE_REQUESTED,
             desired_state=app.STATE_REQUESTED,
             lifecycle_state=app.STATE_REQUESTED,
+            last_action=app.COMMAND_CREATE,
             last_transition=1.0,
             registry_version=1,
         )
@@ -193,6 +195,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
         self.assertIsNone(create.error)
         self.assertEqual("session-1", create.session_id)
         self.assertEqual(app.STATE_REQUESTED, create.state)
+        self.assertEqual(app.COMMAND_CREATE, create.last_action)
 
         start = controller.handle(
             {
@@ -207,6 +210,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
         self.assertIsNone(start.error)
         self.assertEqual(app.STATE_STARTING, start.state)
         self.assertEqual(app.STATE_STARTED, start.desired_state)
+        self.assertEqual(app.COMMAND_START, start.last_action)
 
         missing_auth = controller.handle(
             {
@@ -492,6 +496,56 @@ class MicroVMLifecycleTests(unittest.TestCase):
             app.MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
             app.validate_microvm_controller_request(request).code,
         )
+
+    def test_microvm_session_registry_shape_and_client(self) -> None:
+        record = self._valid_record(
+            state=app.STATE_STARTING,
+            desired_state=app.STATE_STARTED,
+            endpoint="https://microvm.example.test/session-1",
+            microvm_id="microvm-1",
+            generation=7,
+            last_action=app.COMMAND_START,
+        )
+        registry_record = app.microvm_session_record_to_registry_record(record)
+        self.assertEqual("TENANT#tenant-1#NAMESPACE#namespace-1", registry_record.pk)
+        self.assertEqual("SESSION#session-1", registry_record.sk)
+        self.assertEqual(3601, registry_record.ttl)
+        self.assertEqual(7, registry_record.version)
+        self.assertEqual("https://microvm.example.test/session-1", registry_record.endpoint)
+        self.assertEqual("microvm-1", registry_record.microvm_id)
+        self.assertEqual(app.COMMAND_START, registry_record.last_action)
+
+        round_trip = app.microvm_session_from_registry_record(registry_record)
+        self.assertEqual(record.endpoint, round_trip.endpoint)
+        self.assertEqual(record.microvm_id, round_trip.microvm_id)
+        self.assertEqual(record.last_action, round_trip.last_action)
+
+        bad = app.microvm_session_record_to_registry_record(record)
+        bad.pk = "TENANT#other#NAMESPACE#namespace-1"
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_session_registry_record(bad)
+
+        registry = app.create_memory_microvm_session_registry()
+        stored = registry.put(record)
+        self.assertEqual(app.COMMAND_START, stored.last_action)
+        loaded = registry.get(record)
+        self.assertEqual(record.endpoint, loaded.endpoint)
+        registry.delete(record)
+        with self.assertRaises(app.MicroVMSafeError):
+            registry.get(record)
+
+        client_registry = app.create_memory_microvm_session_registry()
+        client = app.create_microvm_registry_client(client_registry, ttl_seconds=30)
+        created = client.create(self._create_input(now=100.0))
+        self.assertEqual(app.COMMAND_CREATE, created.last_action)
+        self.assertEqual(130.0, created.expires_at)
+        started = client.start(self._command_input(request_id="req-start", now=120.0))
+        self.assertEqual(app.STATE_STARTING, started.state)
+        self.assertEqual(app.COMMAND_START, started.last_action)
+        self.assertEqual(2, started.generation)
+        status = client.status(self._query_input(request_id="req-status"))
+        self.assertEqual(app.COMMAND_START, status.last_action)
+        self.assertEqual(2, status.registry_version)
 
     def test_controller_errors_fake_client_and_aws_adapter_are_constrained(self) -> None:
         with self.assertRaises(app.MicroVMSafeError):

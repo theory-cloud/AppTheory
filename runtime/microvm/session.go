@@ -54,13 +54,16 @@ type SessionRecord struct {
 	SessionID           string            `json:"session_id"`
 	State               LifecycleState    `json:"state"`
 	DesiredState        LifecycleState    `json:"desired_state"`
+	Endpoint            string            `json:"endpoint,omitempty"`
+	MicroVMID           string            `json:"microvm_id,omitempty"`
 	ImageRef            string            `json:"image_ref"`
-	NetworkConnectorRef string            `json:"network_connector_ref,omitempty"`
+	NetworkConnectorRef string            `json:"network_connector_ref"`
 	ControllerID        string            `json:"controller_id"`
 	CreatedAt           time.Time         `json:"created_at"`
 	UpdatedAt           time.Time         `json:"updated_at"`
 	ExpiresAt           time.Time         `json:"expires_at"`
 	Generation          int64             `json:"generation"`
+	LastAction          Command           `json:"last_action"`
 	LastCommandID       string            `json:"last_command_id"`
 	AuthSubject         string            `json:"auth_subject"`
 	Metadata            map[string]string `json:"metadata,omitempty"`
@@ -74,6 +77,9 @@ type SessionStatus struct {
 	State           LifecycleState `json:"state"`
 	DesiredState    LifecycleState `json:"desired_state"`
 	LifecycleState  LifecycleState `json:"lifecycle_state"`
+	Endpoint        string         `json:"endpoint,omitempty"`
+	MicroVMID       string         `json:"microvm_id,omitempty"`
+	LastAction      Command        `json:"last_action"`
 	LastTransition  time.Time      `json:"last_transition"`
 	RegistryVersion int64          `json:"registry_version"`
 }
@@ -97,8 +103,11 @@ func validateSessionRecordIdentity(record SessionRecord) error {
 	if record.TenantID == "" || record.Namespace == "" || record.SessionID == "" || record.State == "" || record.DesiredState == "" {
 		return safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session record is incomplete", record.LastCommandID)
 	}
-	if record.ImageRef == "" || record.ControllerID == "" || record.LastCommandID == "" || record.AuthSubject == "" {
+	if record.ImageRef == "" || record.NetworkConnectorRef == "" || record.ControllerID == "" || record.LastCommandID == "" || record.AuthSubject == "" {
 		return safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session record is incomplete", record.LastCommandID)
+	}
+	if !validCommand(record.LastAction) {
+		return safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session record last action is unsupported", record.LastCommandID)
 	}
 	return nil
 }
@@ -113,11 +122,14 @@ func validateSessionRecordRegistryFields(record SessionRecord) error {
 // ValidateSessionStatus fails closed when a status response is incomplete.
 func ValidateSessionStatus(status SessionStatus) error {
 	status = normalizeSessionStatus(status)
-	if status.TenantID == "" || status.Namespace == "" || status.SessionID == "" || status.State == "" || status.DesiredState == "" || status.LifecycleState == "" || status.LastTransition.IsZero() || status.RegistryVersion <= 0 {
+	if status.TenantID == "" || status.Namespace == "" || status.SessionID == "" || status.State == "" || status.DesiredState == "" || status.LifecycleState == "" || status.LastAction == "" || status.LastTransition.IsZero() || status.RegistryVersion <= 0 {
 		return safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session status is incomplete", "")
 	}
 	if !validLifecycleState(status.State) || !validLifecycleState(status.DesiredState) || !validLifecycleState(status.LifecycleState) {
 		return safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session status state is unsupported", "")
+	}
+	if !validCommand(status.LastAction) {
+		return safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session status last action is unsupported", "")
 	}
 	return nil
 }
@@ -138,9 +150,12 @@ func normalizeSessionRecord(record SessionRecord) SessionRecord {
 	record.SessionID = strings.TrimSpace(record.SessionID)
 	record.State = LifecycleState(strings.TrimSpace(string(record.State)))
 	record.DesiredState = LifecycleState(strings.TrimSpace(string(record.DesiredState)))
+	record.Endpoint = strings.TrimSpace(record.Endpoint)
+	record.MicroVMID = strings.TrimSpace(record.MicroVMID)
 	record.ImageRef = strings.TrimSpace(record.ImageRef)
 	record.NetworkConnectorRef = strings.TrimSpace(record.NetworkConnectorRef)
 	record.ControllerID = strings.TrimSpace(record.ControllerID)
+	record.LastAction = normalizeCommand(record.LastAction)
 	record.LastCommandID = strings.TrimSpace(record.LastCommandID)
 	record.AuthSubject = strings.TrimSpace(record.AuthSubject)
 	record.Metadata = cloneStringMap(record.Metadata)
@@ -154,6 +169,9 @@ func normalizeSessionStatus(status SessionStatus) SessionStatus {
 	status.State = LifecycleState(strings.TrimSpace(string(status.State)))
 	status.DesiredState = LifecycleState(strings.TrimSpace(string(status.DesiredState)))
 	status.LifecycleState = LifecycleState(strings.TrimSpace(string(status.LifecycleState)))
+	status.Endpoint = strings.TrimSpace(status.Endpoint)
+	status.MicroVMID = strings.TrimSpace(status.MicroVMID)
+	status.LastAction = normalizeCommand(status.LastAction)
 	return status
 }
 
@@ -165,4 +183,14 @@ func validLifecycleState(state LifecycleState) bool {
 		}
 	}
 	return false
+}
+
+func validCommand(command Command) bool {
+	command = normalizeCommand(command)
+	switch command {
+	case CommandCreate, CommandStart, CommandStop, CommandStatus, CommandSession:
+		return true
+	default:
+		return false
+	}
 }
