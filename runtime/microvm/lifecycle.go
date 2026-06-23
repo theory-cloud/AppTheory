@@ -192,25 +192,43 @@ func DefaultLifecycleContract() LifecycleContract {
 
 // ValidateLifecycleContract validates the lifecycle contract and returns a safe error on failure.
 func ValidateLifecycleContract(contract LifecycleContract) error {
+	hookSpecs, err := validateLifecycleHookSpecs(contract.Hooks)
+	if err != nil {
+		return err
+	}
+	if err := validateLifecycleStateLists(contract); err != nil {
+		return err
+	}
+	return validateLifecycleTransitionSet(hookSpecs, transitionSet(contract.Transitions))
+}
+
+func validateLifecycleHookSpecs(hooks []LifecycleHookSpec) (map[LifecycleHook]LifecycleHookSpec, error) {
 	hookSpecs := map[LifecycleHook]LifecycleHookSpec{}
-	for _, hook := range contract.Hooks {
+	for _, hook := range hooks {
 		name := normalizeLifecycleHook(hook.Name)
 		if name == "" || strings.TrimSpace(hook.Phase) == "" || hook.State == "" || hook.SuccessState == "" || hook.FailureState == "" {
-			return invalidContractError(ErrorCodeLifecycleIncomplete, "apptheory: microvm lifecycle hooks must name phase, active state, success state, and failure state")
+			return nil, invalidContractError(ErrorCodeLifecycleIncomplete, "apptheory: microvm lifecycle hooks must name phase, active state, success state, and failure state")
 		}
 		hook.Name = name
 		hookSpecs[name] = hook
 	}
 	if missing := missingLifecycleHooks(requiredLifecycleHooks(), hookSpecs); len(missing) > 0 {
-		return invalidContractError(ErrorCodeLifecycleIncomplete, "apptheory: microvm lifecycle missing hooks: "+strings.Join(missing, ","))
+		return nil, invalidContractError(ErrorCodeLifecycleIncomplete, "apptheory: microvm lifecycle missing hooks: "+strings.Join(missing, ","))
 	}
+	return hookSpecs, nil
+}
+
+func validateLifecycleStateLists(contract LifecycleContract) error {
 	if missing := missingLifecycleStates(requiredLifecycleStates(), lifecycleStateSet(contract.States)); len(missing) > 0 {
 		return invalidContractError(ErrorCodeLifecycleIncomplete, "apptheory: microvm lifecycle missing states: "+strings.Join(missing, ","))
 	}
 	if missing := missingLifecycleStates([]LifecycleState{StateTerminated, StateFailed}, lifecycleStateSet(contract.TerminalStates)); len(missing) > 0 {
 		return invalidContractError(ErrorCodeLifecycleIncomplete, "apptheory: microvm lifecycle missing terminal states: "+strings.Join(missing, ","))
 	}
-	transitions := transitionSet(contract.Transitions)
+	return nil
+}
+
+func validateLifecycleTransitionSet(hookSpecs map[LifecycleHook]LifecycleHookSpec, transitions lifecycleTransitionSet) error {
 	for _, spec := range hookSpecs {
 		if spec.Name == HookFailure {
 			continue
@@ -222,6 +240,10 @@ func ValidateLifecycleContract(contract LifecycleContract) error {
 			return invalidContractError(ErrorCodeLifecycleIncomplete, fmt.Sprintf("apptheory: microvm lifecycle missing success transition for hook %s", spec.Name))
 		}
 	}
+	return validateLifecycleFailureTransitions(transitions)
+}
+
+func validateLifecycleFailureTransitions(transitions lifecycleTransitionSet) error {
 	for _, state := range []LifecycleState{StateImagePreparing, StateStarting, StateReadinessProbing, StateStopping, StateTearingDown} {
 		if !transitions.has(state, HookFailure, StateFailed) {
 			return invalidContractError(ErrorCodeLifecycleIncomplete, fmt.Sprintf("apptheory: microvm lifecycle missing failure transition from %s", state))
@@ -245,7 +267,7 @@ func (a *LifecycleAdapter) Handle(ctx context.Context, event LifecycleEvent) (Li
 	}
 	normalized, err := normalizeLifecycleEvent(event)
 	if err != nil {
-		safe := err.(SafeError) //nolint:forcetypeassert // normalizeLifecycleEvent only returns SafeError.
+		safe := asSafeError(err, event.RequestID)
 		return lifecycleErrorResult(event, StateFailed, safe), safe
 	}
 

@@ -1,6 +1,9 @@
 package microvm
 
-import "strings"
+import (
+	"errors"
+	"strings"
+)
 
 const (
 	// ErrorCodeInvalidContract reports an unsupported or malformed MicroVM contract.
@@ -8,7 +11,7 @@ const (
 	// ErrorCodeRawSDKEscapeHatch reports a forbidden raw AWS SDK escape hatch.
 	ErrorCodeRawSDKEscapeHatch = "m15.microvm.raw_sdk_escape_hatch"
 	// ErrorCodeLifecycleBypass reports a forbidden raw lifecycle hook bypass.
-	ErrorCodeLifecycleBypass = "m15.microvm.lifecycle_bypass"
+	ErrorCodeLifecycleBypass = "m15.microvm.lifecycle_bypass" //nolint:gosec // Contract error code, not a credential.
 	// ErrorCodeLifecycleIncomplete reports an incomplete lifecycle contract.
 	ErrorCodeLifecycleIncomplete = "m15.microvm.lifecycle_incomplete"
 	// ErrorCodeForbiddenField reports a field that AppTheory refuses to persist or echo.
@@ -46,4 +49,18 @@ func safeError(code, message, requestID string) SafeError {
 func invalidContractError(code, message string) error {
 	err := safeError(code, message, "")
 	return err
+}
+
+func asSafeError(err error, requestID string) SafeError {
+	if err == nil {
+		return SafeError{}
+	}
+	var safe SafeError
+	if errors.As(err, &safe) {
+		if safe.RequestID == "" {
+			safe.RequestID = strings.TrimSpace(requestID)
+		}
+		return safe
+	}
+	return safeError(ErrorCodeControllerCommandFailed, "apptheory: microvm controller command failed", requestID)
 }
