@@ -2,6 +2,7 @@ package microvm
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -94,6 +95,106 @@ func TestMemorySessionRegistryAndRegistryClient(t *testing.T) {
 	require.NoError(t, registry.Delete(context.Background(), created.Key()))
 	_, err = registry.Get(context.Background(), created.Key())
 	require.Error(t, err)
+}
+
+func TestRegistryClientStopSessionAndFailClosedPaths(t *testing.T) {
+	ctx := context.TODO()
+
+	_, err := NewRegistryClient(nil)
+	require.Error(t, err)
+
+	registry := NewMemorySessionRegistry()
+	client, err := NewRegistryClient(registry, nil, WithRegistryClientTTL(0))
+	require.NoError(t, err)
+
+	created, err := client.Create(ctx, CreateSessionInput{
+		RequestID:           "req-create",
+		TenantID:            "tenant-1",
+		Namespace:           "namespace-1",
+		SessionID:           "session-1",
+		ImageRef:            "image-ref",
+		NetworkConnectorRef: "network-ref",
+		SessionSpec:         SessionSpec{Metadata: map[string]string{"safe": "ok"}},
+		ControllerID:        "controller-1",
+		AuthSubject:         "subject-1",
+	})
+	require.NoError(t, err)
+	require.Equal(t, time.Unix(0, 0).UTC().Add(time.Hour), created.ExpiresAt)
+
+	stopped, err := client.Stop(ctx, SessionCommandInput{
+		RequestID:    "req-stop",
+		TenantID:     "tenant-1",
+		Namespace:    "namespace-1",
+		SessionID:    "session-1",
+		ControllerID: "controller-1",
+		AuthSubject:  "subject-1",
+		DesiredState: StateStopped,
+	})
+	require.NoError(t, err)
+	require.Equal(t, StateStopping, stopped.State)
+	require.Equal(t, StateStopped, stopped.DesiredState)
+	require.Equal(t, CommandStop, stopped.LastAction)
+	require.Equal(t, int64(2), stopped.Generation)
+
+	session, err := client.Session(ctx, SessionQueryInput{
+		RequestID:   "req-session",
+		TenantID:    "tenant-1",
+		Namespace:   "namespace-1",
+		SessionID:   "session-1",
+		AuthSubject: "subject-1",
+	})
+	require.NoError(t, err)
+	require.Equal(t, CommandStop, session.LastAction)
+
+	var nilClient *RegistryClient
+	_, err = nilClient.Create(ctx, CreateSessionInput{RequestID: "req-create"})
+	require.Error(t, err)
+	_, err = nilClient.Stop(ctx, SessionCommandInput{RequestID: "req-stop"})
+	require.Error(t, err)
+	_, err = nilClient.Session(ctx, SessionQueryInput{RequestID: "req-session"})
+	require.Error(t, err)
+}
+
+func TestMemorySessionRegistryNilAndInvalidKeysFailClosed(t *testing.T) {
+	var nilRegistry *MemorySessionRegistry
+	_, err := nilRegistry.Put(context.Background(), registryTestRecord(time.Unix(250, 0).UTC()))
+	require.Error(t, err)
+	_, err = nilRegistry.Get(context.Background(), SessionKey{TenantID: "tenant-1", Namespace: "namespace-1", SessionID: "session-1"})
+	require.Error(t, err)
+	require.Error(t, nilRegistry.Delete(context.Background(), SessionKey{TenantID: "tenant-1", Namespace: "namespace-1", SessionID: "session-1"}))
+
+	registry := NewMemorySessionRegistry()
+	_, err = registry.Get(context.Background(), SessionKey{TenantID: "", Namespace: "namespace-1", SessionID: "session-1"})
+	require.Error(t, err)
+	require.Error(t, registry.Delete(context.Background(), SessionKey{TenantID: "tenant-1", Namespace: "", SessionID: "session-1"}))
+}
+
+func TestTableTheorySessionRegistryFailClosedPaths(t *testing.T) {
+	_, err := NewTableTheorySessionRegistry(nil)
+	require.Error(t, err)
+
+	key := SessionKey{TenantID: "tenant-1", Namespace: "namespace-1", SessionID: "session-1"}
+	var nilStore *TableTheorySessionRegistry
+	_, err = nilStore.Put(context.Background(), registryTestRecord(time.Unix(500, 0).UTC()))
+	require.Error(t, err)
+	_, err = nilStore.Get(context.Background(), key)
+	require.Error(t, err)
+	require.Error(t, nilStore.Delete(context.Background(), key))
+
+	db := new(tablemocks.MockDB)
+	q := new(tablemocks.MockQuery)
+	db.On("Model", mock.Anything).Return(q).Once()
+	q.On("WithContext", mock.Anything).Return(q).Once()
+	q.On("CreateOrUpdate").Return(errors.New("raw table failure")).Once()
+
+	store, err := NewTableTheorySessionRegistry(db)
+	require.NoError(t, err)
+	_, err = store.Put(context.Background(), registryTestRecord(time.Unix(501, 0).UTC()))
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "raw table failure")
+
+	db.AssertExpectations(t)
+	q.AssertExpectations(t)
 }
 
 func TestTableTheorySessionRegistryUsesCanonicalModel(t *testing.T) {

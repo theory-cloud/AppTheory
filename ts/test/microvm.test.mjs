@@ -17,21 +17,32 @@ import {
   MicroVMHook,
   MicroVMSafeError,
   MicroVMState,
+  MICROVM_SESSION_REGISTRY_TABLE_ENV,
   createAWSLambdaMicroVMClient,
   createFakeMicroVMClient,
+  createMemoryMicroVMSessionRegistry,
   createMicroVMController,
   createMicroVMLifecycleAdapter,
+  createMicroVMRegistryClient,
+  createTableTheoryMicroVMSessionRegistry,
   defaultMicroVMControllerContract,
   defaultMicroVMLifecycleContract,
   defaultMicroVMSessionRegistryContract,
   isMicroVMTerminalState,
+  microVMSessionFromRegistryRecord,
   microVMSessionKey,
+  microVMSessionRecordToRegistryRecord,
+  microVMSessionRegistryModel,
+  microVMSessionRegistryPartitionKey,
+  microVMSessionRegistrySortKey,
+  microVMSessionRegistryTableName,
   validateMicroVMControllerContract,
   validateMicroVMControllerRequest,
   validateMicroVMEscapeHatches,
   validateMicroVMLifecycleContract,
   validateMicroVMSessionRecord,
   validateMicroVMSessionRegistryContract,
+  validateMicroVMSessionRegistryRecord,
   validateMicroVMSessionStatus,
 } from "../dist/index.js";
 
@@ -536,6 +547,195 @@ test("microvm controller flow and fake client preserve constrained API", async (
     })).error?.code,
     MICROVM_ERROR_CONTROLLER_COMMAND_FAILED,
   );
+});
+
+
+test("microvm session registry conversions keep TableTheory shape", () => {
+  const previousTableName = process.env[MICROVM_SESSION_REGISTRY_TABLE_ENV];
+  try {
+    delete process.env[MICROVM_SESSION_REGISTRY_TABLE_ENV];
+    assert.equal(microVMSessionRegistryTableName(), "apptheory-microvm-sessions");
+
+    process.env[MICROVM_SESSION_REGISTRY_TABLE_ENV] = " custom-microvm-sessions ";
+    assert.equal(microVMSessionRegistryTableName(), "custom-microvm-sessions");
+  } finally {
+    if (previousTableName === undefined) {
+      delete process.env[MICROVM_SESSION_REGISTRY_TABLE_ENV];
+    } else {
+      process.env[MICROVM_SESSION_REGISTRY_TABLE_ENV] = previousTableName;
+    }
+  }
+
+  assert.equal(
+    microVMSessionRegistryPartitionKey(" tenant-1 ", " namespace-1 "),
+    "TENANT#tenant-1#NAMESPACE#namespace-1",
+  );
+  assert.equal(microVMSessionRegistryPartitionKey("", "namespace-1"), "");
+  assert.equal(microVMSessionRegistrySortKey(" session-1 "), "SESSION#session-1");
+  assert.equal(microVMSessionRegistrySortKey(""), "");
+
+  const model = microVMSessionRegistryModel("microvm-table");
+  assert.equal(model.tableName, "microvm-table");
+  assert.equal(model.schema.keys.partition.attribute, "pk");
+  assert.equal(model.schema.keys.sort.attribute, "sk");
+
+  const record = validRecord({
+    endpoint: "https://microvm.example.test/session-1",
+    microvm_id: "microvm-1",
+    metadata: { safe: "ok" },
+  });
+  const registry = microVMSessionRecordToRegistryRecord(record);
+  assert.equal(registry.pk, "TENANT#tenant-1#NAMESPACE#namespace-1");
+  assert.equal(registry.sk, "SESSION#session-1");
+  assert.equal(registry.ttl, Math.trunc(record.expires_at.getTime() / 1000));
+  assert.equal(registry.version, record.generation);
+  validateMicroVMSessionRegistryRecord(registry);
+
+  const roundTrip = microVMSessionFromRegistryRecord(registry);
+  assert.equal(roundTrip.endpoint, record.endpoint);
+  assert.equal(roundTrip.microvm_id, record.microvm_id);
+  assert.deepEqual(roundTrip.metadata, { safe: "ok" });
+
+  for (const bad of [
+    { ...registry, pk: "TENANT#other#NAMESPACE#namespace-1" },
+    { ...registry, ttl: registry.ttl + 1 },
+    { ...registry, version: 0 },
+    { ...registry, metadata: { bearer_token: "secret" } },
+  ]) {
+    assert.throws(
+      () => validateMicroVMSessionRegistryRecord(bad),
+      (err) =>
+        err?.code === MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE ||
+        err?.code === MICROVM_ERROR_FORBIDDEN_FIELD,
+    );
+  }
+});
+
+test("microvm memory registry client preserves durable session flow", async () => {
+  assert.throws(
+    () => createMicroVMRegistryClient(null),
+    (err) => err?.code === MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+  );
+
+  const registry = createMemoryMicroVMSessionRegistry();
+  await assert.rejects(
+    () => registry.get({ tenant_id: "tenant-1", namespace: "namespace-1", session_id: "missing" }),
+    (err) => err?.code === MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+  );
+
+  const client = createMicroVMRegistryClient(registry, { ttl_ms: 30 * 60 * 1000 });
+  const created = await client.create(createInput());
+  assert.equal(created.state, MicroVMState.Requested);
+  assert.equal(created.expires_at.valueOf() - created.created_at.valueOf(), 30 * 60 * 1000);
+
+  const started = await client.start(commandInput({ request_id: "req-start" }));
+  assert.equal(started.state, MicroVMState.Starting);
+  assert.equal(started.desired_state, MicroVMState.Started);
+  assert.equal(started.last_action, MicroVMCommand.Start);
+
+  const status = await client.status(queryInput({ request_id: "req-status" }));
+  assert.equal(status.lifecycle_state, MicroVMState.Starting);
+  assert.equal(status.registry_version, 2);
+
+  const session = await client.session(queryInput({ request_id: "req-session" }));
+  assert.equal(session.session_id, "session-1");
+
+  const stopped = await client.stop(
+    commandInput({
+      request_id: "req-stop",
+      desired_state: MicroVMState.Stopped,
+      now: new Date(3000),
+    }),
+  );
+  assert.equal(stopped.state, MicroVMState.Stopping);
+  assert.equal(stopped.desired_state, MicroVMState.Stopped);
+  assert.equal(stopped.last_action, MicroVMCommand.Stop);
+  assert.equal(stopped.generation, 3);
+
+  await registry.delete(microVMSessionKey(stopped));
+  await assert.rejects(
+    () => registry.get(microVMSessionKey(stopped)),
+    (err) => err?.code === MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+  );
+  await assert.rejects(
+    () => registry.delete({ tenant_id: "", namespace: "namespace-1", session_id: "session-1" }),
+    (err) => err?.code === MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+  );
+});
+
+test("microvm TableTheory registry adapter uses constrained storage model", async () => {
+  const registered = [];
+  const saved = [];
+  const deleted = [];
+  const db = {
+    register(model) {
+      registered.push(model);
+    },
+    async save(modelName, item) {
+      saved.push({ modelName, item });
+    },
+    async get(modelName, key) {
+      assert.equal(modelName, "MicroVMCustomModel");
+      assert.deepEqual(key, {
+        pk: "TENANT#tenant-1#NAMESPACE#namespace-1",
+        sk: "SESSION#session-1",
+      });
+      return saved[0].item;
+    },
+    async delete(modelName, key) {
+      deleted.push({ modelName, key });
+    },
+  };
+
+  const registry = createTableTheoryMicroVMSessionRegistry(db, {
+    table_name: "microvm-table",
+    model_name: "MicroVMCustomModel",
+  });
+  assert.equal(registered[0].tableName, "microvm-table");
+
+  const stored = await registry.put(validRecord({ metadata: { safe: "ok" } }));
+  assert.equal(stored.session_id, "session-1");
+  assert.equal(saved[0].modelName, "MicroVMCustomModel");
+  assert.equal(saved[0].item.pk, "TENANT#tenant-1#NAMESPACE#namespace-1");
+  assert.equal(saved[0].item.created_at, new Date(1000).toISOString());
+  assert.deepEqual(saved[0].item.metadata, { safe: "ok" });
+
+  const got = await registry.get(microVMSessionKey(stored));
+  assert.equal(got.last_action, MicroVMCommand.Create);
+  await registry.delete(microVMSessionKey(stored));
+  assert.equal(deleted[0].modelName, "MicroVMCustomModel");
+
+  assert.throws(
+    () => createTableTheoryMicroVMSessionRegistry(null),
+    (err) => err?.code === MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+  );
+
+  const failingRegistry = createTableTheoryMicroVMSessionRegistry(
+    {
+      async save() {
+        throw new Error("raw table failure");
+      },
+      async get() {
+        throw new Error("raw table failure");
+      },
+      async delete() {
+        throw new Error("raw table failure");
+      },
+    },
+    { auto_register: false },
+  );
+  for (const op of [
+    () => failingRegistry.put(validRecord()),
+    () => failingRegistry.get(microVMSessionKey(validRecord())),
+    () => failingRegistry.delete(microVMSessionKey(validRecord())),
+  ]) {
+    await assert.rejects(
+      op,
+      (err) =>
+        err?.code === MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE &&
+        !String(err.message).includes("raw table failure"),
+    );
+  }
 });
 
 test("microvm AWS Lambda client factory fails closed without SDK support", async () => {
