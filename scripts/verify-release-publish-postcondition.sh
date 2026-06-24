@@ -72,6 +72,30 @@ is_published_release() {
   [[ "${release_state}" == "published-stable" ]]
 }
 
+is_published_prerelease() {
+  local tag="$1"
+  local release_state
+
+  if ! is_rc_tag "${tag}"; then
+    return 1
+  fi
+
+  if ! command -v gh >/dev/null 2>&1; then
+    return 1
+  fi
+
+  if ! release_state="$(
+    gh release view "${tag}" \
+      --json isDraft,isPrerelease \
+      --jq 'if (.isDraft == false and .isPrerelease == true) then "published-prerelease" else "" end' \
+      2>/dev/null
+  )"; then
+    return 1
+  fi
+
+  [[ "${release_state}" == "published-prerelease" ]]
+}
+
 stable_already_published_noop_is_legitimate() {
   local base_ref
 
@@ -102,11 +126,44 @@ stable_already_published_noop_is_legitimate() {
   echo "release-publish-postcondition: PASS (already published ${expected_tag}; legitimate no-op)"
 }
 
+prerelease_already_published_noop_is_legitimate() {
+  local base_ref
+
+  if ! is_rc_tag "${expected_tag}"; then
+    return 1
+  fi
+
+  if ! is_published_prerelease "${expected_tag}"; then
+    return 1
+  fi
+
+  if ! fetch_base_branch_and_tags "premain"; then
+    return 1
+  fi
+
+  if ! git rev-parse --verify --quiet "${expected_tag}^{commit}" >/dev/null; then
+    return 1
+  fi
+
+  if ! base_ref="$(resolve_base_ref "premain")"; then
+    return 1
+  fi
+
+  if has_releasable_commits_since "${expected_tag}" "${base_ref}"; then
+    return 1
+  fi
+
+  echo "release-publish-postcondition: PASS (already published ${expected_tag}; legitimate no-op)"
+}
+
 require_created_tag() {
   local expected_shape="$1"
 
   if [[ "${release_created}" != "true" ]]; then
     if [[ "${expected_shape}" == "stable" ]] && stable_already_published_noop_is_legitimate; then
+      return 0
+    fi
+    if [[ "${expected_shape}" == "RC" ]] && prerelease_already_published_noop_is_legitimate; then
       return 0
     fi
 
@@ -187,8 +244,58 @@ self_test_stable_already_published_noop() {
   rm -rf "${tmp}"
 }
 
+self_test_prerelease_already_published_noop() {
+  local tmp
+  local output
+
+  tmp="$(mktemp -d)"
+  (
+    cd "${tmp}"
+    git init -q
+    git checkout -q -b premain
+    commit_self_test_change "chore: seed RC baseline" "self-test.txt" "baseline"
+    git update-ref refs/tags/v1.0.0-rc HEAD
+
+    expected_tag="v1.0.0-rc"
+    release_created="false"
+    tag_name=""
+
+    is_published_prerelease() {
+      [[ "${1:-}" == "v1.0.0-rc" ]]
+    }
+
+    commit_self_test_change "docs: internal RC note" "self-test.txt" "docs"
+    if ! output="$(require_created_tag "RC" 2>&1)"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test prerelease already-published no-op was rejected)" >&2
+      return 1
+    fi
+    grep -Fq "already published v1.0.0-rc; legitimate no-op" <<<"${output}" || {
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test prerelease no-op did not report already-published tolerance)" >&2
+      return 1
+    }
+    echo "release-publish-postcondition: PASS (self-test prerelease already-published tag with zero user-facing commits passed)"
+
+    commit_self_test_change "fix: self-test releasable change" "self-test.txt" "fix"
+    if output="$(require_created_tag "RC" 2>&1)"; then
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test prerelease genuine miss was accepted)" >&2
+      return 1
+    fi
+    grep -Fq "release-publish-postcondition: FAIL (release-please no-op is a failed RC publish gate; release_created=false)" <<<"${output}" || {
+      printf '%s\n' "${output}" >&2
+      echo "release-publish-postcondition: FAIL (self-test prerelease genuine miss did not preserve the fail-closed message)" >&2
+      return 1
+    }
+    echo "release-publish-postcondition: PASS (self-test prerelease already-published tag with a user-facing commit failed closed)"
+  )
+  rm -rf "${tmp}"
+}
+
 if [[ "${1:-}" == "--self-test" ]]; then
   self_test_stable_already_published_noop
+  self_test_prerelease_already_published_noop
   exit $?
 fi
 
@@ -210,6 +317,9 @@ case "${channel}" in
   prerelease)
     if is_rc_tag "${expected_tag}"; then
       require_created_tag "RC" || exit 1
+      if [[ "${release_created}" != "true" ]]; then
+        exit 0
+      fi
       if ! is_rc_tag "${tag_name}"; then
         echo "release-publish-postcondition: FAIL (prerelease tag ${tag_name} is not RC-shaped)" >&2
         exit 1
