@@ -79,7 +79,7 @@ class AppTheoryMicrovmNetworkConnector extends constructs_1.Construct {
 }
 exports.AppTheoryMicrovmNetworkConnector = AppTheoryMicrovmNetworkConnector;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryMicrovmNetworkConnector[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector", version: "1.13.2" };
+AppTheoryMicrovmNetworkConnector[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector", version: "1.14.0-rc" };
 function validateRequired(value, propName) {
     if (value === undefined || value === null) {
         throw new Error(`AppTheoryMicrovmNetworkConnector requires props.${propName}`);
