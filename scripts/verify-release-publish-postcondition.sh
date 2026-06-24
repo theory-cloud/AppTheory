@@ -72,6 +72,93 @@ is_published_release() {
   [[ "${release_state}" == "published-stable" ]]
 }
 
+github_repo_slug() {
+  local remote_url
+  local slug
+
+  if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
+    printf '%s\n' "${GITHUB_REPOSITORY}"
+    return 0
+  fi
+
+  remote_url="$(git remote get-url origin 2>/dev/null || true)"
+  case "${remote_url}" in
+    git@github.com:*)
+      slug="${remote_url#git@github.com:}"
+      ;;
+    https://github.com/*)
+      slug="${remote_url#https://github.com/}"
+      ;;
+    http://github.com/*)
+      slug="${remote_url#http://github.com/}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  slug="${slug%.git}"
+  if [[ ! "${slug}" =~ ^[^/]+/[^/]+$ ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "${slug}"
+}
+
+release_json_is_published_prerelease() {
+  local release_json="$1"
+
+  python3 -c '
+import json
+import sys
+
+try:
+    data = json.loads(sys.stdin.read())
+except json.JSONDecodeError:
+    sys.exit(1)
+
+sys.exit(0 if data.get("draft") is False and data.get("prerelease") is True else 1)
+' <<<"${release_json}"
+}
+
+is_public_github_published_prerelease() {
+  local tag="$1"
+  local repo
+  local release_json
+  local token
+  local curl_args=()
+
+  if ! command -v curl >/dev/null 2>&1; then
+    return 1
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    return 1
+  fi
+
+  if ! repo="$(github_repo_slug)"; then
+    return 1
+  fi
+
+  curl_args=(
+    -fsSL
+    -H "Accept: application/vnd.github+json"
+    -H "X-GitHub-Api-Version: 2022-11-28"
+  )
+  token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  if [[ -n "${token}" ]]; then
+    curl_args+=(-H "Authorization: Bearer ${token}")
+  fi
+
+  if ! release_json="$(
+    curl "${curl_args[@]}" "https://api.github.com/repos/${repo}/releases/tags/${tag}" 2>/dev/null
+  )"; then
+    return 1
+  fi
+
+  release_json_is_published_prerelease "${release_json}"
+}
+
 is_published_prerelease() {
   local tag="$1"
   local release_state
@@ -80,20 +167,19 @@ is_published_prerelease() {
     return 1
   fi
 
-  if ! command -v gh >/dev/null 2>&1; then
-    return 1
+  if command -v gh >/dev/null 2>&1; then
+    if release_state="$(
+      gh release view "${tag}" \
+        --json isDraft,isPrerelease \
+        --jq 'if (.isDraft == false and .isPrerelease == true) then "published-prerelease" else "" end' \
+        2>/dev/null
+    )"; then
+      [[ "${release_state}" == "published-prerelease" ]]
+      return $?
+    fi
   fi
 
-  if ! release_state="$(
-    gh release view "${tag}" \
-      --json isDraft,isPrerelease \
-      --jq 'if (.isDraft == false and .isPrerelease == true) then "published-prerelease" else "" end' \
-      2>/dev/null
-  )"; then
-    return 1
-  fi
-
-  [[ "${release_state}" == "published-prerelease" ]]
+  is_public_github_published_prerelease "${tag}"
 }
 
 stable_already_published_noop_is_legitimate() {
