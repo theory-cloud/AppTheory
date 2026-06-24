@@ -58,7 +58,7 @@ def stable_json(value: Any) -> str:
 
 def list_fixture_files(fixtures_root: Path) -> list[Path]:
     files: list[Path] = []
-    for tier in ("p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14"):
+    for tier in ("p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15"):
         tier_dir = fixtures_root / tier
         if not tier_dir.exists():
             continue
@@ -765,6 +765,341 @@ def decode_logging_profile_validation_errors(runtime: Any, profile: Any) -> list
     return []
 
 
+MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm"
+MICROVM_CONTRACT_VERSION = "m15.microvm/v1"
+MICROVM_REQUIRED_LIFECYCLE_HOOKS = ["prepare_image", "start", "readiness", "stop", "teardown", "failure"]
+MICROVM_REQUIRED_LIFECYCLE_STATES = [
+    "requested",
+    "image_preparing",
+    "image_prepared",
+    "starting",
+    "started",
+    "readiness_probing",
+    "ready",
+    "stopping",
+    "stopped",
+    "tearing_down",
+    "terminated",
+    "failed",
+]
+MICROVM_REQUIRED_CONTROLLER_COMMANDS = ["create", "start", "stop", "status", "session"]
+MICROVM_REQUIRED_ENVELOPE_FIELDS = ["command", "request_id", "tenant_id", "auth_context"]
+MICROVM_REQUIRED_SESSION_FIELDS = [
+    "tenant_id",
+    "namespace",
+    "session_id",
+    "state",
+    "desired_state",
+    "image_ref",
+    "controller_id",
+    "created_at",
+    "updated_at",
+    "expires_at",
+    "generation",
+    "last_command_id",
+    "auth_subject",
+]
+
+
+def compare_microvm_contract_fixture(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, dict[str, Any], dict[str, Any], _DummyEffectsApp]:
+    actual = validate_microvm_contract_fixture((fixture.get("setup") or {}).get("microvm_contract"))
+    expected = (fixture.get("expect") or {}).get("microvm_contract_validation")
+    if not isinstance(expected, dict):
+        return (
+            False,
+            "missing expect.microvm_contract_validation",
+            actual,
+            {"microvm_contract_validation": None},
+            _DummyEffectsApp(),
+        )
+    if actual == expected:
+        return True, "", actual, expected, _DummyEffectsApp()
+    return False, "microvm_contract_validation mismatch", actual, expected, _DummyEffectsApp()
+
+
+def validate_microvm_contract_fixture(contract: Any) -> dict[str, Any]:
+    if not isinstance(contract, dict):
+        return invalid_microvm_contract(
+            "m15.microvm.invalid_contract",
+            "apptheory: microvm contract fixture missing",
+        )
+
+    kind = str(contract.get("kind", "")).strip()
+    version = str(contract.get("version", "")).strip()
+    if str(contract.get("contract", "")).strip() != MICROVM_CONTRACT_NAME or version != MICROVM_CONTRACT_VERSION:
+        return invalid_microvm_contract(
+            "m15.microvm.invalid_contract",
+            "apptheory: microvm contract must be named and versioned",
+        )
+    if kind not in {"lifecycle", "controller_session"}:
+        return invalid_microvm_contract(
+            "m15.microvm.invalid_contract",
+            "apptheory: microvm contract kind is unsupported",
+        )
+
+    runtime = _load_apptheory_runtime()
+    escape_hatches = contract.get("escape_hatches") or {}
+    escape_hatch_error = validate_microvm_escape_hatches(runtime, kind, version, escape_hatches)
+    if escape_hatch_error:
+        return escape_hatch_error
+
+    controller = contract.get("controller") or {}
+    if kind == "controller_session" and not microvm_controller_auth_defaults_deny(controller.get("auth") or {}):
+        return {
+            "valid": False,
+            "kind": kind,
+            "version": version,
+            "error_code": "m15.microvm.unauthenticated_controller",
+            "error_message": "apptheory: microvm controller must default to authenticated deny",
+        }
+
+    if kind == "lifecycle":
+        err = validate_microvm_lifecycle(contract.get("lifecycle") or {})
+        if err:
+            return invalid_microvm_contract("m15.microvm.lifecycle_incomplete", err)
+    else:
+        err = validate_microvm_controller(runtime, controller)
+        if err:
+            return invalid_microvm_contract("m15.microvm.controller_incomplete", err)
+        err = validate_microvm_session_registry(runtime, contract.get("session_registry") or {})
+        if err:
+            return invalid_microvm_contract("m15.microvm.session_registry_incomplete", err)
+
+    return {"valid": True, "kind": kind, "version": version}
+
+
+def invalid_microvm_contract(error_code: str, error_message: str) -> dict[str, Any]:
+    return {"valid": False, "error_code": error_code, "error_message": error_message}
+
+
+def microvm_controller_auth_defaults_deny(auth: dict[str, Any]) -> bool:
+    return auth.get("required") is True and str(auth.get("default", "")).strip().lower() == "deny"
+
+
+def validate_microvm_lifecycle(lifecycle: dict[str, Any]) -> str:
+    runtime = _load_apptheory_runtime()
+    try:
+        runtime.validate_microvm_lifecycle_contract(lifecycle)
+        handlers = {hook: (lambda _event: None) for hook in MICROVM_REQUIRED_LIFECYCLE_HOOKS}
+        adapter = runtime.create_microvm_lifecycle_adapter(contract=lifecycle, handlers=handlers)
+        state = "requested"
+        for hook in ["prepare_image", "start", "readiness", "stop", "teardown"]:
+            result = adapter.handle(
+                {
+                    "request_id": "m15-lifecycle-fixture",
+                    "tenant_id": "tenant-fixture",
+                    "namespace": "namespace-fixture",
+                    "session_id": "session-fixture",
+                    "hook": hook,
+                    "state": state,
+                }
+            )
+            if result.error:
+                return result.error.message
+            state = str(result.state or "")
+        if state != "terminated":
+            return f"apptheory: microvm lifecycle adapter terminated at {state}"
+
+        failure = adapter.handle(
+            {
+                "request_id": "m15-lifecycle-fixture-failure",
+                "tenant_id": "tenant-fixture",
+                "namespace": "namespace-fixture",
+                "session_id": "session-fixture",
+                "hook": "failure",
+                "state": "starting",
+            }
+        )
+        if failure.error:
+            return failure.error.message
+        if failure.state != "failed":
+            return f"apptheory: microvm lifecycle failure hook produced {failure.state}"
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        return str(exc)
+
+
+def validate_microvm_escape_hatches(runtime: Any, kind: str, version: str, escape_hatches: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        runtime.validate_microvm_escape_hatches(escape_hatches or {})
+        return None
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "valid": False,
+            "kind": kind,
+            "version": version,
+            "error_code": str(getattr(exc, "code", "m15.microvm.invalid_contract")),
+            "error_message": str(getattr(exc, "message", str(exc))),
+        }
+
+def validate_microvm_controller(runtime: Any, controller: dict[str, Any]) -> str:
+    try:
+        runtime.validate_microvm_controller_contract(controller)
+        exercise_microvm_controller(runtime)
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        return str(exc)
+
+
+def exercise_microvm_controller(runtime: Any) -> None:
+    client = runtime.create_fake_microvm_client(now=1.0)
+    controller = runtime.create_microvm_controller(
+        client,
+        controller_id="controller-fixture",
+        id_generator=lambda: "session-fixture",
+    )
+    create = controller.handle(runtime_controller_request(runtime.COMMAND_CREATE, "m15-create", ""))
+    if create.error:
+        raise create.error
+    require_create_response(create)
+
+    start = controller.handle(runtime_controller_request(runtime.COMMAND_START, "m15-start", create.session_id))
+    if start.error:
+        raise start.error
+    require_start_stop_response("start", start, create.session_id, "started")
+
+    status = controller.handle(runtime_controller_request(runtime.COMMAND_STATUS, "m15-status", create.session_id))
+    if status.error:
+        raise status.error
+    require_status_response(status, create.session_id)
+
+    session = controller.handle(runtime_controller_request(runtime.COMMAND_SESSION, "m15-session", create.session_id))
+    if session.error:
+        raise session.error
+    require_session_response(session, create.session_id)
+
+    stop = controller.handle(runtime_controller_request(runtime.COMMAND_STOP, "m15-stop", create.session_id))
+    if stop.error:
+        raise stop.error
+    require_start_stop_response("stop", stop, create.session_id, "stopped")
+
+
+def require_create_response(response: Any) -> None:
+    if not response.session_id or response.state != "requested" or not response.registry_version:
+        raise RuntimeError("apptheory: microvm controller create response incomplete")
+
+
+def require_start_stop_response(name: str, response: Any, session_id: str, desired_state: str) -> None:
+    if response.session_id != session_id or not response.state or response.desired_state != desired_state:
+        raise RuntimeError(f"apptheory: microvm controller {name} response incomplete")
+
+
+def require_status_response(response: Any, session_id: str) -> None:
+    if response.session_id != session_id or not response.lifecycle_state or not response.last_transition:
+        raise RuntimeError("apptheory: microvm controller status response incomplete")
+
+
+def require_session_response(response: Any, session_id: str) -> None:
+    if response.session_id != session_id or not response.tenant_id or not response.namespace or not response.registry_version:
+        raise RuntimeError("apptheory: microvm controller session response incomplete")
+
+
+def runtime_controller_request(command: str, request_id: str, session_id: str) -> dict[str, Any]:
+    request: dict[str, Any] = {
+        "command": command,
+        "request_id": request_id,
+        "tenant_id": "tenant-fixture",
+        "namespace": "namespace-fixture",
+        "auth_context": {
+            "subject": "subject-fixture",
+            "tenant_id": "tenant-fixture",
+        },
+        "session_id": session_id,
+    }
+    if command == "create":
+        request["image_ref"] = "image-fixture"
+        request["network_connector_ref"] = "network-fixture"
+    return request
+
+def validate_microvm_session_registry(runtime: Any, registry: dict[str, Any]) -> str:
+    try:
+        runtime.validate_microvm_session_registry_contract(registry)
+        exercise_microvm_session_registry(runtime)
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        return str(exc)
+
+
+def exercise_microvm_session_registry(runtime: Any) -> None:
+    record = runtime.MicroVMSessionRecord(
+        tenant_id="tenant-fixture",
+        namespace="namespace-fixture",
+        session_id="session-fixture",
+        state="starting",
+        desired_state="started",
+        endpoint="https://microvm.example.test/session-fixture",
+        microvm_id="microvm-fixture",
+        image_ref="image-fixture",
+        network_connector_ref="network-fixture",
+        controller_id="controller-fixture",
+        created_at=100.0,
+        updated_at=160.0,
+        expires_at=3700.0,
+        generation=3,
+        last_action="start",
+        last_command_id="m15-registry",
+        auth_subject="subject-fixture",
+        metadata={"safe": "ok"},
+    )
+    registry_record = runtime.microvm_session_record_to_registry_record(record)
+    if (
+        registry_record.pk != runtime.microvm_session_registry_partition_key(record.tenant_id, record.namespace)
+        or registry_record.sk != runtime.microvm_session_registry_sort_key(record.session_id)
+        or registry_record.ttl != int(record.expires_at)
+        or registry_record.endpoint != record.endpoint
+        or registry_record.microvm_id != record.microvm_id
+        or registry_record.last_action != "start"
+    ):
+        raise RuntimeError("apptheory: microvm session registry canonical record incomplete")
+    round_trip = runtime.microvm_session_from_registry_record(registry_record)
+    if (
+        round_trip.endpoint != record.endpoint
+        or round_trip.microvm_id != record.microvm_id
+        or round_trip.last_action != record.last_action
+    ):
+        raise RuntimeError("apptheory: microvm session registry round trip incomplete")
+    store = runtime.create_memory_microvm_session_registry()
+    stored = store.put(record)
+    if stored.last_action != "start":
+        raise RuntimeError("apptheory: microvm memory registry lost last action")
+    client = runtime.create_microvm_registry_client(store, ttl_seconds=1800)
+    created = client.create(
+        runtime.MicroVMCreateSessionInput(
+            request_id="m15-registry-create",
+            tenant_id="tenant-fixture",
+            namespace="namespace-fixture",
+            session_id="session-registry-client",
+            image_ref="image-fixture",
+            network_connector_ref="network-fixture",
+            session_spec=runtime.MicroVMSessionSpec(metadata={"safe": "ok"}),
+            controller_id="controller-fixture",
+            auth_subject="subject-fixture",
+            now=100.0,
+        )
+    )
+    if created.last_action != "create" or created.expires_at - created.created_at != 1800:
+        raise RuntimeError("apptheory: microvm registry client create record incomplete")
+    status = client.status(
+        runtime.MicroVMSessionQueryInput(
+            request_id="m15-registry-status",
+            tenant_id=created.tenant_id,
+            namespace=created.namespace,
+            session_id=created.session_id,
+            auth_subject=created.auth_subject,
+        )
+    )
+    if status.last_action != "create" or status.registry_version != created.generation:
+        raise RuntimeError("apptheory: microvm registry client status incomplete")
+
+
+def missing_strings(required: list[str], got: Any) -> list[str]:
+    values = got if isinstance(got, list) else []
+    seen = {str(value).strip() for value in values if str(value).strip()}
+    return sorted(value for value in required if value not in seen)
+
+
 def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     tier = str(fixture.get("tier", "")).strip().lower()
     if tier == "p0":
@@ -788,6 +1123,8 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
         return run_fixture_m12(fixture)
     if tier == "m14":
         return run_fixture_m14(fixture)
+    if tier == "m15":
+        return compare_microvm_contract_fixture(fixture)
 
     setup = fixture.get("setup", {})
     input_ = fixture.get("input", {})
@@ -800,7 +1137,7 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
         return False, f"status: expected {expected.get('status')}, got {actual.status}", actual, expected, app
 
     if bool(expected.get("is_base64")) != actual.is_base64:
-        return False, f"is_base64 mismatch", actual, expected, app
+        return False, "is_base64 mismatch", actual, expected, app
 
     if (expected.get("cookies") or []) != actual.cookies:
         return False, "cookies mismatch", actual, expected, app
@@ -2831,6 +3168,9 @@ def main() -> int:
             if "profile_logs" in expect_obj:
                 print(f"  expected.profile_logs: {stable_json(expect_obj.get('profile_logs'))}", file=sys.stderr)
                 print(f"  got.profile_logs: {stable_json(actual.get('profile_logs'))}", file=sys.stderr)
+        elif "microvm_contract_validation" in expect_obj:
+            print(f"  expected.microvm_contract_validation: {stable_json(expected)}", file=sys.stderr)
+            print(f"  got.microvm_contract_validation: {stable_json(actual)}", file=sys.stderr)
         else:
             print(f"  expected: {stable_json(expected)}", file=sys.stderr)
             print(f"  got: {stable_json(debug_actual_for_expected(actual, expected))}", file=sys.stderr)

@@ -1,0 +1,32 @@
+{
+  "id": "m15.microvm.denies.raw_sdk_escape_hatch",
+  "tier": "m15",
+  "name": "Lambda MicroVM contract rejects raw AWS SDK escape hatches",
+  "setup": {
+    "microvm_contract": {
+      "contract": "apptheory.lambda_microvm",
+      "version": "m15.microvm/v1",
+      "kind": "controller_session",
+      "escape_hatches": {
+        "raw_aws_sdk": true,
+        "raw_lifecycle_hook_bypass": false
+      },
+      "controller": {
+        "auth": {
+          "required": true,
+          "default": "deny"
+        }
+      }
+    }
+  },
+  "input": {},
+  "expect": {
+    "microvm_contract_validation": {
+      "valid": false,
+      "kind": "controller_session",
+      "version": "m15.microvm/v1",
+      "error_code": "m15.microvm.raw_sdk_escape_hatch",
+      "error_message": "apptheory: microvm contract forbids raw AWS SDK escape hatch"
+    }
+  }
+}

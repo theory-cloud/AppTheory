@@ -36,6 +36,9 @@
 - [CodeBuild Job Runner (Import Pipeline)](./codebuild-job-runner.md) — batch job runner for transforms/decrypt/backfills.
 - [Jobs Table (Import Pipeline)](./jobs-table.md) — opinionated DynamoDB table for job ledgers (schema + GSIs + TTL).
 - [Lambda Role Helper](./lambda-role.md) — Lambda execution roles (baseline + X-Ray + KMS + custom statements).
+- [MicroVM Network Connector](./microvm-network-connector.md) — Lambda MicroVM VPC egress connector with caller-owned VPC/subnet/security-group context.
+- [MicroVM Image](./microvm-image.md) — Lambda MicroVM image resource with code artifact, base image, hooks, logging, resources, environment variables, and connector references.
+- [MicroVM Controller](./microvm-controller.md) — protected controller HTTP API, controller Lambda, and durable session registry table.
 - [CloudFront Path-Routed Frontend Distribution](./path-routed-frontend.md) — multi-SPA routing behind one stage domain.
 - [Media CDN Pattern](./media-cdn.md) — S3 + CloudFront distribution for media subdomains (optional private media).
 - [Canonical FaceTheory-First SSR Site](../../docs/cdk/ssr-site.md) — operator guide for `AppTheorySsrSite`.

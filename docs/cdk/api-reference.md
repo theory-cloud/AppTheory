@@ -28,6 +28,11 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryCloudWatchLogsSubscription`: source-side CloudWatch Logs subscription attachment for a caller-provided log
   group, destination ARN, filter pattern, and optional delivery role
 - `AppTheoryHttpIngestionEndpoint`: authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer
+- `AppTheoryMicrovmNetworkConnector`: caller-owned VPC/subnet/security-group wiring for Lambda MicroVM egress
+- `AppTheoryMicrovmImage`: `AWS::Lambda::MicrovmImage` deployment with AppTheory hook, logging, resource, and connector
+  validation
+- `AppTheoryMicrovmController`: protected controller routes, controller Lambda, IAM grants, and durable `pk`/`sk`/`ttl`
+  session registry table
 - `AppTheorySsrSite`: FaceTheory-first CloudFront + S3 + Lambda URL deployment for SSR, SSG, and ISR
 - `AppTheoryQueue`, `AppTheoryQueueConsumer`, `AppTheoryQueueProcessor`: SQS queue and consumer patterns
 
@@ -52,6 +57,8 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - Use `AppTheoryRemoteMcpServer` plus `AppTheoryMcpProtectedResource` for Claude Remote MCP
 - Use `AppTheorySsrSite` when you need the canonical FaceTheory-first SSR/SSG/ISR deployment story
 - Use `AppTheoryJobsTable`, `AppTheoryS3Ingest`, and `AppTheoryCodeBuildJobRunner` for import pipelines
+- Use `AppTheoryMicrovmNetworkConnector`, `AppTheoryMicrovmImage`, and `AppTheoryMicrovmController` together for the
+  first-class AWS Lambda MicroVM golden path. The controller requires an authorizer and fails closed when omitted.
 
 Event workload wiring:
 
@@ -79,6 +86,11 @@ Kinesis guide and example:
 Guide:
 
 - [FaceTheory-First SSR Site](./ssr-site.md)
+
+MicroVM guide and example:
+
+- [Lambda MicroVM CDK Constructs](./lambda-microvm.md)
+- `examples/cdk/microvm-controller`
 
 ## AppSync note
 

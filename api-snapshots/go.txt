@@ -2928,6 +2928,474 @@ func (dynamoTaskRecord) TableName() string
 
 func (sessionRecord) TableName() string
 
+## github.com/theory-cloud/apptheory/runtime/microvm
+
+const CommandCreate Command = "create"
+
+const CommandSession Command = "session"
+
+const CommandStart Command = "start"
+
+const CommandStatus Command = "status"
+
+const CommandStop Command = "stop"
+
+const ContractName = "apptheory.lambda_microvm"
+
+const ContractVersion = "m15.microvm/v1"
+
+const ControllerAuthDefaultDeny = "deny"
+
+const DefaultSessionRegistryTableName = "apptheory-microvm-sessions"
+
+const EnvSessionRegistryTableName = "APPTHEORY_MICROVM_SESSION_REGISTRY_TABLE"
+
+const ErrorCodeControllerCommandFailed = "m15.microvm.controller_command_failed"
+
+const ErrorCodeControllerIncomplete = "m15.microvm.controller_incomplete"
+
+const ErrorCodeForbiddenField = "m15.microvm.forbidden_field"
+
+const ErrorCodeInvalidContract = "m15.microvm.invalid_contract"
+
+const ErrorCodeInvalidControllerRequest = "m15.microvm.invalid_controller_request"
+
+const ErrorCodeInvalidLifecycleEvent = "m15.microvm.invalid_lifecycle_event"
+
+const ErrorCodeLifecycleBypass = "m15.microvm.lifecycle_bypass"
+
+const ErrorCodeLifecycleHookFailed = "m15.microvm.lifecycle_hook_failed"
+
+const ErrorCodeLifecycleIncomplete = "m15.microvm.lifecycle_incomplete"
+
+const ErrorCodeRawSDKEscapeHatch = "m15.microvm.raw_sdk_escape_hatch"
+
+const ErrorCodeSessionRegistryIncomplete = "m15.microvm.session_registry_incomplete"
+
+const ErrorCodeUnauthenticatedController = "m15.microvm.unauthenticated_controller"
+
+const HookFailure LifecycleHook = "failure"
+
+const HookPrepareImage LifecycleHook = "prepare_image"
+
+const HookReadiness LifecycleHook = "readiness"
+
+const HookStart LifecycleHook = "start"
+
+const HookStop LifecycleHook = "stop"
+
+const HookTeardown LifecycleHook = "teardown"
+
+const KindControllerSession ContractKind = "controller_session"
+
+const KindLifecycle ContractKind = "lifecycle"
+
+const StateFailed LifecycleState = "failed"
+
+const StateImagePrepared LifecycleState = "image_prepared"
+
+const StateImagePreparing LifecycleState = "image_preparing"
+
+const StateReadinessProbing LifecycleState = "readiness_probing"
+
+const StateReady LifecycleState = "ready"
+
+const StateRequested LifecycleState = "requested"
+
+const StateStarted LifecycleState = "started"
+
+const StateStarting LifecycleState = "starting"
+
+const StateStopped LifecycleState = "stopped"
+
+const StateStopping LifecycleState = "stopping"
+
+const StateTearingDown LifecycleState = "tearing_down"
+
+const StateTerminated LifecycleState = "terminated"
+
+type AuthContext struct {
+	Subject      string            `json:"subject"`
+	TenantID     string            `json:"tenant_id"`
+	Namespace    string            `json:"namespace,omitempty"`
+	Entitlements []string          `json:"entitlements,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+}
+
+type Client interface {
+	Create(context.Context, CreateSessionInput) (SessionRecord, error)
+	Start(context.Context, SessionCommandInput) (SessionRecord, error)
+	Stop(context.Context, SessionCommandInput) (SessionRecord, error)
+	Status(context.Context, SessionQueryInput) (SessionStatus, error)
+	Session(context.Context, SessionQueryInput) (SessionRecord, error)
+}
+
+type Clock interface {
+	Now() time.Time
+}
+
+type Command string
+
+type ContractKind string
+
+type Controller struct {
+	client       Client
+	controllerID string
+	clock        Clock
+	ids          IDGenerator
+}
+
+type ControllerAuthContract struct {
+	Required bool   `json:"required"`
+	Default  string `json:"default"`
+}
+
+type ControllerCommandContract struct {
+	Name           Command  `json:"name"`
+	Method         string   `json:"method"`
+	Path           string   `json:"path"`
+	RequestFields  []string `json:"request_fields"`
+	ResponseFields []string `json:"response_fields"`
+}
+
+type ControllerContract struct {
+	Auth     ControllerAuthContract      `json:"auth"`
+	Envelope ControllerEnvelopeContract  `json:"envelope"`
+	Commands []ControllerCommandContract `json:"commands"`
+}
+
+type ControllerEnvelopeContract struct {
+	RequiredFields  []string `json:"required_fields"`
+	SafeErrorFields []string `json:"safe_error_fields"`
+	ForbiddenFields []string `json:"forbidden_fields"`
+}
+
+type ControllerOption func(*Controller)
+
+type ControllerRequest struct {
+	Command             Command     `json:"command"`
+	RequestID           string      `json:"request_id"`
+	TenantID            string      `json:"tenant_id"`
+	Namespace           string      `json:"namespace"`
+	AuthContext         AuthContext `json:"auth_context"`
+	SessionID           string      `json:"session_id,omitempty"`
+	ImageRef            string      `json:"image_ref,omitempty"`
+	NetworkConnectorRef string      `json:"network_connector_ref,omitempty"`
+	SessionSpec         SessionSpec `json:"session_spec,omitempty"`
+}
+
+type ControllerResponse struct {
+	Command         Command        `json:"command"`
+	RequestID       string         `json:"request_id"`
+	TenantID        string         `json:"tenant_id,omitempty"`
+	Namespace       string         `json:"namespace,omitempty"`
+	SessionID       string         `json:"session_id,omitempty"`
+	State           LifecycleState `json:"state,omitempty"`
+	DesiredState    LifecycleState `json:"desired_state,omitempty"`
+	LifecycleState  LifecycleState `json:"lifecycle_state,omitempty"`
+	Endpoint        string         `json:"endpoint,omitempty"`
+	MicroVMID       string         `json:"microvm_id,omitempty"`
+	LastAction      Command        `json:"last_action,omitempty"`
+	LastTransition  time.Time      `json:"last_transition,omitempty"`
+	RegistryVersion int64          `json:"registry_version,omitempty"`
+	Error           *SafeError     `json:"error,omitempty"`
+}
+
+type CreateSessionInput struct {
+	RequestID           string      `json:"request_id"`
+	TenantID            string      `json:"tenant_id"`
+	Namespace           string      `json:"namespace"`
+	SessionID           string      `json:"session_id"`
+	ImageRef            string      `json:"image_ref"`
+	NetworkConnectorRef string      `json:"network_connector_ref"`
+	SessionSpec         SessionSpec `json:"session_spec"`
+	ControllerID        string      `json:"controller_id"`
+	AuthSubject         string      `json:"auth_subject"`
+	Now                 time.Time   `json:"now"`
+}
+
+type EscapeHatches struct {
+	RawAWSSDK              bool `json:"raw_aws_sdk"`
+	RawLifecycleHookBypass bool `json:"raw_lifecycle_hook_bypass"`
+}
+
+type IDGenerator interface {
+	NewID() string
+}
+
+type LifecycleAdapter struct {
+	contract LifecycleContract
+	handlers map[LifecycleHook]LifecycleHandler
+}
+
+type LifecycleContract struct {
+	Hooks          []LifecycleHookSpec   `json:"hooks"`
+	States         []LifecycleState      `json:"states"`
+	TerminalStates []LifecycleState      `json:"terminal_states"`
+	Transitions    []LifecycleTransition `json:"transitions"`
+}
+
+type LifecycleEvent struct {
+	RequestID string            `json:"request_id"`
+	TenantID  string            `json:"tenant_id"`
+	Namespace string            `json:"namespace"`
+	SessionID string            `json:"session_id"`
+	Hook      LifecycleHook     `json:"hook"`
+	State     LifecycleState    `json:"state"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
+}
+
+type LifecycleHandler func(context.Context, LifecycleEvent) error
+
+type LifecycleHook string
+
+type LifecycleHookSpec struct {
+	Name         LifecycleHook  `json:"name"`
+	Phase        string         `json:"phase"`
+	State        LifecycleState `json:"state"`
+	SuccessState LifecycleState `json:"success_state"`
+	FailureState LifecycleState `json:"failure_state"`
+}
+
+type LifecycleOption func(*LifecycleAdapter)
+
+type LifecycleResult struct {
+	RequestID     string            `json:"request_id"`
+	TenantID      string            `json:"tenant_id"`
+	Namespace     string            `json:"namespace"`
+	SessionID     string            `json:"session_id"`
+	Hook          LifecycleHook     `json:"hook"`
+	PreviousState LifecycleState    `json:"previous_state"`
+	State         LifecycleState    `json:"state"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
+	Error         *SafeError        `json:"error,omitempty"`
+}
+
+type LifecycleState string
+
+type LifecycleTransition struct {
+	From LifecycleState `json:"from"`
+	Hook LifecycleHook  `json:"hook"`
+	To   LifecycleState `json:"to"`
+}
+
+type MemorySessionRegistry struct {
+	mu      sync.Mutex
+	records map[string]SessionRegistryRecord
+}
+
+type RegistryClient struct {
+	registry SessionRegistry
+	ttl      time.Duration
+}
+
+type RegistryClientOption func(*RegistryClient)
+
+type SafeError struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
+type SessionCommandInput struct {
+	RequestID    string         `json:"request_id"`
+	TenantID     string         `json:"tenant_id"`
+	Namespace    string         `json:"namespace"`
+	SessionID    string         `json:"session_id"`
+	ControllerID string         `json:"controller_id"`
+	AuthSubject  string         `json:"auth_subject"`
+	DesiredState LifecycleState `json:"desired_state"`
+	Now          time.Time      `json:"now"`
+}
+
+type SessionKey struct {
+	TenantID  string `json:"tenant_id"`
+	Namespace string `json:"namespace"`
+	SessionID string `json:"session_id"`
+}
+
+type SessionQueryInput struct {
+	RequestID   string `json:"request_id"`
+	TenantID    string `json:"tenant_id"`
+	Namespace   string `json:"namespace"`
+	SessionID   string `json:"session_id"`
+	AuthSubject string `json:"auth_subject"`
+}
+
+type SessionRecord struct {
+	TenantID            string            `json:"tenant_id"`
+	Namespace           string            `json:"namespace"`
+	SessionID           string            `json:"session_id"`
+	State               LifecycleState    `json:"state"`
+	DesiredState        LifecycleState    `json:"desired_state"`
+	Endpoint            string            `json:"endpoint,omitempty"`
+	MicroVMID           string            `json:"microvm_id,omitempty"`
+	ImageRef            string            `json:"image_ref"`
+	NetworkConnectorRef string            `json:"network_connector_ref"`
+	ControllerID        string            `json:"controller_id"`
+	CreatedAt           time.Time         `json:"created_at"`
+	UpdatedAt           time.Time         `json:"updated_at"`
+	ExpiresAt           time.Time         `json:"expires_at"`
+	Generation          int64             `json:"generation"`
+	LastAction          Command           `json:"last_action"`
+	LastCommandID       string            `json:"last_command_id"`
+	AuthSubject         string            `json:"auth_subject"`
+	Metadata            map[string]string `json:"metadata,omitempty"`
+}
+
+type SessionRegistry interface {
+	Put(context.Context, SessionRecord) (SessionRecord, error)
+	Get(context.Context, SessionKey) (SessionRecord, error)
+	Delete(context.Context, SessionKey) error
+}
+
+type SessionRegistryContract struct {
+	Pattern         string   `json:"pattern"`
+	TenantBinding   []string `json:"tenant_binding"`
+	RequiredFields  []string `json:"required_fields"`
+	StateValues     []string `json:"state_values"`
+	ForbiddenFields []string `json:"forbidden_fields"`
+}
+
+type SessionRegistryRecord struct {
+	PK                  string            `theorydb:"pk,attr:pk" json:"pk"`
+	SK                  string            `theorydb:"sk,attr:sk" json:"sk"`
+	TenantID            string            `theorydb:"attr:tenant_id" json:"tenant_id"`
+	Namespace           string            `theorydb:"attr:namespace" json:"namespace"`
+	SessionID           string            `theorydb:"attr:session_id" json:"session_id"`
+	State               LifecycleState    `theorydb:"attr:state" json:"state"`
+	DesiredState        LifecycleState    `theorydb:"attr:desired_state" json:"desired_state"`
+	Endpoint            string            `theorydb:"attr:endpoint,omitempty" json:"endpoint,omitempty"`
+	MicroVMID           string            `theorydb:"attr:microvm_id,omitempty" json:"microvm_id,omitempty"`
+	ImageRef            string            `theorydb:"attr:image_ref" json:"image_ref"`
+	NetworkConnectorRef string            `theorydb:"attr:network_connector_ref" json:"network_connector_ref"`
+	ControllerID        string            `theorydb:"attr:controller_id" json:"controller_id"`
+	CreatedAt           time.Time         `theorydb:"attr:created_at" json:"created_at"`
+	UpdatedAt           time.Time         `theorydb:"attr:updated_at" json:"updated_at"`
+	ExpiresAt           time.Time         `theorydb:"attr:expires_at" json:"expires_at"`
+	TTL                 int64             `theorydb:"ttl,attr:ttl" json:"ttl"`
+	Generation          int64             `theorydb:"attr:generation" json:"generation"`
+	Version             int64             `theorydb:"version,attr:version" json:"version"`
+	LastAction          Command           `theorydb:"attr:last_action" json:"last_action"`
+	LastCommandID       string            `theorydb:"attr:last_command_id" json:"last_command_id"`
+	AuthSubject         string            `theorydb:"attr:auth_subject" json:"auth_subject"`
+	Metadata            map[string]string `theorydb:"attr:metadata,omitempty" json:"metadata,omitempty"`
+}
+
+type SessionSpec struct {
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+type SessionStatus struct {
+	TenantID        string         `json:"tenant_id"`
+	Namespace       string         `json:"namespace"`
+	SessionID       string         `json:"session_id"`
+	State           LifecycleState `json:"state"`
+	DesiredState    LifecycleState `json:"desired_state"`
+	LifecycleState  LifecycleState `json:"lifecycle_state"`
+	Endpoint        string         `json:"endpoint,omitempty"`
+	MicroVMID       string         `json:"microvm_id,omitempty"`
+	LastAction      Command        `json:"last_action"`
+	LastTransition  time.Time      `json:"last_transition"`
+	RegistryVersion int64          `json:"registry_version"`
+}
+
+type TableTheorySessionRegistry struct {
+	db tablecore.DB
+}
+
+func DefaultControllerContract() ControllerContract
+
+func DefaultLifecycleContract() LifecycleContract
+
+func DefaultSessionRegistryContract() SessionRegistryContract
+
+func IsTerminalState(LifecycleState) bool
+
+func NewController(Client, ...ControllerOption) (*Controller, error)
+
+func NewLifecycleAdapter(...LifecycleOption) (*LifecycleAdapter, error)
+
+func NewMemorySessionRegistry() *MemorySessionRegistry
+
+func NewRegistryClient(SessionRegistry, ...RegistryClientOption) (*RegistryClient, error)
+
+func NewTableTheorySessionRegistry(tablecore.DB) (*TableTheorySessionRegistry, error)
+
+func SessionRecordFromRegistryRecord(SessionRegistryRecord) (SessionRecord, error)
+
+func SessionRecordToRegistryRecord(SessionRecord) (SessionRegistryRecord, error)
+
+func SessionRegistryPartitionKey(string, string) string
+
+func SessionRegistrySortKey(string) string
+
+func SessionRegistryTableName() string
+
+func ValidateControllerContract(ControllerContract) error
+
+func ValidateEscapeHatches(EscapeHatches) error
+
+func ValidateLifecycleContract(LifecycleContract) error
+
+func ValidateSessionRecord(SessionRecord) error
+
+func ValidateSessionRegistryContract(SessionRegistryContract) error
+
+func ValidateSessionRegistryRecord(SessionRegistryRecord) error
+
+func ValidateSessionStatus(SessionStatus) error
+
+func WithControllerClock(Clock) ControllerOption
+
+func WithControllerID(string) ControllerOption
+
+func WithControllerIDGenerator(IDGenerator) ControllerOption
+
+func WithLifecycleContract(LifecycleContract) LifecycleOption
+
+func WithLifecycleHandler(LifecycleHook, LifecycleHandler) LifecycleOption
+
+func WithRegistryClientTTL(time.Duration) RegistryClientOption
+
+func (*Controller) Handle(context.Context, ControllerRequest) (ControllerResponse, error)
+
+func (*LifecycleAdapter) Handle(context.Context, LifecycleEvent) (LifecycleResult, error)
+
+func (*MemorySessionRegistry) Delete(context.Context, SessionKey) error
+
+func (*MemorySessionRegistry) Get(context.Context, SessionKey) (SessionRecord, error)
+
+func (*MemorySessionRegistry) Put(context.Context, SessionRecord) (SessionRecord, error)
+
+func (*RegistryClient) Create(context.Context, CreateSessionInput) (SessionRecord, error)
+
+func (*RegistryClient) Session(context.Context, SessionQueryInput) (SessionRecord, error)
+
+func (*RegistryClient) Start(context.Context, SessionCommandInput) (SessionRecord, error)
+
+func (*RegistryClient) Status(context.Context, SessionQueryInput) (SessionStatus, error)
+
+func (*RegistryClient) Stop(context.Context, SessionCommandInput) (SessionRecord, error)
+
+func (*TableTheorySessionRegistry) Delete(context.Context, SessionKey) error
+
+func (*TableTheorySessionRegistry) Get(context.Context, SessionKey) (SessionRecord, error)
+
+func (*TableTheorySessionRegistry) Put(context.Context, SessionRecord) (SessionRecord, error)
+
+func (SafeError) Error() string
+
+func (SessionRecord) Key() SessionKey
+
+func (SessionRegistryRecord) TableName() string
+
+func (SessionStatus) Key() SessionKey
+
+func (randomIDGenerator) NewID() string
+
+func (realClock) Now() time.Time
+
 ## github.com/theory-cloud/apptheory/runtime/oauth
 
 const ContextKeyBearerToken = "oauth.bearer_token"
@@ -3468,6 +3936,41 @@ func (*Stream) Next() (*SSEMessage, error)
 func (*Stream) ReadAll() ([]SSEMessage, error)
 
 func (*Stream) Response() apptheory.Response
+
+## github.com/theory-cloud/apptheory/testkit/microvm
+
+type Call struct {
+	Command   runtimemicrovm.Command
+	RequestID string
+	TenantID  string
+	Namespace string
+	SessionID string
+}
+
+type FakeClient struct {
+	mu       sync.Mutex
+	now      time.Time
+	sessions map[runtimemicrovm.SessionKey]runtimemicrovm.SessionRecord
+	calls    []Call
+}
+
+func NewFakeClient() *FakeClient
+
+func NewFakeClientWithTime(time.Time) *FakeClient
+
+func (*FakeClient) Calls() []Call
+
+func (*FakeClient) Create(context.Context, runtimemicrovm.CreateSessionInput) (runtimemicrovm.SessionRecord, error)
+
+func (*FakeClient) Session(context.Context, runtimemicrovm.SessionQueryInput) (runtimemicrovm.SessionRecord, error)
+
+func (*FakeClient) SetNow(time.Time)
+
+func (*FakeClient) Start(context.Context, runtimemicrovm.SessionCommandInput) (runtimemicrovm.SessionRecord, error)
+
+func (*FakeClient) Status(context.Context, runtimemicrovm.SessionQueryInput) (runtimemicrovm.SessionStatus, error)
+
+func (*FakeClient) Stop(context.Context, runtimemicrovm.SessionCommandInput) (runtimemicrovm.SessionRecord, error)
 
 ## github.com/theory-cloud/apptheory/testkit/oauth
 

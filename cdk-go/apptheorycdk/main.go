@@ -610,6 +610,158 @@ func init() {
 		reflect.TypeOf((*AppTheoryMediaCdnProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmController",
+		reflect.TypeOf((*AppTheoryMicrovmController)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "accessLogGroup", GoGetter: "AccessLogGroup"},
+			_jsii_.MemberProperty{JsiiProperty: "api", GoGetter: "Api"},
+			_jsii_.MemberProperty{JsiiProperty: "controllerFunction", GoGetter: "ControllerFunction"},
+			_jsii_.MemberProperty{JsiiProperty: "endpoint", GoGetter: "Endpoint"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "routeAuthorizer", GoGetter: "RouteAuthorizer"},
+			_jsii_.MemberProperty{JsiiProperty: "sessionTable", GoGetter: "SessionTable"},
+			_jsii_.MemberProperty{JsiiProperty: "stage", GoGetter: "Stage"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryMicrovmController{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmControllerFunctionProps",
+		reflect.TypeOf((*AppTheoryMicrovmControllerFunctionProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmControllerProps",
+		reflect.TypeOf((*AppTheoryMicrovmControllerProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmControllerStageOptions",
+		reflect.TypeOf((*AppTheoryMicrovmControllerStageOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmHookMode",
+		reflect.TypeOf((*AppTheoryMicrovmHookMode)(nil)).Elem(),
+		map[string]interface{}{
+			"DISABLED": AppTheoryMicrovmHookMode_DISABLED,
+			"ENABLED":  AppTheoryMicrovmHookMode_ENABLED,
+		},
+	)
+	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmImage",
+		reflect.TypeOf((*AppTheoryMicrovmImage)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "createdAt", GoGetter: "CreatedAt"},
+			_jsii_.MemberProperty{JsiiProperty: "latestActiveImageVersion", GoGetter: "LatestActiveImageVersion"},
+			_jsii_.MemberProperty{JsiiProperty: "latestFailedImageVersion", GoGetter: "LatestFailedImageVersion"},
+			_jsii_.MemberProperty{JsiiProperty: "microvmImage", GoGetter: "MicrovmImage"},
+			_jsii_.MemberProperty{JsiiProperty: "microvmImageArn", GoGetter: "MicrovmImageArn"},
+			_jsii_.MemberProperty{JsiiProperty: "microvmImageName", GoGetter: "MicrovmImageName"},
+			_jsii_.MemberProperty{JsiiProperty: "microvmImageState", GoGetter: "MicrovmImageState"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberProperty{JsiiProperty: "updatedAt", GoGetter: "UpdatedAt"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryMicrovmImage{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			_jsii_.InitJsiiProxy(&j.jsiiProxy_IAppTheoryMicrovmImage)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageBuildHooks",
+		reflect.TypeOf((*AppTheoryMicrovmImageBuildHooks)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCloudWatchLogging",
+		reflect.TypeOf((*AppTheoryMicrovmImageCloudWatchLogging)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCodeArtifact",
+		reflect.TypeOf((*AppTheoryMicrovmImageCodeArtifact)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCpuArchitecture",
+		reflect.TypeOf((*AppTheoryMicrovmImageCpuArchitecture)(nil)).Elem(),
+		map[string]interface{}{
+			"ARM_64": AppTheoryMicrovmImageCpuArchitecture_ARM_64,
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageCpuConfiguration",
+		reflect.TypeOf((*AppTheoryMicrovmImageCpuConfiguration)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageEnvironmentVariable",
+		reflect.TypeOf((*AppTheoryMicrovmImageEnvironmentVariable)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageHooks",
+		reflect.TypeOf((*AppTheoryMicrovmImageHooks)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageLogging",
+		reflect.TypeOf((*AppTheoryMicrovmImageLogging)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageOsCapability",
+		reflect.TypeOf((*AppTheoryMicrovmImageOsCapability)(nil)).Elem(),
+		map[string]interface{}{
+			"ALL": AppTheoryMicrovmImageOsCapability_ALL,
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageProps",
+		reflect.TypeOf((*AppTheoryMicrovmImageProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageResources",
+		reflect.TypeOf((*AppTheoryMicrovmImageResources)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector",
+		reflect.TypeOf((*AppTheoryMicrovmNetworkConnector)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "networkConnector", GoGetter: "NetworkConnector"},
+			_jsii_.MemberProperty{JsiiProperty: "networkConnectorArn", GoGetter: "NetworkConnectorArn"},
+			_jsii_.MemberProperty{JsiiProperty: "networkConnectorState", GoGetter: "NetworkConnectorState"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "operatorRole", GoGetter: "OperatorRole"},
+			_jsii_.MemberProperty{JsiiProperty: "securityGroupIds", GoGetter: "SecurityGroupIds"},
+			_jsii_.MemberProperty{JsiiProperty: "subnetIds", GoGetter: "SubnetIds"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberProperty{JsiiProperty: "vpc", GoGetter: "Vpc"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryMicrovmNetworkConnector{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			_jsii_.InitJsiiProxy(&j.jsiiProxy_IAppTheoryMicrovmNetworkConnector)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorProps",
+		reflect.TypeOf((*AppTheoryMicrovmNetworkConnectorProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkProtocol",
+		reflect.TypeOf((*AppTheoryMicrovmNetworkProtocol)(nil)).Elem(),
+		map[string]interface{}{
+			"IPV4":       AppTheoryMicrovmNetworkProtocol_IPV4,
+			"DUAL_STACK": AppTheoryMicrovmNetworkProtocol_DUAL_STACK,
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmRuntimeHooks",
+		reflect.TypeOf((*AppTheoryMicrovmRuntimeHooks)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontend",
 		reflect.TypeOf((*AppTheoryPathRoutedFrontend)(nil)).Elem(),
 		[]_jsii_.Member{
@@ -899,6 +1051,26 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryWebSocketApiProps",
 		reflect.TypeOf((*AppTheoryWebSocketApiProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterInterface(
+		"@theory-cloud/apptheory-cdk.IAppTheoryMicrovmImage",
+		reflect.TypeOf((*IAppTheoryMicrovmImage)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "microvmImageArn", GoGetter: "MicrovmImageArn"},
+		},
+		func() interface{} {
+			return &jsiiProxy_IAppTheoryMicrovmImage{}
+		},
+	)
+	_jsii_.RegisterInterface(
+		"@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector",
+		reflect.TypeOf((*IAppTheoryMicrovmNetworkConnector)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "networkConnectorArn", GoGetter: "NetworkConnectorArn"},
+		},
+		func() interface{} {
+			return &jsiiProxy_IAppTheoryMicrovmNetworkConnector{}
+		},
 	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.MediaCdnDomainConfig",
