@@ -2972,6 +2972,12 @@ const ErrorCodeLifecycleIncomplete = "m15.microvm.lifecycle_incomplete"
 
 const ErrorCodeOperationContractIncomplete = "m16.microvm.operation_contract_incomplete"
 
+const ErrorCodeProviderOperationFailed = "m16.microvm.provider_operation_failed"
+
+const ErrorCodeProviderOperationUnsupported = "m16.microvm.provider_operation_unsupported"
+
+const ErrorCodeProviderRequestInvalid = "m16.microvm.provider_request_invalid"
+
 const ErrorCodeProviderStateMappingIncomplete = "m16.microvm.provider_state_mapping_incomplete"
 
 const ErrorCodeRawSDKEscapeHatch = "m15.microvm.raw_sdk_escape_hatch"
@@ -3069,6 +3075,13 @@ const StateTerminating LifecycleState = "terminating"
 const StateValidated LifecycleState = "validated"
 
 const StateValidating LifecycleState = "validating"
+
+type AWSLambdaMicroVMProvider struct {
+	api   lambdaMicroVMAPI
+	clock Clock
+}
+
+type AWSLambdaMicroVMProviderOption func(*awsLambdaMicroVMProviderConfig)
 
 type AuthContext struct {
 	Subject      string            `json:"subject"`
@@ -3264,10 +3277,118 @@ type OperationHTTPRouteContract struct {
 	ForbiddenFields []string  `json:"forbidden_fields,omitempty"`
 }
 
+type Provider interface {
+	Run(context.Context, ProviderRunInput) (ProviderSession, error)
+	Get(context.Context, ProviderSessionInput) (ProviderSession, error)
+	List(context.Context, ProviderListInput) (ProviderListOutput, error)
+	Suspend(context.Context, ProviderSessionInput) (ProviderSession, error)
+	Resume(context.Context, ProviderSessionInput) (ProviderSession, error)
+	Terminate(context.Context, ProviderSessionInput) (ProviderSession, error)
+	CreateAuthToken(context.Context, ProviderTokenInput) (ProviderToken, error)
+	CreateShellToken(context.Context, ProviderTokenInput) (ProviderToken, error)
+}
+
+type ProviderIdlePolicy struct {
+	AutoResumeEnabled        bool  `json:"auto_resume_enabled"`
+	MaxIdleDurationSeconds   int32 `json:"max_idle_duration_seconds"`
+	SuspendedDurationSeconds int32 `json:"suspended_duration_seconds"`
+}
+
+type ProviderListInput struct {
+	RequestID     string                   `json:"request_id"`
+	TenantID      string                   `json:"tenant_id"`
+	Namespace     string                   `json:"namespace"`
+	AuthContext   AuthContext              `json:"auth_context"`
+	ImageRef      string                   `json:"image_ref,omitempty"`
+	ImageVersion  string                   `json:"image_version,omitempty"`
+	MaxResults    int32                    `json:"max_results,omitempty"`
+	KnownSessions []ProviderSessionBinding `json:"known_sessions,omitempty"`
+}
+
+type ProviderListOutput struct {
+	Sessions       []ProviderSession `json:"sessions"`
+	RecoveryCursor string            `json:"recovery_cursor,omitempty"`
+}
+
+type ProviderPortScope struct {
+	AllPorts  bool  `json:"all_ports,omitempty"`
+	Port      int32 `json:"port,omitempty"`
+	StartPort int32 `json:"start_port,omitempty"`
+	EndPort   int32 `json:"end_port,omitempty"`
+}
+
+type ProviderRunInput struct {
+	RequestID                   string              `json:"request_id"`
+	TenantID                    string              `json:"tenant_id"`
+	Namespace                   string              `json:"namespace"`
+	SessionID                   string              `json:"session_id"`
+	AuthContext                 AuthContext         `json:"auth_context"`
+	ImageRef                    string              `json:"image_ref"`
+	ImageVersion                string              `json:"image_version,omitempty"`
+	NetworkConnectorRef         string              `json:"network_connector_ref,omitempty"`
+	IngressNetworkConnectorRefs []string            `json:"ingress_network_connector_refs,omitempty"`
+	EgressNetworkConnectorRefs  []string            `json:"egress_network_connector_refs,omitempty"`
+	SessionSpec                 SessionSpec         `json:"session_spec,omitempty"`
+	IdlePolicy                  *ProviderIdlePolicy `json:"idle_policy,omitempty"`
+	MaximumDurationSeconds      int32               `json:"maximum_duration_seconds,omitempty"`
+}
+
+type ProviderSession struct {
+	TenantID          string         `json:"tenant_id"`
+	Namespace         string         `json:"namespace"`
+	SessionID         string         `json:"session_id"`
+	ProviderMicroVMID string         `json:"provider_microvm_id"`
+	State             LifecycleState `json:"state"`
+	ProviderState     string         `json:"provider_state"`
+	ImageRef          string         `json:"image_ref,omitempty"`
+	ImageVersion      string         `json:"image_version,omitempty"`
+	StartedAt         time.Time      `json:"started_at,omitempty"`
+	TerminatedAt      time.Time      `json:"terminated_at,omitempty"`
+	RegistryVersion   int64          `json:"registry_version,omitempty"`
+	Terminal          bool           `json:"terminal,omitempty"`
+}
+
+type ProviderSessionBinding struct {
+	TenantID          string `json:"tenant_id"`
+	Namespace         string `json:"namespace"`
+	SessionID         string `json:"session_id"`
+	ProviderMicroVMID string `json:"provider_microvm_id"`
+	RegistryVersion   int64  `json:"registry_version,omitempty"`
+}
+
+type ProviderSessionInput struct {
+	RequestID   string                 `json:"request_id"`
+	TenantID    string                 `json:"tenant_id"`
+	Namespace   string                 `json:"namespace"`
+	AuthContext AuthContext            `json:"auth_context"`
+	Binding     ProviderSessionBinding `json:"binding"`
+}
+
 type ProviderStateMapping struct {
 	ProviderState string         `json:"provider_state"`
 	State         LifecycleState `json:"state"`
 	Terminal      bool           `json:"terminal"`
+}
+
+type ProviderToken struct {
+	TenantID          string    `json:"tenant_id"`
+	Namespace         string    `json:"namespace"`
+	SessionID         string    `json:"session_id"`
+	ProviderMicroVMID string    `json:"provider_microvm_id"`
+	TokenID           string    `json:"token_id"`
+	TokenType         string    `json:"token_type"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	Scope             []string  `json:"scope"`
+}
+
+type ProviderTokenInput struct {
+	RequestID        string                 `json:"request_id"`
+	TenantID         string                 `json:"tenant_id"`
+	Namespace        string                 `json:"namespace"`
+	AuthContext      AuthContext            `json:"auth_context"`
+	Binding          ProviderSessionBinding `json:"binding"`
+	TTLSeconds       int32                  `json:"ttl_seconds,omitempty"`
+	AllowedPortScope []ProviderPortScope    `json:"allowed_port_scope,omitempty"`
 }
 
 type RegistryClient struct {
@@ -3424,6 +3545,10 @@ func DefaultSessionRegistryContract() SessionRegistryContract
 
 func IsTerminalState(LifecycleState) bool
 
+func MapProviderState(string) (LifecycleState, bool, error)
+
+func NewAWSLambdaMicroVMProvider(context.Context, ...AWSLambdaMicroVMProviderOption) (*AWSLambdaMicroVMProvider, error)
+
 func NewController(Client, ...ControllerOption) (*Controller, error)
 
 func NewLifecycleAdapter(...LifecycleOption) (*LifecycleAdapter, error)
@@ -3456,6 +3581,18 @@ func ValidateLifecycleContract(LifecycleContract) error
 
 func ValidateOperationContract(OperationContract) error
 
+func ValidateProviderListInput(ProviderListInput) error
+
+func ValidateProviderRunInput(ProviderRunInput) error
+
+func ValidateProviderSession(ProviderSession) error
+
+func ValidateProviderSessionInput(Operation, ProviderSessionInput) error
+
+func ValidateProviderToken(ProviderToken) error
+
+func ValidateProviderTokenInput(Operation, ProviderTokenInput) error
+
 func ValidateRealLifecycleContract(LifecycleContract) error
 
 func ValidateSessionRecord(SessionRecord) error
@@ -3465,6 +3602,10 @@ func ValidateSessionRegistryContract(SessionRegistryContract) error
 func ValidateSessionRegistryRecord(SessionRegistryRecord) error
 
 func ValidateSessionStatus(SessionStatus) error
+
+func WithAWSLambdaMicroVMClock(Clock) AWSLambdaMicroVMProviderOption
+
+func WithAWSLambdaMicroVMRegion(string) AWSLambdaMicroVMProviderOption
 
 func WithControllerClock(Clock) ControllerOption
 
@@ -3477,6 +3618,22 @@ func WithLifecycleContract(LifecycleContract) LifecycleOption
 func WithLifecycleHandler(LifecycleHook, LifecycleHandler) LifecycleOption
 
 func WithRegistryClientTTL(time.Duration) RegistryClientOption
+
+func (*AWSLambdaMicroVMProvider) CreateAuthToken(context.Context, ProviderTokenInput) (ProviderToken, error)
+
+func (*AWSLambdaMicroVMProvider) CreateShellToken(context.Context, ProviderTokenInput) (ProviderToken, error)
+
+func (*AWSLambdaMicroVMProvider) Get(context.Context, ProviderSessionInput) (ProviderSession, error)
+
+func (*AWSLambdaMicroVMProvider) List(context.Context, ProviderListInput) (ProviderListOutput, error)
+
+func (*AWSLambdaMicroVMProvider) Resume(context.Context, ProviderSessionInput) (ProviderSession, error)
+
+func (*AWSLambdaMicroVMProvider) Run(context.Context, ProviderRunInput) (ProviderSession, error)
+
+func (*AWSLambdaMicroVMProvider) Suspend(context.Context, ProviderSessionInput) (ProviderSession, error)
+
+func (*AWSLambdaMicroVMProvider) Terminate(context.Context, ProviderSessionInput) (ProviderSession, error)
 
 func (*Controller) Handle(context.Context, ControllerRequest) (ControllerResponse, error)
 
@@ -3503,6 +3660,12 @@ func (*TableTheorySessionRegistry) Delete(context.Context, SessionKey) error
 func (*TableTheorySessionRegistry) Get(context.Context, SessionKey) (SessionRecord, error)
 
 func (*TableTheorySessionRegistry) Put(context.Context, SessionRecord) (SessionRecord, error)
+
+func (ProviderSession) Binding() ProviderSessionBinding
+
+func (ProviderSession) Key() SessionKey
+
+func (ProviderSessionBinding) Key() SessionKey
 
 func (SafeError) Error() string
 
@@ -4074,9 +4237,31 @@ type FakeClient struct {
 	calls    []Call
 }
 
+type FakeProvider struct {
+	mu       sync.Mutex
+	now      time.Time
+	next     int64
+	tokens   int64
+	sessions map[runtimemicrovm.SessionKey]runtimemicrovm.ProviderSession
+	errors   map[runtimemicrovm.Operation]error
+	calls    []ProviderCall
+}
+
+type ProviderCall struct {
+	Operation runtimemicrovm.Operation
+	RequestID string
+	TenantID  string
+	Namespace string
+	SessionID string
+}
+
 func NewFakeClient() *FakeClient
 
 func NewFakeClientWithTime(time.Time) *FakeClient
+
+func NewFakeProvider() *FakeProvider
+
+func NewFakeProviderWithTime(time.Time) *FakeProvider
 
 func (*FakeClient) Calls() []Call
 
@@ -4091,6 +4276,28 @@ func (*FakeClient) Start(context.Context, runtimemicrovm.SessionCommandInput) (r
 func (*FakeClient) Status(context.Context, runtimemicrovm.SessionQueryInput) (runtimemicrovm.SessionStatus, error)
 
 func (*FakeClient) Stop(context.Context, runtimemicrovm.SessionCommandInput) (runtimemicrovm.SessionRecord, error)
+
+func (*FakeProvider) Calls() []ProviderCall
+
+func (*FakeProvider) CreateAuthToken(context.Context, runtimemicrovm.ProviderTokenInput) (runtimemicrovm.ProviderToken, error)
+
+func (*FakeProvider) CreateShellToken(context.Context, runtimemicrovm.ProviderTokenInput) (runtimemicrovm.ProviderToken, error)
+
+func (*FakeProvider) Get(context.Context, runtimemicrovm.ProviderSessionInput) (runtimemicrovm.ProviderSession, error)
+
+func (*FakeProvider) List(context.Context, runtimemicrovm.ProviderListInput) (runtimemicrovm.ProviderListOutput, error)
+
+func (*FakeProvider) Resume(context.Context, runtimemicrovm.ProviderSessionInput) (runtimemicrovm.ProviderSession, error)
+
+func (*FakeProvider) Run(context.Context, runtimemicrovm.ProviderRunInput) (runtimemicrovm.ProviderSession, error)
+
+func (*FakeProvider) SetNow(time.Time)
+
+func (*FakeProvider) SetOperationError(runtimemicrovm.Operation, error)
+
+func (*FakeProvider) Suspend(context.Context, runtimemicrovm.ProviderSessionInput) (runtimemicrovm.ProviderSession, error)
+
+func (*FakeProvider) Terminate(context.Context, runtimemicrovm.ProviderSessionInput) (runtimemicrovm.ProviderSession, error)
 
 ## github.com/theory-cloud/apptheory/testkit/oauth
 
