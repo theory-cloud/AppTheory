@@ -4916,6 +4916,35 @@ test("AppTheoryMicrovmController synthesizes protected controller deployment", (
   assert.ok(policyActions.includes("lambda:PassNetworkConnector"));
   assert.ok(policyActions.includes("iam:PassRole"));
 
+  const microvmControlPlaneStatements = resourcesOfType(template, "AWS::IAM::Policy")
+    .flatMap((resource) => resource.Properties?.PolicyDocument?.Statement ?? [])
+    .filter((statement) => renderedString(statement.Action).includes("lambda:RunMicrovm"));
+  assert.equal(microvmControlPlaneStatements.length, 1, "Should synthesize one MicroVM instance control statement");
+  const microvmControlPlaneActions = Array.isArray(microvmControlPlaneStatements[0].Action)
+    ? microvmControlPlaneStatements[0].Action
+    : [microvmControlPlaneStatements[0].Action];
+  assert.deepEqual(
+    [...microvmControlPlaneActions].sort(),
+    [
+      "lambda:CreateMicrovmAuthToken",
+      "lambda:CreateMicrovmShellAuthToken",
+      "lambda:GetMicrovm",
+      "lambda:ResumeMicrovm",
+      "lambda:RunMicrovm",
+      "lambda:SuspendMicrovm",
+      "lambda:TerminateMicrovm",
+    ].sort(),
+  );
+  const microvmControlPlaneResource = renderedString(microvmControlPlaneStatements[0].Resource);
+  assert.ok(
+    microvmControlPlaneResource.includes(":lambda:") && microvmControlPlaneResource.includes(":microvm:*"),
+    `MicroVM instance/token actions must be scoped to the MicroVM instance ARN family: ${microvmControlPlaneResource}`,
+  );
+  assert.ok(
+    !microvmControlPlaneResource.includes("ImageArn") && !microvmControlPlaneResource.includes("microvm-image"),
+    `MicroVM instance/token actions must not be scoped to the configured image ARN: ${microvmControlPlaneResource}`,
+  );
+
   const passConnectorStatements = resourcesOfType(template, "AWS::IAM::Policy")
     .flatMap((resource) => resource.Properties?.PolicyDocument?.Statement ?? [])
     .filter((statement) => renderedString(statement.Action).includes("lambda:PassNetworkConnector"));

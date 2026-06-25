@@ -975,9 +975,23 @@
               ],
               "Effect": "Allow",
               "Resource": {
-                "Fn::GetAtt": [
-                  "ImageMicrovmImage9E388E6A",
-                  "ImageArn"
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":lambda:",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId"
+                    },
+                    ":microvm:*"
+                  ]
                 ]
               },
               "Sid": "AppTheoryMicrovmControlPlane"

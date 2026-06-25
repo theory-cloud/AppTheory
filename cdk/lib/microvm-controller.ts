@@ -1,4 +1,4 @@
-import { Duration, RemovalPolicy, Token } from "aws-cdk-lib";
+import { ArnFormat, Duration, RemovalPolicy, Stack, Token } from "aws-cdk-lib";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
@@ -389,7 +389,7 @@ export class AppTheoryMicrovmController extends Construct {
       shellIngressConnectorArn,
     );
     this.sessionTable.grantReadWriteData(this.controllerFunction);
-    this.grantMicrovmControlPlane(props, imageArn);
+    this.grantMicrovmControlPlane(props);
 
     this.routeAuthorizer = new apigwv2Authorizers.HttpLambdaAuthorizer("Authorizer", props.authorizer, {
       authorizerName: props.authorizerName,
@@ -523,7 +523,14 @@ export class AppTheoryMicrovmController extends Construct {
     });
   }
 
-  private grantMicrovmControlPlane(props: AppTheoryMicrovmControllerProps, imageArn: string): void {
+  private grantMicrovmControlPlane(props: AppTheoryMicrovmControllerProps): void {
+    const microvmInstanceArn = Stack.of(this).formatArn({
+      service: "lambda",
+      resource: "microvm",
+      resourceName: "*",
+      arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+    });
+
     this.controllerFunction.addToRolePolicy(
       new iam.PolicyStatement({
         sid: "AppTheoryMicrovmControlPlane",
@@ -536,7 +543,7 @@ export class AppTheoryMicrovmController extends Construct {
           "lambda:SuspendMicrovm",
           "lambda:TerminateMicrovm",
         ],
-        resources: [imageArn],
+        resources: [microvmInstanceArn],
       }),
     );
 
