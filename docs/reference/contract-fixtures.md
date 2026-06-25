@@ -27,7 +27,7 @@ When the contract needs to grow, the fixture grows first. When the fixture grows
 
 ## Categories
 
-The 133 fixtures span (counts approximate; see `contract-tests/fixtures/` for the canonical inventory):
+The 145 fixtures span (counts approximate; see `contract-tests/fixtures/` for the canonical inventory):
 
 | Category | Covers |
 | --- | --- |
