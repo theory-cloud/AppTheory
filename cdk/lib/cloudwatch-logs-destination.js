@@ -50,7 +50,7 @@ class AppTheoryCloudWatchLogsDestination extends constructs_1.Construct {
 }
 exports.AppTheoryCloudWatchLogsDestination = AppTheoryCloudWatchLogsDestination;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryCloudWatchLogsDestination[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestination", version: "1.14.0" };
+AppTheoryCloudWatchLogsDestination[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryCloudWatchLogsDestination", version: "1.15.0-rc" };
 function destinationName(scope, name) {
     const normalized = name === undefined ? aws_cdk_lib_1.Names.uniqueResourceName(scope, { maxLength: 512, separator: "-" }) : name.trim();
     if (!normalized) {
