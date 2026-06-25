@@ -50,6 +50,7 @@ SAFE_TOKEN_FIELD_NAMES = {
 }
 
 FORBIDDEN_FIELD_NAMES = {
+    "account_wide_list_token",
     "authorization",
     "authorization_header",
     "auth_header",
@@ -61,12 +62,20 @@ FORBIDDEN_FIELD_NAMES = {
     "credentials",
     "password",
     "plaintext_token",
+    "provider_error",
+    "provider_exception",
     "private_key",
     "provider_auth_token",
+    "provider_secret",
     "provider_shell_token",
     "provider_token",
     "provider_token_value",
+    "raw_aws_credentials",
+    "raw_lifecycle_hook_payload",
+    "raw_provider_error",
+    "raw_provider_exception",
     "raw_secret",
+    "raw_sdk_client",
     "raw_token",
     "refresh_token",
     "secret",
@@ -74,9 +83,11 @@ FORBIDDEN_FIELD_NAMES = {
     "secret_key",
     "secret_value",
     "session_token",
+    "session_token_plaintext",
     "shell_token",
     "token",
     "token_value",
+    "x_amz_security_token",
     "x_aws_proxy_auth",
     "aws_access_key_id",
     "aws_secret_access_key",
@@ -88,6 +99,11 @@ SECRET_KEY_FRAGMENTS = (
     "password",
     "credential",
     "private_key",
+)
+
+SESSION_TOKEN_PLAINTEXT_TEXT_PATTERN = re.compile(
+    r"(?i)(?:^|[^A-Za-z0-9_])session[_-]?token[_-]?plaintext(?![A-Za-z0-9_])"
+    r"\s*[:=]\s*[\"']?[A-Za-z0-9._~+/=-]{1,}"
 )
 
 TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -179,6 +195,15 @@ class LeakScanner:
                         message="secret-looking text appears in artifact",
                     )
                 )
+        if SESSION_TOKEN_PLAINTEXT_TEXT_PATTERN.search(text):
+            findings.append(
+                LeakFinding(
+                    artifact=artifact,
+                    path="$",
+                    kind="forbidden-field",
+                    message="field 'session_token_plaintext' must not carry plaintext credentials or provider tokens",
+                )
+            )
         payload = _parse_json_maybe(text)
         if payload is not _NOT_JSON:
             findings.extend(self.scan_json(artifact, payload))
@@ -529,7 +554,14 @@ class MicroVMConformanceHarness:
         self._expect_success(payload, command, session_id=session_id)
         if not payload.get("token_id") or not payload.get("token_type") or not payload.get("expires_at"):
             raise ConformanceFailure(f"{command} did not return sanitized token metadata")
-        forbidden = {"token_value", "bearer_token", "provider_token", "shell_token", "auth_token"}
+        forbidden = {
+            "token_value",
+            "bearer_token",
+            "provider_token",
+            "shell_token",
+            "auth_token",
+            "session_token_plaintext",
+        }
         present = sorted(field for field in forbidden if field in payload and payload[field])
         if present:
             raise ConformanceFailure(f"{command} returned forbidden plaintext token fields: {', '.join(present)}")

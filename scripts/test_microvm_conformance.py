@@ -54,6 +54,61 @@ class MicroVMConformanceScannerTests(unittest.TestCase):
             scanner.assert_clean({"logs": "unexpected outbound Authorization: Bearer redactedbutstillcredential"})
         self.assertIn("bearer credential", str(raised.exception))
 
+    def test_scanner_fails_closed_on_canonical_session_token_plaintext(self) -> None:
+        scanner = microvm_conformance.LeakScanner([])
+        leaked_value = "session-token-DO-NOT-LOG-123456"
+        artifacts = {
+            "response": json.dumps(
+                {
+                    "command": "auth-token",
+                    "session_token_plaintext": leaked_value,
+                }
+            ),
+            "registry": json.dumps(
+                {
+                    "records": [
+                        {
+                            "tenant_id": "tenant-example",
+                            "namespace": "namespace-example",
+                            "session_id": "session-fixture-001",
+                            "session_token_plaintext": leaked_value,
+                        }
+                    ]
+                }
+            ),
+            "logs": f"issued session_token_plaintext={leaked_value}",
+        }
+        for artifact, text in artifacts.items():
+            with self.subTest(artifact=artifact):
+                with self.assertRaises(microvm_conformance.ConformanceFailure) as raised:
+                    scanner.assert_clean({artifact: text})
+                message = str(raised.exception)
+                self.assertIn("token leak scanner failed closed", message)
+                self.assertIn("forbidden-field", message)
+                self.assertIn("session_token_plaintext", message)
+                self.assertNotIn(leaked_value, message)
+
+    def test_scanner_does_not_treat_canonical_route_names_as_token_fields(self) -> None:
+        scanner = microvm_conformance.LeakScanner([])
+        scanner.assert_clean(
+            {
+                "routes": json.dumps(
+                    {
+                        "auth-token": {
+                            "command": "auth-token",
+                            "token_id": "auth-token-metadata-001",
+                            "token_type": "auth",
+                        },
+                        "shell-auth-token": {
+                            "command": "shell-auth-token",
+                            "token_id": "shell-token-metadata-001",
+                            "token_type": "shell",
+                        },
+                    }
+                )
+            }
+        )
+
     def test_scanner_allows_sanitized_token_metadata(self) -> None:
         scanner = microvm_conformance.LeakScanner([])
         scanner.assert_clean(

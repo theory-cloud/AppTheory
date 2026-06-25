@@ -87,4 +87,4 @@ python3 scripts/microvm_conformance.py scan \
   --sensitive-env APPTHEORY_MICROVM_CONFORMANCE_AUTH_TOKEN
 ```
 
-The scanner fails closed on plaintext supplied sensitive values, bearer credentials, private keys, AWS-looking credentials, forbidden credential fields such as `token_value` or `provider_token`, and secret-looking field names that are not AppTheory's sanitized token metadata.
+The scanner fails closed on plaintext supplied sensitive values, bearer credentials, private keys, AWS-looking credentials, forbidden credential fields such as `token_value`, `provider_token`, or `session_token_plaintext`, and secret-looking field names that are not AppTheory's sanitized token metadata.
