@@ -251,6 +251,7 @@ func ValidateProviderToken(token ProviderToken) error {
 }
 
 func validateProviderOperation(operation Operation, requestID string) error {
+	operation = normalizeOperation(operation)
 	if !requiredOperation(operation) {
 		return safeError(ErrorCodeProviderOperationUnsupported, "apptheory: microvm provider operation is unsupported", requestID)
 	}
@@ -319,6 +320,7 @@ func validateProviderIdlePolicy(requestID string, policy *ProviderIdlePolicy) er
 }
 
 func validateProviderSessionInput(operation Operation, input ProviderSessionInput) (ProviderSessionInput, error) {
+	operation = normalizeOperation(operation)
 	input = normalizeProviderSessionInput(input)
 	if err := validateProviderOperation(operation, input.RequestID); err != nil {
 		return ProviderSessionInput{}, err
@@ -365,6 +367,7 @@ func validateProviderListInput(input ProviderListInput) (ProviderListInput, erro
 }
 
 func validateProviderTokenInput(operation Operation, input ProviderTokenInput) (ProviderTokenInput, error) {
+	operation = normalizeOperation(operation)
 	input = normalizeProviderTokenInput(input)
 	if err := validateProviderOperation(operation, input.RequestID); err != nil {
 		return ProviderTokenInput{}, err
@@ -372,7 +375,7 @@ func validateProviderTokenInput(operation Operation, input ProviderTokenInput) (
 	if input.RequestID == "" {
 		return ProviderTokenInput{}, safeError(ErrorCodeProviderRequestInvalid, "apptheory: microvm provider request_id is required", "")
 	}
-	if operation != OperationAuthToken && operation != OperationShellToken {
+	if operation != OperationAuthToken && operation != OperationShellAuthToken {
 		return ProviderTokenInput{}, safeError(ErrorCodeProviderOperationUnsupported, "apptheory: microvm provider token operation is unsupported", input.RequestID)
 	}
 	if err := validateProviderAccess(input.RequestID, input.TenantID, input.Namespace, input.AuthContext); err != nil {
@@ -592,8 +595,9 @@ func sessionFromProviderState(binding ProviderSessionBinding, providerState stri
 }
 
 func providerTokenMetadata(operation Operation, input ProviderTokenInput, now time.Time) (ProviderToken, error) {
+	operation = normalizeOperation(operation)
 	tokenType := "auth"
-	if operation == OperationShellToken {
+	if operation == OperationShellAuthToken {
 		tokenType = "shell"
 	}
 	if now.IsZero() {
@@ -619,7 +623,7 @@ func providerTokenMetadata(operation Operation, input ProviderTokenInput, now ti
 }
 
 func providerTokenScope(operation Operation, scopes []ProviderPortScope) []string {
-	if operation == OperationShellToken {
+	if normalizeOperation(operation) == OperationShellAuthToken {
 		return []string{"shell"}
 	}
 	out := make([]string, 0, len(scopes))

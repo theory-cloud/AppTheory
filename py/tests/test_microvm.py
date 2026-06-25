@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import types
 import unittest
@@ -318,6 +319,29 @@ class MicroVMLifecycleTests(unittest.TestCase):
             "allowed_port_scope": [{"all_ports": True}, {"start_port": 8080, "end_port": 8081}],
         }
         return binding_dict, run_dict, session_dict, list_dict, token_dict
+
+    def _controller_request(self, **overrides: object) -> dict[str, object]:
+        request: dict[str, object] = {
+            "command": app.COMMAND_RUN,
+            "request_id": "req-real",
+            "tenant_id": "tenant-1",
+            "namespace": "namespace-1",
+            "auth_context": {
+                "subject": "subject-1",
+                "tenant_id": "tenant-1",
+                "namespace": "namespace-1",
+            },
+            "image_ref": "image-ref",
+            "image_version": "1",
+            "network_connector_ref": "network-ref",
+            "ingress_network_connector_refs": ["ingress-ref"],
+            "egress_network_connector_refs": ["egress-ref"],
+            "session_spec": {"metadata": {"safe": "ok"}},
+            "allowed_port_scope": [{"port": 443}],
+            "ttl_seconds": 120,
+        }
+        request.update(overrides)
+        return request
 
     def test_lifecycle_adapter_runs_to_terminal_states(self) -> None:
         contract = app.default_microvm_lifecycle_contract()
@@ -1209,6 +1233,167 @@ class MicroVMLifecycleTests(unittest.TestCase):
                 {**token_dict, "binding": {**binding_dict, "provider_microvm_id": run.provider_microvm_id}}
             )
         fake.set_operation_error(app.OPERATION_AUTH_TOKEN, None)
+
+    def test_real_controller_commands_and_token_metadata_safety(self) -> None:
+        provider = app.create_fake_microvm_provider(now=1.0)
+        registry = app.create_memory_microvm_session_registry()
+        controller = app.create_real_microvm_controller(
+            provider,
+            registry,
+            controller_id="controller-1",
+            provider_id=app.MICROVM_AWS_LAMBDA_PROVIDER_ID,
+            id_generator=lambda: "session-1",
+            clock=lambda: 10.0,
+            ttl_seconds=60,
+        )
+        run = controller.handle(self._controller_request())
+        self.assertIsNone(run.error)
+        self.assertEqual(app.COMMAND_RUN, run.command)
+        self.assertEqual("session-1", run.session_id)
+        self.assertEqual(app.STATE_RUNNING, run.state)
+
+        get = controller.handle(
+            self._controller_request(command=app.COMMAND_GET, request_id="req-get", session_id="session-1")
+        )
+        self.assertEqual(run.provider_microvm_id, get.provider_microvm_id)
+
+        suspended = controller.handle(
+            self._controller_request(command=app.COMMAND_SUSPEND, request_id="req-suspend", session_id="session-1")
+        )
+        self.assertEqual(app.STATE_SUSPENDED, suspended.state)
+        resumed = controller.handle(
+            self._controller_request(command=app.COMMAND_RESUME, request_id="req-resume", session_id="session-1")
+        )
+        self.assertEqual(app.STATE_READY, resumed.state)
+
+        listed = controller.handle(
+            self._controller_request(command=app.COMMAND_LIST, request_id="req-list", session_id="")
+        )
+        self.assertEqual(1, len(listed.sessions))
+        self.assertEqual("session-1", listed.sessions[0].session_id)
+
+        token = controller.handle(
+            self._controller_request(
+                command=app.COMMAND_AUTH_TOKEN,
+                request_id="req-token",
+                session_id="session-1",
+                allowed_port_scope=[{"port": 443}],
+            )
+        )
+        self.assertEqual("auth", token.token_type)
+        self.assertEqual(["ports:443"], token.scope)
+        token_repr = repr(token)
+        for forbidden in ["token_value", "bearer_token", "x-aws-proxy-auth", "session_token_plaintext"]:
+            self.assertNotIn(forbidden, token_repr)
+
+        shell = controller.handle(
+            self._controller_request(
+                command="shell-token",
+                request_id="req-shell",
+                session_id="session-1",
+                allowed_port_scope=[],
+            )
+        )
+        self.assertEqual(app.COMMAND_SHELL_AUTH_TOKEN, shell.command)
+        self.assertEqual("shell", shell.token_type)
+
+        stored = registry.get(("tenant-1", "namespace-1", "session-1"))
+        self.assertEqual(2, len(stored.token_metadata))
+        stored_repr = repr(stored.token_metadata)
+        self.assertNotIn("token_value", stored_repr)
+        self.assertNotIn("bearer_token", stored_repr)
+
+        denied = controller.handle(
+            self._controller_request(
+                command=app.COMMAND_GET,
+                request_id="req-denied",
+                tenant_id="tenant-2",
+                auth_context={"subject": "subject-1", "tenant_id": "tenant-1", "namespace": "namespace-1"},
+                session_id="session-1",
+            )
+        )
+        self.assertEqual(app.MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER, denied.error.code if denied.error else "")
+
+        terminated = controller.handle(
+            self._controller_request(command=app.COMMAND_TERMINATE, request_id="req-terminate", session_id="session-1")
+        )
+        self.assertEqual(app.STATE_TERMINATED, terminated.state)
+
+    def test_real_controller_route_adapter_enforces_auth_and_tenant_binding(self) -> None:
+        provider = app.create_fake_microvm_provider(now=1.0)
+        registry = app.create_memory_microvm_session_registry()
+        controller = app.create_real_microvm_controller(
+            provider,
+            registry,
+            id_generator=lambda: "route-session",
+            clock=lambda: 10.0,
+        )
+        runtime = app.create_app(tier="p1", auth_hook=lambda ctx: f"identity:{ctx.tenant_id}")
+        app.register_microvm_controller_routes(runtime, controller)
+
+        def serve(method: str, path: str, body: dict[str, object], *, tenant_id: str = "tenant-1") -> app.Response:
+            return runtime.serve(
+                app.Request(
+                    method=method,
+                    path=path,
+                    headers={
+                        "content-type": ["application/json"],
+                        "x-tenant-id": [tenant_id],
+                        "x-request-id": [f"req-{method}-{path}"],
+                    },
+                    body=json.dumps(body).encode("utf-8"),
+                )
+            )
+
+        run = serve(
+            "POST",
+            "/microvms",
+            {
+                "namespace": "namespace-1",
+                "image_ref": "image-ref",
+                "image_version": "1",
+                "network_connector_ref": "network-ref",
+                "session_spec": {"metadata": {"safe": "ok"}},
+            },
+        )
+        self.assertEqual(200, run.status)
+        run_body = json.loads(run.body.decode())
+        self.assertEqual(app.COMMAND_RUN, run_body["command"])
+        self.assertEqual("route-session", run_body["session_id"])
+
+        token = serve(
+            "POST",
+            "/microvms/route-session/auth-token",
+            {"namespace": "namespace-1", "allowed_port_scope": [{"port": 443}]},
+        )
+        self.assertEqual(200, token.status)
+        token_text = token.body.decode()
+        self.assertNotIn("token_value", token_text)
+        self.assertNotIn("bearer_token", token_text)
+        self.assertEqual("auth", json.loads(token_text)["token_type"])
+
+        cross_tenant = serve(
+            "POST",
+            "/microvms/route-session/auth-token",
+            {"tenant_id": "tenant-2", "namespace": "namespace-1", "allowed_port_scope": [{"port": 443}]},
+        )
+        self.assertEqual(403, cross_tenant.status)
+        self.assertEqual(
+            app.MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+            json.loads(cross_tenant.body.decode())["error"]["code"],
+        )
+
+        unauthenticated = app.create_app(tier="p1")
+        app.register_microvm_controller_routes(unauthenticated, controller)
+        denied = unauthenticated.serve(
+            app.Request(
+                method="GET",
+                path="/microvms/route-session",
+                query={"namespace": ["namespace-1"]},
+                headers={"x-tenant-id": ["tenant-1"], "x-request-id": ["req-denied"]},
+            )
+        )
+        self.assertEqual(401, denied.status)
 
     def test_official_sdk_provider_gate_and_safe_mapping(self) -> None:
         binding_dict, run_dict, session_dict, list_dict, token_dict = self._provider_dict_inputs()

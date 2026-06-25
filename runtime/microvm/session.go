@@ -298,22 +298,27 @@ func normalizeSessionStatus(status SessionStatus) SessionStatus {
 
 func validLifecycleState(state LifecycleState) bool {
 	state = LifecycleState(strings.TrimSpace(string(state)))
-	for _, valid := range requiredLifecycleStates() {
-		if state == valid {
-			return true
-		}
-	}
-	return false
+	return lifecycleStateIn(state, requiredLifecycleStates()) || lifecycleStateIn(state, requiredRealLifecycleStates())
 }
 
 func validCommand(command Command) bool {
 	command = normalizeCommand(command)
 	switch command {
-	case CommandCreate, CommandStart, CommandStop, CommandStatus, CommandSession:
+	case CommandCreate, CommandStart, CommandStop, CommandStatus, CommandSession,
+		CommandRun, CommandGet, CommandList, CommandSuspend, CommandResume, CommandTerminate, CommandAuthToken, CommandShellAuthToken:
 		return true
 	default:
 		return false
 	}
+}
+
+func lifecycleStateIn(state LifecycleState, values []LifecycleState) bool {
+	for _, valid := range values {
+		if state == valid {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeSessionTokenMetadata(token SessionTokenMetadata) SessionTokenMetadata {

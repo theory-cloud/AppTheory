@@ -10,7 +10,8 @@ const util = require("node:util");
 
 let cachedRuntime = null;
 
-const CLOUDWATCH_LOGS_SUBSCRIPTION_HANDLER = "kinesis_require_cloudwatch_logs_subscription";
+const CLOUDWATCH_LOGS_SUBSCRIPTION_HANDLER =
+  "kinesis_require_cloudwatch_logs_subscription";
 const CLOUDWATCH_LOGS_SUBSCRIPTION_MISSING_HELPER =
   "apptheory: cloudwatch logs subscription decoder helper missing";
 
@@ -83,21 +84,34 @@ async function compareLoggingProfileContract(fixture) {
       actual_logging_profile_catalog: actual,
     };
   }
-  if (Object.prototype.hasOwnProperty.call(expect, "profile_validation_errors")) {
-    const actual = decodeLoggingProfileValidationErrors(runtime, setup.logging_profile);
-    if (deepEqual(actual, expect.profile_validation_errors ?? [])) return { ok: true };
+  if (
+    Object.prototype.hasOwnProperty.call(expect, "profile_validation_errors")
+  ) {
+    const actual = decodeLoggingProfileValidationErrors(
+      runtime,
+      setup.logging_profile,
+    );
+    if (deepEqual(actual, expect.profile_validation_errors ?? []))
+      return { ok: true };
     return {
       ok: false,
       reason: "profile_validation_errors mismatch",
-      expected_profile_validation_errors: expect.profile_validation_errors ?? [],
+      expected_profile_validation_errors:
+        expect.profile_validation_errors ?? [],
       actual_profile_validation_errors: actual,
     };
   }
   if (Object.prototype.hasOwnProperty.call(expect, "profile_logs")) {
     let actualLogs = [];
     try {
-      const config = runtime.decodeLoggingProfileJSON(JSON.stringify(setup.logging_profile ?? {}));
-      const actual = runtime.encodeLoggingProfileEvent(config, setup.environment ?? {}, input.logging_event ?? {});
+      const config = runtime.decodeLoggingProfileJSON(
+        JSON.stringify(setup.logging_profile ?? {}),
+      );
+      const actual = runtime.encodeLoggingProfileEvent(
+        config,
+        setup.environment ?? {},
+        input.logging_event ?? {},
+      );
       actualLogs = [actual];
     } catch (err) {
       return {
@@ -129,7 +143,18 @@ function decodeLoggingProfileValidationErrors(runtime, profile) {
 }
 
 function listFixtureFiles(fixturesRoot) {
-  const tiers = ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15", "m16"];
+  const tiers = [
+    "p0",
+    "p1",
+    "p2",
+    "m1",
+    "m2",
+    "m3",
+    "m12",
+    "m14",
+    "m15",
+    "m16",
+  ];
   const files = [];
   for (const tier of tiers) {
     const dir = path.join(fixturesRoot, tier);
@@ -177,7 +202,8 @@ function canonicalizeHeaders(headers) {
 function decodeFixtureBody(body) {
   if (!body) return Buffer.alloc(0);
   if (body.encoding === "utf8") return Buffer.from(body.value ?? "", "utf8");
-  if (body.encoding === "base64") return Buffer.from(body.value ?? "", "base64");
+  if (body.encoding === "base64")
+    return Buffer.from(body.value ?? "", "base64");
   throw new Error(`unknown body encoding ${JSON.stringify(body.encoding)}`);
 }
 
@@ -199,7 +225,9 @@ function parseCookies(cookieHeaders) {
 }
 
 function canonicalizeRequest(inReq, ctx) {
-  const method = String(inReq.method ?? "").trim().toUpperCase();
+  const method = String(inReq.method ?? "")
+    .trim()
+    .toUpperCase();
   let pathValue = String(inReq.path ?? "").trim();
   if (!pathValue) pathValue = "/";
   if (!pathValue.startsWith("/")) pathValue = `/${pathValue}`;
@@ -232,19 +260,23 @@ function canonicalizeRequest(inReq, ctx) {
 }
 
 function splitPath(p) {
-  const trimmed = String(p ?? "").trim().replace(/^\/+/, "");
+  const trimmed = String(p ?? "")
+    .trim()
+    .replace(/^\/+/, "");
   if (!trimmed) return [];
   return trimmed.split("/");
 }
 
 function matchPath(patternSegments, pathSegments) {
-  if (patternSegments.length !== pathSegments.length) return { ok: false, params: {} };
+  if (patternSegments.length !== pathSegments.length)
+    return { ok: false, params: {} };
   const params = {};
   for (let i = 0; i < patternSegments.length; i += 1) {
     const pattern = patternSegments[i];
     const value = pathSegments[i];
     if (!value) return { ok: false, params: {} };
-    const isParam = pattern.startsWith("{") && pattern.endsWith("}") && pattern.length > 2;
+    const isParam =
+      pattern.startsWith("{") && pattern.endsWith("}") && pattern.length > 2;
     if (isParam) {
       const name = pattern.slice(1, -1);
       params[name] = value;
@@ -376,7 +408,10 @@ function builtInHandler(name) {
         status: 200,
         headers: { "content-type": ["application/json; charset=utf-8"] },
         cookies: [],
-        body: Buffer.from(JSON.stringify({ trace: req.middleware_trace }), "utf8"),
+        body: Buffer.from(
+          JSON.stringify({ trace: req.middleware_trace }),
+          "utf8",
+        ),
         is_base64: false,
       });
     case "parse_json_echo":
@@ -456,7 +491,10 @@ function extractTenantId(headers, query) {
 }
 
 function isCorsPreflight(method, headers) {
-  return String(method).toUpperCase() === "OPTIONS" && firstHeaderValue(headers, "access-control-request-method");
+  return (
+    String(method).toUpperCase() === "OPTIONS" &&
+    firstHeaderValue(headers, "access-control-request-method")
+  );
 }
 
 function finalizeResponse(resp, enableP1, requestId, origin) {
@@ -550,7 +588,8 @@ function newFixtureApp(routes, opts) {
       };
 
       if (enableP1) {
-        requestId = firstHeaderValue(req.headers, "x-request-id") || "req_test_123";
+        requestId =
+          firstHeaderValue(req.headers, "x-request-id") || "req_test_123";
         req.request_id = requestId;
 
         origin = firstHeaderValue(req.headers, "origin");
@@ -560,7 +599,10 @@ function newFixtureApp(routes, opts) {
         if (origin) req.middleware_trace.push("cors");
 
         if (origin && isCorsPreflight(req.method, req.headers)) {
-          const allow = firstHeaderValue(req.headers, "access-control-request-method");
+          const allow = firstHeaderValue(
+            req.headers,
+            "access-control-request-method",
+          );
           return finish(
             {
               status: 204,
@@ -573,9 +615,20 @@ function newFixtureApp(routes, opts) {
           );
         }
 
-        if (limits.max_request_bytes && req.body.length > limits.max_request_bytes) {
+        if (
+          limits.max_request_bytes &&
+          req.body.length > limits.max_request_bytes
+        ) {
           errorCode = "app.too_large";
-          return finish(appErrorResponse("app.too_large", "request too large", {}, requestId), errorCode);
+          return finish(
+            appErrorResponse(
+              "app.too_large",
+              "request too large",
+              {},
+              requestId,
+            ),
+            errorCode,
+          );
         }
 
         if (enableP2) {
@@ -632,7 +685,10 @@ function newFixtureApp(routes, opts) {
           );
         }
         errorCode = "app.not_found";
-        return finish(appErrorResponse("app.not_found", "not found", {}, requestId), errorCode);
+        return finish(
+          appErrorResponse("app.not_found", "not found", {}, requestId),
+          errorCode,
+        );
       }
 
       if (enableP1 && match.route.auth_required) {
@@ -640,7 +696,10 @@ function newFixtureApp(routes, opts) {
         const authz = firstHeaderValue(req.headers, "authorization");
         if (!authz.trim()) {
           errorCode = "app.unauthorized";
-          return finish(appErrorResponse("app.unauthorized", "unauthorized", {}, requestId), errorCode);
+          return finish(
+            appErrorResponse("app.unauthorized", "unauthorized", {}, requestId),
+            errorCode,
+          );
         }
         req.auth_identity = "authorized";
       }
@@ -649,7 +708,10 @@ function newFixtureApp(routes, opts) {
       const handler = builtInHandler(match.route.handler);
       if (!handler) {
         errorCode = "app.internal";
-        return finish(appErrorResponse("app.internal", "internal error", {}, requestId), errorCode);
+        return finish(
+          appErrorResponse("app.internal", "internal error", {}, requestId),
+          errorCode,
+        );
       }
 
       let resp;
@@ -657,19 +719,38 @@ function newFixtureApp(routes, opts) {
         const enriched = { ...req, path_params: match.params };
         resp = handler(enriched);
       } catch (err) {
-        if (err && typeof err === "object" && "code" in err && "message" in err) {
+        if (
+          err &&
+          typeof err === "object" &&
+          "code" in err &&
+          "message" in err
+        ) {
           errorCode = err.code;
           resp = appErrorResponse(err.code, err.message, {}, requestId);
         } else {
           errorCode = "app.internal";
-          resp = appErrorResponse("app.internal", "internal error", {}, requestId);
+          resp = appErrorResponse(
+            "app.internal",
+            "internal error",
+            {},
+            requestId,
+          );
         }
         return finish(resp, errorCode);
       }
 
-      if (enableP1 && limits.max_response_bytes && resp.body.length > limits.max_response_bytes) {
+      if (
+        enableP1 &&
+        limits.max_response_bytes &&
+        resp.body.length > limits.max_response_bytes
+      ) {
         errorCode = "app.too_large";
-        resp = appErrorResponse("app.too_large", "response too large", {}, requestId);
+        resp = appErrorResponse(
+          "app.too_large",
+          "response too large",
+          {},
+          requestId,
+        );
       }
 
       return finish(resp, errorCode);
@@ -685,7 +766,14 @@ function compareHeaders(expectedHeaders, actualHeaders) {
 
 const MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm";
 const MICROVM_CONTRACT_VERSION = "m15.microvm/v1";
-const MICROVM_REQUIRED_LIFECYCLE_HOOKS = ["prepare_image", "start", "readiness", "stop", "teardown", "failure"];
+const MICROVM_REQUIRED_LIFECYCLE_HOOKS = [
+  "prepare_image",
+  "start",
+  "readiness",
+  "stop",
+  "teardown",
+  "failure",
+];
 const MICROVM_REQUIRED_LIFECYCLE_STATES = [
   "requested",
   "image_preparing",
@@ -700,8 +788,19 @@ const MICROVM_REQUIRED_LIFECYCLE_STATES = [
   "terminated",
   "failed",
 ];
-const MICROVM_REQUIRED_CONTROLLER_COMMANDS = ["create", "start", "stop", "status", "session"];
-const MICROVM_REQUIRED_ENVELOPE_FIELDS = ["command", "request_id", "tenant_id", "auth_context"];
+const MICROVM_REQUIRED_CONTROLLER_COMMANDS = [
+  "create",
+  "start",
+  "stop",
+  "status",
+  "session",
+];
+const MICROVM_REQUIRED_ENVELOPE_FIELDS = [
+  "command",
+  "request_id",
+  "tenant_id",
+  "auth_context",
+];
 const MICROVM_REQUIRED_SESSION_FIELDS = [
   "tenant_id",
   "namespace",
@@ -720,7 +819,10 @@ const MICROVM_REQUIRED_SESSION_FIELDS = [
 
 async function compareMicroVMContractFixture(fixture) {
   const runtime = await loadAppTheoryRuntime();
-  const actual = await validateMicroVMContractFixture(fixture.setup?.microvm_contract, runtime);
+  const actual = await validateMicroVMContractFixture(
+    fixture.setup?.microvm_contract,
+    runtime,
+  );
   const expected = fixture.expect?.microvm_contract_validation;
   if (!expected) {
     return {
@@ -741,41 +843,77 @@ async function compareMicroVMContractFixture(fixture) {
 
 async function validateMicroVMContractFixture(contract, runtime) {
   if (!contract || typeof contract !== "object" || Array.isArray(contract)) {
-    return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract fixture missing");
+    return invalidMicroVMContract(
+      "m15.microvm.invalid_contract",
+      "apptheory: microvm contract fixture missing",
+    );
   }
 
   const kind = String(contract.kind ?? "").trim();
   const version = String(contract.version ?? "").trim();
-  if (String(contract.contract ?? "").trim() !== MICROVM_CONTRACT_NAME || version !== MICROVM_CONTRACT_VERSION) {
-    return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract must be named and versioned");
+  if (
+    String(contract.contract ?? "").trim() !== MICROVM_CONTRACT_NAME ||
+    version !== MICROVM_CONTRACT_VERSION
+  ) {
+    return invalidMicroVMContract(
+      "m15.microvm.invalid_contract",
+      "apptheory: microvm contract must be named and versioned",
+    );
   }
   if (kind !== "lifecycle" && kind !== "controller_session") {
-    return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract kind is unsupported");
+    return invalidMicroVMContract(
+      "m15.microvm.invalid_contract",
+      "apptheory: microvm contract kind is unsupported",
+    );
   }
 
   const escapeHatches = contract.escape_hatches ?? {};
-  const escapeHatchError = validateMicroVMEscapeHatches(runtime, kind, version, escapeHatches);
+  const escapeHatchError = validateMicroVMEscapeHatches(
+    runtime,
+    kind,
+    version,
+    escapeHatches,
+  );
   if (escapeHatchError) return escapeHatchError;
 
   const controller = contract.controller ?? {};
-  if (kind === "controller_session" && !microVMControllerAuthDefaultsDeny(controller.auth ?? {})) {
+  if (
+    kind === "controller_session" &&
+    !microVMControllerAuthDefaultsDeny(controller.auth ?? {})
+  ) {
     return {
       valid: false,
       kind,
       version,
       error_code: "m15.microvm.unauthenticated_controller",
-      error_message: "apptheory: microvm controller must default to authenticated deny",
+      error_message:
+        "apptheory: microvm controller must default to authenticated deny",
     };
   }
 
   if (kind === "lifecycle") {
-    const err = await validateMicroVMLifecycle(runtime, contract.lifecycle ?? {});
-    if (err) return invalidMicroVMContract("m15.microvm.lifecycle_incomplete", err);
+    const err = await validateMicroVMLifecycle(
+      runtime,
+      contract.lifecycle ?? {},
+    );
+    if (err)
+      return invalidMicroVMContract("m15.microvm.lifecycle_incomplete", err);
   } else {
     const controllerErr = await validateMicroVMController(runtime, controller);
-    if (controllerErr) return invalidMicroVMContract("m15.microvm.controller_incomplete", controllerErr);
-    const registryErr = await validateMicroVMSessionRegistry(runtime, contract.session_registry ?? {});
-    if (registryErr) return invalidMicroVMContract("m15.microvm.session_registry_incomplete", registryErr);
+    if (controllerErr)
+      return invalidMicroVMContract(
+        "m15.microvm.controller_incomplete",
+        controllerErr,
+      );
+    const registryErr = await validateMicroVMSessionRegistry(
+      runtime,
+      contract.session_registry ?? {},
+    );
+    if (registryErr)
+      return invalidMicroVMContract(
+        "m15.microvm.session_registry_incomplete",
+        registryErr,
+      );
   }
 
   return { valid: true, kind, version };
@@ -786,17 +924,32 @@ function invalidMicroVMContract(errorCode, errorMessage) {
 }
 
 function microVMControllerAuthDefaultsDeny(auth) {
-  return auth.required === true && String(auth.default ?? "").trim().toLowerCase() === "deny";
+  return (
+    auth.required === true &&
+    String(auth.default ?? "")
+      .trim()
+      .toLowerCase() === "deny"
+  );
 }
 
 async function validateMicroVMLifecycle(runtime, lifecycle) {
   try {
     runtime.validateMicroVMLifecycleContract(lifecycle);
     const handlers = {};
-    for (const hook of MICROVM_REQUIRED_LIFECYCLE_HOOKS) handlers[hook] = () => undefined;
-    const adapter = runtime.createMicroVMLifecycleAdapter({ contract: lifecycle, handlers });
+    for (const hook of MICROVM_REQUIRED_LIFECYCLE_HOOKS)
+      handlers[hook] = () => undefined;
+    const adapter = runtime.createMicroVMLifecycleAdapter({
+      contract: lifecycle,
+      handlers,
+    });
     let state = "requested";
-    for (const hook of ["prepare_image", "start", "readiness", "stop", "teardown"]) {
+    for (const hook of [
+      "prepare_image",
+      "start",
+      "readiness",
+      "stop",
+      "teardown",
+    ]) {
       const result = await adapter.handle({
         request_id: "m15-lifecycle-fixture",
         tenant_id: "tenant-fixture",
@@ -808,7 +961,8 @@ async function validateMicroVMLifecycle(runtime, lifecycle) {
       if (result.error) return result.error.message;
       state = String(result.state ?? "");
     }
-    if (state !== "terminated") return `apptheory: microvm lifecycle adapter terminated at ${state}`;
+    if (state !== "terminated")
+      return `apptheory: microvm lifecycle adapter terminated at ${state}`;
 
     const failure = await adapter.handle({
       request_id: "m15-lifecycle-fixture-failure",
@@ -819,7 +973,8 @@ async function validateMicroVMLifecycle(runtime, lifecycle) {
       state: "starting",
     });
     if (failure.error) return failure.error.message;
-    if (failure.state !== "failed") return `apptheory: microvm lifecycle failure hook produced ${failure.state}`;
+    if (failure.state !== "failed")
+      return `apptheory: microvm lifecycle failure hook produced ${failure.state}`;
     return "";
   } catch (err) {
     return err?.message ?? String(err);
@@ -856,48 +1011,95 @@ async function exerciseRuntimeController(runtime) {
     controller_id: "controller-fixture",
     ids: { newID: () => "session-fixture" },
   });
-  const create = await controller.handle(runtimeControllerRequest(runtime.MicroVMCommand.Create, "m15-create", ""));
+  const create = await controller.handle(
+    runtimeControllerRequest(runtime.MicroVMCommand.Create, "m15-create", ""),
+  );
   if (create.error) return Promise.reject(create.error);
   requireCreateResponse(create);
 
-  const start = await controller.handle(runtimeControllerRequest(runtime.MicroVMCommand.Start, "m15-start", create.session_id));
+  const start = await controller.handle(
+    runtimeControllerRequest(
+      runtime.MicroVMCommand.Start,
+      "m15-start",
+      create.session_id,
+    ),
+  );
   if (start.error) return Promise.reject(start.error);
   requireStartStopResponse("start", start, create.session_id, "started");
 
-  const status = await controller.handle(runtimeControllerRequest(runtime.MicroVMCommand.Status, "m15-status", create.session_id));
+  const status = await controller.handle(
+    runtimeControllerRequest(
+      runtime.MicroVMCommand.Status,
+      "m15-status",
+      create.session_id,
+    ),
+  );
   if (status.error) return Promise.reject(status.error);
   requireStatusResponse(status, create.session_id);
 
-  const session = await controller.handle(runtimeControllerRequest(runtime.MicroVMCommand.Session, "m15-session", create.session_id));
+  const session = await controller.handle(
+    runtimeControllerRequest(
+      runtime.MicroVMCommand.Session,
+      "m15-session",
+      create.session_id,
+    ),
+  );
   if (session.error) return Promise.reject(session.error);
   requireSessionResponse(session, create.session_id);
 
-  const stop = await controller.handle(runtimeControllerRequest(runtime.MicroVMCommand.Stop, "m15-stop", create.session_id));
+  const stop = await controller.handle(
+    runtimeControllerRequest(
+      runtime.MicroVMCommand.Stop,
+      "m15-stop",
+      create.session_id,
+    ),
+  );
   if (stop.error) return Promise.reject(stop.error);
   requireStartStopResponse("stop", stop, create.session_id, "stopped");
 }
 
 function requireCreateResponse(response) {
-  if (!response.session_id || response.state !== "requested" || !response.registry_version) {
+  if (
+    !response.session_id ||
+    response.state !== "requested" ||
+    !response.registry_version
+  ) {
     throw new Error("apptheory: microvm controller create response incomplete");
   }
 }
 
 function requireStartStopResponse(name, response, sessionID, desiredState) {
-  if (response.session_id !== sessionID || !response.state || response.desired_state !== desiredState) {
-    throw new Error(`apptheory: microvm controller ${name} response incomplete`);
+  if (
+    response.session_id !== sessionID ||
+    !response.state ||
+    response.desired_state !== desiredState
+  ) {
+    throw new Error(
+      `apptheory: microvm controller ${name} response incomplete`,
+    );
   }
 }
 
 function requireStatusResponse(response, sessionID) {
-  if (response.session_id !== sessionID || !response.lifecycle_state || !response.last_transition) {
+  if (
+    response.session_id !== sessionID ||
+    !response.lifecycle_state ||
+    !response.last_transition
+  ) {
     throw new Error("apptheory: microvm controller status response incomplete");
   }
 }
 
 function requireSessionResponse(response, sessionID) {
-  if (response.session_id !== sessionID || !response.tenant_id || !response.namespace || !response.registry_version) {
-    throw new Error("apptheory: microvm controller session response incomplete");
+  if (
+    response.session_id !== sessionID ||
+    !response.tenant_id ||
+    !response.namespace ||
+    !response.registry_version
+  ) {
+    throw new Error(
+      "apptheory: microvm controller session response incomplete",
+    );
   }
 }
 
@@ -958,14 +1160,21 @@ async function exerciseRuntimeSessionRegistry(runtime) {
   };
   const registryRecord = runtime.microVMSessionRecordToRegistryRecord(record);
   if (
-    registryRecord.pk !== runtime.microVMSessionRegistryPartitionKey(record.tenant_id, record.namespace) ||
-    registryRecord.sk !== runtime.microVMSessionRegistrySortKey(record.session_id) ||
+    registryRecord.pk !==
+      runtime.microVMSessionRegistryPartitionKey(
+        record.tenant_id,
+        record.namespace,
+      ) ||
+    registryRecord.sk !==
+      runtime.microVMSessionRegistrySortKey(record.session_id) ||
     registryRecord.ttl !== Math.trunc(record.expires_at.valueOf() / 1000) ||
     registryRecord.endpoint !== record.endpoint ||
     registryRecord.microvm_id !== record.microvm_id ||
     registryRecord.last_action !== "start"
   ) {
-    throw new Error("apptheory: microvm session registry canonical record incomplete");
+    throw new Error(
+      "apptheory: microvm session registry canonical record incomplete",
+    );
   }
   const roundTrip = runtime.microVMSessionFromRegistryRecord(registryRecord);
   if (
@@ -973,14 +1182,18 @@ async function exerciseRuntimeSessionRegistry(runtime) {
     roundTrip.microvm_id !== record.microvm_id ||
     roundTrip.last_action !== record.last_action
   ) {
-    throw new Error("apptheory: microvm session registry round trip incomplete");
+    throw new Error(
+      "apptheory: microvm session registry round trip incomplete",
+    );
   }
   const store = runtime.createMemoryMicroVMSessionRegistry();
   const stored = await store.put(record);
   if (stored.last_action !== "start") {
     throw new Error("apptheory: microvm memory registry lost last action");
   }
-  const client = runtime.createMicroVMRegistryClient(store, { ttl_ms: 30 * 60 * 1000 });
+  const client = runtime.createMicroVMRegistryClient(store, {
+    ttl_ms: 30 * 60 * 1000,
+  });
   const created = await client.create({
     request_id: "m15-registry-create",
     tenant_id: "tenant-fixture",
@@ -993,8 +1206,14 @@ async function exerciseRuntimeSessionRegistry(runtime) {
     auth_subject: "subject-fixture",
     now,
   });
-  if (created.last_action !== "create" || created.expires_at.valueOf() - created.created_at.valueOf() !== 30 * 60 * 1000) {
-    throw new Error("apptheory: microvm registry client create record incomplete");
+  if (
+    created.last_action !== "create" ||
+    created.expires_at.valueOf() - created.created_at.valueOf() !==
+      30 * 60 * 1000
+  ) {
+    throw new Error(
+      "apptheory: microvm registry client create record incomplete",
+    );
   }
   const status = await client.status({
     request_id: "m15-registry-status",
@@ -1003,19 +1222,33 @@ async function exerciseRuntimeSessionRegistry(runtime) {
     session_id: created.session_id,
     auth_subject: created.auth_subject,
   });
-  if (status.last_action !== "create" || status.registry_version !== created.generation) {
+  if (
+    status.last_action !== "create" ||
+    status.registry_version !== created.generation
+  ) {
     throw new Error("apptheory: microvm registry client status incomplete");
   }
 }
 
 function missingStrings(required, got) {
-  const seen = new Set((Array.isArray(got) ? got : []).map((value) => String(value ?? "").trim()).filter(Boolean));
+  const seen = new Set(
+    (Array.isArray(got) ? got : [])
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean),
+  );
   return required.filter((value) => !seen.has(value)).sort();
 }
 
 async function compareMicroVMRealContractFixture(fixture) {
+  if (fixture.expect?.microvm_controller_route) {
+    return await compareMicroVMControllerRouteFixture(fixture);
+  }
+
   const runtime = await loadAppTheoryRuntime();
-  const actual = validateMicroVMRealContractFixture(fixture.setup?.microvm_contract, runtime);
+  const actual = validateMicroVMRealContractFixture(
+    fixture.setup?.microvm_contract,
+    runtime,
+  );
   const expected = fixture.expect?.microvm_contract_validation;
   if (!expected) {
     return {
@@ -1036,33 +1269,54 @@ async function compareMicroVMRealContractFixture(fixture) {
 
 function validateMicroVMRealContractFixture(contract, runtime) {
   if (!contract || typeof contract !== "object" || Array.isArray(contract)) {
-    return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract fixture missing");
+    return invalidMicroVMContract(
+      "m15.microvm.invalid_contract",
+      "apptheory: microvm contract fixture missing",
+    );
   }
 
   const kind = String(contract.kind ?? "").trim();
   const version = String(contract.version ?? "").trim();
-  if (String(contract.contract ?? "").trim() !== MICROVM_CONTRACT_NAME || version !== "m16.microvm/v1") {
-    return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract must be named and versioned");
+  if (
+    String(contract.contract ?? "").trim() !== MICROVM_CONTRACT_NAME ||
+    version !== "m16.microvm/v1"
+  ) {
+    return invalidMicroVMContract(
+      "m15.microvm.invalid_contract",
+      "apptheory: microvm contract must be named and versioned",
+    );
   }
   if (kind !== "lifecycle" && kind !== "operation") {
-    return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract kind is unsupported");
+    return invalidMicroVMContract(
+      "m15.microvm.invalid_contract",
+      "apptheory: microvm contract kind is unsupported",
+    );
   }
 
-  const escapeHatchError = validateMicroVMEscapeHatches(runtime, kind, version, contract.escape_hatches ?? {});
+  const escapeHatchError = validateMicroVMEscapeHatches(
+    runtime,
+    kind,
+    version,
+    contract.escape_hatches ?? {},
+  );
   if (escapeHatchError) return escapeHatchError;
 
   try {
     if (kind === "lifecycle") {
       runtime.validateMicroVMRealLifecycleContract(contract.lifecycle ?? {});
     } else {
-      runtime.validateMicroVMOperationContract(contract.operation_contract ?? {});
+      runtime.validateMicroVMOperationContract(
+        contract.operation_contract ?? {},
+      );
     }
   } catch (err) {
     return {
       valid: false,
       kind,
       version,
-      error_code: String(err?.code ?? "m16.microvm.operation_contract_incomplete"),
+      error_code: String(
+        err?.code ?? "m16.microvm.operation_contract_incomplete",
+      ),
       error_message: err?.message ?? String(err),
     };
   }
@@ -1070,8 +1324,217 @@ function validateMicroVMRealContractFixture(contract, runtime) {
   return { valid: true, kind, version };
 }
 
+async function compareMicroVMControllerRouteFixture(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const setup = normalizeMicroVMControllerRouteSetup(
+    fixture.setup?.microvm_controller_route ?? {},
+  );
+  const expected = fixture.expect?.microvm_controller_route ?? {};
+  const now = new Date("2023-11-14T22:13:20.000Z");
+  const provider = runtime.createFakeMicroVMProvider(now);
+  const registry = runtime.createMemoryMicroVMSessionRegistry();
+  const controller = runtime.createRealMicroVMController(provider, registry, {
+    ids: { newID: () => setup.session_id },
+    clock: { now: () => new Date(now.valueOf()) },
+  });
+  if (setup.seed_session) {
+    const seeded = await controller.handle(
+      microVMControllerRouteRunRequest(runtime, setup),
+    );
+    if (seeded?.error) {
+      return {
+        ok: false,
+        reason: `seed microvm_controller_route session failed: ${seeded.error.message ?? seeded.error.code}`,
+        actual: {
+          status: 0,
+          headers: {},
+          cookies: [],
+          body: Buffer.alloc(0),
+          is_base64: false,
+        },
+        expected,
+      };
+    }
+  }
+
+  const appOptions = {
+    tier: "p1",
+    ids: { newID: () => "req-m16-route-fallback" },
+    clock: { now: () => new Date(now.valueOf()) },
+  };
+  if (setup.authenticated) {
+    appOptions.authHook = () => "subject-1";
+  }
+  const app = runtime.createApp(appOptions);
+  runtime.registerMicroVMControllerRoutes(app, controller);
+
+  const req = canonicalizeRequest(
+    fixture.input?.request ?? {},
+    fixture.input?.context ?? {},
+  );
+  const actual = await app.serve({
+    method: req.method,
+    path: req.path,
+    query: req.query,
+    headers: req.headers,
+    cookies: req.cookies,
+    body: req.body,
+    is_base64: req.is_base64,
+  });
+
+  const bodyText = Buffer.from(actual.body ?? Buffer.alloc(0)).toString("utf8");
+  let body = {};
+  if (bodyText.trim()) {
+    try {
+      body = JSON.parse(bodyText);
+    } catch {
+      return {
+        ok: false,
+        reason: "microvm_controller_route response json mismatch",
+        actual,
+        expected,
+      };
+    }
+  }
+
+  const compare = compareMicroVMControllerRouteExpected(expected, actual, body);
+  if (!compare.ok) return { ...compare, actual, expected };
+
+  if (Number.isInteger(expected.registry_token_metadata_count)) {
+    let record;
+    try {
+      record = await registry.get({
+        tenant_id: setup.tenant_id,
+        namespace: setup.namespace,
+        session_id: setup.session_id,
+      });
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `read microvm_controller_route registry record failed: ${err?.message ?? String(err)}`,
+        actual,
+        expected,
+      };
+    }
+    const count = Array.isArray(record.token_metadata)
+      ? record.token_metadata.length
+      : 0;
+    if (count !== expected.registry_token_metadata_count) {
+      return {
+        ok: false,
+        reason: `registry_token_metadata_count: expected ${expected.registry_token_metadata_count}, got ${count}`,
+        actual,
+        expected,
+      };
+    }
+    const recordText = stableStringify(record);
+    for (const forbidden of expected.forbidden_body_substrings ?? []) {
+      if (forbidden && recordText.includes(String(forbidden))) {
+        return {
+          ok: false,
+          reason: `microvm_controller_route registry record contains forbidden substring ${JSON.stringify(forbidden)}`,
+          actual,
+          expected,
+        };
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
+function normalizeMicroVMControllerRouteSetup(setup) {
+  return {
+    authenticated: setup.authenticated === true,
+    seed_session: setup.seed_session === true,
+    tenant_id: String(setup.tenant_id ?? "tenant-1").trim() || "tenant-1",
+    namespace: String(setup.namespace ?? "namespace-1").trim() || "namespace-1",
+    session_id:
+      String(setup.session_id ?? "fixture-session").trim() || "fixture-session",
+  };
+}
+
+function microVMControllerRouteRunRequest(runtime, setup) {
+  return {
+    command: runtime.MicroVMCommand.Run,
+    request_id: "req-m16-route-seed",
+    tenant_id: setup.tenant_id,
+    namespace: setup.namespace,
+    auth_context: {
+      subject: "subject-1",
+      tenant_id: setup.tenant_id,
+      namespace: setup.namespace,
+    },
+    image_ref: "image-ref",
+    image_version: "1",
+    network_connector_ref: "network-ref",
+    session_spec: { metadata: { safe: "ok" } },
+  };
+}
+
+function compareMicroVMControllerRouteExpected(expected, actual, body) {
+  if (expected.status !== actual.status) {
+    return {
+      ok: false,
+      reason: `status: expected ${expected.status}, got ${actual.status}`,
+    };
+  }
+  const bodyText = Buffer.from(actual.body ?? Buffer.alloc(0)).toString("utf8");
+  for (const forbidden of expected.forbidden_body_substrings ?? []) {
+    if (forbidden && bodyText.includes(String(forbidden))) {
+      return {
+        ok: false,
+        reason: `microvm_controller_route body contains forbidden substring ${JSON.stringify(forbidden)}`,
+      };
+    }
+  }
+  for (const field of [
+    "command",
+    "tenant_id",
+    "namespace",
+    "session_id",
+    "state",
+    "token_type",
+  ]) {
+    if (expected[field] && body[field] !== expected[field]) {
+      return {
+        ok: false,
+        reason: `${field}: expected ${JSON.stringify(expected[field])}, got ${JSON.stringify(body[field])}`,
+      };
+    }
+  }
+  if (
+    Array.isArray(expected.scope) &&
+    expected.scope.length > 0 &&
+    !deepEqual(expected.scope, body.scope ?? [])
+  ) {
+    return {
+      ok: false,
+      reason: `scope: expected ${stableStringify(expected.scope)}, got ${stableStringify(body.scope ?? [])}`,
+    };
+  }
+  if (
+    expected.error_code &&
+    microVMControllerRouteErrorCode(body) !== expected.error_code
+  ) {
+    return {
+      ok: false,
+      reason: `error_code: expected ${JSON.stringify(expected.error_code)}, got ${JSON.stringify(microVMControllerRouteErrorCode(body))}`,
+    };
+  }
+  return { ok: true };
+}
+
+function microVMControllerRouteErrorCode(body) {
+  const err = body?.error;
+  if (!err || typeof err !== "object") return "";
+  return String(err.code ?? "");
+}
+
 async function runFixture(fixture) {
-  const tier = String(fixture.tier ?? "").trim().toLowerCase();
+  const tier = String(fixture.tier ?? "")
+    .trim()
+    .toLowerCase();
 
   if (tier === "p0") {
     const { actual, effects } = await runFixtureP0(fixture);
@@ -1090,25 +1553,42 @@ async function runFixture(fixture) {
       Object.prototype.hasOwnProperty.call(expect, "output_json") ||
       Object.prototype.hasOwnProperty.call(expect, "error")
     ) {
-      const { actualOutput, actualError, effects } = await runFixtureP2Output(fixture);
-      return compareFixtureM1Result(fixture, { actualOutput, actualError, effects });
+      const { actualOutput, actualError, effects } =
+        await runFixtureP2Output(fixture);
+      return compareFixtureM1Result(fixture, {
+        actualOutput,
+        actualError,
+        effects,
+      });
     }
     const { actual, effects } = await runFixtureP2(fixture);
     return compareFixture(fixture, actual, effects);
   }
   if (tier === "m1") {
     const { actualOutput, actualError, effects } = await runFixtureM1(fixture);
-    return compareFixtureM1Result(fixture, { actualOutput, actualError, effects });
+    return compareFixtureM1Result(fixture, {
+      actualOutput,
+      actualError,
+      effects,
+    });
   }
   if (tier === "m2") {
     const { actual, wsCalls } = await runFixtureM2(fixture);
-    const result = compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
+    const result = compareFixture(fixture, actual, {
+      logs: [],
+      metrics: [],
+      spans: [],
+    });
     if (!result.ok) return result;
     return compareWebSocketCalls(fixture, wsCalls);
   }
   if (tier === "m3") {
     const { actual } = await runFixtureM3(fixture);
-    return compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
+    return compareFixture(fixture, actual, {
+      logs: [],
+      metrics: [],
+      spans: [],
+    });
   }
   if (tier === "m12") {
     const { actual, effects } = await runFixtureM12(fixture);
@@ -1116,7 +1596,11 @@ async function runFixture(fixture) {
   }
   if (tier === "m14") {
     const { actual } = await runFixtureM14(fixture);
-    return compareFixture(fixture, actual, { logs: [], metrics: [], spans: [] });
+    return compareFixture(fixture, actual, {
+      logs: [],
+      metrics: [],
+      spans: [],
+    });
   }
   if (tier === "m15") {
     return await compareMicroVMContractFixture(fixture);
@@ -1127,8 +1611,15 @@ async function runFixture(fixture) {
 
   const enableP1 = ["p1", "p2"].includes(tier);
   const enableP2 = tier === "p2";
-  const app = newFixtureApp(fixture.setup?.routes ?? [], { enableP1, enableP2, limits: fixture.setup?.limits ?? {} });
-  const req = canonicalizeRequest(fixture.input?.request ?? {}, fixture.input?.context ?? {});
+  const app = newFixtureApp(fixture.setup?.routes ?? [], {
+    enableP1,
+    enableP2,
+    limits: fixture.setup?.limits ?? {},
+  });
+  const req = canonicalizeRequest(
+    fixture.input?.request ?? {},
+    fixture.input?.context ?? {},
+  );
   const actual = app.handle(req);
   const effects = app.effects ?? {};
   return compareFixture(fixture, actual, effects);
@@ -1138,7 +1629,12 @@ function compareFixture(fixture, actual, effects) {
   const expected = fixture.expect?.response ?? {};
 
   if (expected.status !== actual.status) {
-    return { ok: false, reason: `status: expected ${expected.status}, got ${actual.status}`, actual, expected };
+    return {
+      ok: false,
+      reason: `status: expected ${expected.status}, got ${actual.status}`,
+      actual,
+      expected,
+    };
   }
   if ((expected.is_base64 ?? false) !== (actual.is_base64 ?? false)) {
     return {
@@ -1166,7 +1662,10 @@ function compareFixture(fixture, actual, effects) {
     };
   }
 
-  const hasBodyJson = Object.prototype.hasOwnProperty.call(expected, "body_json");
+  const hasBodyJson = Object.prototype.hasOwnProperty.call(
+    expected,
+    "body_json",
+  );
   if (hasBodyJson) {
     let actualJson;
     try {
@@ -1216,7 +1715,9 @@ function compareFixture(fixture, actual, effects) {
   const expectedChunksRaw = expected.chunks ?? null;
   if (Array.isArray(expectedChunksRaw) && expectedChunksRaw.length > 0) {
     const expectedChunks = expectedChunksRaw.map(decodeFixtureBody);
-    const actualChunks = Array.isArray(actual.chunks) ? actual.chunks.map((c) => Buffer.from(c ?? [])) : [];
+    const actualChunks = Array.isArray(actual.chunks)
+      ? actual.chunks.map((c) => Buffer.from(c ?? []))
+      : [];
     if (expectedChunks.length !== actualChunks.length) {
       return { ok: false, reason: "chunks mismatch", actual, expected };
     }
@@ -1226,7 +1727,9 @@ function compareFixture(fixture, actual, effects) {
       }
     }
 
-    const expectedBody = expected.body ? decodeFixtureBody(expected.body) : Buffer.concat(expectedChunks);
+    const expectedBody = expected.body
+      ? decodeFixtureBody(expected.body)
+      : Buffer.concat(expectedChunks);
     if (!expectedBody.equals(actual.body)) {
       return { ok: false, reason: "body mismatch", actual, expected };
     }
@@ -1348,7 +1851,10 @@ function compareFixture(fixture, actual, effects) {
 }
 
 function compareFixtureOutputJson(fixture, actualOutput) {
-  if (!fixture.expect || !Object.prototype.hasOwnProperty.call(fixture.expect, "output_json")) {
+  if (
+    !fixture.expect ||
+    !Object.prototype.hasOwnProperty.call(fixture.expect, "output_json")
+  ) {
     return {
       ok: false,
       reason: "missing expect.output_json",
@@ -1368,10 +1874,16 @@ function compareFixtureOutputJson(fixture, actualOutput) {
   return { ok: true };
 }
 
-function compareFixtureM1Result(fixture, { actualOutput, actualError, effects }) {
+function compareFixtureM1Result(
+  fixture,
+  { actualOutput, actualError, effects },
+) {
   const expect = fixture.expect ?? {};
   const hasError = Object.prototype.hasOwnProperty.call(expect, "error");
-  const hasOutputJson = Object.prototype.hasOwnProperty.call(expect, "output_json");
+  const hasOutputJson = Object.prototype.hasOwnProperty.call(
+    expect,
+    "output_json",
+  );
 
   if (hasError) {
     if (hasOutputJson) {
@@ -1379,12 +1891,19 @@ function compareFixtureM1Result(fixture, { actualOutput, actualError, effects })
         ok: false,
         reason: "fixture expect cannot set both error and output_json",
         expected_error: expect.error,
-        actual_error: actualError ? { message: String(actualError.message ?? actualError) } : null,
+        actual_error: actualError
+          ? { message: String(actualError.message ?? actualError) }
+          : null,
       };
     }
 
     if (!actualError) {
-      return { ok: false, reason: "expected error, got none", expected_error: expect.error, actual_error: null };
+      return {
+        ok: false,
+        reason: "expected error, got none",
+        expected_error: expect.error,
+        actual_error: null,
+      };
     }
 
     const expectedMsg = String(expect.error?.message ?? "").trim();
@@ -1406,7 +1925,9 @@ function compareFixtureM1Result(fixture, { actualOutput, actualError, effects })
       reason: "missing expect.output_json or expect.error",
       expected_output_json: null,
       actual_output_json: actualOutput,
-      actual_error: actualError ? { message: String(actualError.message ?? actualError) } : null,
+      actual_error: actualError
+        ? { message: String(actualError.message ?? actualError) }
+        : null,
     };
   }
   if (actualError) {
@@ -1432,7 +1953,14 @@ function compareM1SideEffectsIfExpected(fixture, effects) {
   if (!expectsEffects) return { ok: true };
   const actualEffects = effects ?? { logs: [], metrics: [], spans: [] };
   if (!deepEqual(expect.logs ?? [], actualEffects.logs ?? [])) {
-    return { ok: false, reason: "logs mismatch", expected_output_json: expect.output_json ?? null, actual_output_json: null, expected_logs: expect.logs ?? [], actual_logs: actualEffects.logs ?? [] };
+    return {
+      ok: false,
+      reason: "logs mismatch",
+      expected_output_json: expect.output_json ?? null,
+      actual_output_json: null,
+      expected_logs: expect.logs ?? [],
+      actual_logs: actualEffects.logs ?? [],
+    };
   }
   if (!deepEqual(expect.metrics ?? [], actualEffects.metrics ?? [])) {
     return {
@@ -1445,14 +1973,23 @@ function compareM1SideEffectsIfExpected(fixture, effects) {
     };
   }
   if (!deepEqual(expect.spans ?? [], actualEffects.spans ?? [])) {
-    return { ok: false, reason: "spans mismatch", expected_output_json: expect.output_json ?? null, actual_output_json: null, expected_spans: expect.spans ?? [], actual_spans: actualEffects.spans ?? [] };
+    return {
+      ok: false,
+      reason: "spans mismatch",
+      expected_output_json: expect.output_json ?? null,
+      actual_output_json: null,
+      expected_spans: expect.spans ?? [],
+      actual_spans: actualEffects.spans ?? [],
+    };
   }
   return { ok: true };
 }
 
 function usesCloudWatchLogsSubscriptionHandler(fixture) {
   return (fixture.setup?.kinesis ?? []).some(
-    (route) => String(route?.handler ?? "").trim() === CLOUDWATCH_LOGS_SUBSCRIPTION_HANDLER,
+    (route) =>
+      String(route?.handler ?? "").trim() ===
+      CLOUDWATCH_LOGS_SUBSCRIPTION_HANDLER,
   );
 }
 
@@ -1466,29 +2003,42 @@ function buildCloudWatchLogsSubscriptionExpectations(fixture) {
     return null;
   }
   if (!usesHandler) {
-    throw new Error("expect.cloudwatch_logs_subscription requires kinesis_require_cloudwatch_logs_subscription handler");
+    throw new Error(
+      "expect.cloudwatch_logs_subscription requires kinesis_require_cloudwatch_logs_subscription handler",
+    );
   }
 
   const expectedRecords = expectationRoot.records ?? [];
   if (!Array.isArray(expectedRecords) || expectedRecords.length === 0) {
-    throw new Error("fixture missing expect.cloudwatch_logs_subscription.records");
+    throw new Error(
+      "fixture missing expect.cloudwatch_logs_subscription.records",
+    );
   }
 
   const inputRecords = fixture.input?.aws_event?.event?.Records ?? null;
   if (!Array.isArray(inputRecords) || inputRecords.length === 0) {
-    throw new Error("cloudwatch logs subscription fixture missing kinesis input records");
+    throw new Error(
+      "cloudwatch logs subscription fixture missing kinesis input records",
+    );
   }
 
   const byRecordId = new Map();
   expectedRecords.forEach((expected, index) => {
     const recordId = String(expected?.record_id ?? "").trim();
     if (!recordId) {
-      throw new Error(`expect.cloudwatch_logs_subscription.records[${index}] missing record_id`);
+      throw new Error(
+        `expect.cloudwatch_logs_subscription.records[${index}] missing record_id`,
+      );
     }
     if (byRecordId.has(recordId)) {
-      throw new Error(`duplicate cloudwatch logs subscription expectation for record_id ${JSON.stringify(recordId)}`);
+      throw new Error(
+        `duplicate cloudwatch logs subscription expectation for record_id ${JSON.stringify(recordId)}`,
+      );
     }
-    validateCloudWatchLogsSubscriptionExpectationRecord({ ...expected, record_id: recordId });
+    validateCloudWatchLogsSubscriptionExpectationRecord({
+      ...expected,
+      record_id: recordId,
+    });
     byRecordId.set(recordId, { ...expected, record_id: recordId });
   });
 
@@ -1496,20 +2046,28 @@ function buildCloudWatchLogsSubscriptionExpectations(fixture) {
   inputRecords.forEach((record, index) => {
     const recordId = String(record?.eventID ?? "").trim();
     if (!recordId) {
-      throw new Error(`kinesis input Records[${index}] missing eventID for cloudwatch logs subscription expectation`);
+      throw new Error(
+        `kinesis input Records[${index}] missing eventID for cloudwatch logs subscription expectation`,
+      );
     }
     if (seenInputRecordIds.has(recordId)) {
-      throw new Error(`duplicate kinesis input record_id ${JSON.stringify(recordId)}`);
+      throw new Error(
+        `duplicate kinesis input record_id ${JSON.stringify(recordId)}`,
+      );
     }
     seenInputRecordIds.add(recordId);
     if (!byRecordId.has(recordId)) {
-      throw new Error(`missing cloudwatch logs subscription expectation for kinesis record_id ${JSON.stringify(recordId)}`);
+      throw new Error(
+        `missing cloudwatch logs subscription expectation for kinesis record_id ${JSON.stringify(recordId)}`,
+      );
     }
   });
 
   for (const recordId of byRecordId.keys()) {
     if (!seenInputRecordIds.has(recordId)) {
-      throw new Error(`extra cloudwatch logs subscription expectation for record_id ${JSON.stringify(recordId)}`);
+      throw new Error(
+        `extra cloudwatch logs subscription expectation for record_id ${JSON.stringify(recordId)}`,
+      );
     }
   }
 
@@ -1524,29 +2082,45 @@ function validateCloudWatchLogsSubscriptionExpectationRecord(expected) {
       String(expected.owner ?? "").trim() ||
       String(expected.log_group ?? "").trim() ||
       String(expected.log_stream ?? "").trim() ||
-      (Array.isArray(expected.subscription_filters) && expected.subscription_filters.length > 0) ||
+      (Array.isArray(expected.subscription_filters) &&
+        expected.subscription_filters.length > 0) ||
       (Array.isArray(expected.log_events) && expected.log_events.length > 0) ||
-      (expected.safe_summary && Object.keys(expected.safe_summary).length > 0) ||
+      (expected.safe_summary &&
+        Object.keys(expected.safe_summary).length > 0) ||
       (Array.isArray(expected.forbidden_safe_log_substrings) &&
         expected.forbidden_safe_log_substrings.length > 0);
     if (hasDecodedFields) {
-      throw new Error(`cloudwatch logs subscription record_id ${JSON.stringify(recordId)} has decode_error=true and decoded fields`);
+      throw new Error(
+        `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} has decode_error=true and decoded fields`,
+      );
     }
     return;
   }
 
   const missing = [];
-  if (!String(expected?.message_type ?? "").trim()) missing.push("message_type");
+  if (!String(expected?.message_type ?? "").trim())
+    missing.push("message_type");
   if (!String(expected?.owner ?? "").trim()) missing.push("owner");
   if (!String(expected?.log_group ?? "").trim()) missing.push("log_group");
   if (!String(expected?.log_stream ?? "").trim()) missing.push("log_stream");
-  if (!Array.isArray(expected?.subscription_filters) || expected.subscription_filters.length === 0) {
+  if (
+    !Array.isArray(expected?.subscription_filters) ||
+    expected.subscription_filters.length === 0
+  ) {
     missing.push("subscription_filters");
   }
-  if (!Array.isArray(expected?.log_events) || expected.log_events.length === 0) {
+  if (
+    !Array.isArray(expected?.log_events) ||
+    expected.log_events.length === 0
+  ) {
     missing.push("log_events");
   }
-  if (!expected?.safe_summary || typeof expected.safe_summary !== "object" || Array.isArray(expected.safe_summary) || Object.keys(expected.safe_summary).length === 0) {
+  if (
+    !expected?.safe_summary ||
+    typeof expected.safe_summary !== "object" ||
+    Array.isArray(expected.safe_summary) ||
+    Object.keys(expected.safe_summary).length === 0
+  ) {
     missing.push("safe_summary");
   }
   if (missing.length > 0) {
@@ -1557,22 +2131,32 @@ function validateCloudWatchLogsSubscriptionExpectationRecord(expected) {
 
   expected.subscription_filters.forEach((filter, index) => {
     if (!String(filter ?? "").trim()) {
-      throw new Error(`cloudwatch logs subscription record_id ${JSON.stringify(recordId)} subscription_filters[${index}] is empty`);
+      throw new Error(
+        `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} subscription_filters[${index}] is empty`,
+      );
     }
   });
   expected.log_events.forEach((event, index) => {
     if (!String(event?.id ?? "").trim()) {
-      throw new Error(`cloudwatch logs subscription record_id ${JSON.stringify(recordId)} log_events[${index}] missing id`);
+      throw new Error(
+        `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} log_events[${index}] missing id`,
+      );
     }
     if (!String(event?.message ?? "").trim()) {
-      throw new Error(`cloudwatch logs subscription record_id ${JSON.stringify(recordId)} log_events[${index}] missing message`);
+      throw new Error(
+        `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} log_events[${index}] missing message`,
+      );
     }
   });
-  if (cloudWatchLogsSafeSummaryContainsForbidden(
-    expected.safe_summary,
-    expected.forbidden_safe_log_substrings ?? [],
-  )) {
-    throw new Error(`cloudwatch logs subscription record_id ${JSON.stringify(recordId)} safe_summary contains forbidden raw log substring`);
+  if (
+    cloudWatchLogsSafeSummaryContainsForbidden(
+      expected.safe_summary,
+      expected.forbidden_safe_log_substrings ?? [],
+    )
+  ) {
+    throw new Error(
+      `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} safe_summary contains forbidden raw log substring`,
+    );
   }
 }
 
@@ -1590,24 +2174,36 @@ async function missingCloudWatchLogsSubscriptionDecoder() {
   throw new Error(CLOUDWATCH_LOGS_SUBSCRIPTION_MISSING_HELPER);
 }
 
-function makeCloudWatchLogsSubscriptionKinesisHandler(fixture, decoder = missingCloudWatchLogsSubscriptionDecoder) {
+function makeCloudWatchLogsSubscriptionKinesisHandler(
+  fixture,
+  decoder = missingCloudWatchLogsSubscriptionDecoder,
+) {
   const expectations = buildCloudWatchLogsSubscriptionExpectations(fixture);
   return async (_ctx, record) => {
     if (!expectations) {
-      throw new Error("fixture missing validated cloudwatch logs subscription expectations");
+      throw new Error(
+        "fixture missing validated cloudwatch logs subscription expectations",
+      );
     }
     const recordId = String(record?.eventID ?? "").trim();
     const expected = expectations.get(recordId);
     if (!expected) {
-      throw new Error(`missing cloudwatch logs subscription expectation for kinesis record_id ${JSON.stringify(recordId)}`);
+      throw new Error(
+        `missing cloudwatch logs subscription expectation for kinesis record_id ${JSON.stringify(recordId)}`,
+      );
     }
 
     const actual = await decoder(record);
     if (expected.decode_error === true) {
-      throw new Error(`cloudwatch logs subscription record_id ${JSON.stringify(recordId)} expected decode_error=true, got decoded record`);
+      throw new Error(
+        `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} expected decode_error=true, got decoded record`,
+      );
     }
 
-    const compare = compareCloudWatchLogsSubscriptionDecodedRecord(expected, actual);
+    const compare = compareCloudWatchLogsSubscriptionDecodedRecord(
+      expected,
+      actual,
+    );
     if (!compare.ok) {
       throw new Error(compare.reason);
     }
@@ -1618,33 +2214,68 @@ function compareCloudWatchLogsSubscriptionDecodedRecord(expected, actual) {
   const recordId = String(expected?.record_id ?? "").trim();
   const actualRecordId = String(actual?.record_id ?? "").trim();
   if (actualRecordId && actualRecordId !== recordId) {
-    return { ok: false, reason: `cloudwatch logs subscription record_id mismatch: expected ${JSON.stringify(recordId)}, got ${JSON.stringify(actualRecordId)}` };
+    return {
+      ok: false,
+      reason: `cloudwatch logs subscription record_id mismatch: expected ${JSON.stringify(recordId)}, got ${JSON.stringify(actualRecordId)}`,
+    };
   }
   for (const key of ["message_type", "owner", "log_group", "log_stream"]) {
-    if (String(actual?.[key] ?? "").trim() !== String(expected?.[key] ?? "").trim()) {
-      return { ok: false, reason: `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} ${key} mismatch` };
+    if (
+      String(actual?.[key] ?? "").trim() !==
+      String(expected?.[key] ?? "").trim()
+    ) {
+      return {
+        ok: false,
+        reason: `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} ${key} mismatch`,
+      };
     }
   }
-  if (!deepEqual(expected?.subscription_filters ?? [], actual?.subscription_filters ?? [])) {
-    return { ok: false, reason: `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} subscription_filters mismatch` };
+  if (
+    !deepEqual(
+      expected?.subscription_filters ?? [],
+      actual?.subscription_filters ?? [],
+    )
+  ) {
+    return {
+      ok: false,
+      reason: `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} subscription_filters mismatch`,
+    };
   }
   if (!deepEqual(expected?.log_events ?? [], actual?.log_events ?? [])) {
-    return { ok: false, reason: `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} log_events mismatch` };
+    return {
+      ok: false,
+      reason: `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} log_events mismatch`,
+    };
   }
   if (!deepEqual(expected?.safe_summary ?? {}, actual?.safe_summary ?? {})) {
-    return { ok: false, reason: `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} safe_summary mismatch` };
+    return {
+      ok: false,
+      reason: `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} safe_summary mismatch`,
+    };
   }
-  if (cloudWatchLogsSafeSummaryContainsForbidden(
-    actual?.safe_summary ?? {},
-    expected?.forbidden_safe_log_substrings ?? [],
-  )) {
-    return { ok: false, reason: `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} safe_summary contains forbidden raw log substring` };
+  if (
+    cloudWatchLogsSafeSummaryContainsForbidden(
+      actual?.safe_summary ?? {},
+      expected?.forbidden_safe_log_substrings ?? [],
+    )
+  ) {
+    return {
+      ok: false,
+      reason: `cloudwatch logs subscription record_id ${JSON.stringify(recordId)} safe_summary contains forbidden raw log substring`,
+    };
   }
   return { ok: true };
 }
 
-function cloudWatchLogsSafeSummaryContainsForbidden(safeSummary, forbiddenSubstrings) {
-  if (!safeSummary || !Array.isArray(forbiddenSubstrings) || forbiddenSubstrings.length === 0) {
+function cloudWatchLogsSafeSummaryContainsForbidden(
+  safeSummary,
+  forbiddenSubstrings,
+) {
+  if (
+    !safeSummary ||
+    !Array.isArray(forbiddenSubstrings) ||
+    forbiddenSubstrings.length === 0
+  ) {
     return false;
   }
   const serialized = JSON.stringify(safeSummary);
@@ -1661,7 +2292,12 @@ function compareWebSocketCalls(fixture, wsCalls) {
 
   if (expected.length === 0) {
     if (actual.length === 0) return { ok: true };
-    return { ok: false, reason: `unexpected ws_calls (${actual.length})`, actual_ws_calls: actual, expected_ws_calls: [] };
+    return {
+      ok: false,
+      reason: `unexpected ws_calls (${actual.length})`,
+      actual_ws_calls: actual,
+      expected_ws_calls: [],
+    };
   }
 
   if (expected.length !== actual.length) {
@@ -1678,15 +2314,28 @@ function compareWebSocketCalls(fixture, wsCalls) {
     const got = actual[i] ?? {};
 
     if (String(exp.op ?? "").trim() !== String(got.op ?? "").trim()) {
-      return { ok: false, reason: `ws_calls[${i}].op mismatch`, actual_ws_calls: actual, expected_ws_calls: expected };
+      return {
+        ok: false,
+        reason: `ws_calls[${i}].op mismatch`,
+        actual_ws_calls: actual,
+        expected_ws_calls: expected,
+      };
     }
 
     const expEndpoint = String(exp.endpoint ?? "").trim();
     if (expEndpoint && expEndpoint !== endpoint) {
-      return { ok: false, reason: `ws_calls[${i}].endpoint mismatch`, actual_ws_calls: actual, expected_ws_calls: expected };
+      return {
+        ok: false,
+        reason: `ws_calls[${i}].endpoint mismatch`,
+        actual_ws_calls: actual,
+        expected_ws_calls: expected,
+      };
     }
 
-    if (String(exp.connection_id ?? "").trim() !== String(got.connectionId ?? "").trim()) {
+    if (
+      String(exp.connection_id ?? "").trim() !==
+      String(got.connectionId ?? "").trim()
+    ) {
       return {
         ok: false,
         reason: `ws_calls[${i}].connection_id mismatch`,
@@ -1695,10 +2344,17 @@ function compareWebSocketCalls(fixture, wsCalls) {
       };
     }
 
-    const expectedBytes = exp.data ? decodeFixtureBody(exp.data) : Buffer.alloc(0);
+    const expectedBytes = exp.data
+      ? decodeFixtureBody(exp.data)
+      : Buffer.alloc(0);
     const gotBytes = got.data ? Buffer.from(got.data) : Buffer.alloc(0);
     if (!expectedBytes.equals(gotBytes)) {
-      return { ok: false, reason: `ws_calls[${i}].data mismatch`, actual_ws_calls: actual, expected_ws_calls: expected };
+      return {
+        ok: false,
+        reason: `ws_calls[${i}].data mismatch`,
+        actual_ws_calls: actual,
+        expected_ws_calls: expected,
+      };
     }
   }
 
@@ -1745,7 +2401,9 @@ function builtInKinesisHandler(runtime, name, fixture) {
     case "kinesis_fail_on_data":
       return async (_ctx, record) => {
         const dataB64 = String(record?.kinesis?.data ?? "").trim();
-        const decoded = dataB64 ? Buffer.from(dataB64, "base64").toString("utf8") : "";
+        const decoded = dataB64
+          ? Buffer.from(dataB64, "base64").toString("utf8")
+          : "";
         if (decoded.trim() === "fail") {
           throw new Error("fail");
         }
@@ -1829,14 +2487,25 @@ function builtInDynamoDBStreamHandler(runtime, name, effects) {
 
 function requireDynamoDBSafeSummary(runtime, record, failOnRemove) {
   const summary = runtime.normalizeDynamoDBStreamRecord(record);
-  for (const key of ["table_name", "event_id", "event_name", "sequence_number", "stream_view_type"]) {
+  for (const key of [
+    "table_name",
+    "event_id",
+    "event_name",
+    "sequence_number",
+    "stream_view_type",
+  ]) {
     if (!String(summary[key] ?? "").trim()) {
       throw new Error(`missing normalized dynamodb ${key}`);
     }
   }
   const safeLog = String(summary.safe_log ?? "").trim();
   const serialized = JSON.stringify(summary);
-  if (!safeLog || ["release#rel_123", "do-not-log", "previous-secret"].some((sentinel) => serialized.includes(sentinel))) {
+  if (
+    !safeLog ||
+    ["release#rel_123", "do-not-log", "previous-secret"].some((sentinel) =>
+      serialized.includes(sentinel),
+    )
+  ) {
     throw new Error("unsafe dynamodb stream summary");
   }
   if (failOnRemove && String(record?.eventName ?? "").trim() === "REMOVE") {
@@ -1845,7 +2514,9 @@ function requireDynamoDBSafeSummary(runtime, record, failOnRemove) {
 }
 
 function dynamoDBSafeSummary(record) {
-  const tableName = dynamoDBFixtureTableNameFromStreamArn(String(record?.eventSourceARN ?? ""));
+  const tableName = dynamoDBFixtureTableNameFromStreamArn(
+    String(record?.eventSourceARN ?? ""),
+  );
   const sequenceNumber = String(record?.dynamodb?.SequenceNumber ?? "").trim();
   const eventId = String(record?.eventID ?? "").trim();
   const eventName = String(record?.eventName ?? "").trim();
@@ -1884,25 +2555,34 @@ function builtInEventBridgeHandler(runtime, name, effects) {
     case "eventbridge_echo_event_middleware":
       return async (ctx) => ({ mw: ctx.get("mw"), trace: ctx.get("trace") });
     case "eventbridge_workload_envelope":
-      return async (ctx, event) => runtime.normalizeEventBridgeWorkloadEnvelope(ctx, event);
+      return async (ctx, event) =>
+        runtime.normalizeEventBridgeWorkloadEnvelope(ctx, event);
     case "eventbridge_scheduled_summary":
-      return async (ctx, event) => runtime.normalizeEventBridgeScheduledWorkload(ctx, event);
+      return async (ctx, event) =>
+        runtime.normalizeEventBridgeScheduledWorkload(ctx, event);
     case "eventbridge_observed_success":
-      return async (ctx, event) => runtime.normalizeEventBridgeWorkloadEnvelope(ctx, event);
+      return async (ctx, event) =>
+        runtime.normalizeEventBridgeWorkloadEnvelope(ctx, event);
     case "eventbridge_observed_panic":
       return async () => {
         throw new Error("raw eventbridge panic: do-not-log");
       };
     case "eventbridge_require_workload_envelope":
-      return async (ctx, event) => runtime.requireEventBridgeWorkloadEnvelope(ctx, event);
+      return async (ctx, event) =>
+        runtime.requireEventBridgeWorkloadEnvelope(ctx, event);
     default:
       return null;
   }
 }
 
 function eventBridgeWorkloadEnvelopeSummary(ctx, event) {
-  const detailType = String(event?.["detail-type"] ?? event?.detailType ?? "").trim();
-  const { correlationId, correlationSource } = eventBridgeCorrelationId(ctx, event);
+  const detailType = String(
+    event?.["detail-type"] ?? event?.detailType ?? "",
+  ).trim();
+  const { correlationId, correlationSource } = eventBridgeCorrelationId(
+    ctx,
+    event,
+  );
   return {
     account: String(event?.account ?? "").trim(),
     correlation_id: correlationId,
@@ -1911,7 +2591,9 @@ function eventBridgeWorkloadEnvelopeSummary(ctx, event) {
     event_id: String(event?.id ?? "").trim(),
     region: String(event?.region ?? "").trim(),
     request_id: String(ctx?.requestId ?? "").trim(),
-    resources: Array.isArray(event?.resources) ? event.resources.map((resource) => String(resource)) : [],
+    resources: Array.isArray(event?.resources)
+      ? event.resources.map((resource) => String(resource))
+      : [],
     source: String(event?.source ?? "").trim(),
     time: String(event?.time ?? "").trim(),
   };
@@ -1919,8 +2601,16 @@ function eventBridgeWorkloadEnvelopeSummary(ctx, event) {
 
 function eventBridgeScheduledSummary(ctx, event) {
   const envelope = eventBridgeWorkloadEnvelopeSummary(ctx, event);
-  const detail = event && typeof event.detail === "object" && !Array.isArray(event.detail) ? event.detail : {};
-  const result = detail.result && typeof detail.result === "object" && !Array.isArray(detail.result) ? detail.result : {};
+  const detail =
+    event && typeof event.detail === "object" && !Array.isArray(event.detail)
+      ? event.detail
+      : {};
+  const result =
+    detail.result &&
+    typeof detail.result === "object" &&
+    !Array.isArray(detail.result)
+      ? detail.result
+      : {};
 
   let runId = objectString(detail, "run_id");
   if (!runId) runId = String(event?.id ?? "").trim();
@@ -1934,10 +2624,13 @@ function eventBridgeScheduledSummary(ctx, event) {
     else if (requestId) idempotencyKey = `lambda:${requestId}`;
   }
 
-  let status = objectString(result, "status") || objectString(detail, "status") || "ok";
+  let status =
+    objectString(result, "status") || objectString(detail, "status") || "ok";
   status = String(status).trim() || "ok";
-  const remainingMs = Number(ctx?.remainingMs ?? 0) > 0 ? Math.floor(Number(ctx.remainingMs)) : 0;
-  const deadlineUnixMs = remainingMs > 0 ? ctx.now().getTime() + remainingMs : 0;
+  const remainingMs =
+    Number(ctx?.remainingMs ?? 0) > 0 ? Math.floor(Number(ctx.remainingMs)) : 0;
+  const deadlineUnixMs =
+    remainingMs > 0 ? ctx.now().getTime() + remainingMs : 0;
 
   return {
     correlation_id: envelope.correlation_id,
@@ -1962,17 +2655,26 @@ function eventBridgeScheduledSummary(ctx, event) {
 function eventBridgeCorrelationId(ctx, event) {
   const metadataCorrelation = objectString(event?.metadata, "correlation_id");
   if (metadataCorrelation) {
-    return { correlationId: metadataCorrelation, correlationSource: "metadata.correlation_id" };
+    return {
+      correlationId: metadataCorrelation,
+      correlationSource: "metadata.correlation_id",
+    };
   }
 
   const headerCorrelation = headerString(event?.headers, "x-correlation-id");
   if (headerCorrelation) {
-    return { correlationId: headerCorrelation, correlationSource: "headers.x-correlation-id" };
+    return {
+      correlationId: headerCorrelation,
+      correlationSource: "headers.x-correlation-id",
+    };
   }
 
   const detailCorrelation = objectString(event?.detail, "correlation_id");
   if (detailCorrelation) {
-    return { correlationId: detailCorrelation, correlationSource: "detail.correlation_id" };
+    return {
+      correlationId: detailCorrelation,
+      correlationSource: "detail.correlation_id",
+    };
   }
 
   const eventId = String(event?.id ?? "").trim();
@@ -1982,7 +2684,10 @@ function eventBridgeCorrelationId(ctx, event) {
 
   const requestId = String(ctx?.ctx?.awsRequestId ?? "").trim();
   if (requestId) {
-    return { correlationId: requestId, correlationSource: "lambda.aws_request_id" };
+    return {
+      correlationId: requestId,
+      correlationSource: "lambda.aws_request_id",
+    };
   }
 
   return { correlationId: "", correlationSource: "" };
@@ -1993,7 +2698,6 @@ function objectString(object, key) {
   return String(object[key] ?? "").trim();
 }
 
-
 function objectInt(object, key) {
   if (!object || typeof object !== "object" || Array.isArray(object)) return 0;
   const value = Number(object[key] ?? 0);
@@ -2002,8 +2706,11 @@ function objectInt(object, key) {
 }
 
 function headerString(headers, key) {
-  if (!headers || typeof headers !== "object" || Array.isArray(headers)) return "";
-  const wanted = String(key ?? "").trim().toLowerCase();
+  if (!headers || typeof headers !== "object" || Array.isArray(headers))
+    return "";
+  const wanted = String(key ?? "")
+    .trim()
+    .toLowerCase();
   for (const [name, value] of Object.entries(headers)) {
     if (String(name).trim().toLowerCase() !== wanted) continue;
     if (Array.isArray(value)) {
@@ -2018,8 +2725,14 @@ function headerString(headers, key) {
   return "";
 }
 
-
-function recordEventBridgeEffects(effects, ctx, summary, level, outcome, errorCode) {
+function recordEventBridgeEffects(
+  effects,
+  ctx,
+  summary,
+  level,
+  outcome,
+  errorCode,
+) {
   if (!effects) return;
   const correlationId = String(summary?.correlation_id ?? "").trim();
   const source = String(summary?.source ?? "").trim();
@@ -2063,7 +2776,14 @@ function recordEventBridgeEffects(effects, ctx, summary, level, outcome, errorCo
   });
 }
 
-function recordDynamoDBEffects(effects, ctx, record, level, outcome, errorCode) {
+function recordDynamoDBEffects(
+  effects,
+  ctx,
+  record,
+  level,
+  outcome,
+  errorCode,
+) {
   if (!effects) return;
   const summary = dynamoDBSafeSummary(record);
   const tableName = String(summary.table_name ?? "").trim();
@@ -2200,7 +2920,9 @@ async function runFixtureM1(fixture) {
   for (const route of fixture.setup?.kinesis ?? []) {
     const handler = builtInKinesisHandler(runtime, route.handler, fixture);
     if (!handler) {
-      throw new Error(`unknown kinesis handler ${JSON.stringify(route.handler)}`);
+      throw new Error(
+        `unknown kinesis handler ${JSON.stringify(route.handler)}`,
+      );
     }
     app.kinesis(route.stream, handler);
   }
@@ -2214,9 +2936,15 @@ async function runFixtureM1(fixture) {
   }
 
   for (const route of fixture.setup?.dynamodb ?? []) {
-    const handler = builtInDynamoDBStreamHandler(runtime, route.handler, effects);
+    const handler = builtInDynamoDBStreamHandler(
+      runtime,
+      route.handler,
+      effects,
+    );
     if (!handler) {
-      throw new Error(`unknown dynamodb handler ${JSON.stringify(route.handler)}`);
+      throw new Error(
+        `unknown dynamodb handler ${JSON.stringify(route.handler)}`,
+      );
     }
     app.dynamoDB(route.table, handler);
   }
@@ -2224,9 +2952,18 @@ async function runFixtureM1(fixture) {
   for (const route of fixture.setup?.eventbridge ?? []) {
     const handler = builtInEventBridgeHandler(runtime, route.handler, effects);
     if (!handler) {
-      throw new Error(`unknown eventbridge handler ${JSON.stringify(route.handler)}`);
+      throw new Error(
+        `unknown eventbridge handler ${JSON.stringify(route.handler)}`,
+      );
     }
-    app.eventBridge({ ruleName: route.rule_name, source: route.source, detailType: route.detail_type }, handler);
+    app.eventBridge(
+      {
+        ruleName: route.rule_name,
+        source: route.source,
+        detailType: route.detail_type,
+      },
+      handler,
+    );
   }
 
   const awsEvent = fixture.input?.aws_event ?? null;
@@ -2237,7 +2974,10 @@ async function runFixtureM1(fixture) {
   let actualOutput = null;
   let actualError = null;
   try {
-    actualOutput = await app.handleLambda(awsEvent.event ?? {}, fixtureLambdaContext(fixture.input?.context ?? {}));
+    actualOutput = await app.handleLambda(
+      awsEvent.event ?? {},
+      fixtureLambdaContext(fixture.input?.context ?? {}),
+    );
   } catch (err) {
     actualError = err;
   }
@@ -2317,7 +3057,9 @@ async function runFixtureM2(fixture) {
   for (const route of fixture.setup?.websockets ?? []) {
     const handler = builtInWebSocketHandler(runtime, route.handler);
     if (!handler) {
-      throw new Error(`unknown websocket handler ${JSON.stringify(route.handler)}`);
+      throw new Error(
+        `unknown websocket handler ${JSON.stringify(route.handler)}`,
+      );
     }
     app.webSocket(route.route_key, handler);
   }
@@ -2349,7 +3091,9 @@ async function runFixtureM3(fixture) {
     if (!handler) {
       throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
     }
-    app.handle(route.method, route.path, handler, { authRequired: Boolean(route.auth_required) });
+    app.handle(route.method, route.path, handler, {
+      authRequired: Boolean(route.auth_required),
+    });
   }
 
   const awsEvent = fixture.input?.aws_event ?? null;
@@ -2391,7 +3135,10 @@ async function runFixtureM12(fixture) {
     },
     ...(cors ? { cors } : {}),
     authHook: (ctx) => {
-      const authz = firstHeaderValue(ctx.request.headers ?? {}, "authorization").trim();
+      const authz = firstHeaderValue(
+        ctx.request.headers ?? {},
+        "authorization",
+      ).trim();
       if (!authz) {
         throw new runtime.AppError("app.unauthorized", "unauthorized");
       }
@@ -2415,7 +3162,9 @@ async function runFixtureM12(fixture) {
     if (!handler) {
       throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
     }
-    app.handle(route.method, route.path, handler, { authRequired: Boolean(route.auth_required) });
+    app.handle(route.method, route.path, handler, {
+      authRequired: Boolean(route.auth_required),
+    });
   }
 
   const input = fixture.input?.request ?? {};
@@ -2429,7 +3178,9 @@ async function runFixtureM12(fixture) {
     isBase64: input.is_base64 ?? false,
   };
 
-  const runtimeCtx = { remaining_ms: Number(fixture.input?.context?.remaining_ms ?? 0) };
+  const runtimeCtx = {
+    remaining_ms: Number(fixture.input?.context?.remaining_ms ?? 0),
+  };
   const resp = await app.serve(req, runtimeCtx);
   const actual = {
     status: resp.status,
@@ -2472,7 +3223,10 @@ async function runFixtureM14(fixture) {
     },
     ...(cors ? { cors } : {}),
     authHook: (ctx) => {
-      const authz = firstHeaderValue(ctx.request.headers ?? {}, "authorization").trim();
+      const authz = firstHeaderValue(
+        ctx.request.headers ?? {},
+        "authorization",
+      ).trim();
       if (!authz) {
         throw new runtime.AppError("app.unauthorized", "unauthorized");
       }
@@ -2496,7 +3250,9 @@ async function runFixtureM14(fixture) {
     if (!handler) {
       throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
     }
-    app.handle(route.method, route.path, handler, { authRequired: Boolean(route.auth_required) });
+    app.handle(route.method, route.path, handler, {
+      authRequired: Boolean(route.auth_required),
+    });
   }
 
   const input = fixture.input?.request ?? {};
@@ -2510,7 +3266,9 @@ async function runFixtureM14(fixture) {
     isBase64: input.is_base64 ?? false,
   };
 
-  const runtimeCtx = { remaining_ms: Number(fixture.input?.context?.remaining_ms ?? 0) };
+  const runtimeCtx = {
+    remaining_ms: Number(fixture.input?.context?.remaining_ms ?? 0),
+  };
   const resp = await app.serve(req, runtimeCtx);
 
   const chunks = [];
@@ -2531,7 +3289,10 @@ async function runFixtureM14(fixture) {
         buffers.push(b);
       }
     } catch (err) {
-      streamErrorCode = err instanceof runtime.AppError ? String(err.code ?? "") : "app.internal";
+      streamErrorCode =
+        err instanceof runtime.AppError
+          ? String(err.code ?? "")
+          : "app.internal";
     }
   }
 
@@ -2562,12 +3323,17 @@ async function runFixtureP0(fixture) {
 
   const awsEvent = fixture.input?.aws_event ?? null;
   if (awsEvent) {
-    const source = String(awsEvent.source ?? "").trim().toLowerCase();
+    const source = String(awsEvent.source ?? "")
+      .trim()
+      .toLowerCase();
     const event = awsEvent.event ?? {};
 
     if (source === "apigw_v2") {
       const resp = await app.serveAPIGatewayV2(event);
-      return { actual: canonicalResponseFromAPIGatewayV2Response(resp), effects: { logs: [], metrics: [], spans: [] } };
+      return {
+        actual: canonicalResponseFromAPIGatewayV2Response(resp),
+        effects: { logs: [], metrics: [], spans: [] },
+      };
     }
     if (source === "lambda_function_url") {
       const resp = await app.serveLambdaFunctionURL(event);
@@ -2584,7 +3350,9 @@ async function runFixtureP0(fixture) {
       };
     }
 
-    throw new Error(`unknown aws_event source ${JSON.stringify(awsEvent.source)}`);
+    throw new Error(
+      `unknown aws_event source ${JSON.stringify(awsEvent.source)}`,
+    );
   }
 
   const input = fixture.input?.request ?? {};
@@ -2614,20 +3382,28 @@ function canonicalResponseFromAPIGatewayV2Response(resp) {
   const status = Number(resp?.statusCode ?? 0);
   const isBase64Encoded = Boolean(resp?.isBase64Encoded);
   const bodyStr = String(resp?.body ?? "");
-  const body = isBase64Encoded ? Buffer.from(bodyStr, "base64") : Buffer.from(bodyStr, "utf8");
+  const body = isBase64Encoded
+    ? Buffer.from(bodyStr, "base64")
+    : Buffer.from(bodyStr, "utf8");
 
   const headersSource =
-    resp?.multiValueHeaders && Object.keys(resp.multiValueHeaders).length > 0 ? resp.multiValueHeaders : resp?.headers ?? {};
+    resp?.multiValueHeaders && Object.keys(resp.multiValueHeaders).length > 0
+      ? resp.multiValueHeaders
+      : (resp?.headers ?? {});
 
   const headers = {};
   for (const [key, value] of Object.entries(headersSource ?? {})) {
-    headers[key] = Array.isArray(value) ? value.map((v) => String(v)) : [String(value)];
+    headers[key] = Array.isArray(value)
+      ? value.map((v) => String(v))
+      : [String(value)];
   }
 
   return {
     status,
     headers,
-    cookies: Array.isArray(resp?.cookies) ? resp.cookies.map((c) => String(c)) : [],
+    cookies: Array.isArray(resp?.cookies)
+      ? resp.cookies.map((c) => String(c))
+      : [],
     body,
     is_base64: isBase64Encoded,
   };
@@ -2637,7 +3413,9 @@ function canonicalResponseFromLambdaFunctionURLResponse(resp) {
   const status = Number(resp?.statusCode ?? 0);
   const isBase64Encoded = Boolean(resp?.isBase64Encoded);
   const bodyStr = String(resp?.body ?? "");
-  const body = isBase64Encoded ? Buffer.from(bodyStr, "base64") : Buffer.from(bodyStr, "utf8");
+  const body = isBase64Encoded
+    ? Buffer.from(bodyStr, "base64")
+    : Buffer.from(bodyStr, "utf8");
 
   const headers = {};
   for (const [key, value] of Object.entries(resp?.headers ?? {})) {
@@ -2647,7 +3425,9 @@ function canonicalResponseFromLambdaFunctionURLResponse(resp) {
   return {
     status,
     headers,
-    cookies: Array.isArray(resp?.cookies) ? resp.cookies.map((c) => String(c)) : [],
+    cookies: Array.isArray(resp?.cookies)
+      ? resp.cookies.map((c) => String(c))
+      : [],
     body,
     is_base64: isBase64Encoded,
   };
@@ -2657,18 +3437,26 @@ function canonicalResponseFromAPIGatewayProxyResponse(resp) {
   const status = Number(resp?.statusCode ?? 0);
   const isBase64Encoded = Boolean(resp?.isBase64Encoded);
   const bodyStr = String(resp?.body ?? "");
-  const body = isBase64Encoded ? Buffer.from(bodyStr, "base64") : Buffer.from(bodyStr, "utf8");
+  const body = isBase64Encoded
+    ? Buffer.from(bodyStr, "base64")
+    : Buffer.from(bodyStr, "utf8");
 
   const headersSource =
-    resp?.multiValueHeaders && Object.keys(resp.multiValueHeaders).length > 0 ? resp.multiValueHeaders : resp?.headers ?? {};
+    resp?.multiValueHeaders && Object.keys(resp.multiValueHeaders).length > 0
+      ? resp.multiValueHeaders
+      : (resp?.headers ?? {});
 
   const headersRaw = {};
   for (const [key, value] of Object.entries(headersSource ?? {})) {
-    headersRaw[key] = Array.isArray(value) ? value.map((v) => String(v)) : [String(value)];
+    headersRaw[key] = Array.isArray(value)
+      ? value.map((v) => String(v))
+      : [String(value)];
   }
   const headers = canonicalizeHeaders(headersRaw);
 
-  const cookies = Array.isArray(headers["set-cookie"]) ? headers["set-cookie"].map((v) => String(v)) : [];
+  const cookies = Array.isArray(headers["set-cookie"])
+    ? headers["set-cookie"].map((v) => String(v))
+    : [];
   delete headers["set-cookie"];
 
   return {
@@ -2744,7 +3532,10 @@ async function runFixtureP1(fixture) {
     },
     ...(cors ? { cors } : {}),
     authHook: (ctx) => {
-      const authz = firstHeaderValue(ctx.request.headers ?? {}, "authorization").trim();
+      const authz = firstHeaderValue(
+        ctx.request.headers ?? {},
+        "authorization",
+      ).trim();
       if (!authz) {
         throw new runtime.AppError("app.unauthorized", "unauthorized");
       }
@@ -2760,7 +3551,9 @@ async function runFixtureP1(fixture) {
     if (!handler) {
       throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
     }
-    app.handle(route.method, route.path, handler, { authRequired: Boolean(route.auth_required) });
+    app.handle(route.method, route.path, handler, {
+      authRequired: Boolean(route.auth_required),
+    });
   }
 
   const input = fixture.input?.request ?? {};
@@ -2774,7 +3567,9 @@ async function runFixtureP1(fixture) {
     isBase64: input.is_base64 ?? false,
   };
 
-  const runtimeCtx = { remaining_ms: Number(fixture.input?.context?.remaining_ms ?? 0) };
+  const runtimeCtx = {
+    remaining_ms: Number(fixture.input?.context?.remaining_ms ?? 0),
+  };
   const resp = await app.serve(req, runtimeCtx);
   const actual = {
     status: resp.status,
@@ -2817,25 +3612,44 @@ async function runFixtureP2(fixture) {
     },
     ...(cors ? { cors } : {}),
     authHook: (ctx) => {
-      const authz = firstHeaderValue(ctx.request.headers ?? {}, "authorization").trim();
+      const authz = firstHeaderValue(
+        ctx.request.headers ?? {},
+        "authorization",
+      ).trim();
       if (!authz) {
         throw new runtime.AppError("app.unauthorized", "unauthorized");
       }
       return "authorized";
     },
     policyHook: (ctx) => {
-      if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-rate-limit-content-type")) {
+      if (
+        firstHeaderValue(
+          ctx.request.headers ?? {},
+          "x-force-rate-limit-content-type",
+        )
+      ) {
         return {
           code: "app.rate_limited",
           message: "rate limited",
-          headers: { "retry-after": ["1"], "Content-Type": ["text/plain; charset=utf-8"] },
+          headers: {
+            "retry-after": ["1"],
+            "Content-Type": ["text/plain; charset=utf-8"],
+          },
         };
       }
       if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-rate-limit")) {
-        return { code: "app.rate_limited", message: "rate limited", headers: { "retry-after": ["1"] } };
+        return {
+          code: "app.rate_limited",
+          message: "rate limited",
+          headers: { "retry-after": ["1"] },
+        };
       }
       if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-shed")) {
-        return { code: "app.overloaded", message: "overloaded", headers: { "retry-after": ["1"] } };
+        return {
+          code: "app.overloaded",
+          message: "overloaded",
+          headers: { "retry-after": ["1"] },
+        };
       }
       return null;
     },
@@ -2866,7 +3680,9 @@ async function runFixtureP2(fixture) {
     if (!handler) {
       throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
     }
-    app.handle(route.method, route.path, handler, { authRequired: Boolean(route.auth_required) });
+    app.handle(route.method, route.path, handler, {
+      authRequired: Boolean(route.auth_required),
+    });
   }
 
   const input = fixture.input?.request ?? {};
@@ -2880,7 +3696,9 @@ async function runFixtureP2(fixture) {
     isBase64: input.is_base64 ?? false,
   };
 
-  const runtimeCtx = { remaining_ms: Number(fixture.input?.context?.remaining_ms ?? 0) };
+  const runtimeCtx = {
+    remaining_ms: Number(fixture.input?.context?.remaining_ms ?? 0),
+  };
   const resp = await app.serve(req, runtimeCtx);
   const actual = {
     status: resp.status,
@@ -2922,25 +3740,44 @@ async function runFixtureP2Output(fixture) {
     },
     ...(cors ? { cors } : {}),
     authHook: (ctx) => {
-      const authz = firstHeaderValue(ctx.request.headers ?? {}, "authorization").trim();
+      const authz = firstHeaderValue(
+        ctx.request.headers ?? {},
+        "authorization",
+      ).trim();
       if (!authz) {
         throw new runtime.AppError("app.unauthorized", "unauthorized");
       }
       return "authorized";
     },
     policyHook: (ctx) => {
-      if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-rate-limit-content-type")) {
+      if (
+        firstHeaderValue(
+          ctx.request.headers ?? {},
+          "x-force-rate-limit-content-type",
+        )
+      ) {
         return {
           code: "app.rate_limited",
           message: "rate limited",
-          headers: { "retry-after": ["1"], "Content-Type": ["text/plain; charset=utf-8"] },
+          headers: {
+            "retry-after": ["1"],
+            "Content-Type": ["text/plain; charset=utf-8"],
+          },
         };
       }
       if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-rate-limit")) {
-        return { code: "app.rate_limited", message: "rate limited", headers: { "retry-after": ["1"] } };
+        return {
+          code: "app.rate_limited",
+          message: "rate limited",
+          headers: { "retry-after": ["1"] },
+        };
       }
       if (firstHeaderValue(ctx.request.headers ?? {}, "x-force-shed")) {
-        return { code: "app.overloaded", message: "overloaded", headers: { "retry-after": ["1"] } };
+        return {
+          code: "app.overloaded",
+          message: "overloaded",
+          headers: { "retry-after": ["1"] },
+        };
       }
       return null;
     },
@@ -2971,22 +3808,31 @@ async function runFixtureP2Output(fixture) {
     if (!handler) {
       throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
     }
-    app.handle(route.method, route.path, handler, { authRequired: Boolean(route.auth_required) });
+    app.handle(route.method, route.path, handler, {
+      authRequired: Boolean(route.auth_required),
+    });
   }
 
   const awsEvent = fixture.input?.aws_event ?? null;
   if (!awsEvent) {
     throw new Error("fixture missing input.aws_event");
   }
-  const source = String(awsEvent.source ?? "").trim().toLowerCase();
+  const source = String(awsEvent.source ?? "")
+    .trim()
+    .toLowerCase();
   if (source !== "appsync") {
-    throw new Error(`unknown aws_event source ${JSON.stringify(awsEvent.source)}`);
+    throw new Error(
+      `unknown aws_event source ${JSON.stringify(awsEvent.source)}`,
+    );
   }
 
   let actualOutput = null;
   let actualError = null;
   try {
-    actualOutput = await app.handleLambda(awsEvent.event ?? {}, fixtureLambdaContext(fixture.input?.context ?? {}));
+    actualOutput = await app.handleLambda(
+      awsEvent.event ?? {},
+      fixtureLambdaContext(fixture.input?.context ?? {}),
+    );
   } catch (err) {
     actualError = err;
   }
@@ -3047,8 +3893,10 @@ function builtInAppTheoryHandler(runtime, name, effects) {
           raw_event_field: appsync?.rawEvent?.info?.fieldName ?? "",
           ctx_trigger_type: ctx.get("apptheory.trigger_type") ?? null,
           ctx_field_name: ctx.get("apptheory.appsync.field_name") ?? null,
-          ctx_parent_type: ctx.get("apptheory.appsync.parent_type_name") ?? null,
-          ctx_request_headers: ctx.get("apptheory.appsync.request_headers") ?? null,
+          ctx_parent_type:
+            ctx.get("apptheory.appsync.parent_type_name") ?? null,
+          ctx_request_headers:
+            ctx.get("apptheory.appsync.request_headers") ?? null,
         });
       };
     case "panic":
@@ -3060,14 +3908,22 @@ function builtInAppTheoryHandler(runtime, name, effects) {
         throw new Error("boom");
       };
     case "binary_body":
-      return () => runtime.binary(200, Buffer.from([0x00, 0x01, 0x02]), "application/octet-stream");
+      return () =>
+        runtime.binary(
+          200,
+          Buffer.from([0x00, 0x01, 0x02]),
+          "application/octet-stream",
+        );
     case "unauthorized":
       return () => {
         throw new runtime.AppError("app.unauthorized", "unauthorized");
       };
     case "validation_failed":
       return () => {
-        throw new runtime.AppError("app.validation_failed", "validation failed");
+        throw new runtime.AppError(
+          "app.validation_failed",
+          "validation failed",
+        );
       };
     case "portable_error":
       return () => {
@@ -3090,7 +3946,11 @@ function builtInAppTheoryHandler(runtime, name, effects) {
     case "echo_middleware_trace":
       return (ctx) => runtime.json(200, { trace: ctx.middlewareTrace ?? [] });
     case "echo_ctx_value_and_trace":
-      return (ctx) => runtime.json(200, { mw: ctx.get("mw") ?? null, trace: ctx.middlewareTrace ?? [] });
+      return (ctx) =>
+        runtime.json(200, {
+          mw: ctx.get("mw") ?? null,
+          trace: ctx.middlewareTrace ?? [],
+        });
     case "naming_helpers":
       return () =>
         runtime.json(200, {
@@ -3100,25 +3960,40 @@ function builtInAppTheoryHandler(runtime, name, effects) {
             custom: runtime.normalizeStage("  Foo_Bar  "),
           },
           base: runtime.baseName("Pay Theory", "prod", "Tenant_1"),
-          resource: runtime.resourceName("Pay Theory", "WS Api", "prod", "Tenant_1"),
+          resource: runtime.resourceName(
+            "Pay Theory",
+            "WS Api",
+            "prod",
+            "Tenant_1",
+          ),
         });
     case "stepfunctions_task_token_helpers":
       return () =>
         runtime.json(200, {
-          from_taskToken: runtime.stepFunctionsTaskToken({ taskToken: " tok-a " }),
-          from_TaskToken: runtime.stepFunctionsTaskToken({ TaskToken: " tok-b " }),
-          from_task_token: runtime.stepFunctionsTaskToken({ task_token: " tok-c " }),
+          from_taskToken: runtime.stepFunctionsTaskToken({
+            taskToken: " tok-a ",
+          }),
+          from_TaskToken: runtime.stepFunctionsTaskToken({
+            TaskToken: " tok-b ",
+          }),
+          from_task_token: runtime.stepFunctionsTaskToken({
+            task_token: " tok-c ",
+          }),
           from_precedence: runtime.stepFunctionsTaskToken({
             TaskToken: " tok-b ",
             task_token: " tok-c ",
             taskToken: " tok-a ",
           }),
-          built: runtime.buildStepFunctionsTaskTokenEvent(" tok-built ", { foo: "bar", taskToken: "ignored" }),
+          built: runtime.buildStepFunctionsTaskTokenEvent(" tok-built ", {
+            foo: "bar",
+            taskToken: "ignored",
+          }),
         });
     case "large_response":
       return () => runtime.text(200, "12345");
     case "sse_single_event":
-      return () => runtime.sse(200, [{ id: "1", event: "message", data: { ok: true } }]);
+      return () =>
+        runtime.sse(200, [{ id: "1", event: "message", data: { ok: true } }]);
     case "sse_stream_three_events":
       return async () => {
         const events = [
@@ -3214,7 +4089,10 @@ function builtInAppTheoryHandler(runtime, name, effects) {
     case "header_multivalue":
       return () => ({
         status: 200,
-        headers: { "content-type": ["text/plain; charset=utf-8"], "x-multi": ["a", "b"] },
+        headers: {
+          "content-type": ["text/plain; charset=utf-8"],
+          "x-multi": ["a", "b"],
+        },
         cookies: [],
         body: Buffer.from("ok", "utf8"),
         isBase64: false,
@@ -3227,7 +4105,10 @@ function builtInAppTheoryHandler(runtime, name, effects) {
           cache_control_ssg: runtime.cacheControlSSG(),
           cache_control_isr: runtime.cacheControlISR(60, 30),
           etag: tag,
-          if_none_match_hit: runtime.matchesIfNoneMatch(ctx?.request?.headers ?? {}, tag),
+          if_none_match_hit: runtime.matchesIfNoneMatch(
+            ctx?.request?.headers ?? {},
+            tag,
+          ),
           vary: runtime.vary(["origin"], "accept-encoding", "Origin"),
         });
       };
@@ -3278,7 +4159,10 @@ function builtInMiddleware(runtime, name) {
 }
 
 function debugActualForExpected(actual, expected) {
-  const hasBodyJson = Object.prototype.hasOwnProperty.call(expected, "body_json");
+  const hasBodyJson = Object.prototype.hasOwnProperty.call(
+    expected,
+    "body_json",
+  );
   const debug = {
     status: actual.status,
     headers: canonicalizeHeaders(actual.headers ?? {}),
@@ -3289,7 +4173,10 @@ function debugActualForExpected(actual, expected) {
     try {
       debug.body_json = JSON.parse(actual.body.toString("utf8"));
     } catch {
-      debug.body = { encoding: "base64", value: actual.body.toString("base64") };
+      debug.body = {
+        encoding: "base64",
+        value: actual.body.toString("base64"),
+      };
     }
   } else {
     debug.body = { encoding: "base64", value: actual.body.toString("base64") };
@@ -3300,7 +4187,9 @@ function debugActualForExpected(actual, expected) {
 async function main() {
   const args = parseArgs(process.argv);
 
-  const { fixtures, failures } = await runAllFixtures({ fixturesRoot: args.fixtures });
+  const { fixtures, failures } = await runAllFixtures({
+    fixturesRoot: args.fixtures,
+  });
 
   for (const f of failures) {
     const { fixture, result } = f;
@@ -3308,26 +4197,44 @@ async function main() {
     console.error(`  ${result.reason}`);
     if ("expected_error" in result || "expected_output_json" in result) {
       if ("expected_error" in result) {
-        console.error(`  expected.error: ${stableStringify(result.expected_error)}`);
+        console.error(
+          `  expected.error: ${stableStringify(result.expected_error)}`,
+        );
         console.error(`  got.error: ${stableStringify(result.actual_error)}`);
       }
       if ("expected_output_json" in result) {
-        console.error(`  expected.output_json: ${stableStringify(result.expected_output_json)}`);
-        console.error(`  got.output_json: ${stableStringify(result.actual_output_json)}`);
+        console.error(
+          `  expected.output_json: ${stableStringify(result.expected_output_json)}`,
+        );
+        console.error(
+          `  got.output_json: ${stableStringify(result.actual_output_json)}`,
+        );
       }
       if ("actual_error" in result && !("expected_error" in result)) {
         console.error(`  got.error: ${stableStringify(result.actual_error)}`);
       }
     } else {
       if ("expected_logging_profile_catalog" in result) {
-        console.error(`  expected.logging_profile_catalog: ${stableStringify(result.expected_logging_profile_catalog)}`);
-        console.error(`  got.logging_profile_catalog: ${stableStringify(result.actual_logging_profile_catalog)}`);
+        console.error(
+          `  expected.logging_profile_catalog: ${stableStringify(result.expected_logging_profile_catalog)}`,
+        );
+        console.error(
+          `  got.logging_profile_catalog: ${stableStringify(result.actual_logging_profile_catalog)}`,
+        );
       } else if ("expected_profile_validation_errors" in result) {
-        console.error(`  expected.profile_validation_errors: ${stableStringify(result.expected_profile_validation_errors)}`);
-        console.error(`  got.profile_validation_errors: ${stableStringify(result.actual_profile_validation_errors)}`);
+        console.error(
+          `  expected.profile_validation_errors: ${stableStringify(result.expected_profile_validation_errors)}`,
+        );
+        console.error(
+          `  got.profile_validation_errors: ${stableStringify(result.actual_profile_validation_errors)}`,
+        );
       } else if ("expected_profile_logs" in result) {
-        console.error(`  expected.profile_logs: ${stableStringify(result.expected_profile_logs)}`);
-        console.error(`  got.profile_logs: ${stableStringify(result.actual_profile_logs)}`);
+        console.error(
+          `  expected.profile_logs: ${stableStringify(result.expected_profile_logs)}`,
+        );
+        console.error(
+          `  got.profile_logs: ${stableStringify(result.actual_profile_logs)}`,
+        );
       } else if ("expected_microvm_contract_validation" in result) {
         console.error(
           `  expected.microvm_contract_validation: ${stableStringify(result.expected_microvm_contract_validation)}`,
@@ -3337,26 +4244,36 @@ async function main() {
         );
       } else {
         console.error(`  expected: ${stableStringify(result.expected)}`);
-        console.error(`  got: ${stableStringify(debugActualForExpected(result.actual, result.expected))}`);
+        console.error(
+          `  got: ${stableStringify(debugActualForExpected(result.actual, result.expected))}`,
+        );
       }
     }
     if ("expected_logs" in result) {
-      console.error(`  expected.logs: ${stableStringify(result.expected_logs)}`);
+      console.error(
+        `  expected.logs: ${stableStringify(result.expected_logs)}`,
+      );
       console.error(`  got.logs: ${stableStringify(result.actual_logs)}`);
     }
     if ("expected_metrics" in result) {
-      console.error(`  expected.metrics: ${stableStringify(result.expected_metrics)}`);
+      console.error(
+        `  expected.metrics: ${stableStringify(result.expected_metrics)}`,
+      );
       console.error(`  got.metrics: ${stableStringify(result.actual_metrics)}`);
     }
     if ("expected_spans" in result) {
-      console.error(`  expected.spans: ${stableStringify(result.expected_spans)}`);
+      console.error(
+        `  expected.spans: ${stableStringify(result.expected_spans)}`,
+      );
       console.error(`  got.spans: ${stableStringify(result.actual_spans)}`);
     }
   }
 
   if (failures.length > 0) {
     console.error("\nFailed fixtures:");
-    for (const f of failures.map((x) => x.fixture).sort((a, b) => a.id.localeCompare(b.id))) {
+    for (const f of failures
+      .map((x) => x.fixture)
+      .sort((a, b) => a.id.localeCompare(b.id))) {
       console.error(`- ${f.id}`);
     }
     process.exit(1);

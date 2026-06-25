@@ -27,14 +27,19 @@ const (
 type Operation string
 
 const (
-	OperationRun        Operation = "run"
-	OperationGet        Operation = "get"
-	OperationList       Operation = "list"
-	OperationSuspend    Operation = "suspend"
-	OperationResume     Operation = "resume"
-	OperationTerminate  Operation = "terminate"
-	OperationAuthToken  Operation = "auth-token"
-	OperationShellToken Operation = "shell-token"
+	OperationRun       Operation = "run"
+	OperationGet       Operation = "get"
+	OperationList      Operation = "list"
+	OperationSuspend   Operation = "suspend"
+	OperationResume    Operation = "resume"
+	OperationTerminate Operation = "terminate"
+	OperationAuthToken Operation = "auth-token"
+	// OperationShellAuthToken is the canonical shell token issuance operation.
+	OperationShellAuthToken Operation = "shell-auth-token" //nolint:gosec // Contract operation name, not a credential.
+	// OperationShellToken is a compatibility alias for the canonical shell-auth-token operation.
+	OperationShellToken Operation = OperationShellAuthToken
+	// OperationLegacyShellToken is accepted only as a compatibility input alias.
+	OperationLegacyShellToken Operation = "shell-token"
 )
 
 const (
@@ -204,7 +209,7 @@ func RequiredOperations() []Operation {
 		OperationResume,
 		OperationTerminate,
 		OperationAuthToken,
-		OperationShellToken,
+		OperationShellAuthToken,
 	}
 }
 
@@ -449,11 +454,11 @@ func validateTokenIssuanceContracts(tokens []TokenIssuanceContract) error {
 	seen := map[Operation]TokenIssuanceContract{}
 	for _, token := range tokens {
 		token.Operation = normalizeOperation(token.Operation)
-		if token.Operation == OperationAuthToken || token.Operation == OperationShellToken {
+		if token.Operation == OperationAuthToken || token.Operation == OperationShellAuthToken {
 			seen[token.Operation] = token
 		}
 	}
-	for _, operation := range []Operation{OperationAuthToken, OperationShellToken} {
+	for _, operation := range []Operation{OperationAuthToken, OperationShellAuthToken} {
 		token, ok := seen[operation]
 		if !ok {
 			return safeError(ErrorCodeTokenSafetyViolation, "apptheory: microvm token issuance missing operation: "+string(operation), "")
@@ -562,7 +567,11 @@ func validRealLifecycleState(state LifecycleState) bool {
 }
 
 func normalizeOperation(operation Operation) Operation {
-	return Operation(strings.TrimSpace(string(operation)))
+	normalized := Operation(strings.TrimSpace(string(operation)))
+	if normalized == OperationLegacyShellToken {
+		return OperationShellAuthToken
+	}
+	return normalized
 }
 
 func normalizeProviderState(state string) string {
@@ -595,8 +604,8 @@ func requiredOperationRoute(operation Operation) OperationHTTPRouteContract {
 		return operationRoute(operation, "DELETE", "/microvms/{session_id}", []string{"tenant_id", "namespace", "session_id"}, []string{"session_id", "state", "provider_state", "registry_version"}, false)
 	case OperationAuthToken:
 		return operationRoute(operation, "POST", "/microvms/{session_id}/auth-token", []string{"tenant_id", "namespace", "session_id"}, []string{"token_id", "token_type", "expires_at", "scope"}, false)
-	case OperationShellToken:
-		return operationRoute(operation, "POST", "/microvms/{session_id}/shell-token", []string{"tenant_id", "namespace", "session_id"}, []string{"token_id", "token_type", "expires_at", "scope"}, false)
+	case OperationShellAuthToken:
+		return operationRoute(operation, "POST", "/microvms/{session_id}/shell-auth-token", []string{"tenant_id", "namespace", "session_id"}, []string{"token_id", "token_type", "expires_at", "scope"}, false)
 	default:
 		return OperationHTTPRouteContract{}
 	}

@@ -20,7 +20,7 @@
           "resume",
           "terminate",
           "auth-token",
-          "shell-token"
+          "shell-auth-token"
         ],
         "routes": [
           {
@@ -270,9 +270,9 @@
             ]
           },
           {
-            "operation": "shell-token",
+            "operation": "shell-auth-token",
             "method": "POST",
-            "path": "/microvms/{session_id}/shell-token",
+            "path": "/microvms/{session_id}/shell-auth-token",
             "auth_required": true,
             "default_auth": "deny",
             "tenant_bound": true,
@@ -382,7 +382,7 @@
             "max_ttl_seconds": 900
           },
           {
-            "operation": "shell-token",
+            "operation": "shell-auth-token",
             "result_fields": [
               "token_id",
               "token_type",

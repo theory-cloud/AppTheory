@@ -1,4 +1,5 @@
 import { type Model } from "@theory-cloud/tabletheory-ts";
+import type { App } from "./app.js";
 export declare const MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm";
 export declare const MICROVM_CONTRACT_VERSION = "m15.microvm/v1";
 export declare const MICROVM_ERROR_INVALID_CONTRACT = "m15.microvm.invalid_contract";
@@ -110,7 +111,8 @@ export declare const MicroVMOperation: {
     readonly Resume: "resume";
     readonly Terminate: "terminate";
     readonly AuthToken: "auth-token";
-    readonly ShellToken: "shell-token";
+    readonly ShellAuthToken: "shell-auth-token";
+    readonly ShellToken: "shell-auth-token";
 };
 export type MicroVMOperationName = (typeof MicroVMOperation)[keyof typeof MicroVMOperation];
 export declare const MicroVMRealHook: {
@@ -325,6 +327,15 @@ export declare const MicroVMCommand: {
     readonly Stop: "stop";
     readonly Status: "status";
     readonly Session: "session";
+    readonly Run: "run";
+    readonly Get: "get";
+    readonly List: "list";
+    readonly Suspend: "suspend";
+    readonly Resume: "resume";
+    readonly Terminate: "terminate";
+    readonly AuthToken: "auth-token";
+    readonly ShellAuthToken: "shell-auth-token";
+    readonly ShellToken: "shell-auth-token";
 };
 export type MicroVMCommandName = (typeof MicroVMCommand)[keyof typeof MicroVMCommand];
 export interface MicroVMControllerAuthContract {
@@ -373,8 +384,16 @@ export interface MicroVMControllerRequest {
     auth_context: MicroVMAuthContext;
     session_id?: string;
     image_ref?: string;
+    image_version?: string;
     network_connector_ref?: string;
+    ingress_network_connector_refs?: string[];
+    egress_network_connector_refs?: string[];
     session_spec?: MicroVMSessionSpec;
+    idle_policy?: MicroVMProviderIdlePolicy;
+    maximum_duration_seconds?: number;
+    ttl_seconds?: number;
+    allowed_port_scope?: MicroVMProviderPortScope[];
+    max_results?: number;
 }
 export interface MicroVMControllerResponse {
     command: MicroVMCommandName | string;
@@ -387,9 +406,17 @@ export interface MicroVMControllerResponse {
     lifecycle_state?: MicroVMLifecycleState | string;
     endpoint?: string;
     microvm_id?: string;
+    provider_microvm_id?: string;
+    provider_state?: string;
     last_action?: MicroVMCommandName | string;
     last_transition?: Date;
     registry_version?: number;
+    sessions?: MicroVMProviderSession[];
+    recovery_cursor?: string;
+    token_id?: string;
+    token_type?: string;
+    expires_at?: Date;
+    scope?: string[];
     error?: MicroVMSafeError;
 }
 export interface MicroVMCreateSessionInput {
@@ -519,6 +546,13 @@ export interface MicroVMSessionRegistry {
     put: (record: MicroVMSessionRecord) => Promise<MicroVMSessionRecord>;
     get: (key: MicroVMSessionKey) => Promise<MicroVMSessionRecord>;
     delete: (key: MicroVMSessionKey) => Promise<void>;
+    list?: (input: MicroVMSessionListInput) => Promise<MicroVMSessionRecord[]>;
+}
+export interface MicroVMSessionListInput {
+    request_id?: string;
+    tenant_id: string;
+    namespace: string;
+    auth_subject?: string;
 }
 export interface MicroVMSessionReconstructionRequest {
     request_id?: string;
@@ -539,6 +573,7 @@ export interface MicroVMTableTheoryClient {
     save: (modelName: string, item: Record<string, unknown>) => Promise<void>;
     get: (modelName: string, key: Record<string, unknown>) => Promise<Record<string, unknown>>;
     delete: (modelName: string, key: Record<string, unknown>) => Promise<void>;
+    list?: (modelName: string, key: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
 }
 export interface TableTheoryMicroVMSessionRegistryOptions {
     model_name?: string;
@@ -565,6 +600,8 @@ export interface MicroVMControllerOptions {
     controller_id?: string;
     clock?: MicroVMClock;
     ids?: MicroVMIDGenerator;
+    ttl_ms?: number;
+    provider_id?: string;
 }
 export interface MicroVMClientCall {
     command: MicroVMCommandName | string;
@@ -597,6 +634,7 @@ export declare class MemoryMicroVMSessionRegistry implements MicroVMSessionRegis
     put(record: MicroVMSessionRecord): Promise<MicroVMSessionRecord>;
     get(key: MicroVMSessionKey): Promise<MicroVMSessionRecord>;
     delete(key: MicroVMSessionKey): Promise<void>;
+    list(input: MicroVMSessionListInput): Promise<MicroVMSessionRecord[]>;
 }
 export declare function createMemoryMicroVMSessionRegistry(): MemoryMicroVMSessionRegistry;
 export declare function reconstructMicroVMSessionRecord(request: MicroVMSessionReconstructionRequest, hook?: MicroVMSessionReconstructionHook | null): Promise<MicroVMSessionRecord>;
@@ -609,6 +647,7 @@ export declare class ReconstructingMicroVMSessionRegistry implements MicroVMSess
     put(record: MicroVMSessionRecord): Promise<MicroVMSessionRecord>;
     get(key: MicroVMSessionKey): Promise<MicroVMSessionRecord>;
     delete(key: MicroVMSessionKey): Promise<void>;
+    list(input: MicroVMSessionListInput): Promise<MicroVMSessionRecord[]>;
 }
 export declare function createReconstructingMicroVMSessionRegistry(registry: MicroVMSessionRegistry, hook: MicroVMSessionReconstructionHook, options?: ReconstructingMicroVMSessionRegistryOptions): ReconstructingMicroVMSessionRegistry;
 export declare class TableTheoryMicroVMSessionRegistry implements MicroVMSessionRegistry {
@@ -618,6 +657,7 @@ export declare class TableTheoryMicroVMSessionRegistry implements MicroVMSession
     put(record: MicroVMSessionRecord): Promise<MicroVMSessionRecord>;
     get(key: MicroVMSessionKey): Promise<MicroVMSessionRecord>;
     delete(key: MicroVMSessionKey): Promise<void>;
+    list(input: MicroVMSessionListInput): Promise<MicroVMSessionRecord[]>;
 }
 export declare function createTableTheoryMicroVMSessionRegistry(db: MicroVMTableTheoryClient, options?: TableTheoryMicroVMSessionRegistryOptions): TableTheoryMicroVMSessionRegistry;
 export declare class MicroVMRegistryClient implements MicroVMClient {
@@ -645,6 +685,30 @@ export declare class MicroVMController {
     private handleSession;
 }
 export declare function createMicroVMController(client: MicroVMClient, options?: MicroVMControllerOptions): MicroVMController;
+export interface MicroVMControllerRouteTarget {
+    handle: (request: MicroVMControllerRequest) => MicroVMControllerResponse | Promise<MicroVMControllerResponse>;
+}
+export declare class MicroVMRealController implements MicroVMControllerRouteTarget {
+    private readonly provider;
+    private readonly registry;
+    private readonly controllerID;
+    private readonly providerID;
+    private readonly clock;
+    private readonly ids;
+    private readonly ttlMs;
+    constructor(provider: MicroVMProvider, registry: MicroVMSessionRegistry, options?: MicroVMControllerOptions);
+    handle(request: MicroVMControllerRequest): Promise<MicroVMControllerResponse>;
+    private handleRun;
+    private handleSession;
+    private handleList;
+    private handleToken;
+    private putProviderSession;
+    private sessionRecordFromProviderSession;
+    private now;
+}
+export declare function createRealMicroVMController(provider: MicroVMProvider, registry: MicroVMSessionRegistry, options?: MicroVMControllerOptions): MicroVMRealController;
+export declare function registerMicroVMControllerRoutes(app: App, controller: MicroVMControllerRouteTarget): App;
+export declare function registerControllerRoutes(app: App, controller: MicroVMControllerRouteTarget): App;
 export declare function validateMicroVMControllerRequest(request: MicroVMControllerRequest): MicroVMSafeError | null;
 export declare class FakeMicroVMClient implements MicroVMClient {
     private currentTime;

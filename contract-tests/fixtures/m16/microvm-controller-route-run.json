@@ -1,0 +1,46 @@
+{
+  "id": "m16_microvm_controller_route_run",
+  "tier": "m16",
+  "name": "M16 canonical MicroVM run route registers through AppTheory adapter",
+  "setup": {
+    "microvm_controller_route": {
+      "authenticated": true,
+      "tenant_id": "tenant-1",
+      "namespace": "namespace-1",
+      "session_id": "fixture-session"
+    }
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/microvms",
+      "headers": {
+        "content-type": ["application/json"],
+        "x-tenant-id": ["tenant-1"],
+        "x-namespace-id": ["namespace-1"],
+        "x-request-id": ["req-m16-route-run"]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"namespace\":\"namespace-1\",\"image_ref\":\"image-ref\",\"image_version\":\"1\",\"network_connector_ref\":\"network-ref\",\"session_spec\":{\"metadata\":{\"safe\":\"ok\"}}}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "microvm_controller_route": {
+      "status": 200,
+      "command": "run",
+      "tenant_id": "tenant-1",
+      "namespace": "namespace-1",
+      "session_id": "fixture-session",
+      "state": "running",
+      "forbidden_body_substrings": [
+        "token_value",
+        "bearer_token",
+        "x-aws-proxy-auth",
+        "session_token_plaintext"
+      ]
+    }
+  }
+}

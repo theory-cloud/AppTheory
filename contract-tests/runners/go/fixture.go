@@ -34,6 +34,7 @@ type FixtureSetup struct {
 	EventBridge     []FixtureEventBridgeRoute `json:"eventbridge,omitempty"`
 	DynamoDB        []FixtureDynamoDBRoute    `json:"dynamodb,omitempty"`
 	MicroVMContract json.RawMessage           `json:"microvm_contract,omitempty"`
+	MicroVMRoute    FixtureMicroVMRouteSetup  `json:"microvm_controller_route,omitempty"`
 }
 
 type FixtureCORSConfig struct {
@@ -121,6 +122,7 @@ type FixtureExpect struct {
 	ProfileValidationErrors    []string                           `json:"profile_validation_errors,omitempty"`
 	LoggingProfileCatalog      map[string]any                     `json:"logging_profile_catalog,omitempty"`
 	MicroVMContractValidation  *FixtureMicroVMContractValidation  `json:"microvm_contract_validation,omitempty"`
+	MicroVMControllerRoute     *FixtureMicroVMControllerRoute     `json:"microvm_controller_route,omitempty"`
 }
 
 type FixtureMicroVMContractValidation struct {
@@ -129,6 +131,28 @@ type FixtureMicroVMContractValidation struct {
 	Version      string `json:"version,omitempty"`
 	ErrorCode    string `json:"error_code,omitempty"`
 	ErrorMessage string `json:"error_message,omitempty"`
+}
+
+type FixtureMicroVMRouteSetup struct {
+	Authenticated bool   `json:"authenticated,omitempty"`
+	SeedSession   bool   `json:"seed_session,omitempty"`
+	TenantID      string `json:"tenant_id,omitempty"`
+	Namespace     string `json:"namespace,omitempty"`
+	SessionID     string `json:"session_id,omitempty"`
+}
+
+type FixtureMicroVMControllerRoute struct {
+	Status                     int      `json:"status"`
+	Command                    string   `json:"command,omitempty"`
+	TenantID                   string   `json:"tenant_id,omitempty"`
+	Namespace                  string   `json:"namespace,omitempty"`
+	SessionID                  string   `json:"session_id,omitempty"`
+	State                      string   `json:"state,omitempty"`
+	TokenType                  string   `json:"token_type,omitempty"`
+	Scope                      []string `json:"scope,omitempty"`
+	ErrorCode                  string   `json:"error_code,omitempty"`
+	ForbiddenBodySubstrings    []string `json:"forbidden_body_substrings,omitempty"`
+	RegistryTokenMetadataCount *int     `json:"registry_token_metadata_count,omitempty"`
 }
 
 type FixtureError struct {

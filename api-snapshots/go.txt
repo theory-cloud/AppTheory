@@ -2932,15 +2932,35 @@ func (sessionRecord) TableName() string
 
 const AWSLambdaMicroVMProviderID = "aws.lambda.microvm"
 
+const CommandAuthToken Command = "auth-token"
+
 const CommandCreate Command = "create"
 
+const CommandGet Command = "get"
+
+const CommandLegacyShellToken Command = "shell-token"
+
+const CommandList Command = "list"
+
+const CommandResume Command = "resume"
+
+const CommandRun Command = "run"
+
 const CommandSession Command = "session"
+
+const CommandShellAuthToken Command = "shell-auth-token"
+
+const CommandShellToken Command = CommandShellAuthToken
 
 const CommandStart Command = "start"
 
 const CommandStatus Command = "status"
 
 const CommandStop Command = "stop"
+
+const CommandSuspend Command = "suspend"
+
+const CommandTerminate Command = "terminate"
 
 const ContractName = "apptheory.lambda_microvm"
 
@@ -3030,13 +3050,17 @@ const OperationAuthToken Operation = "auth-token"
 
 const OperationGet Operation = "get"
 
+const OperationLegacyShellToken Operation = "shell-token"
+
 const OperationList Operation = "list"
 
 const OperationResume Operation = "resume"
 
 const OperationRun Operation = "run"
 
-const OperationShellToken Operation = "shell-token"
+const OperationShellAuthToken Operation = "shell-auth-token"
+
+const OperationShellToken Operation = OperationShellAuthToken
 
 const OperationSuspend Operation = "suspend"
 
@@ -3113,9 +3137,13 @@ type ContractKind string
 
 type Controller struct {
 	client       Client
+	provider     Provider
+	registry     SessionRegistry
 	controllerID string
+	providerID   string
 	clock        Clock
 	ids          IDGenerator
+	ttl          time.Duration
 }
 
 type ControllerAuthContract struct {
@@ -3146,32 +3174,48 @@ type ControllerEnvelopeContract struct {
 type ControllerOption func(*Controller)
 
 type ControllerRequest struct {
-	Command             Command     `json:"command"`
-	RequestID           string      `json:"request_id"`
-	TenantID            string      `json:"tenant_id"`
-	Namespace           string      `json:"namespace"`
-	AuthContext         AuthContext `json:"auth_context"`
-	SessionID           string      `json:"session_id,omitempty"`
-	ImageRef            string      `json:"image_ref,omitempty"`
-	NetworkConnectorRef string      `json:"network_connector_ref,omitempty"`
-	SessionSpec         SessionSpec `json:"session_spec,omitempty"`
+	Command                     Command             `json:"command"`
+	RequestID                   string              `json:"request_id"`
+	TenantID                    string              `json:"tenant_id"`
+	Namespace                   string              `json:"namespace"`
+	AuthContext                 AuthContext         `json:"auth_context"`
+	SessionID                   string              `json:"session_id,omitempty"`
+	ImageRef                    string              `json:"image_ref,omitempty"`
+	ImageVersion                string              `json:"image_version,omitempty"`
+	NetworkConnectorRef         string              `json:"network_connector_ref,omitempty"`
+	IngressNetworkConnectorRefs []string            `json:"ingress_network_connector_refs,omitempty"`
+	EgressNetworkConnectorRefs  []string            `json:"egress_network_connector_refs,omitempty"`
+	SessionSpec                 SessionSpec         `json:"session_spec,omitempty"`
+	IdlePolicy                  *ProviderIdlePolicy `json:"idle_policy,omitempty"`
+	MaximumDurationSeconds      int32               `json:"maximum_duration_seconds,omitempty"`
+	TTLSeconds                  int32               `json:"ttl_seconds,omitempty"`
+	AllowedPortScope            []ProviderPortScope `json:"allowed_port_scope,omitempty"`
+	MaxResults                  int32               `json:"max_results,omitempty"`
 }
 
 type ControllerResponse struct {
-	Command         Command        `json:"command"`
-	RequestID       string         `json:"request_id"`
-	TenantID        string         `json:"tenant_id,omitempty"`
-	Namespace       string         `json:"namespace,omitempty"`
-	SessionID       string         `json:"session_id,omitempty"`
-	State           LifecycleState `json:"state,omitempty"`
-	DesiredState    LifecycleState `json:"desired_state,omitempty"`
-	LifecycleState  LifecycleState `json:"lifecycle_state,omitempty"`
-	Endpoint        string         `json:"endpoint,omitempty"`
-	MicroVMID       string         `json:"microvm_id,omitempty"`
-	LastAction      Command        `json:"last_action,omitempty"`
-	LastTransition  time.Time      `json:"last_transition,omitempty"`
-	RegistryVersion int64          `json:"registry_version,omitempty"`
-	Error           *SafeError     `json:"error,omitempty"`
+	Command           Command           `json:"command"`
+	RequestID         string            `json:"request_id"`
+	TenantID          string            `json:"tenant_id,omitempty"`
+	Namespace         string            `json:"namespace,omitempty"`
+	SessionID         string            `json:"session_id,omitempty"`
+	State             LifecycleState    `json:"state,omitempty"`
+	DesiredState      LifecycleState    `json:"desired_state,omitempty"`
+	LifecycleState    LifecycleState    `json:"lifecycle_state,omitempty"`
+	Endpoint          string            `json:"endpoint,omitempty"`
+	MicroVMID         string            `json:"microvm_id,omitempty"`
+	ProviderMicroVMID string            `json:"provider_microvm_id,omitempty"`
+	ProviderState     string            `json:"provider_state,omitempty"`
+	LastAction        Command           `json:"last_action,omitempty"`
+	LastTransition    time.Time         `json:"last_transition,omitempty"`
+	RegistryVersion   int64             `json:"registry_version,omitempty"`
+	Sessions          []ProviderSession `json:"sessions,omitempty"`
+	RecoveryCursor    string            `json:"recovery_cursor,omitempty"`
+	TokenID           string            `json:"token_id,omitempty"`
+	TokenType         string            `json:"token_type,omitempty"`
+	ExpiresAt         time.Time         `json:"expires_at,omitempty"`
+	Scope             []string          `json:"scope,omitempty"`
+	Error             *SafeError        `json:"error,omitempty"`
 }
 
 type CreateSessionInput struct {
@@ -3432,6 +3476,13 @@ type SessionKey struct {
 	SessionID string `json:"session_id"`
 }
 
+type SessionListInput struct {
+	RequestID   string `json:"request_id"`
+	TenantID    string `json:"tenant_id"`
+	Namespace   string `json:"namespace"`
+	AuthSubject string `json:"auth_subject,omitempty"`
+}
+
 type SessionQueryInput struct {
 	RequestID   string `json:"request_id"`
 	TenantID    string `json:"tenant_id"`
@@ -3500,6 +3551,10 @@ type SessionRegistryContract struct {
 	RequiredFields  []string `json:"required_fields"`
 	StateValues     []string `json:"state_values"`
 	ForbiddenFields []string `json:"forbidden_fields"`
+}
+
+type SessionRegistryLister interface {
+	List(context.Context, SessionListInput) ([]SessionRecord, error)
 }
 
 type SessionRegistryRecord struct {
@@ -3613,6 +3668,8 @@ func NewLifecycleAdapter(...LifecycleOption) (*LifecycleAdapter, error)
 
 func NewMemorySessionRegistry() *MemorySessionRegistry
 
+func NewRealController(Provider, SessionRegistry, ...ControllerOption) (*Controller, error)
+
 func NewReconstructingSessionRegistry(SessionRegistry, SessionReconstructionHook, ...SessionReconstructionOption) (*ReconstructingSessionRegistry, error)
 
 func NewRegistryClient(SessionRegistry, ...RegistryClientOption) (*RegistryClient, error)
@@ -3620,6 +3677,10 @@ func NewRegistryClient(SessionRegistry, ...RegistryClientOption) (*RegistryClien
 func NewTableTheorySessionRegistry(tablecore.DB) (*TableTheorySessionRegistry, error)
 
 func ReconstructSessionRecord(context.Context, SessionReconstructionRequest, SessionReconstructionHook) (SessionRecord, error)
+
+func RegisterControllerRoutes(*apptheory.App, *Controller) (*apptheory.App, error)
+
+func RegisterMicroVMControllerRoutes(*apptheory.App, *Controller) (*apptheory.App, error)
 
 func RequiredForbiddenOperationFields() []string
 
@@ -3679,6 +3740,10 @@ func WithControllerID(string) ControllerOption
 
 func WithControllerIDGenerator(IDGenerator) ControllerOption
 
+func WithControllerProviderID(string) ControllerOption
+
+func WithControllerSessionTTL(time.Duration) ControllerOption
+
 func WithLifecycleContract(LifecycleContract) LifecycleOption
 
 func WithLifecycleHandler(LifecycleHook, LifecycleHandler) LifecycleOption
@@ -3713,11 +3778,15 @@ func (*MemorySessionRegistry) Delete(context.Context, SessionKey) error
 
 func (*MemorySessionRegistry) Get(context.Context, SessionKey) (SessionRecord, error)
 
+func (*MemorySessionRegistry) List(context.Context, SessionListInput) ([]SessionRecord, error)
+
 func (*MemorySessionRegistry) Put(context.Context, SessionRecord) (SessionRecord, error)
 
 func (*ReconstructingSessionRegistry) Delete(context.Context, SessionKey) error
 
 func (*ReconstructingSessionRegistry) Get(context.Context, SessionKey) (SessionRecord, error)
+
+func (*ReconstructingSessionRegistry) List(context.Context, SessionListInput) ([]SessionRecord, error)
 
 func (*ReconstructingSessionRegistry) Put(context.Context, SessionRecord) (SessionRecord, error)
 
@@ -3734,6 +3803,8 @@ func (*RegistryClient) Stop(context.Context, SessionCommandInput) (SessionRecord
 func (*TableTheorySessionRegistry) Delete(context.Context, SessionKey) error
 
 func (*TableTheorySessionRegistry) Get(context.Context, SessionKey) (SessionRecord, error)
+
+func (*TableTheorySessionRegistry) List(context.Context, SessionListInput) ([]SessionRecord, error)
 
 func (*TableTheorySessionRegistry) Put(context.Context, SessionRecord) (SessionRecord, error)
 

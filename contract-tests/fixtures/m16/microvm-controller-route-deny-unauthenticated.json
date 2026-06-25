@@ -1,0 +1,44 @@
+{
+  "id": "m16_microvm_controller_route_deny_unauthenticated",
+  "tier": "m16",
+  "name": "M16 canonical MicroVM routes fail closed without auth context",
+  "setup": {
+    "microvm_controller_route": {
+      "authenticated": false,
+      "seed_session": true,
+      "tenant_id": "tenant-1",
+      "namespace": "namespace-1",
+      "session_id": "fixture-session"
+    }
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/microvms/fixture-session",
+      "query": {
+        "namespace": ["namespace-1"]
+      },
+      "headers": {
+        "x-tenant-id": ["tenant-1"],
+        "x-request-id": ["req-m16-route-deny"]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "microvm_controller_route": {
+      "status": 401,
+      "error_code": "app.unauthorized",
+      "forbidden_body_substrings": [
+        "token_value",
+        "bearer_token",
+        "x-aws-proxy-auth",
+        "session_token_plaintext"
+      ]
+    }
+  }
+}

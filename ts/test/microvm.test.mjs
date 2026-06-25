@@ -41,7 +41,9 @@ import {
   createMicroVMController,
   createMicroVMLifecycleAdapter,
   createMicroVMRegistryClient,
+  createRealMicroVMController,
   createTableTheoryMicroVMSessionRegistry,
+  createApp,
   defaultMicroVMControllerContract,
   defaultMicroVMLifecycleContract,
   defaultMicroVMOperationContract,
@@ -57,6 +59,7 @@ import {
   microVMSessionRegistrySortKey,
   microVMSessionRegistryTableName,
   microVMSessionTokenMetadataFromProviderToken,
+  registerMicroVMControllerRoutes,
   reconstructMicroVMSessionRecord,
   validateMicroVMControllerContract,
   validateMicroVMControllerRequest,
@@ -260,6 +263,33 @@ function validStatus(overrides = {}) {
     registry_version: 1,
     ...overrides,
   };
+}
+
+function controllerRequest(overrides = {}) {
+  return {
+    command: MicroVMCommand.Run,
+    request_id: "req-real",
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+    auth_context: {
+      subject: "subject-1",
+      tenant_id: "tenant-1",
+      namespace: "namespace-1",
+    },
+    image_ref: "image-ref",
+    image_version: "1",
+    network_connector_ref: "network-ref",
+    ingress_network_connector_refs: ["ingress-ref"],
+    egress_network_connector_refs: ["egress-ref"],
+    session_spec: { metadata: { safe: "ok" } },
+    allowed_port_scope: [{ port: 443 }],
+    ttl_seconds: 120,
+    ...overrides,
+  };
+}
+
+function jsonBody(response) {
+  return JSON.parse(Buffer.from(response.body).toString("utf8"));
 }
 
 test("microvm lifecycle adapter runs through terminal states", async () => {
@@ -1182,6 +1212,204 @@ test("microvm provider validation and fake cover M16 real operations", async () 
     () => fake.get(sessionInput),
     (err) => err?.code === MICROVM_ERROR_PROVIDER_OPERATION_FAILED,
   );
+});
+
+test("microvm real controller uses canonical commands and stores only token metadata", async () => {
+  const provider = createFakeMicroVMProvider(new Date(0));
+  const registry = createMemoryMicroVMSessionRegistry();
+  const controller = createRealMicroVMController(provider, registry, {
+    controller_id: "controller-1",
+    provider_id: MICROVM_AWS_LAMBDA_PROVIDER_ID,
+    ids: { newID: () => "session-1" },
+    clock: { now: () => new Date(1000) },
+    ttl_ms: 60_000,
+  });
+
+  const run = await controller.handle(controllerRequest());
+  assert.equal(run.error, undefined);
+  assert.equal(run.command, MicroVMCommand.Run);
+  assert.equal(run.session_id, "session-1");
+  assert.equal(run.state, MicroVMRealState.Running);
+
+  const get = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.Get,
+      request_id: "req-get",
+      session_id: "session-1",
+    }),
+  );
+  assert.equal(get.provider_microvm_id, run.provider_microvm_id);
+
+  const suspended = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.Suspend,
+      request_id: "req-suspend",
+      session_id: "session-1",
+    }),
+  );
+  assert.equal(suspended.state, MicroVMRealState.Suspended);
+
+  const resumed = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.Resume,
+      request_id: "req-resume",
+      session_id: "session-1",
+    }),
+  );
+  assert.equal(resumed.state, MicroVMRealState.Ready);
+
+  const list = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.List,
+      request_id: "req-list",
+      session_id: "",
+    }),
+  );
+  assert.equal(list.sessions.length, 1);
+  assert.equal(list.sessions[0].session_id, "session-1");
+
+  const token = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.AuthToken,
+      request_id: "req-token",
+      session_id: "session-1",
+      allowed_port_scope: [{ port: 443 }],
+    }),
+  );
+  assert.equal(token.error, undefined);
+  assert.equal(token.token_type, "auth");
+  assert.deepEqual(token.scope, ["ports:443"]);
+  const tokenJSON = JSON.stringify(token);
+  for (const forbidden of [
+    "token_value",
+    "bearer_token",
+    "x-aws-proxy-auth",
+    "session_token_plaintext",
+  ]) {
+    assert.equal(tokenJSON.includes(forbidden), false);
+  }
+
+  const shell = await controller.handle(
+    controllerRequest({
+      command: "shell-token",
+      request_id: "req-shell",
+      session_id: "session-1",
+      allowed_port_scope: [],
+    }),
+  );
+  assert.equal(shell.command, MicroVMCommand.ShellAuthToken);
+  assert.equal(shell.token_type, "shell");
+
+  const stored = await registry.get({
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+    session_id: "session-1",
+  });
+  assert.equal(stored.token_metadata.length, 2);
+  const storedJSON = JSON.stringify(stored.token_metadata);
+  assert.equal(storedJSON.includes("token_value"), false);
+  assert.equal(storedJSON.includes("bearer_token"), false);
+
+  const denied = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.Get,
+      request_id: "req-denied",
+      tenant_id: "tenant-2",
+      auth_context: {
+        subject: "subject-1",
+        tenant_id: "tenant-1",
+        namespace: "namespace-1",
+      },
+      session_id: "session-1",
+    }),
+  );
+  assert.equal(denied.error?.code, MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER);
+
+  const terminated = await controller.handle(
+    controllerRequest({
+      command: MicroVMCommand.Terminate,
+      request_id: "req-terminate",
+      session_id: "session-1",
+    }),
+  );
+  assert.equal(terminated.state, MicroVMRealState.Terminated);
+});
+
+test("microvm controller route adapter enforces auth and tenant binding", async () => {
+  const provider = createFakeMicroVMProvider(new Date(0));
+  const registry = createMemoryMicroVMSessionRegistry();
+  const controller = createRealMicroVMController(provider, registry, {
+    ids: { newID: () => "route-session" },
+    clock: { now: () => new Date(1000) },
+  });
+  const app = createApp({
+    tier: "p1",
+    authHook: (ctx) => `identity:${ctx.tenantId}`,
+  });
+  registerMicroVMControllerRoutes(app, controller);
+
+  const serve = (method, path, body = {}, headers = {}) =>
+    app.serve({
+      method,
+      path,
+      headers: {
+        "content-type": ["application/json"],
+        "x-tenant-id": ["tenant-1"],
+        "x-request-id": [`req-${method}-${path}`],
+        ...headers,
+      },
+      body: Buffer.from(JSON.stringify(body), "utf8"),
+    });
+
+  const run = await serve("POST", "/microvms", {
+    namespace: "namespace-1",
+    image_ref: "image-ref",
+    image_version: "1",
+    network_connector_ref: "network-ref",
+    session_spec: { metadata: { safe: "ok" } },
+  });
+  assert.equal(run.status, 200);
+  const runBody = jsonBody(run);
+  assert.equal(runBody.command, MicroVMCommand.Run);
+  assert.equal(runBody.session_id, "route-session");
+
+  const token = await serve("POST", "/microvms/route-session/auth-token", {
+    namespace: "namespace-1",
+    allowed_port_scope: [{ port: 443 }],
+  });
+  assert.equal(token.status, 200);
+  const tokenText = Buffer.from(token.body).toString("utf8");
+  assert.equal(tokenText.includes("token_value"), false);
+  assert.equal(tokenText.includes("bearer_token"), false);
+  assert.equal(jsonBody(token).token_type, "auth");
+
+  const crossTenant = await serve(
+    "POST",
+    "/microvms/route-session/auth-token",
+    {
+      tenant_id: "tenant-2",
+      namespace: "namespace-1",
+      allowed_port_scope: [{ port: 443 }],
+    },
+  );
+  assert.equal(crossTenant.status, 403);
+  assert.equal(
+    jsonBody(crossTenant).error.code,
+    MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+  );
+
+  const unauthenticated = createApp({ tier: "p1" });
+  registerMicroVMControllerRoutes(unauthenticated, controller);
+  const denied = await unauthenticated.serve({
+    method: "GET",
+    path: "/microvms/route-session",
+    query: { namespace: ["namespace-1"] },
+    headers: {
+      "x-tenant-id": ["tenant-1"],
+      "x-request-id": ["req-denied"],
+    },
+  });
+  assert.equal(denied.status, 401);
 });
 
 test("microvm AWS provider uses official command classes and sanitizes tokens", async () => {

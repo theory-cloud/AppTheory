@@ -3,6 +3,7 @@ package microvm
 import (
 	"context"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -70,6 +71,19 @@ type SessionRegistry interface {
 	Put(context.Context, SessionRecord) (SessionRecord, error)
 	Get(context.Context, SessionKey) (SessionRecord, error)
 	Delete(context.Context, SessionKey) error
+}
+
+// SessionListInput identifies a tenant-bound registry list operation.
+type SessionListInput struct {
+	RequestID   string `json:"request_id"`
+	TenantID    string `json:"tenant_id"`
+	Namespace   string `json:"namespace"`
+	AuthSubject string `json:"auth_subject,omitempty"`
+}
+
+// SessionRegistryLister is the optional tenant-bound list surface required by real controller list routes.
+type SessionRegistryLister interface {
+	List(context.Context, SessionListInput) ([]SessionRecord, error)
 }
 
 // SessionReconstructionRequest is the fail-closed request sent to product-owned registry truth.
@@ -188,6 +202,18 @@ func (r *ReconstructingSessionRegistry) Delete(ctx context.Context, key SessionK
 		return safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm registry reconstruction requires a session registry", "")
 	}
 	return r.registry.Delete(ctx, key)
+}
+
+// List delegates tenant-bound listing when the wrapped registry exposes a list surface.
+func (r *ReconstructingSessionRegistry) List(ctx context.Context, input SessionListInput) ([]SessionRecord, error) {
+	if r == nil || r.registry == nil {
+		return nil, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm registry reconstruction requires a session registry", input.RequestID)
+	}
+	lister, ok := r.registry.(SessionRegistryLister)
+	if !ok {
+		return nil, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm registry reconstruction requires tenant-bound list support", input.RequestID)
+	}
+	return lister.List(ctx, input)
 }
 
 // ReconstructSessionRecord invokes a product-owned hook and validates the returned operational state.
@@ -428,6 +454,39 @@ func (r *TableTheorySessionRegistry) Delete(ctx context.Context, key SessionKey)
 	return nil
 }
 
+// List retrieves tenant-bound session records through TableTheory.
+func (r *TableTheorySessionRegistry) List(ctx context.Context, input SessionListInput) ([]SessionRecord, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	input = normalizeSessionListInput(input)
+	if input.TenantID == "" || input.Namespace == "" {
+		return nil, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session list is incomplete", input.RequestID)
+	}
+	if r == nil || r.db == nil {
+		return nil, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry requires TableTheory DB", input.RequestID)
+	}
+	var records []SessionRegistryRecord
+	if err := r.db.Model(&SessionRegistryRecord{}).
+		WithContext(ctx).
+		Where("PK", "=", SessionRegistryPartitionKey(input.TenantID, input.Namespace)).
+		All(&records); err != nil {
+		return nil, sessionRegistryOperationError(input.RequestID)
+	}
+	out := make([]SessionRecord, 0, len(records))
+	for _, record := range records {
+		session, err := SessionRecordFromRegistryRecord(record)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, session)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].SessionID < out[j].SessionID
+	})
+	return out, nil
+}
+
 // MemorySessionRegistry is a deterministic in-memory SessionRegistry for tests and local contract runners.
 type MemorySessionRegistry struct {
 	mu      sync.Mutex
@@ -490,6 +549,34 @@ func (r *MemorySessionRegistry) Delete(_ context.Context, key SessionKey) error 
 	defer r.mu.Unlock()
 	delete(r.records, registryRecordKeyFromKey(key))
 	return nil
+}
+
+// List returns records for exactly one tenant and namespace.
+func (r *MemorySessionRegistry) List(_ context.Context, input SessionListInput) ([]SessionRecord, error) {
+	if r == nil {
+		return nil, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session registry is not configured", input.RequestID)
+	}
+	input = normalizeSessionListInput(input)
+	if input.TenantID == "" || input.Namespace == "" {
+		return nil, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm session list is incomplete", input.RequestID)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]SessionRecord, 0)
+	for _, record := range r.records {
+		if record.TenantID != input.TenantID || record.Namespace != input.Namespace {
+			continue
+		}
+		session, err := SessionRecordFromRegistryRecord(cloneSessionRegistryRecord(record))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, session)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].SessionID < out[j].SessionID
+	})
+	return out, nil
 }
 
 func normalizeSessionRegistryRecord(record SessionRegistryRecord) SessionRegistryRecord {
@@ -569,6 +656,15 @@ func normalizeSessionKey(key SessionKey) SessionKey {
 		TenantID:  strings.TrimSpace(key.TenantID),
 		Namespace: strings.TrimSpace(key.Namespace),
 		SessionID: strings.TrimSpace(key.SessionID),
+	}
+}
+
+func normalizeSessionListInput(input SessionListInput) SessionListInput {
+	return SessionListInput{
+		RequestID:   strings.TrimSpace(input.RequestID),
+		TenantID:    strings.TrimSpace(input.TenantID),
+		Namespace:   strings.TrimSpace(input.Namespace),
+		AuthSubject: strings.TrimSpace(input.AuthSubject),
 	}
 }
 

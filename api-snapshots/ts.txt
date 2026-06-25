@@ -168,6 +168,7 @@ MicroVMControllerEnvelopeContract	interface
 MicroVMControllerOptions	interface
 MicroVMControllerRequest	interface
 MicroVMControllerResponse	interface
+MicroVMControllerRouteTarget	interface
 MicroVMCreateSessionInput	interface
 MicroVMEscapeHatches	interface
 MicroVMHook	const
@@ -199,6 +200,7 @@ MicroVMProviderSessionInput	interface
 MicroVMProviderStateMapping	interface
 MicroVMProviderToken	interface
 MicroVMProviderTokenInput	interface
+MicroVMRealController	class
 MicroVMRealHook	const
 MicroVMRealLifecycleHook	type
 MicroVMRealLifecycleState	type
@@ -208,6 +210,7 @@ MicroVMRegistryClientOptions	interface
 MicroVMSafeError	class
 MicroVMSessionCommandInput	interface
 MicroVMSessionKey	interface
+MicroVMSessionListInput	interface
 MicroVMSessionQueryInput	interface
 MicroVMSessionReconstructionHook	type
 MicroVMSessionReconstructionRequest	interface
@@ -312,6 +315,7 @@ createMemoryMicroVMSessionRegistry	function
 createMicroVMController	function
 createMicroVMLifecycleAdapter	function
 createMicroVMRegistryClient	function
+createRealMicroVMController	function
 createReconstructingMicroVMSessionRegistry	function
 createTableTheoryMicroVMSessionRegistry	function
 createTestEnv	function
@@ -382,6 +386,8 @@ rapidConnectXMLPatterns	const
 rapidConnectXMLPatterns	re-export
 rateLimitTableName	function
 reconstructMicroVMSessionRecord	function
+registerControllerRoutes	function
+registerMicroVMControllerRoutes	function
 reportKinesisPutRecordsFailures	function
 requireEventBridgeWorkloadEnvelope	function
 requiredForbiddenMicroVMOperationFields	function
