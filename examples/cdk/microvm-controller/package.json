@@ -3,7 +3,9 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "synth": "cdk synth"
+    "build:controller": "GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o dist/controller/bootstrap ./controller",
+    "test:controller": "go test ./controller",
+    "synth": "npm run build:controller && cdk synth"
   },
   "devDependencies": {
     "@aws-cdk/cloud-assembly-schema": "53.23.0",
