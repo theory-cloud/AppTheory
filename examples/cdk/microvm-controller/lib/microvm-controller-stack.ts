@@ -50,6 +50,8 @@ export class MicrovmControllerStack extends cdk.Stack {
         NetworkBoundary: "CallerProvidedVpc",
       },
     });
+    const ingressConnector = AppTheoryMicrovmNetworkConnector.allIngress(this, "MicrovmIngressConnector");
+    const shellIngressConnector = AppTheoryMicrovmNetworkConnector.shellIngress(this, "MicrovmShellIngressConnector");
 
     const microvmImage = new AppTheoryMicrovmImage(this, "MicrovmImage", {
       name: "apptheory_microvm_demo",
@@ -123,7 +125,9 @@ export class MicrovmControllerStack extends cdk.Stack {
       authorizerHeaderName: "Authorization",
       authorizerCacheTtl: cdk.Duration.seconds(0),
       microvmImage,
+      ingressNetworkConnectors: [ingressConnector],
       egressNetworkConnectors: [egressConnector],
+      shellIngressNetworkConnector: shellIngressConnector,
       sessionTableRemovalPolicy: cdk.RemovalPolicy.RETAIN,
       sessionTableDeletionProtection: true,
       enableSessionTablePointInTimeRecovery: true,
