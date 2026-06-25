@@ -8,7 +8,7 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
 import type { IAppTheoryMicrovmImage } from "./microvm-image";
-import type { IAppTheoryMicrovmNetworkConnector } from "./microvm-network-connector";
+import { type IAppTheoryMicrovmNetworkConnector } from "./microvm-network-connector";
 /**
  * Stage configuration for the MicroVM controller HTTP API.
  */
@@ -78,11 +78,27 @@ export interface AppTheoryMicrovmControllerProps {
      */
     readonly microvmImage: IAppTheoryMicrovmImage;
     /**
+     * Ingress network connectors the controller is permitted to pass to Lambda MicroVMs.
+     *
+     * At least one connector reference is required and no more than 10 may be supplied.
+     * Use AppTheoryMicrovmNetworkConnector.allIngress/noIngress or an explicitly typed
+     * imported ingress connector reference; AppTheory does not hide an ingress default.
+     */
+    readonly ingressNetworkConnectors: IAppTheoryMicrovmNetworkConnector[];
+    /**
      * Egress network connectors the controller is permitted to pass to Lambda MicroVMs.
      *
      * At least one connector reference is required and no more than 10 may be supplied.
      */
     readonly egressNetworkConnectors: IAppTheoryMicrovmNetworkConnector[];
+    /**
+     * Shell ingress connector required for shell-auth-token support.
+     *
+     * Use AppTheoryMicrovmNetworkConnector.shellIngress or an explicitly typed shell-ingress
+     * connector reference. The shell-auth-token route is part of the real M16 controller
+     * surface, so this reference is required instead of being silently defaulted.
+     */
+    readonly shellIngressNetworkConnector: IAppTheoryMicrovmNetworkConnector;
     /**
      * Optional MicroVM execution role passed to RunMicrovm.
      *
@@ -182,7 +198,7 @@ export interface AppTheoryMicrovmControllerProps {
 /**
  * AppTheory CDK construct for the first-class Lambda MicroVM controller deployment surface.
  *
- * The construct provisions the protected HTTP API routes from the M15 controller contract,
+ * The construct provisions the protected HTTP API routes from the M16 real controller contract,
  * the controller Lambda, the canonical durable session registry table, IAM grants, and
  * fail-closed auth environment wiring. Runtime command handling remains in the AppTheory
  * runtime contract; this construct only wires the deployment path.

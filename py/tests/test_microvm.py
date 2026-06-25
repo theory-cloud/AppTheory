@@ -1,8 +1,115 @@
 from __future__ import annotations
 
+import json
+import sys
+import types
 import unittest
+from unittest.mock import patch
 
 import apptheory as app
+from apptheory import microvm as microvm_mod
+
+
+class _OfficialMicroVMClientStub:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+        self.state = "RUNNING"
+        self.auth_token: dict[str, object] = {"authToken": {"issued": True}}
+
+    def _record(self) -> dict[str, object]:
+        return {
+            "microvmId": "provider-1",
+            "state": self.state,
+            "imageArn": "image-ref",
+            "imageVersion": "1",
+            "startedAt": 2.0,
+            "terminatedAt": "not-a-number",
+        }
+
+    def run_microvm(self, **payload: object) -> dict[str, object]:
+        self.calls.append(("run_microvm", payload))
+        return self._record()
+
+    def get_microvm(self, **payload: object) -> dict[str, object]:
+        self.calls.append(("get_microvm", payload))
+        return self._record()
+
+    def list_microvms(self, **payload: object) -> dict[str, object]:
+        self.calls.append(("list_microvms", payload))
+        return {"items": [self._record(), {"microvmId": "unknown", "state": "RUNNING"}]}
+
+    def suspend_microvm(self, **payload: object) -> dict[str, object]:
+        self.calls.append(("suspend_microvm", payload))
+        self.state = "SUSPENDED"
+        return {}
+
+    def resume_microvm(self, **payload: object) -> dict[str, object]:
+        self.calls.append(("resume_microvm", payload))
+        self.state = "RUNNING"
+        return {}
+
+    def terminate_microvm(self, **payload: object) -> dict[str, object]:
+        self.calls.append(("terminate_microvm", payload))
+        self.state = "TERMINATED"
+        return {}
+
+    def create_microvm_auth_token(self, **payload: object) -> dict[str, object]:
+        self.calls.append(("create_microvm_auth_token", payload))
+        return self.auth_token
+
+    def create_microvm_shell_auth_token(self, **payload: object) -> dict[str, object]:
+        self.calls.append(("create_microvm_shell_auth_token", payload))
+        return self.auth_token
+
+
+def _required_lambda_microvm_operations() -> set[str]:
+    return {
+        "RunMicrovm",
+        "GetMicrovm",
+        "ListMicrovms",
+        "SuspendMicrovm",
+        "ResumeMicrovm",
+        "TerminateMicrovm",
+        "CreateMicrovmAuthToken",
+        "CreateMicrovmShellAuthToken",
+    }
+
+
+def _fake_lambda_microvm_sdk_modules(
+    testcase: unittest.TestCase,
+    clients: list[_OfficialMicroVMClientStub],
+    operations: set[str],
+    *,
+    services: list[str] | None = None,
+) -> dict[str, types.ModuleType]:
+    def fake_boto3_client(service_name: str, **kwargs: object) -> _OfficialMicroVMClientStub:
+        testcase.assertEqual("lambda-microvms", service_name)
+        testcase.assertEqual({"region_name": "us-west-2"}, kwargs)
+        client = _OfficialMicroVMClientStub()
+        clients.append(client)
+        return client
+
+    boto3_module = types.ModuleType("boto3")
+    boto3_module.client = fake_boto3_client  # type: ignore[attr-defined]
+    botocore_module = types.ModuleType("botocore")
+    botocore_module.__path__ = []  # type: ignore[attr-defined]
+    botocore_session_module = types.ModuleType("botocore.session")
+
+    class Session:
+        def get_available_services(self) -> list[str]:
+            return services if services is not None else ["lambda-microvms"]
+
+        def get_service_model(self, service_name: str) -> object:
+            testcase.assertEqual("lambda-microvms", service_name)
+            return types.SimpleNamespace(operation_names=list(operations))
+
+    botocore_session_module.get_session = lambda: Session()  # type: ignore[attr-defined]
+    botocore_module.session = botocore_session_module  # type: ignore[attr-defined]
+    return {
+        "boto3": boto3_module,
+        "botocore": botocore_module,
+        "botocore.session": botocore_session_module,
+    }
 
 
 class MicroVMLifecycleTests(unittest.TestCase):
@@ -82,16 +189,34 @@ class MicroVMLifecycleTests(unittest.TestCase):
             session_id="session-1",
             state=app.STATE_REQUESTED,
             desired_state=app.STATE_REQUESTED,
+            provider_id=app.MICROVM_DEFAULT_SESSION_PROVIDER_ID,
+            provider_microvm_id="session-1",
+            provider_state=app.STATE_REQUESTED,
+            aws_lifecycle_state=app.STATE_REQUESTED,
             image_ref="image-ref",
+            image_version="1",
             network_connector_ref="network-ref",
+            ingress_network_connector_refs=["ingress-ref"],
+            egress_network_connector_refs=["egress-ref"],
             controller_id="controller-1",
             created_at=1.0,
             updated_at=1.0,
+            last_observed_at=1.0,
             expires_at=3601.0,
             generation=1,
             last_action=app.COMMAND_CREATE,
             last_command_id="req-record",
             auth_subject="subject-1",
+            reason_metadata={"reason_code": "ok"},
+            status_metadata={"status": "healthy"},
+            token_metadata=[
+                app.MicroVMSessionTokenMetadata(
+                    token_id="auth-token-metadata",
+                    token_type="auth",
+                    expires_at=901.0,
+                    scope=["ports:443"],
+                )
+            ],
         )
         for key, value in overrides.items():
             setattr(record, key, value)
@@ -112,6 +237,111 @@ class MicroVMLifecycleTests(unittest.TestCase):
         for key, value in overrides.items():
             setattr(status, key, value)
         return status
+
+    def _provider_auth(self, *, tenant_id: str = "tenant-1", namespace: str = "namespace-1") -> app.MicroVMAuthContext:
+        return app.MicroVMAuthContext(subject="subject-1", tenant_id=tenant_id, namespace=namespace)
+
+    def _provider_binding(
+        self,
+        *,
+        tenant_id: str = "tenant-1",
+        namespace: str = "namespace-1",
+        session_id: str = "session-1",
+        provider_microvm_id: str = "microvm-1",
+        registry_version: int = 1,
+    ) -> app.MicroVMProviderSessionBinding:
+        return app.MicroVMProviderSessionBinding(
+            tenant_id=tenant_id,
+            namespace=namespace,
+            session_id=session_id,
+            provider_microvm_id=provider_microvm_id,
+            registry_version=registry_version,
+        )
+
+    def _provider_dict_inputs(
+        self,
+    ) -> tuple[dict[str, object], dict[str, object], dict[str, object], dict[str, object], dict[str, object]]:
+        binding_dict: dict[str, object] = {
+            "tenant_id": "tenant-1",
+            "namespace": "namespace-1",
+            "session_id": "session-1",
+            "provider_microvm_id": "microvm-1",
+            "registry_version": 1,
+        }
+        run_dict: dict[str, object] = {
+            "request_id": "req-run-dict",
+            "tenant_id": "tenant-1",
+            "namespace": "namespace-1",
+            "session_id": "session-1",
+            "auth_context": {
+                "subject": "subject-1",
+                "tenant_id": "tenant-1",
+                "namespace": "namespace-1",
+                "metadata": {"safe": "ok"},
+            },
+            "image_ref": "image-ref",
+            "image_version": "1",
+            "network_connector_ref": "egress-default",
+            "ingress_network_connector_refs": ["ingress-1"],
+            "egress_network_connector_refs": ["egress-1"],
+            "session_spec": {"metadata": {"safe": "ok"}},
+            "idle_policy": {
+                "auto_resume_enabled": True,
+                "max_idle_duration_seconds": 60,
+                "suspended_duration_seconds": 120,
+            },
+            "maximum_duration_seconds": 600,
+        }
+        session_dict: dict[str, object] = {
+            "request_id": "req-get-dict",
+            "tenant_id": "tenant-1",
+            "namespace": "namespace-1",
+            "auth_context": {"subject": "subject-1", "tenant_id": "tenant-1", "namespace": "namespace-1"},
+            "binding": binding_dict,
+        }
+        list_dict: dict[str, object] = {
+            "request_id": "req-list-dict",
+            "tenant_id": "tenant-1",
+            "namespace": "namespace-1",
+            "auth_context": {"subject": "subject-1", "tenant_id": "tenant-1", "namespace": "namespace-1"},
+            "image_ref": "image-ref",
+            "image_version": "1",
+            "max_results": 5,
+            "known_sessions": [binding_dict],
+        }
+        token_dict: dict[str, object] = {
+            "request_id": "req-token-dict",
+            "tenant_id": "tenant-1",
+            "namespace": "namespace-1",
+            "auth_context": {"subject": "subject-1", "tenant_id": "tenant-1", "namespace": "namespace-1"},
+            "binding": binding_dict,
+            "ttl_seconds": 61,
+            "allowed_port_scope": [{"all_ports": True}, {"start_port": 8080, "end_port": 8081}],
+        }
+        return binding_dict, run_dict, session_dict, list_dict, token_dict
+
+    def _controller_request(self, **overrides: object) -> dict[str, object]:
+        request: dict[str, object] = {
+            "command": app.COMMAND_RUN,
+            "request_id": "req-real",
+            "tenant_id": "tenant-1",
+            "namespace": "namespace-1",
+            "auth_context": {
+                "subject": "subject-1",
+                "tenant_id": "tenant-1",
+                "namespace": "namespace-1",
+            },
+            "image_ref": "image-ref",
+            "image_version": "1",
+            "network_connector_ref": "network-ref",
+            "ingress_network_connector_refs": ["ingress-ref"],
+            "egress_network_connector_refs": ["egress-ref"],
+            "session_spec": {"metadata": {"safe": "ok"}},
+            "allowed_port_scope": [{"port": 443}],
+            "ttl_seconds": 120,
+        }
+        request.update(overrides)
+        return request
 
     def test_lifecycle_adapter_runs_to_terminal_states(self) -> None:
         contract = app.default_microvm_lifecycle_contract()
@@ -167,7 +397,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
                 "session_id": "session-1",
                 "hook": app.HOOK_PREPARE_IMAGE,
                 "state": app.STATE_REQUESTED,
-                "metadata": {"bearer_token": "secret"},
+                "metadata": {"bearer_token": "redacted"},
             }
         )
         self.assertIsNotNone(result.error)
@@ -403,7 +633,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
             app.validate_microvm_session_registry_contract(registry)
 
         registry = app.default_microvm_session_registry_contract()
-        registry.required_fields = registry.required_fields[:-1]
+        registry.required_fields = [field for field in registry.required_fields if field != "tenant_id"]
         with self.assertRaises(app.MicroVMSafeError):
             app.validate_microvm_session_registry_contract(registry)
 
@@ -426,7 +656,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
             self._valid_record(session_id=""),
             self._valid_record(created_at=0.0),
             self._valid_record(state="unknown"),
-            self._valid_record(metadata={"bearer-token": "secret"}),
+            self._valid_record(metadata={"bearer-token": "redacted"}),
         ]:
             with self.assertRaises(app.MicroVMSafeError):
                 app.validate_microvm_session_record(record)
@@ -466,12 +696,12 @@ class MicroVMLifecycleTests(unittest.TestCase):
             "auth_context": {
                 "subject": "subject-1",
                 "tenant_id": "tenant-1",
-                "metadata": {"authorization": "secret"},
+                "metadata": {"authorization": "redacted"},
             },
         }
         self.assertEqual(app.MICROVM_ERROR_FORBIDDEN_FIELD, app.validate_microvm_controller_request(request).code)
 
-        request = {**base_request, "session_spec": {"metadata": {"raw_sdk_client": "secret"}}}
+        request = {**base_request, "session_spec": {"metadata": {"raw_sdk_client": "redacted"}}}
         self.assertEqual(app.MICROVM_ERROR_FORBIDDEN_FIELD, app.validate_microvm_controller_request(request).code)
 
         request = {**base_request, "image_ref": ""}
@@ -513,15 +743,35 @@ class MicroVMLifecycleTests(unittest.TestCase):
         self.assertEqual(7, registry_record.version)
         self.assertEqual("https://microvm.example.test/session-1", registry_record.endpoint)
         self.assertEqual("microvm-1", registry_record.microvm_id)
+        self.assertEqual(record.provider_id, registry_record.provider_id)
+        self.assertEqual(record.provider_state, registry_record.provider_state)
+        self.assertEqual(record.image_version, registry_record.image_version)
         self.assertEqual(app.COMMAND_START, registry_record.last_action)
 
         round_trip = app.microvm_session_from_registry_record(registry_record)
         self.assertEqual(record.endpoint, round_trip.endpoint)
         self.assertEqual(record.microvm_id, round_trip.microvm_id)
+        self.assertEqual(record.provider_id, round_trip.provider_id)
+        self.assertEqual(record.token_metadata[0].token_id, round_trip.token_metadata[0].token_id)
         self.assertEqual(record.last_action, round_trip.last_action)
 
         bad = app.microvm_session_record_to_registry_record(record)
         bad.pk = "TENANT#other#NAMESPACE#namespace-1"
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_session_registry_record(bad)
+        bad = app.microvm_session_record_to_registry_record(record)
+        bad.status_metadata = {"provider_exception": "redacted"}
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_session_registry_record(bad)
+        bad = app.microvm_session_record_to_registry_record(record)
+        bad.token_metadata = [
+            app.MicroVMSessionTokenMetadata(
+                token_id="token_value",
+                token_type="auth",
+                expires_at=901.0,
+                scope=["ports:443"],
+            )
+        ]
         with self.assertRaises(app.MicroVMSafeError):
             app.validate_microvm_session_registry_record(bad)
 
@@ -546,6 +796,61 @@ class MicroVMLifecycleTests(unittest.TestCase):
         status = client.status(self._query_input(request_id="req-status"))
         self.assertEqual(app.COMMAND_START, status.last_action)
         self.assertEqual(2, status.registry_version)
+
+    def test_microvm_registry_reconstruction_hooks_fail_closed(self) -> None:
+        request = app.MicroVMSessionReconstructionRequest(
+            request_id="req-reconstruct",
+            tenant_id="tenant-1",
+            namespace="namespace-1",
+            session_id="session-1",
+            now=100.0,
+        )
+        with self.assertRaises(app.MicroVMSafeError):
+            app.reconstruct_microvm_session_record(request, None)
+
+        with self.assertRaises(app.MicroVMSafeError):
+            app.reconstruct_microvm_session_record(
+                request,
+                lambda _request: self._valid_record(tenant_id="tenant-other"),
+            )
+
+        with self.assertRaises(app.MicroVMSafeError):
+            app.reconstruct_microvm_session_record(
+                app.MicroVMSessionReconstructionRequest(
+                    request_id="req-reconstruct",
+                    tenant_id="tenant-1",
+                    namespace="namespace-1",
+                    session_id="session-1",
+                    now=10_000.0,
+                ),
+                lambda _request: self._valid_record(),
+            )
+
+        registry = app.create_memory_microvm_session_registry()
+
+        def hook(reconstruct_request: app.MicroVMSessionReconstructionRequest) -> app.MicroVMSessionRecord:
+            return self._valid_record(
+                session_id=reconstruct_request.session_id,
+                provider_id=app.MICROVM_AWS_LAMBDA_PROVIDER_ID,
+                provider_microvm_id="provider-1",
+                provider_state="running",
+                aws_lifecycle_state="running",
+                last_observed_at=reconstruct_request.now,
+                expires_at=reconstruct_request.now + 60.0,
+            )
+
+        reconstructing = app.create_reconstructing_microvm_session_registry(
+            registry,
+            hook,
+            stale_after_seconds=1,
+            clock=lambda: 500.0,
+        )
+        reconstructed = reconstructing.get(("tenant-1", "namespace-1", "session-1"))
+        self.assertEqual(app.MICROVM_AWS_LAMBDA_PROVIDER_ID, reconstructed.provider_id)
+        self.assertEqual("running", reconstructed.provider_state)
+
+        with self.assertRaises(app.MicroVMSafeError):
+            app.create_reconstructing_microvm_session_registry(registry, None)
 
     def test_controller_errors_fake_client_and_aws_adapter_are_constrained(self) -> None:
         with self.assertRaises(app.MicroVMSafeError):
@@ -579,71 +884,633 @@ class MicroVMLifecycleTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             client.status(self._query_input(session_id="missing"))
 
-        class StubAWSClient:
-            def _record(self, **payload: object) -> dict[str, object]:
+        provider = app.create_fake_microvm_provider(now=0.0)
+        provider_run = app.MicroVMProviderRunInput(
+            request_id="req-run",
+            tenant_id="tenant-1",
+            namespace="namespace-1",
+            session_id="session-1",
+            auth_context=app.MicroVMAuthContext(subject="subject-1", tenant_id="tenant-1", namespace="namespace-1"),
+            image_ref="image-ref",
+            image_version="1",
+            network_connector_ref="egress-default",
+            ingress_network_connector_refs=["ingress-1"],
+            egress_network_connector_refs=["egress-1"],
+            session_spec=app.MicroVMSessionSpec(metadata={"safe": "ok"}),
+            idle_policy=app.MicroVMProviderIdlePolicy(
+                auto_resume_enabled=True,
+                max_idle_duration_seconds=60,
+                suspended_duration_seconds=120,
+            ),
+            maximum_duration_seconds=600,
+        )
+        app.validate_microvm_provider_run_input(provider_run)
+        run = provider.run(provider_run)
+        self.assertEqual("microvm-000001", run.provider_microvm_id)
+        self.assertEqual(app.STATE_RUNNING, run.state)
+        app.validate_microvm_provider_session(run)
+        binding = app.MicroVMProviderSessionBinding(
+            run.tenant_id, run.namespace, run.session_id, run.provider_microvm_id, run.registry_version
+        )
+        session_input = app.MicroVMProviderSessionInput(
+            request_id="req-get",
+            tenant_id="tenant-1",
+            namespace="namespace-1",
+            auth_context=app.MicroVMAuthContext(subject="subject-1", tenant_id="tenant-1", namespace="namespace-1"),
+            binding=binding,
+        )
+        app.validate_microvm_provider_session_input(app.OPERATION_GET, session_input)
+        self.assertEqual("session-1", provider.get(session_input).session_id)
+        self.assertEqual(app.STATE_SUSPENDED, provider.suspend(session_input).state)
+        self.assertEqual(app.STATE_READY, provider.resume(session_input).state)
+        listed = provider.list(
+            app.MicroVMProviderListInput(
+                request_id="req-list",
+                tenant_id="tenant-1",
+                namespace="namespace-1",
+                auth_context=app.MicroVMAuthContext(subject="subject-1", tenant_id="tenant-1", namespace="namespace-1"),
+            )
+        )
+        self.assertEqual(1, len(listed.sessions))
+        token_input = app.MicroVMProviderTokenInput(
+            request_id="req-token",
+            tenant_id="tenant-1",
+            namespace="namespace-1",
+            auth_context=app.MicroVMAuthContext(subject="subject-1", tenant_id="tenant-1", namespace="namespace-1"),
+            binding=binding,
+            ttl_seconds=120,
+            allowed_port_scope=[app.MicroVMProviderPortScope(port=443)],
+        )
+        app.validate_microvm_provider_token_input(app.OPERATION_AUTH_TOKEN, token_input)
+        token = provider.create_auth_token(token_input)
+        app.validate_microvm_provider_token(token)
+        token_metadata = app.microvm_session_token_metadata_from_provider_token(token)
+        app.validate_microvm_session_token_metadata(token_metadata)
+        self.assertEqual("auth-000001", token.token_id)
+        self.assertEqual(["ports:443"], token.scope)
+        shell = provider.create_shell_token(
+            app.MicroVMProviderTokenInput(
+                request_id="req-shell",
+                tenant_id="tenant-1",
+                namespace="namespace-1",
+                auth_context=app.MicroVMAuthContext(subject="subject-1", tenant_id="tenant-1", namespace="namespace-1"),
+                binding=binding,
+            )
+        )
+        self.assertEqual(["shell"], shell.scope)
+        self.assertEqual(app.STATE_TERMINATED, provider.terminate(session_input).state)
+        self.assertEqual(
+            [
+                app.OPERATION_RUN,
+                app.OPERATION_GET,
+                app.OPERATION_SUSPEND,
+                app.OPERATION_RESUME,
+                app.OPERATION_LIST,
+                app.OPERATION_AUTH_TOKEN,
+                app.OPERATION_SHELL_TOKEN,
+                app.OPERATION_TERMINATE,
+            ],
+            [call.operation for call in provider.calls()],
+        )
+        provider.set_operation_error(app.OPERATION_GET, app.MicroVMSafeError("raw", "raw"))
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            provider.get(session_input)
+        self.assertEqual(app.MICROVM_ERROR_PROVIDER_OPERATION_FAILED, ctx.exception.code)
+
+        class StubProviderClient:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, object]]] = []
+                self.state = "RUNNING"
+
+            def _record(self) -> dict[str, object]:
                 return {
-                    "tenantId": payload.get("tenantId", "tenant-1"),
-                    "namespace": payload.get("namespace", "namespace-1"),
-                    "sessionId": payload.get("sessionId", "session-1"),
-                    "state": payload.get("state", app.STATE_REQUESTED),
-                    "desiredState": payload.get("desiredState", app.STATE_REQUESTED),
-                    "imageRef": payload.get("imageRef", "image-ref"),
-                    "networkConnectorRef": payload.get("networkConnectorRef", "network-ref"),
-                    "controllerId": "controller-1",
-                    "createdAt": 11,
-                    "updatedAt": 12,
-                    "expiresAt": 3611,
-                    "generation": 2,
+                    "microvmId": "provider-1",
+                    "state": self.state,
+                    "imageArn": "image-ref",
+                    "imageVersion": "1",
+                    "startedAt": 0.0,
                 }
 
-            def create_microvm_session(self, **payload: object) -> dict[str, object]:
-                return self._record(**payload)
+            def run_microvm(self, **payload: object) -> dict[str, object]:
+                self.calls.append(("run_microvm", payload))
+                self.state = "RUNNING"
+                return self._record()
 
-            def start_microvm_session(self, **payload: object) -> dict[str, object]:
-                return self._record(**payload, state=app.STATE_STARTING)
+            def get_microvm(self, **payload: object) -> dict[str, object]:
+                self.calls.append(("get_microvm", payload))
+                return self._record()
 
-            def stop_microvm_session(self, **payload: object) -> dict[str, object]:
-                return self._record(**payload, state=app.STATE_STOPPING)
+            def list_microvms(self, **payload: object) -> dict[str, object]:
+                self.calls.append(("list_microvms", payload))
+                return {"items": [self._record(), {"microvmId": "provider-other", "state": "RUNNING"}]}
 
-            def get_microvm_session_status(self, **payload: object) -> dict[str, object]:
-                return {
-                    **self._record(**payload, state=app.STATE_STARTING, desiredState=app.STATE_STARTED),
-                    "lifecycleState": app.STATE_STARTING,
-                    "lastTransition": 12,
-                    "registryVersion": 2,
-                }
+            def suspend_microvm(self, **payload: object) -> dict[str, object]:
+                self.calls.append(("suspend_microvm", payload))
+                self.state = "SUSPENDED"
+                return {}
 
-            def get_microvm_session(self, **payload: object) -> dict[str, object]:
-                return self._record(**payload)
+            def resume_microvm(self, **payload: object) -> dict[str, object]:
+                self.calls.append(("resume_microvm", payload))
+                self.state = "RUNNING"
+                return {}
 
-        aws_client = object.__new__(app.AWSLambdaMicroVMClient)
-        aws_client._client = StubAWSClient()
-        self.assertEqual(app.STATE_REQUESTED, aws_client.create(self._create_input()).state)
-        self.assertEqual(
-            app.STATE_STARTING,
-            aws_client.start(self._command_input(desired_state=app.STATE_STARTED)).state,
+            def terminate_microvm(self, **payload: object) -> dict[str, object]:
+                self.calls.append(("terminate_microvm", payload))
+                self.state = "TERMINATED"
+                return {}
+
+            def create_microvm_auth_token(self, **payload: object) -> dict[str, object]:
+                self.calls.append(("create_microvm_auth_token", payload))
+                return {"authToken": {"issued": True}}
+
+            def create_microvm_shell_auth_token(self, **payload: object) -> dict[str, object]:
+                self.calls.append(("create_microvm_shell_auth_token", payload))
+                return {"authToken": {"issued": True}}
+
+        aws_provider = object.__new__(app.AWSLambdaMicroVMProvider)
+        stub = StubProviderClient()
+        aws_provider._client = stub
+        aws_provider._clock = lambda: 0.0
+        run = aws_provider.run(provider_run)
+        aws_binding = app.MicroVMProviderSessionBinding(
+            "tenant-1", "namespace-1", "session-1", run.provider_microvm_id, 1
         )
-        self.assertEqual(
-            app.STATE_STOPPING,
-            aws_client.stop(self._command_input(desired_state=app.STATE_STOPPED)).state,
+        aws_session_input = app.MicroVMProviderSessionInput(
+            "req-get",
+            "tenant-1",
+            "namespace-1",
+            app.MicroVMAuthContext(subject="subject-1", tenant_id="tenant-1", namespace="namespace-1"),
+            aws_binding,
         )
-        self.assertEqual(app.STATE_STARTING, aws_client.status(self._query_input()).lifecycle_state)
-        self.assertEqual("session-1", aws_client.session(self._query_input()).session_id)
+        self.assertEqual("session-1", aws_provider.get(aws_session_input).session_id)
+        listed = aws_provider.list(
+            app.MicroVMProviderListInput(
+                "req-list",
+                "tenant-1",
+                "namespace-1",
+                app.MicroVMAuthContext(subject="subject-1", tenant_id="tenant-1", namespace="namespace-1"),
+                known_sessions=[aws_binding],
+            )
+        )
+        self.assertEqual(1, len(listed.sessions))
+        aws_provider.suspend(aws_session_input)
+        aws_provider.resume(aws_session_input)
+        aws_provider.terminate(aws_session_input)
+        token = aws_provider.create_auth_token(token_input)
+        shell = aws_provider.create_shell_token(
+            app.MicroVMProviderTokenInput(
+                "req-shell",
+                "tenant-1",
+                "namespace-1",
+                app.MicroVMAuthContext(subject="subject-1", tenant_id="tenant-1", namespace="namespace-1"),
+                aws_binding,
+            )
+        )
+        self.assertNotIn("issued", repr(token))
+        self.assertNotIn("issued", repr(shell))
+        self.assertEqual(
+            [
+                "run_microvm",
+                "get_microvm",
+                "list_microvms",
+                "suspend_microvm",
+                "get_microvm",
+                "resume_microvm",
+                "get_microvm",
+                "terminate_microvm",
+                "get_microvm",
+                "create_microvm_auth_token",
+                "create_microvm_shell_auth_token",
+            ],
+            [name for name, _payload in stub.calls],
+        )
+        self.assertEqual("image-ref", stub.calls[0][1]["imageIdentifier"])
+        self.assertEqual([{"port": 443}], stub.calls[-2][1]["allowedPorts"])
 
-        class RaisingAWSClient:
-            def get_microvm_session_status(self, **_payload: object) -> dict[str, object]:
-                raise RuntimeError("raw aws error")
+    def test_provider_validation_fail_closed(self) -> None:
+        self.assertEqual((app.STATE_READY, False), app.map_microvm_provider_state("READY"))
+        for provider_state in ["", "unknown"]:
+            with self.assertRaises(app.MicroVMSafeError):
+                app.map_microvm_provider_state(provider_state)
 
-            def create_microvm_session(self, **_payload: object) -> dict[str, object]:
-                raise RuntimeError("raw aws error")
+        valid_session = app.MicroVMProviderSession(
+            "tenant-1",
+            "namespace-1",
+            "session-1",
+            "microvm-1",
+            app.STATE_RUNNING,
+            "running",
+        )
+        app.validate_microvm_provider_session(valid_session)
+        for bad_session in [
+            app.MicroVMProviderSession("tenant-1", "namespace-1", "session-1", "", app.STATE_RUNNING, "running"),
+            app.MicroVMProviderSession("tenant-1", "namespace-1", "session-1", "microvm-1", app.STATE_READY, "running"),
+            app.MicroVMProviderSession(
+                "tenant-1",
+                "namespace-1",
+                "session-1",
+                "raw_sdk_client",
+                app.STATE_RUNNING,
+                "running",
+            ),
+        ]:
+            with self.assertRaises(app.MicroVMSafeError):
+                app.validate_microvm_provider_session(bad_session)
 
-        aws_client._client = RaisingAWSClient()
+        valid_token = app.MicroVMProviderToken(
+            "tenant-1",
+            "namespace-1",
+            "session-1",
+            "microvm-1",
+            "auth-safe",
+            "auth",
+            10.0,
+            ["ports:443"],
+        )
+        app.validate_microvm_provider_token(valid_token)
+        for bad_token in [
+            app.MicroVMProviderToken("tenant-1", "namespace-1", "session-1", "microvm-1", "", "auth", 10.0),
+            app.MicroVMProviderToken(
+                "tenant-1",
+                "namespace-1",
+                "session-1",
+                "microvm-1",
+                "bearer_token",
+                "auth",
+                10.0,
+                ["ports:443"],
+            ),
+        ]:
+            with self.assertRaises(app.MicroVMSafeError):
+                app.validate_microvm_provider_token(bad_token)
+
+    def test_provider_input_validation_fail_closed(self) -> None:
+        binding_dict, run_dict, session_dict, list_dict, token_dict = self._provider_dict_inputs()
+        app.validate_microvm_provider_run_input(run_dict)
+        app.validate_microvm_provider_session_input(app.OPERATION_GET, session_dict)
+        app.validate_microvm_provider_list_input(list_dict)
+        app.validate_microvm_provider_token_input(app.OPERATION_AUTH_TOKEN, token_dict)
+        app.validate_microvm_provider_token_input(
+            app.OPERATION_SHELL_TOKEN,
+            {**token_dict, "request_id": "req-shell-dict", "allowed_port_scope": [], "ttl_seconds": 0},
+        )
+
+        invalid_run_cases = [
+            {**run_dict, "request_id": ""},
+            {**run_dict, "session_id": ""},
+            {**run_dict, "image_ref": "raw_sdk_client"},
+            {
+                **run_dict,
+                "auth_context": {"subject": "subject-1", "tenant_id": "other", "namespace": "namespace-1"},
+            },
+            {
+                **run_dict,
+                "auth_context": {"subject": "", "tenant_id": "tenant-1", "namespace": "namespace-1"},
+            },
+            {**run_dict, "session_spec": {"metadata": {"authorization": "redacted"}}},
+            {**run_dict, "network_connector_ref": "raw_sdk_client"},
+            {**run_dict, "idle_policy": {"max_idle_duration_seconds": 0, "suspended_duration_seconds": 120}},
+            {**run_dict, "maximum_duration_seconds": -1},
+        ]
+        for invalid in invalid_run_cases:
+            with self.assertRaises(app.MicroVMSafeError):
+                app.validate_microvm_provider_run_input(invalid)
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_provider_session_input("not-real", session_dict)
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_provider_session_input(app.OPERATION_GET, {**session_dict, "request_id": ""})
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_provider_session_input(
+                app.OPERATION_GET, {**session_dict, "binding": {**binding_dict, "tenant_id": "other"}}
+            )
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_provider_list_input({**list_dict, "image_ref": "raw_sdk_client"})
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_provider_list_input({**list_dict, "max_results": -1})
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_provider_token_input(app.OPERATION_RUN, token_dict)
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_provider_token_input(app.OPERATION_AUTH_TOKEN, {**token_dict, "ttl_seconds": 901})
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_provider_token_input(
+                app.OPERATION_AUTH_TOKEN, {**token_dict, "allowed_port_scope": []}
+            )
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_provider_token_input(
+                app.OPERATION_AUTH_TOKEN,
+                {**token_dict, "allowed_port_scope": [{"start_port": 8081, "end_port": 8080}]},
+            )
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_provider_token_input(
+                app.OPERATION_AUTH_TOKEN,
+                {**token_dict, "allowed_port_scope": [{"all_ports": True, "port": 443}]},
+            )
+
+    def test_fake_provider_error_paths_remain_sanitized(self) -> None:
+        binding_dict, run_dict, session_dict, list_dict, token_dict = self._provider_dict_inputs()
+        fake = app.create_fake_microvm_provider(now=1.0)
+        fake.set_now(2.0)
+        fake.set_now(-1.0)
+        fake.set_operation_error("not-real", app.MicroVMSafeError("raw", "raw"))
+        fake.set_operation_error(app.OPERATION_GET, None)
+        run = fake.run(run_dict)
+        with self.assertRaises(app.MicroVMSafeError):
+            fake.run(run_dict)
+        with self.assertRaises(app.MicroVMSafeError):
+            fake.get({**session_dict, "binding": {**binding_dict, "provider_microvm_id": "wrong"}})
+        fake.set_operation_error(app.OPERATION_LIST, app.MicroVMSafeError("raw", "raw"))
+        with self.assertRaises(app.MicroVMSafeError):
+            fake.list(list_dict)
+        fake.set_operation_error(app.OPERATION_LIST, None)
+        self.assertEqual(1, len(fake.list(list_dict).sessions))
+        fake.set_operation_error(app.OPERATION_SUSPEND, app.MicroVMSafeError("raw", "raw"))
+        with self.assertRaises(app.MicroVMSafeError):
+            fake.suspend({**session_dict, "binding": {**binding_dict, "provider_microvm_id": run.provider_microvm_id}})
+        fake.set_operation_error(app.OPERATION_SUSPEND, None)
+        fake.set_operation_error(app.OPERATION_AUTH_TOKEN, app.MicroVMSafeError("raw", "raw"))
+        with self.assertRaises(app.MicroVMSafeError):
+            fake.create_auth_token(
+                {**token_dict, "binding": {**binding_dict, "provider_microvm_id": run.provider_microvm_id}}
+            )
+        fake.set_operation_error(app.OPERATION_AUTH_TOKEN, None)
+
+    def test_real_controller_commands_and_token_metadata_safety(self) -> None:
+        provider = app.create_fake_microvm_provider(now=1.0)
+        registry = app.create_memory_microvm_session_registry()
+        controller = app.create_real_microvm_controller(
+            provider,
+            registry,
+            controller_id="controller-1",
+            provider_id=app.MICROVM_AWS_LAMBDA_PROVIDER_ID,
+            id_generator=lambda: "session-1",
+            clock=lambda: 10.0,
+            ttl_seconds=60,
+        )
+        run = controller.handle(self._controller_request())
+        self.assertIsNone(run.error)
+        self.assertEqual(app.COMMAND_RUN, run.command)
+        self.assertEqual("session-1", run.session_id)
+        self.assertEqual(app.STATE_RUNNING, run.state)
+
+        get = controller.handle(
+            self._controller_request(command=app.COMMAND_GET, request_id="req-get", session_id="session-1")
+        )
+        self.assertEqual(run.provider_microvm_id, get.provider_microvm_id)
+
+        suspended = controller.handle(
+            self._controller_request(command=app.COMMAND_SUSPEND, request_id="req-suspend", session_id="session-1")
+        )
+        self.assertEqual(app.STATE_SUSPENDED, suspended.state)
+        resumed = controller.handle(
+            self._controller_request(command=app.COMMAND_RESUME, request_id="req-resume", session_id="session-1")
+        )
+        self.assertEqual(app.STATE_READY, resumed.state)
+
+        listed = controller.handle(
+            self._controller_request(command=app.COMMAND_LIST, request_id="req-list", session_id="")
+        )
+        self.assertEqual(1, len(listed.sessions))
+        self.assertEqual("session-1", listed.sessions[0].session_id)
+
+        token = controller.handle(
+            self._controller_request(
+                command=app.COMMAND_AUTH_TOKEN,
+                request_id="req-token",
+                session_id="session-1",
+                allowed_port_scope=[{"port": 443}],
+            )
+        )
+        self.assertEqual("auth", token.token_type)
+        self.assertEqual(["ports:443"], token.scope)
+        token_repr = repr(token)
+        for forbidden in ["token_value", "bearer_token", "x-aws-proxy-auth", "session_token_plaintext"]:
+            self.assertNotIn(forbidden, token_repr)
+
+        shell = controller.handle(
+            self._controller_request(
+                command="shell-token",
+                request_id="req-shell",
+                session_id="session-1",
+                allowed_port_scope=[],
+            )
+        )
+        self.assertEqual(app.COMMAND_SHELL_AUTH_TOKEN, shell.command)
+        self.assertEqual("shell", shell.token_type)
+
+        stored = registry.get(("tenant-1", "namespace-1", "session-1"))
+        self.assertEqual(2, len(stored.token_metadata))
+        stored_repr = repr(stored.token_metadata)
+        self.assertNotIn("token_value", stored_repr)
+        self.assertNotIn("bearer_token", stored_repr)
+
+        denied = controller.handle(
+            self._controller_request(
+                command=app.COMMAND_GET,
+                request_id="req-denied",
+                tenant_id="tenant-2",
+                auth_context={"subject": "subject-1", "tenant_id": "tenant-1", "namespace": "namespace-1"},
+                session_id="session-1",
+            )
+        )
+        self.assertEqual(app.MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER, denied.error.code if denied.error else "")
+
+        terminated = controller.handle(
+            self._controller_request(command=app.COMMAND_TERMINATE, request_id="req-terminate", session_id="session-1")
+        )
+        self.assertEqual(app.STATE_TERMINATED, terminated.state)
+
+    def test_real_controller_route_adapter_enforces_auth_and_tenant_binding(self) -> None:
+        provider = app.create_fake_microvm_provider(now=1.0)
+        registry = app.create_memory_microvm_session_registry()
+        controller = app.create_real_microvm_controller(
+            provider,
+            registry,
+            id_generator=lambda: "route-session",
+            clock=lambda: 10.0,
+        )
+        runtime = app.create_app(tier="p1", auth_hook=lambda ctx: f"identity:{ctx.tenant_id}")
+        app.register_microvm_controller_routes(runtime, controller)
+
+        def serve(method: str, path: str, body: dict[str, object], *, tenant_id: str = "tenant-1") -> app.Response:
+            return runtime.serve(
+                app.Request(
+                    method=method,
+                    path=path,
+                    headers={
+                        "content-type": ["application/json"],
+                        "x-tenant-id": [tenant_id],
+                        "x-request-id": [f"req-{method}-{path}"],
+                    },
+                    body=json.dumps(body).encode("utf-8"),
+                )
+            )
+
+        run = serve(
+            "POST",
+            "/microvms",
+            {
+                "namespace": "namespace-1",
+                "image_ref": "image-ref",
+                "image_version": "1",
+                "network_connector_ref": "network-ref",
+                "session_spec": {"metadata": {"safe": "ok"}},
+            },
+        )
+        self.assertEqual(200, run.status)
+        run_body = json.loads(run.body.decode())
+        self.assertEqual(app.COMMAND_RUN, run_body["command"])
+        self.assertEqual("route-session", run_body["session_id"])
+
+        token = serve(
+            "POST",
+            "/microvms/route-session/auth-token",
+            {"namespace": "namespace-1", "allowed_port_scope": [{"port": 443}]},
+        )
+        self.assertEqual(200, token.status)
+        token_text = token.body.decode()
+        self.assertNotIn("token_value", token_text)
+        self.assertNotIn("bearer_token", token_text)
+        self.assertEqual("auth", json.loads(token_text)["token_type"])
+
+        cross_tenant = serve(
+            "POST",
+            "/microvms/route-session/auth-token",
+            {"tenant_id": "tenant-2", "namespace": "namespace-1", "allowed_port_scope": [{"port": 443}]},
+        )
+        self.assertEqual(403, cross_tenant.status)
+        self.assertEqual(
+            app.MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+            json.loads(cross_tenant.body.decode())["error"]["code"],
+        )
+
+        unauthenticated = app.create_app(tier="p1")
+        app.register_microvm_controller_routes(unauthenticated, controller)
+        denied = unauthenticated.serve(
+            app.Request(
+                method="GET",
+                path="/microvms/route-session",
+                query={"namespace": ["namespace-1"]},
+                headers={"x-tenant-id": ["tenant-1"], "x-request-id": ["req-denied"]},
+            )
+        )
+        self.assertEqual(401, denied.status)
+
+    def test_official_sdk_provider_gate_and_safe_mapping(self) -> None:
+        binding_dict, run_dict, session_dict, list_dict, token_dict = self._provider_dict_inputs()
+        required_operations = _required_lambda_microvm_operations()
+        clients: list[_OfficialMicroVMClientStub] = []
+        with patch.dict(sys.modules, _fake_lambda_microvm_sdk_modules(self, clients, required_operations)):
+            official = app.create_aws_lambda_microvm_provider(region_name="us-west-2", clock=lambda: -5.0)
+            official_run = official.run(run_dict)
+            official_binding = {**binding_dict, "provider_microvm_id": official_run.provider_microvm_id}
+            official_session = {**session_dict, "binding": official_binding}
+            self.assertEqual("session-1", official.get(official_session).session_id)
+            listed = official.list({**list_dict, "known_sessions": [official_binding]})
+            self.assertEqual(1, len(listed.sessions))
+            self.assertEqual(app.STATE_SUSPENDED, official.suspend(official_session).state)
+            self.assertEqual(app.STATE_RUNNING, official.resume(official_session).state)
+            self.assertEqual(app.STATE_TERMINATED, official.terminate(official_session).state)
+            token = official.create_auth_token({**token_dict, "binding": official_binding})
+            self.assertEqual(61.0, token.expires_at)
+            self.assertEqual(["ports:*", "ports:8080-8081"], token.scope)
+            self.assertNotIn("issued", repr(token))
+            clients[0].auth_token = {}
+            with self.assertRaises(app.MicroVMSafeError):
+                official.create_shell_token({**token_dict, "binding": official_binding, "allowed_port_scope": []})
+            self.assertEqual(
+                {"imageIdentifier": "image-ref", "imageVersion": "1", "maxResults": 5}, clients[0].calls[2][1]
+            )
+            self.assertEqual(
+                [{"allPorts": {}}, {"range": {"startPort": 8080, "endPort": 8081}}],
+                clients[0].calls[-2][1]["allowedPorts"],
+            )
+
+        clients = []
+        with patch.dict(
+            sys.modules,
+            _fake_lambda_microvm_sdk_modules(self, clients, required_operations - {"RunMicrovm"}),
+        ):
+            with self.assertRaises(app.MicroVMSafeError) as ctx:
+                app.create_aws_lambda_microvm_provider(region_name="us-west-2")
+            self.assertEqual(app.MICROVM_ERROR_PROVIDER_OPERATION_FAILED, ctx.exception.code)
+
+        with (
+            patch.dict(
+                sys.modules,
+                _fake_lambda_microvm_sdk_modules(self, clients, required_operations, services=[]),
+            ),
+            self.assertRaises(app.MicroVMSafeError),
+        ):
+            app.create_aws_lambda_microvm_provider(region_name="us-west-2")
+
+
+class MicroVMRealContractTests(unittest.TestCase):
+    def test_real_operation_contract_validates_safety_boundaries(self) -> None:
+        lifecycle = microvm_mod.default_microvm_real_lifecycle_contract()
+        microvm_mod.validate_microvm_real_lifecycle_contract(lifecycle)
+        self.assertIn(microvm_mod.HOOK_RUN, [hook.name for hook in lifecycle.hooks])
+        self.assertNotIn(app.HOOK_START, [hook.name for hook in lifecycle.hooks])
+
+        lifecycle.hooks.append(
+            app.MicroVMLifecycleHookSpec(
+                app.HOOK_START,
+                "synthetic",
+                microvm_mod.STATE_RUNNING,
+                app.STATE_READY,
+                app.STATE_FAILED,
+            )
+        )
         with self.assertRaises(app.MicroVMSafeError) as ctx:
-            aws_client.status(self._query_input(request_id="req-status"))
-        self.assertEqual(app.MICROVM_ERROR_CONTROLLER_COMMAND_FAILED, ctx.exception.code)
+            microvm_mod.validate_microvm_real_lifecycle_contract(lifecycle)
+        self.assertEqual(microvm_mod.MICROVM_ERROR_REAL_LIFECYCLE_INCOMPLETE, ctx.exception.code)
+
+        contract = microvm_mod.default_microvm_operation_contract()
+        microvm_mod.validate_microvm_operation_contract(contract)
+        self.assertEqual(
+            [
+                microvm_mod.OPERATION_RUN,
+                microvm_mod.OPERATION_GET,
+                microvm_mod.OPERATION_LIST,
+                microvm_mod.OPERATION_SUSPEND,
+                microvm_mod.OPERATION_RESUME,
+                microvm_mod.OPERATION_TERMINATE,
+                microvm_mod.OPERATION_AUTH_TOKEN,
+                microvm_mod.OPERATION_SHELL_TOKEN,
+            ],
+            contract["operations"],
+        )
+
+        missing_operation = microvm_mod.default_microvm_operation_contract()
+        missing_operation["operations"] = [
+            operation for operation in missing_operation["operations"] if operation != microvm_mod.OPERATION_SHELL_TOKEN
+        ]
         with self.assertRaises(app.MicroVMSafeError) as ctx:
-            aws_client.create(self._create_input())
-        self.assertEqual(app.MICROVM_ERROR_CONTROLLER_COMMAND_FAILED, ctx.exception.code)
+            microvm_mod.validate_microvm_operation_contract(missing_operation)
+        self.assertEqual(microvm_mod.MICROVM_ERROR_OPERATION_CONTRACT_INCOMPLETE, ctx.exception.code)
+
+        unsafe_route = microvm_mod.default_microvm_operation_contract()
+        unsafe_route["routes"][0]["auth_required"] = False
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            microvm_mod.validate_microvm_operation_contract(unsafe_route)
+        self.assertEqual(app.MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER, ctx.exception.code)
+
+        unsafe_token = microvm_mod.default_microvm_operation_contract()
+        unsafe_token["token_issuance"][0]["result_fields"].append("token_value")
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            microvm_mod.validate_microvm_operation_contract(unsafe_token)
+        self.assertEqual(microvm_mod.MICROVM_ERROR_TOKEN_SAFETY_VIOLATION, ctx.exception.code)
+
+        unsafe_tenant = microvm_mod.default_microvm_operation_contract()
+        unsafe_tenant["tenant_binding"][1]["allowed"] = True
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            microvm_mod.validate_microvm_operation_contract(unsafe_tenant)
+        self.assertEqual(microvm_mod.MICROVM_ERROR_TENANT_BINDING_VIOLATION, ctx.exception.code)
+
+        bad_provider = microvm_mod.default_microvm_operation_contract()
+        bad_provider["provider_state_mappings"][0]["state"] = app.STATE_STARTED
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            microvm_mod.validate_microvm_operation_contract(bad_provider)
+        self.assertEqual(microvm_mod.MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE, ctx.exception.code)
 
 
 if __name__ == "__main__":

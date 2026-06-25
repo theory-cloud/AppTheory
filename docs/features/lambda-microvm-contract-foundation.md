@@ -1,64 +1,81 @@
 ---
-title: First-class AWS Lambda MicroVM Support
-description: The M15 golden path for fixture-backed Lambda MicroVM lifecycle, controller, registry, and CDK deployment support.
+title: AWS Lambda MicroVM Golden Path
+description: The corrective M16 AppTheory path for fixture-backed Lambda MicroVM lifecycle, provider, controller, registry, CDK, and consumer conformance support.
 ---
 
-# First-class AWS Lambda MicroVM Support
+# AWS Lambda MicroVM Golden Path
 
-M15 grows the Lambda MicroVM work from a contract foundation into an **evidence-bounded golden path** for AppTheory
-applications that need first-class AWS Lambda MicroVM primitives. The path is still AppTheory's path: fixture-backed
-runtime vocabulary, constrained controllers, durable TableTheory-shaped session records, and CDK constructs that wire the
-deployment surface without introducing raw AWS SDK or raw lifecycle-hook bypasses.
+AppTheory's Lambda MicroVM support is an evidence-bounded framework path, not a shortcut around the runtime contract.
+The `v1.14.0` / M15 line established a fixture-backed foundation, but it must not be described as complete live
+first-class MicroVM support. The corrective M16 line is the canonical AppTheory path for real Lambda MicroVM operation
+vocabulary, protected controller routes, provider adapters, durable registry state, CDK wiring, and consumer conformance
+harness proof.
 
-The contract name is `apptheory.lambda_microvm`; the fixture version is `m15.microvm/v1`. Fixtures live under
-`contract-tests/fixtures/m15/` and are validated by the Go, TypeScript, and Python contract runners.
+The contract name is `apptheory.lambda_microvm`; the corrective fixture version is `m16.microvm/v1`. Corrective
+fixtures live under `contract-tests/fixtures/m16/` and are validated by the Go, TypeScript, and Python contract runners.
+The earlier M15 fixtures remain part of the compatibility history, but the real operation vocabulary below is canonical
+for new docs, routes, conformance harnesses, and reviews.
 
-## What the M15 feature line proves
+This page is repository-local documentation for the integration line. It is not stable release evidence, live AWS proof,
+EqualToAI/Host application proof, customer workload readiness, or release-train execution evidence.
 
-M15 provides evidence for the AppTheory framework surface only:
+## What AppTheory proves
 
-- shared fixtures for lifecycle vocabulary, controller/session command envelopes, durable session-registry requirements,
-  and denial cases;
-- Go, TypeScript, and Python runtime primitives for lifecycle adapters, constrained MicroVM controllers, fake clients,
-  AWS adapter factories, and durable registry adapters;
-- CDK constructs for the MicroVM network connector, image resource, and protected controller deployment surface;
-- a synth-only controller example that demonstrates how the constructs are assembled.
+AppTheory can prove the framework surface locally:
 
-This evidence does **not** claim live deployment proof, cloud mutation proof, customer workload proof, generalized
-account vending, or proof that unauthenticated controllers are acceptable. Demo-only authorizers and placeholder example
-values are examples of shape, not production authentication or deployment evidence.
+- shared M16 fixtures for the real operation contract, route auth, tenant binding, lifecycle bypass denial, raw SDK
+  denial, and token no-leak denial;
+- Go, TypeScript, and Python runtime primitives for sanitized lifecycle adapters, constrained MicroVM controllers,
+  provider adapters, fake clients, provider-aware session records, and durable registry adapters;
+- CDK constructs for typed ingress, egress, and shell-ingress connector references, MicroVM images, protected controller
+  deployment, IAM grants, and fail-closed environment wiring;
+- a runnable controller example and an AppTheory-owned consumer conformance harness that can be run in local dry-run mode.
+
+That evidence does **not** claim live AWS deployment success, cloud mutation proof, customer workload proof, generalized
+account vending, or proof that unauthenticated controllers are acceptable. Live application proof belongs to a
+consumer-provided EqualToAI/Host lab run of the conformance harness with real lab configuration and supplied registry/log
+artifacts. Until that external run exists, the acceptable claim is local AppTheory corrective prep and gate proof only.
 
 ## Golden path
 
 Use these pieces together. Do not replace one piece with an ad-hoc implementation.
 
-1. **Model lifecycle through the AppTheory lifecycle adapter.** Handlers receive a sanitized `MicroVMLifecycleEvent` and
-   return through the adapter's safe result/error envelope. They do not receive raw AWS hook payloads and they do not get
-   a raw SDK client.
-2. **Deploy network and image resources through AppTheory CDK constructs.** The network connector is bound to
-   caller-provided VPC, subnet, and security-group context. The image references that connector and declares lifecycle
-   hook enablement, logging, resources, base image, build role, and artifact URI.
-3. **Expose the controller through `AppTheoryMicrovmController`.** The controller HTTP routes are fixed, protected by a
-   Lambda request authorizer, and backed by the construct-created durable session table.
-4. **Persist controller state through the durable session registry.** Controller and session routes use the registry
-   table shape rather than ad-hoc storage.
+1. **Model lifecycle through the AppTheory lifecycle adapter.** Handlers receive sanitized `MicroVMLifecycleEvent`
+   values and return through the adapter's safe result/error envelope. They do not receive raw AWS hook payloads and they
+   do not get raw SDK clients.
+2. **Use the constrained provider surface.** Runtime code calls AppTheory `Run`, `Get`, `List`, `Suspend`, `Resume`,
+   `Terminate`, `CreateAuthToken`, and `CreateShellToken` provider methods through AppTheory request/response structs.
+   Raw credentials, raw AWS SDK clients, bearer tokens, provider payloads, and plaintext session tokens are not part of
+   the provider interface.
+3. **Expose the controller through the fixed AppTheory routes.** Controller routes are protected, tenant-bound, and backed
+   by the durable session registry. The canonical route/command names are `run`, `get`, `list`, `suspend`, `resume`,
+   `terminate`, `auth-token`, and `shell-auth-token`.
+4. **Deploy through AppTheory CDK constructs.** The deployment path is `AppTheoryMicrovmNetworkConnector` or typed
+   connector references, `AppTheoryMicrovmImage`, and `AppTheoryMicrovmController`. The controller requires explicit
+   ingress, egress, and shell-ingress connector references; AppTheory does not hide connector defaults.
+5. **Persist controller state through the durable session registry.** Controller and session routes use the canonical
+   TableTheory/DynamoDB-shaped registry instead of route-local memory, ad-hoc tables, or raw SDK calls.
+6. **Use the conformance harness for consumer proof.** Local dry-run proves the harness is ready. Live EqualToAI/Host
+   proof exists only when the consumer runs it against a deployed lab controller.
 
-## Lifecycle hooks
+## Real lifecycle hooks
 
-The runtime lifecycle contract is language-neutral. All three runtimes validate the same hook/state vocabulary:
+The corrective runtime lifecycle contract is language-neutral. All three runtimes validate the same M16 hook/state
+vocabulary:
 
 | Hook | Active state | Success state | Failure state | Purpose |
 | --- | --- | --- | --- | --- |
-| `prepare_image` | `image_preparing` | `image_prepared` | `failed` | Prepare image-specific session state before start. |
-| `start` | `starting` | `started` | `failed` | Start the MicroVM session through the constrained client. |
-| `readiness` | `readiness_probing` | `ready` | `failed` | Confirm the session is ready before callers treat it as usable. |
-| `stop` | `stopping` | `stopped` | `failed` | Stop a running session. |
-| `teardown` | `tearing_down` | `terminated` | `failed` | Tear down session state and end the lifecycle. |
+| `validate` | `validating` | `validated` | `failed` | Validate a requested MicroVM before provider `run`. |
+| `run` | `running` | `running` | `failed` | Track the provider `RunMicrovm` operation. |
+| `ready` | `ready` | `ready` | `failed` | Record a ready observation without widening the state model. |
+| `suspend` | `suspending` | `suspended` | `failed` | Track provider suspend. |
+| `resume` | `resuming` | `ready` | `failed` | Track provider resume. |
+| `terminate` | `terminating` | `terminated` | `failed` | Track provider terminate. |
 | `failure` | `failed` | `failed` | `failed` | Record terminal failure without widening the contract. |
 
-The event shape is intentionally small: `request_id`, `tenant_id`, `namespace`, `session_id`, `hook`, `state`, and safe
-string metadata. The adapter fails closed for missing handlers, malformed events, unsupported transitions, forbidden
-metadata, or explicit `raw_lifecycle_hook_bypass` requests.
+The event shape stays intentionally small: `request_id`, `tenant_id`, `namespace`, `session_id`, `hook`, `state`, and
+safe string metadata. The adapter fails closed for missing handlers, malformed events, unsupported transitions,
+forbidden metadata, or explicit `raw_lifecycle_hook_bypass` requests.
 
 The CDK image construct also exposes AWS Lambda MicroVM hook **configuration** fields:
 
@@ -70,21 +87,24 @@ The CDK image construct also exposes AWS Lambda MicroVM hook **configuration** f
 Those CDK fields configure the AWS resource. Application behavior still goes through the AppTheory runtime lifecycle
 adapter and its sanitized event/result contract.
 
-## Controller routes
+## Real controller routes
 
-`AppTheoryMicrovmController` exposes the fixed M15 controller surface under `/microvms`:
+`AppTheoryMicrovmController` and the runtime route helpers expose the fixed M16 controller surface under `/microvms`:
 
-| Command | Method | Route | Required request fields | Registry use |
+| Operation | Method | Route | Required request fields | Response boundary |
 | --- | --- | --- | --- | --- |
-| `create` | `POST` | `/microvms` | `image_ref`, `network_connector_ref`, `session_spec` | Creates the tenant-bound session record. |
-| `start` | `POST` | `/microvms/{session_id}/start` | `session_id` | Loads and updates the existing session record. |
-| `stop` | `POST` | `/microvms/{session_id}/stop` | `session_id` | Loads and updates the existing session record. |
-| `status` | `GET` | `/microvms/{session_id}/status` | `session_id` | Reads status through the session registry/client boundary. |
-| `session` | `GET` | `/microvms/{session_id}` | `session_id` | Returns the durable tenant-bound session record. |
+| `run` | `POST` | `/microvms` | `tenant_id`, `namespace`, `image_ref`, connector refs, `session_spec` | Session ID, provider MicroVM ID, state, provider state, registry version. |
+| `list` | `GET` | `/microvms` | `tenant_id`, `namespace` | Tenant/namespace-bound sessions and recovery cursor. |
+| `get` | `GET` | `/microvms/{session_id}` | `tenant_id`, `namespace`, `session_id` | Tenant-bound session state and provider state. |
+| `suspend` | `POST` | `/microvms/{session_id}/suspend` | `tenant_id`, `namespace`, `session_id` | Updated state, provider state, registry version. |
+| `resume` | `POST` | `/microvms/{session_id}/resume` | `tenant_id`, `namespace`, `session_id` | Updated state, provider state, registry version. |
+| `terminate` | `DELETE` | `/microvms/{session_id}` | `tenant_id`, `namespace`, `session_id` | Terminal-or-denied state, provider state, registry version. |
+| `auth-token` | `POST` | `/microvms/{session_id}/auth-token` | `tenant_id`, `namespace`, `session_id`, optional port scope | Sanitized `token_id`, `token_type`, `expires_at`, and `scope` only. |
+| `shell-auth-token` | `POST` | `/microvms/{session_id}/shell-auth-token` | `tenant_id`, `namespace`, `session_id` | Sanitized `token_id`, `token_type`, `expires_at`, and `scope` only. |
 
-The controller request envelope requires `command`, `request_id`, `tenant_id`, `namespace`, and `auth_context`. Safe
-errors expose only `code`, `message`, and `request_id`. The envelope and durable records forbid raw AWS credentials,
-raw SDK clients, bearer tokens, raw lifecycle hook payloads, and plaintext session tokens.
+`auth-token` and `shell-auth-token` responses must never expose provider token values, bearer credentials, raw AWS
+credentials, or plaintext session tokens. `shell-auth-token` is canonical. `shell-token` may appear in API snapshots or
+runtime compatibility aliases for earlier corrective callers, but it is not the canonical route or command.
 
 ## Authentication posture
 
@@ -98,23 +118,23 @@ Controller routes are **protected and fail closed by default**:
 - The runtime controller requires authenticated, tenant-bound requests. `tenant_id`, `namespace`, and `auth_context`
   must agree with the caller's authorization model.
 
-The synth-only example uses a `DemoOnlyTokenAuthorizer` to prove route wiring. That authorizer is not production auth
-proof and must be replaced with a tenant-bound AppTheory authorizer before deployment.
+The examples use demo-only authorizers to prove route wiring. They are not production auth proof and must be replaced
+with tenant-bound AppTheory authorization before deployment.
 
-## VPC and network boundary
+## Network and CDK boundary
 
 AppTheory does not hide account or network mutation behind the MicroVM primitive.
 
-`AppTheoryMicrovmNetworkConnector` requires caller-provided network context:
+`AppTheoryMicrovmNetworkConnector` creates caller-owned VPC egress connectors from explicit `vpc`, `subnets`, and
+`securityGroups`. The CDK surface also exposes typed references for AWS-managed or imported connectors:
 
-- `vpc`: the application's VPC boundary;
-- `subnets`: one to sixteen caller-selected subnets where Lambda may attach connector ENIs;
-- `securityGroups`: one to five explicit security groups;
-- optional `operatorRole` or an AppTheory-created operator role scoped to the supplied subnet/security-group IDs.
+- `AppTheoryMicrovmNetworkConnector.allIngress(...)` and `.noIngress(...)` for ingress;
+- `AppTheoryMicrovmNetworkConnector.internetEgress(...)` or created/imported egress connectors for egress;
+- `AppTheoryMicrovmNetworkConnector.shellIngress(...)` for shell auth-token support.
 
-The construct does not synthesize a VPC, select a default security group, vend an AWS account, mutate sibling accounts,
-or perform live AWS lookups. The controller and image constructs receive network connector references from this boundary;
-there is no hidden fallback connector.
+`AppTheoryMicrovmController` requires `ingressNetworkConnectors`, `egressNetworkConnectors`, and
+`shellIngressNetworkConnector` so the route/IAM/environment contract can fail closed. The construct does not synthesize a
+VPC, select a default security group, vend an AWS account, mutate sibling accounts, or perform live AWS lookups.
 
 ## Durable session registry shape
 
@@ -135,18 +155,26 @@ Canonical keys are derived from tenant and session identity:
 | `sk` | `SESSION#<session_id>` |
 | `ttl` | Unix expiry derived from `expires_at` |
 
-Canonical durable records include `tenant_id`, `namespace`, `session_id`, `state`, `desired_state`, `image_ref`,
-`network_connector_ref`, `controller_id`, `created_at`, `updated_at`, `expires_at`, `generation`, `version`,
-`last_action`, `last_command_id`, `auth_subject`, and optional `endpoint`, `microvm_id`, and safe metadata.
+Canonical durable records include tenant, namespace, session, image, connector, provider binding, AWS lifecycle,
+registry version, timestamps, generation/version fields, last action metadata, auth subject, token metadata, and safe
+metadata only. The session and controller routes must use this registry shape. Do not replace it with route-local memory,
+an ad-hoc DynamoDB schema, raw SDK calls, or per-controller private storage.
 
-The session and controller routes must use this registry shape. Do not replace it with route-local memory, an ad-hoc
-DynamoDB schema, raw SDK calls, or per-controller private storage.
+## Compatibility and version boundary
+
+- `m16.microvm/v1` is the canonical corrective contract version for real MicroVM operations.
+- `m15.microvm/v1` and the synthetic `create`, `start`, `stop`, `status`, and `session` vocabulary were foundation and
+  compatibility surfaces, not complete live support.
+- API snapshots may still list legacy compatibility constants. Do not use those constants as evidence that the old
+  vocabulary is canonical for new controller routes or conformance proof.
+- Release execution, immutable tags, and stable release proof remain out of scope for this docs page.
 
 ## Explicit out of scope
 
-M15 does not provide or prove:
+AppTheory does not provide or prove:
 
 - live AWS deployment success;
+- EqualToAI/Host application proof without a consumer-run live harness;
 - cloud mutation receipts or customer workload execution;
 - generalized account vending, VPC vending, or network mutation outside caller-provided VPC/subnet/security-group
   inputs;
@@ -164,6 +192,7 @@ Do not add a private escape hatch.
 - [MicroVM CDK constructs](../cdk/lambda-microvm.md)
 - [Contract fixtures](../reference/contract-fixtures.md)
 - `examples/cdk/microvm-controller`
+- `examples/microvm-conformance`
 
 ## Validation
 
@@ -171,6 +200,12 @@ Run the shared contract runners when changing runtime-visible behavior:
 
 ```bash
 ./scripts/verify-contract-tests.sh
+```
+
+Run the local conformance harness proof without mutating AWS:
+
+```bash
+./scripts/verify-microvm-conformance-harness.sh
 ```
 
 Run the repository gate for ordinary validation:

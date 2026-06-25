@@ -16484,14 +16484,14 @@
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
       "docs": {
-        "remarks": "The construct provisions the protected HTTP API routes from the M15 controller contract,\nthe controller Lambda, the canonical durable session registry table, IAM grants, and\nfail-closed auth environment wiring. Runtime command handling remains in the AppTheory\nruntime contract; this construct only wires the deployment path.",
+        "remarks": "The construct provisions the protected HTTP API routes from the M16 real controller contract,\nthe controller Lambda, the canonical durable session registry table, IAM grants, and\nfail-closed auth environment wiring. Runtime command handling remains in the AppTheory\nruntime contract; this construct only wires the deployment path.",
         "summary": "AppTheory CDK construct for the first-class Lambda MicroVM controller deployment surface."
       },
       "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmController",
       "initializer": {
         "locationInModule": {
           "filename": "lib/microvm-controller.ts",
-          "line": 280
+          "line": 335
         },
         "parameters": [
           {
@@ -16517,7 +16517,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 244
+        "line": 299
       },
       "name": "AppTheoryMicrovmController",
       "properties": [
@@ -16528,7 +16528,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 248
+            "line": 303
           },
           "name": "api",
           "type": {
@@ -16542,7 +16542,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 263
+            "line": 318
           },
           "name": "controllerFunction",
           "type": {
@@ -16556,7 +16556,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 273
+            "line": 328
           },
           "name": "endpoint",
           "type": {
@@ -16570,7 +16570,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 258
+            "line": 313
           },
           "name": "routeAuthorizer",
           "type": {
@@ -16584,7 +16584,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 268
+            "line": 323
           },
           "name": "sessionTable",
           "type": {
@@ -16598,7 +16598,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 253
+            "line": 308
           },
           "name": "stage",
           "type": {
@@ -16612,7 +16612,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 278
+            "line": 333
           },
           "name": "accessLogGroup",
           "optional": true,
@@ -16637,7 +16637,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 91
+        "line": 128
       },
       "name": "AppTheoryMicrovmControllerFunctionProps",
       "symbolId": "lib/microvm-controller:AppTheoryMicrovmControllerFunctionProps"
@@ -16652,7 +16652,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 96
+        "line": 133
       },
       "name": "AppTheoryMicrovmControllerProps",
       "properties": [
@@ -16665,7 +16665,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 111
+            "line": 148
           },
           "name": "authorizer",
           "type": {
@@ -16681,7 +16681,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 103
+            "line": 140
           },
           "name": "controller",
           "type": {
@@ -16697,9 +16697,30 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 123
+            "line": 169
           },
           "name": "egressNetworkConnectors",
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "At least one connector reference is required and no more than 10 may be supplied.\nUse AppTheoryMicrovmNetworkConnector.allIngress/noIngress or an explicitly typed\nimported ingress connector reference; AppTheory does not hide an ingress default.",
+            "summary": "Ingress network connectors the controller is permitted to pass to Lambda MicroVMs."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 162
+          },
+          "name": "ingressNetworkConnectors",
           "type": {
             "collection": {
               "elementtype": {
@@ -16717,11 +16738,27 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 116
+            "line": 153
           },
           "name": "microvmImage",
           "type": {
             "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmImage"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Use AppTheoryMicrovmNetworkConnector.shellIngress or an explicitly typed shell-ingress\nconnector reference. The shell-auth-token route is part of the real M16 controller\nsurface, so this reference is required instead of being silently defaulted.",
+            "summary": "Shell ingress connector required for shell-auth-token support."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-controller.ts",
+            "line": 178
+          },
+          "name": "shellIngressNetworkConnector",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector"
           }
         },
         {
@@ -16733,7 +16770,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 140
+            "line": 195
           },
           "name": "apiName",
           "optional": true,
@@ -16751,7 +16788,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 233
+            "line": 288
           },
           "name": "authorizerCacheTtl",
           "optional": true,
@@ -16768,7 +16805,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 217
+            "line": 272
           },
           "name": "authorizerHeaderName",
           "optional": true,
@@ -16785,7 +16822,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 224
+            "line": 279
           },
           "name": "authorizerName",
           "optional": true,
@@ -16802,7 +16839,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 182
+            "line": 237
           },
           "name": "enableSessionTablePointInTimeRecovery",
           "optional": true,
@@ -16820,7 +16857,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 133
+            "line": 188
           },
           "name": "executionRole",
           "optional": true,
@@ -16837,7 +16874,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 161
+            "line": 216
           },
           "name": "sessionTableBillingMode",
           "optional": true,
@@ -16854,7 +16891,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 175
+            "line": 230
           },
           "name": "sessionTableDeletionProtection",
           "optional": true,
@@ -16871,7 +16908,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 189
+            "line": 244
           },
           "name": "sessionTableEncryption",
           "optional": true,
@@ -16888,7 +16925,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 196
+            "line": 251
           },
           "name": "sessionTableEncryptionKey",
           "optional": true,
@@ -16905,7 +16942,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 154
+            "line": 209
           },
           "name": "sessionTableName",
           "optional": true,
@@ -16922,7 +16959,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 203
+            "line": 258
           },
           "name": "sessionTableReadCapacity",
           "optional": true,
@@ -16939,7 +16976,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 168
+            "line": 223
           },
           "name": "sessionTableRemovalPolicy",
           "optional": true,
@@ -16956,7 +16993,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 210
+            "line": 265
           },
           "name": "sessionTableWriteCapacity",
           "optional": true,
@@ -16973,7 +17010,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 147
+            "line": 202
           },
           "name": "stage",
           "optional": true,
@@ -16994,7 +17031,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-controller.ts",
-        "line": 45
+        "line": 82
       },
       "name": "AppTheoryMicrovmControllerStageOptions",
       "properties": [
@@ -17007,7 +17044,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 58
+            "line": 95
           },
           "name": "accessLogging",
           "optional": true,
@@ -17025,7 +17062,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 66
+            "line": 103
           },
           "name": "accessLogRetention",
           "optional": true,
@@ -17042,7 +17079,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 51
+            "line": 88
           },
           "name": "stageName",
           "optional": true,
@@ -17059,7 +17096,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 80
+            "line": 117
           },
           "name": "throttlingBurstLimit",
           "optional": true,
@@ -17076,7 +17113,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-controller.ts",
-            "line": 73
+            "line": 110
           },
           "name": "throttlingRateLimit",
           "optional": true,
@@ -17975,6 +18012,46 @@
       ],
       "symbolId": "lib/microvm-image:AppTheoryMicrovmImageResources"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmManagedNetworkConnector": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "summary": "AWS-managed Lambda MicroVM network connector references."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmManagedNetworkConnector",
+      "kind": "enum",
+      "locationInModule": {
+        "filename": "lib/microvm-network-connector.ts",
+        "line": 44
+      },
+      "members": [
+        {
+          "docs": {
+            "summary": "Enable all inbound HTTPS connectivity for a MicroVM."
+          },
+          "name": "ALL_INGRESS"
+        },
+        {
+          "docs": {
+            "summary": "Explicitly disable inbound HTTPS connectivity for a MicroVM."
+          },
+          "name": "NO_INGRESS"
+        },
+        {
+          "docs": {
+            "summary": "Enable AWS-managed public internet egress for a MicroVM."
+          },
+          "name": "INTERNET_EGRESS"
+        },
+        {
+          "docs": {
+            "summary": "Enable shell ingress required by CreateMicrovmShellAuthToken."
+          },
+          "name": "SHELL_INGRESS"
+        }
+      ],
+      "name": "AppTheoryMicrovmManagedNetworkConnector",
+      "symbolId": "lib/microvm-network-connector:AppTheoryMicrovmManagedNetworkConnector"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -17986,7 +18063,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/microvm-network-connector.ts",
-          "line": 138
+          "line": 281
         },
         "parameters": [
           {
@@ -18015,8 +18092,209 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/microvm-network-connector.ts",
-        "line": 102
+        "line": 170
       },
+      "methods": [
+        {
+          "docs": {
+            "summary": "Reference the AWS-managed ALL_INGRESS connector."
+          },
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 200
+          },
+          "name": "allIngress",
+          "parameters": [
+            {
+              "name": "scope",
+              "type": {
+                "fqn": "constructs.Construct"
+              }
+            },
+            {
+              "name": "id",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Reference an AWS-managed Lambda MicroVM connector by name."
+          },
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 189
+          },
+          "name": "awsManaged",
+          "parameters": [
+            {
+              "name": "scope",
+              "type": {
+                "fqn": "constructs.Construct"
+              }
+            },
+            {
+              "name": "id",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "name": "connector",
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmManagedNetworkConnector"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Import an existing Lambda MicroVM network connector ARN into the AppTheory CDK surface."
+          },
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 174
+          },
+          "name": "fromNetworkConnectorArn",
+          "parameters": [
+            {
+              "name": "scope",
+              "type": {
+                "fqn": "constructs.Construct"
+              }
+            },
+            {
+              "name": "id",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "name": "networkConnectorArn",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "name": "networkConnectorKind",
+              "optional": true,
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorKind"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Reference the AWS-managed INTERNET_EGRESS connector."
+          },
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 222
+          },
+          "name": "internetEgress",
+          "parameters": [
+            {
+              "name": "scope",
+              "type": {
+                "fqn": "constructs.Construct"
+              }
+            },
+            {
+              "name": "id",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Reference the AWS-managed NO_INGRESS connector."
+          },
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 211
+          },
+          "name": "noIngress",
+          "parameters": [
+            {
+              "name": "scope",
+              "type": {
+                "fqn": "constructs.Construct"
+              }
+            },
+            {
+              "name": "id",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Reference the AWS-managed SHELL_INGRESS connector required for shell auth-token support."
+          },
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 233
+          },
+          "name": "shellIngress",
+          "parameters": [
+            {
+              "name": "scope",
+              "type": {
+                "fqn": "constructs.Construct"
+              }
+            },
+            {
+              "name": "id",
+              "type": {
+                "primitive": "string"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector"
+            }
+          },
+          "static": true
+        }
+      ],
       "name": "AppTheoryMicrovmNetworkConnector",
       "properties": [
         {
@@ -18026,7 +18304,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 126
+            "line": 264
           },
           "name": "networkConnector",
           "type": {
@@ -18040,7 +18318,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 131
+            "line": 269
           },
           "name": "networkConnectorArn",
           "overrides": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector",
@@ -18055,7 +18333,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 136
+            "line": 279
           },
           "name": "networkConnectorState",
           "type": {
@@ -18069,7 +18347,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 121
+            "line": 259
           },
           "name": "operatorRole",
           "type": {
@@ -18083,7 +18361,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 116
+            "line": 254
           },
           "name": "securityGroupIds",
           "type": {
@@ -18102,7 +18380,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 111
+            "line": 249
           },
           "name": "subnetIds",
           "type": {
@@ -18121,15 +18399,65 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 106
+            "line": 244
           },
           "name": "vpc",
           "type": {
             "fqn": "aws-cdk-lib.aws_ec2.IVpc"
           }
+        },
+        {
+          "docs": {
+            "summary": "Created connectors are VPC egress connectors."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 274
+          },
+          "name": "networkConnectorKind",
+          "optional": true,
+          "overrides": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorKind"
+          }
         }
       ],
       "symbolId": "lib/microvm-network-connector:AppTheoryMicrovmNetworkConnector"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorKind": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "summary": "Direction/type for a Lambda MicroVM network connector reference."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorKind",
+      "kind": "enum",
+      "locationInModule": {
+        "filename": "lib/microvm-network-connector.ts",
+        "line": 24
+      },
+      "members": [
+        {
+          "docs": {
+            "summary": "Inbound HTTPS connector reference passed to RunMicrovm."
+          },
+          "name": "INGRESS"
+        },
+        {
+          "docs": {
+            "summary": "Outbound connector reference passed to RunMicrovm."
+          },
+          "name": "EGRESS"
+        },
+        {
+          "docs": {
+            "summary": "AWS-managed shell ingress connector required for shell-auth-token support."
+          },
+          "name": "SHELL_INGRESS"
+        }
+      ],
+      "name": "AppTheoryMicrovmNetworkConnectorKind",
+      "symbolId": "lib/microvm-network-connector:AppTheoryMicrovmNetworkConnectorKind"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorProps": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -18141,7 +18469,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-network-connector.ts",
-        "line": 34
+        "line": 102
       },
       "name": "AppTheoryMicrovmNetworkConnectorProps",
       "properties": [
@@ -18154,7 +18482,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 57
+            "line": 125
           },
           "name": "securityGroups",
           "type": {
@@ -18175,7 +18503,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 48
+            "line": 116
           },
           "name": "subnets",
           "type": {
@@ -18196,7 +18524,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 41
+            "line": 109
           },
           "name": "vpc",
           "type": {
@@ -18212,7 +18540,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 64
+            "line": 132
           },
           "name": "connectorName",
           "optional": true,
@@ -18229,7 +18557,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 71
+            "line": 139
           },
           "name": "networkProtocol",
           "optional": true,
@@ -18246,7 +18574,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 79
+            "line": 147
           },
           "name": "operatorRole",
           "optional": true,
@@ -18263,7 +18591,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 86
+            "line": 154
           },
           "name": "operatorRoleName",
           "optional": true,
@@ -18279,7 +18607,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 91
+            "line": 159
           },
           "name": "tags",
           "optional": true,
@@ -18294,6 +18622,214 @@
         }
       ],
       "symbolId": "lib/microvm-network-connector:AppTheoryMicrovmNetworkConnectorProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorReference": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "remarks": "This construct intentionally synthesizes no resources. It gives controller/image constructs a\ntyped connector reference without requiring callers to pass raw strings through deployment code.",
+        "summary": "AppTheory CDK reference to an existing or AWS-managed Lambda MicroVM network connector."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorReference",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/microvm-network-connector.ts",
+          "line": 389
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorReferenceProps"
+            }
+          }
+        ]
+      },
+      "interfaces": [
+        "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector"
+      ],
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/microvm-network-connector.ts",
+        "line": 348
+      },
+      "methods": [
+        {
+          "docs": {
+            "summary": "Reference an AWS-managed Lambda MicroVM connector by name."
+          },
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 367
+          },
+          "name": "awsManaged",
+          "parameters": [
+            {
+              "name": "scope",
+              "type": {
+                "fqn": "constructs.Construct"
+              }
+            },
+            {
+              "name": "id",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "name": "connector",
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmManagedNetworkConnector"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector"
+            }
+          },
+          "static": true
+        },
+        {
+          "docs": {
+            "summary": "Import an existing Lambda MicroVM network connector ARN into the AppTheory CDK surface."
+          },
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 352
+          },
+          "name": "fromNetworkConnectorArn",
+          "parameters": [
+            {
+              "name": "scope",
+              "type": {
+                "fqn": "constructs.Construct"
+              }
+            },
+            {
+              "name": "id",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "name": "networkConnectorArn",
+              "type": {
+                "primitive": "string"
+              }
+            },
+            {
+              "name": "networkConnectorKind",
+              "optional": true,
+              "type": {
+                "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorKind"
+              }
+            }
+          ],
+          "returns": {
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector"
+            }
+          },
+          "static": true
+        }
+      ],
+      "name": "AppTheoryMicrovmNetworkConnectorReference",
+      "properties": [
+        {
+          "docs": {
+            "summary": "The network connector ARN."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 382
+          },
+          "name": "networkConnectorArn",
+          "overrides": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "docs": {
+            "summary": "Optional connector direction/type."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 387
+          },
+          "name": "networkConnectorKind",
+          "optional": true,
+          "overrides": "@theory-cloud/apptheory-cdk.IAppTheoryMicrovmNetworkConnector",
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorKind"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-network-connector:AppTheoryMicrovmNetworkConnectorReference"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorReferenceProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Properties for an imported or AWS-managed MicroVM network connector reference."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorReferenceProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/microvm-network-connector.ts",
+        "line": 85
+      },
+      "name": "AppTheoryMicrovmNetworkConnectorReferenceProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "The network connector ARN."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 89
+          },
+          "name": "networkConnectorArn",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Connector direction/type."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 96
+          },
+          "name": "networkConnectorKind",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorKind"
+          }
+        }
+      ],
+      "symbolId": "lib/microvm-network-connector:AppTheoryMicrovmNetworkConnectorReferenceProps"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkProtocol": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -23593,7 +24129,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/microvm-network-connector.ts",
-        "line": 24
+        "line": 69
       },
       "name": "IAppTheoryMicrovmNetworkConnector",
       "properties": [
@@ -23605,11 +24141,27 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/microvm-network-connector.ts",
-            "line": 28
+            "line": 73
           },
           "name": "networkConnectorArn",
           "type": {
             "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Optional connector direction/type used by AppTheory constructs to fail closed when ingress, egress, or shell connector references are wired into the wrong slot."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/microvm-network-connector.ts",
+            "line": 79
+          },
+          "name": "networkConnectorKind",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorKind"
           }
         }
       ],
@@ -24032,6 +24584,6 @@
       "symbolId": "lib/path-routed-frontend:SpaOriginConfig"
     }
   },
-  "version": "1.14.0",
-  "fingerprint": "FLj4p38Kv/ZNiAkViKI9tcbfad1dw4muMNZneE0e8HQ="
+  "version": "1.15.0-rc",
+  "fingerprint": "N31es7GWv2q7v3Z9qeeW7bgcr3jtwU4VEcUB6mXIdXY="
 }

@@ -127,7 +127,7 @@ func TestFakeClientInvalidCreateAndHelpers(t *testing.T) {
 		SessionID: "session-1",
 		ImageRef:  "image-ref",
 		SessionSpec: runtimemicrovm.SessionSpec{
-			Metadata: map[string]string{"bearer_token": "secret"},
+			Metadata: map[string]string{"bearer_token": "redacted"},
 		},
 		ControllerID: "controller-1",
 		AuthSubject:  "subject-1",

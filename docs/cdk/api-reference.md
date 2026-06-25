@@ -28,7 +28,8 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - `AppTheoryCloudWatchLogsSubscription`: source-side CloudWatch Logs subscription attachment for a caller-provided log
   group, destination ARN, filter pattern, and optional delivery role
 - `AppTheoryHttpIngestionEndpoint`: authenticated HTTP API v2 ingestion endpoint with Lambda request authorizer
-- `AppTheoryMicrovmNetworkConnector`: caller-owned VPC/subnet/security-group wiring for Lambda MicroVM egress
+- `AppTheoryMicrovmNetworkConnector`: caller-owned VPC/subnet/security-group egress wiring plus typed
+  ingress/egress/shell connector references for Lambda MicroVMs
 - `AppTheoryMicrovmImage`: `AWS::Lambda::MicrovmImage` deployment with AppTheory hook, logging, resource, and connector
   validation
 - `AppTheoryMicrovmController`: protected controller routes, controller Lambda, IAM grants, and durable `pk`/`sk`/`ttl`
@@ -58,7 +59,8 @@ constructs, read `cdk/.jsii`, `cdk/lib/index.ts`, and `cdk/lib/*.d.ts`.
 - Use `AppTheorySsrSite` when you need the canonical FaceTheory-first SSR/SSG/ISR deployment story
 - Use `AppTheoryJobsTable`, `AppTheoryS3Ingest`, and `AppTheoryCodeBuildJobRunner` for import pipelines
 - Use `AppTheoryMicrovmNetworkConnector`, `AppTheoryMicrovmImage`, and `AppTheoryMicrovmController` together for the
-  first-class AWS Lambda MicroVM golden path. The controller requires an authorizer and fails closed when omitted.
+  corrective M16 AWS Lambda MicroVM golden path. The controller requires an authorizer, explicit ingress/egress/shell
+  connector references, and fails closed when omitted.
 
 Event workload wiring:
 

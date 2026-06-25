@@ -76,7 +76,7 @@ AppTheory is distributed exclusively through immutable **[GitHub Releases](https
 Use AppTheory when you want AWS-Lambda-backed services that are:
 
 - **Serverless-first** — one unified `HandleLambda` entrypoint dispatches Lambda Function URL, API Gateway v2, ALB, AppSync, SQS, EventBridge, DynamoDB Streams, Kinesis, and WebSockets. The same handler shape covers every event source.
-- **Cross-language consistent** — one routing model, one middleware order, one error envelope — across three runtimes — without behavioral drift. Verified on every commit by the [128 contract fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/).
+- **Cross-language consistent** — one routing model, one middleware order, one error envelope — across three runtimes — without behavioral drift. Verified on every commit by the [145 contract fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/).
 - **Generative-coding friendly** — explicit tiers, canonical patterns, and strict verification so AI-generated code stays correct and maintainable.
 
 ✅ Treat routing, middleware, and event normalization as a contract

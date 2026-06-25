@@ -1,0 +1,49 @@
+{
+  "id": "m16_microvm_controller_route_shell_auth_token",
+  "tier": "m16",
+  "name": "M16 canonical MicroVM shell-auth-token route is tenant-bound and safe",
+  "setup": {
+    "microvm_controller_route": {
+      "authenticated": true,
+      "seed_session": true,
+      "tenant_id": "tenant-1",
+      "namespace": "namespace-1",
+      "session_id": "fixture-session"
+    }
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/microvms/fixture-session/shell-auth-token",
+      "headers": {
+        "content-type": ["application/json"],
+        "x-tenant-id": ["tenant-1"],
+        "x-namespace-id": ["namespace-1"],
+        "x-request-id": ["req-m16-route-shell-auth-token"]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"namespace\":\"namespace-1\",\"ttl_seconds\":60}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "microvm_controller_route": {
+      "status": 200,
+      "command": "shell-auth-token",
+      "tenant_id": "tenant-1",
+      "namespace": "namespace-1",
+      "session_id": "fixture-session",
+      "token_type": "shell",
+      "scope": ["shell"],
+      "registry_token_metadata_count": 1,
+      "forbidden_body_substrings": [
+        "token_value",
+        "bearer_token",
+        "x-aws-proxy-auth",
+        "session_token_plaintext"
+      ]
+    }
+  }
+}

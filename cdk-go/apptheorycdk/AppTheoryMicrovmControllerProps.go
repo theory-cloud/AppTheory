@@ -24,8 +24,20 @@ type AppTheoryMicrovmControllerProps struct {
 	//
 	// At least one connector reference is required and no more than 10 may be supplied.
 	EgressNetworkConnectors *[]IAppTheoryMicrovmNetworkConnector `field:"required" json:"egressNetworkConnectors" yaml:"egressNetworkConnectors"`
+	// Ingress network connectors the controller is permitted to pass to Lambda MicroVMs.
+	//
+	// At least one connector reference is required and no more than 10 may be supplied.
+	// Use AppTheoryMicrovmNetworkConnector.allIngress/noIngress or an explicitly typed
+	// imported ingress connector reference; AppTheory does not hide an ingress default.
+	IngressNetworkConnectors *[]IAppTheoryMicrovmNetworkConnector `field:"required" json:"ingressNetworkConnectors" yaml:"ingressNetworkConnectors"`
 	// The MicroVM image the controller is permitted to run.
 	MicrovmImage IAppTheoryMicrovmImage `field:"required" json:"microvmImage" yaml:"microvmImage"`
+	// Shell ingress connector required for shell-auth-token support.
+	//
+	// Use AppTheoryMicrovmNetworkConnector.shellIngress or an explicitly typed shell-ingress
+	// connector reference. The shell-auth-token route is part of the real M16 controller
+	// surface, so this reference is required instead of being silently defaulted.
+	ShellIngressNetworkConnector IAppTheoryMicrovmNetworkConnector `field:"required" json:"shellIngressNetworkConnector" yaml:"shellIngressNetworkConnector"`
 	// Optional API name.
 	// Default: undefined.
 	//

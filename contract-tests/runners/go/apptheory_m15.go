@@ -10,7 +10,6 @@ import (
 	"time"
 
 	runtimemicrovm "github.com/theory-cloud/apptheory/runtime/microvm"
-	microvmtest "github.com/theory-cloud/apptheory/testkit/microvm"
 )
 
 const (
@@ -329,7 +328,11 @@ func runtimeControllerContract(controller microVMControllerContract) runtimemicr
 }
 
 func exerciseRuntimeController() error {
-	client := microvmtest.NewFakeClient()
+	registry := runtimemicrovm.NewMemorySessionRegistry()
+	client, err := runtimemicrovm.NewRegistryClient(registry)
+	if err != nil {
+		return err
+	}
 	controller, err := runtimemicrovm.NewController(
 		client,
 		runtimemicrovm.WithControllerID("controller-fixture"),
@@ -467,11 +470,16 @@ func runtimeRegistryFixtureRecord() runtimemicrovm.SessionRecord {
 		DesiredState:        runtimemicrovm.StateStarted,
 		Endpoint:            "https://microvm.example.test/session-fixture",
 		MicroVMID:           "microvm-fixture",
+		ProviderID:          runtimemicrovm.DefaultSessionProviderID,
+		ProviderMicroVMID:   "session-fixture",
+		ProviderState:       string(runtimemicrovm.StateStarting),
+		AWSLifecycleState:   string(runtimemicrovm.StateStarting),
 		ImageRef:            "image-fixture",
 		NetworkConnectorRef: "network-fixture",
 		ControllerID:        "controller-fixture",
 		CreatedAt:           now,
 		UpdatedAt:           now.Add(time.Minute),
+		LastObservedAt:      now.Add(time.Minute),
 		ExpiresAt:           now.Add(time.Hour),
 		Generation:          3,
 		LastAction:          runtimemicrovm.CommandStart,

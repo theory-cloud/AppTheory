@@ -8,7 +8,7 @@ import json
 import sys
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +58,7 @@ def stable_json(value: Any) -> str:
 
 def list_fixture_files(fixtures_root: Path) -> list[Path]:
     files: list[Path] = []
-    for tier in ("p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15"):
+    for tier in ("p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15", "m16"):
         tier_dir = fixtures_root / tier
         if not tier_dir.exists():
             continue
@@ -228,6 +228,7 @@ def is_json_content_type(headers: dict[str, list[str]]) -> bool:
 
 def built_in_handler(name: str):
     if name == "static_pong":
+
         def handler(_req: CanonicalRequest) -> CanonicalResponse:
             return CanonicalResponse(
                 status=200,
@@ -240,6 +241,7 @@ def built_in_handler(name: str):
         return handler
 
     if name == "echo_path_params":
+
         def handler(req: CanonicalRequest) -> CanonicalResponse:
             body = json.dumps({"params": req.path_params}, separators=(",", ":")).encode("utf-8")
             return CanonicalResponse(
@@ -253,6 +255,7 @@ def built_in_handler(name: str):
         return handler
 
     if name == "echo_request":
+
         def handler(req: CanonicalRequest) -> CanonicalResponse:
             body = json.dumps(
                 {
@@ -277,6 +280,7 @@ def built_in_handler(name: str):
         return handler
 
     if name == "echo_context":
+
         def handler(req: CanonicalRequest) -> CanonicalResponse:
             body = json.dumps(
                 {
@@ -298,6 +302,7 @@ def built_in_handler(name: str):
         return handler
 
     if name == "echo_middleware_trace":
+
         def handler(req: CanonicalRequest) -> CanonicalResponse:
             body = json.dumps({"trace": req.middleware_trace}, separators=(",", ":")).encode("utf-8")
             return CanonicalResponse(
@@ -311,6 +316,7 @@ def built_in_handler(name: str):
         return handler
 
     if name == "parse_json_echo":
+
         def handler(req: CanonicalRequest) -> CanonicalResponse:
             if not is_json_content_type(req.headers):
                 raise AppError("app.bad_request", "invalid json")
@@ -334,12 +340,14 @@ def built_in_handler(name: str):
         return handler
 
     if name == "panic":
+
         def handler(_req: CanonicalRequest) -> CanonicalResponse:
             raise RuntimeError("boom")
 
         return handler
 
     if name == "binary_body":
+
         def handler(_req: CanonicalRequest) -> CanonicalResponse:
             return CanonicalResponse(
                 status=200,
@@ -352,18 +360,21 @@ def built_in_handler(name: str):
         return handler
 
     if name == "unauthorized":
+
         def handler(_req: CanonicalRequest) -> CanonicalResponse:
             raise AppError("app.unauthorized", "unauthorized")
 
         return handler
 
     if name == "validation_failed":
+
         def handler(_req: CanonicalRequest) -> CanonicalResponse:
             raise AppError("app.validation_failed", "validation failed")
 
         return handler
 
     if name == "large_response":
+
         def handler(_req: CanonicalRequest) -> CanonicalResponse:
             return CanonicalResponse(
                 status=200,
@@ -423,6 +434,7 @@ def finalize_response(
         body=resp.body,
         is_base64=resp.is_base64,
     )
+
 
 class FixtureApp:
     def __init__(self, routes: list[dict[str, Any]], tier: str, limits: dict[str, Any]) -> None:
@@ -721,9 +733,7 @@ def compare_logging_profile_contract(
     }
     if "logging_profile_catalog" in expect_obj:
         actual["logging_profile_catalog"] = runtime.logging_profile_catalog()
-        if actual["logging_profile_catalog"] == expect_obj.get(
-            "logging_profile_catalog"
-        ):
+        if actual["logging_profile_catalog"] == expect_obj.get("logging_profile_catalog"):
             return True, "", actual, expect_obj, _DummyEffectsApp()
         return False, "logging_profile_catalog mismatch", actual, expect_obj, _DummyEffectsApp()
     if "profile_validation_errors" in expect_obj:
@@ -736,9 +746,7 @@ def compare_logging_profile_contract(
         return False, "profile_validation_errors mismatch", actual, expect_obj, _DummyEffectsApp()
     if "profile_logs" in expect_obj:
         try:
-            config = runtime.decode_logging_profile_json(
-                json.dumps(setup.get("logging_profile") or {})
-            )
+            config = runtime.decode_logging_profile_json(json.dumps(setup.get("logging_profile") or {}))
             actual["profile_logs"] = [
                 runtime.encode_logging_profile_event(
                     config,
@@ -921,7 +929,9 @@ def validate_microvm_lifecycle(lifecycle: dict[str, Any]) -> str:
         return str(exc)
 
 
-def validate_microvm_escape_hatches(runtime: Any, kind: str, version: str, escape_hatches: dict[str, Any]) -> dict[str, Any] | None:
+def validate_microvm_escape_hatches(
+    runtime: Any, kind: str, version: str, escape_hatches: dict[str, Any]
+) -> dict[str, Any] | None:
     try:
         runtime.validate_microvm_escape_hatches(escape_hatches or {})
         return None
@@ -933,6 +943,7 @@ def validate_microvm_escape_hatches(runtime: Any, kind: str, version: str, escap
             "error_code": str(getattr(exc, "code", "m15.microvm.invalid_contract")),
             "error_message": str(getattr(exc, "message", str(exc))),
         }
+
 
 def validate_microvm_controller(runtime: Any, controller: dict[str, Any]) -> str:
     try:
@@ -992,7 +1003,12 @@ def require_status_response(response: Any, session_id: str) -> None:
 
 
 def require_session_response(response: Any, session_id: str) -> None:
-    if response.session_id != session_id or not response.tenant_id or not response.namespace or not response.registry_version:
+    if (
+        response.session_id != session_id
+        or not response.tenant_id
+        or not response.namespace
+        or not response.registry_version
+    ):
         raise RuntimeError("apptheory: microvm controller session response incomplete")
 
 
@@ -1013,6 +1029,7 @@ def runtime_controller_request(command: str, request_id: str, session_id: str) -
         request["network_connector_ref"] = "network-fixture"
     return request
 
+
 def validate_microvm_session_registry(runtime: Any, registry: dict[str, Any]) -> str:
     try:
         runtime.validate_microvm_session_registry_contract(registry)
@@ -1031,11 +1048,16 @@ def exercise_microvm_session_registry(runtime: Any) -> None:
         desired_state="started",
         endpoint="https://microvm.example.test/session-fixture",
         microvm_id="microvm-fixture",
+        provider_id="apptheory.microvm.registry",
+        provider_microvm_id="session-fixture",
+        provider_state="starting",
+        aws_lifecycle_state="starting",
         image_ref="image-fixture",
         network_connector_ref="network-fixture",
         controller_id="controller-fixture",
         created_at=100.0,
         updated_at=160.0,
+        last_observed_at=160.0,
         expires_at=3700.0,
         generation=3,
         last_action="start",
@@ -1100,6 +1122,234 @@ def missing_strings(required: list[str], got: Any) -> list[str]:
     return sorted(value for value in required if value not in seen)
 
 
+def compare_microvm_real_contract_fixture(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, dict[str, Any], dict[str, Any], _DummyEffectsApp]:
+    if "microvm_controller_route" in (fixture.get("expect") or {}):
+        return compare_microvm_controller_route_fixture(fixture)
+
+    actual = validate_microvm_real_contract_fixture((fixture.get("setup") or {}).get("microvm_contract"))
+    expected = (fixture.get("expect") or {}).get("microvm_contract_validation")
+    if not isinstance(expected, dict):
+        return (
+            False,
+            "missing expect.microvm_contract_validation",
+            actual,
+            {"microvm_contract_validation": None},
+            _DummyEffectsApp(),
+        )
+    if actual == expected:
+        return True, "", actual, expected, _DummyEffectsApp()
+    return False, "microvm_contract_validation mismatch", actual, expected, _DummyEffectsApp()
+
+
+def validate_microvm_real_contract_fixture(contract: Any) -> dict[str, Any]:
+    if not isinstance(contract, dict):
+        return invalid_microvm_contract(
+            "m15.microvm.invalid_contract",
+            "apptheory: microvm contract fixture missing",
+        )
+
+    kind = str(contract.get("kind", "")).strip()
+    version = str(contract.get("version", "")).strip()
+    if str(contract.get("contract", "")).strip() != MICROVM_CONTRACT_NAME or version != "m16.microvm/v1":
+        return invalid_microvm_contract(
+            "m15.microvm.invalid_contract",
+            "apptheory: microvm contract must be named and versioned",
+        )
+    if kind not in {"lifecycle", "operation"}:
+        return invalid_microvm_contract(
+            "m15.microvm.invalid_contract",
+            "apptheory: microvm contract kind is unsupported",
+        )
+
+    runtime = _load_apptheory_microvm_runtime()
+    escape_hatch_error = validate_microvm_escape_hatches(runtime, kind, version, contract.get("escape_hatches") or {})
+    if escape_hatch_error:
+        return escape_hatch_error
+
+    try:
+        if kind == "lifecycle":
+            runtime.validate_microvm_real_lifecycle_contract(contract.get("lifecycle") or {})
+        else:
+            runtime.validate_microvm_operation_contract(contract.get("operation_contract") or {})
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "valid": False,
+            "kind": kind,
+            "version": version,
+            "error_code": str(getattr(exc, "code", "m16.microvm.operation_contract_incomplete")),
+            "error_message": str(getattr(exc, "message", str(exc))),
+        }
+
+    return {"valid": True, "kind": kind, "version": version}
+
+
+def compare_microvm_controller_route_fixture(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, Any, dict[str, Any], _DummyEffectsApp]:
+    runtime = _load_apptheory_runtime()
+    setup = normalize_microvm_controller_route_setup((fixture.get("setup") or {}).get("microvm_controller_route") or {})
+    expected = (fixture.get("expect") or {}).get("microvm_controller_route") or {}
+    provider = runtime.create_fake_microvm_provider(now=1_700_000_000.0)
+    registry = runtime.create_memory_microvm_session_registry()
+    controller = runtime.create_real_microvm_controller(
+        provider,
+        registry,
+        id_generator=lambda: setup["session_id"],
+        clock=lambda: 1_700_000_000.0,
+    )
+    if setup["seed_session"]:
+        seeded = controller.handle(microvm_controller_route_run_request(runtime, setup))
+        if getattr(seeded, "error", None):
+            return (
+                False,
+                f"seed microvm_controller_route session failed: {seeded.error.message}",
+                _empty_route_response(runtime),
+                expected,
+                _DummyEffectsApp(),
+            )
+
+    kwargs: dict[str, Any] = {"tier": "p1"}
+    if setup["authenticated"]:
+        kwargs["auth_hook"] = lambda _ctx: "subject-1"
+    route_app = runtime.create_app(**kwargs)
+    runtime.register_microvm_controller_routes(route_app, controller)
+
+    req = canonicalize_request(
+        (fixture.get("input") or {}).get("request") or {}, (fixture.get("input") or {}).get("context") or {}
+    )
+    actual = route_app.serve(
+        runtime.Request(
+            method=req.method,
+            path=req.path,
+            query=req.query,
+            headers=req.headers,
+            cookies=req.cookies,
+            body=req.body,
+            is_base64=req.is_base64,
+        )
+    )
+
+    ok, reason, _body = compare_microvm_controller_route_expected(expected, actual)
+    if not ok:
+        return False, reason, actual, expected, _DummyEffectsApp()
+
+    if isinstance(expected.get("registry_token_metadata_count"), int):
+        try:
+            record = registry.get((setup["tenant_id"], setup["namespace"], setup["session_id"]))
+        except Exception as exc:  # noqa: BLE001
+            return (
+                False,
+                f"read microvm_controller_route registry record failed: {exc}",
+                actual,
+                expected,
+                _DummyEffectsApp(),
+            )
+        count = len(getattr(record, "token_metadata", []) or [])
+        if count != expected["registry_token_metadata_count"]:
+            return (
+                False,
+                f"registry_token_metadata_count: expected {expected['registry_token_metadata_count']}, got {count}",
+                actual,
+                expected,
+                _DummyEffectsApp(),
+            )
+        record_text = stable_json(asdict(record) if hasattr(record, "__dataclass_fields__") else str(record))
+        for forbidden in expected.get("forbidden_body_substrings") or []:
+            if forbidden and str(forbidden) in record_text:
+                return (
+                    False,
+                    f"microvm_controller_route registry record contains forbidden substring {forbidden!r}",
+                    actual,
+                    expected,
+                    _DummyEffectsApp(),
+                )
+
+    return True, "", actual, expected, _DummyEffectsApp()
+
+
+def normalize_microvm_controller_route_setup(setup: dict[str, Any]) -> dict[str, Any]:
+    tenant_id = str(setup.get("tenant_id") or "tenant-1").strip() or "tenant-1"
+    namespace = str(setup.get("namespace") or "namespace-1").strip() or "namespace-1"
+    session_id = str(setup.get("session_id") or "fixture-session").strip() or "fixture-session"
+    return {
+        "authenticated": setup.get("authenticated") is True,
+        "seed_session": setup.get("seed_session") is True,
+        "tenant_id": tenant_id,
+        "namespace": namespace,
+        "session_id": session_id,
+    }
+
+
+def microvm_controller_route_run_request(runtime: Any, setup: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "command": runtime.COMMAND_RUN,
+        "request_id": "req-m16-route-seed",
+        "tenant_id": setup["tenant_id"],
+        "namespace": setup["namespace"],
+        "auth_context": {
+            "subject": "subject-1",
+            "tenant_id": setup["tenant_id"],
+            "namespace": setup["namespace"],
+        },
+        "image_ref": "image-ref",
+        "image_version": "1",
+        "network_connector_ref": "network-ref",
+        "session_spec": {"metadata": {"safe": "ok"}},
+    }
+
+
+def compare_microvm_controller_route_expected(
+    expected: dict[str, Any], actual: Any
+) -> tuple[bool, str, dict[str, Any]]:
+    if expected.get("status") != actual.status:
+        return False, f"status: expected {expected.get('status')}, got {actual.status}", {}
+    text = actual.body.decode("utf-8")
+    for forbidden in expected.get("forbidden_body_substrings") or []:
+        if forbidden and str(forbidden) in text:
+            return False, f"microvm_controller_route body contains forbidden substring {forbidden!r}", {}
+    try:
+        body = json.loads(text) if text.strip() else {}
+    except Exception:  # noqa: BLE001
+        return False, "microvm_controller_route response json mismatch", {}
+    for expected_field in ["command", "tenant_id", "namespace", "session_id", "state", "token_type"]:
+        if expected.get(expected_field) and body.get(expected_field) != expected.get(expected_field):
+            return (
+                False,
+                f"{expected_field}: expected {expected.get(expected_field)!r}, got {body.get(expected_field)!r}",
+                body,
+            )
+    if expected.get("scope") and body.get("scope", []) != expected.get("scope"):
+        return False, f"scope: expected {expected.get('scope')!r}, got {body.get('scope', [])!r}", body
+    if expected.get("error_code") and microvm_controller_route_error_code(body) != expected.get("error_code"):
+        return (
+            False,
+            f"error_code: expected {expected.get('error_code')!r}, got {microvm_controller_route_error_code(body)!r}",
+            body,
+        )
+    return True, "", body
+
+
+def microvm_controller_route_error_code(body: dict[str, Any]) -> str:
+    error = body.get("error")
+    if not isinstance(error, dict):
+        return ""
+    return str(error.get("code") or "")
+
+
+def _empty_route_response(runtime: Any) -> Any:
+    return runtime.Response(status=0, headers={}, cookies=[], body=b"", is_base64=False)
+
+
+def _load_apptheory_microvm_runtime() -> Any:
+    repo_root = Path(__file__).resolve().parents[3]
+    sys.path.insert(0, str(repo_root / "py" / "src"))
+    import importlib
+
+    return importlib.import_module("apptheory.microvm")
+
+
 def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     tier = str(fixture.get("tier", "")).strip().lower()
     if tier == "p0":
@@ -1125,6 +1375,8 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
         return run_fixture_m14(fixture)
     if tier == "m15":
         return compare_microvm_contract_fixture(fixture)
+    if tier == "m16":
+        return compare_microvm_real_contract_fixture(fixture)
 
     setup = fixture.get("setup", {})
     input_ = fixture.get("input", {})
@@ -1226,6 +1478,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return lambda _ctx: runtime.text(200, "pong")
 
     if name == "sleep_50ms":
+
         def handler(_ctx):
             import time
 
@@ -1235,6 +1488,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "cooperative_cancel_side_effect":
+
         def handler(ctx):
             deadline = time.monotonic() + 0.02
             while time.monotonic() < deadline:
@@ -1257,6 +1511,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return lambda ctx: runtime.json(200, {"params": ctx.params})
 
     if name == "echo_request":
+
         def handler(ctx):
             return runtime.json(
                 200,
@@ -1277,6 +1532,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return lambda ctx: runtime.json(200, ctx.json_value())
 
     if name == "echo_appsync_context":
+
         def handler(ctx):
             appsync = ctx.as_appsync()
             return runtime.json(
@@ -1291,7 +1547,9 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
                     "stash": getattr(appsync, "stash", {}) if appsync is not None else {},
                     "prev": getattr(appsync, "prev", None) if appsync is not None else None,
                     "request_headers": getattr(appsync, "request_headers", {}) if appsync is not None else {},
-                    "raw_event_field": ((getattr(appsync, "raw_event", {}) or {}).get("info") or {}).get("fieldName", "")
+                    "raw_event_field": ((getattr(appsync, "raw_event", {}) or {}).get("info") or {}).get(
+                        "fieldName", ""
+                    )
                     if appsync is not None
                     else "",
                     "ctx_trigger_type": ctx.get("apptheory.trigger_type"),
@@ -1304,12 +1562,14 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "panic":
+
         def handler(_ctx):
             raise RuntimeError("boom")
 
         return handler
 
     if name == "unexpected_error":
+
         def handler(_ctx):
             raise RuntimeError("boom")
 
@@ -1319,18 +1579,21 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return lambda _ctx: runtime.binary(200, bytes([0, 1, 2]), content_type="application/octet-stream")
 
     if name == "unauthorized":
+
         def handler(_ctx):
             raise runtime.AppError("app.unauthorized", "unauthorized")
 
         return handler
 
     if name == "validation_failed":
+
         def handler(_ctx):
             raise runtime.AppError("app.validation_failed", "validation failed")
 
         return handler
 
     if name == "portable_error":
+
         def handler(_ctx):
             raise runtime.AppTheoryError(
                 code="app.conflict",
@@ -1345,6 +1608,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "echo_context":
+
         def handler(ctx):
             return runtime.json(
                 200,
@@ -1359,12 +1623,14 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "echo_middleware_trace":
+
         def handler(ctx):
             return runtime.json(200, {"trace": getattr(ctx, "middleware_trace", [])})
 
         return handler
 
     if name == "echo_ctx_value_and_trace":
+
         def handler(ctx):
             return runtime.json(
                 200,
@@ -1377,6 +1643,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "naming_helpers":
+
         def handler(_ctx):
             return runtime.json(
                 200,
@@ -1394,6 +1661,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "stepfunctions_task_token_helpers":
+
         def handler(_ctx):
             return runtime.json(
                 200,
@@ -1421,6 +1689,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return lambda _ctx: runtime.text(200, "12345")
 
     if name == "sse_single_event":
+
         def handler(_ctx):
             return runtime.sse(
                 200,
@@ -1432,6 +1701,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "sse_stream_three_events":
+
         def handler(_ctx):
             events = [
                 runtime.SSEEvent(id="1", event="message", data={"a": 1, "b": 2}),
@@ -1454,6 +1724,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "stream_mutate_headers_after_first_chunk":
+
         def handler(_ctx):
             resp = runtime.Response(
                 status=200,
@@ -1478,6 +1749,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "stream_error_after_first_chunk":
+
         def handler(_ctx):
             def gen():
                 yield b"hello"
@@ -1498,6 +1770,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return lambda _ctx: runtime.html(200, "<h1>Hello</h1>")
 
     if name == "html_stream_two_chunks":
+
         def handler(_ctx):
             def gen():
                 yield b"<h1>"
@@ -1508,6 +1781,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "safe_json_for_html":
+
         def handler(_ctx):
             return runtime.text(
                 200,
@@ -1524,6 +1798,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "cookies_from_set_cookie_header":
+
         def handler(_ctx):
             return runtime.Response(
                 status=200,
@@ -1539,6 +1814,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "header_multivalue":
+
         def handler(_ctx):
             return runtime.Response(
                 status=200,
@@ -1551,6 +1827,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "cache_helpers":
+
         def handler(ctx):
             tag = runtime.etag("hello")
             return runtime.json(
@@ -1571,6 +1848,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "cloudfront_helpers":
+
         def handler(ctx):
             headers = getattr(getattr(ctx, "request", None), "headers", {}) or {}
             return runtime.json(
@@ -1584,6 +1862,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "source_provenance":
+
         def handler(ctx):
             provenance = ctx.source_provenance()
             return runtime.json(
@@ -1606,6 +1885,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
 
 def _built_in_m12_middleware(runtime: Any, name: str):
     if name == "mw_a":
+
         def mw(ctx, next_handler):
             ctx.set("mw", "ok")
             getattr(ctx, "middleware_trace", []).append("mw_a")
@@ -1616,6 +1896,7 @@ def _built_in_m12_middleware(runtime: Any, name: str):
         return mw
 
     if name == "mw_b":
+
         def mw(ctx, next_handler):
             getattr(ctx, "middleware_trace", []).append("mw_b")
             return next_handler(ctx)
@@ -1630,6 +1911,7 @@ def _built_in_m12_middleware(runtime: Any, name: str):
 
 def _built_in_event_middleware(name: str):
     if name == "evt_mw_a":
+
         def mw(ctx, _event, next_handler):
             ctx.set("mw", "ok")
             ctx.set("trace", ["evt_mw_a"])
@@ -1638,6 +1920,7 @@ def _built_in_event_middleware(name: str):
         return mw
 
     if name == "evt_mw_b":
+
         def mw(ctx, _event, next_handler):
             existing = ctx.get("trace")
             trace = list(existing) if isinstance(existing, list) else []
@@ -1655,12 +1938,14 @@ def _built_in_sqs_handler(name: str):
         return lambda _ctx, _msg: None
 
     if name == "sqs_always_fail":
+
         def handler(_ctx, _msg):
             raise RuntimeError("fail")
 
         return handler
 
     if name == "sqs_fail_on_body":
+
         def handler(_ctx, msg):
             if str((msg or {}).get("body") or "").strip() == "fail":
                 raise RuntimeError("fail")
@@ -1668,6 +1953,7 @@ def _built_in_sqs_handler(name: str):
         return handler
 
     if name == "sqs_requires_event_middleware":
+
         def handler(ctx, _msg):
             if ctx.get("mw") != "ok":
                 raise RuntimeError("missing middleware value")
@@ -1685,12 +1971,14 @@ def _built_in_kinesis_handler(runtime: Any, name: str, fixture: dict[str, Any]):
         return lambda _ctx, _record: None
 
     if name == "kinesis_always_fail":
+
         def handler(_ctx, _record):
             raise RuntimeError("fail")
 
         return handler
 
     if name == "kinesis_fail_on_data":
+
         def handler(_ctx, record):
             data_b64 = str(((record or {}).get("kinesis") or {}).get("data") or "").strip()
             decoded = base64.b64decode(data_b64) if data_b64 else b""
@@ -1700,6 +1988,7 @@ def _built_in_kinesis_handler(runtime: Any, name: str, fixture: dict[str, Any]):
         return handler
 
     if name == "kinesis_requires_event_middleware":
+
         def handler(ctx, _record):
             if ctx.get("mw") != "ok":
                 raise RuntimeError("missing middleware value")
@@ -1733,12 +2022,14 @@ def _built_in_dynamodb_stream_handler(runtime: Any, name: str):
         return lambda _ctx, _record: None
 
     if name == "ddb_always_fail":
+
         def handler(_ctx, _record):
             raise RuntimeError("fail")
 
         return handler
 
     if name == "ddb_fail_on_event_name_remove":
+
         def handler(_ctx, record):
             if str((record or {}).get("eventName") or "").strip() == "REMOVE":
                 raise RuntimeError("fail")
@@ -1746,6 +2037,7 @@ def _built_in_dynamodb_stream_handler(runtime: Any, name: str):
         return handler
 
     if name == "ddb_requires_event_middleware":
+
         def handler(ctx, _record):
             if ctx.get("mw") != "ok":
                 raise RuntimeError("missing middleware value")
@@ -1762,6 +2054,7 @@ def _built_in_dynamodb_stream_handler(runtime: Any, name: str):
         return lambda _ctx, record: _require_dynamodb_safe_summary(runtime, record, True)
 
     if name == "ddb_observed_fail_on_remove":
+
         def handler(ctx, record):
             _require_dynamodb_safe_summary(runtime, record, False)
             if str((record or {}).get("eventName") or "").strip() == "REMOVE":
@@ -1800,6 +2093,7 @@ def _built_in_eventbridge_handler(runtime: Any, name: str):
     if name == "eventbridge_observed_success":
         return lambda ctx, event: runtime.normalize_eventbridge_workload_envelope(ctx, event)
     if name == "eventbridge_observed_panic":
+
         def handler(_ctx, _event):
             raise RuntimeError("raw eventbridge panic: do-not-log")
 
@@ -1868,6 +2162,7 @@ class FakeWebSocketManagementClient:
 
 def _built_in_websocket_handler(runtime: Any, name: str):
     if name == "ws_connect_ok":
+
         def handler(ctx):
             ws = ctx.as_websocket()
             if ws is None:
@@ -1887,6 +2182,7 @@ def _built_in_websocket_handler(runtime: Any, name: str):
         return handler
 
     if name == "ws_disconnect_ok":
+
         def handler(ctx):
             ws = ctx.as_websocket()
             if ws is None:
@@ -1906,6 +2202,7 @@ def _built_in_websocket_handler(runtime: Any, name: str):
         return handler
 
     if name == "ws_default_send_json_ok":
+
         def handler(ctx):
             ws = ctx.as_websocket()
             if ws is None:
@@ -1927,6 +2224,7 @@ def _built_in_websocket_handler(runtime: Any, name: str):
         return handler
 
     if name == "ws_bad_request":
+
         def handler(_ctx):
             raise runtime.AppError("app.bad_request", "bad request")
 
@@ -2029,14 +2327,19 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
     if "output_json" not in expect_obj:
         return False, "missing expect.output_json or expect.error", actual_output, None, _DummyEffectsApp()
     if actual_error is not None:
-        return False, "unexpected error", {"message": str(actual_error).strip()}, expect_obj.get("output_json"), _DummyEffectsApp()
+        return (
+            False,
+            "unexpected error",
+            {"message": str(actual_error).strip()},
+            expect_obj.get("output_json"),
+            _DummyEffectsApp(),
+        )
 
     expected_output = expect_obj.get("output_json")
     if stable_json(expected_output) != stable_json(actual_output):
         return False, "output_json mismatch", actual_output, expected_output, _DummyEffectsApp()
 
     return _compare_m1_side_effects_if_expected(fixture, effects, actual_output, expected_output)
-
 
 
 def _compare_m1_side_effects_if_expected(
@@ -2083,9 +2386,7 @@ def build_cloudwatch_logs_subscription_expectations(
     if not isinstance(expected_records, list) or not expected_records:
         raise RuntimeError("fixture missing expect.cloudwatch_logs_subscription.records")
 
-    input_records = (
-        (((fixture.get("input", {}) or {}).get("aws_event") or {}).get("event") or {}).get("Records")
-    )
+    input_records = (((fixture.get("input", {}) or {}).get("aws_event") or {}).get("event") or {}).get("Records")
     if not isinstance(input_records, list) or not input_records:
         raise RuntimeError("cloudwatch logs subscription fixture missing kinesis input records")
 
@@ -2112,9 +2413,7 @@ def build_cloudwatch_logs_subscription_expectations(
             raise RuntimeError(f"duplicate kinesis input record_id {record_id!r}")
         seen_input_record_ids.add(record_id)
         if record_id not in by_record_id:
-            raise RuntimeError(
-                f"missing cloudwatch logs subscription expectation for kinesis record_id {record_id!r}"
-            )
+            raise RuntimeError(f"missing cloudwatch logs subscription expectation for kinesis record_id {record_id!r}")
 
     for record_id in by_record_id:
         if record_id not in seen_input_record_ids:
@@ -2236,8 +2535,7 @@ def compare_cloudwatch_logs_subscription_decoded_record(
     if actual_record_id and actual_record_id != record_id:
         return (
             False,
-            "cloudwatch logs subscription record_id mismatch: "
-            f"expected {record_id!r}, got {actual_record_id!r}",
+            f"cloudwatch logs subscription record_id mismatch: expected {record_id!r}, got {actual_record_id!r}",
         )
     for key in ("message_type", "owner", "log_group", "log_stream"):
         if str((actual or {}).get(key) or "").strip() != str((expected or {}).get(key) or "").strip():
@@ -2260,8 +2558,7 @@ def compare_cloudwatch_logs_subscription_decoded_record(
     ):
         return (
             False,
-            f"cloudwatch logs subscription record_id {record_id!r} "
-            "safe_summary contains forbidden raw log substring",
+            f"cloudwatch logs subscription record_id {record_id!r} safe_summary contains forbidden raw log substring",
         )
     return True, ""
 
@@ -2939,7 +3236,10 @@ def run_fixture_p2_output(fixture: dict[str, Any]) -> tuple[bool, str, dict[str,
     actual_output = None
     actual_error: Exception | None = None
     try:
-        actual_output = app.handle_lambda((aws_event or {}).get("event") or {}, ctx=_fixture_lambda_context((fixture.get("input", {}) or {}).get("context") or {}))
+        actual_output = app.handle_lambda(
+            (aws_event or {}).get("event") or {},
+            ctx=_fixture_lambda_context((fixture.get("input", {}) or {}).get("context") or {}),
+        )
     except Exception as exc:  # noqa: BLE001
         actual_error = exc
 
@@ -3053,7 +3353,9 @@ def run_fixture_compare(
         if expected_chunks != actual.chunks:
             return False, "chunks mismatch", actual, expected, app
 
-        expected_body = decode_fixture_body(expected.get("body")) if expected.get("body") is not None else b"".join(expected_chunks)
+        expected_body = (
+            decode_fixture_body(expected.get("body")) if expected.get("body") is not None else b"".join(expected_chunks)
+        )
         if expected_body != actual.body:
             return False, "body mismatch", actual, expected, app
 

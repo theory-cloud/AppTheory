@@ -159,16 +159,17 @@ patterns:
 
   lambda_microvm_golden_path:
     name: "Use the AppTheory MicroVM golden path end to end"
-    problem: "MicroVM lifecycle, controller, network, and session-state behavior drifts when teams hand-roll pieces around the framework."
-    solution: "Use AppTheory lifecycle adapters, constrained MicroVM controllers, the TableTheory-shaped session registry, and the AppTheory CDK network/image/controller constructs together. Controller routes stay authorizer-protected and fail closed by default."
+    problem: "MicroVM lifecycle, provider, controller, network, token, and session-state behavior drifts when teams hand-roll pieces around the framework."
+    solution: "Use AppTheory lifecycle adapters, the constrained real MicroVM provider/controller, the TableTheory-shaped session registry, typed AppTheory CDK connector/image/controller constructs, and the AppTheory conformance harness together. Controller routes stay authorizer-protected and fail closed by default; EqualToAI/Host proof requires a consumer-run live harness."
     correct_example: |
       # CORRECT: compose the blessed AppTheory surfaces.
       AppTheoryMicrovmNetworkConnector -> AppTheoryMicrovmImage -> AppTheoryMicrovmController
-      controller handler -> MicroVMController + TableTheoryMicroVMSessionRegistry
+      controller handler -> MicroVMRealController + TableTheoryMicroVMSessionRegistry
       lifecycle handlers -> MicroVMLifecycleAdapter
+      conformance -> examples/microvm-conformance against a consumer-provided lab
     anti_patterns:
       - name: "Raw MicroVM control plane calls"
-        why: "Raw SDK clients bypass AppTheory's constrained command envelope, sanitized errors, tenant binding, and registry validation."
+        why: "Raw SDK clients bypass AppTheory's constrained real operation envelope, sanitized errors, tenant binding, token safety, and registry validation."
         incorrect_example: |
           # INCORRECT
           lambdaClient.runMicrovm(rawRequest)
@@ -191,3 +192,11 @@ patterns:
         consequences:
           - "Session lookup drift"
           - "TTL and tenant-bound key mismatch"
+      - name: "Claiming live proof from local dry-run"
+        why: "Local dry-run proves only harness readiness; live AWS and EqualToAI/Host proof require a consumer lab run."
+        incorrect_example: |
+          # INCORRECT
+          ./scripts/verify-microvm-conformance-harness.sh  # described as live customer readiness
+        consequences:
+          - "Release-readiness overclaim"
+          - "Customer workload proof boundary violation"

@@ -19,6 +19,51 @@ export enum AppTheoryMicrovmNetworkProtocol {
 }
 
 /**
+ * Direction/type for a Lambda MicroVM network connector reference.
+ */
+export enum AppTheoryMicrovmNetworkConnectorKind {
+  /**
+   * Inbound HTTPS connector reference passed to RunMicrovm.
+   */
+  INGRESS = "ingress",
+
+  /**
+   * Outbound connector reference passed to RunMicrovm.
+   */
+  EGRESS = "egress",
+
+  /**
+   * AWS-managed shell ingress connector required for shell-auth-token support.
+   */
+  SHELL_INGRESS = "shell-ingress",
+}
+
+/**
+ * AWS-managed Lambda MicroVM network connector references.
+ */
+export enum AppTheoryMicrovmManagedNetworkConnector {
+  /**
+   * Enable all inbound HTTPS connectivity for a MicroVM.
+   */
+  ALL_INGRESS = "ALL_INGRESS",
+
+  /**
+   * Explicitly disable inbound HTTPS connectivity for a MicroVM.
+   */
+  NO_INGRESS = "NO_INGRESS",
+
+  /**
+   * Enable AWS-managed public internet egress for a MicroVM.
+   */
+  INTERNET_EGRESS = "INTERNET_EGRESS",
+
+  /**
+   * Enable shell ingress required by CreateMicrovmShellAuthToken.
+   */
+  SHELL_INGRESS = "SHELL_INGRESS",
+}
+
+/**
  * Reference to a Lambda MicroVM network connector usable by MicroVM image constructs.
  */
 export interface IAppTheoryMicrovmNetworkConnector {
@@ -26,6 +71,29 @@ export interface IAppTheoryMicrovmNetworkConnector {
    * The network connector ARN.
    */
   readonly networkConnectorArn: string;
+
+  /**
+   * Optional connector direction/type used by AppTheory constructs to fail closed when
+   * ingress, egress, or shell connector references are wired into the wrong slot.
+   */
+  readonly networkConnectorKind?: AppTheoryMicrovmNetworkConnectorKind;
+}
+
+/**
+ * Properties for an imported or AWS-managed MicroVM network connector reference.
+ */
+export interface AppTheoryMicrovmNetworkConnectorReferenceProps {
+  /**
+   * The network connector ARN.
+   */
+  readonly networkConnectorArn: string;
+
+  /**
+   * Connector direction/type.
+   *
+   * @default undefined
+   */
+  readonly networkConnectorKind?: AppTheoryMicrovmNetworkConnectorKind;
 }
 
 /**
@@ -101,6 +169,76 @@ export interface AppTheoryMicrovmNetworkConnectorProps {
  */
 export class AppTheoryMicrovmNetworkConnector extends Construct implements IAppTheoryMicrovmNetworkConnector {
   /**
+   * Import an existing Lambda MicroVM network connector ARN into the AppTheory CDK surface.
+   */
+  public static fromNetworkConnectorArn(
+    scope: Construct,
+    id: string,
+    networkConnectorArn: string,
+    networkConnectorKind?: AppTheoryMicrovmNetworkConnectorKind,
+  ): IAppTheoryMicrovmNetworkConnector {
+    return new AppTheoryMicrovmNetworkConnectorReference(scope, id, {
+      networkConnectorArn,
+      networkConnectorKind,
+    });
+  }
+
+  /**
+   * Reference an AWS-managed Lambda MicroVM connector by name.
+   */
+  public static awsManaged(
+    scope: Construct,
+    id: string,
+    connector: AppTheoryMicrovmManagedNetworkConnector,
+  ): IAppTheoryMicrovmNetworkConnector {
+    return AppTheoryMicrovmNetworkConnectorReference.awsManaged(scope, id, connector);
+  }
+
+  /**
+   * Reference the AWS-managed ALL_INGRESS connector.
+   */
+  public static allIngress(scope: Construct, id: string): IAppTheoryMicrovmNetworkConnector {
+    return AppTheoryMicrovmNetworkConnectorReference.awsManaged(
+      scope,
+      id,
+      AppTheoryMicrovmManagedNetworkConnector.ALL_INGRESS,
+    );
+  }
+
+  /**
+   * Reference the AWS-managed NO_INGRESS connector.
+   */
+  public static noIngress(scope: Construct, id: string): IAppTheoryMicrovmNetworkConnector {
+    return AppTheoryMicrovmNetworkConnectorReference.awsManaged(
+      scope,
+      id,
+      AppTheoryMicrovmManagedNetworkConnector.NO_INGRESS,
+    );
+  }
+
+  /**
+   * Reference the AWS-managed INTERNET_EGRESS connector.
+   */
+  public static internetEgress(scope: Construct, id: string): IAppTheoryMicrovmNetworkConnector {
+    return AppTheoryMicrovmNetworkConnectorReference.awsManaged(
+      scope,
+      id,
+      AppTheoryMicrovmManagedNetworkConnector.INTERNET_EGRESS,
+    );
+  }
+
+  /**
+   * Reference the AWS-managed SHELL_INGRESS connector required for shell auth-token support.
+   */
+  public static shellIngress(scope: Construct, id: string): IAppTheoryMicrovmNetworkConnector {
+    return AppTheoryMicrovmNetworkConnectorReference.awsManaged(
+      scope,
+      id,
+      AppTheoryMicrovmManagedNetworkConnector.SHELL_INGRESS,
+    );
+  }
+
+  /**
    * The caller-provided VPC boundary for this connector.
    */
   public readonly vpc: ec2.IVpc;
@@ -129,6 +267,11 @@ export class AppTheoryMicrovmNetworkConnector extends Construct implements IAppT
    * The network connector ARN.
    */
   public readonly networkConnectorArn: string;
+
+  /**
+   * Created connectors are VPC egress connectors.
+   */
+  public readonly networkConnectorKind?: AppTheoryMicrovmNetworkConnectorKind = AppTheoryMicrovmNetworkConnectorKind.EGRESS;
 
   /**
    * The CloudFormation state attribute for the network connector.
@@ -193,6 +336,65 @@ export class AppTheoryMicrovmNetworkConnector extends Construct implements IAppT
 
     this.networkConnectorArn = this.networkConnector.ref;
     this.networkConnectorState = this.networkConnector.getAtt("State").toString();
+  }
+}
+
+/**
+ * AppTheory CDK reference to an existing or AWS-managed Lambda MicroVM network connector.
+ *
+ * This construct intentionally synthesizes no resources. It gives controller/image constructs a
+ * typed connector reference without requiring callers to pass raw strings through deployment code.
+ */
+export class AppTheoryMicrovmNetworkConnectorReference extends Construct implements IAppTheoryMicrovmNetworkConnector {
+  /**
+   * Import an existing Lambda MicroVM network connector ARN into the AppTheory CDK surface.
+   */
+  public static fromNetworkConnectorArn(
+    scope: Construct,
+    id: string,
+    networkConnectorArn: string,
+    networkConnectorKind?: AppTheoryMicrovmNetworkConnectorKind,
+  ): IAppTheoryMicrovmNetworkConnector {
+    return new AppTheoryMicrovmNetworkConnectorReference(scope, id, {
+      networkConnectorArn,
+      networkConnectorKind,
+    });
+  }
+
+  /**
+   * Reference an AWS-managed Lambda MicroVM connector by name.
+   */
+  public static awsManaged(
+    scope: Construct,
+    id: string,
+    connector: AppTheoryMicrovmManagedNetworkConnector,
+  ): IAppTheoryMicrovmNetworkConnector {
+    const managed = normalizeManagedConnector(connector);
+    return new AppTheoryMicrovmNetworkConnectorReference(scope, id, {
+      networkConnectorArn: managedConnectorArn(scope, managed),
+      networkConnectorKind: managedConnectorKind(managed),
+    });
+  }
+
+  /**
+   * The network connector ARN.
+   */
+  public readonly networkConnectorArn: string;
+
+  /**
+   * Optional connector direction/type.
+   */
+  public readonly networkConnectorKind?: AppTheoryMicrovmNetworkConnectorKind;
+
+  constructor(scope: Construct, id: string, props: AppTheoryMicrovmNetworkConnectorReferenceProps) {
+    super(scope, id);
+
+    if (props === undefined || props === null) {
+      throw new Error("AppTheoryMicrovmNetworkConnectorReference requires props");
+    }
+
+    this.networkConnectorArn = normalizeNetworkConnectorArn(props.networkConnectorArn);
+    this.networkConnectorKind = normalizeNetworkConnectorKind(props.networkConnectorKind);
   }
 }
 
@@ -271,6 +473,88 @@ function normalizeNetworkProtocol(
     return AppTheoryMicrovmNetworkProtocol.DUAL_STACK;
   }
   throw new Error("AppTheoryMicrovmNetworkConnector: networkProtocol must be IPv4 or DualStack");
+}
+
+function normalizeNetworkConnectorArn(arn: string | undefined): string {
+  if (arn === undefined || arn === null) {
+    throw new Error("AppTheoryMicrovmNetworkConnectorReference requires props.networkConnectorArn");
+  }
+  const normalized = String(arn).trim();
+  if (!normalized) {
+    throw new Error("AppTheoryMicrovmNetworkConnectorReference requires props.networkConnectorArn");
+  }
+  if (!Token.isUnresolved(arn) && /\s/.test(normalized)) {
+    throw new Error("AppTheoryMicrovmNetworkConnectorReference: networkConnectorArn must not contain whitespace");
+  }
+  if (!Token.isUnresolved(arn) && normalized.length > 2048) {
+    throw new Error("AppTheoryMicrovmNetworkConnectorReference: networkConnectorArn must be at most 2048 characters");
+  }
+  return normalized;
+}
+
+function normalizeNetworkConnectorKind(
+  kind: AppTheoryMicrovmNetworkConnectorKind | string | undefined,
+): AppTheoryMicrovmNetworkConnectorKind | undefined {
+  if (kind === undefined) {
+    return undefined;
+  }
+  const normalized = String(kind).trim().toLowerCase().replace(/[_-]/g, "");
+  if (normalized === "ingress") {
+    return AppTheoryMicrovmNetworkConnectorKind.INGRESS;
+  }
+  if (normalized === "egress") {
+    return AppTheoryMicrovmNetworkConnectorKind.EGRESS;
+  }
+  if (normalized === "shellingress") {
+    return AppTheoryMicrovmNetworkConnectorKind.SHELL_INGRESS;
+  }
+  throw new Error("AppTheoryMicrovmNetworkConnectorReference: networkConnectorKind must be ingress, egress, or shell-ingress");
+}
+
+function normalizeManagedConnector(
+  connector: AppTheoryMicrovmManagedNetworkConnector | string | undefined,
+): AppTheoryMicrovmManagedNetworkConnector {
+  if (connector === undefined || connector === null) {
+    throw new Error("AppTheoryMicrovmNetworkConnectorReference requires a managed connector name");
+  }
+  const normalized = String(connector).trim().toUpperCase().replace(/[-\s]/g, "_");
+  switch (normalized) {
+    case AppTheoryMicrovmManagedNetworkConnector.ALL_INGRESS:
+      return AppTheoryMicrovmManagedNetworkConnector.ALL_INGRESS;
+    case AppTheoryMicrovmManagedNetworkConnector.NO_INGRESS:
+      return AppTheoryMicrovmManagedNetworkConnector.NO_INGRESS;
+    case AppTheoryMicrovmManagedNetworkConnector.INTERNET_EGRESS:
+      return AppTheoryMicrovmManagedNetworkConnector.INTERNET_EGRESS;
+    case AppTheoryMicrovmManagedNetworkConnector.SHELL_INGRESS:
+      return AppTheoryMicrovmManagedNetworkConnector.SHELL_INGRESS;
+    default:
+      throw new Error(
+        "AppTheoryMicrovmNetworkConnectorReference: managed connector must be ALL_INGRESS, NO_INGRESS, INTERNET_EGRESS, or SHELL_INGRESS",
+      );
+  }
+}
+
+function managedConnectorKind(
+  connector: AppTheoryMicrovmManagedNetworkConnector,
+): AppTheoryMicrovmNetworkConnectorKind {
+  if (connector === AppTheoryMicrovmManagedNetworkConnector.INTERNET_EGRESS) {
+    return AppTheoryMicrovmNetworkConnectorKind.EGRESS;
+  }
+  if (connector === AppTheoryMicrovmManagedNetworkConnector.SHELL_INGRESS) {
+    return AppTheoryMicrovmNetworkConnectorKind.SHELL_INGRESS;
+  }
+  return AppTheoryMicrovmNetworkConnectorKind.INGRESS;
+}
+
+function managedConnectorArn(scope: Construct, connector: AppTheoryMicrovmManagedNetworkConnector): string {
+  const stack = Stack.of(scope);
+  return stack.formatArn({
+    service: "lambda",
+    account: "aws",
+    resource: "network-connector",
+    resourceName: `aws-network-connector:${connector}`,
+    arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+  });
 }
 
 function addOperatorRolePolicy(role: iam.Role, subnetIds: string[], securityGroupIds: string[]): void {
