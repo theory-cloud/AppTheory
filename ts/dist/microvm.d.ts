@@ -95,6 +95,97 @@ export declare class MicroVMLifecycleAdapter {
 }
 export declare function createMicroVMLifecycleAdapter(options?: MicroVMLifecycleAdapterOptions): MicroVMLifecycleAdapter;
 export declare function isMicroVMTerminalState(state: MicroVMLifecycleState | string): boolean;
+export declare const MICROVM_CONTRACT_VERSION_M16 = "m16.microvm/v1";
+export declare const MICROVM_ERROR_OPERATION_CONTRACT_INCOMPLETE = "m16.microvm.operation_contract_incomplete";
+export declare const MICROVM_ERROR_ROUTE_CONTRACT_INCOMPLETE = "m16.microvm.route_contract_incomplete";
+export declare const MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE = "m16.microvm.provider_state_mapping_incomplete";
+export declare const MICROVM_ERROR_TOKEN_SAFETY_VIOLATION = "m16.microvm.token_safety_violation";
+export declare const MICROVM_ERROR_TENANT_BINDING_VIOLATION = "m16.microvm.tenant_binding_violation";
+export declare const MICROVM_ERROR_REAL_LIFECYCLE_INCOMPLETE = "m16.microvm.lifecycle_incomplete";
+export declare const MicroVMOperation: {
+    readonly Run: "run";
+    readonly Get: "get";
+    readonly List: "list";
+    readonly Suspend: "suspend";
+    readonly Resume: "resume";
+    readonly Terminate: "terminate";
+    readonly AuthToken: "auth-token";
+    readonly ShellToken: "shell-token";
+};
+export type MicroVMOperationName = (typeof MicroVMOperation)[keyof typeof MicroVMOperation];
+export declare const MicroVMRealHook: {
+    readonly Validate: "validate";
+    readonly Run: "run";
+    readonly Ready: "ready";
+    readonly Suspend: "suspend";
+    readonly Resume: "resume";
+    readonly Terminate: "terminate";
+    readonly Failure: "failure";
+};
+export type MicroVMRealLifecycleHook = (typeof MicroVMRealHook)[keyof typeof MicroVMRealHook];
+export declare const MicroVMRealState: {
+    readonly Requested: "requested";
+    readonly Validating: "validating";
+    readonly Validated: "validated";
+    readonly Running: "running";
+    readonly Ready: "ready";
+    readonly Suspending: "suspending";
+    readonly Suspended: "suspended";
+    readonly Resuming: "resuming";
+    readonly Terminating: "terminating";
+    readonly Terminated: "terminated";
+    readonly Failed: "failed";
+};
+export type MicroVMRealLifecycleState = (typeof MicroVMRealState)[keyof typeof MicroVMRealState];
+export interface MicroVMOperationHTTPRouteContract {
+    operation: MicroVMOperationName | string;
+    method: string;
+    path: string;
+    auth_required: boolean;
+    default_auth: string;
+    tenant_bound: boolean;
+    recovery?: boolean;
+    request_fields: string[];
+    response_fields: string[];
+    forbidden_fields?: string[];
+}
+export interface MicroVMProviderStateMapping {
+    provider_state: string;
+    state: MicroVMRealLifecycleState | string;
+    terminal: boolean;
+}
+export interface MicroVMTokenIssuanceContract {
+    operation: MicroVMOperationName | string;
+    result_fields: string[];
+    forbidden_fields: string[];
+    sanitized: boolean;
+    tenant_bound: boolean;
+    session_bound: boolean;
+    max_ttl_seconds: number;
+}
+export interface MicroVMTenantBindingRule {
+    operation: MicroVMOperationName | string;
+    request_tenant_id: string;
+    request_namespace: string;
+    record_tenant_id: string;
+    record_namespace: string;
+    recovery?: boolean;
+    allowed: boolean;
+}
+export interface MicroVMOperationContract {
+    operations: Array<MicroVMOperationName | string>;
+    routes: MicroVMOperationHTTPRouteContract[];
+    provider_state_mappings: MicroVMProviderStateMapping[];
+    token_issuance: MicroVMTokenIssuanceContract[];
+    tenant_binding: MicroVMTenantBindingRule[];
+    forbidden_fields: string[];
+}
+export declare function defaultMicroVMRealLifecycleContract(): MicroVMLifecycleContract;
+export declare function defaultMicroVMOperationContract(): MicroVMOperationContract;
+export declare function defaultMicroVMProviderStateMappings(): MicroVMProviderStateMapping[];
+export declare function requiredForbiddenMicroVMOperationFields(): string[];
+export declare function validateMicroVMRealLifecycleContract(contract: MicroVMLifecycleContract): void;
+export declare function validateMicroVMOperationContract(contract: MicroVMOperationContract): void;
 export declare const MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER = "m15.microvm.unauthenticated_controller";
 export declare const MICROVM_ERROR_CONTROLLER_INCOMPLETE = "m15.microvm.controller_incomplete";
 export declare const MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE = "m15.microvm.session_registry_incomplete";

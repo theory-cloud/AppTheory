@@ -58,7 +58,7 @@ def stable_json(value: Any) -> str:
 
 def list_fixture_files(fixtures_root: Path) -> list[Path]:
     files: list[Path] = []
-    for tier in ("p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15"):
+    for tier in ("p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15", "m16"):
         tier_dir = fixtures_root / tier
         if not tier_dir.exists():
             continue
@@ -1100,6 +1100,74 @@ def missing_strings(required: list[str], got: Any) -> list[str]:
     return sorted(value for value in required if value not in seen)
 
 
+def compare_microvm_real_contract_fixture(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, dict[str, Any], dict[str, Any], _DummyEffectsApp]:
+    actual = validate_microvm_real_contract_fixture((fixture.get("setup") or {}).get("microvm_contract"))
+    expected = (fixture.get("expect") or {}).get("microvm_contract_validation")
+    if not isinstance(expected, dict):
+        return (
+            False,
+            "missing expect.microvm_contract_validation",
+            actual,
+            {"microvm_contract_validation": None},
+            _DummyEffectsApp(),
+        )
+    if actual == expected:
+        return True, "", actual, expected, _DummyEffectsApp()
+    return False, "microvm_contract_validation mismatch", actual, expected, _DummyEffectsApp()
+
+
+def validate_microvm_real_contract_fixture(contract: Any) -> dict[str, Any]:
+    if not isinstance(contract, dict):
+        return invalid_microvm_contract(
+            "m15.microvm.invalid_contract",
+            "apptheory: microvm contract fixture missing",
+        )
+
+    kind = str(contract.get("kind", "")).strip()
+    version = str(contract.get("version", "")).strip()
+    if str(contract.get("contract", "")).strip() != MICROVM_CONTRACT_NAME or version != "m16.microvm/v1":
+        return invalid_microvm_contract(
+            "m15.microvm.invalid_contract",
+            "apptheory: microvm contract must be named and versioned",
+        )
+    if kind not in {"lifecycle", "operation"}:
+        return invalid_microvm_contract(
+            "m15.microvm.invalid_contract",
+            "apptheory: microvm contract kind is unsupported",
+        )
+
+    runtime = _load_apptheory_microvm_runtime()
+    escape_hatch_error = validate_microvm_escape_hatches(runtime, kind, version, contract.get("escape_hatches") or {})
+    if escape_hatch_error:
+        return escape_hatch_error
+
+    try:
+        if kind == "lifecycle":
+            runtime.validate_microvm_real_lifecycle_contract(contract.get("lifecycle") or {})
+        else:
+            runtime.validate_microvm_operation_contract(contract.get("operation_contract") or {})
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "valid": False,
+            "kind": kind,
+            "version": version,
+            "error_code": str(getattr(exc, "code", "m16.microvm.operation_contract_incomplete")),
+            "error_message": str(getattr(exc, "message", str(exc))),
+        }
+
+    return {"valid": True, "kind": kind, "version": version}
+
+
+def _load_apptheory_microvm_runtime() -> Any:
+    repo_root = Path(__file__).resolve().parents[3]
+    sys.path.insert(0, str(repo_root / "py" / "src"))
+    import importlib
+
+    return importlib.import_module("apptheory.microvm")
+
+
 def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     tier = str(fixture.get("tier", "")).strip().lower()
     if tier == "p0":
@@ -1125,6 +1193,8 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
         return run_fixture_m14(fixture)
     if tier == "m15":
         return compare_microvm_contract_fixture(fixture)
+    if tier == "m16":
+        return compare_microvm_real_contract_fixture(fixture)
 
     setup = fixture.get("setup", {})
     input_ = fixture.get("input", {})

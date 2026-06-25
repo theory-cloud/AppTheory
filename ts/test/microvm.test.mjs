@@ -7,6 +7,11 @@ import {
   MICROVM_ERROR_FORBIDDEN_FIELD,
   MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
   MICROVM_ERROR_INVALID_LIFECYCLE_EVENT,
+  MICROVM_ERROR_OPERATION_CONTRACT_INCOMPLETE,
+  MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE,
+  MICROVM_ERROR_REAL_LIFECYCLE_INCOMPLETE,
+  MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+  MICROVM_ERROR_TOKEN_SAFETY_VIOLATION,
   MICROVM_ERROR_LIFECYCLE_BYPASS,
   MICROVM_ERROR_LIFECYCLE_HOOK_FAILED,
   MICROVM_ERROR_LIFECYCLE_INCOMPLETE,
@@ -15,6 +20,9 @@ import {
   MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER,
   MicroVMCommand,
   MicroVMHook,
+  MicroVMOperation,
+  MicroVMRealHook,
+  MicroVMRealState,
   MicroVMSafeError,
   MicroVMState,
   MICROVM_SESSION_REGISTRY_TABLE_ENV,
@@ -27,6 +35,8 @@ import {
   createTableTheoryMicroVMSessionRegistry,
   defaultMicroVMControllerContract,
   defaultMicroVMLifecycleContract,
+  defaultMicroVMOperationContract,
+  defaultMicroVMRealLifecycleContract,
   defaultMicroVMSessionRegistryContract,
   isMicroVMTerminalState,
   microVMSessionFromRegistryRecord,
@@ -39,6 +49,8 @@ import {
   validateMicroVMControllerContract,
   validateMicroVMControllerRequest,
   validateMicroVMEscapeHatches,
+  validateMicroVMOperationContract,
+  validateMicroVMRealLifecycleContract,
   validateMicroVMLifecycleContract,
   validateMicroVMSessionRecord,
   validateMicroVMSessionRegistryContract,
@@ -742,5 +754,76 @@ test("microvm AWS Lambda client factory fails closed without SDK support", async
   await assert.rejects(
     () => createAWSLambdaMicroVMClient(),
     (err) => err?.code === MICROVM_ERROR_CONTROLLER_INCOMPLETE,
+  );
+});
+
+
+test("microvm real M16 operation contract validates route, token, and tenant safety", () => {
+  const realLifecycle = defaultMicroVMRealLifecycleContract();
+  validateMicroVMRealLifecycleContract(realLifecycle);
+  assert.equal(realLifecycle.hooks.some((hook) => hook.name === MicroVMRealHook.Run), true);
+  assert.equal(realLifecycle.hooks.some((hook) => hook.name === MicroVMHook.Start), false);
+
+  const synthetic = defaultMicroVMRealLifecycleContract();
+  synthetic.hooks.push({
+    name: MicroVMHook.Start,
+    phase: "synthetic",
+    state: MicroVMRealState.Running,
+    success_state: MicroVMRealState.Ready,
+    failure_state: MicroVMRealState.Failed,
+  });
+  assert.throws(
+    () => validateMicroVMRealLifecycleContract(synthetic),
+    (err) => err?.code === MICROVM_ERROR_REAL_LIFECYCLE_INCOMPLETE,
+  );
+
+  const contract = defaultMicroVMOperationContract();
+  validateMicroVMOperationContract(contract);
+  assert.deepEqual(contract.operations, [
+    MicroVMOperation.Run,
+    MicroVMOperation.Get,
+    MicroVMOperation.List,
+    MicroVMOperation.Suspend,
+    MicroVMOperation.Resume,
+    MicroVMOperation.Terminate,
+    MicroVMOperation.AuthToken,
+    MicroVMOperation.ShellToken,
+  ]);
+
+  const missingOperation = defaultMicroVMOperationContract();
+  missingOperation.operations = missingOperation.operations.filter(
+    (operation) => operation !== MicroVMOperation.ShellToken,
+  );
+  assert.throws(
+    () => validateMicroVMOperationContract(missingOperation),
+    (err) => err?.code === MICROVM_ERROR_OPERATION_CONTRACT_INCOMPLETE,
+  );
+
+  const unsafeRoute = defaultMicroVMOperationContract();
+  unsafeRoute.routes[0].auth_required = false;
+  assert.throws(
+    () => validateMicroVMOperationContract(unsafeRoute),
+    (err) => err?.code === MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER,
+  );
+
+  const unsafeToken = defaultMicroVMOperationContract();
+  unsafeToken.token_issuance[0].result_fields.push("token_value");
+  assert.throws(
+    () => validateMicroVMOperationContract(unsafeToken),
+    (err) => err?.code === MICROVM_ERROR_TOKEN_SAFETY_VIOLATION,
+  );
+
+  const unsafeTenant = defaultMicroVMOperationContract();
+  unsafeTenant.tenant_binding[1].allowed = true;
+  assert.throws(
+    () => validateMicroVMOperationContract(unsafeTenant),
+    (err) => err?.code === MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+  );
+
+  const badProvider = defaultMicroVMOperationContract();
+  badProvider.provider_state_mappings[0].state = "started";
+  assert.throws(
+    () => validateMicroVMOperationContract(badProvider),
+    (err) => err?.code === MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE,
   );
 });

@@ -8,10 +8,13 @@ var forbiddenFieldNames = map[string]struct{}{ //nolint:gosec // Contract field 
 	"aws_secret_access_key":      {},
 	"aws_session_token":          {},
 	"bearer_token":               {},
+	"plaintext_token":            {},
+	"provider_secret":            {},
 	"raw_aws_credentials":        {},
 	"raw_lifecycle_hook_payload": {},
 	"raw_sdk_client":             {},
 	"session_token_plaintext":    {},
+	"token_value":                {},
 	"x-amz-security-token":       {},
 }
 

@@ -118,6 +118,7 @@ LoggingProfileSanitizer	type
 LoggingProfileValidationError	class
 MICROVM_CONTRACT_NAME	const
 MICROVM_CONTRACT_VERSION	const
+MICROVM_CONTRACT_VERSION_M16	const
 MICROVM_CONTROLLER_AUTH_DEFAULT_DENY	const
 MICROVM_ERROR_CONTROLLER_COMMAND_FAILED	const
 MICROVM_ERROR_CONTROLLER_INCOMPLETE	const
@@ -128,8 +129,14 @@ MICROVM_ERROR_INVALID_LIFECYCLE_EVENT	const
 MICROVM_ERROR_LIFECYCLE_BYPASS	const
 MICROVM_ERROR_LIFECYCLE_HOOK_FAILED	const
 MICROVM_ERROR_LIFECYCLE_INCOMPLETE	const
+MICROVM_ERROR_OPERATION_CONTRACT_INCOMPLETE	const
+MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE	const
 MICROVM_ERROR_RAW_SDK_ESCAPE_HATCH	const
+MICROVM_ERROR_REAL_LIFECYCLE_INCOMPLETE	const
+MICROVM_ERROR_ROUTE_CONTRACT_INCOMPLETE	const
 MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE	const
+MICROVM_ERROR_TENANT_BINDING_VIOLATION	const
+MICROVM_ERROR_TOKEN_SAFETY_VIOLATION	const
 MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER	const
 MICROVM_SESSION_REGISTRY_MODEL_NAME	const
 MICROVM_SESSION_REGISTRY_TABLE_ENV	const
@@ -167,6 +174,15 @@ MicroVMLifecycleHookSpec	interface
 MicroVMLifecycleResult	interface
 MicroVMLifecycleState	type
 MicroVMLifecycleTransition	interface
+MicroVMOperation	const
+MicroVMOperationContract	interface
+MicroVMOperationHTTPRouteContract	interface
+MicroVMOperationName	type
+MicroVMProviderStateMapping	interface
+MicroVMRealHook	const
+MicroVMRealLifecycleHook	type
+MicroVMRealLifecycleState	type
+MicroVMRealState	const
 MicroVMRegistryClient	class
 MicroVMRegistryClientOptions	interface
 MicroVMSafeError	class
@@ -181,6 +197,8 @@ MicroVMSessionSpec	interface
 MicroVMSessionStatus	interface
 MicroVMState	const
 MicroVMTableTheoryClient	interface
+MicroVMTenantBindingRule	interface
+MicroVMTokenIssuanceContract	interface
 Middleware	type
 MultiWindowStrategy	class
 ObservabilityHooks	interface
@@ -277,6 +295,9 @@ defaultJobsTableName	const
 defaultLoggingProfile	function
 defaultMicroVMControllerContract	function
 defaultMicroVMLifecycleContract	function
+defaultMicroVMOperationContract	function
+defaultMicroVMProviderStateMappings	function
+defaultMicroVMRealLifecycleContract	function
 defaultMicroVMSessionRegistryContract	function
 encodeLoggingProfileEvent	function
 encodeLoggingProfileEventWithSanitizer	function
@@ -332,6 +353,7 @@ rapidConnectXMLPatterns	re-export
 rateLimitTableName	function
 reportKinesisPutRecordsFailures	function
 requireEventBridgeWorkloadEnvelope	function
+requiredForbiddenMicroVMOperationFields	function
 resourceName	function
 safeJSONForHTML	function
 sanitizeErrorEnvelope	function
@@ -361,6 +383,8 @@ validateMicroVMControllerContract	function
 validateMicroVMControllerRequest	function
 validateMicroVMEscapeHatches	function
 validateMicroVMLifecycleContract	function
+validateMicroVMOperationContract	function
+validateMicroVMRealLifecycleContract	function
 validateMicroVMSessionRecord	function
 validateMicroVMSessionRegistryContract	function
 validateMicroVMSessionRegistryRecord	function

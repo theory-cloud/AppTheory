@@ -2944,6 +2944,8 @@ const ContractName = "apptheory.lambda_microvm"
 
 const ContractVersion = "m15.microvm/v1"
 
+const ContractVersionM16 = "m16.microvm/v1"
+
 const ControllerAuthDefaultDeny = "deny"
 
 const DefaultSessionRegistryTableName = "apptheory-microvm-sessions"
@@ -2968,9 +2970,21 @@ const ErrorCodeLifecycleHookFailed = "m15.microvm.lifecycle_hook_failed"
 
 const ErrorCodeLifecycleIncomplete = "m15.microvm.lifecycle_incomplete"
 
+const ErrorCodeOperationContractIncomplete = "m16.microvm.operation_contract_incomplete"
+
+const ErrorCodeProviderStateMappingIncomplete = "m16.microvm.provider_state_mapping_incomplete"
+
 const ErrorCodeRawSDKEscapeHatch = "m15.microvm.raw_sdk_escape_hatch"
 
+const ErrorCodeRealLifecycleIncomplete = "m16.microvm.lifecycle_incomplete"
+
+const ErrorCodeRouteContractIncomplete = "m16.microvm.route_contract_incomplete"
+
 const ErrorCodeSessionRegistryIncomplete = "m15.microvm.session_registry_incomplete"
+
+const ErrorCodeTenantBindingViolation = "m16.microvm.tenant_binding_violation"
+
+const ErrorCodeTokenSafetyViolation = "m16.microvm.token_safety_violation"
 
 const ErrorCodeUnauthenticatedController = "m15.microvm.unauthenticated_controller"
 
@@ -2980,15 +2994,43 @@ const HookPrepareImage LifecycleHook = "prepare_image"
 
 const HookReadiness LifecycleHook = "readiness"
 
+const HookReady LifecycleHook = "ready"
+
+const HookResume LifecycleHook = "resume"
+
+const HookRun LifecycleHook = "run"
+
 const HookStart LifecycleHook = "start"
 
 const HookStop LifecycleHook = "stop"
 
+const HookSuspend LifecycleHook = "suspend"
+
 const HookTeardown LifecycleHook = "teardown"
+
+const HookTerminate LifecycleHook = "terminate"
+
+const HookValidate LifecycleHook = "validate"
 
 const KindControllerSession ContractKind = "controller_session"
 
 const KindLifecycle ContractKind = "lifecycle"
+
+const OperationAuthToken Operation = "auth-token"
+
+const OperationGet Operation = "get"
+
+const OperationList Operation = "list"
+
+const OperationResume Operation = "resume"
+
+const OperationRun Operation = "run"
+
+const OperationShellToken Operation = "shell-token"
+
+const OperationSuspend Operation = "suspend"
+
+const OperationTerminate Operation = "terminate"
 
 const StateFailed LifecycleState = "failed"
 
@@ -3002,6 +3044,10 @@ const StateReady LifecycleState = "ready"
 
 const StateRequested LifecycleState = "requested"
 
+const StateResuming LifecycleState = "resuming"
+
+const StateRunning LifecycleState = "running"
+
 const StateStarted LifecycleState = "started"
 
 const StateStarting LifecycleState = "starting"
@@ -3010,9 +3056,19 @@ const StateStopped LifecycleState = "stopped"
 
 const StateStopping LifecycleState = "stopping"
 
+const StateSuspended LifecycleState = "suspended"
+
+const StateSuspending LifecycleState = "suspending"
+
 const StateTearingDown LifecycleState = "tearing_down"
 
 const StateTerminated LifecycleState = "terminated"
+
+const StateTerminating LifecycleState = "terminating"
+
+const StateValidated LifecycleState = "validated"
+
+const StateValidating LifecycleState = "validating"
 
 type AuthContext struct {
 	Subject      string            `json:"subject"`
@@ -3184,6 +3240,36 @@ type MemorySessionRegistry struct {
 	records map[string]SessionRegistryRecord
 }
 
+type Operation string
+
+type OperationContract struct {
+	Operations            []Operation                  `json:"operations"`
+	Routes                []OperationHTTPRouteContract `json:"routes"`
+	ProviderStateMappings []ProviderStateMapping       `json:"provider_state_mappings"`
+	TokenIssuance         []TokenIssuanceContract      `json:"token_issuance"`
+	TenantBinding         []TenantBindingRule          `json:"tenant_binding"`
+	ForbiddenFields       []string                     `json:"forbidden_fields"`
+}
+
+type OperationHTTPRouteContract struct {
+	Operation       Operation `json:"operation"`
+	Method          string    `json:"method"`
+	Path            string    `json:"path"`
+	AuthRequired    bool      `json:"auth_required"`
+	DefaultAuth     string    `json:"default_auth"`
+	TenantBound     bool      `json:"tenant_bound"`
+	Recovery        bool      `json:"recovery,omitempty"`
+	RequestFields   []string  `json:"request_fields"`
+	ResponseFields  []string  `json:"response_fields"`
+	ForbiddenFields []string  `json:"forbidden_fields,omitempty"`
+}
+
+type ProviderStateMapping struct {
+	ProviderState string         `json:"provider_state"`
+	State         LifecycleState `json:"state"`
+	Terminal      bool           `json:"terminal"`
+}
+
 type RegistryClient struct {
 	registry SessionRegistry
 	ttl      time.Duration
@@ -3304,9 +3390,35 @@ type TableTheorySessionRegistry struct {
 	db tablecore.DB
 }
 
+type TenantBindingRule struct {
+	Operation        Operation `json:"operation"`
+	RequestTenantID  string    `json:"request_tenant_id"`
+	RequestNamespace string    `json:"request_namespace"`
+	RecordTenantID   string    `json:"record_tenant_id"`
+	RecordNamespace  string    `json:"record_namespace"`
+	Recovery         bool      `json:"recovery,omitempty"`
+	Allowed          bool      `json:"allowed"`
+}
+
+type TokenIssuanceContract struct {
+	Operation       Operation `json:"operation"`
+	ResultFields    []string  `json:"result_fields"`
+	ForbiddenFields []string  `json:"forbidden_fields"`
+	Sanitized       bool      `json:"sanitized"`
+	TenantBound     bool      `json:"tenant_bound"`
+	SessionBound    bool      `json:"session_bound"`
+	MaxTTLSeconds   int       `json:"max_ttl_seconds"`
+}
+
 func DefaultControllerContract() ControllerContract
 
 func DefaultLifecycleContract() LifecycleContract
+
+func DefaultOperationContract() OperationContract
+
+func DefaultProviderStateMappings() []ProviderStateMapping
+
+func DefaultRealLifecycleContract() LifecycleContract
 
 func DefaultSessionRegistryContract() SessionRegistryContract
 
@@ -3321,6 +3433,10 @@ func NewMemorySessionRegistry() *MemorySessionRegistry
 func NewRegistryClient(SessionRegistry, ...RegistryClientOption) (*RegistryClient, error)
 
 func NewTableTheorySessionRegistry(tablecore.DB) (*TableTheorySessionRegistry, error)
+
+func RequiredForbiddenOperationFields() []string
+
+func RequiredOperations() []Operation
 
 func SessionRecordFromRegistryRecord(SessionRegistryRecord) (SessionRecord, error)
 
@@ -3337,6 +3453,10 @@ func ValidateControllerContract(ControllerContract) error
 func ValidateEscapeHatches(EscapeHatches) error
 
 func ValidateLifecycleContract(LifecycleContract) error
+
+func ValidateOperationContract(OperationContract) error
+
+func ValidateRealLifecycleContract(LifecycleContract) error
 
 func ValidateSessionRecord(SessionRecord) error
 

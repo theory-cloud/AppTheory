@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 import apptheory as app
+from apptheory import microvm as microvm_mod
 
 
 class MicroVMLifecycleTests(unittest.TestCase):
@@ -644,6 +645,76 @@ class MicroVMLifecycleTests(unittest.TestCase):
         with self.assertRaises(app.MicroVMSafeError) as ctx:
             aws_client.create(self._create_input())
         self.assertEqual(app.MICROVM_ERROR_CONTROLLER_COMMAND_FAILED, ctx.exception.code)
+
+
+class MicroVMRealContractTests(unittest.TestCase):
+    def test_real_operation_contract_validates_safety_boundaries(self) -> None:
+        lifecycle = microvm_mod.default_microvm_real_lifecycle_contract()
+        microvm_mod.validate_microvm_real_lifecycle_contract(lifecycle)
+        self.assertIn(microvm_mod.HOOK_RUN, [hook.name for hook in lifecycle.hooks])
+        self.assertNotIn(app.HOOK_START, [hook.name for hook in lifecycle.hooks])
+
+        lifecycle.hooks.append(
+            app.MicroVMLifecycleHookSpec(
+                app.HOOK_START,
+                "synthetic",
+                microvm_mod.STATE_RUNNING,
+                app.STATE_READY,
+                app.STATE_FAILED,
+            )
+        )
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            microvm_mod.validate_microvm_real_lifecycle_contract(lifecycle)
+        self.assertEqual(microvm_mod.MICROVM_ERROR_REAL_LIFECYCLE_INCOMPLETE, ctx.exception.code)
+
+        contract = microvm_mod.default_microvm_operation_contract()
+        microvm_mod.validate_microvm_operation_contract(contract)
+        self.assertEqual(
+            [
+                microvm_mod.OPERATION_RUN,
+                microvm_mod.OPERATION_GET,
+                microvm_mod.OPERATION_LIST,
+                microvm_mod.OPERATION_SUSPEND,
+                microvm_mod.OPERATION_RESUME,
+                microvm_mod.OPERATION_TERMINATE,
+                microvm_mod.OPERATION_AUTH_TOKEN,
+                microvm_mod.OPERATION_SHELL_TOKEN,
+            ],
+            contract["operations"],
+        )
+
+        missing_operation = microvm_mod.default_microvm_operation_contract()
+        missing_operation["operations"] = [
+            operation for operation in missing_operation["operations"] if operation != microvm_mod.OPERATION_SHELL_TOKEN
+        ]
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            microvm_mod.validate_microvm_operation_contract(missing_operation)
+        self.assertEqual(microvm_mod.MICROVM_ERROR_OPERATION_CONTRACT_INCOMPLETE, ctx.exception.code)
+
+        unsafe_route = microvm_mod.default_microvm_operation_contract()
+        unsafe_route["routes"][0]["auth_required"] = False
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            microvm_mod.validate_microvm_operation_contract(unsafe_route)
+        self.assertEqual(app.MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER, ctx.exception.code)
+
+        unsafe_token = microvm_mod.default_microvm_operation_contract()
+        unsafe_token["token_issuance"][0]["result_fields"].append("token_value")
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            microvm_mod.validate_microvm_operation_contract(unsafe_token)
+        self.assertEqual(microvm_mod.MICROVM_ERROR_TOKEN_SAFETY_VIOLATION, ctx.exception.code)
+
+        unsafe_tenant = microvm_mod.default_microvm_operation_contract()
+        unsafe_tenant["tenant_binding"][1]["allowed"] = True
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            microvm_mod.validate_microvm_operation_contract(unsafe_tenant)
+        self.assertEqual(microvm_mod.MICROVM_ERROR_TENANT_BINDING_VIOLATION, ctx.exception.code)
+
+        bad_provider = microvm_mod.default_microvm_operation_contract()
+        bad_provider["provider_state_mappings"][0]["state"] = app.STATE_STARTED
+        with self.assertRaises(app.MicroVMSafeError) as ctx:
+            microvm_mod.validate_microvm_operation_contract(bad_provider)
+        self.assertEqual(microvm_mod.MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE, ctx.exception.code)
+
 
 
 if __name__ == "__main__":

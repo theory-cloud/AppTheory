@@ -13,13 +13,14 @@ File layout:
 - `contract-tests/fixtures/m12/` — Lift parity completion extensions (middleware/ctx bag/naming/SSE streaming)
 - `contract-tests/fixtures/m14/` — FaceTheory enablement (streaming contract, catch-all routing, SSR helpers)
 - `contract-tests/fixtures/m15/` — Lambda MicroVM contract foundation (validation-only lifecycle/controller/session vocabulary)
+- `contract-tests/fixtures/m16/` — real Lambda MicroVM operation contract (run/get/list/suspend/resume/terminate/token, tenant-bound routes/recovery, provider states, token safety)
 
 Each fixture is a single JSON object.
 
 ## Common shape
 
-- `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*`, `m14.*`, `m15.*` prefixes).
-- `tier` (string): `p0` / `p1` / `p2` / `m1` / `m2` / `m3` / `m12` / `m14` / `m15`.
+- `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*`, `m14.*`, `m15.*`, or `m16.*` prefixes).
+- `tier` (string): `p0` / `p1` / `p2` / `m1` / `m2` / `m3` / `m12` / `m14` / `m15` / `m16`.
 - `name` (string): short human-friendly name.
 - `setup.routes` (array): route table for the fixture runner.
   - `method` (string): HTTP method (e.g. `GET`).
@@ -219,6 +220,29 @@ Denial fixtures intentionally describe invalid contracts and expect the runners 
 codes for raw AWS SDK escape hatches, raw lifecycle hook bypasses, and unauthenticated controller defaults. Later MicroVM
 runtime and CDK milestones must grow from these fixtures; they must not introduce raw AWS SDK escape hatches or private
 lifecycle-hook bypasses.
+
+## M16 real Lambda MicroVM operation fixtures
+
+M16 fixtures replace the evidence-only M15 controller vocabulary with the real `apptheory.lambda_microvm` /
+`m16.microvm/v1` operation contract. They are still contract fixtures, not a live AWS provider adapter: they pin the
+truth later provider/controller milestones must implement.
+
+The operation fixture requires the canonical operation names `run`, `get`, `list`, `suspend`, `resume`, `terminate`,
+`auth-token`, and `shell-token`. Each operation has one authenticated, default-deny, tenant-bound HTTP route. The `list`
+route also carries tenant-bound recovery semantics; fixtures reject any rule that allows one tenant/namespace to list,
+recover, or fetch another binding's session.
+
+The lifecycle fixture uses real provider-oriented hooks (`validate`, `run`, `ready`, `suspend`, `resume`, `terminate`,
+and `failure`) and real states such as `running`, `suspending`, `suspended`, `resuming`, and `terminating`. Synthetic
+M15 `start`/`stop` lifecycle hooks are not valid in the M16 real lifecycle contract. Provider-state mappings pin the
+minimum AWS adapter vocabulary needed by later milestones.
+
+Token fixtures allow `auth-token` and `shell-token` only as sanitized issuance metadata: `token_id`, `token_type`,
+`expires_at`, and `scope`. Plaintext bearer/session token fields, raw AWS credentials, raw SDK clients, provider
+secrets, lifecycle payloads, and generated secrets must never appear as records, metadata, errors, logs, or response
+fields. Denial fixtures keep raw SDK escape hatches, lifecycle bypasses, unauthenticated routes, cross-tenant recovery,
+and token leak fields fail-closed.
+
 
 
 ## Bytes in JSON

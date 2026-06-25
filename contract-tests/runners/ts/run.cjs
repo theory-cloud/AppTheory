@@ -129,7 +129,7 @@ function decodeLoggingProfileValidationErrors(runtime, profile) {
 }
 
 function listFixtureFiles(fixturesRoot) {
-  const tiers = ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15"];
+  const tiers = ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15", "m16"];
   const files = [];
   for (const tier of tiers) {
     const dir = path.join(fixturesRoot, tier);
@@ -1008,6 +1008,63 @@ function missingStrings(required, got) {
   return required.filter((value) => !seen.has(value)).sort();
 }
 
+async function compareMicroVMRealContractFixture(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const actual = validateMicroVMRealContractFixture(fixture.setup?.microvm_contract, runtime);
+  const expected = fixture.expect?.microvm_contract_validation;
+  if (!expected) {
+    return {
+      ok: false,
+      reason: "missing expect.microvm_contract_validation",
+      expected_microvm_contract_validation: null,
+      actual_microvm_contract_validation: actual,
+    };
+  }
+  if (deepEqual(actual, expected)) return { ok: true };
+  return {
+    ok: false,
+    reason: "microvm_contract_validation mismatch",
+    expected_microvm_contract_validation: expected,
+    actual_microvm_contract_validation: actual,
+  };
+}
+
+function validateMicroVMRealContractFixture(contract, runtime) {
+  if (!contract || typeof contract !== "object" || Array.isArray(contract)) {
+    return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract fixture missing");
+  }
+
+  const kind = String(contract.kind ?? "").trim();
+  const version = String(contract.version ?? "").trim();
+  if (String(contract.contract ?? "").trim() !== MICROVM_CONTRACT_NAME || version !== "m16.microvm/v1") {
+    return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract must be named and versioned");
+  }
+  if (kind !== "lifecycle" && kind !== "operation") {
+    return invalidMicroVMContract("m15.microvm.invalid_contract", "apptheory: microvm contract kind is unsupported");
+  }
+
+  const escapeHatchError = validateMicroVMEscapeHatches(runtime, kind, version, contract.escape_hatches ?? {});
+  if (escapeHatchError) return escapeHatchError;
+
+  try {
+    if (kind === "lifecycle") {
+      runtime.validateMicroVMRealLifecycleContract(contract.lifecycle ?? {});
+    } else {
+      runtime.validateMicroVMOperationContract(contract.operation_contract ?? {});
+    }
+  } catch (err) {
+    return {
+      valid: false,
+      kind,
+      version,
+      error_code: String(err?.code ?? "m16.microvm.operation_contract_incomplete"),
+      error_message: err?.message ?? String(err),
+    };
+  }
+
+  return { valid: true, kind, version };
+}
+
 async function runFixture(fixture) {
   const tier = String(fixture.tier ?? "").trim().toLowerCase();
 
@@ -1058,6 +1115,9 @@ async function runFixture(fixture) {
   }
   if (tier === "m15") {
     return await compareMicroVMContractFixture(fixture);
+  }
+  if (tier === "m16") {
+    return await compareMicroVMRealContractFixture(fixture);
   }
 
   const enableP1 = ["p1", "p2"].includes(tier);
