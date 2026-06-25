@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.15.0](https://github.com/theory-cloud/AppTheory/compare/v1.14.0...v1.15.0) (2026-06-25)
+
+
+### Features
+
+* **cdk:** align MicroVM controller deployment ([d7e6515](https://github.com/theory-cloud/AppTheory/commit/d7e6515475f3ed8e974238bc1d16020b1cee6eaa))
+* **cdk:** support MicroVM ingress connectors ([f549134](https://github.com/theory-cloud/AppTheory/commit/f549134d42017d6cc1e114a1ee8c1f4b4f27770a))
+* **examples:** add runnable microvm controller ([4ee97fd](https://github.com/theory-cloud/AppTheory/commit/4ee97fdaff6299fc512e4ba4c352e8c5f4411901))
+* **microvm:** add EqualToAI conformance harness ([1e92617](https://github.com/theory-cloud/AppTheory/commit/1e92617fdf1813295a7a34fa0d64a032d5b4140e))
+* **microvm:** add Go Lambda MicroVM provider adapter ([e101cd6](https://github.com/theory-cloud/AppTheory/commit/e101cd6fec1c3a56c062578b58e12fa590935819))
+* **microvm:** add real controller routes ([ae332a2](https://github.com/theory-cloud/AppTheory/commit/ae332a2b880814308e3c1247f1779feecb1ef72a))
+* **microvm:** align TS and Python providers ([f5b05ce](https://github.com/theory-cloud/AppTheory/commit/f5b05cee1665ff3f060af8b0e7e68ec5c27219ec))
+* **microvm:** pin real Lambda MicroVM contract ([4c73b5c](https://github.com/theory-cloud/AppTheory/commit/4c73b5c7c4aeccd78e2cb479b281768059d7af2b))
+* **microvm:** promote corrective Lambda MicroVM support ([552b84e](https://github.com/theory-cloud/AppTheory/commit/552b84ed017e22871936a7779f604f5b3dab2d3c))
+* **microvm:** recover provider-aware registry state ([36269d8](https://github.com/theory-cloud/AppTheory/commit/36269d8e56bccd1b733a67df8aa7d039681a91ea))
+
+
+### Bug Fixes
+
+* **cdk:** align MicroVM synth example ([fdc784d](https://github.com/theory-cloud/AppTheory/commit/fdc784db06a5753e3c117911f468584aec5018de))
+* **cdk:** scope MicroVM control-plane IAM ([2735ee0](https://github.com/theory-cloud/AppTheory/commit/2735ee008c338b9d63cb08656e7a51f2f787fae3))
+* **microvm:** export M16 Python contract API ([9e80344](https://github.com/theory-cloud/AppTheory/commit/9e803445b0adc2e936b34a96658a526d9d789cfa))
+* **microvm:** reject plaintext session token leaks ([c1fc4cd](https://github.com/theory-cloud/AppTheory/commit/c1fc4cdcf634c6454e8b6914f660f0a82a19115c))
+
 ## [1.15.0-rc](https://github.com/theory-cloud/AppTheory/compare/v1.14.0...v1.15.0-rc) (2026-06-25)
 
 
