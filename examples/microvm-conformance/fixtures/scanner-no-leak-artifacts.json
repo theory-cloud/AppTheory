@@ -1,0 +1,50 @@
+{
+  "responses": [
+    {
+      "command": "auth-token",
+      "tenant_id": "tenant-example",
+      "namespace": "namespace-example",
+      "session_id": "session-fixture-001",
+      "token_id": "auth-token-metadata-001",
+      "token_type": "auth",
+      "expires_at": "2026-06-25T12:15:00Z",
+      "scope": [
+        "ports:443"
+      ]
+    },
+    {
+      "command": "shell-auth-token",
+      "tenant_id": "tenant-example",
+      "namespace": "namespace-example",
+      "session_id": "session-fixture-001",
+      "token_id": "shell-token-metadata-001",
+      "token_type": "shell",
+      "expires_at": "2026-06-25T12:15:00Z",
+      "scope": [
+        "shell"
+      ]
+    }
+  ],
+  "registry_records": [
+    {
+      "tenant_id": "tenant-example",
+      "namespace": "namespace-example",
+      "session_id": "session-fixture-001",
+      "state": "running",
+      "provider_microvm_id": "provider-microvm-fixture-001",
+      "token_metadata": [
+        {
+          "token_id": "auth-token-metadata-001",
+          "token_type": "auth",
+          "expires_at": "2026-06-25T12:15:00Z",
+          "scope": [
+            "ports:443"
+          ]
+        }
+      ]
+    }
+  ],
+  "logs": [
+    "microvm controller emitted sanitized token_id=auth-token-metadata-001 only"
+  ]
+}

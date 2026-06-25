@@ -1,0 +1,37 @@
+{
+  "endpoint": "https://microvm-controller.example.invalid",
+  "auth_token_env": "APPTHEORY_MICROVM_CONFORMANCE_AUTH_TOKEN",
+  "tenant_id": "tenant-example",
+  "namespace": "namespace-example",
+  "timeout_seconds": 30,
+  "headers": {},
+  "run": {
+    "image_ref": "microvm-image-ref-placeholder",
+    "network_connector_ref": "microvm-egress-connector-ref-placeholder",
+    "ingress_network_connector_refs": [
+      "microvm-ingress-connector-ref-placeholder"
+    ],
+    "egress_network_connector_refs": [
+      "microvm-egress-connector-ref-placeholder"
+    ],
+    "session_spec": {
+      "metadata": {
+        "purpose": "apptheory-conformance"
+      }
+    },
+    "maximum_duration_seconds": 900,
+    "ttl_seconds": 1800
+  },
+  "negative": {
+    "tenant_id": "tenant-negative-example",
+    "namespace": "namespace-negative-example"
+  },
+  "scanner": {
+    "registry_artifact_paths": [],
+    "log_artifact_paths": [],
+    "sensitive_value_env": [
+      "APPTHEORY_MICROVM_CONFORMANCE_AUTH_TOKEN"
+    ],
+    "sensitive_values": []
+  }
+}

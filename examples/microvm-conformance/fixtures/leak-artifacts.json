@@ -1,0 +1,25 @@
+{
+  "responses": {
+    "auth-token": {
+      "status": 200,
+      "body": {
+        "command": "auth-token",
+        "tenant_id": "tenant-example",
+        "namespace": "namespace-example",
+        "session_id": "session-fixture-001",
+        "token_value": "provider-token-DO-NOT-LOG-123456"
+      }
+    }
+  },
+  "registry_records": [
+    {
+      "tenant_id": "tenant-example",
+      "namespace": "namespace-example",
+      "session_id": "session-fixture-001",
+      "provider_token": "provider-token-DO-NOT-LOG-123456"
+    }
+  ],
+  "logs": [
+    "unexpected Authorization: Bearer provider-token-DO-NOT-LOG-123456"
+  ]
+}
