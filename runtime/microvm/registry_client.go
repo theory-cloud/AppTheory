@@ -56,11 +56,16 @@ func (c *RegistryClient) Create(ctx context.Context, input CreateSessionInput) (
 		SessionID:           input.SessionID,
 		State:               StateRequested,
 		DesiredState:        StateRequested,
+		ProviderID:          DefaultSessionProviderID,
+		ProviderMicroVMID:   input.SessionID,
+		ProviderState:       string(StateRequested),
+		AWSLifecycleState:   string(StateRequested),
 		ImageRef:            input.ImageRef,
 		NetworkConnectorRef: input.NetworkConnectorRef,
 		ControllerID:        input.ControllerID,
 		CreatedAt:           now,
 		UpdatedAt:           now,
+		LastObservedAt:      now,
 		ExpiresAt:           now.Add(c.ttl),
 		Generation:          1,
 		LastAction:          CommandCreate,
@@ -130,11 +135,16 @@ func (c *RegistryClient) transition(ctx context.Context, input SessionCommandInp
 	}
 	record.State = state
 	record.DesiredState = desired
+	record.ProviderID = defaultString(record.ProviderID, DefaultSessionProviderID)
+	record.ProviderMicroVMID = defaultString(record.ProviderMicroVMID, record.SessionID)
+	record.ProviderState = string(state)
+	record.AWSLifecycleState = string(state)
 	record.ControllerID = input.ControllerID
 	record.AuthSubject = input.AuthSubject
 	record.LastAction = action
 	record.LastCommandID = input.RequestID
 	record.UpdatedAt = registryClientTime(input.Now)
+	record.LastObservedAt = record.UpdatedAt
 	record.Generation++
 	return c.registry.Put(ctx, record)
 }
@@ -151,4 +161,11 @@ func registryClientTime(value time.Time) time.Time {
 		return value.UTC()
 	}
 	return time.Unix(0, 0).UTC()
+}
+
+func defaultString(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
 }

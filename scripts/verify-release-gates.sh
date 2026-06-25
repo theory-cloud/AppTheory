@@ -25,6 +25,7 @@ bash ./scripts/verify-branch-version-sync.sh
 ./scripts/verify-api-snapshots.sh
 ./scripts/verify-contract-tests.sh
 ./scripts/verify-testkit-examples.sh
+./scripts/verify-microvm-conformance-harness.sh
 bash ./scripts/verify-docs-standard.sh
 bash ./scripts/verify-release-train-promotion.sh --self-test
 bash ./scripts/verify-ci-rubric-enforced.sh

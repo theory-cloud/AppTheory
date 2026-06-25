@@ -1,0 +1,44 @@
+{
+  "id": "m16_microvm_controller_route_cross_tenant",
+  "tier": "m16",
+  "name": "M16 canonical MicroVM routes deny tenant binding mismatch",
+  "setup": {
+    "microvm_controller_route": {
+      "authenticated": true,
+      "seed_session": true,
+      "tenant_id": "tenant-1",
+      "namespace": "namespace-1",
+      "session_id": "fixture-session"
+    }
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/microvms/fixture-session/auth-token",
+      "headers": {
+        "content-type": ["application/json"],
+        "x-tenant-id": ["tenant-1"],
+        "x-namespace-id": ["namespace-1"],
+        "x-request-id": ["req-m16-route-cross-tenant"]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"tenant_id\":\"tenant-2\",\"namespace\":\"namespace-1\",\"allowed_port_scope\":[{\"port\":443}]}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "microvm_controller_route": {
+      "status": 403,
+      "command": "auth-token",
+      "error_code": "m16.microvm.tenant_binding_violation",
+      "forbidden_body_substrings": [
+        "token_value",
+        "bearer_token",
+        "x-aws-proxy-auth",
+        "session_token_plaintext"
+      ]
+    }
+  }
+}

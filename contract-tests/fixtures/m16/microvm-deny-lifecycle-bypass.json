@@ -1,0 +1,198 @@
+{
+  "id": "m16.microvm.denies.lifecycle_bypass",
+  "tier": "m16",
+  "name": "Lambda MicroVM real contract rejects lifecycle hook bypasses",
+  "setup": {
+    "microvm_contract": {
+      "contract": "apptheory.lambda_microvm",
+      "version": "m16.microvm/v1",
+      "kind": "lifecycle",
+      "escape_hatches": {
+        "raw_aws_sdk": false,
+        "raw_lifecycle_hook_bypass": true
+      },
+      "lifecycle": {
+        "hooks": [
+          {
+            "name": "validate",
+            "phase": "validation",
+            "state": "validating",
+            "success_state": "validated",
+            "failure_state": "failed"
+          },
+          {
+            "name": "run",
+            "phase": "provider_run",
+            "state": "running",
+            "success_state": "running",
+            "failure_state": "failed"
+          },
+          {
+            "name": "ready",
+            "phase": "provider_ready",
+            "state": "ready",
+            "success_state": "ready",
+            "failure_state": "failed"
+          },
+          {
+            "name": "suspend",
+            "phase": "provider_suspend",
+            "state": "suspending",
+            "success_state": "suspended",
+            "failure_state": "failed"
+          },
+          {
+            "name": "resume",
+            "phase": "provider_resume",
+            "state": "resuming",
+            "success_state": "ready",
+            "failure_state": "failed"
+          },
+          {
+            "name": "terminate",
+            "phase": "provider_terminate",
+            "state": "terminating",
+            "success_state": "terminated",
+            "failure_state": "failed"
+          },
+          {
+            "name": "failure",
+            "phase": "failure",
+            "state": "failed",
+            "success_state": "failed",
+            "failure_state": "failed"
+          }
+        ],
+        "states": [
+          "requested",
+          "validating",
+          "validated",
+          "running",
+          "ready",
+          "suspending",
+          "suspended",
+          "resuming",
+          "terminating",
+          "terminated",
+          "failed"
+        ],
+        "terminal_states": [
+          "terminated",
+          "failed"
+        ],
+        "transitions": [
+          {
+            "from": "requested",
+            "hook": "validate",
+            "to": "validating"
+          },
+          {
+            "from": "validating",
+            "hook": "validate",
+            "to": "validated"
+          },
+          {
+            "from": "validated",
+            "hook": "run",
+            "to": "running"
+          },
+          {
+            "from": "running",
+            "hook": "run",
+            "to": "running"
+          },
+          {
+            "from": "running",
+            "hook": "ready",
+            "to": "ready"
+          },
+          {
+            "from": "ready",
+            "hook": "ready",
+            "to": "ready"
+          },
+          {
+            "from": "ready",
+            "hook": "suspend",
+            "to": "suspending"
+          },
+          {
+            "from": "suspending",
+            "hook": "suspend",
+            "to": "suspended"
+          },
+          {
+            "from": "suspended",
+            "hook": "resume",
+            "to": "resuming"
+          },
+          {
+            "from": "resuming",
+            "hook": "resume",
+            "to": "ready"
+          },
+          {
+            "from": "ready",
+            "hook": "terminate",
+            "to": "terminating"
+          },
+          {
+            "from": "suspended",
+            "hook": "terminate",
+            "to": "terminating"
+          },
+          {
+            "from": "terminating",
+            "hook": "terminate",
+            "to": "terminated"
+          },
+          {
+            "from": "validating",
+            "hook": "failure",
+            "to": "failed"
+          },
+          {
+            "from": "running",
+            "hook": "failure",
+            "to": "failed"
+          },
+          {
+            "from": "ready",
+            "hook": "failure",
+            "to": "failed"
+          },
+          {
+            "from": "suspending",
+            "hook": "failure",
+            "to": "failed"
+          },
+          {
+            "from": "suspended",
+            "hook": "failure",
+            "to": "failed"
+          },
+          {
+            "from": "resuming",
+            "hook": "failure",
+            "to": "failed"
+          },
+          {
+            "from": "terminating",
+            "hook": "failure",
+            "to": "failed"
+          }
+        ]
+      }
+    }
+  },
+  "input": {},
+  "expect": {
+    "microvm_contract_validation": {
+      "valid": false,
+      "kind": "lifecycle",
+      "version": "m16.microvm/v1",
+      "error_code": "m15.microvm.lifecycle_bypass",
+      "error_message": "apptheory: microvm contract forbids raw lifecycle hook bypass"
+    }
+  }
+}
