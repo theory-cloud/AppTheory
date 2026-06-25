@@ -15,7 +15,7 @@ import (
 
 // AppTheory CDK construct for the first-class Lambda MicroVM controller deployment surface.
 //
-// The construct provisions the protected HTTP API routes from the M15 controller contract,
+// The construct provisions the protected HTTP API routes from the M16 real controller contract,
 // the controller Lambda, the canonical durable session registry table, IAM grants, and
 // fail-closed auth environment wiring. Runtime command handling remains in the AppTheory
 // runtime contract; this construct only wires the deployment path.

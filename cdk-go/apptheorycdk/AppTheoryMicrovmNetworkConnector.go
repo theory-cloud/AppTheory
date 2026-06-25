@@ -24,6 +24,8 @@ type AppTheoryMicrovmNetworkConnector interface {
 	NetworkConnector() awscdk.CfnResource
 	// The network connector ARN.
 	NetworkConnectorArn() *string
+	// Created connectors are VPC egress connectors.
+	NetworkConnectorKind() AppTheoryMicrovmNetworkConnectorKind
 	// The CloudFormation state attribute for the network connector.
 	NetworkConnectorState() *string
 	// The tree node.
@@ -70,6 +72,16 @@ func (j *jsiiProxy_AppTheoryMicrovmNetworkConnector) NetworkConnectorArn() *stri
 	_jsii_.Get(
 		j,
 		"networkConnectorArn",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryMicrovmNetworkConnector) NetworkConnectorKind() AppTheoryMicrovmNetworkConnectorKind {
+	var returns AppTheoryMicrovmNetworkConnectorKind
+	_jsii_.Get(
+		j,
+		"networkConnectorKind",
 		&returns,
 	)
 	return returns
@@ -162,6 +174,82 @@ func NewAppTheoryMicrovmNetworkConnector_Override(a AppTheoryMicrovmNetworkConne
 	)
 }
 
+// Reference the AWS-managed ALL_INGRESS connector.
+func AppTheoryMicrovmNetworkConnector_AllIngress(scope constructs.Construct, id *string) IAppTheoryMicrovmNetworkConnector {
+	_init_.Initialize()
+
+	if err := validateAppTheoryMicrovmNetworkConnector_AllIngressParameters(scope, id); err != nil {
+		panic(err)
+	}
+	var returns IAppTheoryMicrovmNetworkConnector
+
+	_jsii_.StaticInvoke(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector",
+		"allIngress",
+		[]interface{}{scope, id},
+		&returns,
+	)
+
+	return returns
+}
+
+// Reference an AWS-managed Lambda MicroVM connector by name.
+func AppTheoryMicrovmNetworkConnector_AwsManaged(scope constructs.Construct, id *string, connector AppTheoryMicrovmManagedNetworkConnector) IAppTheoryMicrovmNetworkConnector {
+	_init_.Initialize()
+
+	if err := validateAppTheoryMicrovmNetworkConnector_AwsManagedParameters(scope, id, connector); err != nil {
+		panic(err)
+	}
+	var returns IAppTheoryMicrovmNetworkConnector
+
+	_jsii_.StaticInvoke(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector",
+		"awsManaged",
+		[]interface{}{scope, id, connector},
+		&returns,
+	)
+
+	return returns
+}
+
+// Import an existing Lambda MicroVM network connector ARN into the AppTheory CDK surface.
+func AppTheoryMicrovmNetworkConnector_FromNetworkConnectorArn(scope constructs.Construct, id *string, networkConnectorArn *string, networkConnectorKind AppTheoryMicrovmNetworkConnectorKind) IAppTheoryMicrovmNetworkConnector {
+	_init_.Initialize()
+
+	if err := validateAppTheoryMicrovmNetworkConnector_FromNetworkConnectorArnParameters(scope, id, networkConnectorArn); err != nil {
+		panic(err)
+	}
+	var returns IAppTheoryMicrovmNetworkConnector
+
+	_jsii_.StaticInvoke(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector",
+		"fromNetworkConnectorArn",
+		[]interface{}{scope, id, networkConnectorArn, networkConnectorKind},
+		&returns,
+	)
+
+	return returns
+}
+
+// Reference the AWS-managed INTERNET_EGRESS connector.
+func AppTheoryMicrovmNetworkConnector_InternetEgress(scope constructs.Construct, id *string) IAppTheoryMicrovmNetworkConnector {
+	_init_.Initialize()
+
+	if err := validateAppTheoryMicrovmNetworkConnector_InternetEgressParameters(scope, id); err != nil {
+		panic(err)
+	}
+	var returns IAppTheoryMicrovmNetworkConnector
+
+	_jsii_.StaticInvoke(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector",
+		"internetEgress",
+		[]interface{}{scope, id},
+		&returns,
+	)
+
+	return returns
+}
+
 // Checks if `x` is a construct.
 //
 // Use this method instead of `instanceof` to properly detect `Construct`
@@ -191,6 +279,44 @@ func AppTheoryMicrovmNetworkConnector_IsConstruct(x interface{}) *bool {
 		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector",
 		"isConstruct",
 		[]interface{}{x},
+		&returns,
+	)
+
+	return returns
+}
+
+// Reference the AWS-managed NO_INGRESS connector.
+func AppTheoryMicrovmNetworkConnector_NoIngress(scope constructs.Construct, id *string) IAppTheoryMicrovmNetworkConnector {
+	_init_.Initialize()
+
+	if err := validateAppTheoryMicrovmNetworkConnector_NoIngressParameters(scope, id); err != nil {
+		panic(err)
+	}
+	var returns IAppTheoryMicrovmNetworkConnector
+
+	_jsii_.StaticInvoke(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector",
+		"noIngress",
+		[]interface{}{scope, id},
+		&returns,
+	)
+
+	return returns
+}
+
+// Reference the AWS-managed SHELL_INGRESS connector required for shell auth-token support.
+func AppTheoryMicrovmNetworkConnector_ShellIngress(scope constructs.Construct, id *string) IAppTheoryMicrovmNetworkConnector {
+	_init_.Initialize()
+
+	if err := validateAppTheoryMicrovmNetworkConnector_ShellIngressParameters(scope, id); err != nil {
+		panic(err)
+	}
+	var returns IAppTheoryMicrovmNetworkConnector
+
+	_jsii_.StaticInvoke(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector",
+		"shellIngress",
+		[]interface{}{scope, id},
 		&returns,
 	)
 

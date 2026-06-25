@@ -1,0 +1,49 @@
+{
+  "id": "m16_microvm_controller_route_auth_token",
+  "tier": "m16",
+  "name": "M16 canonical MicroVM auth-token route is tenant-bound and safe",
+  "setup": {
+    "microvm_controller_route": {
+      "authenticated": true,
+      "seed_session": true,
+      "tenant_id": "tenant-1",
+      "namespace": "namespace-1",
+      "session_id": "fixture-session"
+    }
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/microvms/fixture-session/auth-token",
+      "headers": {
+        "content-type": ["application/json"],
+        "x-tenant-id": ["tenant-1"],
+        "x-namespace-id": ["namespace-1"],
+        "x-request-id": ["req-m16-route-auth-token"]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"namespace\":\"namespace-1\",\"allowed_port_scope\":[{\"port\":443}]}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "microvm_controller_route": {
+      "status": 200,
+      "command": "auth-token",
+      "tenant_id": "tenant-1",
+      "namespace": "namespace-1",
+      "session_id": "fixture-session",
+      "token_type": "auth",
+      "scope": ["ports:443"],
+      "registry_token_metadata_count": 1,
+      "forbidden_body_substrings": [
+        "token_value",
+        "bearer_token",
+        "x-aws-proxy-auth",
+        "session_token_plaintext"
+      ]
+    }
+  }
+}

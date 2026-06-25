@@ -1,0 +1,469 @@
+{
+  "id": "m16.microvm.denies.cross_tenant_recovery",
+  "tier": "m16",
+  "name": "Lambda MicroVM real contract rejects cross-tenant list and recovery access",
+  "setup": {
+    "microvm_contract": {
+      "contract": "apptheory.lambda_microvm",
+      "version": "m16.microvm/v1",
+      "kind": "operation",
+      "escape_hatches": {
+        "raw_aws_sdk": false,
+        "raw_lifecycle_hook_bypass": false
+      },
+      "operation_contract": {
+        "operations": [
+          "run",
+          "get",
+          "list",
+          "suspend",
+          "resume",
+          "terminate",
+          "auth-token",
+          "shell-auth-token"
+        ],
+        "routes": [
+          {
+            "operation": "run",
+            "method": "POST",
+            "path": "/microvms",
+            "auth_required": true,
+            "default_auth": "deny",
+            "tenant_bound": true,
+            "recovery": false,
+            "request_fields": [
+              "tenant_id",
+              "namespace",
+              "image_ref",
+              "network_connector_ref",
+              "session_spec"
+            ],
+            "response_fields": [
+              "session_id",
+              "provider_microvm_id",
+              "state",
+              "provider_state",
+              "registry_version"
+            ],
+            "forbidden_fields": [
+              "authorization",
+              "aws_access_key_id",
+              "aws_secret_access_key",
+              "aws_session_token",
+              "bearer_token",
+              "plaintext_token",
+              "provider_secret",
+              "raw_aws_credentials",
+              "raw_lifecycle_hook_payload",
+              "raw_sdk_client",
+              "session_token_plaintext",
+              "token_value",
+              "x-amz-security-token"
+            ]
+          },
+          {
+            "operation": "get",
+            "method": "GET",
+            "path": "/microvms/{session_id}",
+            "auth_required": true,
+            "default_auth": "deny",
+            "tenant_bound": true,
+            "recovery": false,
+            "request_fields": [
+              "tenant_id",
+              "namespace",
+              "session_id"
+            ],
+            "response_fields": [
+              "session_id",
+              "provider_microvm_id",
+              "state",
+              "provider_state",
+              "registry_version"
+            ],
+            "forbidden_fields": [
+              "authorization",
+              "aws_access_key_id",
+              "aws_secret_access_key",
+              "aws_session_token",
+              "bearer_token",
+              "plaintext_token",
+              "provider_secret",
+              "raw_aws_credentials",
+              "raw_lifecycle_hook_payload",
+              "raw_sdk_client",
+              "session_token_plaintext",
+              "token_value",
+              "x-amz-security-token"
+            ]
+          },
+          {
+            "operation": "list",
+            "method": "GET",
+            "path": "/microvms",
+            "auth_required": true,
+            "default_auth": "deny",
+            "tenant_bound": true,
+            "recovery": true,
+            "request_fields": [
+              "tenant_id",
+              "namespace"
+            ],
+            "response_fields": [
+              "sessions",
+              "recovery_cursor"
+            ],
+            "forbidden_fields": [
+              "authorization",
+              "aws_access_key_id",
+              "aws_secret_access_key",
+              "aws_session_token",
+              "bearer_token",
+              "plaintext_token",
+              "provider_secret",
+              "raw_aws_credentials",
+              "raw_lifecycle_hook_payload",
+              "raw_sdk_client",
+              "session_token_plaintext",
+              "token_value",
+              "x-amz-security-token"
+            ]
+          },
+          {
+            "operation": "suspend",
+            "method": "POST",
+            "path": "/microvms/{session_id}/suspend",
+            "auth_required": true,
+            "default_auth": "deny",
+            "tenant_bound": true,
+            "recovery": false,
+            "request_fields": [
+              "tenant_id",
+              "namespace",
+              "session_id"
+            ],
+            "response_fields": [
+              "session_id",
+              "state",
+              "provider_state",
+              "registry_version"
+            ],
+            "forbidden_fields": [
+              "authorization",
+              "aws_access_key_id",
+              "aws_secret_access_key",
+              "aws_session_token",
+              "bearer_token",
+              "plaintext_token",
+              "provider_secret",
+              "raw_aws_credentials",
+              "raw_lifecycle_hook_payload",
+              "raw_sdk_client",
+              "session_token_plaintext",
+              "token_value",
+              "x-amz-security-token"
+            ]
+          },
+          {
+            "operation": "resume",
+            "method": "POST",
+            "path": "/microvms/{session_id}/resume",
+            "auth_required": true,
+            "default_auth": "deny",
+            "tenant_bound": true,
+            "recovery": false,
+            "request_fields": [
+              "tenant_id",
+              "namespace",
+              "session_id"
+            ],
+            "response_fields": [
+              "session_id",
+              "state",
+              "provider_state",
+              "registry_version"
+            ],
+            "forbidden_fields": [
+              "authorization",
+              "aws_access_key_id",
+              "aws_secret_access_key",
+              "aws_session_token",
+              "bearer_token",
+              "plaintext_token",
+              "provider_secret",
+              "raw_aws_credentials",
+              "raw_lifecycle_hook_payload",
+              "raw_sdk_client",
+              "session_token_plaintext",
+              "token_value",
+              "x-amz-security-token"
+            ]
+          },
+          {
+            "operation": "terminate",
+            "method": "DELETE",
+            "path": "/microvms/{session_id}",
+            "auth_required": true,
+            "default_auth": "deny",
+            "tenant_bound": true,
+            "recovery": false,
+            "request_fields": [
+              "tenant_id",
+              "namespace",
+              "session_id"
+            ],
+            "response_fields": [
+              "session_id",
+              "state",
+              "provider_state",
+              "registry_version"
+            ],
+            "forbidden_fields": [
+              "authorization",
+              "aws_access_key_id",
+              "aws_secret_access_key",
+              "aws_session_token",
+              "bearer_token",
+              "plaintext_token",
+              "provider_secret",
+              "raw_aws_credentials",
+              "raw_lifecycle_hook_payload",
+              "raw_sdk_client",
+              "session_token_plaintext",
+              "token_value",
+              "x-amz-security-token"
+            ]
+          },
+          {
+            "operation": "auth-token",
+            "method": "POST",
+            "path": "/microvms/{session_id}/auth-token",
+            "auth_required": true,
+            "default_auth": "deny",
+            "tenant_bound": true,
+            "recovery": false,
+            "request_fields": [
+              "tenant_id",
+              "namespace",
+              "session_id"
+            ],
+            "response_fields": [
+              "token_id",
+              "token_type",
+              "expires_at",
+              "scope"
+            ],
+            "forbidden_fields": [
+              "authorization",
+              "aws_access_key_id",
+              "aws_secret_access_key",
+              "aws_session_token",
+              "bearer_token",
+              "plaintext_token",
+              "provider_secret",
+              "raw_aws_credentials",
+              "raw_lifecycle_hook_payload",
+              "raw_sdk_client",
+              "session_token_plaintext",
+              "token_value",
+              "x-amz-security-token"
+            ]
+          },
+          {
+            "operation": "shell-auth-token",
+            "method": "POST",
+            "path": "/microvms/{session_id}/shell-auth-token",
+            "auth_required": true,
+            "default_auth": "deny",
+            "tenant_bound": true,
+            "recovery": false,
+            "request_fields": [
+              "tenant_id",
+              "namespace",
+              "session_id"
+            ],
+            "response_fields": [
+              "token_id",
+              "token_type",
+              "expires_at",
+              "scope"
+            ],
+            "forbidden_fields": [
+              "authorization",
+              "aws_access_key_id",
+              "aws_secret_access_key",
+              "aws_session_token",
+              "bearer_token",
+              "plaintext_token",
+              "provider_secret",
+              "raw_aws_credentials",
+              "raw_lifecycle_hook_payload",
+              "raw_sdk_client",
+              "session_token_plaintext",
+              "token_value",
+              "x-amz-security-token"
+            ]
+          }
+        ],
+        "provider_state_mappings": [
+          {
+            "provider_state": "pending",
+            "state": "validating",
+            "terminal": false
+          },
+          {
+            "provider_state": "running",
+            "state": "running",
+            "terminal": false
+          },
+          {
+            "provider_state": "ready",
+            "state": "ready",
+            "terminal": false
+          },
+          {
+            "provider_state": "suspending",
+            "state": "suspending",
+            "terminal": false
+          },
+          {
+            "provider_state": "suspended",
+            "state": "suspended",
+            "terminal": false
+          },
+          {
+            "provider_state": "resuming",
+            "state": "resuming",
+            "terminal": false
+          },
+          {
+            "provider_state": "terminating",
+            "state": "terminating",
+            "terminal": false
+          },
+          {
+            "provider_state": "terminated",
+            "state": "terminated",
+            "terminal": true
+          },
+          {
+            "provider_state": "failed",
+            "state": "failed",
+            "terminal": true
+          }
+        ],
+        "token_issuance": [
+          {
+            "operation": "auth-token",
+            "result_fields": [
+              "token_id",
+              "token_type",
+              "expires_at",
+              "scope"
+            ],
+            "forbidden_fields": [
+              "authorization",
+              "aws_access_key_id",
+              "aws_secret_access_key",
+              "aws_session_token",
+              "bearer_token",
+              "plaintext_token",
+              "provider_secret",
+              "raw_aws_credentials",
+              "raw_lifecycle_hook_payload",
+              "raw_sdk_client",
+              "session_token_plaintext",
+              "token_value",
+              "x-amz-security-token"
+            ],
+            "sanitized": true,
+            "tenant_bound": true,
+            "session_bound": true,
+            "max_ttl_seconds": 900
+          },
+          {
+            "operation": "shell-auth-token",
+            "result_fields": [
+              "token_id",
+              "token_type",
+              "expires_at",
+              "scope"
+            ],
+            "forbidden_fields": [
+              "authorization",
+              "aws_access_key_id",
+              "aws_secret_access_key",
+              "aws_session_token",
+              "bearer_token",
+              "plaintext_token",
+              "provider_secret",
+              "raw_aws_credentials",
+              "raw_lifecycle_hook_payload",
+              "raw_sdk_client",
+              "session_token_plaintext",
+              "token_value",
+              "x-amz-security-token"
+            ],
+            "sanitized": true,
+            "tenant_bound": true,
+            "session_bound": true,
+            "max_ttl_seconds": 900
+          }
+        ],
+        "tenant_binding": [
+          {
+            "operation": "list",
+            "request_tenant_id": "tenant-a",
+            "request_namespace": "namespace-a",
+            "record_tenant_id": "tenant-a",
+            "record_namespace": "namespace-a",
+            "recovery": true,
+            "allowed": true
+          },
+          {
+            "operation": "list",
+            "request_tenant_id": "tenant-a",
+            "request_namespace": "namespace-a",
+            "record_tenant_id": "tenant-b",
+            "record_namespace": "namespace-a",
+            "recovery": true,
+            "allowed": true
+          },
+          {
+            "operation": "get",
+            "request_tenant_id": "tenant-a",
+            "request_namespace": "namespace-a",
+            "record_tenant_id": "tenant-b",
+            "record_namespace": "namespace-a",
+            "allowed": false
+          }
+        ],
+        "forbidden_fields": [
+          "authorization",
+          "aws_access_key_id",
+          "aws_secret_access_key",
+          "aws_session_token",
+          "bearer_token",
+          "plaintext_token",
+          "provider_secret",
+          "raw_aws_credentials",
+          "raw_lifecycle_hook_payload",
+          "raw_sdk_client",
+          "session_token_plaintext",
+          "token_value",
+          "x-amz-security-token"
+        ]
+      }
+    }
+  },
+  "input": {},
+  "expect": {
+    "microvm_contract_validation": {
+      "valid": false,
+      "kind": "operation",
+      "version": "m16.microvm/v1",
+      "error_code": "m16.microvm.tenant_binding_violation",
+      "error_message": "apptheory: microvm tenant binding rule allows cross-tenant access"
+    }
+  }
+}

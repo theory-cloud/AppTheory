@@ -121,25 +121,36 @@ decisions:
     question: "How should I wire AWS Lambda MicroVM support?"
     decision_tree:
       - condition: "You need first-class Lambda MicroVM lifecycle and controller support."
-        check: "Can you use the AppTheory lifecycle adapter, constrained controller, durable session registry, and CDK constructs together?"
+        check: "Can you use the AppTheory lifecycle adapter, constrained real provider/controller, durable session registry, typed CDK constructs, and conformance harness together?"
         if_yes:
-          choice: "Use the MicroVM golden path"
-          reason: "M15 evidence covers fixture-backed runtime/CDK/example docs for the single AppTheory path."
+          choice: "Use the corrective M16 MicroVM golden path"
+          reason: "M16 evidence covers fixture-backed real operations, provider adapters, protected controller routes, CDK wiring, and local conformance harness readiness for the single AppTheory path."
           example: |
             AppTheoryMicrovmNetworkConnector -> AppTheoryMicrovmImage -> AppTheoryMicrovmController
-            MicroVMController + TableTheoryMicroVMSessionRegistry
+            MicroVMRealController + TableTheoryMicroVMSessionRegistry
+            operations: run/get/list/suspend/resume/terminate/auth-token/shell-auth-token
         if_no:
           choice: "Grow the AppTheory contract before shipping"
-          reason: "Raw SDK calls, raw lifecycle hook bypasses, unauthenticated controllers, or ad-hoc registries fragment the contract."
+          reason: "Raw SDK calls, raw lifecycle hook bypasses, unauthenticated controllers, ad-hoc registries, or non-canonical operation names fragment the contract."
           example: |
             TODO: add fixtures and cross-runtime parity before adding a new MicroVM capability.
-      - condition: "You only have demo or synth-time credentials and placeholder networking."
-        check: "Are you using the example only to prove construct shape?"
+      - condition: "You are reviewing v1.14.0/M15 MicroVM wording."
+        check: "Does the wording claim complete live first-class support or customer/application proof?"
+        if_yes:
+          choice: "Correct the claim to foundation-only"
+          reason: "M15 was an evidence-bounded foundation; M16 is the corrective real operation path and live proof is outside AppTheory until a consumer lab run exists."
+          example: |
+            Say: fixture-backed foundation, not live AWS or EqualToAI/Host proof.
+        if_no:
+          choice: "Keep the evidence boundary explicit"
+          reason: "Docs can reference M15 compatibility only when they clearly point new users to the M16 canonical path."
+      - condition: "You only have demo, dry-run, or synth-time credentials and placeholder networking."
+        check: "Are you using the example or conformance harness only to prove local shape/readiness?"
         if_yes:
           choice: "Keep the claim evidence-bounded"
-          reason: "The example is synth-only and demo authorizers are not production authentication proof."
+          reason: "Synth examples and local harness dry-run are not production authentication, live AWS, EqualToAI/Host, or customer readiness proof."
           example: |
-            Document this as fixture-backed/runtime/CDK/example evidence, not live deployment proof.
+            Document this as repo-local runtime/CDK/example/harness evidence, not live deployment proof.
         if_no:
-          choice: "Provide production auth and caller-owned network context"
-          reason: "Controller routes must stay protected and the VPC/subnet/security-group boundary must be explicit."
+          choice: "Provide production auth, caller-owned network context, and a consumer-run lab harness"
+          reason: "Controller routes must stay protected, the network boundary must be explicit, and live application proof belongs to the consumer lab."
