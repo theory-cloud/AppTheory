@@ -4304,6 +4304,11 @@ test("AppTheoryMicrovmNetworkConnector synthesizes expected template", () => {
   });
 
   assert.ok(connector.networkConnectorArn, "Should expose the connector ARN token");
+  assert.equal(
+    connector.networkConnectorKind,
+    apptheory.AppTheoryMicrovmNetworkConnectorKind.EGRESS,
+    "Created connector should be typed as egress",
+  );
   assert.ok(connector.networkConnectorState, "Should expose the connector state token");
 
   const template = assertions.Template.fromStack(stack).toJSON();
@@ -4330,6 +4335,61 @@ test("AppTheoryMicrovmNetworkConnector synthesizes expected template", () => {
   } else {
     expectSnapshot("microvm-network-connector", template);
   }
+});
+
+test("AppTheoryMicrovmNetworkConnector exposes managed ingress, egress, and shell references", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "123456789012", region: "us-east-1" },
+  });
+
+  const allIngress = apptheory.AppTheoryMicrovmNetworkConnector.allIngress(stack, "AllIngress");
+  const noIngress = apptheory.AppTheoryMicrovmNetworkConnector.awsManaged(
+    stack,
+    "NoIngress",
+    apptheory.AppTheoryMicrovmManagedNetworkConnector.NO_INGRESS,
+  );
+  const internetEgress = apptheory.AppTheoryMicrovmNetworkConnector.internetEgress(stack, "InternetEgress");
+  const shellIngress = apptheory.AppTheoryMicrovmNetworkConnector.shellIngress(stack, "ShellIngress");
+  const importedIngress = apptheory.AppTheoryMicrovmNetworkConnector.fromNetworkConnectorArn(
+    stack,
+    "ImportedIngress",
+    "arn:aws:lambda:us-east-1:123456789012:network-connector:custom-ingress",
+    apptheory.AppTheoryMicrovmNetworkConnectorKind.INGRESS,
+  );
+
+  assert.ok(
+    renderedString(allIngress.networkConnectorArn).includes(
+      ":lambda:us-east-1:aws:network-connector:aws-network-connector:ALL_INGRESS",
+    ),
+  );
+  assert.ok(
+    renderedString(noIngress.networkConnectorArn).includes(
+      ":lambda:us-east-1:aws:network-connector:aws-network-connector:NO_INGRESS",
+    ),
+  );
+  assert.ok(
+    renderedString(internetEgress.networkConnectorArn).includes(
+      ":lambda:us-east-1:aws:network-connector:aws-network-connector:INTERNET_EGRESS",
+    ),
+  );
+  assert.ok(
+    renderedString(shellIngress.networkConnectorArn).includes(
+      ":lambda:us-east-1:aws:network-connector:aws-network-connector:SHELL_INGRESS",
+    ),
+  );
+  assert.equal(allIngress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.INGRESS);
+  assert.equal(noIngress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.INGRESS);
+  assert.equal(internetEgress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.EGRESS);
+  assert.equal(shellIngress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.SHELL_INGRESS);
+  assert.equal(importedIngress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.INGRESS);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(
+    resourcesOfType(template, "AWS::Lambda::NetworkConnector").length,
+    0,
+    "Managed/imported connector references should synthesize no connector resources",
+  );
 });
 
 test("AppTheoryMicrovmNetworkConnector can use a caller-provided operator role", () => {
@@ -4460,6 +4520,41 @@ test("AppTheoryMicrovmNetworkConnector fails closed on invalid props", () => {
           networkProtocol: "IPv6Only",
         }),
       /networkProtocol must be IPv4 or DualStack/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "InvalidManagedConnectorStack");
+    assert.throws(
+      () => apptheory.AppTheoryMicrovmNetworkConnector.awsManaged(stack, "Connector", "OPEN_WORLD"),
+      /managed connector must be ALL_INGRESS/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "InvalidReferenceStack");
+    assert.throws(
+      () =>
+        apptheory.AppTheoryMicrovmNetworkConnector.fromNetworkConnectorArn(
+          stack,
+          "Connector",
+          "arn:aws:lambda:us-east-1:123456789012:network-connector:bad connector",
+        ),
+      /networkConnectorArn must not contain whitespace/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "InvalidKindStack");
+    assert.throws(
+      () =>
+        apptheory.AppTheoryMicrovmNetworkConnector.fromNetworkConnectorArn(
+          stack,
+          "Connector",
+          "arn:aws:lambda:us-east-1:123456789012:network-connector:custom",
+          "sideways",
+        ),
+      /networkConnectorKind must be ingress, egress, or shell-ingress/,
     );
   }
 });
@@ -4714,10 +4809,20 @@ function microvmAuthorizer(stack) {
   });
 }
 
+function microvmControllerNetworkProps(stack, egressConnector) {
+  return {
+    ingressNetworkConnectors: [apptheory.AppTheoryMicrovmNetworkConnector.allIngress(stack, "ControllerIngress")],
+    egressNetworkConnectors: [egressConnector],
+    shellIngressNetworkConnector: apptheory.AppTheoryMicrovmNetworkConnector.shellIngress(stack, "ControllerShellIngress"),
+  };
+}
+
 test("AppTheoryMicrovmController synthesizes protected controller deployment", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
   const connector = importedMicrovmConnector(stack);
+  const ingressConnector = apptheory.AppTheoryMicrovmNetworkConnector.allIngress(stack, "IngressConnector");
+  const shellIngressConnector = apptheory.AppTheoryMicrovmNetworkConnector.shellIngress(stack, "ShellIngressConnector");
   const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
   const authorizer = microvmAuthorizer(stack);
   const executionRole = new iam.Role(stack, "MicrovmExecutionRole", {
@@ -4728,7 +4833,9 @@ test("AppTheoryMicrovmController synthesizes protected controller deployment", (
     controller: microvmControllerLambdaProps(),
     authorizer,
     microvmImage: image,
+    ingressNetworkConnectors: [ingressConnector],
     egressNetworkConnectors: [connector],
+    shellIngressNetworkConnector: shellIngressConnector,
     executionRole,
     apiName: "apptheory-microvm-controller",
     sessionTableName: "apptheory-microvm-sessions",
@@ -4749,11 +4856,14 @@ test("AppTheoryMicrovmController synthesizes protected controller deployment", (
   assert.deepEqual(
     routes.map((route) => route.Properties.RouteKey).sort(),
     [
+      "DELETE /microvms/{session_id}",
+      "GET /microvms",
       "GET /microvms/{session_id}",
-      "GET /microvms/{session_id}/status",
       "POST /microvms",
-      "POST /microvms/{session_id}/start",
-      "POST /microvms/{session_id}/stop",
+      "POST /microvms/{session_id}/auth-token",
+      "POST /microvms/{session_id}/resume",
+      "POST /microvms/{session_id}/shell-auth-token",
+      "POST /microvms/{session_id}/suspend",
     ].sort(),
   );
   for (const route of routes) {
@@ -4778,20 +4888,68 @@ test("AppTheoryMicrovmController synthesizes protected controller deployment", (
   assert.ok(controllerFunction, "Should synthesize controller Lambda with AppTheory MicroVM env");
   const env = controllerFunction.Properties.Environment.Variables;
   assert.equal(env.APP_ENV, "test");
-  assert.equal(env.APPTHEORY_MICROVM_CONTRACT_VERSION, "m15.microvm/v1");
+  assert.equal(env.APPTHEORY_MICROVM_CONTRACT_VERSION, "m16.microvm/v1");
+  assert.equal(
+    env.APPTHEORY_MICROVM_CONTROLLER_OPERATIONS,
+    "run,get,list,suspend,resume,terminate,auth-token,shell-auth-token",
+  );
+  assert.ok(env.APPTHEORY_MICROVM_CONTROLLER_ROUTES.includes("DELETE /microvms/{session_id}"));
+  assert.ok(!env.APPTHEORY_MICROVM_CONTROLLER_ROUTES.includes("/start"));
+  assert.ok(!env.APPTHEORY_MICROVM_CONTROLLER_ROUTES.includes("/stop"));
+  assert.ok(!env.APPTHEORY_MICROVM_CONTROLLER_ROUTES.includes("/status"));
   assert.equal(env.APPTHEORY_MICROVM_CONTROLLER_AUTH_REQUIRED, "true");
   assert.equal(env.APPTHEORY_MICROVM_CONTROLLER_AUTH_DEFAULT, "deny");
   assert.ok(renderedString(env.APPTHEORY_MICROVM_SESSION_REGISTRY_TABLE).includes("SessionTable"));
   assert.ok(renderedString(env.APPTHEORY_MICROVM_IMAGE_REF).includes("MicrovmImage"));
   assert.ok(renderedString(env.APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS).includes("NetworkConnector"));
+  assert.ok(renderedString(env.APPTHEORY_MICROVM_EGRESS_NETWORK_CONNECTOR_REFS).includes("NetworkConnector"));
+  assert.ok(renderedString(env.APPTHEORY_MICROVM_INGRESS_NETWORK_CONNECTOR_REFS).includes("ALL_INGRESS"));
+  assert.ok(renderedString(env.APPTHEORY_MICROVM_INGRESS_NETWORK_CONNECTOR_REFS).includes("SHELL_INGRESS"));
+  assert.ok(renderedString(env.APPTHEORY_MICROVM_SHELL_INGRESS_NETWORK_CONNECTOR_REF).includes("SHELL_INGRESS"));
   assert.ok(renderedString(env.APPTHEORY_MICROVM_EXECUTION_ROLE_ARN).includes("MicrovmExecutionRole"));
 
   const policyActions = iamPolicyActions(template);
   assert.ok(policyActions.includes("dynamodb:PutItem"));
   assert.ok(policyActions.includes("lambda:RunMicrovm"));
   assert.ok(policyActions.includes("lambda:CreateMicrovmAuthToken"));
+  assert.ok(policyActions.includes("lambda:CreateMicrovmShellAuthToken"));
   assert.ok(policyActions.includes("lambda:PassNetworkConnector"));
   assert.ok(policyActions.includes("iam:PassRole"));
+
+  const microvmControlPlaneStatements = resourcesOfType(template, "AWS::IAM::Policy")
+    .flatMap((resource) => resource.Properties?.PolicyDocument?.Statement ?? [])
+    .filter((statement) => renderedString(statement.Action).includes("lambda:RunMicrovm"));
+  assert.equal(microvmControlPlaneStatements.length, 1, "Should synthesize one MicroVM instance control statement");
+  const microvmControlPlaneActions = Array.isArray(microvmControlPlaneStatements[0].Action)
+    ? microvmControlPlaneStatements[0].Action
+    : [microvmControlPlaneStatements[0].Action];
+  assert.deepEqual(
+    [...microvmControlPlaneActions].sort(),
+    [
+      "lambda:CreateMicrovmAuthToken",
+      "lambda:CreateMicrovmShellAuthToken",
+      "lambda:GetMicrovm",
+      "lambda:ResumeMicrovm",
+      "lambda:RunMicrovm",
+      "lambda:SuspendMicrovm",
+      "lambda:TerminateMicrovm",
+    ].sort(),
+  );
+  const microvmControlPlaneResource = renderedString(microvmControlPlaneStatements[0].Resource);
+  assert.ok(
+    microvmControlPlaneResource.includes(":lambda:") && microvmControlPlaneResource.includes(":microvm:*"),
+    `MicroVM instance/token actions must be scoped to the MicroVM instance ARN family: ${microvmControlPlaneResource}`,
+  );
+  assert.ok(
+    !microvmControlPlaneResource.includes("ImageArn") && !microvmControlPlaneResource.includes("microvm-image"),
+    `MicroVM instance/token actions must not be scoped to the configured image ARN: ${microvmControlPlaneResource}`,
+  );
+
+  const passConnectorStatements = resourcesOfType(template, "AWS::IAM::Policy")
+    .flatMap((resource) => resource.Properties?.PolicyDocument?.Statement ?? [])
+    .filter((statement) => renderedString(statement.Action).includes("lambda:PassNetworkConnector"));
+  assert.equal(passConnectorStatements.length, 1, "Should synthesize one PassNetworkConnector statement");
+  assert.equal(passConnectorStatements[0].Resource, "*");
 
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("microvm-controller", template);
@@ -4812,7 +4970,7 @@ test("AppTheoryMicrovmController fails closed on invalid props", () => {
         new apptheory.AppTheoryMicrovmController(stack, "Controller", {
           controller: microvmControllerLambdaProps(),
           microvmImage: image,
-          egressNetworkConnectors: [connector],
+          ...microvmControllerNetworkProps(stack, connector),
         }),
       /requires props\.authorizer/,
     );
@@ -4828,9 +4986,97 @@ test("AppTheoryMicrovmController fails closed on invalid props", () => {
           controller: microvmControllerLambdaProps(),
           authorizer: microvmAuthorizer(stack),
           microvmImage: image,
+          ...microvmControllerNetworkProps(stack, connector),
           egressNetworkConnectors: [],
         }),
       /at least 1 egressNetworkConnectors entry/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "MissingIngressStack");
+    const connector = importedMicrovmConnector(stack);
+    const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+          controller: microvmControllerLambdaProps(),
+          authorizer: microvmAuthorizer(stack),
+          microvmImage: image,
+          ...microvmControllerNetworkProps(stack, connector),
+          ingressNetworkConnectors: [],
+        }),
+      /at least 1 ingressNetworkConnectors entry/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "MissingShellIngressStack");
+    const connector = importedMicrovmConnector(stack);
+    const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+          controller: microvmControllerLambdaProps(),
+          authorizer: microvmAuthorizer(stack),
+          microvmImage: image,
+          ...microvmControllerNetworkProps(stack, connector),
+          shellIngressNetworkConnector: undefined,
+        }),
+      /requires props\.shellIngressNetworkConnector/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "IngressKindStack");
+    const connector = importedMicrovmConnector(stack);
+    const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+          controller: microvmControllerLambdaProps(),
+          authorizer: microvmAuthorizer(stack),
+          microvmImage: image,
+          ...microvmControllerNetworkProps(stack, connector),
+          ingressNetworkConnectors: [connector],
+        }),
+      /ingressNetworkConnectors\[0\] must be .*ingress connector reference/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "EgressKindStack");
+    const connector = importedMicrovmConnector(stack);
+    const ingressConnector = apptheory.AppTheoryMicrovmNetworkConnector.allIngress(stack, "IngressConnector");
+    const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+          controller: microvmControllerLambdaProps(),
+          authorizer: microvmAuthorizer(stack),
+          microvmImage: image,
+          ...microvmControllerNetworkProps(stack, connector),
+          egressNetworkConnectors: [ingressConnector],
+        }),
+      /egressNetworkConnectors\[0\] must be .*egress connector reference/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "ShellKindStack");
+    const connector = importedMicrovmConnector(stack);
+    const ingressConnector = apptheory.AppTheoryMicrovmNetworkConnector.allIngress(stack, "IngressConnector");
+    const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+          controller: microvmControllerLambdaProps(),
+          authorizer: microvmAuthorizer(stack),
+          microvmImage: image,
+          ...microvmControllerNetworkProps(stack, connector),
+          shellIngressNetworkConnector: ingressConnector,
+        }),
+      /shellIngressNetworkConnector must be .*shell-ingress connector reference/,
     );
   }
 
@@ -4848,9 +5094,29 @@ test("AppTheoryMicrovmController fails closed on invalid props", () => {
           }),
           authorizer: microvmAuthorizer(stack),
           microvmImage: image,
-          egressNetworkConnectors: [connector],
+          ...microvmControllerNetworkProps(stack, connector),
         }),
       /cannot override reserved APPTHEORY_MICROVM_CONTROLLER_AUTH_DEFAULT/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "ReservedRoutesEnvStack");
+    const connector = importedMicrovmConnector(stack);
+    const image = new apptheory.AppTheoryMicrovmImage(stack, "Image", microvmImageProps(connector));
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmController(stack, "Controller", {
+          controller: microvmControllerLambdaProps({
+            environment: {
+              APPTHEORY_MICROVM_CONTROLLER_ROUTES: "POST /unsafe",
+            },
+          }),
+          authorizer: microvmAuthorizer(stack),
+          microvmImage: image,
+          ...microvmControllerNetworkProps(stack, connector),
+        }),
+      /cannot override reserved APPTHEORY_MICROVM_CONTROLLER_ROUTES/,
     );
   }
 
@@ -4864,7 +5130,7 @@ test("AppTheoryMicrovmController fails closed on invalid props", () => {
           controller: microvmControllerLambdaProps(),
           authorizer: microvmAuthorizer(stack),
           microvmImage: image,
-          egressNetworkConnectors: [connector],
+          ...microvmControllerNetworkProps(stack, connector),
           sessionTableEncryption: dynamodb.TableEncryption.CUSTOMER_MANAGED,
         }),
       /requires sessionTableEncryptionKey/,
@@ -4881,7 +5147,7 @@ test("AppTheoryMicrovmController fails closed on invalid props", () => {
           controller: microvmControllerLambdaProps(),
           authorizer: microvmAuthorizer(stack),
           microvmImage: image,
-          egressNetworkConnectors: [connector],
+          ...microvmControllerNetworkProps(stack, connector),
           authorizerHeaderName: " ",
         }),
       /authorizerHeaderName is required/,

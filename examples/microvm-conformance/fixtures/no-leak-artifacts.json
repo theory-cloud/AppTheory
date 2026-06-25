@@ -1,0 +1,200 @@
+{
+  "responses": {
+    "missing-auth": {
+      "status": 401,
+      "body": {
+        "error": {
+          "code": "m16.microvm.unauthenticated_controller",
+          "message": "controller requires authenticated access"
+        }
+      }
+    },
+    "invalid-auth": {
+      "status": 401,
+      "body": {
+        "error": {
+          "code": "m16.microvm.unauthenticated_controller",
+          "message": "controller rejected invalid access"
+        }
+      }
+    },
+    "run": {
+      "status": 200,
+      "body": {
+        "command": "run",
+        "request_id": "fixture-run",
+        "tenant_id": "tenant-example",
+        "namespace": "namespace-example",
+        "session_id": "session-fixture-001",
+        "state": "running",
+        "provider_microvm_id": "provider-microvm-fixture-001",
+        "provider_state": "running",
+        "registry_version": 1
+      }
+    },
+    "get": {
+      "status": 200,
+      "body": {
+        "command": "get",
+        "request_id": "fixture-get",
+        "tenant_id": "tenant-example",
+        "namespace": "namespace-example",
+        "session_id": "session-fixture-001",
+        "state": "running",
+        "provider_microvm_id": "provider-microvm-fixture-001",
+        "provider_state": "running",
+        "registry_version": 1
+      }
+    },
+    "list": {
+      "status": 200,
+      "body": {
+        "command": "list",
+        "request_id": "fixture-list",
+        "tenant_id": "tenant-example",
+        "namespace": "namespace-example",
+        "sessions": [
+          {
+            "tenant_id": "tenant-example",
+            "namespace": "namespace-example",
+            "session_id": "session-fixture-001",
+            "state": "running",
+            "provider_microvm_id": "provider-microvm-fixture-001",
+            "provider_state": "running",
+            "image_ref": "microvm-image-ref-placeholder"
+          }
+        ]
+      }
+    },
+    "tenant-mismatch-get": {
+      "status": 403,
+      "body": {
+        "error": {
+          "code": "m16.microvm.tenant_binding_violation",
+          "message": "tenant binding mismatch"
+        }
+      }
+    },
+    "namespace-mismatch-get": {
+      "status": 404,
+      "body": {
+        "error": {
+          "code": "m16.microvm.session_registry_incomplete",
+          "message": "session is not available for namespace"
+        }
+      }
+    },
+    "suspend": {
+      "status": 200,
+      "body": {
+        "command": "suspend",
+        "request_id": "fixture-suspend",
+        "tenant_id": "tenant-example",
+        "namespace": "namespace-example",
+        "session_id": "session-fixture-001",
+        "state": "suspended",
+        "provider_microvm_id": "provider-microvm-fixture-001",
+        "provider_state": "suspended",
+        "registry_version": 2
+      }
+    },
+    "resume": {
+      "status": 200,
+      "body": {
+        "command": "resume",
+        "request_id": "fixture-resume",
+        "tenant_id": "tenant-example",
+        "namespace": "namespace-example",
+        "session_id": "session-fixture-001",
+        "state": "running",
+        "provider_microvm_id": "provider-microvm-fixture-001",
+        "provider_state": "running",
+        "registry_version": 3
+      }
+    },
+    "auth-token": {
+      "status": 200,
+      "body": {
+        "command": "auth-token",
+        "request_id": "fixture-auth-token",
+        "tenant_id": "tenant-example",
+        "namespace": "namespace-example",
+        "session_id": "session-fixture-001",
+        "token_id": "auth-token-metadata-001",
+        "token_type": "auth",
+        "expires_at": "2026-06-25T12:15:00Z",
+        "scope": [
+          "ports:443"
+        ]
+      }
+    },
+    "shell-auth-token": {
+      "status": 200,
+      "body": {
+        "command": "shell-auth-token",
+        "request_id": "fixture-shell-auth-token",
+        "tenant_id": "tenant-example",
+        "namespace": "namespace-example",
+        "session_id": "session-fixture-001",
+        "token_id": "shell-token-metadata-001",
+        "token_type": "shell",
+        "expires_at": "2026-06-25T12:15:00Z",
+        "scope": [
+          "shell"
+        ]
+      }
+    },
+    "terminate": {
+      "status": 200,
+      "body": {
+        "command": "terminate",
+        "request_id": "fixture-terminate",
+        "tenant_id": "tenant-example",
+        "namespace": "namespace-example",
+        "session_id": "session-fixture-001",
+        "state": "terminated",
+        "provider_microvm_id": "provider-microvm-fixture-001",
+        "provider_state": "terminated",
+        "registry_version": 4
+      }
+    },
+    "post-terminate-get": {
+      "status": 200,
+      "body": {
+        "command": "get",
+        "request_id": "fixture-post-terminate-get",
+        "tenant_id": "tenant-example",
+        "namespace": "namespace-example",
+        "session_id": "session-fixture-001",
+        "state": "terminated",
+        "provider_microvm_id": "provider-microvm-fixture-001",
+        "provider_state": "terminated",
+        "registry_version": 4
+      }
+    }
+  },
+  "registry_records": [
+    {
+      "tenant_id": "tenant-example",
+      "namespace": "namespace-example",
+      "session_id": "session-fixture-001",
+      "state": "terminated",
+      "provider_microvm_id": "provider-microvm-fixture-001",
+      "provider_state": "terminated",
+      "token_metadata": [
+        {
+          "token_id": "auth-token-metadata-001",
+          "token_type": "auth",
+          "expires_at": "2026-06-25T12:15:00Z",
+          "scope": [
+            "ports:443"
+          ]
+        }
+      ]
+    }
+  ],
+  "logs": [
+    "microvm controller issued sanitized auth-token metadata token_id=auth-token-metadata-001",
+    "microvm controller issued sanitized shell-auth-token metadata token_id=shell-token-metadata-001"
+  ]
+}

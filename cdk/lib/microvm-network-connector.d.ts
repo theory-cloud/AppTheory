@@ -16,6 +16,44 @@ export declare enum AppTheoryMicrovmNetworkProtocol {
     DUAL_STACK = "DualStack"
 }
 /**
+ * Direction/type for a Lambda MicroVM network connector reference.
+ */
+export declare enum AppTheoryMicrovmNetworkConnectorKind {
+    /**
+     * Inbound HTTPS connector reference passed to RunMicrovm.
+     */
+    INGRESS = "ingress",
+    /**
+     * Outbound connector reference passed to RunMicrovm.
+     */
+    EGRESS = "egress",
+    /**
+     * AWS-managed shell ingress connector required for shell-auth-token support.
+     */
+    SHELL_INGRESS = "shell-ingress"
+}
+/**
+ * AWS-managed Lambda MicroVM network connector references.
+ */
+export declare enum AppTheoryMicrovmManagedNetworkConnector {
+    /**
+     * Enable all inbound HTTPS connectivity for a MicroVM.
+     */
+    ALL_INGRESS = "ALL_INGRESS",
+    /**
+     * Explicitly disable inbound HTTPS connectivity for a MicroVM.
+     */
+    NO_INGRESS = "NO_INGRESS",
+    /**
+     * Enable AWS-managed public internet egress for a MicroVM.
+     */
+    INTERNET_EGRESS = "INTERNET_EGRESS",
+    /**
+     * Enable shell ingress required by CreateMicrovmShellAuthToken.
+     */
+    SHELL_INGRESS = "SHELL_INGRESS"
+}
+/**
  * Reference to a Lambda MicroVM network connector usable by MicroVM image constructs.
  */
 export interface IAppTheoryMicrovmNetworkConnector {
@@ -23,6 +61,26 @@ export interface IAppTheoryMicrovmNetworkConnector {
      * The network connector ARN.
      */
     readonly networkConnectorArn: string;
+    /**
+     * Optional connector direction/type used by AppTheory constructs to fail closed when
+     * ingress, egress, or shell connector references are wired into the wrong slot.
+     */
+    readonly networkConnectorKind?: AppTheoryMicrovmNetworkConnectorKind;
+}
+/**
+ * Properties for an imported or AWS-managed MicroVM network connector reference.
+ */
+export interface AppTheoryMicrovmNetworkConnectorReferenceProps {
+    /**
+     * The network connector ARN.
+     */
+    readonly networkConnectorArn: string;
+    /**
+     * Connector direction/type.
+     *
+     * @default undefined
+     */
+    readonly networkConnectorKind?: AppTheoryMicrovmNetworkConnectorKind;
 }
 /**
  * Properties for AppTheoryMicrovmNetworkConnector.
@@ -89,6 +147,30 @@ export interface AppTheoryMicrovmNetworkConnectorProps {
  */
 export declare class AppTheoryMicrovmNetworkConnector extends Construct implements IAppTheoryMicrovmNetworkConnector {
     /**
+     * Import an existing Lambda MicroVM network connector ARN into the AppTheory CDK surface.
+     */
+    static fromNetworkConnectorArn(scope: Construct, id: string, networkConnectorArn: string, networkConnectorKind?: AppTheoryMicrovmNetworkConnectorKind): IAppTheoryMicrovmNetworkConnector;
+    /**
+     * Reference an AWS-managed Lambda MicroVM connector by name.
+     */
+    static awsManaged(scope: Construct, id: string, connector: AppTheoryMicrovmManagedNetworkConnector): IAppTheoryMicrovmNetworkConnector;
+    /**
+     * Reference the AWS-managed ALL_INGRESS connector.
+     */
+    static allIngress(scope: Construct, id: string): IAppTheoryMicrovmNetworkConnector;
+    /**
+     * Reference the AWS-managed NO_INGRESS connector.
+     */
+    static noIngress(scope: Construct, id: string): IAppTheoryMicrovmNetworkConnector;
+    /**
+     * Reference the AWS-managed INTERNET_EGRESS connector.
+     */
+    static internetEgress(scope: Construct, id: string): IAppTheoryMicrovmNetworkConnector;
+    /**
+     * Reference the AWS-managed SHELL_INGRESS connector required for shell auth-token support.
+     */
+    static shellIngress(scope: Construct, id: string): IAppTheoryMicrovmNetworkConnector;
+    /**
      * The caller-provided VPC boundary for this connector.
      */
     readonly vpc: ec2.IVpc;
@@ -113,8 +195,37 @@ export declare class AppTheoryMicrovmNetworkConnector extends Construct implemen
      */
     readonly networkConnectorArn: string;
     /**
+     * Created connectors are VPC egress connectors.
+     */
+    readonly networkConnectorKind?: AppTheoryMicrovmNetworkConnectorKind;
+    /**
      * The CloudFormation state attribute for the network connector.
      */
     readonly networkConnectorState: string;
     constructor(scope: Construct, id: string, props: AppTheoryMicrovmNetworkConnectorProps);
+}
+/**
+ * AppTheory CDK reference to an existing or AWS-managed Lambda MicroVM network connector.
+ *
+ * This construct intentionally synthesizes no resources. It gives controller/image constructs a
+ * typed connector reference without requiring callers to pass raw strings through deployment code.
+ */
+export declare class AppTheoryMicrovmNetworkConnectorReference extends Construct implements IAppTheoryMicrovmNetworkConnector {
+    /**
+     * Import an existing Lambda MicroVM network connector ARN into the AppTheory CDK surface.
+     */
+    static fromNetworkConnectorArn(scope: Construct, id: string, networkConnectorArn: string, networkConnectorKind?: AppTheoryMicrovmNetworkConnectorKind): IAppTheoryMicrovmNetworkConnector;
+    /**
+     * Reference an AWS-managed Lambda MicroVM connector by name.
+     */
+    static awsManaged(scope: Construct, id: string, connector: AppTheoryMicrovmManagedNetworkConnector): IAppTheoryMicrovmNetworkConnector;
+    /**
+     * The network connector ARN.
+     */
+    readonly networkConnectorArn: string;
+    /**
+     * Optional connector direction/type.
+     */
+    readonly networkConnectorKind?: AppTheoryMicrovmNetworkConnectorKind;
+    constructor(scope: Construct, id: string, props: AppTheoryMicrovmNetworkConnectorReferenceProps);
 }

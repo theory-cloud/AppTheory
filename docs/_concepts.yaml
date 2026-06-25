@@ -186,16 +186,18 @@ concepts:
 
   lambda_microvm_support:
     type: component
-    purpose: "Fixture-backed AWS Lambda MicroVM lifecycle, controller, durable session registry, and CDK deployment primitive."
+    purpose: "Corrective M16 fixture-backed AWS Lambda MicroVM lifecycle, provider, controller, durable session registry, CDK deployment, and consumer conformance surface."
     provides:
       - sanitized_microvm_lifecycle_hooks
-      - constrained_microvm_controller
+      - constrained_real_microvm_provider
       - protected_controller_routes
+      - canonical_operations_run_get_list_suspend_resume_terminate_auth_token_shell_auth_token
       - tenant_bound_session_registry
-      - cdk_network_connector_image_controller_constructs
-      - evidence_bounded_synth_example
+      - cdk_typed_connector_image_controller_constructs
+      - evidence_bounded_conformance_harness
     configuration:
       - contract-tests/fixtures/m15/
+      - contract-tests/fixtures/m16/
       - runtime/microvm/
       - ts/src/microvm.ts
       - py/src/apptheory/microvm.py
@@ -203,16 +205,19 @@ concepts:
       - cdk/lib/microvm-image.ts
       - cdk/lib/microvm-controller.ts
       - examples/cdk/microvm-controller/
+      - examples/microvm-conformance/
     docs:
       - docs/features/lambda-microvm-contract-foundation.md
       - docs/cdk/lambda-microvm.md
       - docs/reference/contract-fixtures.md
     failure_modes:
-      - "Raw AWS SDK escape hatches bypass the constrained controller/client contract."
+      - "Treating the v1.14.0/M15 foundation as complete live MicroVM proof overclaims the release boundary."
+      - "Raw AWS SDK escape hatches bypass the constrained controller/provider contract."
       - "Raw lifecycle hook payloads bypass sanitized MicroVMLifecycleEvent handling."
       - "Unauthenticated controller routes violate the fail-closed auth posture."
       - "Ad-hoc session storage drifts from the TableTheory/DynamoDB pk/sk/ttl registry shape."
       - "Hidden VPC/account/network mutation violates the caller-provided network boundary."
+      - "Claiming EqualToAI/Host proof without a consumer-run live conformance harness run crosses AppTheory's proof boundary."
 
   import_pipeline_support_pack:
     type: workflow
