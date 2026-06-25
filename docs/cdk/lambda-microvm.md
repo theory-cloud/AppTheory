@@ -1,37 +1,46 @@
 ---
 title: Lambda MicroVM CDK Constructs
-description: The AppTheory CDK golden path for AWS Lambda MicroVM network, image, controller, and session-registry wiring.
+description: The AppTheory CDK golden path for corrective M16 AWS Lambda MicroVM network, image, protected controller, and session-registry wiring.
 ---
 
 # Lambda MicroVM CDK Constructs
 
-AppTheory's MicroVM CDK surface is the deployment side of the M15 MicroVM contract. Use these constructs together:
+AppTheory's MicroVM CDK surface is the deployment side of the corrective M16 MicroVM contract. The `v1.14.0` / M15
+foundation should not be cited as complete live MicroVM support; new controller docs, examples, and conformance proof use
+`m16.microvm/v1` and the real operation vocabulary.
 
-- `AppTheoryMicrovmNetworkConnector` for caller-owned VPC egress connector wiring;
+Use these constructs together:
+
+- `AppTheoryMicrovmNetworkConnector` or typed connector references for caller-owned and AWS-managed connector wiring;
 - `AppTheoryMicrovmImage` for the `AWS::Lambda::MicrovmImage` resource and hook configuration;
-- `AppTheoryMicrovmController` for protected controller routes, the controller Lambda, IAM grants, and the durable
-  session registry table.
+- `AppTheoryMicrovmController` for protected real controller routes, the controller Lambda, IAM grants, fail-closed
+  environment wiring, and the durable session registry table.
 
 This is the single AppTheory deployment path for MicroVM applications. Do not drop to raw CDK resources or raw AWS SDK
-calls to bypass controller auth, lifecycle validation, registry shape, or network-boundary requirements.
+calls to bypass controller auth, lifecycle validation, registry shape, token safety, or network-boundary requirements.
 
 ## Construct sequence
 
-1. Import or pass the caller-owned `ec2.IVpc`, selected subnets, and explicit security groups.
-2. Create `AppTheoryMicrovmNetworkConnector` with that network context.
+1. Import or pass the caller-owned `ec2.IVpc`, selected subnets, and explicit security groups for any VPC egress
+   connector AppTheory creates.
+2. Create `AppTheoryMicrovmNetworkConnector` for VPC egress, or pass explicitly typed imported/AWS-managed connector
+   references with the correct connector kind.
 3. Create `AppTheoryMicrovmImage` with a caller-provided base image, build role, artifact URI, hook configuration,
-   logging posture, resources, and the connector reference.
-4. Create `AppTheoryMicrovmController` with controller Lambda packaging, a Lambda request authorizer, the image
-   reference, connector references, and optional session-table settings.
+   logging posture, resources, and egress connector references.
+4. Create `AppTheoryMicrovmController` with controller Lambda packaging, a Lambda request authorizer, the image reference,
+   explicit ingress connector references, explicit egress connector references, an explicit shell-ingress connector
+   reference, and optional session-table settings.
 5. Implement the controller Lambda with AppTheory MicroVM runtime/controller primitives and the session registry table
    name from `APPTHEORY_MICROVM_SESSION_REGISTRY_TABLE`.
+6. Use `examples/microvm-conformance` for consumer proof. Local dry-run proves harness readiness only; live proof requires
+   a consumer-provided EqualToAI/Host lab deployment and configuration.
 
 The synth-only reference stack lives at `examples/cdk/microvm-controller`. It demonstrates construct wiring without live
 AWS lookups or deployment.
 
 ## Network connector boundary
 
-`AppTheoryMicrovmNetworkConnector` requires the network boundary to be explicit:
+`AppTheoryMicrovmNetworkConnector` creates VPC egress connectors from explicit caller-owned network context:
 
 | Prop | Required | Notes |
 | --- | --- | --- |
@@ -42,9 +51,19 @@ AWS lookups or deployment.
 | `operatorRole` | no | Existing role Lambda can assume to manage connector ENIs. |
 | `operatorRoleName` | no | Used only when AppTheory creates the operator role; cannot be combined with `operatorRole`. |
 
-When AppTheory creates the operator role, it scopes the ENI policy to the supplied subnet and security-group IDs. The
+The same CDK surface exposes typed imported/AWS-managed connector references:
+
+| Helper | Connector kind | Use |
+| --- | --- | --- |
+| `fromNetworkConnectorArn(..., kind)` | caller-supplied | Import a connector while preserving the ingress/egress/shell kind. |
+| `allIngress(...)` | ingress | AWS-managed all-ingress connector reference. |
+| `noIngress(...)` | ingress | AWS-managed no-ingress connector reference. |
+| `internetEgress(...)` | egress | AWS-managed internet-egress connector reference. |
+| `shellIngress(...)` | shell-ingress | AWS-managed shell-ingress connector required for shell auth-token support. |
+
+When AppTheory creates an egress connector, it scopes the ENI policy to the supplied subnet and security-group IDs. The
 construct creates the `AWS::Lambda::NetworkConnector` resource but does not vend accounts, mutate unrelated networks, or
-invent a hidden connector.
+invent hidden connectors.
 
 ## Image resource and hooks
 
@@ -56,12 +75,12 @@ invent a hidden connector.
 | `baseImageArn`, `baseImageVersion` | yes | Caller-selected base image reference. |
 | `buildRoleArn` | yes | Caller-provided IAM build role ARN. |
 | `codeArtifact.uri` | yes | Artifact URI, such as an S3 path or ECR image URI. |
-| `egressNetworkConnectors` | yes | One to ten `IAppTheoryMicrovmNetworkConnector` references. |
+| `egressNetworkConnectors` | yes | One to ten egress connector references. |
 | `hooks` | yes | Hook enablement for image-build and runtime MicroVM hooks. |
 | `logging` | yes | Exactly one of CloudWatch logging or `disabled: true`. |
 | `resources` | yes | Exactly one resource entry; `minimumMemoryInMiB` is required. |
 | `additionalOsCapabilities` | no | Defaults to `[ALL]`. |
-| `cpuConfigurations` | no | Defaults to ARM64; M15 does not broaden this into arbitrary architectures. |
+| `cpuConfigurations` | no | Defaults to ARM64; AppTheory does not broaden this into arbitrary architectures. |
 
 Hook fields on the image construct configure AWS resource integration:
 
@@ -80,8 +99,9 @@ lifecycle hook bypass.
 - a controller Lambda created from caller-supplied `lambda.FunctionProps`;
 - a Lambda request authorizer attached to every controller route;
 - the durable TableTheory-shaped DynamoDB session table;
-- IAM grants for the constrained Lambda MicroVM control-plane actions, listed MicroVM image, supplied network connector
-  ARNs, and optional execution role pass-through;
+- IAM grants for the constrained Lambda MicroVM control-plane actions, `ListMicrovms`, permission-only
+  `PassNetworkConnector`, the supplied MicroVM image, supplied network connector references, and optional execution-role
+  pass-through;
 - fail-closed environment wiring for the controller Lambda.
 
 Required props:
@@ -91,30 +111,43 @@ Required props:
 | `controller` | yes | Lambda packaging/configuration. Handler code must use AppTheory MicroVM runtime/controller primitives. |
 | `authorizer` | yes | Lambda request authorizer. Omission fails closed; unauthenticated routes are not synthesized. |
 | `microvmImage` | yes | `IAppTheoryMicrovmImage` reference the controller may run. |
-| `egressNetworkConnectors` | yes | Connector references the controller may pass to Lambda MicroVMs. |
+| `ingressNetworkConnectors` | yes | Ingress connector references the controller may pass to Lambda MicroVMs. |
+| `egressNetworkConnectors` | yes | Egress connector references the controller may pass to Lambda MicroVMs. |
+| `shellIngressNetworkConnector` | yes | Shell-ingress connector required for `shell-auth-token` support. |
 
 Controller routes are fixed:
 
-| Method | Path | Command |
+| Method | Path | Operation |
 | --- | --- | --- |
-| `POST` | `/microvms` | `create` |
-| `POST` | `/microvms/{session_id}/start` | `start` |
-| `POST` | `/microvms/{session_id}/stop` | `stop` |
-| `GET` | `/microvms/{session_id}/status` | `status` |
-| `GET` | `/microvms/{session_id}` | `session` |
+| `POST` | `/microvms` | `run` |
+| `GET` | `/microvms` | `list` |
+| `GET` | `/microvms/{session_id}` | `get` |
+| `POST` | `/microvms/{session_id}/suspend` | `suspend` |
+| `POST` | `/microvms/{session_id}/resume` | `resume` |
+| `DELETE` | `/microvms/{session_id}` | `terminate` |
+| `POST` | `/microvms/{session_id}/auth-token` | `auth-token` |
+| `POST` | `/microvms/{session_id}/shell-auth-token` | `shell-auth-token` |
+
+`shell-auth-token` is canonical. Runtime route helpers may accept `shell-token` as a compatibility alias, but the CDK
+construct and conformance harness do not use it as a canonical route.
 
 The construct sets these controller environment variables:
 
 | Variable | Meaning |
 | --- | --- |
 | `APPTHEORY_MICROVM_CONTRACT_NAME` | `apptheory.lambda_microvm` |
-| `APPTHEORY_MICROVM_CONTRACT_VERSION` | `m15.microvm/v1` |
+| `APPTHEORY_MICROVM_CONTRACT_VERSION` | `m16.microvm/v1` |
 | `APPTHEORY_MICROVM_CONTROLLER_ENDPOINT` | Synthesized `/microvms` base endpoint. |
+| `APPTHEORY_MICROVM_CONTROLLER_OPERATIONS` | Comma-separated canonical operations. |
+| `APPTHEORY_MICROVM_CONTROLLER_ROUTES` | Comma-separated canonical method/path pairs. |
 | `APPTHEORY_MICROVM_CONTROLLER_AUTH_REQUIRED` | Always `true`. |
 | `APPTHEORY_MICROVM_CONTROLLER_AUTH_DEFAULT` | Always `deny`. |
 | `APPTHEORY_MICROVM_SESSION_REGISTRY_TABLE` | Durable session table name. |
 | `APPTHEORY_MICROVM_IMAGE_REF` | Permitted MicroVM image ARN/reference. |
-| `APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS` | Comma-separated permitted connector ARNs. |
+| `APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS` | Compatibility egress connector reference list. |
+| `APPTHEORY_MICROVM_INGRESS_NETWORK_CONNECTOR_REFS` | Permitted ingress connector references. |
+| `APPTHEORY_MICROVM_EGRESS_NETWORK_CONNECTOR_REFS` | Permitted egress connector references. |
+| `APPTHEORY_MICROVM_SHELL_INGRESS_NETWORK_CONNECTOR_REF` | Required shell-ingress connector reference. |
 | `APPTHEORY_MICROVM_EXECUTION_ROLE_ARN` | Present only when an execution role is supplied. |
 
 Reserved environment variables cannot be overridden through `controller.environment`.
@@ -140,9 +173,9 @@ Records use the TableTheory/DynamoDB key shape:
 | `ttl` | Unix expiry derived from `expires_at` |
 
 Controller/session handlers must use this registry table rather than route-local memory, ad-hoc tables, or raw SDK
-storage. The durable record is tenant-bound and includes session state, desired state, image/network refs, controller ID,
-creation/update/expiry fields, generation/version fields, last command metadata, auth subject, and optional safe
-metadata.
+storage. The durable record is tenant-bound and includes session state, desired state, image/network refs, provider
+binding, AWS lifecycle state, controller ID, creation/update/expiry fields, generation/version fields, last command
+metadata, auth subject, token metadata, and optional safe metadata.
 
 ## Authentication posture
 
@@ -155,17 +188,18 @@ model can tolerate cached decisions.
 
 ## Evidence boundary and non-goals
 
-The CDK docs and example demonstrate synth-time wiring for the AppTheory construct surface. They do not prove live AWS
-deployment, customer workload behavior, cloud mutation, account vending, VPC creation, or that unauthenticated
-controllers are acceptable.
+The CDK docs and examples demonstrate repo-local wiring for the AppTheory construct surface. They do not prove live AWS
+deployment, EqualToAI/Host application behavior, customer workload readiness, cloud mutation, account vending, VPC
+creation, or that unauthenticated controllers are acceptable.
 
-M15 intentionally does not add:
+AppTheory intentionally does not add:
 
 - raw AWS SDK escape hatches;
 - raw lifecycle hook bypasses;
 - unauthenticated controller defaults;
 - hidden account, VPC, subnet, security-group, or network connector mutation;
-- a deployment path outside AppTheory CDK constructs.
+- a deployment path outside AppTheory CDK constructs;
+- release-train execution or immutable GitHub Release creation.
 
 ## Validation
 
@@ -176,4 +210,8 @@ make test
 ```
 
 When changing runtime-visible behavior or exported API, also run the contract and snapshot gates described in
-[Contract Fixtures](../reference/contract-fixtures.md).
+[Contract Fixtures](../reference/contract-fixtures.md). When changing MicroVM conformance coverage, run:
+
+```bash
+./scripts/verify-microvm-conformance-harness.sh
+```

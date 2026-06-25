@@ -48,6 +48,9 @@ From the AppTheory repo root:
 ./scripts/verify-microvm-conformance-harness.sh
 ```
 
+That verifier is part of the full release/rubric gate path as repo-local dry-run and scanner proof only. It does not
+replace the consumer-run live EqualToAI/Host lab run.
+
 Equivalent direct commands:
 
 ```bash
