@@ -180,12 +180,133 @@ export interface MicroVMOperationContract {
     tenant_binding: MicroVMTenantBindingRule[];
     forbidden_fields: string[];
 }
+export declare const MICROVM_ERROR_PROVIDER_REQUEST_INVALID = "m16.microvm.provider_request_invalid";
+export declare const MICROVM_ERROR_PROVIDER_OPERATION_UNSUPPORTED = "m16.microvm.provider_operation_unsupported";
+export declare const MICROVM_ERROR_PROVIDER_OPERATION_FAILED = "m16.microvm.provider_operation_failed";
+export interface MicroVMProviderIdlePolicy {
+    auto_resume_enabled: boolean;
+    max_idle_duration_seconds: number;
+    suspended_duration_seconds: number;
+}
+export interface MicroVMProviderRunInput {
+    request_id: string;
+    tenant_id: string;
+    namespace: string;
+    session_id: string;
+    auth_context: MicroVMAuthContext;
+    image_ref: string;
+    image_version?: string;
+    network_connector_ref?: string;
+    ingress_network_connector_refs?: string[];
+    egress_network_connector_refs?: string[];
+    session_spec?: MicroVMSessionSpec;
+    idle_policy?: MicroVMProviderIdlePolicy;
+    maximum_duration_seconds?: number;
+}
+export interface MicroVMProviderSessionBinding {
+    tenant_id: string;
+    namespace: string;
+    session_id: string;
+    provider_microvm_id: string;
+    registry_version?: number;
+}
+export interface MicroVMProviderSessionInput {
+    request_id: string;
+    tenant_id: string;
+    namespace: string;
+    auth_context: MicroVMAuthContext;
+    binding: MicroVMProviderSessionBinding;
+}
+export interface MicroVMProviderListInput {
+    request_id: string;
+    tenant_id: string;
+    namespace: string;
+    auth_context: MicroVMAuthContext;
+    image_ref?: string;
+    image_version?: string;
+    max_results?: number;
+    known_sessions?: MicroVMProviderSessionBinding[];
+}
+export interface MicroVMProviderPortScope {
+    all_ports?: boolean;
+    port?: number;
+    start_port?: number;
+    end_port?: number;
+}
+export interface MicroVMProviderTokenInput {
+    request_id: string;
+    tenant_id: string;
+    namespace: string;
+    auth_context: MicroVMAuthContext;
+    binding: MicroVMProviderSessionBinding;
+    ttl_seconds?: number;
+    allowed_port_scope?: MicroVMProviderPortScope[];
+}
+export interface MicroVMProviderSession {
+    tenant_id: string;
+    namespace: string;
+    session_id: string;
+    provider_microvm_id: string;
+    state: MicroVMRealLifecycleState | string;
+    provider_state: string;
+    image_ref?: string;
+    image_version?: string;
+    started_at?: Date;
+    terminated_at?: Date;
+    registry_version?: number;
+    terminal: boolean;
+}
+export interface MicroVMProviderListOutput {
+    sessions: MicroVMProviderSession[];
+    recovery_cursor?: string;
+}
+export interface MicroVMProviderToken {
+    tenant_id: string;
+    namespace: string;
+    session_id: string;
+    provider_microvm_id: string;
+    token_id: string;
+    token_type: string;
+    expires_at: Date;
+    scope: string[];
+}
+export interface MicroVMProviderCall {
+    operation: MicroVMOperationName | string;
+    request_id: string;
+    tenant_id: string;
+    namespace: string;
+    session_id: string;
+}
+export interface MicroVMProvider {
+    run(input: MicroVMProviderRunInput): Promise<MicroVMProviderSession>;
+    get(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
+    list(input: MicroVMProviderListInput): Promise<MicroVMProviderListOutput>;
+    suspend(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
+    resume(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
+    terminate(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
+    createAuthToken(input: MicroVMProviderTokenInput): Promise<MicroVMProviderToken>;
+    createShellToken(input: MicroVMProviderTokenInput): Promise<MicroVMProviderToken>;
+}
+export interface AWSLambdaMicroVMProviderOptions {
+    region?: string;
+    clock?: MicroVMClock;
+}
 export declare function defaultMicroVMRealLifecycleContract(): MicroVMLifecycleContract;
 export declare function defaultMicroVMOperationContract(): MicroVMOperationContract;
 export declare function defaultMicroVMProviderStateMappings(): MicroVMProviderStateMapping[];
 export declare function requiredForbiddenMicroVMOperationFields(): string[];
 export declare function validateMicroVMRealLifecycleContract(contract: MicroVMLifecycleContract): void;
 export declare function validateMicroVMOperationContract(contract: MicroVMOperationContract): void;
+export declare function mapMicroVMProviderState(providerState: string): {
+    state: MicroVMRealLifecycleState;
+    terminal: boolean;
+};
+export declare function validateMicroVMProviderSession(session: MicroVMProviderSession): void;
+export declare function validateMicroVMProviderRunInput(input: MicroVMProviderRunInput): void;
+export declare function validateMicroVMProviderSessionInput(operation: MicroVMOperationName | string, input: MicroVMProviderSessionInput): void;
+export declare function validateMicroVMProviderListInput(input: MicroVMProviderListInput): void;
+export declare function validateMicroVMProviderTokenInput(operation: MicroVMOperationName | string, input: MicroVMProviderTokenInput): void;
+export declare function validateMicroVMProviderToken(token: MicroVMProviderToken): void;
 export declare const MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER = "m15.microvm.unauthenticated_controller";
 export declare const MICROVM_ERROR_CONTROLLER_INCOMPLETE = "m15.microvm.controller_incomplete";
 export declare const MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE = "m15.microvm.session_registry_incomplete";
@@ -480,4 +601,47 @@ export declare class FakeMicroVMClient implements MicroVMClient {
     private recordCall;
 }
 export declare function createFakeMicroVMClient(now?: Date): FakeMicroVMClient;
-export declare function createAWSLambdaMicroVMClient(options?: AWSLambdaMicroVMClientOptions): Promise<MicroVMClient>;
+export declare class FakeMicroVMProvider implements MicroVMProvider {
+    private currentTime;
+    private next;
+    private tokens;
+    private readonly sessions;
+    private readonly errors;
+    private readonly recordedCalls;
+    constructor(now?: Date);
+    setNow(now: Date): void;
+    setOperationError(operation: MicroVMOperationName | string, err?: MicroVMSafeError | null): void;
+    calls(): MicroVMProviderCall[];
+    run(input: MicroVMProviderRunInput): Promise<MicroVMProviderSession>;
+    get(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
+    list(input: MicroVMProviderListInput): Promise<MicroVMProviderListOutput>;
+    suspend(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
+    resume(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
+    terminate(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
+    createAuthToken(input: MicroVMProviderTokenInput): Promise<MicroVMProviderToken>;
+    createShellToken(input: MicroVMProviderTokenInput): Promise<MicroVMProviderToken>;
+    private lookup;
+    private transition;
+    private token;
+    private boundSession;
+    private configuredError;
+    private recordCall;
+}
+export declare function createFakeMicroVMProvider(now?: Date): FakeMicroVMProvider;
+export declare function createAWSLambdaMicroVMClient(_options?: AWSLambdaMicroVMClientOptions): Promise<MicroVMClient>;
+export declare class AWSLambdaMicroVMProvider implements MicroVMProvider {
+    private readonly client;
+    private readonly clock;
+    constructor(options?: AWSLambdaMicroVMProviderOptions);
+    run(input: MicroVMProviderRunInput): Promise<MicroVMProviderSession>;
+    get(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
+    list(input: MicroVMProviderListInput): Promise<MicroVMProviderListOutput>;
+    suspend(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
+    resume(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
+    terminate(input: MicroVMProviderSessionInput): Promise<MicroVMProviderSession>;
+    createAuthToken(input: MicroVMProviderTokenInput): Promise<MicroVMProviderToken>;
+    createShellToken(input: MicroVMProviderTokenInput): Promise<MicroVMProviderToken>;
+    private runStateChangingOperation;
+    private now;
+}
+export declare function createAWSLambdaMicroVMProvider(options?: AWSLambdaMicroVMProviderOptions): AWSLambdaMicroVMProvider;
