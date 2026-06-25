@@ -10,32 +10,69 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import { Construct } from "constructs";
 
 import type { IAppTheoryMicrovmImage } from "./microvm-image";
-import type { IAppTheoryMicrovmNetworkConnector } from "./microvm-network-connector";
+import {
+  AppTheoryMicrovmNetworkConnectorKind,
+  type IAppTheoryMicrovmNetworkConnector,
+} from "./microvm-network-connector";
 
 const MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm";
-const MICROVM_CONTRACT_VERSION = "m15.microvm/v1";
+const MICROVM_CONTRACT_VERSION = "m16.microvm/v1";
 const CONTROLLER_AUTH_REQUIRED = "true";
 const CONTROLLER_AUTH_DEFAULT = "deny";
+const CONTROLLER_OPERATIONS = [
+  "run",
+  "get",
+  "list",
+  "suspend",
+  "resume",
+  "terminate",
+  "auth-token",
+  "shell-auth-token",
+];
+const CONTROLLER_ROUTE_DEFINITIONS: Array<{ id: string; method: apigwv2.HttpMethod; path: string }> = [
+  { id: "RunMicrovm", method: apigwv2.HttpMethod.POST, path: "/microvms" },
+  { id: "ListMicrovms", method: apigwv2.HttpMethod.GET, path: "/microvms" },
+  { id: "GetMicrovm", method: apigwv2.HttpMethod.GET, path: "/microvms/{session_id}" },
+  { id: "SuspendMicrovm", method: apigwv2.HttpMethod.POST, path: "/microvms/{session_id}/suspend" },
+  { id: "ResumeMicrovm", method: apigwv2.HttpMethod.POST, path: "/microvms/{session_id}/resume" },
+  { id: "TerminateMicrovm", method: apigwv2.HttpMethod.DELETE, path: "/microvms/{session_id}" },
+  { id: "CreateMicrovmAuthToken", method: apigwv2.HttpMethod.POST, path: "/microvms/{session_id}/auth-token" },
+  {
+    id: "CreateMicrovmShellAuthToken",
+    method: apigwv2.HttpMethod.POST,
+    path: "/microvms/{session_id}/shell-auth-token",
+  },
+];
 
 const ENV_CONTRACT_NAME = "APPTHEORY_MICROVM_CONTRACT_NAME";
 const ENV_CONTRACT_VERSION = "APPTHEORY_MICROVM_CONTRACT_VERSION";
 const ENV_CONTROLLER_ENDPOINT = "APPTHEORY_MICROVM_CONTROLLER_ENDPOINT";
+const ENV_CONTROLLER_OPERATIONS = "APPTHEORY_MICROVM_CONTROLLER_OPERATIONS";
+const ENV_CONTROLLER_ROUTES = "APPTHEORY_MICROVM_CONTROLLER_ROUTES";
 const ENV_CONTROLLER_AUTH_REQUIRED = "APPTHEORY_MICROVM_CONTROLLER_AUTH_REQUIRED";
 const ENV_CONTROLLER_AUTH_DEFAULT = "APPTHEORY_MICROVM_CONTROLLER_AUTH_DEFAULT";
 const ENV_SESSION_REGISTRY_TABLE = "APPTHEORY_MICROVM_SESSION_REGISTRY_TABLE";
 const ENV_IMAGE_REF = "APPTHEORY_MICROVM_IMAGE_REF";
 const ENV_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS";
+const ENV_INGRESS_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_INGRESS_NETWORK_CONNECTOR_REFS";
+const ENV_EGRESS_NETWORK_CONNECTOR_REFS = "APPTHEORY_MICROVM_EGRESS_NETWORK_CONNECTOR_REFS";
+const ENV_SHELL_INGRESS_NETWORK_CONNECTOR_REF = "APPTHEORY_MICROVM_SHELL_INGRESS_NETWORK_CONNECTOR_REF";
 const ENV_EXECUTION_ROLE_ARN = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN";
 
 const RESERVED_ENV_KEYS = [
   ENV_CONTRACT_NAME,
   ENV_CONTRACT_VERSION,
   ENV_CONTROLLER_ENDPOINT,
+  ENV_CONTROLLER_OPERATIONS,
+  ENV_CONTROLLER_ROUTES,
   ENV_CONTROLLER_AUTH_REQUIRED,
   ENV_CONTROLLER_AUTH_DEFAULT,
   ENV_SESSION_REGISTRY_TABLE,
   ENV_IMAGE_REF,
   ENV_NETWORK_CONNECTOR_REFS,
+  ENV_INGRESS_NETWORK_CONNECTOR_REFS,
+  ENV_EGRESS_NETWORK_CONNECTOR_REFS,
+  ENV_SHELL_INGRESS_NETWORK_CONNECTOR_REF,
   ENV_EXECUTION_ROLE_ARN,
 ];
 
@@ -116,11 +153,29 @@ export interface AppTheoryMicrovmControllerProps {
   readonly microvmImage: IAppTheoryMicrovmImage;
 
   /**
+   * Ingress network connectors the controller is permitted to pass to Lambda MicroVMs.
+   *
+   * At least one connector reference is required and no more than 10 may be supplied.
+   * Use AppTheoryMicrovmNetworkConnector.allIngress/noIngress or an explicitly typed
+   * imported ingress connector reference; AppTheory does not hide an ingress default.
+   */
+  readonly ingressNetworkConnectors: IAppTheoryMicrovmNetworkConnector[];
+
+  /**
    * Egress network connectors the controller is permitted to pass to Lambda MicroVMs.
    *
    * At least one connector reference is required and no more than 10 may be supplied.
    */
   readonly egressNetworkConnectors: IAppTheoryMicrovmNetworkConnector[];
+
+  /**
+   * Shell ingress connector required for shell-auth-token support.
+   *
+   * Use AppTheoryMicrovmNetworkConnector.shellIngress or an explicitly typed shell-ingress
+   * connector reference. The shell-auth-token route is part of the real M16 controller
+   * surface, so this reference is required instead of being silently defaulted.
+   */
+  readonly shellIngressNetworkConnector: IAppTheoryMicrovmNetworkConnector;
 
   /**
    * Optional MicroVM execution role passed to RunMicrovm.
@@ -236,7 +291,7 @@ export interface AppTheoryMicrovmControllerProps {
 /**
  * AppTheory CDK construct for the first-class Lambda MicroVM controller deployment surface.
  *
- * The construct provisions the protected HTTP API routes from the M15 controller contract,
+ * The construct provisions the protected HTTP API routes from the M16 real controller contract,
  * the controller Lambda, the canonical durable session registry table, IAM grants, and
  * fail-closed auth environment wiring. Runtime command handling remains in the AppTheory
  * runtime contract; this construct only wires the deployment path.
@@ -288,7 +343,23 @@ export class AppTheoryMicrovmController extends Construct {
     validateRequired(props.microvmImage, "microvmImage");
 
     const imageArn = normalizeNoWhitespaceString(props.microvmImage.microvmImageArn, "microvmImage.microvmImageArn", 2048);
-    const connectorArns = normalizeConnectorReferences(props.egressNetworkConnectors);
+    const ingressConnectorArns = normalizeConnectorReferences(
+      props.ingressNetworkConnectors,
+      "ingressNetworkConnectors",
+      AppTheoryMicrovmNetworkConnectorKind.INGRESS,
+    );
+    const egressConnectorArns = normalizeConnectorReferences(
+      props.egressNetworkConnectors,
+      "egressNetworkConnectors",
+      AppTheoryMicrovmNetworkConnectorKind.EGRESS,
+    );
+    const shellIngressConnectorArn = normalizeSingleConnectorReference(
+      props.shellIngressNetworkConnector,
+      "shellIngressNetworkConnector",
+      AppTheoryMicrovmNetworkConnectorKind.SHELL_INGRESS,
+    );
+    const allIngressConnectorArns = dedupeConnectorArns([...ingressConnectorArns, shellIngressConnectorArn]);
+    assertNoDuplicates([...allIngressConnectorArns, ...egressConnectorArns], "controller networkConnectorArn");
     const authorizerHeaderName = normalizeHeaderName(props.authorizerHeaderName ?? "Authorization");
     const stageOpts = props.stage ?? {};
     const stageName = normalizeStageName(stageOpts.stageName ?? "$default");
@@ -310,9 +381,15 @@ export class AppTheoryMicrovmController extends Construct {
       ? `${stripTrailingSlash(this.api.apiEndpoint)}/microvms`
       : `${stripTrailingSlash(this.api.apiEndpoint)}/${stageName}/microvms`;
 
-    this.controllerFunction = this.createControllerFunction(props, imageArn, connectorArns);
+    this.controllerFunction = this.createControllerFunction(
+      props,
+      imageArn,
+      allIngressConnectorArns,
+      egressConnectorArns,
+      shellIngressConnectorArn,
+    );
     this.sessionTable.grantReadWriteData(this.controllerFunction);
-    this.grantMicrovmControlPlane(props, imageArn, connectorArns);
+    this.grantMicrovmControlPlane(props, imageArn);
 
     this.routeAuthorizer = new apigwv2Authorizers.HttpLambdaAuthorizer("Authorizer", props.authorizer, {
       authorizerName: props.authorizerName,
@@ -411,7 +488,9 @@ export class AppTheoryMicrovmController extends Construct {
   private createControllerFunction(
     props: AppTheoryMicrovmControllerProps,
     imageArn: string,
-    connectorArns: string[],
+    ingressConnectorArns: string[],
+    egressConnectorArns: string[],
+    shellIngressConnectorArn: string,
   ): lambda.Function {
     const controllerProps = props.controller;
     const environment = buildControllerEnvironment(
@@ -420,11 +499,16 @@ export class AppTheoryMicrovmController extends Construct {
         [ENV_CONTRACT_NAME]: MICROVM_CONTRACT_NAME,
         [ENV_CONTRACT_VERSION]: MICROVM_CONTRACT_VERSION,
         [ENV_CONTROLLER_ENDPOINT]: this.endpoint,
+        [ENV_CONTROLLER_OPERATIONS]: CONTROLLER_OPERATIONS.join(","),
+        [ENV_CONTROLLER_ROUTES]: CONTROLLER_ROUTE_DEFINITIONS.map((route) => `${route.method} ${route.path}`).join(","),
         [ENV_CONTROLLER_AUTH_REQUIRED]: CONTROLLER_AUTH_REQUIRED,
         [ENV_CONTROLLER_AUTH_DEFAULT]: CONTROLLER_AUTH_DEFAULT,
         [ENV_SESSION_REGISTRY_TABLE]: this.sessionTable.tableName,
         [ENV_IMAGE_REF]: imageArn,
-        [ENV_NETWORK_CONNECTOR_REFS]: connectorArns.join(","),
+        [ENV_NETWORK_CONNECTOR_REFS]: egressConnectorArns.join(","),
+        [ENV_INGRESS_NETWORK_CONNECTOR_REFS]: ingressConnectorArns.join(","),
+        [ENV_EGRESS_NETWORK_CONNECTOR_REFS]: egressConnectorArns.join(","),
+        [ENV_SHELL_INGRESS_NETWORK_CONNECTOR_REF]: shellIngressConnectorArn,
         ...(props.executionRole ? { [ENV_EXECUTION_ROLE_ARN]: props.executionRole.roleArn } : {}),
       },
     );
@@ -439,16 +523,13 @@ export class AppTheoryMicrovmController extends Construct {
     });
   }
 
-  private grantMicrovmControlPlane(
-    props: AppTheoryMicrovmControllerProps,
-    imageArn: string,
-    connectorArns: string[],
-  ): void {
+  private grantMicrovmControlPlane(props: AppTheoryMicrovmControllerProps, imageArn: string): void {
     this.controllerFunction.addToRolePolicy(
       new iam.PolicyStatement({
         sid: "AppTheoryMicrovmControlPlane",
         actions: [
           "lambda:CreateMicrovmAuthToken",
+          "lambda:CreateMicrovmShellAuthToken",
           "lambda:GetMicrovm",
           "lambda:ResumeMicrovm",
           "lambda:RunMicrovm",
@@ -471,7 +552,10 @@ export class AppTheoryMicrovmController extends Construct {
       new iam.PolicyStatement({
         sid: "AppTheoryMicrovmPassNetworkConnectors",
         actions: ["lambda:PassNetworkConnector"],
-        resources: connectorArns,
+        // Lambda marks PassNetworkConnector as permission-only without resource-level
+        // support. AppTheory constrains the permitted connector set through typed props
+        // and fail-closed environment wiring instead of accepting raw request strings.
+        resources: ["*"],
       }),
     );
 
@@ -481,15 +565,7 @@ export class AppTheoryMicrovmController extends Construct {
   }
 
   private addControllerRoutes(): void {
-    const routes: Array<{ id: string; method: apigwv2.HttpMethod; path: string }> = [
-      { id: "CreateMicrovm", method: apigwv2.HttpMethod.POST, path: "/microvms" },
-      { id: "StartMicrovm", method: apigwv2.HttpMethod.POST, path: "/microvms/{session_id}/start" },
-      { id: "StopMicrovm", method: apigwv2.HttpMethod.POST, path: "/microvms/{session_id}/stop" },
-      { id: "StatusMicrovm", method: apigwv2.HttpMethod.GET, path: "/microvms/{session_id}/status" },
-      { id: "GetMicrovmSession", method: apigwv2.HttpMethod.GET, path: "/microvms/{session_id}" },
-    ];
-
-    for (const route of routes) {
+    for (const route of CONTROLLER_ROUTE_DEFINITIONS) {
       this.api.addRoutes({
         path: route.path,
         methods: [route.method],
@@ -539,26 +615,65 @@ function normalizeNoWhitespaceString(value: string | undefined, propName: string
 
 function normalizeConnectorReferences(
   connectors: readonly IAppTheoryMicrovmNetworkConnector[] | undefined,
+  propName: string,
+  expectedKind: AppTheoryMicrovmNetworkConnectorKind,
 ): string[] {
   if (!connectors || connectors.length === 0) {
-    throw new Error("AppTheoryMicrovmController requires at least 1 egressNetworkConnectors entry");
+    throw new Error(`AppTheoryMicrovmController requires at least 1 ${propName} entry`);
   }
   if (connectors.length > 10) {
-    throw new Error("AppTheoryMicrovmController supports at most 10 egressNetworkConnectors entries");
+    throw new Error(`AppTheoryMicrovmController supports at most 10 ${propName} entries`);
   }
 
   const arns = connectors.map((connector, index) => {
-    if (connector === undefined || connector === null) {
-      throw new Error(`AppTheoryMicrovmController requires props.egressNetworkConnectors[${index}]`);
-    }
-    return normalizeNoWhitespaceString(
-      connector.networkConnectorArn,
-      `egressNetworkConnectors[${index}].networkConnectorArn`,
-      2048,
-    );
+    return normalizeSingleConnectorReference(connector, `${propName}[${index}]`, expectedKind);
   });
 
-  assertNoDuplicates(arns, "egressNetworkConnectors networkConnectorArn");
+  assertNoDuplicates(arns, `${propName} networkConnectorArn`);
+  return arns;
+}
+
+function normalizeSingleConnectorReference(
+  connector: IAppTheoryMicrovmNetworkConnector | undefined,
+  propName: string,
+  expectedKind: AppTheoryMicrovmNetworkConnectorKind,
+): string {
+  if (connector === undefined || connector === null) {
+    throw new Error(`AppTheoryMicrovmController requires props.${propName}`);
+  }
+  const actualKind = normalizeConnectorKindForController(connector.networkConnectorKind, propName);
+  if (actualKind !== expectedKind) {
+    throw new Error(
+      `AppTheoryMicrovmController: props.${propName} must be a ${expectedKind} connector reference`,
+    );
+  }
+  return normalizeNoWhitespaceString(connector.networkConnectorArn, `${propName}.networkConnectorArn`, 2048);
+}
+
+function normalizeConnectorKindForController(
+  kind: AppTheoryMicrovmNetworkConnectorKind | string | undefined,
+  propName: string,
+): AppTheoryMicrovmNetworkConnectorKind {
+  if (kind === undefined) {
+    throw new Error(`AppTheoryMicrovmController: props.${propName} must include networkConnectorKind`);
+  }
+  const normalized = String(kind).trim().toLowerCase().replace(/[_-]/g, "");
+  if (normalized === "ingress") {
+    return AppTheoryMicrovmNetworkConnectorKind.INGRESS;
+  }
+  if (normalized === "egress") {
+    return AppTheoryMicrovmNetworkConnectorKind.EGRESS;
+  }
+  if (normalized === "shellingress") {
+    return AppTheoryMicrovmNetworkConnectorKind.SHELL_INGRESS;
+  }
+  throw new Error(
+    `AppTheoryMicrovmController: props.${propName}.networkConnectorKind must be ingress, egress, or shell-ingress`,
+  );
+}
+
+function dedupeConnectorArns(arns: string[]): string[] {
+  assertNoDuplicates(arns, "controller networkConnectorArn");
   return arns;
 }
 
