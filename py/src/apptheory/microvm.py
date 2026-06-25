@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -1401,18 +1402,25 @@ class _LifecycleContractIndex:
 
 _FORBIDDEN_FIELD_NAMES = {
     "authorization",
+    "account_wide_list_token",
     "aws_access_key_id",
     "aws_secret_access_key",
     "aws_session_token",
     "bearer_token",
     "plaintext_token",
+    "provider_error",
+    "provider_exception",
     "provider_secret",
+    "raw_provider_error",
+    "raw_provider_exception",
     "raw_aws_credentials",
     "raw_lifecycle_hook_payload",
     "raw_sdk_client",
     "session_token_plaintext",
     "token_value",
     "x-amz-security-token",
+    "x-aws-proxy-auth",
+    "x_aws_proxy_auth",
 }
 
 
@@ -1422,14 +1430,46 @@ def _forbidden_field_name(name: str) -> bool:
 
 
 def _validate_safe_metadata(metadata: dict[str, str] | None, request_id: str) -> MicroVMSafeError | None:
-    for key in metadata or {}:
+    for key, value in (metadata or {}).items():
         if _forbidden_field_name(key):
             return _safe_error(
                 MICROVM_ERROR_FORBIDDEN_FIELD,
                 "apptheory: microvm metadata contains forbidden field",
                 request_id,
             )
+        if _forbidden_field_value(value):
+            return _safe_error(
+                MICROVM_ERROR_FORBIDDEN_FIELD,
+                "apptheory: microvm metadata contains forbidden value",
+                request_id,
+            )
     return None
+
+
+def _validate_safe_field_value(value: str, request_id: str) -> MicroVMSafeError | None:
+    if _forbidden_field_name(value) or _forbidden_field_value(value):
+        return _safe_error(
+            MICROVM_ERROR_FORBIDDEN_FIELD,
+            "apptheory: microvm field contains forbidden value",
+            request_id,
+        )
+    return None
+
+
+def _forbidden_field_value(value: str) -> bool:
+    normalized = str(value or "").strip().lower()
+    return bool(normalized) and (
+        normalized.startswith("bearer ")
+        or "x-aws-proxy-auth" in normalized
+        or "aws_secret_access_key" in normalized
+        or "aws_access_key_id" in normalized
+        or "aws_session_token" in normalized
+        or "raw provider exception" in normalized
+        or "raw_provider_exception" in normalized
+        or "raw provider error" in normalized
+        or "account-wide list token" in normalized
+        or "account_wide_list_token" in normalized
+    )
 
 
 def _clone_string_map(value: dict[str, Any] | None) -> dict[str, str] | None:
@@ -1469,6 +1509,8 @@ MICROVM_CONTROLLER_AUTH_DEFAULT_DENY = "deny"
 MICROVM_SESSION_REGISTRY_MODEL_NAME = "MicroVMSessionRegistryRecord"
 MICROVM_SESSION_REGISTRY_TABLE_NAME = "apptheory-microvm-sessions"
 MICROVM_SESSION_REGISTRY_TABLE_ENV = "APPTHEORY_MICROVM_SESSION_REGISTRY_TABLE"
+MICROVM_DEFAULT_SESSION_PROVIDER_ID = "apptheory.microvm.registry"
+MICROVM_AWS_LAMBDA_PROVIDER_ID = "aws.lambda.microvm"
 
 COMMAND_CREATE = "create"
 COMMAND_START = "start"
@@ -1751,6 +1793,14 @@ class MicroVMSessionQueryInput:
 
 
 @dataclass(slots=True)
+class MicroVMSessionTokenMetadata:
+    token_id: str
+    token_type: str
+    expires_at: float
+    scope: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class MicroVMSessionRecord:
     tenant_id: str
     namespace: str
@@ -1768,7 +1818,20 @@ class MicroVMSessionRecord:
     network_connector_ref: str = ""
     endpoint: str = ""
     microvm_id: str = ""
+    provider_id: str = MICROVM_DEFAULT_SESSION_PROVIDER_ID
+    provider_microvm_id: str = ""
+    provider_state: str = ""
+    aws_lifecycle_state: str = ""
+    image_version: str = ""
+    ingress_network_connector_refs: list[str] = field(default_factory=list)
+    egress_network_connector_refs: list[str] = field(default_factory=list)
+    last_observed_at: float = 0.0
+    provider_started_at: float = 0.0
+    provider_terminated_at: float = 0.0
     last_action: str = ""
+    reason_metadata: dict[str, str] | None = None
+    status_metadata: dict[str, str] | None = None
+    token_metadata: list[MicroVMSessionTokenMetadata] = field(default_factory=list)
     metadata: dict[str, str] | None = None
 
 
@@ -1798,11 +1861,27 @@ class MicroVMSessionRegistryRecord:
     desired_state: str = _registry_s("desired_state")
     endpoint: str = _registry_s("endpoint", omitempty=True)
     microvm_id: str = _registry_s("microvm_id", omitempty=True)
+    provider_id: str = _registry_s("provider_id")
+    provider_microvm_id: str = _registry_s("provider_microvm_id", omitempty=True)
+    provider_state: str = _registry_s("provider_state")
+    aws_lifecycle_state: str = _registry_s("aws_lifecycle_state")
     image_ref: str = _registry_s("image_ref")
+    image_version: str = _registry_s("image_version", omitempty=True)
     network_connector_ref: str = _registry_s("network_connector_ref")
+    ingress_network_connector_refs: list[str] = field(
+        default_factory=list,
+        metadata=_registry_theorydb_meta("ingress_network_connector_refs", omitempty=True),
+    )
+    egress_network_connector_refs: list[str] = field(
+        default_factory=list,
+        metadata=_registry_theorydb_meta("egress_network_connector_refs", omitempty=True),
+    )
     controller_id: str = _registry_s("controller_id")
     created_at: float = _registry_f("created_at")
     updated_at: float = _registry_f("updated_at")
+    last_observed_at: float = _registry_f("last_observed_at")
+    provider_started_at: float = _registry_f("provider_started_at", omitempty=True)
+    provider_terminated_at: float = _registry_f("provider_terminated_at", omitempty=True)
     expires_at: float = _registry_f("expires_at")
     ttl: int = _registry_n("ttl", roles=["ttl"])
     generation: int = _registry_n("generation")
@@ -1810,10 +1889,33 @@ class MicroVMSessionRegistryRecord:
     last_action: str = _registry_s("last_action")
     last_command_id: str = _registry_s("last_command_id")
     auth_subject: str = _registry_s("auth_subject")
+    reason_metadata: dict[str, str] | None = field(
+        default=None,
+        metadata=_registry_theorydb_meta("reason_metadata", omitempty=True),
+    )
+    status_metadata: dict[str, str] | None = field(
+        default=None,
+        metadata=_registry_theorydb_meta("status_metadata", omitempty=True),
+    )
+    token_metadata: list[MicroVMSessionTokenMetadata] = field(
+        default_factory=list,
+        metadata=_registry_theorydb_meta("token_metadata", omitempty=True),
+    )
     metadata: dict[str, str] | None = field(
         default=None,
         metadata=_registry_theorydb_meta("metadata", omitempty=True),
     )
+
+
+@dataclass(slots=True)
+class MicroVMSessionReconstructionRequest:
+    tenant_id: str
+    namespace: str
+    session_id: str
+    request_id: str = ""
+    auth_subject: str = ""
+    now: float = 0.0
+    existing: MicroVMSessionRecord | None = None
 
 
 type _MicroVMSessionRegistryKeyInput = (
@@ -1909,11 +2011,21 @@ def default_microvm_session_registry_contract() -> MicroVMSessionRegistryContrac
             "desired_state",
             "endpoint",
             "microvm_id",
+            "provider_id",
+            "provider_microvm_id",
+            "provider_state",
+            "aws_lifecycle_state",
             "image_ref",
+            "image_version",
             "network_connector_ref",
+            "ingress_network_connector_refs",
+            "egress_network_connector_refs",
             "controller_id",
             "created_at",
             "updated_at",
+            "last_observed_at",
+            "provider_started_at",
+            "provider_terminated_at",
             "expires_at",
             "ttl",
             "generation",
@@ -1921,6 +2033,9 @@ def default_microvm_session_registry_contract() -> MicroVMSessionRegistryContrac
             "last_action",
             "last_command_id",
             "auth_subject",
+            "reason_metadata",
+            "status_metadata",
+            "token_metadata",
         ],
         state_values=_required_lifecycle_states(),
         forbidden_fields=[
@@ -1928,6 +2043,9 @@ def default_microvm_session_registry_contract() -> MicroVMSessionRegistryContrac
             "raw_lifecycle_hook_payload",
             "bearer_token",
             "session_token_plaintext",
+            "x-aws-proxy-auth",
+            "raw_provider_exception",
+            "account_wide_list_token",
         ],
     )
 
@@ -2036,6 +2154,9 @@ def validate_microvm_session_record(record: MicroVMSessionRecord) -> None:
         or not normalized.session_id
         or not normalized.state
         or not normalized.desired_state
+        or not normalized.provider_id
+        or not normalized.provider_state
+        or not normalized.aws_lifecycle_state
         or not normalized.image_ref
         or not normalized.network_connector_ref
         or not normalized.controller_id
@@ -2051,6 +2172,7 @@ def validate_microvm_session_record(record: MicroVMSessionRecord) -> None:
     if (
         normalized.created_at <= 0
         or normalized.updated_at <= 0
+        or normalized.last_observed_at <= 0
         or normalized.expires_at <= 0
         or normalized.generation <= 0
     ):
@@ -2071,9 +2193,81 @@ def validate_microvm_session_record(record: MicroVMSessionRecord) -> None:
             "apptheory: microvm session record state is unsupported",
             normalized.last_command_id,
         )
+    provider_err = _validate_session_provider_fields(normalized)
+    if provider_err:
+        raise provider_err
     metadata_err = _validate_safe_metadata(normalized.metadata, normalized.last_command_id)
     if metadata_err:
         raise metadata_err
+    reason_err = _validate_safe_metadata(normalized.reason_metadata, normalized.last_command_id)
+    if reason_err:
+        raise reason_err
+    status_err = _validate_safe_metadata(normalized.status_metadata, normalized.last_command_id)
+    if status_err:
+        raise status_err
+    reason_err = _validate_safe_metadata(normalized.reason_metadata, normalized.last_command_id)
+    if reason_err:
+        raise reason_err
+    status_err = _validate_safe_metadata(normalized.status_metadata, normalized.last_command_id)
+    if status_err:
+        raise status_err
+
+
+def _validate_session_provider_fields(record: MicroVMSessionRecord) -> MicroVMSafeError | None:
+    fields = [
+        record.endpoint,
+        record.microvm_id,
+        record.provider_id,
+        record.provider_microvm_id,
+        record.provider_state,
+        record.aws_lifecycle_state,
+        record.image_ref,
+        record.image_version,
+        record.network_connector_ref,
+        *record.ingress_network_connector_refs,
+        *record.egress_network_connector_refs,
+    ]
+    for item in fields:
+        err = _validate_safe_field_value(item, record.last_command_id)
+        if err:
+            return err
+    for token in record.token_metadata:
+        try:
+            validate_microvm_session_token_metadata(token, record.last_command_id)
+        except MicroVMSafeError as exc:
+            return exc
+    return None
+
+
+def validate_microvm_session_token_metadata(
+    token: MicroVMSessionTokenMetadata | dict[str, Any], request_id: str = ""
+) -> None:
+    normalized = _normalize_session_token_metadata(token)
+    if not normalized.token_id or not normalized.token_type or normalized.expires_at <= 0 or not normalized.scope:
+        raise _safe_error(
+            MICROVM_ERROR_TOKEN_SAFETY_VIOLATION,
+            "apptheory: microvm session token metadata is incomplete",
+            request_id,
+        )
+    for item in [normalized.token_id, normalized.token_type, *normalized.scope]:
+        err = _validate_safe_field_value(item, request_id)
+        if err:
+            raise err
+
+
+def microvm_session_token_metadata_from_provider_token(
+    token: MicroVMProviderToken | dict[str, Any],
+) -> MicroVMSessionTokenMetadata:
+    normalized = _normalize_provider_token(token)
+    validate_microvm_provider_token(normalized)
+    metadata = MicroVMSessionTokenMetadata(
+        token_id=normalized.token_id,
+        token_type=normalized.token_type,
+        expires_at=normalized.expires_at,
+        scope=list(normalized.scope),
+    )
+    validate_microvm_session_token_metadata(metadata)
+    return metadata
 
 
 def validate_microvm_session_status(status: MicroVMSessionStatus) -> None:
@@ -2194,11 +2388,21 @@ def microvm_session_record_to_registry_record(record: MicroVMSessionRecord) -> M
         desired_state=normalized.desired_state,
         endpoint=normalized.endpoint,
         microvm_id=normalized.microvm_id,
+        provider_id=normalized.provider_id,
+        provider_microvm_id=normalized.provider_microvm_id,
+        provider_state=normalized.provider_state,
+        aws_lifecycle_state=normalized.aws_lifecycle_state,
         image_ref=normalized.image_ref,
+        image_version=normalized.image_version,
         network_connector_ref=normalized.network_connector_ref,
+        ingress_network_connector_refs=list(normalized.ingress_network_connector_refs),
+        egress_network_connector_refs=list(normalized.egress_network_connector_refs),
         controller_id=normalized.controller_id,
         created_at=normalized.created_at,
         updated_at=normalized.updated_at,
+        last_observed_at=normalized.last_observed_at,
+        provider_started_at=normalized.provider_started_at,
+        provider_terminated_at=normalized.provider_terminated_at,
         expires_at=normalized.expires_at,
         ttl=int(normalized.expires_at),
         generation=normalized.generation,
@@ -2206,6 +2410,9 @@ def microvm_session_record_to_registry_record(record: MicroVMSessionRecord) -> M
         last_action=normalized.last_action,
         last_command_id=normalized.last_command_id,
         auth_subject=normalized.auth_subject,
+        reason_metadata=_clone_string_map(normalized.reason_metadata),
+        status_metadata=_clone_string_map(normalized.status_metadata),
+        token_metadata=_clone_session_token_metadata_list(normalized.token_metadata),
         metadata=_clone_string_map(normalized.metadata),
     )
     validate_microvm_session_registry_record(registry)
@@ -2247,6 +2454,127 @@ class MemoryMicroVMSessionRegistry:
 
 def create_memory_microvm_session_registry() -> MemoryMicroVMSessionRegistry:
     return MemoryMicroVMSessionRegistry()
+
+
+MicroVMSessionReconstructionHook = Callable[[MicroVMSessionReconstructionRequest], MicroVMSessionRecord]
+
+
+def reconstruct_microvm_session_record(
+    request: MicroVMSessionReconstructionRequest | dict[str, Any],
+    hook: MicroVMSessionReconstructionHook | None,
+) -> MicroVMSessionRecord:
+    normalized = _normalize_session_reconstruction_request(request)
+    _normalize_session_registry_key((normalized.tenant_id, normalized.namespace, normalized.session_id))
+    if hook is None:
+        raise _safe_error(
+            MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+            "apptheory: microvm registry reconstruction requires a product hook",
+            normalized.request_id,
+        )
+    try:
+        record = hook(normalized)
+    except Exception as exc:  # noqa: BLE001
+        if isinstance(exc, MicroVMSafeError):
+            raise _safe_error(
+                MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+                "apptheory: microvm registry reconstruction hook failed",
+                normalized.request_id,
+            ) from None
+        raise _safe_error(
+            MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+            "apptheory: microvm registry reconstruction hook failed",
+            normalized.request_id,
+        ) from None
+    reconstructed = _normalize_session_record(record)
+    if (
+        reconstructed.tenant_id != normalized.tenant_id
+        or reconstructed.namespace != normalized.namespace
+        or reconstructed.session_id != normalized.session_id
+    ):
+        raise _safe_error(
+            MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+            "apptheory: microvm registry reconstruction tenant/session mismatch",
+            normalized.request_id,
+        )
+    validate_microvm_session_record(reconstructed)
+    if normalized.now > 0 and reconstructed.expires_at <= normalized.now:
+        raise _safe_error(
+            MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+            "apptheory: microvm registry reconstruction returned stale state",
+            normalized.request_id,
+        )
+    return reconstructed
+
+
+class ReconstructingMicroVMSessionRegistry:
+    def __init__(
+        self,
+        registry: Any,
+        hook: MicroVMSessionReconstructionHook | None,
+        *,
+        stale_after_seconds: int = 0,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        if registry is None:
+            raise _safe_error(
+                MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+                "apptheory: microvm registry reconstruction requires a session registry",
+                "",
+            )
+        if hook is None:
+            raise _safe_error(
+                MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+                "apptheory: microvm registry reconstruction requires a product hook",
+                "",
+            )
+        self._registry = registry
+        self._hook = hook
+        self._stale_after_seconds = int(stale_after_seconds or 0) if int(stale_after_seconds or 0) > 0 else 0
+        self._clock = clock or time.time
+
+    def put(self, record: MicroVMSessionRecord) -> MicroVMSessionRecord:
+        return self._registry.put(record)
+
+    def get(self, key: _MicroVMSessionRegistryKeyInput) -> MicroVMSessionRecord:
+        normalized = _normalize_session_registry_key(key)
+        now = float(self._clock() or 0.0)
+        existing: MicroVMSessionRecord | None = None
+        try:
+            record = self._registry.get(normalized)
+            if not _session_record_is_stale(record, now, self._stale_after_seconds):
+                return record
+            existing = record
+        except Exception:  # noqa: BLE001
+            existing = None
+        reconstructed = reconstruct_microvm_session_record(
+            MicroVMSessionReconstructionRequest(
+                tenant_id=normalized[0],
+                namespace=normalized[1],
+                session_id=normalized[2],
+                now=now,
+                existing=existing,
+            ),
+            self._hook,
+        )
+        return self._registry.put(reconstructed)
+
+    def delete(self, key: _MicroVMSessionRegistryKeyInput) -> None:
+        self._registry.delete(key)
+
+
+def create_reconstructing_microvm_session_registry(
+    registry: Any,
+    hook: MicroVMSessionReconstructionHook | None,
+    *,
+    stale_after_seconds: int = 0,
+    clock: Callable[[], float] | None = None,
+) -> ReconstructingMicroVMSessionRegistry:
+    return ReconstructingMicroVMSessionRegistry(
+        registry,
+        hook,
+        stale_after_seconds=stale_after_seconds,
+        clock=clock,
+    )
 
 
 class TableTheoryMicroVMSessionRegistry:
@@ -2347,11 +2675,16 @@ class MicroVMRegistryClient:
             desired_state=STATE_REQUESTED,
             endpoint="",
             microvm_id="",
+            provider_id=MICROVM_DEFAULT_SESSION_PROVIDER_ID,
+            provider_microvm_id=input_.session_id,
+            provider_state=STATE_REQUESTED,
+            aws_lifecycle_state=STATE_REQUESTED,
             image_ref=input_.image_ref,
             network_connector_ref=input_.network_connector_ref,
             controller_id=input_.controller_id,
             created_at=now,
             updated_at=now,
+            last_observed_at=now,
             expires_at=now + self._ttl_seconds,
             generation=1,
             last_action=COMMAND_CREATE,
@@ -2395,11 +2728,16 @@ class MicroVMRegistryClient:
         next_record = _clone_session_record(record)
         next_record.state = state
         next_record.desired_state = desired_state
+        next_record.provider_id = next_record.provider_id or MICROVM_DEFAULT_SESSION_PROVIDER_ID
+        next_record.provider_microvm_id = next_record.provider_microvm_id or next_record.session_id
+        next_record.provider_state = state
+        next_record.aws_lifecycle_state = state
         next_record.controller_id = input_.controller_id
         next_record.auth_subject = input_.auth_subject
         next_record.last_action = action
         next_record.last_command_id = input_.request_id
         next_record.updated_at = float(input_.now or 0) if float(input_.now or 0) > 0 else next_record.updated_at
+        next_record.last_observed_at = next_record.updated_at
         next_record.generation += 1
         return self._registry.put(next_record)
 
@@ -2608,11 +2946,16 @@ class FakeMicroVMClient:
             desired_state=STATE_REQUESTED,
             endpoint="",
             microvm_id="",
+            provider_id=MICROVM_DEFAULT_SESSION_PROVIDER_ID,
+            provider_microvm_id=input_.session_id,
+            provider_state=STATE_REQUESTED,
+            aws_lifecycle_state=STATE_REQUESTED,
             image_ref=input_.image_ref,
             network_connector_ref=input_.network_connector_ref,
             controller_id=input_.controller_id,
             created_at=now,
             updated_at=now,
+            last_observed_at=now,
             expires_at=now + 3600,
             generation=1,
             last_action=COMMAND_CREATE,
@@ -2662,11 +3005,16 @@ class FakeMicroVMClient:
         next_record = _clone_session_record(record)
         next_record.state = state
         next_record.desired_state = desired
+        next_record.provider_id = next_record.provider_id or MICROVM_DEFAULT_SESSION_PROVIDER_ID
+        next_record.provider_microvm_id = next_record.provider_microvm_id or next_record.session_id
+        next_record.provider_state = state
+        next_record.aws_lifecycle_state = state
         next_record.controller_id = input_.controller_id
         next_record.auth_subject = input_.auth_subject
         next_record.last_action = command
         next_record.last_command_id = input_.request_id
         next_record.updated_at = float(input_.now or self._now or 1.0)
+        next_record.last_observed_at = next_record.updated_at
         next_record.generation += 1
         validate_microvm_session_record(next_record)
         self._sessions[microvm_session_key(next_record)] = _clone_session_record(next_record)
@@ -2883,7 +3231,7 @@ def create_fake_microvm_provider(now: float = 0.0) -> FakeMicroVMProvider:
 class AWSLambdaMicroVMProvider:
     def __init__(self, *, region_name: str | None = None, clock: Callable[[], float] | None = None) -> None:
         self._client = _load_aws_lambda_microvm_provider_client(region_name=region_name)
-        self._clock = clock or (lambda: 0.0)
+        self._clock = clock or time.time
 
     def run(self, input_: MicroVMProviderRunInput | dict[str, Any]) -> MicroVMProviderSession:
         normalized = _validate_provider_run_input(input_)
@@ -3179,17 +3527,30 @@ def _normalize_session_record(record: MicroVMSessionRecord) -> MicroVMSessionRec
         state=_normalize_state(record.state),
         desired_state=_normalize_state(record.desired_state),
         image_ref=str(record.image_ref or "").strip(),
+        image_version=str(record.image_version or "").strip(),
         network_connector_ref=str(record.network_connector_ref or "").strip(),
         controller_id=str(record.controller_id or "").strip(),
         created_at=float(record.created_at or 0),
         updated_at=float(record.updated_at or 0),
+        last_observed_at=float(record.last_observed_at or 0),
+        provider_started_at=float(record.provider_started_at or 0),
+        provider_terminated_at=float(record.provider_terminated_at or 0),
         expires_at=float(record.expires_at or 0),
         generation=int(record.generation or 0),
         endpoint=str(record.endpoint or "").strip(),
         microvm_id=str(record.microvm_id or "").strip(),
+        provider_id=str(record.provider_id or "").strip(),
+        provider_microvm_id=str(record.provider_microvm_id or "").strip(),
+        provider_state=str(record.provider_state or "").strip(),
+        aws_lifecycle_state=str(record.aws_lifecycle_state or "").strip(),
+        ingress_network_connector_refs=_normalize_string_list(record.ingress_network_connector_refs),
+        egress_network_connector_refs=_normalize_string_list(record.egress_network_connector_refs),
         last_action=_normalize_command(record.last_action),
         last_command_id=str(record.last_command_id or "").strip(),
         auth_subject=str(record.auth_subject or "").strip(),
+        reason_metadata=_clone_string_map(record.reason_metadata),
+        status_metadata=_clone_string_map(record.status_metadata),
+        token_metadata=_clone_session_token_metadata_list(record.token_metadata),
         metadata=_clone_string_map(record.metadata),
     )
 
@@ -3224,11 +3585,21 @@ def _normalize_session_registry_record(
             "desired_state": record.desired_state,
             "endpoint": record.endpoint,
             "microvm_id": record.microvm_id,
+            "provider_id": record.provider_id,
+            "provider_microvm_id": record.provider_microvm_id,
+            "provider_state": record.provider_state,
+            "aws_lifecycle_state": record.aws_lifecycle_state,
             "image_ref": record.image_ref,
+            "image_version": record.image_version,
             "network_connector_ref": record.network_connector_ref,
+            "ingress_network_connector_refs": record.ingress_network_connector_refs,
+            "egress_network_connector_refs": record.egress_network_connector_refs,
             "controller_id": record.controller_id,
             "created_at": record.created_at,
             "updated_at": record.updated_at,
+            "last_observed_at": record.last_observed_at,
+            "provider_started_at": record.provider_started_at,
+            "provider_terminated_at": record.provider_terminated_at,
             "expires_at": record.expires_at,
             "ttl": record.ttl,
             "generation": record.generation,
@@ -3236,10 +3607,17 @@ def _normalize_session_registry_record(
             "last_action": record.last_action,
             "last_command_id": record.last_command_id,
             "auth_subject": record.auth_subject,
+            "reason_metadata": record.reason_metadata,
+            "status_metadata": record.status_metadata,
+            "token_metadata": record.token_metadata,
             "metadata": record.metadata,
         }
     else:
         raw = record if isinstance(record, dict) else {}
+    reason_metadata = raw.get("reason_metadata")
+    status_metadata = raw.get("status_metadata")
+    token_metadata = raw.get("token_metadata")
+    metadata = raw.get("metadata")
     return MicroVMSessionRegistryRecord(
         pk=str(raw.get("pk", "") or "").strip(),
         sk=str(raw.get("sk", "") or "").strip(),
@@ -3250,11 +3628,21 @@ def _normalize_session_registry_record(
         desired_state=_normalize_state(str(raw.get("desired_state", "") or "")),
         endpoint=str(raw.get("endpoint", "") or "").strip(),
         microvm_id=str(raw.get("microvm_id", "") or "").strip(),
+        provider_id=str(raw.get("provider_id", "") or "").strip(),
+        provider_microvm_id=str(raw.get("provider_microvm_id", "") or "").strip(),
+        provider_state=str(raw.get("provider_state", "") or "").strip(),
+        aws_lifecycle_state=str(raw.get("aws_lifecycle_state", "") or "").strip(),
         image_ref=str(raw.get("image_ref", "") or "").strip(),
+        image_version=str(raw.get("image_version", "") or "").strip(),
         network_connector_ref=str(raw.get("network_connector_ref", "") or "").strip(),
+        ingress_network_connector_refs=_normalize_string_list(raw.get("ingress_network_connector_refs") or []),
+        egress_network_connector_refs=_normalize_string_list(raw.get("egress_network_connector_refs") or []),
         controller_id=str(raw.get("controller_id", "") or "").strip(),
         created_at=float(raw.get("created_at", 0) or 0),
         updated_at=float(raw.get("updated_at", 0) or 0),
+        last_observed_at=float(raw.get("last_observed_at", 0) or 0),
+        provider_started_at=float(raw.get("provider_started_at", 0) or 0),
+        provider_terminated_at=float(raw.get("provider_terminated_at", 0) or 0),
         expires_at=float(raw.get("expires_at", 0) or 0),
         ttl=int(raw.get("ttl", 0) or 0),
         generation=int(raw.get("generation", 0) or 0),
@@ -3262,7 +3650,10 @@ def _normalize_session_registry_record(
         last_action=_normalize_command(str(raw.get("last_action", "") or "")),
         last_command_id=str(raw.get("last_command_id", "") or "").strip(),
         auth_subject=str(raw.get("auth_subject", "") or "").strip(),
-        metadata=_clone_string_map(raw.get("metadata") if isinstance(raw.get("metadata"), dict) else None),
+        reason_metadata=_clone_string_map(reason_metadata if isinstance(reason_metadata, dict) else None),
+        status_metadata=_clone_string_map(status_metadata if isinstance(status_metadata, dict) else None),
+        token_metadata=_clone_session_token_metadata_list(token_metadata if isinstance(token_metadata, list) else []),
+        metadata=_clone_string_map(metadata if isinstance(metadata, dict) else None),
     )
 
 
@@ -3274,17 +3665,30 @@ def _session_record_from_registry_no_validate(record: MicroVMSessionRegistryReco
         state=record.state,
         desired_state=record.desired_state,
         image_ref=record.image_ref,
+        image_version=record.image_version,
         network_connector_ref=record.network_connector_ref,
         controller_id=record.controller_id,
         created_at=record.created_at,
         updated_at=record.updated_at,
+        last_observed_at=record.last_observed_at,
+        provider_started_at=record.provider_started_at,
+        provider_terminated_at=record.provider_terminated_at,
         expires_at=record.expires_at,
         generation=record.generation,
         endpoint=record.endpoint,
         microvm_id=record.microvm_id,
+        provider_id=record.provider_id,
+        provider_microvm_id=record.provider_microvm_id,
+        provider_state=record.provider_state,
+        aws_lifecycle_state=record.aws_lifecycle_state,
+        ingress_network_connector_refs=list(record.ingress_network_connector_refs),
+        egress_network_connector_refs=list(record.egress_network_connector_refs),
         last_action=record.last_action,
         last_command_id=record.last_command_id,
         auth_subject=record.auth_subject,
+        reason_metadata=_clone_string_map(record.reason_metadata),
+        status_metadata=_clone_string_map(record.status_metadata),
+        token_metadata=_clone_session_token_metadata_list(record.token_metadata),
         metadata=_clone_string_map(record.metadata),
     )
 
@@ -3319,6 +3723,43 @@ def _normalize_session_registry_key(
             "",
         )
     return (tenant_id, namespace, session_id)
+
+
+def _normalize_session_reconstruction_request(
+    request: MicroVMSessionReconstructionRequest | dict[str, Any],
+) -> MicroVMSessionReconstructionRequest:
+    if isinstance(request, MicroVMSessionReconstructionRequest):
+        return MicroVMSessionReconstructionRequest(
+            tenant_id=str(request.tenant_id or "").strip(),
+            namespace=str(request.namespace or "").strip(),
+            session_id=str(request.session_id or "").strip(),
+            request_id=str(request.request_id or "").strip(),
+            auth_subject=str(request.auth_subject or "").strip(),
+            now=float(request.now or 0.0),
+            existing=_clone_session_record(request.existing) if request.existing is not None else None,
+        )
+    raw = request if isinstance(request, dict) else {}
+    existing = raw.get("existing")
+    return MicroVMSessionReconstructionRequest(
+        tenant_id=str(raw.get("tenant_id", "") or "").strip(),
+        namespace=str(raw.get("namespace", "") or "").strip(),
+        session_id=str(raw.get("session_id", "") or "").strip(),
+        request_id=str(raw.get("request_id", "") or "").strip(),
+        auth_subject=str(raw.get("auth_subject", "") or "").strip(),
+        now=float(raw.get("now", 0.0) or 0.0),
+        existing=_clone_session_record(existing) if isinstance(existing, MicroVMSessionRecord) else None,
+    )
+
+
+def _session_record_is_stale(record: MicroVMSessionRecord, now: float, stale_after_seconds: int) -> bool:
+    if stale_after_seconds <= 0 or now <= 0:
+        return False
+    normalized = _normalize_session_record(record)
+    return (
+        normalized.last_observed_at <= 0
+        or normalized.last_observed_at + stale_after_seconds < now
+        or normalized.expires_at <= now
+    )
 
 
 def _registry_key_tuple(key: tuple[str, str, str]) -> tuple[str, str]:
@@ -3412,6 +3853,36 @@ def _as_safe_error(exc: Exception, request_id: str) -> MicroVMSafeError:
         "apptheory: microvm controller command failed",
         request_id,
     )
+
+
+def _normalize_session_token_metadata(
+    token: MicroVMSessionTokenMetadata | dict[str, Any],
+) -> MicroVMSessionTokenMetadata:
+    if isinstance(token, MicroVMSessionTokenMetadata):
+        return MicroVMSessionTokenMetadata(
+            token_id=str(token.token_id or "").strip(),
+            token_type=str(token.token_type or "").strip(),
+            expires_at=float(token.expires_at or 0.0),
+            scope=_normalize_string_list(token.scope),
+        )
+    raw = token if isinstance(token, dict) else {}
+    return MicroVMSessionTokenMetadata(
+        token_id=str(raw.get("token_id", "") or "").strip(),
+        token_type=str(raw.get("token_type", "") or "").strip(),
+        expires_at=float(raw.get("expires_at", 0.0) or 0.0),
+        scope=_normalize_string_list(raw.get("scope") or []),
+    )
+
+
+def _clone_session_token_metadata_list(values: Any) -> list[MicroVMSessionTokenMetadata]:
+    if not isinstance(values, list):
+        return []
+    out: list[MicroVMSessionTokenMetadata] = []
+    for item in values:
+        normalized = _normalize_session_token_metadata(item)
+        if normalized.token_id or normalized.token_type or normalized.expires_at > 0 or normalized.scope:
+            out.append(normalized)
+    return out
 
 
 def _clone_session_record(record: MicroVMSessionRecord) -> MicroVMSessionRecord:

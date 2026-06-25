@@ -2930,6 +2930,8 @@ func (sessionRecord) TableName() string
 
 ## github.com/theory-cloud/apptheory/runtime/microvm
 
+const AWSLambdaMicroVMProviderID = "aws.lambda.microvm"
+
 const CommandCreate Command = "create"
 
 const CommandSession Command = "session"
@@ -2947,6 +2949,8 @@ const ContractVersion = "m15.microvm/v1"
 const ContractVersionM16 = "m16.microvm/v1"
 
 const ControllerAuthDefaultDeny = "deny"
+
+const DefaultSessionProviderID = "apptheory.microvm.registry"
 
 const DefaultSessionRegistryTableName = "apptheory-microvm-sessions"
 
@@ -3391,6 +3395,13 @@ type ProviderTokenInput struct {
 	AllowedPortScope []ProviderPortScope    `json:"allowed_port_scope,omitempty"`
 }
 
+type ReconstructingSessionRegistry struct {
+	registry   SessionRegistry
+	hook       SessionReconstructionHook
+	staleAfter time.Duration
+	clock      Clock
+}
+
 type RegistryClient struct {
 	registry SessionRegistry
 	ttl      time.Duration
@@ -3429,25 +3440,52 @@ type SessionQueryInput struct {
 	AuthSubject string `json:"auth_subject"`
 }
 
+type SessionReconstructionHook func(context.Context, SessionReconstructionRequest) (SessionRecord, error)
+
+type SessionReconstructionOption func(*ReconstructingSessionRegistry)
+
+type SessionReconstructionRequest struct {
+	RequestID   string         `json:"request_id"`
+	TenantID    string         `json:"tenant_id"`
+	Namespace   string         `json:"namespace"`
+	SessionID   string         `json:"session_id"`
+	AuthSubject string         `json:"auth_subject,omitempty"`
+	Now         time.Time      `json:"now"`
+	Existing    *SessionRecord `json:"existing,omitempty"`
+}
+
 type SessionRecord struct {
-	TenantID            string            `json:"tenant_id"`
-	Namespace           string            `json:"namespace"`
-	SessionID           string            `json:"session_id"`
-	State               LifecycleState    `json:"state"`
-	DesiredState        LifecycleState    `json:"desired_state"`
-	Endpoint            string            `json:"endpoint,omitempty"`
-	MicroVMID           string            `json:"microvm_id,omitempty"`
-	ImageRef            string            `json:"image_ref"`
-	NetworkConnectorRef string            `json:"network_connector_ref"`
-	ControllerID        string            `json:"controller_id"`
-	CreatedAt           time.Time         `json:"created_at"`
-	UpdatedAt           time.Time         `json:"updated_at"`
-	ExpiresAt           time.Time         `json:"expires_at"`
-	Generation          int64             `json:"generation"`
-	LastAction          Command           `json:"last_action"`
-	LastCommandID       string            `json:"last_command_id"`
-	AuthSubject         string            `json:"auth_subject"`
-	Metadata            map[string]string `json:"metadata,omitempty"`
+	TenantID                    string                 `json:"tenant_id"`
+	Namespace                   string                 `json:"namespace"`
+	SessionID                   string                 `json:"session_id"`
+	State                       LifecycleState         `json:"state"`
+	DesiredState                LifecycleState         `json:"desired_state"`
+	Endpoint                    string                 `json:"endpoint,omitempty"`
+	MicroVMID                   string                 `json:"microvm_id,omitempty"`
+	ProviderID                  string                 `json:"provider_id"`
+	ProviderMicroVMID           string                 `json:"provider_microvm_id,omitempty"`
+	ProviderState               string                 `json:"provider_state"`
+	AWSLifecycleState           string                 `json:"aws_lifecycle_state"`
+	ImageRef                    string                 `json:"image_ref"`
+	ImageVersion                string                 `json:"image_version,omitempty"`
+	NetworkConnectorRef         string                 `json:"network_connector_ref"`
+	IngressNetworkConnectorRefs []string               `json:"ingress_network_connector_refs,omitempty"`
+	EgressNetworkConnectorRefs  []string               `json:"egress_network_connector_refs,omitempty"`
+	ControllerID                string                 `json:"controller_id"`
+	CreatedAt                   time.Time              `json:"created_at"`
+	UpdatedAt                   time.Time              `json:"updated_at"`
+	LastObservedAt              time.Time              `json:"last_observed_at"`
+	ProviderStartedAt           time.Time              `json:"provider_started_at,omitempty"`
+	ProviderTerminatedAt        time.Time              `json:"provider_terminated_at,omitempty"`
+	ExpiresAt                   time.Time              `json:"expires_at"`
+	Generation                  int64                  `json:"generation"`
+	LastAction                  Command                `json:"last_action"`
+	LastCommandID               string                 `json:"last_command_id"`
+	AuthSubject                 string                 `json:"auth_subject"`
+	ReasonMetadata              map[string]string      `json:"reason_metadata,omitempty"`
+	StatusMetadata              map[string]string      `json:"status_metadata,omitempty"`
+	TokenMetadata               []SessionTokenMetadata `json:"token_metadata,omitempty"`
+	Metadata                    map[string]string      `json:"metadata,omitempty"`
 }
 
 type SessionRegistry interface {
@@ -3465,28 +3503,41 @@ type SessionRegistryContract struct {
 }
 
 type SessionRegistryRecord struct {
-	PK                  string            `theorydb:"pk,attr:pk" json:"pk"`
-	SK                  string            `theorydb:"sk,attr:sk" json:"sk"`
-	TenantID            string            `theorydb:"attr:tenant_id" json:"tenant_id"`
-	Namespace           string            `theorydb:"attr:namespace" json:"namespace"`
-	SessionID           string            `theorydb:"attr:session_id" json:"session_id"`
-	State               LifecycleState    `theorydb:"attr:state" json:"state"`
-	DesiredState        LifecycleState    `theorydb:"attr:desired_state" json:"desired_state"`
-	Endpoint            string            `theorydb:"attr:endpoint,omitempty" json:"endpoint,omitempty"`
-	MicroVMID           string            `theorydb:"attr:microvm_id,omitempty" json:"microvm_id,omitempty"`
-	ImageRef            string            `theorydb:"attr:image_ref" json:"image_ref"`
-	NetworkConnectorRef string            `theorydb:"attr:network_connector_ref" json:"network_connector_ref"`
-	ControllerID        string            `theorydb:"attr:controller_id" json:"controller_id"`
-	CreatedAt           time.Time         `theorydb:"attr:created_at" json:"created_at"`
-	UpdatedAt           time.Time         `theorydb:"attr:updated_at" json:"updated_at"`
-	ExpiresAt           time.Time         `theorydb:"attr:expires_at" json:"expires_at"`
-	TTL                 int64             `theorydb:"ttl,attr:ttl" json:"ttl"`
-	Generation          int64             `theorydb:"attr:generation" json:"generation"`
-	Version             int64             `theorydb:"version,attr:version" json:"version"`
-	LastAction          Command           `theorydb:"attr:last_action" json:"last_action"`
-	LastCommandID       string            `theorydb:"attr:last_command_id" json:"last_command_id"`
-	AuthSubject         string            `theorydb:"attr:auth_subject" json:"auth_subject"`
-	Metadata            map[string]string `theorydb:"attr:metadata,omitempty" json:"metadata,omitempty"`
+	PK                          string                 `theorydb:"pk,attr:pk" json:"pk"`
+	SK                          string                 `theorydb:"sk,attr:sk" json:"sk"`
+	TenantID                    string                 `theorydb:"attr:tenant_id" json:"tenant_id"`
+	Namespace                   string                 `theorydb:"attr:namespace" json:"namespace"`
+	SessionID                   string                 `theorydb:"attr:session_id" json:"session_id"`
+	State                       LifecycleState         `theorydb:"attr:state" json:"state"`
+	DesiredState                LifecycleState         `theorydb:"attr:desired_state" json:"desired_state"`
+	Endpoint                    string                 `theorydb:"attr:endpoint,omitempty" json:"endpoint,omitempty"`
+	MicroVMID                   string                 `theorydb:"attr:microvm_id,omitempty" json:"microvm_id,omitempty"`
+	ProviderID                  string                 `theorydb:"attr:provider_id" json:"provider_id"`
+	ProviderMicroVMID           string                 `theorydb:"attr:provider_microvm_id,omitempty" json:"provider_microvm_id,omitempty"`
+	ProviderState               string                 `theorydb:"attr:provider_state" json:"provider_state"`
+	AWSLifecycleState           string                 `theorydb:"attr:aws_lifecycle_state" json:"aws_lifecycle_state"`
+	ImageRef                    string                 `theorydb:"attr:image_ref" json:"image_ref"`
+	ImageVersion                string                 `theorydb:"attr:image_version,omitempty" json:"image_version,omitempty"`
+	NetworkConnectorRef         string                 `theorydb:"attr:network_connector_ref" json:"network_connector_ref"`
+	IngressNetworkConnectorRefs []string               `theorydb:"attr:ingress_network_connector_refs,omitempty" json:"ingress_network_connector_refs,omitempty"`
+	EgressNetworkConnectorRefs  []string               `theorydb:"attr:egress_network_connector_refs,omitempty" json:"egress_network_connector_refs,omitempty"`
+	ControllerID                string                 `theorydb:"attr:controller_id" json:"controller_id"`
+	CreatedAt                   time.Time              `theorydb:"attr:created_at" json:"created_at"`
+	UpdatedAt                   time.Time              `theorydb:"attr:updated_at" json:"updated_at"`
+	LastObservedAt              time.Time              `theorydb:"attr:last_observed_at" json:"last_observed_at"`
+	ProviderStartedAt           time.Time              `theorydb:"attr:provider_started_at,omitempty" json:"provider_started_at,omitempty"`
+	ProviderTerminatedAt        time.Time              `theorydb:"attr:provider_terminated_at,omitempty" json:"provider_terminated_at,omitempty"`
+	ExpiresAt                   time.Time              `theorydb:"attr:expires_at" json:"expires_at"`
+	TTL                         int64                  `theorydb:"ttl,attr:ttl" json:"ttl"`
+	Generation                  int64                  `theorydb:"attr:generation" json:"generation"`
+	Version                     int64                  `theorydb:"version,attr:version" json:"version"`
+	LastAction                  Command                `theorydb:"attr:last_action" json:"last_action"`
+	LastCommandID               string                 `theorydb:"attr:last_command_id" json:"last_command_id"`
+	AuthSubject                 string                 `theorydb:"attr:auth_subject" json:"auth_subject"`
+	ReasonMetadata              map[string]string      `theorydb:"attr:reason_metadata,omitempty" json:"reason_metadata,omitempty"`
+	StatusMetadata              map[string]string      `theorydb:"attr:status_metadata,omitempty" json:"status_metadata,omitempty"`
+	TokenMetadata               []SessionTokenMetadata `theorydb:"attr:token_metadata,omitempty" json:"token_metadata,omitempty"`
+	Metadata                    map[string]string      `theorydb:"attr:metadata,omitempty" json:"metadata,omitempty"`
 }
 
 type SessionSpec struct {
@@ -3505,6 +3556,13 @@ type SessionStatus struct {
 	LastAction      Command        `json:"last_action"`
 	LastTransition  time.Time      `json:"last_transition"`
 	RegistryVersion int64          `json:"registry_version"`
+}
+
+type SessionTokenMetadata struct {
+	TokenID   string    `json:"token_id"`
+	TokenType string    `json:"token_type"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Scope     []string  `json:"scope"`
 }
 
 type TableTheorySessionRegistry struct {
@@ -3555,9 +3613,13 @@ func NewLifecycleAdapter(...LifecycleOption) (*LifecycleAdapter, error)
 
 func NewMemorySessionRegistry() *MemorySessionRegistry
 
+func NewReconstructingSessionRegistry(SessionRegistry, SessionReconstructionHook, ...SessionReconstructionOption) (*ReconstructingSessionRegistry, error)
+
 func NewRegistryClient(SessionRegistry, ...RegistryClientOption) (*RegistryClient, error)
 
 func NewTableTheorySessionRegistry(tablecore.DB) (*TableTheorySessionRegistry, error)
+
+func ReconstructSessionRecord(context.Context, SessionReconstructionRequest, SessionReconstructionHook) (SessionRecord, error)
 
 func RequiredForbiddenOperationFields() []string
 
@@ -3572,6 +3634,8 @@ func SessionRegistryPartitionKey(string, string) string
 func SessionRegistrySortKey(string) string
 
 func SessionRegistryTableName() string
+
+func SessionTokenMetadataFromProviderToken(ProviderToken) (SessionTokenMetadata, error)
 
 func ValidateControllerContract(ControllerContract) error
 
@@ -3603,6 +3667,8 @@ func ValidateSessionRegistryRecord(SessionRegistryRecord) error
 
 func ValidateSessionStatus(SessionStatus) error
 
+func ValidateSessionTokenMetadata(SessionTokenMetadata, string) error
+
 func WithAWSLambdaMicroVMClock(Clock) AWSLambdaMicroVMProviderOption
 
 func WithAWSLambdaMicroVMRegion(string) AWSLambdaMicroVMProviderOption
@@ -3618,6 +3684,10 @@ func WithLifecycleContract(LifecycleContract) LifecycleOption
 func WithLifecycleHandler(LifecycleHook, LifecycleHandler) LifecycleOption
 
 func WithRegistryClientTTL(time.Duration) RegistryClientOption
+
+func WithSessionReconstructionClock(Clock) SessionReconstructionOption
+
+func WithSessionReconstructionStaleAfter(time.Duration) SessionReconstructionOption
 
 func (*AWSLambdaMicroVMProvider) CreateAuthToken(context.Context, ProviderTokenInput) (ProviderToken, error)
 
@@ -3644,6 +3714,12 @@ func (*MemorySessionRegistry) Delete(context.Context, SessionKey) error
 func (*MemorySessionRegistry) Get(context.Context, SessionKey) (SessionRecord, error)
 
 func (*MemorySessionRegistry) Put(context.Context, SessionRecord) (SessionRecord, error)
+
+func (*ReconstructingSessionRegistry) Delete(context.Context, SessionKey) error
+
+func (*ReconstructingSessionRegistry) Get(context.Context, SessionKey) (SessionRecord, error)
+
+func (*ReconstructingSessionRegistry) Put(context.Context, SessionRecord) (SessionRecord, error)
 
 func (*RegistryClient) Create(context.Context, CreateSessionInput) (SessionRecord, error)
 

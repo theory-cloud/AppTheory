@@ -188,16 +188,34 @@ class MicroVMLifecycleTests(unittest.TestCase):
             session_id="session-1",
             state=app.STATE_REQUESTED,
             desired_state=app.STATE_REQUESTED,
+            provider_id=app.MICROVM_DEFAULT_SESSION_PROVIDER_ID,
+            provider_microvm_id="session-1",
+            provider_state=app.STATE_REQUESTED,
+            aws_lifecycle_state=app.STATE_REQUESTED,
             image_ref="image-ref",
+            image_version="1",
             network_connector_ref="network-ref",
+            ingress_network_connector_refs=["ingress-ref"],
+            egress_network_connector_refs=["egress-ref"],
             controller_id="controller-1",
             created_at=1.0,
             updated_at=1.0,
+            last_observed_at=1.0,
             expires_at=3601.0,
             generation=1,
             last_action=app.COMMAND_CREATE,
             last_command_id="req-record",
             auth_subject="subject-1",
+            reason_metadata={"reason_code": "ok"},
+            status_metadata={"status": "healthy"},
+            token_metadata=[
+                app.MicroVMSessionTokenMetadata(
+                    token_id="auth-token-metadata",
+                    token_type="auth",
+                    expires_at=901.0,
+                    scope=["ports:443"],
+                )
+            ],
         )
         for key, value in overrides.items():
             setattr(record, key, value)
@@ -355,7 +373,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
                 "session_id": "session-1",
                 "hook": app.HOOK_PREPARE_IMAGE,
                 "state": app.STATE_REQUESTED,
-                "metadata": {"bearer_token": "secret"},
+                "metadata": {"bearer_token": "redacted"},
             }
         )
         self.assertIsNotNone(result.error)
@@ -591,7 +609,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
             app.validate_microvm_session_registry_contract(registry)
 
         registry = app.default_microvm_session_registry_contract()
-        registry.required_fields = registry.required_fields[:-1]
+        registry.required_fields = [field for field in registry.required_fields if field != "tenant_id"]
         with self.assertRaises(app.MicroVMSafeError):
             app.validate_microvm_session_registry_contract(registry)
 
@@ -614,7 +632,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
             self._valid_record(session_id=""),
             self._valid_record(created_at=0.0),
             self._valid_record(state="unknown"),
-            self._valid_record(metadata={"bearer-token": "secret"}),
+            self._valid_record(metadata={"bearer-token": "redacted"}),
         ]:
             with self.assertRaises(app.MicroVMSafeError):
                 app.validate_microvm_session_record(record)
@@ -654,12 +672,12 @@ class MicroVMLifecycleTests(unittest.TestCase):
             "auth_context": {
                 "subject": "subject-1",
                 "tenant_id": "tenant-1",
-                "metadata": {"authorization": "secret"},
+                "metadata": {"authorization": "redacted"},
             },
         }
         self.assertEqual(app.MICROVM_ERROR_FORBIDDEN_FIELD, app.validate_microvm_controller_request(request).code)
 
-        request = {**base_request, "session_spec": {"metadata": {"raw_sdk_client": "secret"}}}
+        request = {**base_request, "session_spec": {"metadata": {"raw_sdk_client": "redacted"}}}
         self.assertEqual(app.MICROVM_ERROR_FORBIDDEN_FIELD, app.validate_microvm_controller_request(request).code)
 
         request = {**base_request, "image_ref": ""}
@@ -701,15 +719,35 @@ class MicroVMLifecycleTests(unittest.TestCase):
         self.assertEqual(7, registry_record.version)
         self.assertEqual("https://microvm.example.test/session-1", registry_record.endpoint)
         self.assertEqual("microvm-1", registry_record.microvm_id)
+        self.assertEqual(record.provider_id, registry_record.provider_id)
+        self.assertEqual(record.provider_state, registry_record.provider_state)
+        self.assertEqual(record.image_version, registry_record.image_version)
         self.assertEqual(app.COMMAND_START, registry_record.last_action)
 
         round_trip = app.microvm_session_from_registry_record(registry_record)
         self.assertEqual(record.endpoint, round_trip.endpoint)
         self.assertEqual(record.microvm_id, round_trip.microvm_id)
+        self.assertEqual(record.provider_id, round_trip.provider_id)
+        self.assertEqual(record.token_metadata[0].token_id, round_trip.token_metadata[0].token_id)
         self.assertEqual(record.last_action, round_trip.last_action)
 
         bad = app.microvm_session_record_to_registry_record(record)
         bad.pk = "TENANT#other#NAMESPACE#namespace-1"
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_session_registry_record(bad)
+        bad = app.microvm_session_record_to_registry_record(record)
+        bad.status_metadata = {"provider_exception": "redacted"}
+        with self.assertRaises(app.MicroVMSafeError):
+            app.validate_microvm_session_registry_record(bad)
+        bad = app.microvm_session_record_to_registry_record(record)
+        bad.token_metadata = [
+            app.MicroVMSessionTokenMetadata(
+                token_id="token_value",
+                token_type="auth",
+                expires_at=901.0,
+                scope=["ports:443"],
+            )
+        ]
         with self.assertRaises(app.MicroVMSafeError):
             app.validate_microvm_session_registry_record(bad)
 
@@ -734,6 +772,61 @@ class MicroVMLifecycleTests(unittest.TestCase):
         status = client.status(self._query_input(request_id="req-status"))
         self.assertEqual(app.COMMAND_START, status.last_action)
         self.assertEqual(2, status.registry_version)
+
+    def test_microvm_registry_reconstruction_hooks_fail_closed(self) -> None:
+        request = app.MicroVMSessionReconstructionRequest(
+            request_id="req-reconstruct",
+            tenant_id="tenant-1",
+            namespace="namespace-1",
+            session_id="session-1",
+            now=100.0,
+        )
+        with self.assertRaises(app.MicroVMSafeError):
+            app.reconstruct_microvm_session_record(request, None)
+
+        with self.assertRaises(app.MicroVMSafeError):
+            app.reconstruct_microvm_session_record(
+                request,
+                lambda _request: self._valid_record(tenant_id="tenant-other"),
+            )
+
+        with self.assertRaises(app.MicroVMSafeError):
+            app.reconstruct_microvm_session_record(
+                app.MicroVMSessionReconstructionRequest(
+                    request_id="req-reconstruct",
+                    tenant_id="tenant-1",
+                    namespace="namespace-1",
+                    session_id="session-1",
+                    now=10_000.0,
+                ),
+                lambda _request: self._valid_record(),
+            )
+
+        registry = app.create_memory_microvm_session_registry()
+
+        def hook(reconstruct_request: app.MicroVMSessionReconstructionRequest) -> app.MicroVMSessionRecord:
+            return self._valid_record(
+                session_id=reconstruct_request.session_id,
+                provider_id=app.MICROVM_AWS_LAMBDA_PROVIDER_ID,
+                provider_microvm_id="provider-1",
+                provider_state="running",
+                aws_lifecycle_state="running",
+                last_observed_at=reconstruct_request.now,
+                expires_at=reconstruct_request.now + 60.0,
+            )
+
+        reconstructing = app.create_reconstructing_microvm_session_registry(
+            registry,
+            hook,
+            stale_after_seconds=1,
+            clock=lambda: 500.0,
+        )
+        reconstructed = reconstructing.get(("tenant-1", "namespace-1", "session-1"))
+        self.assertEqual(app.MICROVM_AWS_LAMBDA_PROVIDER_ID, reconstructed.provider_id)
+        self.assertEqual("running", reconstructed.provider_state)
+
+        with self.assertRaises(app.MicroVMSafeError):
+            app.create_reconstructing_microvm_session_registry(registry, None)
 
     def test_controller_errors_fake_client_and_aws_adapter_are_constrained(self) -> None:
         with self.assertRaises(app.MicroVMSafeError):
@@ -827,6 +920,8 @@ class MicroVMLifecycleTests(unittest.TestCase):
         app.validate_microvm_provider_token_input(app.OPERATION_AUTH_TOKEN, token_input)
         token = provider.create_auth_token(token_input)
         app.validate_microvm_provider_token(token)
+        token_metadata = app.microvm_session_token_metadata_from_provider_token(token)
+        app.validate_microvm_session_token_metadata(token_metadata)
         self.assertEqual("auth-000001", token.token_id)
         self.assertEqual(["ports:443"], token.scope)
         shell = provider.create_shell_token(
@@ -1048,7 +1143,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
                 **run_dict,
                 "auth_context": {"subject": "", "tenant_id": "tenant-1", "namespace": "namespace-1"},
             },
-            {**run_dict, "session_spec": {"metadata": {"authorization": "secret"}}},
+            {**run_dict, "session_spec": {"metadata": {"authorization": "redacted"}}},
             {**run_dict, "network_connector_ref": "raw_sdk_client"},
             {**run_dict, "idle_policy": {"max_idle_duration_seconds": 0, "suspended_duration_seconds": 120}},
             {**run_dict, "maximum_duration_seconds": -1},

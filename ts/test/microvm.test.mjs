@@ -29,7 +29,10 @@ import {
   MicroVMSafeError,
   MicroVMState,
   AWSLambdaMicroVMProvider,
+  MICROVM_AWS_LAMBDA_PROVIDER_ID,
+  MICROVM_DEFAULT_SESSION_PROVIDER_ID,
   MICROVM_SESSION_REGISTRY_TABLE_ENV,
+  createReconstructingMicroVMSessionRegistry,
   createAWSLambdaMicroVMClient,
   createAWSLambdaMicroVMProvider,
   createFakeMicroVMClient,
@@ -53,6 +56,8 @@ import {
   microVMSessionRegistryPartitionKey,
   microVMSessionRegistrySortKey,
   microVMSessionRegistryTableName,
+  microVMSessionTokenMetadataFromProviderToken,
+  reconstructMicroVMSessionRecord,
   validateMicroVMControllerContract,
   validateMicroVMControllerRequest,
   validateMicroVMEscapeHatches,
@@ -69,6 +74,7 @@ import {
   validateMicroVMSessionRegistryContract,
   validateMicroVMSessionRegistryRecord,
   validateMicroVMSessionStatus,
+  validateMicroVMSessionTokenMetadata,
 } from "../dist/index.js";
 
 function lifecycleEvent(overrides = {}) {
@@ -209,16 +215,34 @@ function validRecord(overrides = {}) {
     session_id: "session-1",
     state: MicroVMState.Requested,
     desired_state: MicroVMState.Requested,
+    provider_id: MICROVM_DEFAULT_SESSION_PROVIDER_ID,
+    provider_microvm_id: "session-1",
+    provider_state: MicroVMState.Requested,
+    aws_lifecycle_state: MicroVMState.Requested,
     image_ref: "image-ref",
+    image_version: "1",
     network_connector_ref: "network-ref",
+    ingress_network_connector_refs: ["ingress-ref"],
+    egress_network_connector_refs: ["egress-ref"],
     controller_id: "controller-1",
     created_at: new Date(1000),
     updated_at: new Date(1000),
+    last_observed_at: new Date(1000),
     expires_at: new Date(3_601_000),
     generation: 1,
     last_action: MicroVMCommand.Create,
     last_command_id: "req-record",
     auth_subject: "subject-1",
+    reason_metadata: { reason_code: "ok" },
+    status_metadata: { status: "healthy" },
+    token_metadata: [
+      {
+        token_id: "auth-token-metadata",
+        token_type: "auth",
+        expires_at: new Date(901_000),
+        scope: ["ports:443"],
+      },
+    ],
     ...overrides,
   };
 }
@@ -332,7 +356,7 @@ test("microvm lifecycle fails closed with safe errors", async () => {
   assert.equal(
     (
       await adapter.handle(
-        lifecycleEvent({ metadata: { authorization: "secret" } }),
+        lifecycleEvent({ metadata: { authorization: "redacted" } }),
       )
     ).error?.code,
     MICROVM_ERROR_FORBIDDEN_FIELD,
@@ -460,7 +484,9 @@ test("microvm controller, registry, record, and request contracts fail closed", 
       registry.tenant_binding = ["tenant_id"];
     },
     (registry) => {
-      registry.required_fields = registry.required_fields.slice(0, -1);
+      registry.required_fields = registry.required_fields.filter(
+        (field) => field !== "tenant_id",
+      );
     },
     (registry) => {
       registry.state_values = registry.state_values.slice(0, -1);
@@ -482,7 +508,7 @@ test("microvm controller, registry, record, and request contracts fail closed", 
     validRecord({ created_at: new Date(Number.NaN) }),
     validRecord({ last_action: "" }),
     validRecord({ state: "unknown" }),
-    validRecord({ metadata: { "bearer-token": "secret" } }),
+    validRecord({ metadata: { "bearer-token": "redacted" } }),
   ]) {
     assert.throws(
       () => validateMicroVMSessionRecord(record),
@@ -544,7 +570,7 @@ test("microvm controller, registry, record, and request contracts fail closed", 
       auth_context: {
         subject: "subject-1",
         tenant_id: "tenant-1",
-        metadata: { authorization: "secret" },
+        metadata: { authorization: "redacted" },
       },
     })?.code,
     MICROVM_ERROR_FORBIDDEN_FIELD,
@@ -552,7 +578,7 @@ test("microvm controller, registry, record, and request contracts fail closed", 
   assert.equal(
     validateMicroVMControllerRequest({
       ...baseRequest,
-      session_spec: { metadata: { raw_sdk_client: "secret" } },
+      session_spec: { metadata: { raw_sdk_client: "redacted" } },
     })?.code,
     MICROVM_ERROR_FORBIDDEN_FIELD,
   );
@@ -775,13 +801,29 @@ test("microvm session registry conversions keep TableTheory shape", () => {
   const roundTrip = microVMSessionFromRegistryRecord(registry);
   assert.equal(roundTrip.endpoint, record.endpoint);
   assert.equal(roundTrip.microvm_id, record.microvm_id);
+  assert.equal(roundTrip.provider_id, record.provider_id);
+  assert.equal(roundTrip.provider_state, record.provider_state);
+  assert.equal(roundTrip.image_version, record.image_version);
+  assert.deepEqual(roundTrip.token_metadata, record.token_metadata);
   assert.deepEqual(roundTrip.metadata, { safe: "ok" });
 
   for (const bad of [
     { ...registry, pk: "TENANT#other#NAMESPACE#namespace-1" },
     { ...registry, ttl: registry.ttl + 1 },
     { ...registry, version: 0 },
-    { ...registry, metadata: { bearer_token: "secret" } },
+    { ...registry, metadata: { bearer_token: "redacted" } },
+    { ...registry, status_metadata: { provider_exception: "redacted" } },
+    {
+      ...registry,
+      token_metadata: [
+        {
+          token_id: "token_value",
+          token_type: "auth",
+          expires_at: new Date(901_000),
+          scope: ["ports:443"],
+        },
+      ],
+    },
   ]) {
     assert.throws(
       () => validateMicroVMSessionRegistryRecord(bad),
@@ -857,6 +899,84 @@ test("microvm memory registry client preserves durable session flow", async () =
         namespace: "namespace-1",
         session_id: "session-1",
       }),
+    (err) => err?.code === MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+  );
+});
+
+test("microvm registry reconstruction hooks fail closed", async () => {
+  await assert.rejects(
+    () =>
+      reconstructMicroVMSessionRecord(
+        {
+          request_id: "req-reconstruct",
+          tenant_id: "tenant-1",
+          namespace: "namespace-1",
+          session_id: "session-1",
+          now: new Date(1000),
+        },
+        null,
+      ),
+    (err) => err?.code === MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+  );
+
+  await assert.rejects(
+    () =>
+      reconstructMicroVMSessionRecord(
+        {
+          request_id: "req-reconstruct",
+          tenant_id: "tenant-1",
+          namespace: "namespace-1",
+          session_id: "session-1",
+          now: new Date(1000),
+        },
+        () => validRecord({ tenant_id: "tenant-other" }),
+      ),
+    (err) => err?.code === MICROVM_ERROR_TENANT_BINDING_VIOLATION,
+  );
+
+  await assert.rejects(
+    () =>
+      reconstructMicroVMSessionRecord(
+        {
+          request_id: "req-reconstruct",
+          tenant_id: "tenant-1",
+          namespace: "namespace-1",
+          session_id: "session-1",
+          now: new Date(10_000_000),
+        },
+        () => validRecord(),
+      ),
+    (err) => err?.code === MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
+  );
+
+  const registry = createMemoryMicroVMSessionRegistry();
+  const reconstructing = createReconstructingMicroVMSessionRegistry(
+    registry,
+    (request) =>
+      validRecord({
+        session_id: request.session_id,
+        provider_id: MICROVM_AWS_LAMBDA_PROVIDER_ID,
+        provider_microvm_id: "provider-1",
+        provider_state: "running",
+        aws_lifecycle_state: "running",
+        last_observed_at: request.now,
+        expires_at: new Date(request.now.valueOf() + 60_000),
+      }),
+    {
+      stale_after_ms: 1,
+      clock: { now: () => new Date(5000) },
+    },
+  );
+  const reconstructed = await reconstructing.get({
+    tenant_id: "tenant-1",
+    namespace: "namespace-1",
+    session_id: "session-1",
+  });
+  assert.equal(reconstructed.provider_id, MICROVM_AWS_LAMBDA_PROVIDER_ID);
+  assert.equal(reconstructed.provider_state, "running");
+
+  assert.throws(
+    () => createReconstructingMicroVMSessionRegistry(registry, null),
     (err) => err?.code === MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE,
   );
 });
@@ -1025,6 +1145,8 @@ test("microvm provider validation and fake cover M16 real operations", async () 
     providerTokenInput({ binding: sessionInput.binding }),
   );
   validateMicroVMProviderToken(token);
+  const tokenMetadata = microVMSessionTokenMetadataFromProviderToken(token);
+  validateMicroVMSessionTokenMetadata(tokenMetadata);
   assert.equal(token.token_id, "auth-000001");
   assert.deepEqual(token.scope, ["ports:443"]);
   const shell = await fake.createShellToken(

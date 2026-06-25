@@ -109,11 +109,16 @@ func (c *stubClient) Create(_ context.Context, input CreateSessionInput) (Sessio
 		SessionID:           input.SessionID,
 		State:               StateRequested,
 		DesiredState:        StateRequested,
+		ProviderID:          DefaultSessionProviderID,
+		ProviderMicroVMID:   input.SessionID,
+		ProviderState:       string(StateRequested),
+		AWSLifecycleState:   string(StateRequested),
 		ImageRef:            input.ImageRef,
 		NetworkConnectorRef: input.NetworkConnectorRef,
 		ControllerID:        input.ControllerID,
 		CreatedAt:           input.Now,
 		UpdatedAt:           input.Now,
+		LastObservedAt:      input.Now,
 		ExpiresAt:           input.Now.Add(time.Hour),
 		Generation:          1,
 		LastAction:          CommandCreate,
@@ -133,7 +138,12 @@ func (c *stubClient) Start(_ context.Context, input SessionCommandInput) (Sessio
 	record := c.record
 	record.State = StateStarting
 	record.DesiredState = input.DesiredState
+	record.ProviderID = DefaultSessionProviderID
+	record.ProviderMicroVMID = record.SessionID
+	record.ProviderState = string(StateStarting)
+	record.AWSLifecycleState = string(StateStarting)
 	record.UpdatedAt = input.Now
+	record.LastObservedAt = input.Now
 	record.Generation++
 	record.LastAction = CommandStart
 	record.LastCommandID = input.RequestID
@@ -150,7 +160,12 @@ func (c *stubClient) Stop(_ context.Context, input SessionCommandInput) (Session
 	record := c.record
 	record.State = StateStopping
 	record.DesiredState = input.DesiredState
+	record.ProviderID = DefaultSessionProviderID
+	record.ProviderMicroVMID = record.SessionID
+	record.ProviderState = string(StateStopping)
+	record.AWSLifecycleState = string(StateStopping)
 	record.UpdatedAt = input.Now
+	record.LastObservedAt = input.Now
 	record.Generation++
 	record.LastAction = CommandStop
 	record.LastCommandID = input.RequestID
@@ -331,11 +346,16 @@ func TestSessionValidationAndKeys(t *testing.T) {
 		SessionID:           "session-1",
 		State:               StateRequested,
 		DesiredState:        StateRequested,
+		ProviderID:          DefaultSessionProviderID,
+		ProviderMicroVMID:   "session-1",
+		ProviderState:       string(StateRequested),
+		AWSLifecycleState:   string(StateRequested),
 		ImageRef:            "image-ref",
 		NetworkConnectorRef: "network-ref",
 		ControllerID:        "controller-1",
 		CreatedAt:           now,
 		UpdatedAt:           now,
+		LastObservedAt:      now,
 		ExpiresAt:           now.Add(time.Hour),
 		Generation:          1,
 		LastAction:          CommandCreate,
@@ -358,7 +378,7 @@ func TestSessionValidationAndKeys(t *testing.T) {
 	require.Error(t, ValidateSessionRecord(bad))
 
 	bad = record
-	bad.Metadata = map[string]string{"bearer_token": "secret"}
+	bad.Metadata = map[string]string{"bearer_token": "redacted"}
 	require.Error(t, ValidateSessionRecord(bad))
 
 	status := SessionStatus{

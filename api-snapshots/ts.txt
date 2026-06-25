@@ -119,10 +119,12 @@ LoggingProfileRequestContext	interface
 LoggingProfileSanitization	interface
 LoggingProfileSanitizer	type
 LoggingProfileValidationError	class
+MICROVM_AWS_LAMBDA_PROVIDER_ID	const
 MICROVM_CONTRACT_NAME	const
 MICROVM_CONTRACT_VERSION	const
 MICROVM_CONTRACT_VERSION_M16	const
 MICROVM_CONTROLLER_AUTH_DEFAULT_DENY	const
+MICROVM_DEFAULT_SESSION_PROVIDER_ID	const
 MICROVM_ERROR_CONTROLLER_COMMAND_FAILED	const
 MICROVM_ERROR_CONTROLLER_INCOMPLETE	const
 MICROVM_ERROR_FORBIDDEN_FIELD	const
@@ -207,12 +209,15 @@ MicroVMSafeError	class
 MicroVMSessionCommandInput	interface
 MicroVMSessionKey	interface
 MicroVMSessionQueryInput	interface
+MicroVMSessionReconstructionHook	type
+MicroVMSessionReconstructionRequest	interface
 MicroVMSessionRecord	interface
 MicroVMSessionRegistry	interface
 MicroVMSessionRegistryContract	interface
 MicroVMSessionRegistryRecord	interface
 MicroVMSessionSpec	interface
 MicroVMSessionStatus	interface
+MicroVMSessionTokenMetadata	interface
 MicroVMState	const
 MicroVMTableTheoryClient	interface
 MicroVMTenantBindingRule	interface
@@ -233,6 +238,8 @@ RateLimitWindow	type
 RateLimiter	interface
 RateLimiterError	class
 RealClock	class
+ReconstructingMicroVMSessionRegistry	class
+ReconstructingMicroVMSessionRegistryOptions	interface
 RecordStatus	type
 RefreshLeaseInput	type
 RefreshSemaphoreSlotInput	type
@@ -305,6 +312,7 @@ createMemoryMicroVMSessionRegistry	function
 createMicroVMController	function
 createMicroVMLifecycleAdapter	function
 createMicroVMRegistryClient	function
+createReconstructingMicroVMSessionRegistry	function
 createTableTheoryMicroVMSessionRegistry	function
 createTestEnv	function
 decodeCloudWatchLogsSubscription	function
@@ -357,6 +365,7 @@ microVMSessionRegistryModel	function
 microVMSessionRegistryPartitionKey	function
 microVMSessionRegistrySortKey	function
 microVMSessionRegistryTableName	function
+microVMSessionTokenMetadataFromProviderToken	function
 newError	function
 newJobLedgerError	function
 normalizeDynamoDBStreamRecord	function
@@ -372,6 +381,7 @@ paymentXMLPatterns	re-export
 rapidConnectXMLPatterns	const
 rapidConnectXMLPatterns	re-export
 rateLimitTableName	function
+reconstructMicroVMSessionRecord	function
 reportKinesisPutRecordsFailures	function
 requireEventBridgeWorkloadEnvelope	function
 requiredForbiddenMicroVMOperationFields	function
@@ -416,6 +426,7 @@ validateMicroVMSessionRecord	function
 validateMicroVMSessionRegistryContract	function
 validateMicroVMSessionRegistryRecord	function
 validateMicroVMSessionStatus	function
+validateMicroVMSessionTokenMetadata	function
 vary	function
 wrapError	function
 wrapJobLedgerError	function

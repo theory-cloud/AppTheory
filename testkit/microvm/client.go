@@ -70,11 +70,16 @@ func (c *FakeClient) Create(_ context.Context, input runtimemicrovm.CreateSessio
 		SessionID:           input.SessionID,
 		State:               runtimemicrovm.StateRequested,
 		DesiredState:        runtimemicrovm.StateRequested,
+		ProviderID:          runtimemicrovm.DefaultSessionProviderID,
+		ProviderMicroVMID:   input.SessionID,
+		ProviderState:       string(runtimemicrovm.StateRequested),
+		AWSLifecycleState:   string(runtimemicrovm.StateRequested),
 		ImageRef:            input.ImageRef,
 		NetworkConnectorRef: input.NetworkConnectorRef,
 		ControllerID:        input.ControllerID,
 		CreatedAt:           now,
 		UpdatedAt:           now,
+		LastObservedAt:      now,
 		ExpiresAt:           now.Add(time.Hour),
 		Generation:          1,
 		LastAction:          runtimemicrovm.CommandCreate,
@@ -154,11 +159,20 @@ func (c *FakeClient) transition(
 	}
 	record.State = state
 	record.DesiredState = desired
+	if record.ProviderID == "" {
+		record.ProviderID = runtimemicrovm.DefaultSessionProviderID
+	}
+	if record.ProviderMicroVMID == "" {
+		record.ProviderMicroVMID = record.SessionID
+	}
+	record.ProviderState = string(state)
+	record.AWSLifecycleState = string(state)
 	record.ControllerID = input.ControllerID
 	record.AuthSubject = input.AuthSubject
 	record.LastAction = command
 	record.LastCommandID = input.RequestID
 	record.UpdatedAt = coalesceTime(input.Now, c.now)
+	record.LastObservedAt = record.UpdatedAt
 	record.Generation++
 	if err := runtimemicrovm.ValidateSessionRecord(record); err != nil {
 		return runtimemicrovm.SessionRecord{}, err
