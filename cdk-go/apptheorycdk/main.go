@@ -723,12 +723,23 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmImageResources",
 		reflect.TypeOf((*AppTheoryMicrovmImageResources)(nil)).Elem(),
 	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmManagedNetworkConnector",
+		reflect.TypeOf((*AppTheoryMicrovmManagedNetworkConnector)(nil)).Elem(),
+		map[string]interface{}{
+			"ALL_INGRESS":     AppTheoryMicrovmManagedNetworkConnector_ALL_INGRESS,
+			"NO_INGRESS":      AppTheoryMicrovmManagedNetworkConnector_NO_INGRESS,
+			"INTERNET_EGRESS": AppTheoryMicrovmManagedNetworkConnector_INTERNET_EGRESS,
+			"SHELL_INGRESS":   AppTheoryMicrovmManagedNetworkConnector_SHELL_INGRESS,
+		},
+	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector",
 		reflect.TypeOf((*AppTheoryMicrovmNetworkConnector)(nil)).Elem(),
 		[]_jsii_.Member{
 			_jsii_.MemberProperty{JsiiProperty: "networkConnector", GoGetter: "NetworkConnector"},
 			_jsii_.MemberProperty{JsiiProperty: "networkConnectorArn", GoGetter: "NetworkConnectorArn"},
+			_jsii_.MemberProperty{JsiiProperty: "networkConnectorKind", GoGetter: "NetworkConnectorKind"},
 			_jsii_.MemberProperty{JsiiProperty: "networkConnectorState", GoGetter: "NetworkConnectorState"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
 			_jsii_.MemberProperty{JsiiProperty: "operatorRole", GoGetter: "OperatorRole"},
@@ -745,9 +756,39 @@ func init() {
 			return &j
 		},
 	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorKind",
+		reflect.TypeOf((*AppTheoryMicrovmNetworkConnectorKind)(nil)).Elem(),
+		map[string]interface{}{
+			"INGRESS":       AppTheoryMicrovmNetworkConnectorKind_INGRESS,
+			"EGRESS":        AppTheoryMicrovmNetworkConnectorKind_EGRESS,
+			"SHELL_INGRESS": AppTheoryMicrovmNetworkConnectorKind_SHELL_INGRESS,
+		},
+	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorProps",
 		reflect.TypeOf((*AppTheoryMicrovmNetworkConnectorProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorReference",
+		reflect.TypeOf((*AppTheoryMicrovmNetworkConnectorReference)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "networkConnectorArn", GoGetter: "NetworkConnectorArn"},
+			_jsii_.MemberProperty{JsiiProperty: "networkConnectorKind", GoGetter: "NetworkConnectorKind"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryMicrovmNetworkConnectorReference{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			_jsii_.InitJsiiProxy(&j.jsiiProxy_IAppTheoryMicrovmNetworkConnector)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorReferenceProps",
+		reflect.TypeOf((*AppTheoryMicrovmNetworkConnectorReferenceProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterEnum(
 		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkProtocol",
@@ -1067,6 +1108,7 @@ func init() {
 		reflect.TypeOf((*IAppTheoryMicrovmNetworkConnector)(nil)).Elem(),
 		[]_jsii_.Member{
 			_jsii_.MemberProperty{JsiiProperty: "networkConnectorArn", GoGetter: "NetworkConnectorArn"},
+			_jsii_.MemberProperty{JsiiProperty: "networkConnectorKind", GoGetter: "NetworkConnectorKind"},
 		},
 		func() interface{} {
 			return &jsiiProxy_IAppTheoryMicrovmNetworkConnector{}

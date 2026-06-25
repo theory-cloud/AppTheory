@@ -4304,6 +4304,11 @@ test("AppTheoryMicrovmNetworkConnector synthesizes expected template", () => {
   });
 
   assert.ok(connector.networkConnectorArn, "Should expose the connector ARN token");
+  assert.equal(
+    connector.networkConnectorKind,
+    apptheory.AppTheoryMicrovmNetworkConnectorKind.EGRESS,
+    "Created connector should be typed as egress",
+  );
   assert.ok(connector.networkConnectorState, "Should expose the connector state token");
 
   const template = assertions.Template.fromStack(stack).toJSON();
@@ -4330,6 +4335,61 @@ test("AppTheoryMicrovmNetworkConnector synthesizes expected template", () => {
   } else {
     expectSnapshot("microvm-network-connector", template);
   }
+});
+
+test("AppTheoryMicrovmNetworkConnector exposes managed ingress, egress, and shell references", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack", {
+    env: { account: "123456789012", region: "us-east-1" },
+  });
+
+  const allIngress = apptheory.AppTheoryMicrovmNetworkConnector.allIngress(stack, "AllIngress");
+  const noIngress = apptheory.AppTheoryMicrovmNetworkConnector.awsManaged(
+    stack,
+    "NoIngress",
+    apptheory.AppTheoryMicrovmManagedNetworkConnector.NO_INGRESS,
+  );
+  const internetEgress = apptheory.AppTheoryMicrovmNetworkConnector.internetEgress(stack, "InternetEgress");
+  const shellIngress = apptheory.AppTheoryMicrovmNetworkConnector.shellIngress(stack, "ShellIngress");
+  const importedIngress = apptheory.AppTheoryMicrovmNetworkConnector.fromNetworkConnectorArn(
+    stack,
+    "ImportedIngress",
+    "arn:aws:lambda:us-east-1:123456789012:network-connector:custom-ingress",
+    apptheory.AppTheoryMicrovmNetworkConnectorKind.INGRESS,
+  );
+
+  assert.ok(
+    renderedString(allIngress.networkConnectorArn).includes(
+      ":lambda:us-east-1:aws:network-connector:aws-network-connector:ALL_INGRESS",
+    ),
+  );
+  assert.ok(
+    renderedString(noIngress.networkConnectorArn).includes(
+      ":lambda:us-east-1:aws:network-connector:aws-network-connector:NO_INGRESS",
+    ),
+  );
+  assert.ok(
+    renderedString(internetEgress.networkConnectorArn).includes(
+      ":lambda:us-east-1:aws:network-connector:aws-network-connector:INTERNET_EGRESS",
+    ),
+  );
+  assert.ok(
+    renderedString(shellIngress.networkConnectorArn).includes(
+      ":lambda:us-east-1:aws:network-connector:aws-network-connector:SHELL_INGRESS",
+    ),
+  );
+  assert.equal(allIngress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.INGRESS);
+  assert.equal(noIngress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.INGRESS);
+  assert.equal(internetEgress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.EGRESS);
+  assert.equal(shellIngress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.SHELL_INGRESS);
+  assert.equal(importedIngress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.INGRESS);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  assert.equal(
+    resourcesOfType(template, "AWS::Lambda::NetworkConnector").length,
+    0,
+    "Managed/imported connector references should synthesize no connector resources",
+  );
 });
 
 test("AppTheoryMicrovmNetworkConnector can use a caller-provided operator role", () => {
@@ -4460,6 +4520,41 @@ test("AppTheoryMicrovmNetworkConnector fails closed on invalid props", () => {
           networkProtocol: "IPv6Only",
         }),
       /networkProtocol must be IPv4 or DualStack/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "InvalidManagedConnectorStack");
+    assert.throws(
+      () => apptheory.AppTheoryMicrovmNetworkConnector.awsManaged(stack, "Connector", "OPEN_WORLD"),
+      /managed connector must be ALL_INGRESS/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "InvalidReferenceStack");
+    assert.throws(
+      () =>
+        apptheory.AppTheoryMicrovmNetworkConnector.fromNetworkConnectorArn(
+          stack,
+          "Connector",
+          "arn:aws:lambda:us-east-1:123456789012:network-connector:bad connector",
+        ),
+      /networkConnectorArn must not contain whitespace/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "InvalidKindStack");
+    assert.throws(
+      () =>
+        apptheory.AppTheoryMicrovmNetworkConnector.fromNetworkConnectorArn(
+          stack,
+          "Connector",
+          "arn:aws:lambda:us-east-1:123456789012:network-connector:custom",
+          "sideways",
+        ),
+      /networkConnectorKind must be ingress, egress, or shell-ingress/,
     );
   }
 });
