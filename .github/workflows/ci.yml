@@ -213,6 +213,28 @@ jobs:
       - name: Build twice and compare checksums
         run: scripts/verify-builds.sh
 
+  cdk-go-drift:
+    name: CDK Go binding drift
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: "1.26.4"
+          cache: true
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: cdk/package-lock.json
+      - name: Verify cdk-go generated binding drift
+        run: scripts/verify-cdk-go-drift.sh
+
   contract-tests:
     name: Contract tests (fixtures)
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')
