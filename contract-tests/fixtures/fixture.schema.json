@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://theory.cloud/apptheory/contract-tests/fixture.schema.json",
+  "title": "AppTheory contract fixture",
+  "description": "Internal meta-contract for AppTheory cross-language contract test fixtures.",
+  "type": "object",
+  "required": ["id", "tier", "name", "expect"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^(p0|p1|p2|m1|m2|m3|m12|m14|m15|m16)(\\.|_)[A-Za-z0-9_.-]+$"
+    },
+    "tier": { "$ref": "#/$defs/tier" },
+    "name": { "type": "string", "minLength": 1 },
+    "setup": { "$ref": "#/$defs/setup" },
+    "input": { "$ref": "#/$defs/input" },
+    "expect": { "$ref": "#/$defs/expect" }
+  },
+  "$defs": {
+    "tier": {
+      "type": "string",
+      "enum": ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15", "m16"]
+    },
+    "stringArray": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "route": {
+      "type": "object",
+      "required": ["method", "path", "handler"],
+      "additionalProperties": false,
+      "properties": {
+        "method": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "handler": { "type": "string", "minLength": 1 },
+        "auth_required": { "type": "boolean" }
+      }
+    },
+    "namedHandler": {
+      "type": "object",
+      "required": ["handler"],
+      "additionalProperties": true,
+      "properties": {
+        "handler": { "type": "string", "minLength": 1 }
+      }
+    },
+    "setup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "routes": { "type": "array", "items": { "$ref": "#/$defs/route" } },
+        "middlewares": { "$ref": "#/$defs/stringArray" },
+        "cors": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allow_credentials": { "type": "boolean" },
+            "allowed_origins": { "$ref": "#/$defs/stringArray" }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_request_bytes": { "type": "integer" },
+            "max_response_bytes": { "type": "integer" }
+          }
+        },
+        "http_error_format": { "type": "string" },
+        "sqs": { "type": "array", "items": { "$ref": "#/$defs/namedHandler" } },
+        "eventbridge": { "type": "array", "items": { "$ref": "#/$defs/namedHandler" } },
+        "dynamodb": { "type": "array", "items": { "$ref": "#/$defs/namedHandler" } },
+        "kinesis": { "type": "array", "items": { "$ref": "#/$defs/namedHandler" } },
+        "sns": { "type": "array", "items": { "$ref": "#/$defs/namedHandler" } },
+        "websockets": { "type": "array", "items": { "$ref": "#/$defs/namedHandler" } },
+        "logging_profile": { "type": "object", "additionalProperties": true },
+        "environment": { "$ref": "#/$defs/stringMap" },
+        "microvm_contract": { "type": "object", "additionalProperties": true },
+        "microvm_controller_route": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "request": {
+      "type": "object",
+      "required": ["method", "path", "headers", "body", "is_base64"],
+      "additionalProperties": false,
+      "properties": {
+        "method": { "type": "string" },
+        "path": { "type": "string" },
+        "query": { "type": "object", "additionalProperties": true },
+        "headers": { "type": "object", "additionalProperties": true },
+        "body": {},
+        "is_base64": { "type": "boolean" }
+      }
+    },
+    "awsEvent": {
+      "type": "object",
+      "required": ["source", "event"],
+      "additionalProperties": false,
+      "properties": {
+        "source": { "type": "string", "minLength": 1 },
+        "event": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "aws_request_id": { "type": "string" },
+        "remaining_ms": { "type": "integer" }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "request": { "$ref": "#/$defs/request" },
+        "aws_event": { "$ref": "#/$defs/awsEvent" },
+        "context": { "$ref": "#/$defs/context" },
+        "logging_event": { "type": "object", "additionalProperties": true },
+        "logging_profile_catalog": { "type": "boolean" }
+      }
+    },
+    "response": {
+      "type": "object",
+      "required": ["status", "headers", "cookies", "is_base64"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "type": "integer" },
+        "headers": { "type": "object", "additionalProperties": true },
+        "cookies": { "$ref": "#/$defs/stringArray" },
+        "body": {},
+        "body_json": {},
+        "chunks": { "type": "array", "items": {} },
+        "is_base64": { "type": "boolean" },
+        "stream_error_code": { "type": "string" }
+      }
+    },
+    "expect": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "response": { "$ref": "#/$defs/response" },
+        "output_json": {},
+        "error": {
+          "type": "object",
+          "required": ["message"],
+          "additionalProperties": false,
+          "properties": { "message": { "type": "string" } }
+        },
+        "logs": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "metrics": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "spans": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "ws_calls": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "cloudwatch_logs_subscription": { "type": "object", "additionalProperties": true },
+        "profile_logs": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "profile_validation_errors": { "$ref": "#/$defs/stringArray" },
+        "logging_profile_catalog": { "type": "object", "additionalProperties": true },
+        "microvm_contract_validation": { "type": "object", "additionalProperties": true },
+        "microvm_controller_route": { "type": "object", "additionalProperties": true }
+      }
+    }
+  }
+}

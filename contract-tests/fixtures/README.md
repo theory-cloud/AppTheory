@@ -17,6 +17,14 @@ File layout:
 
 Each fixture is a single JSON object.
 
+## Schema gate
+
+`fixture.schema.json` is the internal meta-contract for fixture files. The gate validates every checked-in fixture
+with `./scripts/verify-fixture-schema.sh`, then runs an in-memory negative self-test to prove a malformed fixture
+(missing required envelope fields) is rejected. The schema is strict for the shared fixture envelope and section keys,
+while provider/runtime payload objects remain open so behavior-specific contracts can stay in their fixtures.
+
+
 ## Common shape
 
 - `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*`, `m14.*`, `m15.*`, or `m16.*` prefixes).
