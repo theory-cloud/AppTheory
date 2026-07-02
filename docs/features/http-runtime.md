@@ -158,4 +158,4 @@ You almost never need these directly — use `HandleLambda` / `handleLambda` / `
 - [Logging Profiles](logging-profiles.md) — P2 observability output shapes
 - [Sanitization](sanitization.md) — safe logging helpers
 - [Event Workloads](event-workloads.md) — the non-HTTP side of the runtime
-- [Contract Fixtures](../reference/contract-fixtures.md) — the 128-fixture covenant
+- [Contract Fixtures](../reference/contract-fixtures.md) — the 145-fixture covenant
