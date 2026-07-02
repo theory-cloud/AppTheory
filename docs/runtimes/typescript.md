@@ -9,11 +9,19 @@ The TypeScript runtime is an independent implementation of the AppTheory contrac
 
 ## Install
 
-Distribution is **GitHub Releases only.** The npm registry is not used; AppTheory does not publish to it. Consumers pin a release-asset tarball downloaded from the [releases page](https://github.com/theory-cloud/AppTheory/releases):
+Distribution is **GitHub Releases only.** The npm registry is not used; AppTheory does not publish to it. Pin the release asset and verify its checksum before installing it:
 
 ```bash
-# After downloading the .tgz asset from the GitHub Release
-npm i ./theory-cloud-apptheory-X.Y.Z.tgz
+VERSION=1.14.0
+TAG="v${VERSION}"
+REPO="theory-cloud/AppTheory"
+
+gh release download "${TAG}" --repo "${REPO}" \
+  --pattern "theory-cloud-apptheory-${VERSION}.tgz" \
+  --pattern "SHA256SUMS.txt" \
+  --clobber
+grep " theory-cloud-apptheory-${VERSION}.tgz$" SHA256SUMS.txt | sha256sum -c -
+npm install "./theory-cloud-apptheory-${VERSION}.tgz"
 ```
 
 The package is ESM and ships TypeScript declarations. Node.js 24+ is required.

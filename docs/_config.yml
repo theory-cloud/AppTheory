@@ -128,19 +128,19 @@ tabletheory:
   repo_branch: main
   docs_root: docs
   version_pill: "v1.x"
-  version_status: prerelease    # stable | prerelease | dev
+  version_status: stable        # stable | prerelease | dev
   runtimes:
     - id: go
       label: Go
-      install: "go get github.com/theory-cloud/apptheory@vX.Y.Z"
+      install: "go get github.com/theory-cloud/apptheory@v1.14.0"
       docs_path: runtimes/go
     - id: ts
       label: TypeScript
-      install: "npm i ./theory-cloud-apptheory-X.Y.Z.tgz   # from a GitHub Release asset"
+      install: "gh release download v1.14.0 --repo theory-cloud/AppTheory --pattern theory-cloud-apptheory-1.14.0.tgz --pattern SHA256SUMS.txt --clobber && grep ' theory-cloud-apptheory-1.14.0.tgz$' SHA256SUMS.txt | sha256sum -c - && npm install ./theory-cloud-apptheory-1.14.0.tgz"
       docs_path: runtimes/typescript
     - id: python
       label: Python
-      install: "python -m pip install ./apptheory-X.Y.Z-py3-none-any.whl   # from a GitHub Release asset"
+      install: "gh release download v1.14.0 --repo theory-cloud/AppTheory --pattern apptheory-1.14.0-py3-none-any.whl --pattern SHA256SUMS.txt --clobber && grep ' apptheory-1.14.0-py3-none-any.whl$' SHA256SUMS.txt | sha256sum -c - && python -m pip install ./apptheory-1.14.0-py3-none-any.whl"
       docs_path: runtimes/python
   surfaces:
     - id: core

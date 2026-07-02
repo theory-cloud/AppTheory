@@ -8,13 +8,21 @@ Use this guide when you want to deploy an AppTheory application with the jsii CD
 
 ## Install
 
-AppTheory CDK is distributed via GitHub Releases.
-
-Examples:
+AppTheory CDK is distributed via GitHub Releases. Pin the jsii package assets and verify their checksums before installing them:
 
 ```bash
-npm i ./theory-cloud-apptheory-cdk-X.Y.Z.tgz
-python -m pip install ./apptheory_cdk-X.Y.Z-py3-none-any.whl
+VERSION=1.14.0
+TAG="v${VERSION}"
+REPO="theory-cloud/AppTheory"
+
+gh release download "${TAG}" --repo "${REPO}" \
+  --pattern "theory-cloud-apptheory-cdk-${VERSION}.tgz" \
+  --pattern "apptheory_cdk-${VERSION}-py3-none-any.whl" \
+  --pattern "SHA256SUMS.txt" \
+  --clobber
+grep -E " (theory-cloud-apptheory-cdk-${VERSION}\.tgz|apptheory_cdk-${VERSION}-py3-none-any\.whl)$" SHA256SUMS.txt | sha256sum -c -
+npm install "./theory-cloud-apptheory-cdk-${VERSION}.tgz"
+python -m pip install "./apptheory_cdk-${VERSION}-py3-none-any.whl"
 ```
 
 ## Minimal TypeScript stack

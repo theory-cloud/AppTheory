@@ -111,7 +111,7 @@ Python:
 
 Go:
 
-- Install by tag: `go get github.com/theory-cloud/apptheory@vX.Y.Z`
+- Install by tag: `go get github.com/theory-cloud/apptheory@v1.14.0` (or the exact stable/RC tag being evaluated).
 - CDK Go bindings live under `github.com/theory-cloud/apptheory/cdk-go/apptheorycdk`.
 
 ## CI/CD rules (no dangerous tokens)

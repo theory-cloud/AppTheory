@@ -9,11 +9,19 @@ The Python runtime is an independent implementation of the AppTheory contract â€
 
 ## Install
 
-Distribution is **GitHub Releases only.** PyPI is not used; AppTheory does not publish to it. Consumers pin a release-asset wheel downloaded from the [releases page](https://github.com/theory-cloud/AppTheory/releases):
+Distribution is **GitHub Releases only.** PyPI is not used; AppTheory does not publish to it. Pin the release wheel and verify its checksum before installing it:
 
 ```bash
-# After downloading the .whl asset from the GitHub Release
-python -m pip install ./apptheory-X.Y.Z-py3-none-any.whl
+VERSION=1.14.0
+TAG="v${VERSION}"
+REPO="theory-cloud/AppTheory"
+
+gh release download "${TAG}" --repo "${REPO}" \
+  --pattern "apptheory-${VERSION}-py3-none-any.whl" \
+  --pattern "SHA256SUMS.txt" \
+  --clobber
+grep " apptheory-${VERSION}-py3-none-any.whl$" SHA256SUMS.txt | sha256sum -c -
+python -m pip install "./apptheory-${VERSION}-py3-none-any.whl"
 ```
 
 Python 3.14+ is required.

@@ -12,7 +12,7 @@ The Go runtime is the most complete implementation of the AppTheory contract and
 The Go toolchain resolves modules from the immutable git tag — no registry is involved beyond Go's standard proxy.
 
 ```bash
-go get github.com/theory-cloud/apptheory@vX.Y.Z
+go get github.com/theory-cloud/apptheory@v1.14.0
 ```
 
 Pin a specific release tag from the [releases page](https://github.com/theory-cloud/AppTheory/releases). AppTheory does not publish to the npm or PyPI registries; the Go module is the only language artifact that ships through Go's normal toolchain path.
