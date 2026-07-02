@@ -196,8 +196,8 @@ concepts:
       - cdk_typed_connector_image_controller_constructs
       - evidence_bounded_conformance_harness
     configuration:
-      - contract-tests/fixtures/m15/
-      - contract-tests/fixtures/m16/
+      - contract-tests/fixtures/microvm-foundation/
+      - contract-tests/fixtures/microvm-operations/
       - runtime/microvm/
       - ts/src/microvm.ts
       - py/src/apptheory/microvm.py

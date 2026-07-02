@@ -25,9 +25,27 @@ The single-path philosophy says there is one correct path per domain. The fixtur
 
 When the contract needs to grow, the fixture grows first. When the fixture grows, **all three runtimes converge to the new shape in the same change.**
 
+## Behavior-domain layout
+
+The fixture files are grouped by behavior domain, while each fixture keeps the historical P/M tier or milestone in
+its `tier` field and stable `id`. Directory names are organizational metadata, not an alternate contract ID.
+
+| Directory | Fixture metadata | Covers |
+| --- | --- | --- |
+| `http-core/` | `p0.*` / `tier = p0` | P0 runtime core: routing, normalization, errors, source provenance, Lambda URL/ALB adapters. |
+| `middleware-guardrails/` | `p1.*` / `tier = p1` | P1 request-id, tenant, auth, CORS, guardrails, and legacy flat-error behavior. |
+| `appsync-observability-policies/` | `p2.*` / `tier = p2` | P2 AppSync, observability, logging profiles, rate limiting, and load shedding. |
+| `event-sources/` | `m1.*` / `tier = m1` | SQS, EventBridge, DynamoDB Streams, Kinesis, SNS, and non-HTTP middleware behavior. |
+| `websockets/` | `m2.*` / `tier = m2` | API Gateway WebSockets and management client fakes. |
+| `api-gateway-rest-sse/` | `m3.*` / `tier = m3` | API Gateway REST v1, Remote MCP path normalization, and SSE. |
+| `middleware-timeout-sse/` | `m12.*` / `tier = m12` | Middleware ctx bag, timeout, naming, and SSE streaming extensions. |
+| `edge-streaming-html/` | `m14.*` / `tier = m14` | Streaming, catch-all routing, HTML/cache/CloudFront helpers, and Step Functions helpers. |
+| `microvm-foundation/` | `m15.*` / `tier = m15` | Lambda MicroVM validation-only lifecycle/controller/session vocabulary. |
+| `microvm-operations/` | `m16.*` / `tier = m16` | Real Lambda MicroVM operations, routes, provider-state mappings, tenant boundaries, and token safety. |
+
 ## Categories
 
-The 145 fixtures span (counts approximate; see `contract-tests/fixtures/` for the canonical inventory): <!-- apptheory-fixture-count -->
+The 145 fixtures span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory): <!-- apptheory-fixture-count -->
 
 | Category | Covers |
 | --- | --- |
