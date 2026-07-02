@@ -15,11 +15,23 @@ from pathlib import Path
 
 actual = int(os.environ["APPTHEORY_FIXTURE_COUNT_ACTUAL"])
 
-tracked = subprocess.check_output(["git", "ls-files", "README.md", "docs"], text=True).splitlines()
+# Keep the root set intentionally explicit: these are user-facing root
+# documents. Agent bootstrap files and planning artifacts contain historical
+# review text and are not public fixture-count claims.
+scan_roots = [
+    "README.md",
+    "THEORY_CLOUD.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "docs",
+]
+tracked = subprocess.check_output(["git", "ls-files", "--", *scan_roots], text=True).splitlines()
 public_suffixes = {".md", ".markdown", ".html", ".yml", ".yaml"}
 ignored_prefixes = (
     "docs/assets/",
     "docs/development/planning/",
+    "docs/_site/",
+    "docs/.jekyll-cache/",
 )
 
 marker_re = re.compile(r"apptheory-fixture-count(?::\s*(?P<count>\d+))?", re.IGNORECASE)
@@ -68,7 +80,7 @@ for name in tracked:
                     mismatches.append(f"{name}:{lineno}: documented fixture count {value} != actual corpus count {actual}: {match.group(0)!r}")
 
 if marker_count == 0:
-    mismatches.append("no apptheory-fixture-count markers found in README/docs")
+    mismatches.append("no apptheory-fixture-count markers found in root user-facing docs or docs/")
 
 if mismatches:
     print("fixture-count: FAIL", file=sys.stderr)

@@ -40,6 +40,16 @@
           "type": "json",
           "path": "examples/cdk/lesser-parity/package-lock.json",
           "jsonpath": "$.packages['../../../cdk'].version"
+        },
+        {
+          "type": "json",
+          "path": "examples/cdk/sqs-queue/package-lock.json",
+          "jsonpath": "$.packages['../../../cdk'].version"
+        },
+        {
+          "type": "json",
+          "path": "examples/cdk/lambda-role/package-lock.json",
+          "jsonpath": "$.packages['../../../cdk'].version"
         }
       ]
     }
