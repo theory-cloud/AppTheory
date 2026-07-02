@@ -5,7 +5,7 @@ import inspect
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from apptheory.aws_events import AppSyncResolverEvent
 from apptheory.aws_http import (
@@ -1136,7 +1136,7 @@ class App:
         if not isinstance(records, list) or not records:
             return None
         first = records[0] if isinstance(records[0], dict) else {}
-        sns = first.get("Sns") if isinstance(first.get("Sns"), dict) else {}
+        sns: dict[str, Any] = cast(dict[str, Any], first.get("Sns")) if isinstance(first.get("Sns"), dict) else {}
         topic_name = _sns_topic_name_from_arn(str(sns.get("TopicArn") or ""))
         if not topic_name:
             return None
@@ -1184,7 +1184,7 @@ class App:
         if "detail-type" in event or "detailType" in event:
             return self.serve_eventbridge(event, ctx=ctx)
         if _is_appsync_event(event):
-            return self.serve_appsync(event, ctx=ctx)
+            return self.serve_appsync(cast(AppSyncResolverEvent, event), ctx=ctx)
 
         if "requestContext" in event:
             request_context = event.get("requestContext") or {}
@@ -1764,7 +1764,7 @@ def _remaining_ms(ctx: Any | None) -> int:
     get_remaining = getattr(ctx, "get_remaining_time_in_millis", None)
     if callable(get_remaining):
         try:
-            value = int(get_remaining())
+            value = int(cast(Callable[[], Any], get_remaining)())
         except Exception:  # noqa: BLE001
             return 0
         return value if value > 0 else 0
@@ -1791,12 +1791,16 @@ def _event_workload_failed_error() -> RuntimeError:
 
 
 def _kinesis_sequence_number(record: dict[str, Any]) -> str:
-    kinesis = record.get("kinesis") if isinstance(record.get("kinesis"), dict) else {}
+    kinesis: dict[str, Any] = (
+        cast(dict[str, Any], record.get("kinesis")) if isinstance(record.get("kinesis"), dict) else {}
+    )
     return str(kinesis.get("sequenceNumber") or "").strip()
 
 
 def _dynamodb_stream_sequence_number(record: dict[str, Any]) -> str:
-    change = record.get("dynamodb") if isinstance(record.get("dynamodb"), dict) else {}
+    change: dict[str, Any] = (
+        cast(dict[str, Any], record.get("dynamodb")) if isinstance(record.get("dynamodb"), dict) else {}
+    )
     return str(change.get("SequenceNumber") or "").strip()
 
 

@@ -188,8 +188,9 @@ def _event_time(event: dict[str, Any]) -> str:
     value = event.get("time")
     if isinstance(value, str):
         return value.strip()
-    if hasattr(value, "isoformat"):
-        return str(value.isoformat()).strip()
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        return str(isoformat()).strip()
     return ""
 
 

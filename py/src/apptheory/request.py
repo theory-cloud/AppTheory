@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass, field
+from typing import Any
 
 from apptheory.errors import AppError
 from apptheory.source_provenance import SourceProvenance, normalize_source_provenance, unknown_source_provenance
@@ -13,9 +14,9 @@ class Request:
     method: str
     path: str
     query: dict[str, list[str]] = field(default_factory=dict)
-    headers: dict[str, object] = field(default_factory=dict)
+    headers: dict[str, Any] = field(default_factory=dict)
     cookies: dict[str, str] = field(default_factory=dict)
-    body: object = b""
+    body: Any = b""
     is_base64: bool = False
     source_provenance: SourceProvenance = field(default_factory=unknown_source_provenance)
 

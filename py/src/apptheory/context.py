@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import json as jsonlib
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -100,7 +101,7 @@ class Context:
         self.appsync = appsync
         self._values = {}
 
-    def now(self):
+    def now(self) -> dt.datetime:
         return self.clock.now()
 
     def new_id(self) -> str:
@@ -171,7 +172,7 @@ class EventContext:
         self.remaining_ms = int(remaining_ms or 0)
         self._values = {}
 
-    def now(self):
+    def now(self) -> dt.datetime:
         return self.clock.now()
 
     def new_id(self) -> str:
@@ -252,7 +253,7 @@ class WebSocketContext:
         self._client = None
         self._client_error = None
 
-    def now(self):
+    def now(self) -> dt.datetime:
         return self.clock.now()
 
     def new_id(self) -> str:
@@ -291,7 +292,7 @@ class WebSocketContext:
         self.send_message(payload)
 
 
-def _has_json_content_type(headers: dict[str, list[str]]) -> bool:
+def _has_json_content_type(headers: dict[str, Any]) -> bool:
     for value in headers.get("content-type", []):
         v = str(value).strip().lower()
         if v.startswith("application/json"):

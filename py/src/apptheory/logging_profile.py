@@ -6,7 +6,7 @@ import os
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict, cast
 
 from apptheory.app import LogRecord, ObservabilityHooks
 from apptheory.logger import StructuredLogger
@@ -103,9 +103,10 @@ def default_logging_profile(profile: str) -> LoggingProfileConfig:
         return cfg
     if key == LOGGING_PROFILE_LEGACY:
         cfg = _base_json_profile(LOGGING_PROFILE_LEGACY)
-        cfg["encoding"]["timestamp_field"] = "timestamp"
-        cfg["encoding"]["level_field"] = "level"
-        cfg["encoding"]["message_field"] = "message"
+        encoding = cast(dict[str, Any], cfg.get("encoding", {}))
+        encoding["timestamp_field"] = "timestamp"
+        encoding["level_field"] = "level"
+        encoding["message_field"] = "message"
         return cfg
     if key == LOGGING_PROFILE_LOCAL_DEV:
         cfg = _base_json_profile(LOGGING_PROFILE_LOCAL_DEV)
@@ -124,7 +125,7 @@ def decode_logging_profile_json(raw: str | bytes | bytearray) -> LoggingProfileC
         raise ValueError("logging profile json: root must be an object")
 
     strict_errors = _validate_logging_profile_json_options("", parsed, _LOGGING_PROFILE_JSON_OPTIONS)
-    config = parsed
+    config = cast(LoggingProfileConfig, parsed)
     errors = [*strict_errors, *logging_profile_validation_errors(config)]
     if errors:
         raise LoggingProfileValidationError(errors)
@@ -158,7 +159,7 @@ def logging_profile_validation_errors(config: LoggingProfileConfig) -> list[str]
     if encoding_value is None:
         encoding: dict[str, Any] | None = {}
     elif isinstance(encoding_value, dict):
-        encoding = encoding_value
+        encoding = cast(dict[str, Any], encoding_value)
     else:
         errors.append("encoding: must be an object")
         encoding = None
@@ -184,7 +185,7 @@ def logging_profile_validation_errors(config: LoggingProfileConfig) -> list[str]
     if enrichment_value is None:
         enrichment: dict[str, Any] | None = {}
     elif isinstance(enrichment_value, dict):
-        enrichment = enrichment_value
+        enrichment = cast(dict[str, Any], enrichment_value)
     else:
         errors.append("enrichment: must be an object")
         enrichment = None
@@ -269,7 +270,9 @@ class ProfileLogger:
         self._root = _root or self
         self._config = config
         self._environment = dict(environment or {})
-        self._writer = _default_profile_writer if writer is _DEFAULT_PROFILE_WRITER else writer
+        self._writer: Callable[[str], None] | None = (
+            _default_profile_writer if writer is _DEFAULT_PROFILE_WRITER else cast(Callable[[str], None] | None, writer)
+        )
         self._sanitizer = sanitizer or sanitize_field_value
         self._clock = clock or (lambda: datetime.now(UTC))
         self._fields = dict(_fields or {})
