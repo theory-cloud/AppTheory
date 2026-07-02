@@ -57,11 +57,10 @@ def stable_json(value: Any) -> str:
 
 
 def list_fixture_files(fixtures_root: Path) -> list[Path]:
+    if not fixtures_root.exists():
+        return []
     files: list[Path] = []
-    for tier in ("p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15", "m16"):
-        tier_dir = fixtures_root / tier
-        if not tier_dir.exists():
-            continue
+    for tier_dir in sorted(path for path in fixtures_root.iterdir() if path.is_dir()):
         files.extend(sorted(tier_dir.glob("*.json")))
     return sorted(files)
 

@@ -143,24 +143,17 @@ function decodeLoggingProfileValidationErrors(runtime, profile) {
 }
 
 function listFixtureFiles(fixturesRoot) {
-  const tiers = [
-    "p0",
-    "p1",
-    "p2",
-    "m1",
-    "m2",
-    "m3",
-    "m12",
-    "m14",
-    "m15",
-    "m16",
-  ];
+  if (!fs.existsSync(fixturesRoot)) {
+    return [];
+  }
   const files = [];
-  for (const tier of tiers) {
+  const tierDirs = fs
+    .readdirSync(fixturesRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  for (const tier of tierDirs) {
     const dir = path.join(fixturesRoot, tier);
-    if (!fs.existsSync(dir)) {
-      continue;
-    }
     for (const entry of fs.readdirSync(dir)) {
       if (!entry.endsWith(".json")) continue;
       files.push(path.join(dir, entry));

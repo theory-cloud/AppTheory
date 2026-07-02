@@ -241,11 +241,19 @@ type FixtureSpanRecord struct {
 }
 
 func loadFixtures(fixturesRoot string) ([]Fixture, error) {
+	entries, err := os.ReadDir(fixturesRoot)
+	if err != nil {
+		return nil, fmt.Errorf("read fixtures root %s: %w", fixturesRoot, err)
+	}
+
 	var files []string
-	for _, tier := range []string{"p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15", "m16"} {
-		matches, err := filepath.Glob(filepath.Join(fixturesRoot, tier, "*.json"))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		matches, err := filepath.Glob(filepath.Join(fixturesRoot, entry.Name(), "*.json"))
 		if err != nil {
-			return nil, fmt.Errorf("glob %s fixtures: %w", tier, err)
+			return nil, fmt.Errorf("glob %s fixtures: %w", entry.Name(), err)
 		}
 		files = append(files, matches...)
 	}
