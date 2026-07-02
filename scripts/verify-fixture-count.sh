@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-actual="$(find contract-tests/fixtures -name '*.json' | wc -l | tr -d '[:space:]')"
+actual="$(find contract-tests/fixtures -name '*.json' ! -name 'fixture.schema.json' | wc -l | tr -d '[:space:]')"
 export APPTHEORY_FIXTURE_COUNT_ACTUAL="${actual}"
 
 python3 <<'PY'
