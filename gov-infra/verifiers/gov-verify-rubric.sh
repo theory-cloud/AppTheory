@@ -807,6 +807,19 @@ function sameStringSet(actual, expected) {
   return actualSorted.every((value, index) => value === expectedSorted[index]);
 }
 
+function allowedDependencyGroupsForLockfile() {
+  // The older linked CDK examples carry aws-cdk-lib as a dev dependency.
+  // The queue/role examples are private deploy examples with aws-cdk-lib in
+  // dependencies; osv-scanner omits dependency_groups for those lockfiles.
+  if (
+    allowed.lockfile === "examples/cdk/sqs-queue/package-lock.json" ||
+    allowed.lockfile === "examples/cdk/lambda-role/package-lock.json"
+  ) {
+    return [];
+  }
+  return ["dev"];
+}
+
 function hasFixedVersion(vuln) {
   for (const affected of vuln.affected ?? []) {
     if (affected?.package?.ecosystem !== "npm" || affected.package.name !== allowed.packageName) {
@@ -857,7 +870,7 @@ function isAllowedAwsCdkBundledBraceExpansion(result, pkg, vuln) {
     packageInfo.ecosystem === "npm" &&
     packageInfo.name === allowed.packageName &&
     packageInfo.version === allowed.packageVersion &&
-    sameStringSet(dependencyGroups, ["dev"]) &&
+    sameStringSet(dependencyGroups, allowedDependencyGroupsForLockfile()) &&
     vuln.id === allowed.advisoryId &&
     aliases.includes(allowed.alias) &&
     hasFixedVersion(vuln) &&
@@ -950,6 +963,8 @@ gov_cmd_vuln() {
     "cdk/package-lock.json"
     "examples/cdk/multilang/package-lock.json"
     "examples/cdk/ssr-site/package-lock.json"
+    "examples/cdk/sqs-queue/package-lock.json"
+    "examples/cdk/lambda-role/package-lock.json"
   )
 
   local lf
@@ -2445,6 +2460,8 @@ check_supply_chain_apptheory() {
     "cdk"
     "examples/cdk/multilang"
     "examples/cdk/ssr-site"
+    "examples/cdk/sqs-queue"
+    "examples/cdk/lambda-role"
   )
 
   require_cmd_or_blocked git || return $?
