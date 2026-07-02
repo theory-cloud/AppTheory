@@ -8,6 +8,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # deterministic build check. Keep this wrapper thin so `make rubric`, CI,
 # and local validation cannot drift into separate meanings of "rubric".
 bash ./scripts/verify-fixture-count.sh
+bash ./scripts/verify-fixture-schema.sh
 bash ./gov-infra/verifiers/gov-verify-rubric.sh
 
 echo "rubric: PASS"
