@@ -9,7 +9,7 @@
     "destroy": "cdk destroy"
   },
   "dependencies": {
-    "@theory-cloud/apptheory-cdk": "file:../../..",
+    "@theory-cloud/apptheory-cdk": "file:../../../cdk",
     "aws-cdk-lib": "2.257.0",
     "constructs": "10.6.0"
   },
