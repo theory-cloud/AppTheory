@@ -5,3 +5,4 @@ export function normalizeHTTPErrorFormat(format) {
         ? HTTP_ERROR_FORMAT_FLAT_LEGACY
         : HTTP_ERROR_FORMAT_NESTED;
 }
+//# sourceMappingURL=http-error-format.js.map

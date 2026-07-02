@@ -18,3 +18,4 @@ export declare function originalURI(headers: Headers): string;
 export declare function originURL(headers: Headers): string;
 export declare function clientIP(headers: Headers): string;
 export {};
+//# sourceMappingURL=response.d.ts.map

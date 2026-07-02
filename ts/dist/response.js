@@ -288,3 +288,4 @@ export function clientIP(headers) {
     }
     return "";
 }
+//# sourceMappingURL=response.js.map

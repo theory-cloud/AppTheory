@@ -32,3 +32,4 @@ export declare class AppTheoryError extends Error {
 }
 export declare const appTheoryErrorFromAppError: (err: AppError) => AppTheoryError;
 export declare const isAppTheoryError: (err: unknown) => err is AppTheoryError;
+//# sourceMappingURL=errors.d.ts.map

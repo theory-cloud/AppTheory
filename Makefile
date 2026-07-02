@@ -12,6 +12,7 @@ all: fmt lint test build
 
 build:
 	@echo "Building release artifacts..."
+	@./scripts/verify-ts-dist-drift.sh
 	@./scripts/verify-ts-pack.sh
 	@./scripts/verify-python-build.sh
 	@./scripts/verify-cdk-ts-pack.sh

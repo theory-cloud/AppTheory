@@ -136,3 +136,4 @@ export declare function hooksFromProfileLogger(config: LoggingProfileConfig, opt
 };
 export declare function hooksFromLogger(logger: StructuredLogger | null | undefined): ObservabilityHooks;
 export declare function isSupportedProfileOutputField(field: string): boolean;
+//# sourceMappingURL=logging-profile.d.ts.map

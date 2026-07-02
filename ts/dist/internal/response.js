@@ -173,3 +173,4 @@ export function responseForErrorWithRequestIdAndFormat(format, err, requestId) {
     }
     return errorResponseWithRequestIdAndFormat(format, "app.internal", "internal error", {}, requestId);
 }
+//# sourceMappingURL=response.js.map

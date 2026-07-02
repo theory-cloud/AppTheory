@@ -161,3 +161,4 @@ export declare function createApp(options?: {
 export type LambdaFunctionURLStreamingHandler = (event: LambdaFunctionURLRequest, ctx?: unknown) => Promise<unknown>;
 export declare function createLambdaFunctionURLStreamingHandler(app: App): LambdaFunctionURLStreamingHandler;
 export declare function timeoutMiddleware(config?: TimeoutConfig): Middleware;
+//# sourceMappingURL=app.d.ts.map

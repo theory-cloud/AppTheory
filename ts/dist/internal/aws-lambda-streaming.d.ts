@@ -28,3 +28,4 @@ export declare class CapturedHttpResponseStream implements HttpResponseStreamLik
     end(chunk?: Uint8Array): void;
 }
 export {};
+//# sourceMappingURL=aws-lambda-streaming.d.ts.map

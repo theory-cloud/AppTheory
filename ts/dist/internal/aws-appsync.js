@@ -301,3 +301,4 @@ export function appSyncErrorResponse(err, request, requestId) {
         isBase64: false,
     });
 }
+//# sourceMappingURL=aws-appsync.js.map

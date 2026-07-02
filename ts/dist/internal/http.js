@@ -197,3 +197,4 @@ export function firstHeaderValue(headers, key) {
     const values = headers?.[String(key).trim().toLowerCase()] ?? [];
     return values.length > 0 ? String(values[0]) : "";
 }
+//# sourceMappingURL=http.js.map

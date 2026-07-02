@@ -141,3 +141,4 @@ export declare class WebSocketContext {
     sendMessage(data: Uint8Array): Promise<void>;
     sendJSONMessage(value: unknown): Promise<void>;
 }
+//# sourceMappingURL=context.d.ts.map

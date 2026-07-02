@@ -11,3 +11,4 @@ export declare class ManualClock implements Clock {
     set(now: Date): void;
     advance(ms: number): Date;
 }
+//# sourceMappingURL=clock.d.ts.map

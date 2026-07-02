@@ -19,3 +19,4 @@ export class ManualClock {
         return this.now();
     }
 }
+//# sourceMappingURL=clock.js.map

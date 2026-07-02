@@ -15,3 +15,4 @@ export function trimRepeatedCharEnd(value, char) {
 export function trimRepeatedChar(value, char) {
     return trimRepeatedCharEnd(trimRepeatedCharStart(value, char), char);
 }
+//# sourceMappingURL=string-utils.js.map

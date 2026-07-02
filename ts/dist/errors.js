@@ -76,3 +76,4 @@ export class AppTheoryError extends Error {
 }
 export const appTheoryErrorFromAppError = (err) => new AppTheoryError(err.code, err.message);
 export const isAppTheoryError = (err) => err instanceof AppTheoryError;
+//# sourceMappingURL=errors.js.map
