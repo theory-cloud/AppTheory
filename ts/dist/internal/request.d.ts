@@ -11,3 +11,4 @@ export interface NormalizedRequest {
     sourceProvenance: SourceProvenance;
 }
 export declare function normalizeRequest(request: Request, maxRequestBytes?: number): NormalizedRequest;
+//# sourceMappingURL=request.d.ts.map

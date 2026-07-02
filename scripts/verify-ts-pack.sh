@@ -83,6 +83,16 @@ tar -tf "dist/${expected_tgz}" | grep "^package/dist/index.d.ts$" >/dev/null || 
   exit 1
 }
 
+tar -tf "dist/${expected_tgz}" | grep "^package/dist/index.js.map$" >/dev/null || {
+  echo "ts-pack: FAIL (missing dist/index.js.map in ${expected_tgz})"
+  exit 1
+}
+
+tar -tf "dist/${expected_tgz}" | grep "^package/dist/index.d.ts.map$" >/dev/null || {
+  echo "ts-pack: FAIL (missing dist/index.d.ts.map in ${expected_tgz})"
+  exit 1
+}
+
 tar -tf "dist/${expected_tgz}" | grep "^package/README.md$" >/dev/null || {
   echo "ts-pack: FAIL (missing README.md in ${expected_tgz})"
   exit 1

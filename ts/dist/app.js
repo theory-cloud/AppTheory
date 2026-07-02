@@ -1357,3 +1357,4 @@ function formatAllowHeader(methods) {
     }
     return [...unique].sort().join(", ");
 }
+//# sourceMappingURL=app.js.map

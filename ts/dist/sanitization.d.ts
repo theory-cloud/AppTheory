@@ -12,3 +12,4 @@ export interface XMLSanitizationPattern {
 export declare function sanitizeXML(xmlString: string, patterns: XMLSanitizationPattern[]): string;
 export declare const paymentXMLPatterns: XMLSanitizationPattern[];
 export declare const rapidConnectXMLPatterns: XMLSanitizationPattern[];
+//# sourceMappingURL=sanitization.d.ts.map

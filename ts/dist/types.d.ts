@@ -24,3 +24,4 @@ export interface Response {
     bodyStream?: BodyStream | null;
     isBase64: boolean;
 }
+//# sourceMappingURL=types.d.ts.map

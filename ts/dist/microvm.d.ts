@@ -771,3 +771,4 @@ export declare class AWSLambdaMicroVMProvider implements MicroVMProvider {
     private now;
 }
 export declare function createAWSLambdaMicroVMProvider(options?: AWSLambdaMicroVMProviderOptions): AWSLambdaMicroVMProvider;
+//# sourceMappingURL=microvm.d.ts.map

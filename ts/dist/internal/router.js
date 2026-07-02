@@ -163,3 +163,4 @@ function routeMoreSpecific(a, b) {
         return a.segments.length > b.segments.length;
     return a.order < b.order;
 }
+//# sourceMappingURL=router.js.map

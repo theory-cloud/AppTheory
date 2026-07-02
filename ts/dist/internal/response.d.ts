@@ -19,3 +19,4 @@ export declare function responseForError(err: unknown): NormalizedResponse;
 export declare function responseForErrorWithFormat(format: HTTPErrorFormat, err: unknown): NormalizedResponse;
 export declare function responseForErrorWithRequestId(err: unknown, requestId: string): NormalizedResponse;
 export declare function responseForErrorWithRequestIdAndFormat(format: HTTPErrorFormat, err: unknown, requestId: string): NormalizedResponse;
+//# sourceMappingURL=response.d.ts.map

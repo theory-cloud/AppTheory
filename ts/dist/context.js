@@ -266,3 +266,4 @@ export class WebSocketContext {
         await this.sendMessage(Buffer.from(JSON.stringify(value), "utf8"));
     }
 }
+//# sourceMappingURL=context.js.map

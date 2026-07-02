@@ -34,3 +34,4 @@ export declare class Router<THandler> {
     };
 }
 export {};
+//# sourceMappingURL=router.d.ts.map

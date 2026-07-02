@@ -645,3 +645,4 @@ export class DynamoRateLimiter {
         throw wrapError(err, "internal_error", "failed to check and increment rate limit");
     }
 }
+//# sourceMappingURL=limiter.js.map

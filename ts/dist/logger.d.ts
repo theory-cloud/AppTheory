@@ -20,3 +20,4 @@ export interface StructuredLogger {
 export declare function getLogger(): StructuredLogger;
 export declare function setLogger(logger: StructuredLogger | null | undefined): void;
 export { paymentXMLPatterns, rapidConnectXMLPatterns, sanitizeFieldValue, sanitizeJSON, sanitizeJSONValue, sanitizeLogString, sanitizeXML, };
+//# sourceMappingURL=logger.d.ts.map

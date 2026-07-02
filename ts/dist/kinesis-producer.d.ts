@@ -66,3 +66,4 @@ export declare function createKinesisJsonRecord(options: KinesisJsonRecordOption
  * error messages are intentionally excluded from the returned summaries.
  */
 export declare function reportKinesisPutRecordsFailures(records: KinesisJsonRecord[], results: KinesisPutRecordsResultRecord[]): KinesisPutRecordsFailureReport;
+//# sourceMappingURL=kinesis-producer.d.ts.map

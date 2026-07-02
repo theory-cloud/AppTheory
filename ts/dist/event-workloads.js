@@ -229,3 +229,4 @@ function headerString(headers, key) {
 function asTrimmedString(value) {
     return typeof value === "string" ? value.trim() : "";
 }
+//# sourceMappingURL=event-workloads.js.map
