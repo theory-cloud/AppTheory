@@ -4,7 +4,7 @@ import hashlib
 import json as jsonlib
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -4798,7 +4798,8 @@ def _load_aws_lambda_microvm_provider_client(*, region_name: str | None) -> Any:
             "CreateMicrovmAuthToken",
             "CreateMicrovmShellAuthToken",
         }
-        if not required_operations.issubset(set(model.operation_names)):
+        operation_names = set(cast(Iterable[str], model.operation_names))
+        if not required_operations.issubset(operation_names):
             raise RuntimeError("lambda-microvms service model incomplete")
         kwargs = {"region_name": region_name} if region_name else {}
         client = cast(Any, boto3).client("lambda-microvms", **kwargs)

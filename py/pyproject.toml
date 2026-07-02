@@ -63,3 +63,5 @@ quote-style = "double"
 include = ["src/apptheory"]
 pythonVersion = "3.14"
 typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"
