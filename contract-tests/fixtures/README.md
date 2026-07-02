@@ -2,18 +2,19 @@
 
 Fixtures are shared, machine-readable test vectors used to prevent cross-language runtime drift.
 
-File layout:
+File layout is organized by behavior domain. The historical tier/milestone label remains inside each fixture's
+`tier` metadata and fixture `id`; directory names are not the contract identifier.
 
-- `contract-tests/fixtures/p0/` — runtime core
-- `contract-tests/fixtures/p1/` — context + middleware
-- `contract-tests/fixtures/p2/` — portable production features
-- `contract-tests/fixtures/m1/` — non-HTTP event sources (SQS/EventBridge/DynamoDB Streams)
-- `contract-tests/fixtures/m2/` — API Gateway WebSockets (+ management client fakes)
-- `contract-tests/fixtures/m3/` — API Gateway REST v1 (+ SSE)
-- `contract-tests/fixtures/m12/` — Lift parity completion extensions (middleware/ctx bag/naming/SSE streaming)
-- `contract-tests/fixtures/m14/` — FaceTheory enablement (streaming contract, catch-all routing, SSR helpers)
-- `contract-tests/fixtures/m15/` — Lambda MicroVM contract foundation (validation-only lifecycle/controller/session vocabulary)
-- `contract-tests/fixtures/m16/` — real Lambda MicroVM operation contract (run/get/list/suspend/resume/terminate/token, tenant-bound routes/recovery, provider states, token safety)
+- `contract-tests/fixtures/http-core/` — P0 runtime core: routing, normalization, errors, source provenance, Lambda URL/ALB adapters
+- `contract-tests/fixtures/middleware-guardrails/` — P1 request-id, tenant, auth, CORS, guardrails, and legacy flat-error behavior
+- `contract-tests/fixtures/appsync-observability-policies/` — P2 AppSync, observability, logging profiles, rate-limit, and load-shed behavior
+- `contract-tests/fixtures/event-sources/` — M1 SQS, EventBridge, DynamoDB Streams, Kinesis, SNS, and non-HTTP middleware behavior
+- `contract-tests/fixtures/websockets/` — M2 API Gateway WebSockets and management client fakes
+- `contract-tests/fixtures/api-gateway-rest-sse/` — M3 API Gateway REST v1, Remote MCP path normalization, and SSE
+- `contract-tests/fixtures/middleware-timeout-sse/` — M12 middleware ctx bag, timeout, naming, and SSE streaming extensions
+- `contract-tests/fixtures/edge-streaming-html/` — M14 streaming, catch-all routing, HTML/cache/CloudFront helpers, and Step Functions helpers
+- `contract-tests/fixtures/microvm-foundation/` — M15 Lambda MicroVM validation-only lifecycle/controller/session vocabulary
+- `contract-tests/fixtures/microvm-operations/` — M16 real Lambda MicroVM operation, route, provider-state, tenant, and token-safety contracts
 
 Each fixture is a single JSON object.
 

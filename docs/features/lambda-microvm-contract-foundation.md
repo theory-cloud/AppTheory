@@ -12,7 +12,7 @@ vocabulary, protected controller routes, provider adapters, durable registry sta
 harness proof.
 
 The contract name is `apptheory.lambda_microvm`; the corrective fixture version is `m16.microvm/v1`. Corrective
-fixtures live under `contract-tests/fixtures/m16/` and are validated by the Go, TypeScript, and Python contract runners.
+fixtures live under `contract-tests/fixtures/microvm-operations/` and are validated by the Go, TypeScript, and Python contract runners.
 The earlier M15 fixtures remain part of the compatibility history, but the real operation vocabulary below is canonical
 for new docs, routes, conformance harnesses, and reviews.
 

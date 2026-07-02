@@ -154,6 +154,20 @@ def load_json(path: Path) -> Any:
         raise ValidationError(f"{path}: invalid JSON: {exc}") from exc
 
 
+FIXTURE_DOMAIN_TIERS = {
+    "http-core": "p0",
+    "middleware-guardrails": "p1",
+    "appsync-observability-policies": "p2",
+    "event-sources": "m1",
+    "websockets": "m2",
+    "api-gateway-rest-sse": "m3",
+    "middleware-timeout-sse": "m12",
+    "edge-streaming-html": "m14",
+    "microvm-foundation": "m15",
+    "microvm-operations": "m16",
+}
+
+
 def fixture_errors(root: dict[str, Any], fixture: Any, path: Path | None = None) -> list[str]:
     errors = validate(root, root, fixture)
     if isinstance(fixture, dict):
@@ -163,8 +177,14 @@ def fixture_errors(root: dict[str, Any], fixture: Any, path: Path | None = None)
             fixture_id.startswith(f"{tier}.") or fixture_id.startswith(f"{tier}_")
         ):
             errors.append(f"$: id {fixture_id!r} must start with tier prefix {tier!r}")
-        if path is not None and isinstance(tier, str) and path.parent.name != tier:
-            errors.append(f"$: fixture path tier {path.parent.name!r} does not match tier {tier!r}")
+        if path is not None and isinstance(tier, str):
+            path_tier = FIXTURE_DOMAIN_TIERS.get(path.parent.name)
+            if path_tier is None:
+                errors.append(f"$: fixture directory {path.parent.name!r} is not a known behavior domain")
+            elif path_tier != tier:
+                errors.append(
+                    f"$: fixture directory {path.parent.name!r} maps to tier {path_tier!r}, not fixture tier {tier!r}"
+                )
     return errors
 
 
