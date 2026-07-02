@@ -69,15 +69,14 @@ These are enforced by release hygiene and the staging rubric via:
 - Stable releases: `vX.Y.Z`
 - Pre-releases: `vX.Y.Z-rc.N` (recommended)
 
-Initial public stable release:
+Public stable release line:
 
-- The first `main` stable cut for the v1 line is planned as `v1.0.0`.
-- The corresponding prerelease line starts on `premain` as `v1.0.0-rc.1`.
+- AppTheory is on the v1 stable release line; `main` cuts immutable stable releases such as `v1.14.0`.
+- The corresponding prerelease line starts on `premain` as `vX.Y.Z-rc.1` for the next release candidate train.
 
 Breaking changes:
 
 - Prefer semver major bumps for contract-breaking changes.
-- While AppTheory is `0.x`, breaking changes may ship in `0.(Y+1).0` as needed; keep `0.Y.Z` patch releases non-breaking.
 - If contract changes, the contract fixtures must change in the same release.
 
 ## Release assets (required)

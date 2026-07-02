@@ -168,4 +168,4 @@ The Go runtime passes all 145 contract fixtures on every commit. Any behavioral 
 - [API Reference](../api-reference.md) — full surface table
 - [HTTP Runtime tiers](../features/http-runtime.md) — P0 / P1 / P2
 - [Event Shape Dispatch](../reference/event-shapes.md) — when `HandleLambda` calls what
-- [Contract Fixtures](../reference/contract-fixtures.md) — the 128-fixture covenant
+- [Contract Fixtures](../reference/contract-fixtures.md) — the 145-fixture covenant

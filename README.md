@@ -63,13 +63,13 @@ AppTheory is distributed exclusively through immutable **[GitHub Releases](https
 
 | | |
 |---|---|
-| **Contract test fixtures** | 128 — routing, normalization, error envelope, event dispatch, MCP, jobs ledger |
+| **Contract test fixtures** | 145 — routing, normalization, error envelope, event dispatch, MCP, jobs ledger |
 | **Runtimes** | Go · TypeScript · Python (peers, not ports) |
 | **Tiers** | P0 (core) · P1 (+request-id, auth, CORS, guardrails) · P2 (+observability, rate limiting) — default P2 |
 | **Event sources** | Lambda Function URL · API Gateway v2 · ALB · AppSync · SQS · EventBridge · DynamoDB Streams · Kinesis · WebSockets |
 | **Distribution** | Immutable GitHub Releases — version-aligned across all runtimes |
 | **License** | Apache-2.0 — open source, production use |
-| **Status** | Pre-1.0, runtime contract stable across Go · TS · Python |
+| **Status** | v1 stable release line, runtime contract stable across Go · TS · Python |
 
 ## Why AppTheory?
 
@@ -115,7 +115,7 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 
 **Contract reference and feature pages:**
 
-- [Contract Fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/) — the 128-fixture covenant every runtime is tested against
+- [Contract Fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/) — the 145-fixture covenant every runtime is tested against
 - [Event Shape Dispatch](https://apptheory.theorycloud.ai/reference/event-shapes/) — which Lambda event shapes route to which handler
 - [HTTP Runtime](https://apptheory.theorycloud.ai/features/http-runtime/) — P0/P1/P2 tier surface
 - [Jobs Ledger](https://apptheory.theorycloud.ai/features/jobs-ledger/)
@@ -144,7 +144,7 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 | `py/` | Python runtime (3.14+) |
 | `cdk/` | CDK constructs (jsii) — `AppTheoryHttpApi`, `AppTheoryMcpServer`, `AppTheoryQueue`, ... |
 | `cdk-go/` | Generated Go bindings for the jsii CDK package |
-| `contract-tests/` | Cross-language contract fixtures (128) + runners for Go, TS, Python |
+| `contract-tests/` | Cross-language contract fixtures (145) + runners for Go, TS, Python |
 | `api-snapshots/` | Public API surface lockfiles for each runtime — the release gate |
 | `examples/` | CDK + handler examples: `multilang`, `import-pipeline`, `ssr-site`, MCP, ... |
 | `.github/workflows/` | CI: rubric, release-please (stable + prerelease), Pages publish, subtree publish |
