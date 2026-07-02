@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify all release-managed version files and manifests match VERSION.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

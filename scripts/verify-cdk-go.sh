@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify the generated CDK Go binding package compiles and tests.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

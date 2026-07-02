@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: run Python runtime unit tests.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

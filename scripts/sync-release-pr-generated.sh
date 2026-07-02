@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: synchronize generated artifacts on release-please PR branches.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

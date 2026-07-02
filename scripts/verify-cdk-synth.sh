@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: synthesize CDK examples and compare deterministic template hashes.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

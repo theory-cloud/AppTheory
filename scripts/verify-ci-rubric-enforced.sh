@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify CI still runs the required rubric gate on the intended branches.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: run Python formatting, lint, and type checks with pinned tool requirements.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

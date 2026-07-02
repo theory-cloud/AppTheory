@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: fail when TypeScript dist output differs from checked-in generated files.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

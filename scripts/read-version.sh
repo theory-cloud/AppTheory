@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: print the canonical repo version from VERSION with release-please comments stripped.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

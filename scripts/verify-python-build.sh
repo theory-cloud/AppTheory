@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: build and verify the Python runtime wheel and source distribution.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

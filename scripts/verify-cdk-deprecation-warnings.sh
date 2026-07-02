@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify CDK deprecation warnings remain intentional and documented.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
