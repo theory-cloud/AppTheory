@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify checked-in jsii Go bindings match the CDK TypeScript source.
 # Verify checked-in jsii Go bindings match the CDK TypeScript source.
 # Usage: ./scripts/verify-cdk-go-drift.sh
 set -euo pipefail

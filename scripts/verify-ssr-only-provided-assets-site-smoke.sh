@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: smoke-test the SSR-only provided-assets site example output.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

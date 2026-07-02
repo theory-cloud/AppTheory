@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: validate every contract fixture against the fixture schema and negative self-test.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

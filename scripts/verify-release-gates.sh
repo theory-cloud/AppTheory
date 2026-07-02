@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: run release-lane hygiene gates before release publication.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

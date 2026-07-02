@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify the generated TheoryCloud AppTheory docs subtree matches source docs.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

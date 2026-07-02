@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: run the full local rubric gate used by make rubric and CI.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

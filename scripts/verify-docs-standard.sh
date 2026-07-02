@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify docs front matter, navigation, links, and release-install placeholders.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

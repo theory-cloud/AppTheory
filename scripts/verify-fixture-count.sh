@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify public fixture-count claims match the checked-in fixture corpus.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

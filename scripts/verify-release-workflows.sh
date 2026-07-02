@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify GitHub release workflows preserve the immutable release contract.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify generated release-please PRs satisfy postcondition requirements.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

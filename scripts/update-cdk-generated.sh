@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: regenerate checked-in jsii Go bindings for the CDK construct package.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

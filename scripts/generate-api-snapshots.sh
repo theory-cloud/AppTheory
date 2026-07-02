@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: regenerate language API snapshot text from the current checked-in sources.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

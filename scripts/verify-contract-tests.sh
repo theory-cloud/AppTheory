@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: run the shared contract fixture corpus against Go, TypeScript, and Python.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
