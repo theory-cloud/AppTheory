@@ -26,11 +26,23 @@ go mod download
 (cd cdk && npm ci)
 ```
 
-AppTheory release artifacts are also published via GitHub Releases:
+AppTheory release artifacts are also published via GitHub Releases. Pin and verify the release you consume:
 
-- Go module: `go get github.com/theory-cloud/apptheory@vX.Y.Z`
-- TypeScript tarball: `npm i ./theory-cloud-apptheory-X.Y.Z.tgz`
-- Python wheel: `python -m pip install ./apptheory-X.Y.Z-py3-none-any.whl`
+```bash
+VERSION=1.14.0
+TAG="v${VERSION}"
+REPO="theory-cloud/AppTheory"
+
+go get "github.com/theory-cloud/apptheory@${TAG}"
+gh release download "${TAG}" --repo "${REPO}" \
+  --pattern "theory-cloud-apptheory-${VERSION}.tgz" \
+  --pattern "apptheory-${VERSION}-py3-none-any.whl" \
+  --pattern "SHA256SUMS.txt" \
+  --clobber
+grep -E " (theory-cloud-apptheory-${VERSION}\.tgz|apptheory-${VERSION}-py3-none-any\.whl)$" SHA256SUMS.txt | sha256sum -c -
+npm install "./theory-cloud-apptheory-${VERSION}.tgz"
+python -m pip install "./apptheory-${VERSION}-py3-none-any.whl"
+```
 
 ## First deterministic local invocation
 

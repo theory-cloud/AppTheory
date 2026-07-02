@@ -4,12 +4,19 @@ This guide walks you through installing and running a minimal AppTheory app in T
 
 ## Install
 
-AppTheory is distributed via **GitHub Releases** (no npm registry publishing).
-
-Example (install from a downloaded release tarball):
+AppTheory is distributed via **GitHub Releases** (no npm registry publishing). Pin and verify the release tarball before installing it:
 
 ```bash
-npm i ./theory-cloud-apptheory-X.Y.Z.tgz
+VERSION=1.14.0
+TAG="v${VERSION}"
+REPO="theory-cloud/AppTheory"
+
+gh release download "${TAG}" --repo "${REPO}" \
+  --pattern "theory-cloud-apptheory-${VERSION}.tgz" \
+  --pattern "SHA256SUMS.txt" \
+  --clobber
+grep " theory-cloud-apptheory-${VERSION}.tgz$" SHA256SUMS.txt | sha256sum -c -
+npm install "./theory-cloud-apptheory-${VERSION}.tgz"
 ```
 
 ## Minimal local invocation (P2 default)

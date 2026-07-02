@@ -4,16 +4,21 @@ This guide deploys a minimal HTTP API backed by a Lambda function that runs an A
 
 ## Install
 
-AppTheory CDK is distributed via **GitHub Releases** (no npm/PyPI registry publishing).
-
-Examples:
+AppTheory CDK is distributed via **GitHub Releases** (no npm/PyPI registry publishing). Pin and verify the jsii package assets before installing them:
 
 ```bash
-# Node (install from a downloaded release tarball)
-npm i ./theory-cloud-apptheory-cdk-X.Y.Z.tgz
+VERSION=1.14.0
+TAG="v${VERSION}"
+REPO="theory-cloud/AppTheory"
 
-# Python (install from a downloaded release wheel)
-python -m pip install ./apptheory_cdk-X.Y.Z-py3-none-any.whl
+gh release download "${TAG}" --repo "${REPO}" \
+  --pattern "theory-cloud-apptheory-cdk-${VERSION}.tgz" \
+  --pattern "apptheory_cdk-${VERSION}-py3-none-any.whl" \
+  --pattern "SHA256SUMS.txt" \
+  --clobber
+grep -E " (theory-cloud-apptheory-cdk-${VERSION}\.tgz|apptheory_cdk-${VERSION}-py3-none-any\.whl)$" SHA256SUMS.txt | sha256sum -c -
+npm install "./theory-cloud-apptheory-cdk-${VERSION}.tgz"
+python -m pip install "./apptheory_cdk-${VERSION}-py3-none-any.whl"
 ```
 
 ## Minimal example (TypeScript)

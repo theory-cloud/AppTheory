@@ -51,13 +51,26 @@ AppTheory is the runtime layer of the [Theory Cloud](THEORY_CLOUD.md) stack — 
 
 ## Install
 
-AppTheory is distributed exclusively through immutable **[GitHub Releases](https://github.com/theory-cloud/AppTheory/releases)** — no PyPI, no npm. The single distribution path keeps versions aligned across all three runtimes.
+AppTheory is distributed exclusively through immutable **[GitHub Releases](https://github.com/theory-cloud/AppTheory/releases)** — no PyPI, no npm. The single distribution path keeps versions aligned across all three runtimes. Pin the release you are consuming and verify downloaded assets before installing them:
 
-| Runtime | Install |
-|---|---|
-| **Go** | `go get github.com/theory-cloud/apptheory@vX.Y.Z` |
-| **TypeScript** | install the `.tgz` release asset — see [TypeScript getting started](https://apptheory.theorycloud.ai/runtimes/typescript/) |
-| **Python** | install the `.whl` release asset — see [Python getting started](https://apptheory.theorycloud.ai/runtimes/python/) |
+```bash
+VERSION=1.14.0
+TAG="v${VERSION}"
+REPO="theory-cloud/AppTheory"
+
+# Go resolves the immutable git tag.
+go get "github.com/theory-cloud/apptheory@${TAG}"
+
+# TypeScript and Python install from verified GitHub Release assets.
+gh release download "${TAG}" --repo "${REPO}" \
+  --pattern "theory-cloud-apptheory-${VERSION}.tgz" \
+  --pattern "apptheory-${VERSION}-py3-none-any.whl" \
+  --pattern "SHA256SUMS.txt" \
+  --clobber
+grep -E " (theory-cloud-apptheory-${VERSION}\.tgz|apptheory-${VERSION}-py3-none-any\.whl)$" SHA256SUMS.txt | sha256sum -c -
+npm install "./theory-cloud-apptheory-${VERSION}.tgz"
+python -m pip install "./apptheory-${VERSION}-py3-none-any.whl"
+```
 
 ## At a glance
 
