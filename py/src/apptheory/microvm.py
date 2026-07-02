@@ -6,7 +6,7 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm"
 MICROVM_CONTRACT_VERSION = "m15.microvm/v1"
@@ -2634,7 +2634,7 @@ class ReconstructingMicroVMSessionRegistry:
                 "apptheory: microvm registry reconstruction requires tenant-bound list support",
                 normalized.request_id,
             )
-        return list_fn(input_)
+        return cast(list[MicroVMSessionRecord], list_fn(input_))
 
 
 def create_reconstructing_microvm_session_registry(
@@ -2701,7 +2701,7 @@ class TableTheoryMicroVMSessionRegistry:
                     "apptheory: microvm session registry record not found",
                     "",
                 )
-            return microvm_session_from_registry_record(item)
+            return microvm_session_from_registry_record(cast(MicroVMSessionRegistryRecord | dict[str, Any], item))
         except Exception as exc:
             if isinstance(exc, MicroVMSafeError):
                 raise exc
@@ -2733,7 +2733,10 @@ class TableTheoryMicroVMSessionRegistry:
                 items = list_fn(partition_key)
             except TypeError:
                 items = list_fn(pk=partition_key)
-            out = [microvm_session_from_registry_record(item) for item in list(items or [])]
+            out = [
+                microvm_session_from_registry_record(cast(MicroVMSessionRegistryRecord | dict[str, Any], item))
+                for item in list(cast(Any, items) or [])
+            ]
             out.sort(key=lambda record: record.session_id)
             return out
         except Exception as exc:
@@ -3089,13 +3092,16 @@ class MicroVMRealController:
             )
             return _controller_error_response(request, err)
         try:
-            records = list_fn(
-                MicroVMSessionListInput(
-                    request_id=request.request_id,
-                    tenant_id=request.tenant_id,
-                    namespace=request.namespace,
-                    auth_subject=request.auth_context.subject,
-                )
+            records = cast(
+                list[MicroVMSessionRecord],
+                list_fn(
+                    MicroVMSessionListInput(
+                        request_id=request.request_id,
+                        tenant_id=request.tenant_id,
+                        namespace=request.namespace,
+                        auth_subject=request.auth_context.subject,
+                    )
+                ),
             )
             bindings: list[MicroVMProviderSessionBinding] = []
             records_by_key: dict[tuple[str, str, str], MicroVMSessionRecord] = {}
@@ -4188,10 +4194,10 @@ def _coerce_controller_contract(value: MicroVMControllerContract | dict[str, Any
                 for c in value.commands
             ],
         )
-    raw = value if isinstance(value, dict) else {}
-    auth = raw.get("auth") if isinstance(raw.get("auth"), dict) else {}
-    envelope = raw.get("envelope") if isinstance(raw.get("envelope"), dict) else {}
-    commands = raw.get("commands") if isinstance(raw.get("commands"), list) else []
+    raw = cast(dict[str, Any], value) if isinstance(value, dict) else {}
+    auth = cast(dict[str, Any], raw.get("auth")) if isinstance(raw.get("auth"), dict) else {}
+    envelope = cast(dict[str, Any], raw.get("envelope")) if isinstance(raw.get("envelope"), dict) else {}
+    commands = cast(list[Any], raw.get("commands")) if isinstance(raw.get("commands"), list) else []
     return MicroVMControllerContract(
         auth=MicroVMControllerAuthContract(
             required=auth.get("required") is True,
@@ -4352,8 +4358,8 @@ def _normalize_auth_context(value: MicroVMAuthContext | dict[str, Any]) -> Micro
             entitlements=[str(v) for v in value.entitlements],
             metadata=_clone_string_map(value.metadata),
         )
-    raw = value if isinstance(value, dict) else {}
-    entitlements = raw.get("entitlements") if isinstance(raw.get("entitlements"), list) else []
+    raw = cast(dict[str, Any], value) if isinstance(value, dict) else {}
+    entitlements = cast(list[Any], raw.get("entitlements")) if isinstance(raw.get("entitlements"), list) else []
     return MicroVMAuthContext(
         subject=str(raw.get("subject", "") or "").strip(),
         tenant_id=str(raw.get("tenant_id", "") or "").strip(),
@@ -4795,7 +4801,7 @@ def _load_aws_lambda_microvm_provider_client(*, region_name: str | None) -> Any:
         if not required_operations.issubset(set(model.operation_names)):
             raise RuntimeError("lambda-microvms service model incomplete")
         kwargs = {"region_name": region_name} if region_name else {}
-        client = boto3.client("lambda-microvms", **kwargs)
+        client = cast(Any, boto3).client("lambda-microvms", **kwargs)
         required_methods = [
             "run_microvm",
             "get_microvm",
@@ -5150,8 +5156,8 @@ def _normalize_provider_list_input(value: MicroVMProviderListInput | dict[str, A
             max_results=int(value.max_results or 0),
             known_sessions=[_normalize_provider_binding(binding) for binding in value.known_sessions],
         )
-    raw = value if isinstance(value, dict) else {}
-    known = raw.get("known_sessions") if isinstance(raw.get("known_sessions"), list) else []
+    raw = cast(dict[str, Any], value) if isinstance(value, dict) else {}
+    known = cast(list[Any], raw.get("known_sessions")) if isinstance(raw.get("known_sessions"), list) else []
     return MicroVMProviderListInput(
         request_id=str(raw.get("request_id", "") or "").strip(),
         tenant_id=str(raw.get("tenant_id", "") or "").strip(),
@@ -5175,8 +5181,8 @@ def _normalize_provider_token_input(value: MicroVMProviderTokenInput | dict[str,
             ttl_seconds=int(value.ttl_seconds or 0),
             allowed_port_scope=[_normalize_provider_port_scope(scope) for scope in value.allowed_port_scope],
         )
-    raw = value if isinstance(value, dict) else {}
-    scopes = raw.get("allowed_port_scope") if isinstance(raw.get("allowed_port_scope"), list) else []
+    raw = cast(dict[str, Any], value) if isinstance(value, dict) else {}
+    scopes = cast(list[Any], raw.get("allowed_port_scope")) if isinstance(raw.get("allowed_port_scope"), list) else []
     return MicroVMProviderTokenInput(
         request_id=str(raw.get("request_id", "") or "").strip(),
         tenant_id=str(raw.get("tenant_id", "") or "").strip(),
@@ -5501,9 +5507,10 @@ def _normalize_provider_state(state: str) -> str:
 
 def _time_field(value: Any, key: str) -> float:
     raw = value.get(key, 0) if isinstance(value, dict) else getattr(value, key, 0)
-    if hasattr(raw, "timestamp"):
+    timestamp = getattr(raw, "timestamp", None)
+    if callable(timestamp):
         try:
-            return float(raw.timestamp())
+            return float(cast(Any, timestamp)())
         except TypeError, ValueError, OSError:
             return 0.0
     try:

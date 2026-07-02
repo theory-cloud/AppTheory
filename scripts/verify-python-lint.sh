@@ -29,5 +29,6 @@ py/.venv/bin/python -m pip install --requirement py/requirements-lint.txt >/dev/
 
 py/.venv/bin/ruff check py/src
 py/.venv/bin/ruff format --check py/src
+py/.venv/bin/pyright -p py/pyproject.toml
 
 echo "python-lint: PASS"

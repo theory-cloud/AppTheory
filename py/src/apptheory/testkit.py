@@ -50,7 +50,7 @@ class TestEnv:
         policy_hook: PolicyHook | None = None,
         websocket_client_factory: WebSocketClientFactory | None = None,
     ) -> App:
-        kwargs: dict[str, object] = {
+        kwargs: dict[str, Any] = {
             "clock": clock or self.clock,
             "id_generator": id_generator or self.ids,
         }

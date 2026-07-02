@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import datetime as dt
+from typing import TYPE_CHECKING, Any, Literal, NoReturn
+
 from apptheory.app import (
     App,
     CORSConfig,
@@ -64,8 +67,8 @@ from apptheory.kinesis_producer import (
     report_kinesis_put_records_failures,
 )
 
-try:
-    from apptheory.jobs import (  # type: ignore
+if TYPE_CHECKING:
+    from apptheory.jobs import (
         DEFAULT_JOBS_TABLE_NAME,
         DynamoJobLedger,
         EnvJobsTableName,
@@ -91,68 +94,104 @@ try:
     from apptheory.jobs import (
         wrap_error as wrap_job_ledger_error,
     )
-except ModuleNotFoundError as exc:  # pragma: no cover
-    if exc.name != "theorydb_py":
-        raise
+else:
+    try:
+        from apptheory.jobs import (  # type: ignore
+            DEFAULT_JOBS_TABLE_NAME,
+            DynamoJobLedger,
+            EnvJobsTableName,
+            JobLedgerError,
+            JobsConfig,
+            format_rfc3339_nano,
+            job_lock_sort_key,
+            job_meta_sort_key,
+            job_partition_key,
+            job_record_sort_key,
+            job_request_sort_key,
+            jobs_table_name,
+            sanitize_error_envelope,
+            sanitize_fields,
+            unix_seconds,
+        )
+        from apptheory.jobs import (
+            default_config as default_jobs_config,
+        )
+        from apptheory.jobs import (
+            new_error as new_job_ledger_error,
+        )
+        from apptheory.jobs import (
+            wrap_error as wrap_job_ledger_error,
+        )
+    except ModuleNotFoundError as exc:  # pragma: no cover
+        if exc.name != "theorydb_py":
+            raise
 
-    DEFAULT_JOBS_TABLE_NAME = "apptheory-jobs"
-    EnvJobsTableName = "APPTHEORY_JOBS_TABLE_NAME"
-    missing_exc = exc
+        DEFAULT_JOBS_TABLE_NAME = "apptheory-jobs"
+        EnvJobsTableName = "APPTHEORY_JOBS_TABLE_NAME"
+        missing_exc = exc
 
-    def _raise_jobs_dependency_error() -> None:
-        raise ModuleNotFoundError(
-            "theorydb_py is required for apptheory.jobs; install `tabletheory-py` (see py/pyproject.toml)."
-        ) from missing_exc
+        ErrorType = Literal["internal_error", "invalid_input", "conflict", "not_found"]
 
-    class JobsConfig:  # type: ignore
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
+        def _raise_jobs_dependency_error() -> NoReturn:
+            raise ModuleNotFoundError(
+                "theorydb_py is required for apptheory.jobs; install `tabletheory-py` (see py/pyproject.toml)."
+            ) from missing_exc
+
+        class JobsConfig:  # type: ignore
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                _raise_jobs_dependency_error()
+
+        class JobLedgerError(Exception):
+            type: ErrorType
+            message: str
+
+            def __init__(self, error_type: ErrorType = "internal_error", message: str = "") -> None:
+                self.type = error_type
+                self.message = str(message)
+                super().__init__(self.message)
+
+        class DynamoJobLedger:  # type: ignore
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                _raise_jobs_dependency_error()
+
+        def default_jobs_config() -> JobsConfig:
             _raise_jobs_dependency_error()
 
-    class JobLedgerError(Exception):
-        pass
-
-    class DynamoJobLedger:  # type: ignore
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
+        def new_job_ledger_error(error_type: ErrorType, message: str) -> JobLedgerError:
             _raise_jobs_dependency_error()
 
-    def default_jobs_config() -> JobsConfig:
-        _raise_jobs_dependency_error()
+        def wrap_job_ledger_error(cause: Exception, error_type: ErrorType, message: str) -> JobLedgerError:
+            _raise_jobs_dependency_error()
 
-    def new_job_ledger_error(*_args: object, **_kwargs: object) -> JobLedgerError:
-        _raise_jobs_dependency_error()
+        def jobs_table_name() -> str:
+            _raise_jobs_dependency_error()
 
-    def wrap_job_ledger_error(*_args: object, **_kwargs: object) -> JobLedgerError:
-        _raise_jobs_dependency_error()
+        def job_partition_key(job_id: str) -> str:
+            _raise_jobs_dependency_error()
 
-    def jobs_table_name() -> str:
-        _raise_jobs_dependency_error()
+        def job_meta_sort_key() -> str:
+            _raise_jobs_dependency_error()
 
-    def job_partition_key(_job_id: str) -> str:
-        _raise_jobs_dependency_error()
+        def job_record_sort_key(record_id: str) -> str:
+            _raise_jobs_dependency_error()
 
-    def job_meta_sort_key() -> str:
-        _raise_jobs_dependency_error()
+        def job_lock_sort_key() -> str:
+            _raise_jobs_dependency_error()
 
-    def job_record_sort_key(_record_id: str) -> str:
-        _raise_jobs_dependency_error()
+        def job_request_sort_key(idempotency_key: str) -> str:
+            _raise_jobs_dependency_error()
 
-    def job_lock_sort_key() -> str:
-        _raise_jobs_dependency_error()
+        def unix_seconds(value: dt.datetime) -> int:
+            _raise_jobs_dependency_error()
 
-    def job_request_sort_key(_idempotency_key: str) -> str:
-        _raise_jobs_dependency_error()
+        def format_rfc3339_nano(value: dt.datetime) -> str:
+            _raise_jobs_dependency_error()
 
-    def unix_seconds(_value: object) -> int:
-        _raise_jobs_dependency_error()
+        def sanitize_fields(fields: dict[str, Any] | None) -> dict[str, Any] | None:
+            _raise_jobs_dependency_error()
 
-    def format_rfc3339_nano(_value: object) -> str:
-        _raise_jobs_dependency_error()
-
-    def sanitize_fields(_fields: object) -> object:
-        _raise_jobs_dependency_error()
-
-    def sanitize_error_envelope(_envelope: object) -> object:
-        _raise_jobs_dependency_error()
+        def sanitize_error_envelope(envelope: dict[str, Any] | None) -> dict[str, Any] | None:
+            _raise_jobs_dependency_error()
 
 
 from apptheory.logger import NoOpLogger, StructuredLogger, get_logger, set_logger

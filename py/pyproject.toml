@@ -58,3 +58,8 @@ max-complexity = 15
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.pyright]
+include = ["src/apptheory"]
+pythonVersion = "3.14"
+typeCheckingMode = "basic"

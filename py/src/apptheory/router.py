@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from apptheory.util import normalize_path
 
 
 @dataclass(slots=True)
 class Match:
-    handler: object
+    handler: Any
     params: dict[str, str]
     auth_required: bool
 
@@ -17,7 +18,7 @@ class _Route:
     method: str
     pattern: str
     segments: list[tuple[str, str]]
-    handler: object
+    handler: Any
     auth_required: bool
     static_count: int
     param_count: int
@@ -29,13 +30,13 @@ class Router:
     def __init__(self) -> None:
         self._routes: list[_Route] = []
 
-    def add(self, method: str, pattern: str, handler: object, *, auth_required: bool = False) -> None:
+    def add(self, method: str, pattern: str, handler: Any, *, auth_required: bool = False) -> None:
         try:
             self.add_strict(method, pattern, handler, auth_required=auth_required)
         except ValueError:
             return
 
-    def add_strict(self, method: str, pattern: str, handler: object, *, auth_required: bool = False) -> None:
+    def add_strict(self, method: str, pattern: str, handler: Any, *, auth_required: bool = False) -> None:
         if handler is None:
             raise ValueError("apptheory: route handler is nil")
 
