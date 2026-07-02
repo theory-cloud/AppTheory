@@ -24,11 +24,17 @@ async function loadAppTheoryRuntime() {
 }
 
 function parseArgs(argv) {
-  const args = { fixtures: "contract-tests/fixtures" };
+  const args = { fixtures: "contract-tests/fixtures", id: "", filter: "" };
   for (let i = 2; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--fixtures") {
       args.fixtures = argv[i + 1];
+      i += 1;
+    } else if (arg === "--id") {
+      args.id = argv[i + 1] ?? "";
+      i += 1;
+    } else if (arg === "--filter") {
+      args.filter = argv[i + 1] ?? "";
       i += 1;
     }
   }
@@ -161,6 +167,27 @@ function listFixtureFiles(fixturesRoot) {
   }
   files.sort();
   return files;
+}
+
+function selectedFixtureID(id, filter) {
+  const fixtureID = String(id ?? "").trim();
+  const fixtureFilter = String(filter ?? "").trim();
+  if (fixtureID && fixtureFilter && fixtureID !== fixtureFilter) {
+    throw new Error(
+      `fixture id mismatch: --id ${JSON.stringify(fixtureID)} != --filter ${JSON.stringify(fixtureFilter)}`,
+    );
+  }
+  return fixtureID || fixtureFilter;
+}
+
+function filterFixturesByID(fixtures, fixtureID) {
+  const matches = fixtures.filter((fixture) => fixture.id === fixtureID);
+  if (matches.length !== 1) {
+    throw new Error(
+      `fixture id ${JSON.stringify(fixtureID)} matched ${matches.length} fixtures`,
+    );
+  }
+  return matches;
 }
 
 function loadFixtures(fixturesRoot) {
@@ -4180,8 +4207,10 @@ function debugActualForExpected(actual, expected) {
 async function main() {
   const args = parseArgs(process.argv);
 
+  const fixtureID = selectedFixtureID(args.id, args.filter);
   const { fixtures, failures } = await runAllFixtures({
     fixturesRoot: args.fixtures,
+    fixtureID,
   });
 
   for (const f of failures) {
@@ -4275,8 +4304,11 @@ async function main() {
   console.log(`contract-tests(ts): PASS (${fixtures.length} fixtures)`);
 }
 
-async function runAllFixtures({ fixturesRoot } = {}) {
-  const fixtures = loadFixtures(fixturesRoot ?? "contract-tests/fixtures");
+async function runAllFixtures({ fixturesRoot, fixtureID = "" } = {}) {
+  let fixtures = loadFixtures(fixturesRoot ?? "contract-tests/fixtures");
+  if (fixtureID) {
+    fixtures = filterFixturesByID(fixtures, fixtureID);
+  }
 
   const failures = [];
   for (const fixture of fixtures) {

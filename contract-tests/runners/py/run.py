@@ -65,6 +65,22 @@ def list_fixture_files(fixtures_root: Path) -> list[Path]:
     return sorted(files)
 
 
+
+
+def selected_fixture_id(fixture_id: str, fixture_filter: str) -> str:
+    fixture_id = str(fixture_id or "").strip()
+    fixture_filter = str(fixture_filter or "").strip()
+    if fixture_id and fixture_filter and fixture_id != fixture_filter:
+        raise RuntimeError(f"fixture id mismatch: --id {fixture_id!r} != --filter {fixture_filter!r}")
+    return fixture_id or fixture_filter
+
+
+def filter_fixtures_by_id(fixtures: list[dict[str, Any]], fixture_id: str) -> list[dict[str, Any]]:
+    matches = [fixture for fixture in fixtures if fixture.get("id") == fixture_id]
+    if len(matches) != 1:
+        raise RuntimeError(f"fixture id {fixture_id!r} matched {len(matches)} fixtures")
+    return matches
+
 def load_fixtures(fixtures_root: Path) -> list[dict[str, Any]]:
     files = list_fixture_files(fixtures_root)
     if not files:
@@ -3420,10 +3436,15 @@ def debug_actual_for_expected(actual: CanonicalResponse, expected: dict[str, Any
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--fixtures", default="contract-tests/fixtures")
+    parser.add_argument("--id", dest="fixture_id", default="")
+    parser.add_argument("--filter", dest="fixture_filter", default="")
     args = parser.parse_args()
 
     fixtures_root = Path(args.fixtures)
     fixtures = load_fixtures(fixtures_root)
+    fixture_id = selected_fixture_id(args.fixture_id, args.fixture_filter)
+    if fixture_id:
+        fixtures = filter_fixtures_by_id(fixtures, fixture_id)
 
     failed: list[dict[str, Any]] = []
     for fixture in fixtures:
