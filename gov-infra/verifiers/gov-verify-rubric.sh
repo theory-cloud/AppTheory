@@ -695,13 +695,20 @@ gov_cmd_unit() {
   require_cmd_or_blocked node || return $?
   require_cmd_or_blocked python3 || return $?
 
-  make test-unit
+  # QUA-1 is the unit-test gate. Contract fixtures run exactly once in CON-3,
+  # so the rubric's Go unit pass excludes the fixture runner package whose
+  # TestAllFixturesPass executes the full corpus.
+  local -a go_unit_pkgs=()
+  mapfile -t go_unit_pkgs < <(./scripts/list-go-packages.sh | grep -Ev '^\./contract-tests/runners/go$')
+  if [[ "${#go_unit_pkgs[@]}" -eq 0 ]]; then
+    echo "FAIL: no Go packages selected for unit tests" >&2
+    return 1
+  fi
+  go test "${go_unit_pkgs[@]}"
 
   ensure_ts_runtime_deps_installed || return $?
-  node --test contract-tests/runners/ts/fixtures.test.cjs
   scripts/verify-ts-tests.sh
   ensure_py_runtime_deps_installed || return $?
-  "${GOV_TOOLS_PY_RUNTIME_BIN}/python" contract-tests/runners/py/run.py
   PYTHONPATH="${REPO_ROOT}/py/src" "${GOV_TOOLS_PY_RUNTIME_BIN}/python" -m unittest discover -s py/tests -p "test_*.py"
 }
 
