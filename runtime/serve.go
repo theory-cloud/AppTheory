@@ -21,10 +21,16 @@ func (a *App) Handle(method, pattern string, handler Handler, opts ...RouteOptio
 		}
 		opt(&routeOpts)
 	}
-	a.router.add(method, pattern, handler, routeOpts)
+	if err := a.router.add(method, pattern, handler, routeOpts); err != nil {
+		panic(err)
+	}
 	return a
 }
 
+// HandleStrict registers a route and returns registration errors instead of panicking.
+//
+// Deprecated: Handle now fails closed on invalid registrations. Use Handle for
+// normal application registration and recover during tests only when required.
 func (a *App) HandleStrict(method, pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	if a == nil {
 		return nil, errors.New("apptheory: app is nil")
@@ -50,6 +56,8 @@ func (a *App) Get(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("GET", pattern, handler, opts...)
 }
 
+// Deprecated: the fluent registration helpers now fail closed; use Get unless
+// you specifically need an error-returning compatibility wrapper.
 func (a *App) GetStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("GET", pattern, handler, opts...)
 }
@@ -58,6 +66,8 @@ func (a *App) Post(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("POST", pattern, handler, opts...)
 }
 
+// Deprecated: the fluent registration helpers now fail closed; use Post unless
+// you specifically need an error-returning compatibility wrapper.
 func (a *App) PostStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("POST", pattern, handler, opts...)
 }
@@ -66,6 +76,8 @@ func (a *App) Put(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("PUT", pattern, handler, opts...)
 }
 
+// Deprecated: the fluent registration helpers now fail closed; use Put unless
+// you specifically need an error-returning compatibility wrapper.
 func (a *App) PutStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("PUT", pattern, handler, opts...)
 }
@@ -74,6 +86,8 @@ func (a *App) Patch(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("PATCH", pattern, handler, opts...)
 }
 
+// Deprecated: the fluent registration helpers now fail closed; use Patch unless
+// you specifically need an error-returning compatibility wrapper.
 func (a *App) PatchStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("PATCH", pattern, handler, opts...)
 }
@@ -82,6 +96,8 @@ func (a *App) Options(pattern string, handler Handler, opts ...RouteOption) *App
 	return a.Handle("OPTIONS", pattern, handler, opts...)
 }
 
+// Deprecated: the fluent registration helpers now fail closed; use Options unless
+// you specifically need an error-returning compatibility wrapper.
 func (a *App) OptionsStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("OPTIONS", pattern, handler, opts...)
 }
@@ -90,6 +106,8 @@ func (a *App) Delete(pattern string, handler Handler, opts ...RouteOption) *App 
 	return a.Handle("DELETE", pattern, handler, opts...)
 }
 
+// Deprecated: the fluent registration helpers now fail closed; use Delete unless
+// you specifically need an error-returning compatibility wrapper.
 func (a *App) DeleteStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("DELETE", pattern, handler, opts...)
 }
