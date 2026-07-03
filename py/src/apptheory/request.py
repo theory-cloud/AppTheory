@@ -6,6 +6,7 @@ from typing import Any
 
 from apptheory.errors import AppError
 from apptheory.source_provenance import SourceProvenance, normalize_source_provenance, unknown_source_provenance
+from apptheory.trace_context import extract_trace_id_from_headers
 from apptheory.util import canonicalize_headers, clone_query, normalize_path, parse_cookies, to_bytes
 
 
@@ -19,6 +20,7 @@ class Request:
     body: Any = b""
     is_base64: bool = False
     source_provenance: SourceProvenance = field(default_factory=unknown_source_provenance)
+    trace_id: str = ""
 
 
 def normalize_request(req: Request) -> Request:
@@ -79,4 +81,5 @@ def normalize_request_with_max_bytes(req: Request, max_request_bytes: int = 0) -
         body=body,
         is_base64=is_base64,
         source_provenance=normalize_source_provenance(req.source_provenance),
+        trace_id=extract_trace_id_from_headers(headers),
     )

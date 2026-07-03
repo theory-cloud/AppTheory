@@ -29,10 +29,12 @@ from apptheory.errors import (
     error_response,
     error_response_with_format,
     error_response_with_request_id_and_format,
+    error_response_with_request_id_trace_id_and_format,
     normalize_http_error_format,
     response_for_error,
     response_for_error_with_format,
     response_for_error_with_request_id_and_format,
+    response_for_error_with_request_id_trace_id_and_format,
     status_for_error_code,
 )
 from apptheory.event_workloads import normalize_dynamodb_stream_record, normalize_eventbridge_workload_envelope
@@ -40,6 +42,7 @@ from apptheory.ids import IdGenerator, RealIdGenerator
 from apptheory.request import Request, normalize_request, normalize_request_with_max_bytes
 from apptheory.response import Response, normalize_response
 from apptheory.router import Router
+from apptheory.trace_context import extract_trace_id_from_headers
 from apptheory.util import canonicalize_headers, clone_query
 
 T = TypeVar("T")
@@ -119,6 +122,7 @@ class LogRecord:
     status: int
     error_code: str
     duration_ms: int = 0
+    trace_id: str = ""
     trigger: str = ""
     correlation_id: str = ""
     source: str = ""
@@ -385,11 +389,42 @@ class App:
             request_id=request_id,
         )
 
+    def _http_error_response_with_request_id_trace_id(
+        self,
+        code: str,
+        message: str,
+        *,
+        headers: dict[str, Any] | None = None,
+        request_id: str = "",
+        trace_id: str = "",
+    ) -> Response:
+        return error_response_with_request_id_trace_id_and_format(
+            self._http_error_format,
+            code,
+            message,
+            headers=headers,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
+
     def _response_for_http_error(self, exc: Exception) -> Response:
         return response_for_error_with_format(self._http_error_format, exc)
 
     def _response_for_http_error_with_request_id(self, exc: Exception, request_id: str) -> Response:
         return response_for_error_with_request_id_and_format(self._http_error_format, exc, request_id)
+
+    def _response_for_http_error_with_request_id_trace_id(
+        self,
+        exc: Exception,
+        request_id: str,
+        trace_id: str,
+    ) -> Response:
+        return response_for_error_with_request_id_trace_id_and_format(
+            self._http_error_format,
+            exc,
+            request_id,
+            trace_id,
+        )
 
     def serve(self, request: Request, ctx: Any | None = None) -> Response:
         return self._serve(request, ctx)
@@ -403,11 +438,17 @@ class App:
         error_responder: Callable[[Exception, Request, str], Response] | None = None,
         fallback_request_id: str = "",
     ) -> Response:
-        def respond_to_error(exc: Exception, error_request: Request, request_id: str) -> Response:
+        def respond_to_error(
+            exc: Exception,
+            error_request: Request,
+            request_id: str,
+            trace_id: str = "",
+        ) -> Response:
             if error_responder is not None:
                 return error_responder(exc, error_request, request_id)
             if request_id:
-                return self._response_for_http_error_with_request_id(exc, request_id)
+                resolved_trace_id = str(trace_id or "").strip() or str(getattr(error_request, "trace_id", "") or "")
+                return self._response_for_http_error_with_request_id_trace_id(exc, request_id, resolved_trace_id)
             return self._response_for_http_error(exc)
 
         if self._tier == "p1":
@@ -464,6 +505,7 @@ class App:
             clock=self._clock,
             id_generator=self._id_generator,
             ctx=ctx,
+            trace_id=normalized.trace_id,
             appsync=appsync,
         )
         if context_configurer is not None:
@@ -493,6 +535,7 @@ class App:
         request_id: str,
         *,
         tier: str,
+        trace_id: str = "",
         error_responder: Callable[[Exception, Request, str], Response] | None = None,
     ) -> tuple[Response, str] | None:
         if tier != "p2" or self._policy_hook is None:
@@ -504,7 +547,7 @@ class App:
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
             if error_responder is not None:
                 return error_responder(exc, request_ctx.request, request_id), error_code
-            return self._response_for_http_error_with_request_id(exc, request_id), error_code
+            return self._response_for_http_error_with_request_id_trace_id(exc, request_id, trace_id), error_code
 
         if decision is None or not str(getattr(decision, "code", "")).strip():
             return None
@@ -513,11 +556,12 @@ class App:
         message = str(getattr(decision, "message", "")).strip() or _default_policy_message(code)
         if error_responder is not None:
             return error_responder(AppError(code, message), request_ctx.request, request_id), code
-        resp = self._http_error_response_with_request_id(
+        resp = self._http_error_response_with_request_id_trace_id(
             code,
             message,
             headers=decision.headers,
             request_id=request_id,
+            trace_id=trace_id,
         )
         return resp, code
 
@@ -528,6 +572,7 @@ class App:
         auth_required: bool,
         request_id: str,
         trace: list[str],
+        trace_id: str = "",
         error_responder: Callable[[Exception, Request, str], Response] | None = None,
     ) -> tuple[Response, str] | None:
         if not auth_required:
@@ -540,10 +585,11 @@ class App:
                     error_responder(AppError("app.unauthorized", "unauthorized"), request_ctx.request, request_id),
                     "app.unauthorized",
                 )
-            resp = self._http_error_response_with_request_id(
+            resp = self._http_error_response_with_request_id_trace_id(
                 "app.unauthorized",
                 "unauthorized",
                 request_id=request_id,
+                trace_id=trace_id,
             )
             return resp, "app.unauthorized"
 
@@ -553,7 +599,7 @@ class App:
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
             if error_responder is not None:
                 return error_responder(exc, request_ctx.request, request_id), error_code
-            return self._response_for_http_error_with_request_id(exc, request_id), error_code
+            return self._response_for_http_error_with_request_id_trace_id(exc, request_id, trace_id), error_code
 
         if not str(identity or "").strip():
             if error_responder is not None:
@@ -561,10 +607,11 @@ class App:
                     error_responder(AppError("app.unauthorized", "unauthorized"), request_ctx.request, request_id),
                     "app.unauthorized",
                 )
-            resp = self._http_error_response_with_request_id(
+            resp = self._http_error_response_with_request_id_trace_id(
                 "app.unauthorized",
                 "unauthorized",
                 request_id=request_id,
+                trace_id=trace_id,
             )
             return resp, "app.unauthorized"
 
@@ -582,14 +629,21 @@ class App:
         error_responder: Callable[[Exception, Request, str], Response] | None = None,
         fallback_request_id: str = "",
     ) -> Response:
-        def respond_to_error(exc: Exception, error_request: Request, request_id: str) -> Response:
+        def respond_to_error(
+            exc: Exception,
+            error_request: Request,
+            request_id: str,
+            trace_id: str = "",
+        ) -> Response:
             if error_responder is not None:
                 return error_responder(exc, error_request, request_id)
-            return self._response_for_http_error_with_request_id(exc, request_id)
+            resolved_trace_id = str(trace_id or "").strip() or str(getattr(error_request, "trace_id", "") or "")
+            return self._response_for_http_error_with_request_id_trace_id(exc, request_id, resolved_trace_id)
 
         started_at = self._clock.now()
         pre_headers = canonicalize_headers(request.headers)
         pre_query = clone_query(request.query)
+        trace_id = extract_trace_id_from_headers(pre_headers)
 
         method = str(request.method or "").strip().upper()
         path = str(request.path or "").strip() or "/"
@@ -615,6 +669,7 @@ class App:
                     path,
                     request_id,
                     tenant_id,
+                    trace_id,
                     out.status,
                     error_code,
                     _duration_ms(started_at, self._clock.now()),
@@ -636,23 +691,30 @@ class App:
             normalized = normalize_request_with_max_bytes(request, self._limits.max_request_bytes)
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
-            return finish(respond_to_error(exc, request, request_id), error_code)
+            return finish(respond_to_error(exc, request, request_id, trace_id), error_code)
 
         method = normalized.method
         path = normalized.path
+        trace_id = normalized.trace_id
         tenant_id = _extract_tenant_id(normalized.headers, normalized.query)
 
         if self._limits.max_request_bytes > 0 and len(normalized.body) > self._limits.max_request_bytes:
             if error_responder is not None:
                 return finish(
-                    respond_to_error(AppError("app.too_large", "request too large"), normalized, request_id),
+                    respond_to_error(
+                        AppError("app.too_large", "request too large"),
+                        normalized,
+                        request_id,
+                        trace_id,
+                    ),
                     "app.too_large",
                 )
             return finish(
-                self._http_error_response_with_request_id(
+                self._http_error_response_with_request_id_trace_id(
                     "app.too_large",
                     "request too large",
                     request_id=request_id,
+                    trace_id=trace_id,
                 ),
                 "app.too_large",
             )
@@ -666,28 +728,31 @@ class App:
                             AppError("app.method_not_allowed", "method not allowed"),
                             normalized,
                             request_id,
+                            trace_id,
                         ),
                         "app.method_not_allowed",
                     )
                 return finish(
-                    respond_to_error(AppError("app.not_found", "not found"), normalized, request_id),
+                    respond_to_error(AppError("app.not_found", "not found"), normalized, request_id, trace_id),
                     "app.not_found",
                 )
             if allowed:
                 return finish(
-                    self._http_error_response_with_request_id(
+                    self._http_error_response_with_request_id_trace_id(
                         "app.method_not_allowed",
                         "method not allowed",
                         headers={"allow": [self._router.format_allow_header(allowed)]},
                         request_id=request_id,
+                        trace_id=trace_id,
                     ),
                     "app.method_not_allowed",
                 )
             return finish(
-                self._http_error_response_with_request_id(
+                self._http_error_response_with_request_id_trace_id(
                     "app.not_found",
                     "not found",
                     request_id=request_id,
+                    trace_id=trace_id,
                 ),
                 "app.not_found",
             )
@@ -699,6 +764,7 @@ class App:
             id_generator=self._id_generator,
             ctx=ctx,
             request_id=request_id,
+            trace_id=trace_id,
             tenant_id=tenant_id,
             auth_identity="",
             remaining_ms=remaining_ms,
@@ -712,6 +778,7 @@ class App:
             request_ctx,
             request_id,
             tier=tier,
+            trace_id=trace_id,
             error_responder=error_responder,
         )
         if policy_outcome is not None:
@@ -723,6 +790,7 @@ class App:
             auth_required=match.auth_required,
             request_id=request_id,
             trace=trace,
+            trace_id=trace_id,
             error_responder=error_responder,
         )
         if auth_outcome is not None:
@@ -736,11 +804,11 @@ class App:
             resp = _resolve(handler(request_ctx))
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
-            return finish(respond_to_error(exc, normalized, request_id), error_code)
+            return finish(respond_to_error(exc, normalized, request_id, trace_id), error_code)
 
         if resp is None:
             return finish(
-                respond_to_error(AppError("app.internal", "internal error"), normalized, request_id),
+                respond_to_error(AppError("app.internal", "internal error"), normalized, request_id, trace_id),
                 "app.internal",
             )
 
@@ -748,19 +816,25 @@ class App:
             resp = normalize_response(resp)
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
-            return finish(respond_to_error(exc, normalized, request_id), error_code)
+            return finish(respond_to_error(exc, normalized, request_id, trace_id), error_code)
 
         if self._limits.max_response_bytes > 0 and len(resp.body) > self._limits.max_response_bytes:
             if error_responder is not None:
                 return finish(
-                    respond_to_error(AppError("app.too_large", "response too large"), normalized, request_id),
+                    respond_to_error(
+                        AppError("app.too_large", "response too large"),
+                        normalized,
+                        request_id,
+                        trace_id,
+                    ),
                     "app.too_large",
                 )
             return finish(
-                self._http_error_response_with_request_id(
+                self._http_error_response_with_request_id_trace_id(
                     "app.too_large",
                     "response too large",
                     request_id=request_id,
+                    trace_id=trace_id,
                 ),
                 "app.too_large",
             )
@@ -780,6 +854,7 @@ class App:
         path: str,
         request_id: str,
         tenant_id: str,
+        trace_id: str,
         status: int,
         error_code: str,
         duration_ms: int,
@@ -804,6 +879,7 @@ class App:
                     status=int(status),
                     error_code=error_code,
                     duration_ms=observed_duration_ms,
+                    trace_id=str(trace_id or "").strip(),
                 )
             )
 
@@ -824,17 +900,21 @@ class App:
             )
 
         if self._observability.span is not None:
+            attrs = {
+                "http.method": method,
+                "http.route": path,
+                "http.status_code": str(int(status)),
+                "request.id": request_id,
+                "tenant.id": tenant_id,
+                "error.code": error_code,
+            }
+            resolved_trace_id = str(trace_id or "").strip()
+            if resolved_trace_id:
+                attrs["trace.id"] = resolved_trace_id
             self._observability.span(
                 SpanRecord(
                     name=f"http {method} {path}",
-                    attributes={
-                        "http.method": method,
-                        "http.route": path,
-                        "http.status_code": str(int(status)),
-                        "request.id": request_id,
-                        "tenant.id": tenant_id,
-                        "error.code": error_code,
-                    },
+                    attributes=attrs,
                 )
             )
 
@@ -958,6 +1038,7 @@ class App:
             id_generator=self._id_generator,
             ctx=ctx,
             request_id=request_id,
+            trace_id=normalized.trace_id,
             tenant_id=tenant_id,
             auth_identity="",
             remaining_ms=remaining_ms,

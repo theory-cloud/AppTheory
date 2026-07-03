@@ -191,13 +191,36 @@ def error_response_with_request_id_and_format(
     headers: dict[str, Any] | None = None,
     request_id: str = "",
 ) -> Response:
+    return error_response_with_request_id_trace_id_and_format(
+        error_format,
+        code,
+        message,
+        headers=headers,
+        request_id=request_id,
+        trace_id="",
+    )
+
+
+def error_response_with_request_id_trace_id_and_format(
+    error_format: str,
+    code: str,
+    message: str,
+    *,
+    headers: dict[str, Any] | None = None,
+    request_id: str = "",
+    trace_id: str = "",
+) -> Response:
     headers_out = canonicalize_headers(headers or {})
     headers_out["content-type"] = ["application/json; charset=utf-8"]
 
     body_code, body_message = _canonical_http_error_fields(error_format, code, message)
     error: dict[str, Any] = {"code": body_code, "message": body_message}
-    if normalize_http_error_format(error_format) != HTTP_ERROR_FORMAT_FLAT_LEGACY and request_id:
-        error["request_id"] = str(request_id)
+    if normalize_http_error_format(error_format) != HTTP_ERROR_FORMAT_FLAT_LEGACY:
+        if request_id:
+            error["request_id"] = str(request_id)
+        resolved_trace_id = str(trace_id or "").strip()
+        if resolved_trace_id:
+            error["trace_id"] = resolved_trace_id
 
     body = _serialize_http_error_body(error_format, error)
 
@@ -232,6 +255,7 @@ def error_response_from_app_theory_error_with_format(
     *,
     headers: dict[str, Any] | None = None,
     request_id: str = "",
+    trace_id: str = "",
 ) -> Response:
     headers_out = canonicalize_headers(headers or {})
     headers_out["content-type"] = ["application/json; charset=utf-8"]
@@ -251,8 +275,9 @@ def error_response_from_app_theory_error_with_format(
         resolved_request_id = str(exc.request_id or "").strip() or str(request_id or "").strip()
         if resolved_request_id:
             error["request_id"] = resolved_request_id
-        if str(exc.trace_id or "").strip():
-            error["trace_id"] = str(exc.trace_id)
+        resolved_trace_id = str(exc.trace_id or "").strip() or str(trace_id or "").strip()
+        if resolved_trace_id:
+            error["trace_id"] = resolved_trace_id
         if str(exc.timestamp or "").strip():
             error["timestamp"] = str(exc.timestamp)
         if str(exc.stack_trace or "").strip():
@@ -288,20 +313,36 @@ def response_for_error_with_request_id(exc: Exception, request_id: str) -> Respo
 
 
 def response_for_error_with_request_id_and_format(error_format: str, exc: Exception, request_id: str) -> Response:
+    return response_for_error_with_request_id_trace_id_and_format(error_format, exc, request_id, "")
+
+
+def response_for_error_with_request_id_trace_id_and_format(
+    error_format: str,
+    exc: Exception,
+    request_id: str,
+    trace_id: str,
+) -> Response:
     if isinstance(exc, AppTheoryError):
-        return error_response_from_app_theory_error_with_format(error_format, exc, request_id=request_id)
+        return error_response_from_app_theory_error_with_format(
+            error_format,
+            exc,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
     if isinstance(exc, AppError):
-        return error_response_with_request_id_and_format(
+        return error_response_with_request_id_trace_id_and_format(
             error_format,
             exc.code,
             exc.message,
             request_id=request_id,
+            trace_id=trace_id,
         )
-    return error_response_with_request_id_and_format(
+    return error_response_with_request_id_trace_id_and_format(
         error_format,
         "app.internal",
         "internal error",
         request_id=request_id,
+        trace_id=trace_id,
     )
 
 
