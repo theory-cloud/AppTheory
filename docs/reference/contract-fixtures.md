@@ -1,11 +1,11 @@
 ---
 title: Contract Fixtures
-description: The 194 contract fixtures: Go executes all; TypeScript and Python explicitly skip 11 MCP future-runtime fixtures. # apptheory-fixture-count
+description: The 194 contract fixtures: Go executes all; TypeScript and Python explicitly skip 11 MCP future-runtime fixtures. # apptheory-fixture-count: 194
 ---
 
 # Contract Fixtures
 
-AppTheory ships **194 contract test fixtures** in `contract-tests/fixtures/`. <!-- apptheory-fixture-count --> Of those, 183 form the shared non-MCP corpus that Go, TypeScript, and Python execute on every commit. The 11 `tier: mcp` fixtures are SP09 Go MCP runtime contracts: Go executes them now; the schema gate checks the same files, and TypeScript/Python runners load them and explicitly report them as future-runtime skips until SP10/SP11 add those runtime legs.
+AppTheory ships **194 contract test fixtures** in `contract-tests/fixtures/`. <!-- apptheory-fixture-count: 194 --> Of those, 183 form the shared non-MCP corpus that Go, TypeScript, and Python execute on every commit. The 11 `tier: mcp` fixtures are SP09 Go MCP runtime contracts: Go executes them now; the schema gate checks the same files, and TypeScript/Python runners load them and explicitly report them as future-runtime skips until SP10/SP11 add those runtime legs.
 
 This page explains what the fixtures are, what they cover, and how to evolve them safely.
 
@@ -17,7 +17,7 @@ A contract fixture is a language-neutral description of a scenario:
 - An app configuration (registered routes, tier, error format, event-source bindings, etc.)
 - The expected output (response shape, status, headers, partial-batch failure list, normalized summary, etc.)
 
-For implemented tiers, each fixture is loaded by language-specific runners that construct an AppTheory app from the configuration, invoke it with the input, and compare the output to the expected shape. The SP09 MCP tier is intentionally staged: the schema gate validates those 11 fixtures, and the TypeScript/Python runners load them before reporting an explicit future-runtime skip instead of claiming parity. **The fixture is the specification.** The runners are not — they are independent test harnesses against the same source of truth.
+For implemented tiers, each fixture is loaded by language-specific runners that construct an AppTheory app from the configuration, invoke it with the input, and compare the output to the expected shape. The SP09 MCP tier is intentionally staged: the schema gate validates that MCP fixture set, and the TypeScript/Python runners load them before reporting an explicit future-runtime skip instead of claiming parity. **The fixture is the specification.** The runners are not — they are independent test harnesses against the same source of truth.
 
 ## Why this matters
 
@@ -50,7 +50,7 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 
 ## Categories
 
-The 194 fixtures span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory). Go executes all 194; TypeScript and Python execute the 183 shared non-MCP fixtures and explicitly skip the 11 MCP future-runtime fixtures pending SP10/SP11. <!-- apptheory-fixture-count -->
+The 194 fixtures span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory). Go executes all 194; TypeScript and Python execute the 183 shared non-MCP fixtures and explicitly skip the 11 MCP future-runtime fixtures pending SP10/SP11. <!-- apptheory-fixture-count: 194 -->
 
 | Category | Covers |
 | --- | --- |
@@ -73,7 +73,7 @@ The 194 fixtures span these behavior areas (counts approximate; see `contract-te
 | DynamoDB Streams | Partial-batch response, record safe-summary shape. |
 | Kinesis | Partial-batch response, stream routing, fail-closed for unregistered streams, CloudWatch Logs subscription envelope decoding. |
 | Remote MCP path dispatch | API Gateway REST proxy path normalization for Remote MCP and protected-resource metadata routes. These shared non-MCP fixtures are separate from the Go MCP runtime tier and do not cover DCR, PKCE, bearer-token validation, or OAuth challenges. |
-| MCP JSON-RPC and Streamable HTTP | The `mcp/` fixture tier pins Go MCP `initialize`, JSON-RPC envelopes, tools/resources/resource-templates/prompts registries, session lifecycle, Streamable HTTP framing, resumable SSE replay, and task-store behavior. The schema gate validates these 11 fixtures; TypeScript and Python runners load them and report explicit future-runtime skips until SP10/SP11. They are not TS/Py parity proof yet. |
+| MCP JSON-RPC and Streamable HTTP | The `mcp/` fixture tier pins Go MCP `initialize`, JSON-RPC envelopes, tools/resources/resource-templates/prompts registries, session lifecycle, Streamable HTTP framing, resumable SSE replay, and task-store behavior. The schema gate validates these MCP fixture files; TypeScript and Python runners load them and report explicit future-runtime skips until SP10/SP11. They are not TS/Py parity proof yet. |
 | Sanitization | Token-like value redaction, JSON/XML safe-logging output. |
 | Lambda MicroVM support | M15 foundation fixtures plus M16 real operations `run/get/list/suspend/resume/terminate/auth-token/shell-auth-token`, provider-state mappings, protected controller routes, tenant-bound list/recovery, token no-leak denial, and raw SDK/lifecycle bypass denial. The feature line is evidence-bounded to repo-local runtime/CDK/example/conformance harness proof, not live AWS, EqualToAI/Host, customer workload, or unauthenticated-controller proof. |
 

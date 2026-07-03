@@ -28,7 +28,7 @@ by the framework.
   application model for AWS Lambda: routing, middleware, error handling, and event normalization. The same handler
   code in Go, TypeScript, or Python produces the same HTTP response, verified by the shared non-MCP contract fixture
   corpus. Go also executes the 11 SP09 MCP fixtures; TypeScript and Python load them and explicitly skip those
-  future-runtime fixtures pending SP10/SP11. <!-- apptheory-fixture-count -->
+  future-runtime fixtures pending SP10/SP11. <!-- apptheory-fixture-count: 194 -->
 
 - **One path to client delivery.** [FaceTheory](https://github.com/theory-cloud/FaceTheory) provides a single model
   for SSR, SSG, and ISR on AWS Lambda + CloudFront, with adapter support for React, Vue, and Svelte.
