@@ -427,6 +427,16 @@ from apptheory.microvm import (
 )
 from apptheory.middleware import TimeoutConfig, timeout_middleware
 from apptheory.naming import base_name, normalize_stage, resource_name
+from apptheory.openapi import (
+    OpenAPIFieldSpec,
+    OpenAPIRequestSpec,
+    OpenAPIResponseSpec,
+    OpenAPIRouteSpec,
+    OpenAPISpec,
+    OpenAPIValidationRule,
+    generate_openapi,
+    generate_openapi_json,
+)
 from apptheory.request import Request
 from apptheory.response import Response, binary, html, html_stream, json, safe_json_for_html, text
 from apptheory.sanitization import (
@@ -680,6 +690,12 @@ __all__ = [
     "MicroVMSessionTokenMetadata",
     "NoOpLogger",
     "ObservabilityHooks",
+    "OpenAPIFieldSpec",
+    "OpenAPIRequestSpec",
+    "OpenAPIResponseSpec",
+    "OpenAPIRouteSpec",
+    "OpenAPISpec",
+    "OpenAPIValidationRule",
     "PolicyDecision",
     "ProfileLogger",
     "ProfileLoggerOptions",
@@ -753,6 +769,8 @@ __all__ = [
     "event_bridge_rule",
     "format_duration",
     "format_rfc3339_nano",
+    "generate_openapi",
+    "generate_openapi_json",
     "get_logger",
     "header",
     "hooks_from_logger",
