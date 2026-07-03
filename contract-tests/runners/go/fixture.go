@@ -122,6 +122,7 @@ type FixtureExpect struct {
 	ProfileValidationErrors    []string                           `json:"profile_validation_errors,omitempty"`
 	LoggingProfileCatalog      map[string]any                     `json:"logging_profile_catalog,omitempty"`
 	MicroVMContractValidation  *FixtureMicroVMContractValidation  `json:"microvm_contract_validation,omitempty"`
+	MicroVMLifecycleAdapter    *FixtureMicroVMLifecycleAdapter    `json:"microvm_lifecycle_adapter,omitempty"`
 	MicroVMControllerRoute     *FixtureMicroVMControllerRoute     `json:"microvm_controller_route,omitempty"`
 }
 
@@ -131,6 +132,16 @@ type FixtureMicroVMContractValidation struct {
 	Version      string `json:"version,omitempty"`
 	ErrorCode    string `json:"error_code,omitempty"`
 	ErrorMessage string `json:"error_message,omitempty"`
+}
+
+type FixtureMicroVMLifecycleAdapter struct {
+	Valid         bool     `json:"valid"`
+	Version       string   `json:"version,omitempty"`
+	FinalState    string   `json:"final_state,omitempty"`
+	FailureState  string   `json:"failure_state,omitempty"`
+	HandlerStates []string `json:"handler_states,omitempty"`
+	ErrorCode     string   `json:"error_code,omitempty"`
+	ErrorMessage  string   `json:"error_message,omitempty"`
 }
 
 type FixtureMicroVMRouteSetup struct {
