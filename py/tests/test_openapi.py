@@ -10,12 +10,18 @@ import apptheory
 class OpenAPITests(unittest.TestCase):
     def test_contract_fixture_canonical_json(self) -> None:
         root = Path(__file__).resolve().parents[2]
-        fixture_path = root / "contract-tests" / "fixtures" / "openapi" / "typed-handler-validation.json"
-        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+        fixture_dir = root / "contract-tests" / "fixtures" / "openapi"
 
-        actual = apptheory.generate_openapi_json(fixture["setup"]["openapi"])
-
-        self.assertEqual(actual, fixture["expect"]["output_json"])
+        for fixture_path in sorted(fixture_dir.glob("*.json")):
+            with self.subTest(fixture=fixture_path.name):
+                fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+                expected_error = fixture["expect"].get("error")
+                if expected_error is not None:
+                    with self.assertRaisesRegex(ValueError, expected_error["message"]):
+                        apptheory.generate_openapi_json(fixture["setup"]["openapi"])
+                    continue
+                actual = apptheory.generate_openapi_json(fixture["setup"]["openapi"])
+                self.assertEqual(actual, fixture["expect"]["output_json"])
 
     def test_dataclass_spec_normalizes_route_and_tags(self) -> None:
         spec = apptheory.OpenAPISpec(
@@ -96,6 +102,32 @@ class OpenAPITests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "unsupported source"):
             apptheory.generate_openapi(invalid_source)
+
+        invalid_integer_rule = {
+            "title": "API",
+            "version": "v1",
+            "routes": [
+                {
+                    "method": "GET",
+                    "path": "/x",
+                    "operation_id": "one",
+                    "request": {
+                        "fields": [
+                            {
+                                "field": "name",
+                                "source": "query",
+                                "name": "name",
+                                "type": "string",
+                                "validation": [{"rule": "min_length", "value": 3.5}],
+                            }
+                        ]
+                    },
+                    "response": {},
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "min_length must be an integer"):
+            apptheory.generate_openapi(invalid_integer_rule)
 
 
 if __name__ == "__main__":

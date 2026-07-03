@@ -287,10 +287,10 @@ export class App {
             middlewareTrace.push("cors");
         const tenantId = extractTenantId(preHeaders, preQuery);
         const remainingMs = extractRemainingMs(ctx);
-        const enableP2 = this._tier === "p2";
+        const tier = this._tier;
         const finish = (resp, errCode) => {
             const out = finalizeP1Response(resp, requestId, origin, this._cors);
-            if (enableP2) {
+            if (tier === "p2") {
                 recordObservability(this._observability, {
                     method,
                     path,
@@ -357,7 +357,7 @@ export class App {
             appSync: contextOptions?.appSync ?? null,
         });
         contextOptions?.configure?.(requestCtx);
-        if (enableP2 && typeof this._policyHook === "function") {
+        if (tier === "p2" && typeof this._policyHook === "function") {
             let decision;
             try {
                 decision = await this._policyHook(requestCtx);

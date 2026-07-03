@@ -1,11 +1,11 @@
 ---
 title: Contract Fixtures
-description: The 165 shared fixtures that arbitrate behavior across Go, TypeScript, and Python. # apptheory-fixture-count
+description: The 168 shared fixtures that arbitrate behavior across Go, TypeScript, and Python. # apptheory-fixture-count
 ---
 
 # Contract Fixtures
 
-AppTheory ships **165 contract test fixtures** in `contract-tests/fixtures/` <!-- apptheory-fixture-count --> that define the language-neutral behavior every runtime must produce. The Go, TypeScript, and Python runtimes are each independently verified against the same fixture corpus on every commit.
+AppTheory ships **168 contract test fixtures** in `contract-tests/fixtures/` <!-- apptheory-fixture-count --> that define the language-neutral behavior every runtime must produce. The Go, TypeScript, and Python runtimes are each independently verified against the same fixture corpus on every commit.
 
 This page explains what the fixtures are, what they cover, and how to evolve them safely.
 
@@ -35,7 +35,7 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 | `http-core/` | `p0.*` / `tier = p0` | P0 runtime core: routing, normalization, errors, source provenance, Lambda URL/ALB adapters. |
 | `binding/` | `p0.binding.*` / `tier = p0` | Canonical typed-handler body/query/path/header binding, conversions, strict JSON, and binding-error envelopes. |
 | `validation/` | `p0.validation.*` / `tier = p0` | Declarative validation vocabulary, canonical 422 field-error envelope, and binding/validation precedence. |
-| `openapi/` | `p0.openapi.*` / `tier = p0` | Typed-handler OpenAPI generation and byte-pinned canonical JSON output. |
+| `openapi/` | `p0.openapi.*` / `tier = p0` | Descriptive OpenAPI generation and byte-pinned canonical JSON output. |
 | `middleware-guardrails/` | `p1.*` / `tier = p1` | P1 request-id, tenant, auth, CORS, guardrails, and legacy flat-error behavior. |
 | `appsync-observability-policies/` | `p2.*` / `tier = p2` | P2 AppSync, observability, logging profiles, rate limiting, and load shedding. |
 | `event-sources/` | `m1.*` / `tier = m1` | SQS, EventBridge, DynamoDB Streams, Kinesis, SNS, and non-HTTP middleware behavior. |
@@ -48,7 +48,7 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 
 ## Categories
 
-The 165 fixtures span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory): <!-- apptheory-fixture-count -->
+The 168 fixtures span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory): <!-- apptheory-fixture-count -->
 
 | Category | Covers |
 | --- | --- |
@@ -57,7 +57,7 @@ The 165 fixtures span these behavior areas (counts approximate; see `contract-te
 | HTTP error envelope | Nested vs flat-legacy shape, `error.code` / `error.message` / `error.details`, `request_id` propagation. |
 | Typed handlers | Body/query/path/header binding, typed conversion, strict unknown-field rejection, and binding-error details. |
 | Declarative validation | Required/min/max/length/pattern/enum rules, canonical 422 status, field-error aggregation, and binding precedence. |
-| OpenAPI | Descriptive OpenAPI 3.1 output generated from typed-handler route, binding, response, and validation metadata. |
+| OpenAPI | Descriptive OpenAPI 3.1 output generated from an explicit OpenAPISpec covering route, binding, response, and validation metadata. |
 | Middleware tiers | P0 / P1 / P2 inclusion sets, ordering, request-id, tenant, auth, CORS, guardrails. |
 | Source provenance | `SourceProvenance` shape, canonical IP form, fail-closed `provider = "unknown"`. |
 | Lambda Function URL | Streaming vs buffered, request shape, response headers. |

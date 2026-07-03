@@ -1,7 +1,7 @@
 {
-  "id": "p0.openapi.typed_handler_validation",
+  "id": "p0.openapi.descriptive_validation",
   "tier": "p0",
-  "name": "OpenAPI generation from typed handlers is deterministic",
+  "name": "OpenAPI descriptive spec with validation is deterministic",
   "setup": {
     "openapi": {
       "title": "Inventory API",

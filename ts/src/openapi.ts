@@ -14,6 +14,11 @@ type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
 interface JsonObject {
   [key: string]: JsonValue;
 }
+type OpenAPIValidationRuleValue =
+  | number
+  | string
+  | readonly (number | string)[]
+  | undefined;
 
 export type OpenAPIFieldSource =
   | "body"
@@ -34,7 +39,7 @@ export type OpenAPIFieldType =
 
 export interface OpenAPIValidationRuleSpec {
   rule: ValidationRuleName;
-  value?: number | string | readonly string[] | undefined;
+  value?: OpenAPIValidationRuleValue;
 }
 
 export interface OpenAPIFieldSpec {
@@ -254,7 +259,7 @@ function parametersForFields(fields: readonly OpenAPIFieldSpec[]): JsonValue[] {
     if (rank !== 0) {
       return rank;
     }
-    return left.name.trim().localeCompare(right.name.trim());
+    return compareCanonicalStrings(left.name.trim(), right.name.trim());
   });
 
   return params.map((field): JsonObject => {
@@ -291,7 +296,7 @@ function fieldsForSource(
     }
     out.push({ ...field, name, source: fieldSource });
   }
-  out.sort((left, right) => left.name.localeCompare(right.name));
+  out.sort((left, right) => compareCanonicalStrings(left.name, right.name));
   return out;
 }
 
@@ -304,7 +309,7 @@ function objectSchema(fields: readonly OpenAPIFieldSpec[]): JsonObject {
       required.push(field.name);
     }
   }
-  required.sort();
+  required.sort(compareCanonicalStrings);
   const schema: JsonObject = {
     additionalProperties: false,
     properties,
@@ -354,16 +359,22 @@ function fieldSchema(field: OpenAPIFieldSpec): JsonObject {
         break;
       case VALIDATION_RULE_MIN_LENGTH: {
         const value = integerValue(rule.value);
-        if (value !== null) {
-          applyLength(schema, baseType, Boolean(field.array), "min", value);
+        if (value === null) {
+          throw new Error(
+            `apptheory: openapi field ${fieldLabel(field)} ${VALIDATION_RULE_MIN_LENGTH} must be an integer`,
+          );
         }
+        applyLength(schema, baseType, Boolean(field.array), "min", value);
         break;
       }
       case VALIDATION_RULE_MAX_LENGTH: {
         const value = integerValue(rule.value);
-        if (value !== null) {
-          applyLength(schema, baseType, Boolean(field.array), "max", value);
+        if (value === null) {
+          throw new Error(
+            `apptheory: openapi field ${fieldLabel(field)} ${VALIDATION_RULE_MAX_LENGTH} must be an integer`,
+          );
         }
+        applyLength(schema, baseType, Boolean(field.array), "max", value);
         break;
       }
       case VALIDATION_RULE_PATTERN:
@@ -454,7 +465,7 @@ function compareRoutes(
   const leftPath = normalizePath(left.path);
   const rightPath = normalizePath(right.path);
   if (leftPath !== rightPath) {
-    return leftPath.localeCompare(rightPath);
+    return compareCanonicalStrings(leftPath, rightPath);
   }
   const leftMethod = normalizeMethod(left.method);
   const rightMethod = normalizeMethod(right.method);
@@ -462,7 +473,7 @@ function compareRoutes(
   if (rank !== 0) {
     return rank;
   }
-  return leftMethod.localeCompare(rightMethod);
+  return compareCanonicalStrings(leftMethod, rightMethod);
 }
 
 function methodRank(method: string): number {
@@ -496,14 +507,14 @@ function sourceRank(source: OpenAPIFieldSource): number {
 }
 
 function sortedTags(tags: readonly string[]): string[] {
-  return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))].sort();
+  return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))].sort(
+    compareCanonicalStrings,
+  );
 }
 
-function enumValues(
-  value: number | string | readonly string[] | undefined,
-): string[] {
-  if (isReadonlyStringArray(value)) {
-    return value.map((item) => item.trim());
+function enumValues(value: OpenAPIValidationRuleValue): string[] {
+  if (isReadonlyEnumArray(value)) {
+    return value.map((item) => String(item).trim());
   }
   if (typeof value === "string") {
     return value
@@ -517,16 +528,19 @@ function enumValues(
   return [];
 }
 
-function isReadonlyStringArray(value: unknown): value is readonly string[] {
+function isReadonlyEnumArray(
+  value: unknown,
+): value is readonly (number | string)[] {
   return (
     Array.isArray(value) &&
-    value.every((item): item is string => typeof item === "string")
+    value.every(
+      (item): item is number | string =>
+        typeof item === "string" || typeof item === "number",
+    )
   );
 }
 
-function numberValue(
-  value: number | string | readonly string[] | undefined,
-): number | null {
+function numberValue(value: OpenAPIValidationRuleValue): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
   }
@@ -537,11 +551,30 @@ function numberValue(
   return null;
 }
 
-function integerValue(
-  value: number | string | readonly string[] | undefined,
-): number | null {
+function integerValue(value: OpenAPIValidationRuleValue): number | null {
   const parsed = numberValue(value);
-  return parsed === null ? null : Math.trunc(parsed);
+  return parsed === null || !Number.isInteger(parsed) ? null : parsed;
+}
+
+function fieldLabel(field: OpenAPIFieldSpec): string {
+  return field.field.trim() || field.name.trim() || "field";
+}
+
+function compareCanonicalStrings(left: string, right: string): number {
+  const leftPoints = Array.from(left);
+  const rightPoints = Array.from(right);
+  const limit = Math.min(leftPoints.length, rightPoints.length);
+  for (let index = 0; index < limit; index += 1) {
+    const leftCode = leftPoints[index]?.codePointAt(0) ?? 0;
+    const rightCode = rightPoints[index]?.codePointAt(0) ?? 0;
+    if (leftCode !== rightCode) {
+      return leftCode < rightCode ? -1 : 1;
+    }
+  }
+  if (leftPoints.length === rightPoints.length) {
+    return 0;
+  }
+  return leftPoints.length < rightPoints.length ? -1 : 1;
 }
 
 function stableStringify(value: unknown): string {
@@ -553,7 +586,7 @@ function stableStringify(value: unknown): string {
   }
   if (typeof value === "object") {
     const record = value as Record<string, unknown>;
-    const keys = Object.keys(record).sort();
+    const keys = Object.keys(record).sort(compareCanonicalStrings);
     return `{${keys
       .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
       .join(",")}}`;

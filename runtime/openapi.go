@@ -1,6 +1,7 @@
 package apptheory
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,39 +17,40 @@ const (
 	openAPITypeNumber     = "number"
 	openAPITypeObject     = "object"
 	openAPITypeString     = "string"
+	openAPIUnknownField   = "field"
 )
 
-// OpenAPISpec describes the typed-handler route table used for deterministic OpenAPI generation.
+// OpenAPISpec describes an explicit route table used for deterministic descriptive OpenAPI generation.
 type OpenAPISpec struct {
 	Title   string             `json:"title"`
 	Version string             `json:"version"`
 	Routes  []OpenAPIRouteSpec `json:"routes"`
 }
 
-// OpenAPIRouteSpec describes one typed handler operation in the OpenAPI route table.
+// OpenAPIRouteSpec describes one operation in the descriptive OpenAPI route table.
 type OpenAPIRouteSpec struct {
 	Method        string              `json:"method"`
 	Path          string              `json:"path"`
 	OperationID   string              `json:"operation_id"`
 	Summary       string              `json:"summary,omitempty"`
 	Tags          []string            `json:"tags,omitempty"`
-	SuccessStatus int                 `json:"success_status,omitempty"`
+	SuccessStatus *int                `json:"success_status,omitempty"`
 	Request       OpenAPIRequestSpec  `json:"request,omitempty"`
 	Response      OpenAPIResponseSpec `json:"response"`
 }
 
-// OpenAPIRequestSpec describes request fields bound by a typed handler.
+// OpenAPIRequestSpec describes request fields in the descriptive OpenAPI route table.
 type OpenAPIRequestSpec struct {
 	Fields []OpenAPIFieldSpec `json:"fields,omitempty"`
 }
 
-// OpenAPIResponseSpec describes the successful JSON response emitted by a typed handler.
+// OpenAPIResponseSpec describes the successful JSON response for a descriptive OpenAPI operation.
 type OpenAPIResponseSpec struct {
 	Description string             `json:"description,omitempty"`
 	Fields      []OpenAPIFieldSpec `json:"fields,omitempty"`
 }
 
-// OpenAPIFieldSpec describes one request or response field in the typed-handler contract.
+// OpenAPIFieldSpec describes one request or response field in the descriptive OpenAPI contract.
 type OpenAPIFieldSpec struct {
 	Field      string                  `json:"field"`
 	Source     string                  `json:"source"`
@@ -65,7 +67,7 @@ type OpenAPIValidationRule struct {
 	Value any    `json:"value,omitempty"`
 }
 
-// GenerateOpenAPI returns the deterministic OpenAPI 3.1 document for a typed-handler route table.
+// GenerateOpenAPI returns the deterministic OpenAPI 3.1 document for an explicit OpenAPISpec route table.
 func GenerateOpenAPI(spec OpenAPISpec) (map[string]any, error) {
 	title := strings.TrimSpace(spec.Title)
 	version := strings.TrimSpace(spec.Version)
@@ -141,7 +143,13 @@ func GenerateOpenAPIJSON(spec OpenAPISpec) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(doc)
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(doc); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 func openAPIComponents() map[string]any {
@@ -188,12 +196,9 @@ func openAPIComponents() map[string]any {
 }
 
 func openAPIOperation(route OpenAPIRouteSpec, operationID string) (map[string]any, error) {
-	successStatus := route.SuccessStatus
-	if successStatus == 0 {
-		successStatus = 200
-	}
-	if successStatus < 100 || successStatus > 599 {
-		return nil, fmt.Errorf("apptheory: openapi route %s %s success_status must be an HTTP status", strings.ToUpper(route.Method), route.Path)
+	successStatus, err := openAPISuccessStatus(route)
+	if err != nil {
+		return nil, err
 	}
 
 	successResponse, err := openAPISuccessResponse(route.Response)
@@ -223,10 +228,14 @@ func openAPIOperation(route OpenAPIRouteSpec, operationID string) (map[string]an
 		return nil, err
 	}
 	if len(bodyFields) > 0 {
+		schema, err := openAPIObjectSchema(bodyFields)
+		if err != nil {
+			return nil, err
+		}
 		operation["requestBody"] = map[string]any{
 			"content": map[string]any{
 				"application/json": map[string]any{
-					"schema": openAPIObjectSchema(bodyFields),
+					"schema": schema,
 				},
 			},
 			"required": true,
@@ -255,13 +264,28 @@ func openAPISuccessResponse(response OpenAPIResponseSpec) (map[string]any, error
 		return nil, err
 	}
 	if len(fields) > 0 {
+		schema, err := openAPIObjectSchema(fields)
+		if err != nil {
+			return nil, err
+		}
 		out["content"] = map[string]any{
 			"application/json": map[string]any{
-				"schema": openAPIObjectSchema(fields),
+				"schema": schema,
 			},
 		}
 	}
 	return out, nil
+}
+
+func openAPISuccessStatus(route OpenAPIRouteSpec) (int, error) {
+	successStatus := 200
+	if route.SuccessStatus != nil {
+		successStatus = *route.SuccessStatus
+	}
+	if successStatus < 100 || successStatus > 599 {
+		return 0, fmt.Errorf("apptheory: openapi route %s %s success_status must be an HTTP status", strings.ToUpper(route.Method), route.Path)
+	}
+	return successStatus, nil
 }
 
 func openAPIParameters(fields []OpenAPIFieldSpec) ([]any, error) {
@@ -293,11 +317,15 @@ func openAPIParameters(fields []OpenAPIFieldSpec) ([]any, error) {
 		if name == "" {
 			return nil, fmt.Errorf("apptheory: openapi request field %s name is required", field.Field)
 		}
+		schema, err := openAPIFieldSchema(field)
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, map[string]any{
 			"in":       field.Source,
 			"name":     name,
 			"required": openAPIFieldRequired(field),
-			"schema":   openAPIFieldSchema(field),
+			"schema":   schema,
 		})
 	}
 	return out, nil
@@ -326,11 +354,15 @@ func openAPIFieldsForSource(fields []OpenAPIFieldSpec, source string) ([]OpenAPI
 	return out, nil
 }
 
-func openAPIObjectSchema(fields []OpenAPIFieldSpec) map[string]any {
+func openAPIObjectSchema(fields []OpenAPIFieldSpec) (map[string]any, error) {
 	properties := map[string]any{}
 	required := make([]string, 0, len(fields))
 	for _, field := range fields {
-		properties[field.Name] = openAPIFieldSchema(field)
+		schema, err := openAPIFieldSchema(field)
+		if err != nil {
+			return nil, err
+		}
+		properties[field.Name] = schema
 		if openAPIFieldRequired(field) {
 			required = append(required, field.Name)
 		}
@@ -344,10 +376,10 @@ func openAPIObjectSchema(fields []OpenAPIFieldSpec) map[string]any {
 	if len(required) > 0 {
 		schema["required"] = required
 	}
-	return schema
+	return schema, nil
 }
 
-func openAPIFieldSchema(field OpenAPIFieldSpec) map[string]any {
+func openAPIFieldSchema(field OpenAPIFieldSpec) (map[string]any, error) {
 	baseType := normalizeOpenAPIType(field.Type)
 	var schema map[string]any
 	if field.Array {
@@ -364,24 +396,29 @@ func openAPIFieldSchema(field OpenAPIFieldSpec) map[string]any {
 	}
 
 	for _, rule := range field.Validation {
-		applyOpenAPIValidationRule(schema, baseType, field.Array, rule)
+		if err := applyOpenAPIValidationRule(schema, baseType, field.Array, field, rule); err != nil {
+			return nil, err
+		}
 	}
-	return schema
+	return schema, nil
 }
 
-func applyOpenAPIValidationRule(schema map[string]any, baseType string, array bool, rule OpenAPIValidationRule) {
+func applyOpenAPIValidationRule(schema map[string]any, baseType string, array bool, field OpenAPIFieldSpec, rule OpenAPIValidationRule) error {
 	switch strings.TrimSpace(rule.Rule) {
 	case ValidationRuleRequired:
-		return
+		return nil
 	case ValidationRuleMin, ValidationRuleMax:
 		applyOpenAPINumericRule(schema, baseType, array, rule)
 	case ValidationRuleMinLength, ValidationRuleMaxLength:
-		applyOpenAPILengthRule(schema, baseType, array, rule)
+		if err := applyOpenAPILengthRule(schema, baseType, array, field, rule); err != nil {
+			return err
+		}
 	case ValidationRulePattern:
 		applyOpenAPIPatternRule(schema, baseType, array, rule.Value)
 	case ValidationRuleEnum:
 		applyOpenAPIEnumRule(schema, rule.Value)
 	}
+	return nil
 }
 
 func applyOpenAPINumericRule(schema map[string]any, baseType string, array bool, rule OpenAPIValidationRule) {
@@ -399,16 +436,17 @@ func applyOpenAPINumericRule(schema map[string]any, baseType string, array bool,
 	schema["maximum"] = value
 }
 
-func applyOpenAPILengthRule(schema map[string]any, baseType string, array bool, rule OpenAPIValidationRule) {
+func applyOpenAPILengthRule(schema map[string]any, baseType string, array bool, field OpenAPIFieldSpec, rule OpenAPIValidationRule) error {
 	value, ok := openAPIIntegerValue(rule.Value)
 	if !ok {
-		return
+		return fmt.Errorf("apptheory: openapi field %s %s must be an integer", openAPIFieldLabel(field), strings.TrimSpace(rule.Rule))
 	}
 	if strings.TrimSpace(rule.Rule) == ValidationRuleMinLength {
 		applyOpenAPILength(schema, baseType, array, ValidationRuleMin, value)
-		return
+		return nil
 	}
 	applyOpenAPILength(schema, baseType, array, ValidationRuleMax, value)
+	return nil
 }
 
 func applyOpenAPIPatternRule(schema map[string]any, baseType string, array bool, value any) {
@@ -457,6 +495,16 @@ func openAPIFieldRequired(field OpenAPIFieldSpec) bool {
 		}
 	}
 	return false
+}
+
+func openAPIFieldLabel(field OpenAPIFieldSpec) string {
+	if label := strings.TrimSpace(field.Field); label != "" {
+		return label
+	}
+	if label := strings.TrimSpace(field.Name); label != "" {
+		return label
+	}
+	return openAPIUnknownField
 }
 
 func normalizeOpenAPIPath(path string) string {

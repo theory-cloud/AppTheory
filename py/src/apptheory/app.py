@@ -411,7 +411,7 @@ class App:
             return self._serve_portable(
                 request,
                 ctx,
-                enable_p2=False,
+                tier=self._tier,
                 context_configurer=context_configurer,
                 appsync=appsync,
                 error_responder=error_responder,
@@ -421,7 +421,7 @@ class App:
             return self._serve_portable(
                 request,
                 ctx,
-                enable_p2=True,
+                tier=self._tier,
                 context_configurer=context_configurer,
                 appsync=appsync,
                 error_responder=error_responder,
@@ -489,10 +489,10 @@ class App:
         request_ctx: Context,
         request_id: str,
         *,
-        enable_p2: bool,
+        tier: str,
         error_responder: Callable[[Exception, Request, str], Response] | None = None,
     ) -> tuple[Response, str] | None:
-        if not enable_p2 or self._policy_hook is None:
+        if tier != "p2" or self._policy_hook is None:
             return None
 
         try:
@@ -573,7 +573,7 @@ class App:
         request: Request,
         ctx: Any | None,
         *,
-        enable_p2: bool,
+        tier: str,
         context_configurer: Callable[[Context], None] | None = None,
         appsync: AppSyncContext | None = None,
         error_responder: Callable[[Exception, Request, str], Response] | None = None,
@@ -605,7 +605,7 @@ class App:
 
         def finish(resp: Response, error_code: str = "") -> Response:
             out = _finalize_p1_response(resp, request_id, origin, self._cors)
-            if enable_p2:
+            if tier == "p2":
                 self._record_observability(method, path, request_id, tenant_id, out.status, error_code)
             return out
 
@@ -699,7 +699,7 @@ class App:
         policy_outcome = self._policy_check(
             request_ctx,
             request_id,
-            enable_p2=enable_p2,
+            tier=tier,
             error_responder=error_responder,
         )
         if policy_outcome is not None:

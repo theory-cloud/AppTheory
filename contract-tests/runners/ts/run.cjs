@@ -81,9 +81,47 @@ function isOpenAPIContractFixture(fixture) {
 
 async function compareOpenAPIContract(fixture) {
   const runtime = await loadAppTheoryRuntime();
-  const actual = runtime.generateOpenAPIJSON(
-    normalizeOpenAPISpecForRuntime(fixture.setup?.openapi ?? {}),
-  );
+  let actual = null;
+  let actualError = null;
+  try {
+    actual = runtime.generateOpenAPIJSON(
+      normalizeOpenAPISpecForRuntime(fixture.setup?.openapi ?? {}),
+    );
+  } catch (err) {
+    actualError = err;
+  }
+  if (fixture.expect?.error) {
+    if (Object.prototype.hasOwnProperty.call(fixture.expect, "output_json")) {
+      return {
+        ok: false,
+        reason: "fixture expect cannot set both error and output_json",
+        expected_error: fixture.expect.error,
+        actual_error: null,
+      };
+    }
+    const expectedMessage = String(fixture.expect.error.message ?? "").trim();
+    const actualMessage = String(actualError?.message ?? actualError ?? "").trim();
+    if (actualError && (!expectedMessage || actualMessage === expectedMessage)) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      reason: actualError
+        ? "openapi error message mismatch"
+        : "expected openapi error, got nil",
+      expected_error: fixture.expect.error,
+      actual_error: actualError ? { message: actualMessage } : null,
+    };
+  }
+  if (actualError) {
+    return {
+      ok: false,
+      reason: "unexpected openapi error",
+      expected_output_json: fixture.expect?.output_json,
+      actual_output_json: null,
+      actual_error: { message: String(actualError?.message ?? actualError) },
+    };
+  }
   const expected = fixture.expect?.output_json;
   if (actual === expected) return { ok: true };
   return {

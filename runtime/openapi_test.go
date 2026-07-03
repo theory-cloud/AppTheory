@@ -3,6 +3,7 @@ package apptheory
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -13,28 +14,47 @@ type openAPIContractFixture struct {
 	} `json:"setup"`
 	Expect struct {
 		OutputJSON string `json:"output_json"`
+		Error      struct {
+			Message string `json:"message"`
+		} `json:"error"`
 	} `json:"expect"`
 }
 
-func TestGenerateOpenAPIJSONMatchesContractFixture(t *testing.T) {
+func TestGenerateOpenAPIJSONMatchesContractFixtures(t *testing.T) {
 	t.Parallel()
 
-	data, err := os.ReadFile("../contract-tests/fixtures/openapi/typed-handler-validation.json")
+	paths, err := filepath.Glob("../contract-tests/fixtures/openapi/*.json")
 	if err != nil {
-		t.Fatalf("read fixture: %v", err)
+		t.Fatalf("glob fixtures: %v", err)
 	}
-	var fixture openAPIContractFixture
-	decodeErr := json.Unmarshal(data, &fixture)
-	if decodeErr != nil {
-		t.Fatalf("decode fixture: %v", decodeErr)
-	}
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			t.Parallel()
+			//nolint:gosec // Contract fixture paths are repository-local test data.
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read fixture: %v", err)
+			}
+			var fixture openAPIContractFixture
+			decodeErr := json.Unmarshal(data, &fixture)
+			if decodeErr != nil {
+				t.Fatalf("decode fixture: %v", decodeErr)
+			}
 
-	got, err := GenerateOpenAPIJSON(fixture.Setup.OpenAPI)
-	if err != nil {
-		t.Fatalf("GenerateOpenAPIJSON: %v", err)
-	}
-	if string(got) != fixture.Expect.OutputJSON {
-		t.Fatalf("OpenAPI JSON mismatch\nwant: %s\n got: %s", fixture.Expect.OutputJSON, string(got))
+			got, err := GenerateOpenAPIJSON(fixture.Setup.OpenAPI)
+			if fixture.Expect.Error.Message != "" {
+				if err == nil || err.Error() != fixture.Expect.Error.Message {
+					t.Fatalf("GenerateOpenAPIJSON error = %v, want %q", err, fixture.Expect.Error.Message)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("GenerateOpenAPIJSON: %v", err)
+			}
+			if string(got) != fixture.Expect.OutputJSON {
+				t.Fatalf("OpenAPI JSON mismatch\nwant: %s\n got: %s", fixture.Expect.OutputJSON, string(got))
+			}
+		})
 	}
 }
 
@@ -156,7 +176,7 @@ func TestGenerateOpenAPIFailsClosed(t *testing.T) {
 		},
 		{
 			name: "invalid success status",
-			spec: OpenAPISpec{Title: "Widgets", Version: "1", Routes: []OpenAPIRouteSpec{{Method: "GET", Path: "/widgets", OperationID: "listWidgets", SuccessStatus: 99}}},
+			spec: OpenAPISpec{Title: "Widgets", Version: "1", Routes: []OpenAPIRouteSpec{{Method: "GET", Path: "/widgets", OperationID: "listWidgets", SuccessStatus: openAPIStatusPtr(99)}}},
 			want: "success_status must be an HTTP status",
 		},
 		{
@@ -178,6 +198,11 @@ func TestGenerateOpenAPIFailsClosed(t *testing.T) {
 			name: "blank response field name",
 			spec: OpenAPISpec{Title: "Widgets", Version: "1", Routes: []OpenAPIRouteSpec{{Method: "GET", Path: "/widgets", OperationID: "listWidgets", Response: OpenAPIResponseSpec{Fields: []OpenAPIFieldSpec{{Field: "id", Source: openAPISourceResponse}}}}}},
 			want: "name is required",
+		},
+		{
+			name: "decimal length rule",
+			spec: OpenAPISpec{Title: "Widgets", Version: "1", Routes: []OpenAPIRouteSpec{{Method: "GET", Path: "/widgets", OperationID: "listWidgets", Response: OpenAPIResponseSpec{Fields: []OpenAPIFieldSpec{{Field: "id", Source: openAPISourceResponse, Name: "id", Validation: []OpenAPIValidationRule{{Rule: ValidationRuleMinLength, Value: 1.25}}}}}}}},
+			want: "must be an integer",
 		},
 	}
 
@@ -208,7 +233,7 @@ func TestOpenAPIValidationHelpers(t *testing.T) {
 		t.Fatalf("unknown source rank = %d", got)
 	}
 
-	stringSchema := openAPIFieldSchema(OpenAPIFieldSpec{
+	stringSchema, err := openAPIFieldSchema(OpenAPIFieldSpec{
 		Type: openAPITypeString,
 		Validation: []OpenAPIValidationRule{
 			{Rule: ValidationRulePattern, Value: "^[a-z]+$"},
@@ -218,6 +243,9 @@ func TestOpenAPIValidationHelpers(t *testing.T) {
 			{Rule: "ignored", Value: "ignored"},
 		},
 	})
+	if err != nil {
+		t.Fatalf("openAPIFieldSchema string: %v", err)
+	}
 	if stringSchema["pattern"] != "^[a-z]+$" || stringSchema["minLength"] == nil || stringSchema["maxLength"] == nil {
 		t.Fatalf("string validation schema missing constraints: %#v", stringSchema)
 	}
@@ -225,12 +253,18 @@ func TestOpenAPIValidationHelpers(t *testing.T) {
 		t.Fatalf("string enum not normalized: %#v", got)
 	}
 
-	numberSchema := openAPIFieldSchema(OpenAPIFieldSpec{Type: "number", Validation: []OpenAPIValidationRule{{Rule: ValidationRuleMin, Value: 1.5}, {Rule: ValidationRuleMax, Value: uint64(5)}}})
+	numberSchema, err := openAPIFieldSchema(OpenAPIFieldSpec{Type: "number", Validation: []OpenAPIValidationRule{{Rule: ValidationRuleMin, Value: 1.5}, {Rule: ValidationRuleMax, Value: uint64(5)}}})
+	if err != nil {
+		t.Fatalf("openAPIFieldSchema number: %v", err)
+	}
 	if numberSchema["minimum"] == nil || numberSchema["maximum"] == nil {
 		t.Fatalf("number validation schema missing min/max: %#v", numberSchema)
 	}
 
-	arrayObjectSchema := openAPIFieldSchema(OpenAPIFieldSpec{Type: openAPITypeObject, Array: true})
+	arrayObjectSchema, err := openAPIFieldSchema(OpenAPIFieldSpec{Type: openAPITypeObject, Array: true})
+	if err != nil {
+		t.Fatalf("openAPIFieldSchema array object: %v", err)
+	}
 	items := requireOpenAPIMap(t, arrayObjectSchema["items"])
 	if items["additionalProperties"] != true {
 		t.Fatalf("array object items should allow additional properties: %#v", arrayObjectSchema)
@@ -254,6 +288,10 @@ func TestOpenAPIValidationHelpers(t *testing.T) {
 	if _, ok := openAPINumberValue(struct{}{}); ok {
 		t.Fatal("unsupported number value accepted")
 	}
+}
+
+func openAPIStatusPtr(status int) *int {
+	return &status
 }
 
 func stringSliceEqual(left, right []string) bool {

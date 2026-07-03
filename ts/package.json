@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run check",
+    "test": "npm run check && node ./scripts/verify-openapi.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint --max-warnings=0 --report-unused-disable-directives \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",

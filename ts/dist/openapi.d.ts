@@ -4,11 +4,12 @@ type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
 interface JsonObject {
     [key: string]: JsonValue;
 }
+type OpenAPIValidationRuleValue = number | string | readonly (number | string)[] | undefined;
 export type OpenAPIFieldSource = "body" | "query" | "path" | "header" | "response";
 export type OpenAPIFieldType = "string" | "integer" | "number" | "boolean" | "object" | "int" | "float" | "bool" | "map";
 export interface OpenAPIValidationRuleSpec {
     rule: ValidationRuleName;
-    value?: number | string | readonly string[] | undefined;
+    value?: OpenAPIValidationRuleValue;
 }
 export interface OpenAPIFieldSpec {
     field: string;

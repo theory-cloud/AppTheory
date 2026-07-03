@@ -19,6 +19,19 @@ func runFixtureOpenAPI(f Fixture) error {
 		return fmt.Errorf("parse setup.openapi: %w", err)
 	}
 	actual, err := apptheory.GenerateOpenAPIJSON(spec)
+	if f.Expect.Error != nil {
+		if len(f.Expect.Output) != 0 {
+			return fmt.Errorf("fixture expect cannot set both error and output_json")
+		}
+		if err == nil {
+			return fmt.Errorf("expected openapi error, got nil")
+		}
+		expected := strings.TrimSpace(f.Expect.Error.Message)
+		if expected != "" && strings.TrimSpace(err.Error()) != expected {
+			return fmt.Errorf("openapi error message mismatch: expected %q, got %q", expected, err.Error())
+		}
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("generate openapi: %w", err)
 	}

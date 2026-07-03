@@ -1539,8 +1539,32 @@ def compare_openapi_contract(
 ) -> tuple[bool, str, str, str | None, _DummyEffectsApp]:
     runtime = _load_apptheory_runtime()
     setup = fixture.get("setup") or {}
-    actual = runtime.generate_openapi_json(setup.get("openapi") or {})
-    expected = (fixture.get("expect") or {}).get("output_json")
+    expect = fixture.get("expect") or {}
+    try:
+        actual = runtime.generate_openapi_json(setup.get("openapi") or {})
+        actual_error: Exception | None = None
+    except Exception as exc:  # noqa: BLE001
+        actual = ""
+        actual_error = exc
+    expected_error = expect.get("error")
+    if isinstance(expected_error, dict):
+        if "output_json" in expect:
+            return (
+                False,
+                "fixture expect cannot set both error and output_json",
+                actual,
+                None,
+                _DummyEffectsApp(),
+            )
+        expected_message = str(expected_error.get("message", "")).strip()
+        actual_message = str(actual_error).strip() if actual_error is not None else ""
+        if actual_error is not None and (not expected_message or actual_message == expected_message):
+            return True, "", actual_message, expected_message, _DummyEffectsApp()
+        reason = "openapi error message mismatch" if actual_error is not None else "expected openapi error, got nil"
+        return False, reason, actual_message, expected_message, _DummyEffectsApp()
+    if actual_error is not None:
+        return False, "unexpected openapi error", str(actual_error).strip(), expect.get("output_json"), _DummyEffectsApp()
+    expected = expect.get("output_json")
     if actual == expected:
         return True, "", actual, expected, _DummyEffectsApp()
     return False, "openapi canonical json mismatch", actual, expected, _DummyEffectsApp()
