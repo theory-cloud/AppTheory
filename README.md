@@ -78,7 +78,7 @@ python -m pip install "./apptheory-${VERSION}-py3-none-any.whl"
 |---|---|
 | **Contract test fixtures** | 174 — routing, normalization, error envelope, event dispatch, MCP, jobs ledger | <!-- apptheory-fixture-count -->
 | **Runtimes** | Go · TypeScript · Python (peers, not ports) |
-| **Tiers** | P0 (core) · P1 (+request-id, auth, CORS, guardrails) · P2 (+observability, rate limiting) — default P2 |
+| **Tiers** | P0 (core) · P1 (+request-id, auth, CORS, guardrails) · P2 (+duration-aware observability hooks, inbound trace recording, EMF metric sink path, rate limiting) — default P2 |
 | **Event sources** | Lambda Function URL · API Gateway v2 · ALB · AppSync · SQS · EventBridge · DynamoDB Streams · Kinesis · WebSockets |
 | **Distribution** | Immutable GitHub Releases — version-aligned across all runtimes |
 | **License** | Apache-2.0 — open source, production use |
@@ -178,7 +178,7 @@ AppTheory's middleware surface is tiered, not flag-based. Each tier is additive 
 |---|---|
 | **P0** | Routing + request/response normalization + error envelope |
 | **P1** | P0 + request-id, tenant extraction, auth hooks, CORS, size/time guardrails, middleware ordering |
-| **P2** *(default)* | P1 + observability hooks, rate limiting / load-shedding policy hooks |
+| **P2** *(default)* | P1 + duration-aware observability hooks, inbound trace recording in logs/spans/error envelopes, EMF metric sink path, rate limiting / load-shedding policy hooks |
 
 Tiers are a **contract**, not a menu — see [HTTP Runtime](https://apptheory.theorycloud.ai/features/http-runtime/) for the exact slot list and per-tier behavior.
 

@@ -65,6 +65,7 @@ These pages are versioned with the docs contract, but they are not part of the i
 ## Functional guides now covered by the canonical ingest surface
 
 - [Sanitization](./features/sanitization.md)
+- [Observability Hooks](./features/observability.md)
 - [Logging Profiles](./features/logging-profiles.md)
 - [Jobs Ledger](./features/jobs-ledger.md)
 - [AWS Lambda MicroVM Golden Path](./features/lambda-microvm-contract-foundation.md)
