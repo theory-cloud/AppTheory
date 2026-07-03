@@ -19,6 +19,13 @@ def normalize_http_error_format(value: str | None) -> str:
 
 @dataclass(slots=True)
 class AppError(Exception):
+    """Legacy portable, client-safe error with a stable error code.
+
+    Deprecated: return AppTheoryError from new code so status, request,
+    trace, timestamp, details, and cause metadata use the canonical AppTheory
+    error path.
+    """
+
     code: str
     message: str
 
@@ -28,6 +35,13 @@ class AppError(Exception):
 
 @dataclass(slots=True)
 class AppTheoryError(Exception):
+    """Canonical AppTheory portable, client-safe error.
+
+    Return AppTheoryError from framework and application code when the runtime
+    should preserve status, details, request, trace, timestamp, stack, or cause
+    metadata in the AppTheory error envelope.
+    """
+
     code: str
     message: str
     status_code: int | None = None
@@ -103,6 +117,26 @@ def status_for_error_code(code: str) -> int:
             return 500
 
 
+def _canonical_http_error_fields(error_format: str, code: str, message: str) -> tuple[str, str]:
+    if normalize_http_error_format(error_format) == HTTP_ERROR_FORMAT_FLAT_LEGACY:
+        return code, message
+    match code:
+        case "EMPTY_BODY":
+            return "app.bad_request", "request body is empty"
+        case "INVALID_JSON":
+            return "app.bad_request", "invalid json"
+        case _:
+            return code, message
+
+
+def _canonical_runtime_error_code(code: str) -> str:
+    match code:
+        case "EMPTY_BODY" | "INVALID_JSON":
+            return "app.bad_request"
+        case _:
+            return code
+
+
 def error_response(code: str, message: str, *, headers: dict[str, Any] | None = None) -> Response:
     return error_response_with_format(HTTP_ERROR_FORMAT_NESTED, code, message, headers=headers)
 
@@ -117,11 +151,12 @@ def error_response_with_format(
     headers_out = canonicalize_headers(headers or {})
     headers_out["content-type"] = ["application/json; charset=utf-8"]
 
-    body = _serialize_http_error_body(error_format, {"code": code, "message": message})
+    body_code, body_message = _canonical_http_error_fields(error_format, code, message)
+    body = _serialize_http_error_body(error_format, {"code": body_code, "message": body_message})
 
     return normalize_response(
         Response(
-            status=status_for_error_code(code),
+            status=status_for_error_code(_canonical_runtime_error_code(code)),
             headers=headers_out,
             cookies=[],
             body=body,
@@ -157,7 +192,8 @@ def error_response_with_request_id_and_format(
     headers_out = canonicalize_headers(headers or {})
     headers_out["content-type"] = ["application/json; charset=utf-8"]
 
-    error: dict[str, Any] = {"code": code, "message": message}
+    body_code, body_message = _canonical_http_error_fields(error_format, code, message)
+    error: dict[str, Any] = {"code": body_code, "message": body_message}
     if normalize_http_error_format(error_format) != HTTP_ERROR_FORMAT_FLAT_LEGACY and request_id:
         error["request_id"] = str(request_id)
 
@@ -165,7 +201,7 @@ def error_response_with_request_id_and_format(
 
     return normalize_response(
         Response(
-            status=status_for_error_code(code),
+            status=status_for_error_code(_canonical_runtime_error_code(code)),
             headers=headers_out,
             cookies=[],
             body=body,
@@ -200,9 +236,10 @@ def error_response_from_app_theory_error_with_format(
     normalized_format = normalize_http_error_format(error_format)
 
     code = str(exc.code or "").strip() or "app.internal"
-    status = int(exc.status_code) if exc.status_code and exc.status_code > 0 else status_for_error_code(code)
+    body_code, body_message = _canonical_http_error_fields(error_format, code, str(exc.message))
+    status = int(exc.status_code) if exc.status_code and exc.status_code > 0 else status_for_error_code(body_code)
 
-    error: dict[str, Any] = {"code": code, "message": str(exc.message)}
+    error: dict[str, Any] = {"code": body_code, "message": body_message}
     if normalized_format != HTTP_ERROR_FORMAT_FLAT_LEGACY and exc.status_code and exc.status_code > 0:
         error["status_code"] = int(exc.status_code)
     if exc.details is not None:
