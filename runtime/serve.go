@@ -127,14 +127,6 @@ func (a *App) httpErrorResponse(code, message string, headers map[string][]strin
 	return errorResponseWithFormat(a.httpErrorFormatValue(), code, message, headers)
 }
 
-func (a *App) httpErrorResponseWithRequestID(
-	code, message string,
-	headers map[string][]string,
-	requestID string,
-) Response {
-	return errorResponseWithRequestIDAndFormat(a.httpErrorFormatValue(), code, message, headers, requestID)
-}
-
 func (a *App) httpErrorResponseWithRequestIDTraceID(
 	code, message string,
 	headers map[string][]string,
@@ -146,10 +138,6 @@ func (a *App) httpErrorResponseWithRequestIDTraceID(
 
 func (a *App) responseForHTTPError(err error) Response {
 	return responseForErrorWithFormat(a.httpErrorFormatValue(), err)
-}
-
-func (a *App) responseForHTTPErrorWithRequestID(err error, requestID string) Response {
-	return responseForErrorWithRequestIDAndFormat(a.httpErrorFormatValue(), err, requestID)
 }
 
 func (a *App) responseForHTTPErrorWithRequestIDTraceID(err error, requestID string, traceID string) Response {
