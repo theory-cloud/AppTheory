@@ -28,6 +28,7 @@ type FixtureSetup struct {
 	Environment     map[string]string         `json:"environment,omitempty"`
 	LoggingProfile  json.RawMessage           `json:"logging_profile,omitempty"`
 	OpenAPI         json.RawMessage           `json:"openapi,omitempty"`
+	MCP             FixtureMCPSetup           `json:"mcp,omitempty"`
 	WebSockets      []FixtureWebSocketRoute   `json:"websockets,omitempty"`
 	SQS             []FixtureSQSRoute         `json:"sqs,omitempty"`
 	Kinesis         []FixtureKinesisRoute     `json:"kinesis,omitempty"`
@@ -89,6 +90,7 @@ type FixtureInput struct {
 	AWSEvent              *FixtureAWSEvent `json:"aws_event,omitempty"`
 	LoggingEvent          json.RawMessage  `json:"logging_event,omitempty"`
 	LoggingProfileCatalog bool             `json:"logging_profile_catalog,omitempty"`
+	MCP                   *FixtureMCPInput `json:"mcp,omitempty"`
 }
 
 type FixtureAWSEvent struct {
@@ -126,6 +128,127 @@ type FixtureExpect struct {
 	MicroVMContractValidation  *FixtureMicroVMContractValidation  `json:"microvm_contract_validation,omitempty"`
 	MicroVMLifecycleAdapter    *FixtureMicroVMLifecycleAdapter    `json:"microvm_lifecycle_adapter,omitempty"`
 	MicroVMControllerRoute     *FixtureMicroVMControllerRoute     `json:"microvm_controller_route,omitempty"`
+	MCP                        *FixtureMCPExpect                  `json:"mcp,omitempty"`
+}
+
+type FixtureMCPSetup struct {
+	Server            FixtureMCPServer             `json:"server,omitempty"`
+	IDSequence        []string                     `json:"id_sequence,omitempty"`
+	StreamIDSequence  []string                     `json:"stream_id_sequence,omitempty"`
+	Tools             []FixtureMCPTool             `json:"tools,omitempty"`
+	Resources         []FixtureMCPResource         `json:"resources,omitempty"`
+	ResourceTemplates []FixtureMCPResourceTemplate `json:"resource_templates,omitempty"`
+	Prompts           []FixtureMCPPrompt           `json:"prompts,omitempty"`
+	SessionStore      FixtureMCPSessionStore       `json:"session_store,omitempty"`
+	TaskRuntime       *FixtureMCPTaskRuntime       `json:"task_runtime,omitempty"`
+}
+
+type FixtureMCPServer struct {
+	Name    string `json:"name,omitempty"`
+	Version string `json:"version,omitempty"`
+}
+
+type FixtureMCPTool struct {
+	Name         string          `json:"name"`
+	Title        string          `json:"title,omitempty"`
+	Description  string          `json:"description,omitempty"`
+	InputSchema  json.RawMessage `json:"input_schema"`
+	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
+	Handler      string          `json:"handler"`
+	Streaming    bool            `json:"streaming,omitempty"`
+	TaskSupport  string          `json:"task_support,omitempty"`
+}
+
+type FixtureMCPResource struct {
+	URI         string                      `json:"uri"`
+	Name        string                      `json:"name"`
+	Title       string                      `json:"title,omitempty"`
+	Description string                      `json:"description,omitempty"`
+	MimeType    string                      `json:"mime_type,omitempty"`
+	Size        int64                       `json:"size,omitempty"`
+	Contents    []FixtureMCPResourceContent `json:"contents"`
+}
+
+type FixtureMCPResourceTemplate struct {
+	URITemplate string `json:"uri_template"`
+	Name        string `json:"name"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mime_type,omitempty"`
+}
+
+type FixtureMCPResourceContent struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mime_type,omitempty"`
+	Text     string `json:"text,omitempty"`
+	Blob     string `json:"blob,omitempty"`
+}
+
+type FixtureMCPPrompt struct {
+	Name        string                     `json:"name"`
+	Title       string                     `json:"title,omitempty"`
+	Description string                     `json:"description,omitempty"`
+	Arguments   []FixtureMCPPromptArgument `json:"arguments,omitempty"`
+	Handler     string                     `json:"handler"`
+}
+
+type FixtureMCPPromptArgument struct {
+	Name        string `json:"name"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+type FixtureMCPSessionStore struct {
+	Seed []FixtureMCPSession `json:"seed,omitempty"`
+}
+
+type FixtureMCPSession struct {
+	ID            string            `json:"id"`
+	CreatedUnixMS int64             `json:"created_unix_ms,omitempty"`
+	ExpiresUnixMS int64             `json:"expires_unix_ms"`
+	Data          map[string]string `json:"data,omitempty"`
+}
+
+type FixtureMCPTaskRuntime struct {
+	Enabled                bool   `json:"enabled,omitempty"`
+	DefaultTTLMS           int64  `json:"default_ttl_ms,omitempty"`
+	MaxTTLMS               int64  `json:"max_ttl_ms,omitempty"`
+	PollIntervalMS         int64  `json:"poll_interval_ms,omitempty"`
+	ListLimit              int    `json:"list_limit,omitempty"`
+	ModelImmediateResponse string `json:"model_immediate_response,omitempty"`
+	ClockUnixMS            int64  `json:"clock_unix_ms,omitempty"`
+	UpdateClockUnixMS      int64  `json:"update_clock_unix_ms,omitempty"`
+}
+
+type FixtureMCPInput struct {
+	Steps []FixtureMCPStep `json:"steps"`
+}
+
+type FixtureMCPStep struct {
+	Name     string         `json:"name"`
+	Request  FixtureRequest `json:"request"`
+	ReadBody bool           `json:"read_body,omitempty"`
+}
+
+type FixtureMCPExpect struct {
+	Steps []FixtureMCPExpectedStep `json:"steps"`
+}
+
+type FixtureMCPExpectedStep struct {
+	Status    int                  `json:"status"`
+	Headers   map[string][]string  `json:"headers"`
+	Cookies   []string             `json:"cookies"`
+	Body      *FixtureBody         `json:"body,omitempty"`
+	BodyJSON  json.RawMessage      `json:"body_json,omitempty"`
+	SSEFrames []FixtureMCPSSEFrame `json:"sse_frames,omitempty"`
+	IsBase64  bool                 `json:"is_base64"`
+}
+
+type FixtureMCPSSEFrame struct {
+	ID    string `json:"id"`
+	Event string `json:"event,omitempty"`
+	Data  string `json:"data"`
 }
 
 type FixtureMicroVMContractValidation struct {

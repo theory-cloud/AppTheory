@@ -17,6 +17,7 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/microvm-foundation/` — M15 Lambda MicroVM validation-only lifecycle/controller/session vocabulary
 - `contract-tests/fixtures/microvm-operations/` — M16 real Lambda MicroVM operation, route, provider-state, tenant, and token-safety contracts
 - `contract-tests/fixtures/openapi/` — P0 descriptive OpenAPI generation with byte-pinned canonical JSON output
+- `contract-tests/fixtures/mcp/` — SP09 Go MCP protocol, registry, session, Streamable HTTP, resumable SSE, and task-store contracts
 
 Each fixture is a single JSON object.
 
@@ -30,8 +31,8 @@ while provider/runtime payload objects remain open so behavior-specific contract
 
 ## Common shape
 
-- `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*`, `m14.*`, `m15.*`, or `m16.*` prefixes).
-- `tier` (string): `p0` / `p1` / `p2` / `m1` / `m2` / `m3` / `m12` / `m14` / `m15` / `m16`.
+- `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*`, `m14.*`, `m15.*`, `m16.*`, or `mcp.*` prefixes).
+- `tier` (string): `p0` / `p1` / `p2` / `m1` / `m2` / `m3` / `m12` / `m14` / `m15` / `m16` / `mcp`.
 - `name` (string): short human-friendly name.
 - `setup.routes` (array): route table for the fixture runner.
   - `method` (string): HTTP method (e.g. `GET`).
@@ -69,6 +70,31 @@ while provider/runtime payload objects remain open so behavior-specific contract
 - `expect.logging_profile_catalog` (object, optional): expected built-in logging profile catalog.
 - `expect.metrics` (array, optional): expected metric emissions (portable subset).
 - `expect.spans` (array, optional): expected trace span emissions (portable subset).
+
+## SP09 MCP fixtures
+
+MCP fixtures pin the Go MCP runtime contract for protocol `2025-11-25`. They are a Go implementation leg for SP09:
+the TypeScript and Python contract runners must load and explicitly skip `tier: "mcp"` fixtures until SP10/SP11 add
+their MCP runtimes. That skip is intentional and reported by those runners; it is not parity proof for TS/Py.
+
+`setup.mcp` builds a deterministic Go `runtime/mcp.Server`:
+
+- `server.name` / `server.version`: expected `serverInfo` values in `initialize`.
+- `id_sequence`: deterministic server IDs for sessions and task IDs.
+- `stream_id_sequence`: deterministic stream IDs for resumable SSE stores.
+- `tools`: registered tools. `handler` is a runner-owned deterministic handler such as `echo_text`, `fail_error`,
+  `stream_progress`, or `task_echo`; `task_support` may be `forbidden`, `optional`, or `required`.
+- `resources`: static resources with exact `resources/list` metadata and `resources/read` contents.
+- `resource_templates`: `resources/templates/list` metadata.
+- `prompts`: registered prompt templates; `handler` renders deterministic `prompts/get` messages.
+- `session_store.seed`: deterministic pre-seeded sessions for expiration/rejection checks.
+- `task_runtime`: opt-in deterministic task store settings for task lifecycle fixtures.
+
+`input.mcp.steps` is an ordered exchange against one mounted `/mcp` AppTheory route. Each step carries the canonical
+HTTP request shape (`method`, `path`, `headers`, `body`, `is_base64`) and optional `read_body` for SSE readers. Expected
+steps live in `expect.mcp.steps` and compare status, canonical headers, cookies, body JSON, or parsed `sse_frames`.
+The fixtures intentionally exercise HTTP framing (POST/GET/DELETE), JSON-RPC envelopes, session headers, and replay
+semantics through the runtime handler instead of calling private Go helpers directly.
 
 
 ## HTTP source provenance fixtures

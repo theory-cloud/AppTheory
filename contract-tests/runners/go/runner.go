@@ -45,6 +45,8 @@ func runFixture(f Fixture) error {
 		return runFixtureM15(f)
 	case "m16":
 		return runFixtureM16(f)
+	case "mcp":
+		return runFixtureMCP(f)
 	default:
 		return runFixtureLegacy(f)
 	}
