@@ -156,7 +156,7 @@ function parametersForFields(fields) {
         if (rank !== 0) {
             return rank;
         }
-        return left.name.trim().localeCompare(right.name.trim());
+        return compareCanonicalStrings(left.name.trim(), right.name.trim());
     });
     return params.map((field) => {
         const name = field.name.trim();
@@ -184,7 +184,7 @@ function fieldsForSource(fields, source) {
         }
         out.push({ ...field, name, source: fieldSource });
     }
-    out.sort((left, right) => left.name.localeCompare(right.name));
+    out.sort((left, right) => compareCanonicalStrings(left.name, right.name));
     return out;
 }
 function objectSchema(fields) {
@@ -196,7 +196,7 @@ function objectSchema(fields) {
             required.push(field.name);
         }
     }
-    required.sort();
+    required.sort(compareCanonicalStrings);
     const schema = {
         additionalProperties: false,
         properties,
@@ -245,16 +245,18 @@ function fieldSchema(field) {
                 break;
             case VALIDATION_RULE_MIN_LENGTH: {
                 const value = integerValue(rule.value);
-                if (value !== null) {
-                    applyLength(schema, baseType, Boolean(field.array), "min", value);
+                if (value === null) {
+                    throw new Error(`apptheory: openapi field ${fieldLabel(field)} ${VALIDATION_RULE_MIN_LENGTH} must be an integer`);
                 }
+                applyLength(schema, baseType, Boolean(field.array), "min", value);
                 break;
             }
             case VALIDATION_RULE_MAX_LENGTH: {
                 const value = integerValue(rule.value);
-                if (value !== null) {
-                    applyLength(schema, baseType, Boolean(field.array), "max", value);
+                if (value === null) {
+                    throw new Error(`apptheory: openapi field ${fieldLabel(field)} ${VALIDATION_RULE_MAX_LENGTH} must be an integer`);
                 }
+                applyLength(schema, baseType, Boolean(field.array), "max", value);
                 break;
             }
             case VALIDATION_RULE_PATTERN:
@@ -325,7 +327,7 @@ function compareRoutes(left, right) {
     const leftPath = normalizePath(left.path);
     const rightPath = normalizePath(right.path);
     if (leftPath !== rightPath) {
-        return leftPath.localeCompare(rightPath);
+        return compareCanonicalStrings(leftPath, rightPath);
     }
     const leftMethod = normalizeMethod(left.method);
     const rightMethod = normalizeMethod(right.method);
@@ -333,7 +335,7 @@ function compareRoutes(left, right) {
     if (rank !== 0) {
         return rank;
     }
-    return leftMethod.localeCompare(rightMethod);
+    return compareCanonicalStrings(leftMethod, rightMethod);
 }
 function methodRank(method) {
     const order = [
@@ -364,11 +366,11 @@ function sourceRank(source) {
     }
 }
 function sortedTags(tags) {
-    return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))].sort();
+    return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))].sort(compareCanonicalStrings);
 }
 function enumValues(value) {
-    if (isReadonlyStringArray(value)) {
-        return value.map((item) => item.trim());
+    if (isReadonlyEnumArray(value)) {
+        return value.map((item) => String(item).trim());
     }
     if (typeof value === "string") {
         return value
@@ -381,9 +383,9 @@ function enumValues(value) {
     }
     return [];
 }
-function isReadonlyStringArray(value) {
+function isReadonlyEnumArray(value) {
     return (Array.isArray(value) &&
-        value.every((item) => typeof item === "string"));
+        value.every((item) => typeof item === "string" || typeof item === "number"));
 }
 function numberValue(value) {
     if (typeof value === "number" && Number.isFinite(value)) {
@@ -397,7 +399,26 @@ function numberValue(value) {
 }
 function integerValue(value) {
     const parsed = numberValue(value);
-    return parsed === null ? null : Math.trunc(parsed);
+    return parsed === null || !Number.isInteger(parsed) ? null : parsed;
+}
+function fieldLabel(field) {
+    return field.field.trim() || field.name.trim() || "field";
+}
+function compareCanonicalStrings(left, right) {
+    const leftPoints = Array.from(left);
+    const rightPoints = Array.from(right);
+    const limit = Math.min(leftPoints.length, rightPoints.length);
+    for (let index = 0; index < limit; index += 1) {
+        const leftCode = leftPoints[index]?.codePointAt(0) ?? 0;
+        const rightCode = rightPoints[index]?.codePointAt(0) ?? 0;
+        if (leftCode !== rightCode) {
+            return leftCode < rightCode ? -1 : 1;
+        }
+    }
+    if (leftPoints.length === rightPoints.length) {
+        return 0;
+    }
+    return leftPoints.length < rightPoints.length ? -1 : 1;
 }
 function stableStringify(value) {
     if (value === null || value === undefined) {
@@ -408,7 +429,7 @@ function stableStringify(value) {
     }
     if (typeof value === "object") {
         const record = value;
-        const keys = Object.keys(record).sort();
+        const keys = Object.keys(record).sort(compareCanonicalStrings);
         return `{${keys
             .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
             .join(",")}}`;

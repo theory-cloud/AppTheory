@@ -19,7 +19,7 @@ from apptheory.validate import (
 @dataclass(frozen=True, slots=True)
 class OpenAPIValidationRule:
     rule: str
-    value: int | float | str | list[str] | None = None
+    value: int | float | str | list[int | float | str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +52,7 @@ class OpenAPIRouteSpec:
     response: OpenAPIResponseSpec
     summary: str = ""
     tags: list[str] | None = None
-    success_status: int = 200
+    success_status: int | None = None
     request: OpenAPIRequestSpec | None = None
 
 
@@ -140,7 +140,8 @@ def _openapi_components() -> dict[str, Any]:
 
 
 def _operation_for_route(route: Mapping[str, Any], operation_id: str) -> dict[str, Any]:
-    success_status = int(_first(route, "success_status", "successStatus") or 200)
+    raw_success_status = _first(route, "success_status", "successStatus")
+    success_status = 200 if raw_success_status is None else int(raw_success_status)
     if success_status < 100 or success_status > 599:
         method = str(route.get("method", "")).upper()
         path_value = str(route.get("path", ""))
@@ -265,7 +266,7 @@ def _field_schema(field: Mapping[str, Any]) -> dict[str, Any]:
             schema["additionalProperties"] = True
 
     for rule in _sequence(field.get("validation")):
-        _apply_validation_rule(schema, base_type, is_array, _as_mapping(rule))
+        _apply_validation_rule(schema, base_type, is_array, field, _as_mapping(rule))
     return schema
 
 
@@ -273,6 +274,7 @@ def _apply_validation_rule(
     schema: dict[str, Any],
     base_type: str,
     is_array: bool,
+    field: Mapping[str, Any],
     rule: Mapping[str, Any],
 ) -> None:
     rule_name = str(rule.get("rule", "")).strip()
@@ -289,12 +291,14 @@ def _apply_validation_rule(
             schema["maximum"] = number
     elif rule_name == VALIDATION_RULE_MIN_LENGTH:
         integer = _integer_value(value)
-        if integer is not None:
-            _apply_length(schema, base_type, is_array, "min", integer)
+        if integer is None:
+            raise ValueError(f"apptheory: openapi field {_field_label(field)} {rule_name} must be an integer")
+        _apply_length(schema, base_type, is_array, "min", integer)
     elif rule_name == VALIDATION_RULE_MAX_LENGTH:
         integer = _integer_value(value)
-        if integer is not None:
-            _apply_length(schema, base_type, is_array, "max", integer)
+        if integer is None:
+            raise ValueError(f"apptheory: openapi field {_field_label(field)} {rule_name} must be an integer")
+        _apply_length(schema, base_type, is_array, "max", integer)
     elif rule_name == VALIDATION_RULE_PATTERN and not is_array and base_type == "string":
         schema["pattern"] = str(value or "")
     elif rule_name == VALIDATION_RULE_ENUM:
@@ -316,6 +320,10 @@ def _field_required(field: Mapping[str, Any]) -> bool:
     if _normalize_source(str(field.get("source", ""))) == "path" or bool(field.get("required", False)):
         return True
     return any(_as_mapping(rule).get("rule") == VALIDATION_RULE_REQUIRED for rule in _sequence(field.get("validation")))
+
+
+def _field_label(field: Mapping[str, Any]) -> str:
+    return str(field.get("field") or "").strip() or str(field.get("name") or "").strip() or "field"
 
 
 def _route_sort_key(route_value: Any) -> tuple[str, int, str]:
@@ -395,7 +403,9 @@ def _number_value(value: Any) -> int | float | None:
 
 def _integer_value(value: Any) -> int | None:
     number = _number_value(value)
-    return None if number is None else int(number)
+    if number is None:
+        return None
+    return int(number) if float(number).is_integer() else None
 
 
 def _as_mapping(value: Any) -> dict[str, Any]:

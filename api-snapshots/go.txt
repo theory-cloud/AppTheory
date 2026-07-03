@@ -1904,7 +1904,7 @@ type OpenAPIRouteSpec struct {
 	OperationID   string              `json:"operation_id"`
 	Summary       string              `json:"summary,omitempty"`
 	Tags          []string            `json:"tags,omitempty"`
-	SuccessStatus int                 `json:"success_status,omitempty"`
+	SuccessStatus *int                `json:"success_status,omitempty"`
 	Request       OpenAPIRequestSpec  `json:"request,omitempty"`
 	Response      OpenAPIResponseSpec `json:"response"`
 }
