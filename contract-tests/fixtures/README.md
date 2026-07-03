@@ -7,7 +7,8 @@ File layout is organized by behavior domain. The historical tier/milestone label
 
 - `contract-tests/fixtures/http-core/` — P0 runtime core: routing, normalization, errors, source provenance, Lambda URL/ALB adapters
 - `contract-tests/fixtures/middleware-guardrails/` — P1 request-id, tenant, auth, CORS, guardrails, and legacy flat-error behavior
-- `contract-tests/fixtures/appsync-observability-policies/` — P2 AppSync, observability, logging profiles, rate-limit, and load-shed behavior
+- `contract-tests/fixtures/appsync-observability-policies/` — P2 AppSync, logging profiles, rate-limit, and load-shed behavior
+- `contract-tests/fixtures/observability/` — P2 request duration, CloudWatch EMF, and trace-context propagation behavior
 - `contract-tests/fixtures/event-sources/` — M1 SQS, EventBridge, DynamoDB Streams, Kinesis, SNS, and non-HTTP middleware behavior
 - `contract-tests/fixtures/websockets/` — M2 API Gateway WebSockets and management client fakes
 - `contract-tests/fixtures/api-gateway-rest-sse/` — M3 API Gateway REST v1, Remote MCP path normalization, and SSE
@@ -183,6 +184,17 @@ Non-HTTP observability fixtures use the existing `expect.logs`, `expect.metrics`
 - Spans use trigger-specific names and attributes; raw event details, DynamoDB keys, and image values are not emitted.
 
 The safe-panic fixture pins the posture for non-HTTP handler panics/errors: observability records carry `error_code = "app.internal"`, while the surfaced error is the safe message `apptheory: event workload failed`.
+
+## P2 HTTP observability fixtures
+
+P2 HTTP observability fixtures pin the portable request log, metric, span, and EMF surfaces. Trace propagation is extraction/recording only: runtimes extract an inbound trace ID from HTTP headers and attach it to AppTheory records and nested error envelopes, but they do not install an OpenTelemetry SDK, exporter, or dashboard.
+
+Trace extraction precedence is:
+
+1. A valid W3C `traceparent` header. The recorded trace ID is the 32-character trace-id segment.
+2. A valid AWS X-Ray `X-Amzn-Trace-Id` header with a `Root=` value. The recorded trace ID is the root value (for example, `1-67891233-abcdef012345678912345678`).
+
+Invalid or missing trace headers leave the trace ID empty; runtimes must not synthesize one in this contract pass.
 
 ## P2 logging profile fixtures
 
