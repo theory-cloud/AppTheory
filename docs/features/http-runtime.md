@@ -47,7 +47,9 @@ P0 plus:
 
 P1 plus:
 
-- **Observability hooks** — structured request log, span hooks, structured access-log fields. See [Logging Profiles](logging-profiles.md).
+- **Observability hooks** — one request log record, one metric record, and one span-shaped record per completed HTTP
+  request, including `duration_ms` and inbound trace IDs extracted from `traceparent` or `X-Amzn-Trace-Id`. See
+  [Observability Hooks](observability.md) and [Logging Profiles](logging-profiles.md).
 - **Rate-limit / load-shed hooks** — the shared P2 contract pins the portable policy-hook outcome: a rejected request returns `app.rate_limited`, `429`, and `Retry-After` while still flowing through observability. Go additionally exports `RateLimitMiddleware`, which integrates with `pkg/limited` and fingerprints default credential-derived identifiers (`x-api-key`, `Authorization: Bearer`) with HMAC-SHA256 before they reach the limiter. TypeScript and Python expose policy hooks plus limiter primitives, but they do not currently ship a `RateLimitMiddleware` equivalent.
 
 P2 is what production applications use unless they have a reason not to. The default is P2 because most consumers should not be assembling these pieces from scratch.
@@ -155,7 +157,8 @@ You almost never need these directly — use `HandleLambda` / `handleLambda` / `
 ## Next reads
 
 - [Source Provenance](source-provenance.md) — safe HTTP client-IP access
-- [Logging Profiles](logging-profiles.md) — P2 observability output shapes
+- [Observability Hooks](observability.md) — P2 duration, trace extraction, span/log records, and EMF sink boundaries
+- [Logging Profiles](logging-profiles.md) — profile-backed structured JSON log output
 - [Sanitization](sanitization.md) — safe logging helpers
 - [Event Workloads](event-workloads.md) — the non-HTTP side of the runtime
 - [Contract Fixtures](../reference/contract-fixtures.md) — the 174-fixture covenant <!-- apptheory-fixture-count -->

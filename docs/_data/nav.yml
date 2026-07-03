@@ -33,6 +33,7 @@ groups:
     items:
       - { id: feature-http,           title: HTTP Runtime (P0–P2),    url: /features/http-runtime/,      icon: layers,       tag: ga }
       - { id: feature-source,         title: Source Provenance,       url: /features/source-provenance/, icon: shield-check }
+      - { id: feature-observability,  title: Observability Hooks,     url: /features/observability/,     icon: activity }
       - { id: feature-logging,        title: Logging Profiles,        url: /features/logging-profiles/,  icon: activity }
       - { id: feature-sanitization,   title: Sanitization,            url: /features/sanitization/,      icon: shield }
 
@@ -141,6 +142,7 @@ url_to_id:
   /runtimes/python/:                            runtime-py
   /features/http-runtime/:                      feature-http
   /features/source-provenance/:                 feature-source
+  /features/observability/:                     feature-observability
   /features/logging-profiles/:                  feature-logging
   /features/sanitization/:                      feature-sanitization
   /features/event-workloads/:                   feature-events
