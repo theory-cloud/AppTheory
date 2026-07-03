@@ -2483,6 +2483,7 @@ class FakeWebSocketManagementClient:
     def __init__(self, endpoint: str) -> None:
         self.endpoint = str(endpoint or "").strip()
         self.calls: list[WebSocketCall] = []
+        self.post_error: Exception | None = None
 
     def post_to_connection(self, connection_id: str, data: bytes) -> None:
         self.calls.append(
@@ -2493,6 +2494,8 @@ class FakeWebSocketManagementClient:
                 data=bytes(data or b""),
             )
         )
+        if self.post_error is not None:
+            raise self.post_error
 
     def get_connection(self, connection_id: str) -> dict[str, Any]:
         self.calls.append(
@@ -2574,6 +2577,45 @@ def _built_in_websocket_handler(runtime: Any, name: str):
                     "request_id": getattr(ctx, "request_id", ""),
                 },
             )
+
+        return handler
+
+    if name == "ws_default_send_json_fail":
+
+        def handler(ctx):
+            ws = ctx.as_websocket()
+            if ws is None:
+                raise RuntimeError("missing websocket context")
+            ws.send_json_message({"ok": True})
+            return runtime.json(200, {"sent": True})
+
+        return handler
+
+    if name == "ws_default_body_size":
+
+        def handler(ctx):
+            ws = ctx.as_websocket()
+            if ws is None:
+                raise RuntimeError("missing websocket context")
+            return runtime.json(
+                200,
+                {
+                    "handler": "default",
+                    "body_len": len(ws.body),
+                    "route_key": ws.route_key,
+                    "event_type": ws.event_type,
+                    "connection_id": ws.connection_id,
+                    "management_endpoint": ws.management_endpoint,
+                    "request_id": getattr(ctx, "request_id", ""),
+                },
+            )
+
+        return handler
+
+    if name == "ws_connect_deny":
+
+        def handler(_ctx):
+            raise runtime.AppError("app.unauthorized", "unauthorized")
 
         return handler
 
@@ -3043,6 +3085,10 @@ def run_fixture_m2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
         nonlocal fake
         if fake is None:
             fake = FakeWebSocketManagementClient(endpoint)
+            for route in (fixture.get("setup", {}) or {}).get("websockets", []) or []:
+                if str(route.get("handler") or "").strip() == "ws_default_send_json_fail":
+                    fake.post_error = RuntimeError("testkit: post failed")
+                    break
         return fake
 
     app = runtime.create_app(
