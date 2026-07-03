@@ -2,6 +2,7 @@ package apptheory
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -280,8 +281,14 @@ func TestOpenAPIValidationHelpers(t *testing.T) {
 		t.Fatalf("array object items should allow additional properties: %#v", arrayObjectSchema)
 	}
 
+	if values, err := openAPIEnumValues([]string{" a ", "b"}); err != nil || !stringSliceEqual(values, []string{"a", "b"}) {
+		t.Fatalf("[]string enum values = %#v", values)
+	}
 	if values, err := openAPIEnumValues([]any{"a", 2}); err != nil || !stringSliceEqual(values, []string{"a", "2"}) {
 		t.Fatalf("[]any enum values = %#v", values)
+	}
+	if values, err := openAPIEnumValues([]int{1, 1000000}); err != nil || !stringSliceEqual(values, []string{"1", "1000000"}) {
+		t.Fatalf("[]int enum values = %#v", values)
 	}
 	if values, err := openAPIEnumValues([]any{1000000.0}); err != nil || !stringSliceEqual(values, []string{"1000000"}) {
 		t.Fatalf("large numeric enum values = %#v", values)
@@ -291,6 +298,12 @@ func TestOpenAPIValidationHelpers(t *testing.T) {
 	}
 	if values, err := openAPIEnumValues(nil); err != nil || values != nil {
 		t.Fatalf("nil enum values = %#v", values)
+	}
+	if _, err := openAPIEnumValues([]any{math.NaN()}); err == nil {
+		t.Fatal("nan enum value accepted")
+	}
+	if got, ok := openAPINumberValue(json.Number("1e-5")); !ok || got.String() != "0.00001" {
+		t.Fatalf("exponent number canonicalization = %q, %v", got.String(), ok)
 	}
 	if _, ok := openAPINumberValue("not-a-number"); ok {
 		t.Fatal("invalid number string accepted")
@@ -303,6 +316,9 @@ func TestOpenAPIValidationHelpers(t *testing.T) {
 	}
 	if _, ok := openAPINumberValue("0x10"); ok {
 		t.Fatal("hex number string accepted")
+	}
+	if _, ok := openAPINumberValue(math.Inf(1)); ok {
+		t.Fatal("infinite number accepted")
 	}
 	if _, ok := openAPIIntegerValue(1.25); ok {
 		t.Fatal("fractional value accepted as integer")
