@@ -683,7 +683,7 @@ func builtInAppTheoryHandler(name string) apptheory.Handler {
 	return builtInAppTheoryHandlers[key]
 }
 
-func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []FixtureLogRecord, metrics []FixtureMetricRecord, spans []FixtureSpanRecord) error {
+func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []FixtureLogRecord, metrics []FixtureMetricRecord, spans []FixtureSpanRecord, emfLogInputs ...[]string) error {
 	if f.Expect.Response == nil {
 		return fmt.Errorf("fixture missing expect.response")
 	}
@@ -700,7 +700,11 @@ func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []Fixture
 		return err
 	}
 
-	return compareFixtureSideEffects(f.Expect, logs, metrics, spans)
+	emfLogs := []string(nil)
+	if len(emfLogInputs) > 0 {
+		emfLogs = emfLogInputs[0]
+	}
+	return compareFixtureSideEffects(f.Expect, logs, metrics, spans, emfLogs)
 }
 
 func compareFixtureResponseMeta(expected FixtureResponse, actual apptheory.Response, expectedHeaders, actualHeaders map[string][]string) error {
@@ -749,7 +753,7 @@ func compareFixtureResponseBody(expected FixtureResponse, actual apptheory.Respo
 	return nil
 }
 
-func compareFixtureSideEffects(expected FixtureExpect, logs []FixtureLogRecord, metrics []FixtureMetricRecord, spans []FixtureSpanRecord) error {
+func compareFixtureSideEffects(expected FixtureExpect, logs []FixtureLogRecord, metrics []FixtureMetricRecord, spans []FixtureSpanRecord, emfLogInputs ...[]string) error {
 	if !reflect.DeepEqual(expected.Logs, logs) {
 		return fmt.Errorf("logs mismatch")
 	}
@@ -758,6 +762,15 @@ func compareFixtureSideEffects(expected FixtureExpect, logs []FixtureLogRecord, 
 	}
 	if !reflect.DeepEqual(expected.Spans, spans) {
 		return fmt.Errorf("spans mismatch")
+	}
+	if expected.EMFLogs != nil {
+		emfLogs := []string(nil)
+		if len(emfLogInputs) > 0 {
+			emfLogs = emfLogInputs[0]
+		}
+		if !reflect.DeepEqual(expected.EMFLogs, emfLogs) {
+			return fmt.Errorf("emf_logs mismatch")
+		}
 	}
 	return nil
 }

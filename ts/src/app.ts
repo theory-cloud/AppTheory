@@ -156,6 +156,7 @@ export interface LogRecord {
   path: string;
   status: number;
   errorCode: string;
+  durationMs: number;
   trigger?: string;
   correlationId?: string;
   source?: string;
@@ -168,6 +169,7 @@ export interface LogRecord {
 export interface MetricRecord {
   name: string;
   value: number;
+  durationMs: number;
   tags: Record<string, string>;
 }
 
@@ -609,6 +611,7 @@ export class App {
       }
     }
 
+    const startedAtMs = this._clock.now().valueOf();
     const preHeaders = canonicalizeHeaders(request.headers);
     const preQuery = cloneQuery(request.query);
     let method = normalizeMethod(request.method);
@@ -640,6 +643,7 @@ export class App {
           tenantId,
           status: out.status,
           errorCode: errCode ?? "",
+          durationMs: durationMs(startedAtMs, this._clock.now().valueOf()),
         });
       }
       return out;
@@ -1961,6 +1965,7 @@ function recordEventObservability(
       path: "",
       status: 0,
       errorCode,
+      durationMs: 0,
     };
     addNonEmptyLogField(record, "trigger", observation.trigger);
     addNonEmptyLogField(record, "correlationId", observation.correlationId);
@@ -1976,6 +1981,7 @@ function recordEventObservability(
     hooks.metric({
       name: "apptheory.event",
       value: 1,
+      durationMs: 0,
       tags: eventMetricTags(observation, outcome, errorCode),
     });
   }
@@ -2060,6 +2066,7 @@ function recordObservability(
     tenantId,
     status,
     errorCode,
+    durationMs: requestDurationMs,
   }: {
     method: string;
     path: string;
@@ -2067,9 +2074,12 @@ function recordObservability(
     tenantId: string;
     status: number;
     errorCode: string;
+    durationMs: number;
   },
 ): void {
   if (!hooks) return;
+
+  const observedDurationMs = Math.max(0, Math.trunc(requestDurationMs));
 
   let level = "info";
   if (status >= 500) {
@@ -2088,6 +2098,7 @@ function recordObservability(
       path,
       status,
       errorCode,
+      durationMs: observedDurationMs,
     });
   }
 
@@ -2095,6 +2106,7 @@ function recordObservability(
     hooks.metric({
       name: "apptheory.request",
       value: 1,
+      durationMs: observedDurationMs,
       tags: {
         method,
         path,
@@ -2118,6 +2130,11 @@ function recordObservability(
       },
     });
   }
+}
+
+function durationMs(startedAtMs: number, finishedAtMs: number): number {
+  const delta = Math.trunc(finishedAtMs - startedAtMs);
+  return delta > 0 ? delta : 0;
 }
 
 function formatAllowHeader(methods: string[]): string {

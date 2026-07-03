@@ -61,6 +61,27 @@ function deepEqual(a, b) {
   return util.isDeepStrictEqual(a, b);
 }
 
+function newEffects() {
+  return { logs: [], metrics: [], spans: [], emf_logs: [] };
+}
+
+function compareEMFLogsIfExpected(fixture, effects, actual, expected) {
+  if (!Object.prototype.hasOwnProperty.call(fixture.expect ?? {}, "emf_logs")) {
+    return { ok: true };
+  }
+  const expectedEmfLogs = fixture.expect?.emf_logs ?? [];
+  const actualEmfLogs = effects?.emf_logs ?? [];
+  if (deepEqual(expectedEmfLogs, actualEmfLogs)) return { ok: true };
+  return {
+    ok: false,
+    reason: "emf_logs mismatch",
+    actual,
+    expected,
+    expected_emf_logs: expectedEmfLogs,
+    actual_emf_logs: actualEmfLogs,
+  };
+}
+
 function isLoggingProfileContractFixture(fixture) {
   const setup = fixture.setup ?? {};
   const input = fixture.input ?? {};
@@ -645,7 +666,7 @@ function newFixtureApp(routes, opts) {
   const enableP1 = Boolean(opts?.enableP1);
   const enableP2 = Boolean(opts?.enableP2);
   const limits = opts?.limits ?? {};
-  const effects = { logs: [], metrics: [], spans: [] };
+  const effects = newEffects();
 
   const compiled = (routes ?? []).map((r) => ({
     method: String(r.method).trim().toUpperCase(),
@@ -2084,6 +2105,8 @@ function compareFixture(fixture, actual, effects) {
         actual_spans: effects.spans ?? [],
       };
     }
+    const emfResult = compareEMFLogsIfExpected(fixture, effects, actual, expected);
+    if (!emfResult.ok) return emfResult;
     return { ok: true };
   }
 
@@ -2142,6 +2165,8 @@ function compareFixture(fixture, actual, effects) {
         actual_spans: effects.spans ?? [],
       };
     }
+    const emfResult = compareEMFLogsIfExpected(fixture, effects, actual, expected);
+    if (!emfResult.ok) return emfResult;
     return { ok: true };
   }
 
@@ -2183,6 +2208,8 @@ function compareFixture(fixture, actual, effects) {
         actual_spans: effects.spans ?? [],
       };
     }
+    const emfResult = compareEMFLogsIfExpected(fixture, effects, actual, expected);
+    if (!emfResult.ok) return emfResult;
     return { ok: true };
   }
 
@@ -2222,6 +2249,8 @@ function compareFixture(fixture, actual, effects) {
       actual_spans: effects.spans ?? [],
     };
   }
+  const emfResult = compareEMFLogsIfExpected(fixture, effects, actual, expected);
+  if (!emfResult.ok) return emfResult;
   return { ok: true };
 }
 
@@ -2324,9 +2353,10 @@ function compareM1SideEffectsIfExpected(fixture, effects) {
   const expectsEffects =
     Object.prototype.hasOwnProperty.call(expect, "logs") ||
     Object.prototype.hasOwnProperty.call(expect, "metrics") ||
-    Object.prototype.hasOwnProperty.call(expect, "spans");
+    Object.prototype.hasOwnProperty.call(expect, "spans") ||
+    Object.prototype.hasOwnProperty.call(expect, "emf_logs");
   if (!expectsEffects) return { ok: true };
-  const actualEffects = effects ?? { logs: [], metrics: [], spans: [] };
+  const actualEffects = effects ?? newEffects();
   if (!deepEqual(expect.logs ?? [], actualEffects.logs ?? [])) {
     return {
       ok: false,
@@ -2355,6 +2385,16 @@ function compareM1SideEffectsIfExpected(fixture, effects) {
       actual_output_json: null,
       expected_spans: expect.spans ?? [],
       actual_spans: actualEffects.spans ?? [],
+    };
+  }
+  if (Object.prototype.hasOwnProperty.call(expect, "emf_logs") && !deepEqual(expect.emf_logs ?? [], actualEffects.emf_logs ?? [])) {
+    return {
+      ok: false,
+      reason: "emf_logs mismatch",
+      expected_output_json: expect.output_json ?? null,
+      actual_output_json: null,
+      expected_emf_logs: expect.emf_logs ?? [],
+      actual_emf_logs: actualEffects.emf_logs ?? [],
     };
   }
   return { ok: true };
@@ -3241,7 +3281,7 @@ async function runFixtureM1(fixture) {
   const runtime = await loadAppTheoryRuntime();
   const ids = new runtime.ManualIdGenerator();
   ids.queue("req_test_123");
-  const effects = { logs: [], metrics: [], spans: [] };
+  const effects = newEffects();
   const app = runtime.createApp({
     tier: "p0",
     clock: new runtime.ManualClock(new Date(0)),
@@ -3483,7 +3523,7 @@ async function runFixtureM3(fixture) {
 
 async function runFixtureM12(fixture) {
   const runtime = await loadAppTheoryRuntime();
-  const effects = { logs: [], metrics: [], spans: [] };
+  const effects = newEffects();
 
   const ids = new runtime.ManualIdGenerator();
   ids.queue("req_test_123");
@@ -3715,7 +3755,7 @@ async function runFixtureP0(fixture) {
   }
 
   if (expectsSetupError(fixture)) {
-    return { actualError, effects: { logs: [], metrics: [], spans: [] } };
+    return { actualError, effects: newEffects() };
   }
   if (actualError) {
     throw actualError;
@@ -3732,21 +3772,21 @@ async function runFixtureP0(fixture) {
       const resp = await app.serveAPIGatewayV2(event);
       return {
         actual: canonicalResponseFromAPIGatewayV2Response(resp),
-        effects: { logs: [], metrics: [], spans: [] },
+        effects: newEffects(),
       };
     }
     if (source === "lambda_function_url") {
       const resp = await app.serveLambdaFunctionURL(event);
       return {
         actual: canonicalResponseFromLambdaFunctionURLResponse(resp),
-        effects: { logs: [], metrics: [], spans: [] },
+        effects: newEffects(),
       };
     }
     if (source === "alb") {
       const resp = await app.serveALB(event);
       return {
         actual: canonicalResponseFromAPIGatewayProxyResponse(resp),
-        effects: { logs: [], metrics: [], spans: [] },
+        effects: newEffects(),
       };
     }
 
@@ -3775,7 +3815,7 @@ async function runFixtureP0(fixture) {
     is_base64: resp.isBase64 ?? false,
   };
 
-  return { actual, effects: { logs: [], metrics: [], spans: [] } };
+  return { actual, effects: newEffects() };
 }
 
 function canonicalResponseFromAPIGatewayV2Response(resp) {
@@ -3979,7 +4019,24 @@ async function runFixtureP1(fixture) {
     is_base64: resp.isBase64 ?? false,
   };
 
-  return { actual, effects: { logs: [], metrics: [], spans: [] } };
+  return { actual, effects: newEffects() };
+}
+
+function builtInAppTheoryHandlerP2(runtime, name, effects, clock) {
+  switch (String(name ?? "").trim()) {
+    case "advance_clock_25ms":
+      return () => {
+        clock.advance(25);
+        return runtime.text(200, "advanced");
+      };
+    case "advance_clock_13ms_internal":
+      return () => {
+        clock.advance(13);
+        throw new runtime.AppTheoryError("app.internal", "internal error");
+      };
+    default:
+      return builtInAppTheoryHandler(runtime, name, effects);
+  }
 }
 
 async function runFixtureP2(fixture) {
@@ -3987,8 +4044,15 @@ async function runFixtureP2(fixture) {
 
   const ids = new runtime.ManualIdGenerator();
   ids.queue("req_test_123");
+  const clock = new runtime.ManualClock(new Date(0));
 
-  const effects = { logs: [], metrics: [], spans: [] };
+  const effects = newEffects();
+  const emfSink = Object.prototype.hasOwnProperty.call(fixture.expect ?? {}, "emf_logs")
+    ? runtime.createEMFMetricSink({
+        clock: () => clock.now(),
+        write: (line) => effects.emf_logs.push(line),
+      })
+    : null;
 
   const limits = fixture.setup?.limits ?? {};
   const corsSetup = fixture.setup?.cors ?? null;
@@ -4003,6 +4067,7 @@ async function runFixtureP2(fixture) {
   const app = runtime.createApp({
     tier: "p2",
     ids,
+    clock,
     ...(fixture.setup?.http_error_format
       ? { httpErrorFormat: fixture.setup.http_error_format }
       : {}),
@@ -4064,10 +4129,17 @@ async function runFixtureP2(fixture) {
           path: r.path,
           status: r.status,
           error_code: r.errorCode,
+          duration_ms: r.durationMs,
         });
       },
       metric: (r) => {
-        effects.metrics.push({ name: r.name, value: r.value, tags: r.tags });
+        effects.metrics.push({
+          name: r.name,
+          value: r.value,
+          duration_ms: r.durationMs,
+          tags: r.tags,
+        });
+        emfSink?.recordMetric(r);
       },
       span: (r) => {
         effects.spans.push({ name: r.name, attributes: r.attributes });
@@ -4076,7 +4148,7 @@ async function runFixtureP2(fixture) {
   });
 
   for (const route of fixture.setup?.routes ?? []) {
-    const handler = builtInAppTheoryHandler(runtime, route.handler);
+    const handler = builtInAppTheoryHandlerP2(runtime, route.handler, effects, clock);
     if (!handler) {
       throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
     }
@@ -4117,7 +4189,7 @@ async function runFixtureP2Output(fixture) {
   const ids = new runtime.ManualIdGenerator();
   ids.queue("req_test_123");
 
-  const effects = { logs: [], metrics: [], spans: [] };
+  const effects = newEffects();
   const limits = fixture.setup?.limits ?? {};
   const corsSetup = fixture.setup?.cors ?? null;
   const cors =

@@ -119,6 +119,7 @@ type FixtureExpect struct {
 	Logs                       []FixtureLogRecord                 `json:"logs,omitempty"`
 	Metrics                    []FixtureMetricRecord              `json:"metrics,omitempty"`
 	Spans                      []FixtureSpanRecord                `json:"spans,omitempty"`
+	EMFLogs                    []string                           `json:"emf_logs,omitempty"`
 	ProfileLogs                []map[string]any                   `json:"profile_logs,omitempty"`
 	ProfileValidationErrors    []string                           `json:"profile_validation_errors,omitempty"`
 	LoggingProfileCatalog      map[string]any                     `json:"logging_profile_catalog,omitempty"`
@@ -234,6 +235,7 @@ type FixtureLogRecord struct {
 	Path          string `json:"path"`
 	Status        int    `json:"status"`
 	ErrorCode     string `json:"error_code"`
+	DurationMS    int    `json:"duration_ms,omitempty"`
 	Trigger       string `json:"trigger,omitempty"`
 	CorrelationID string `json:"correlation_id,omitempty"`
 	Source        string `json:"source,omitempty"`
@@ -244,9 +246,10 @@ type FixtureLogRecord struct {
 }
 
 type FixtureMetricRecord struct {
-	Name  string            `json:"name"`
-	Value int               `json:"value"`
-	Tags  map[string]string `json:"tags"`
+	Name       string            `json:"name"`
+	Value      int               `json:"value"`
+	DurationMS int               `json:"duration_ms,omitempty"`
+	Tags       map[string]string `json:"tags"`
 }
 
 type FixtureSpanRecord struct {

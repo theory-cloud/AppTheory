@@ -243,6 +243,7 @@
         "logs": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
         "metrics": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
         "spans": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "emf_logs": { "type": "array", "items": { "type": "string" } },
         "ws_calls": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
         "cloudwatch_logs_subscription": { "type": "object", "additionalProperties": true },
         "profile_logs": { "type": "array", "items": { "type": "object", "additionalProperties": true } },

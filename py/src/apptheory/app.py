@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import inspect
 import json
 from collections.abc import Awaitable, Callable
@@ -117,6 +118,7 @@ class LogRecord:
     path: str
     status: int
     error_code: str
+    duration_ms: int = 0
     trigger: str = ""
     correlation_id: str = ""
     source: str = ""
@@ -131,6 +133,7 @@ class MetricRecord:
     name: str
     value: int
     tags: dict[str, str]
+    duration_ms: int = 0
 
 
 @dataclass(slots=True)
@@ -584,6 +587,7 @@ class App:
                 return error_responder(exc, error_request, request_id)
             return self._response_for_http_error_with_request_id(exc, request_id)
 
+        started_at = self._clock.now()
         pre_headers = canonicalize_headers(request.headers)
         pre_query = clone_query(request.query)
 
@@ -606,7 +610,15 @@ class App:
         def finish(resp: Response, error_code: str = "") -> Response:
             out = _finalize_p1_response(resp, request_id, origin, self._cors)
             if tier == "p2":
-                self._record_observability(method, path, request_id, tenant_id, out.status, error_code)
+                self._record_observability(
+                    method,
+                    path,
+                    request_id,
+                    tenant_id,
+                    out.status,
+                    error_code,
+                    _duration_ms(started_at, self._clock.now()),
+                )
             return out
 
         if _is_cors_preflight(request.method, pre_headers):
@@ -770,7 +782,10 @@ class App:
         tenant_id: str,
         status: int,
         error_code: str,
+        duration_ms: int,
     ) -> None:
+        observed_duration_ms = max(0, int(duration_ms))
+
         level = "info"
         if status >= 500:
             level = "error"
@@ -788,6 +803,7 @@ class App:
                     path=path,
                     status=int(status),
                     error_code=error_code,
+                    duration_ms=observed_duration_ms,
                 )
             )
 
@@ -796,6 +812,7 @@ class App:
                 MetricRecord(
                     name="apptheory.request",
                     value=1,
+                    duration_ms=observed_duration_ms,
                     tags={
                         "method": method,
                         "path": path,
@@ -1764,6 +1781,12 @@ def _finalize_p1_response(resp: Response, request_id: str, origin: str, cors: CO
     )
 
 
+def _duration_ms(started_at: dt.datetime, finished_at: dt.datetime) -> int:
+    delta = finished_at - started_at
+    duration = int(delta.total_seconds() * 1000)
+    return duration if duration > 0 else 0
+
+
 def _remaining_ms(ctx: Any | None) -> int:
     if ctx is None:
         return 0
@@ -1863,6 +1886,7 @@ def _record_event_observability(
                 path="",
                 status=0,
                 error_code=error_code,
+                duration_ms=0,
                 trigger=observation.trigger,
                 correlation_id=observation.correlation_id,
                 source=observation.source,
@@ -1879,6 +1903,7 @@ def _record_event_observability(
                 name="apptheory.event",
                 value=1,
                 tags=_event_metric_tags(observation, outcome, error_code),
+                duration_ms=0,
             )
         )
 
