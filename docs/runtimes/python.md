@@ -5,7 +5,7 @@ description: The Python implementation of the AppTheory contract — typed, asyn
 
 # Python Runtime
 
-The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. The [145 contract fixtures](../reference/contract-fixtures.md) arbitrate when Go, TS, and Python disagree.
+The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. The [146 contract fixtures](../reference/contract-fixtures.md) arbitrate when Go, TS, and Python disagree.
 
 ## Install
 
@@ -95,7 +95,7 @@ Applies to HTTP error serialization only.
 
 ## What's verified
 
-The Python runtime passes all 145 contract fixtures on every commit, against the same fixture corpus as Go and TypeScript. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
+The Python runtime passes all 146 contract fixtures on every commit, against the same fixture corpus as Go and TypeScript. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
 
 ## Next reads
 

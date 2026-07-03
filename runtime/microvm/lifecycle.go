@@ -3,6 +3,7 @@ package microvm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -138,7 +139,7 @@ func NewLifecycleAdapter(opts ...LifecycleOption) (*LifecycleAdapter, error) {
 			opt(adapter)
 		}
 	}
-	if err := ValidateLifecycleContract(adapter.contract); err != nil {
+	if err := validateLifecycleAdapterContract(adapter.contract); err != nil {
 		return nil, err
 	}
 	return adapter, nil
@@ -252,6 +253,61 @@ func validateLifecycleFailureTransitions(transitions lifecycleTransitionSet) err
 	return nil
 }
 
+func validateLifecycleAdapterContract(contract LifecycleContract) error {
+	if isRealLifecycleContractShape(contract) {
+		return ValidateRealLifecycleContract(contract)
+	}
+	return ValidateLifecycleContract(contract)
+}
+
+func isRealLifecycleContractShape(contract LifecycleContract) bool {
+	for _, hook := range contract.Hooks {
+		if realLifecycleOnlyHook(normalizeLifecycleHook(hook.Name)) {
+			return true
+		}
+	}
+	for _, state := range contract.States {
+		if realLifecycleOnlyState(state) {
+			return true
+		}
+	}
+	for _, transition := range contract.Transitions {
+		if realLifecycleOnlyHook(normalizeLifecycleHook(transition.Hook)) ||
+			realLifecycleOnlyState(transition.From) ||
+			realLifecycleOnlyState(transition.To) {
+			return true
+		}
+	}
+	return false
+}
+
+func realLifecycleOnlyHook(hook LifecycleHook) bool {
+	switch hook {
+	case HookValidate, HookRun, HookReady, HookSuspend, HookResume, HookTerminate:
+		return true
+	default:
+		return false
+	}
+}
+
+func realLifecycleOnlyState(state LifecycleState) bool {
+	switch LifecycleState(strings.TrimSpace(string(state))) {
+	case StateValidating, StateValidated, StateRunning, StateSuspending, StateSuspended, StateResuming, StateTerminating:
+		return true
+	default:
+		return false
+	}
+}
+
+func lifecycleContractValidationError(err error, requestID string) SafeError {
+	var safe SafeError
+	if errors.As(err, &safe) {
+		safe.RequestID = strings.TrimSpace(requestID)
+		return safe
+	}
+	return safeError(ErrorCodeLifecycleIncomplete, err.Error(), requestID)
+}
+
 // Handle executes one lifecycle hook. Handler errors are sanitized and translated to failed state.
 func (a *LifecycleAdapter) Handle(ctx context.Context, event LifecycleEvent) (LifecycleResult, error) {
 	if ctx == nil {
@@ -261,8 +317,8 @@ func (a *LifecycleAdapter) Handle(ctx context.Context, event LifecycleEvent) (Li
 		err := safeError(ErrorCodeInvalidLifecycleEvent, "apptheory: microvm lifecycle adapter is nil", event.RequestID)
 		return lifecycleErrorResult(event, StateFailed, err), err
 	}
-	if err := ValidateLifecycleContract(a.contract); err != nil {
-		safe := safeError(ErrorCodeLifecycleIncomplete, err.Error(), event.RequestID)
+	if err := validateLifecycleAdapterContract(a.contract); err != nil {
+		safe := lifecycleContractValidationError(err, event.RequestID)
 		return lifecycleErrorResult(event, StateFailed, safe), safe
 	}
 	normalized, err := normalizeLifecycleEvent(event)
