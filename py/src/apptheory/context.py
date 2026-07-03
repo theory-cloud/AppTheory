@@ -63,6 +63,7 @@ class Context:
     id_generator: IdGenerator
     ctx: Any | None
     request_id: str
+    trace_id: str
     tenant_id: str
     auth_identity: str
     remaining_ms: int
@@ -80,6 +81,7 @@ class Context:
         id_generator: IdGenerator | None = None,
         ctx: Any | None = None,
         request_id: str = "",
+        trace_id: str = "",
         tenant_id: str = "",
         auth_identity: str = "",
         remaining_ms: int = 0,
@@ -93,6 +95,7 @@ class Context:
         self.id_generator = id_generator or RealIdGenerator()
         self.ctx = ctx
         self.request_id = str(request_id)
+        self.trace_id = str(trace_id or getattr(request, "trace_id", "") or "")
         self.tenant_id = str(tenant_id)
         self.auth_identity = str(auth_identity)
         self.remaining_ms = int(remaining_ms or 0)
@@ -129,6 +132,9 @@ class Context:
 
     def source_ip(self) -> str:
         return self.source_provenance().source_ip
+
+    def trace_context_id(self) -> str:
+        return str(self.trace_id or "").strip()
 
     def as_websocket(self) -> WebSocketContext | None:
         return self.websocket

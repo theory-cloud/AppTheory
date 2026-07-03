@@ -2950,6 +2950,25 @@ def _m1_log_record(record: Any) -> dict[str, Any]:
     return output
 
 
+def _p2_log_record(record: Any, *, include_duration: bool = False) -> dict[str, Any]:
+    output = {
+        "level": getattr(record, "level", ""),
+        "event": getattr(record, "event", ""),
+        "request_id": getattr(record, "request_id", ""),
+        "tenant_id": getattr(record, "tenant_id", ""),
+        "method": getattr(record, "method", ""),
+        "path": getattr(record, "path", ""),
+        "status": getattr(record, "status", 0),
+        "error_code": getattr(record, "error_code", ""),
+    }
+    if include_duration:
+        output["duration_ms"] = getattr(record, "duration_ms", 0)
+    trace_id = str(getattr(record, "trace_id", "") or "").strip()
+    if trace_id:
+        output["trace_id"] = trace_id
+    return output
+
+
 def canonical_response_from_apigw_proxy(resp: dict[str, Any]) -> CanonicalResponse:
     status = int(resp.get("statusCode") or 0)
     is_base64 = bool(resp.get("isBase64Encoded"))
@@ -3517,19 +3536,7 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
         auth_hook=lambda ctx: _fixture_auth_hook(runtime, ctx),
         policy_hook=lambda ctx: _fixture_policy_hook(runtime, ctx),
         observability=runtime.ObservabilityHooks(
-            log=lambda r: effects.logs.append(
-                {
-                    "level": r.level,
-                    "event": r.event,
-                    "request_id": r.request_id,
-                    "tenant_id": r.tenant_id,
-                    "method": r.method,
-                    "path": r.path,
-                    "status": r.status,
-                    "error_code": r.error_code,
-                    "duration_ms": r.duration_ms,
-                }
-            ),
+            log=lambda r: effects.logs.append(_p2_log_record(r, include_duration=True)),
             metric=lambda r: (
                 effects.metrics.append(
                     {"name": r.name, "value": r.value, "duration_ms": r.duration_ms, "tags": r.tags}
@@ -3616,18 +3623,7 @@ def run_fixture_p2_output(fixture: dict[str, Any]) -> tuple[bool, str, dict[str,
         auth_hook=lambda ctx: _fixture_auth_hook(runtime, ctx),
         policy_hook=lambda ctx: _fixture_policy_hook(runtime, ctx),
         observability=runtime.ObservabilityHooks(
-            log=lambda r: effects.logs.append(
-                {
-                    "level": r.level,
-                    "event": r.event,
-                    "request_id": r.request_id,
-                    "tenant_id": r.tenant_id,
-                    "method": r.method,
-                    "path": r.path,
-                    "status": r.status,
-                    "error_code": r.error_code,
-                }
-            ),
+            log=lambda r: effects.logs.append(_p2_log_record(r)),
             metric=lambda r: effects.metrics.append({"name": r.name, "value": r.value, "tags": r.tags}),
             span=lambda r: effects.spans.append({"name": r.name, "attributes": r.attributes}),
         ),
