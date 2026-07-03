@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +21,8 @@ const (
 	openAPITypeString     = "string"
 	openAPIUnknownField   = "field"
 )
+
+var openAPIJSONNumberPattern = regexp.MustCompile(`^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$`)
 
 // OpenAPISpec describes an explicit route table used for deterministic descriptive OpenAPI generation.
 type OpenAPISpec struct {
@@ -408,7 +412,9 @@ func applyOpenAPIValidationRule(schema map[string]any, baseType string, array bo
 	case ValidationRuleRequired:
 		return nil
 	case ValidationRuleMin, ValidationRuleMax:
-		applyOpenAPINumericRule(schema, baseType, array, rule)
+		if err := applyOpenAPINumericRule(schema, baseType, array, field, rule); err != nil {
+			return err
+		}
 	case ValidationRuleMinLength, ValidationRuleMaxLength:
 		if err := applyOpenAPILengthRule(schema, baseType, array, field, rule); err != nil {
 			return err
@@ -416,24 +422,27 @@ func applyOpenAPIValidationRule(schema map[string]any, baseType string, array bo
 	case ValidationRulePattern:
 		applyOpenAPIPatternRule(schema, baseType, array, rule.Value)
 	case ValidationRuleEnum:
-		applyOpenAPIEnumRule(schema, rule.Value)
+		if err := applyOpenAPIEnumRule(schema, field, rule.Value); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func applyOpenAPINumericRule(schema map[string]any, baseType string, array bool, rule OpenAPIValidationRule) {
+func applyOpenAPINumericRule(schema map[string]any, baseType string, array bool, field OpenAPIFieldSpec, rule OpenAPIValidationRule) error {
 	if array || (baseType != openAPITypeInteger && baseType != openAPITypeNumber) {
-		return
+		return nil
 	}
 	value, ok := openAPINumberValue(rule.Value)
 	if !ok {
-		return
+		return fmt.Errorf("apptheory: openapi field %s %s must be a number", openAPIFieldLabel(field), strings.TrimSpace(rule.Rule))
 	}
 	if strings.TrimSpace(rule.Rule) == ValidationRuleMin {
 		schema["minimum"] = value
-		return
+		return nil
 	}
 	schema["maximum"] = value
+	return nil
 }
 
 func applyOpenAPILengthRule(schema map[string]any, baseType string, array bool, field OpenAPIFieldSpec, rule OpenAPIValidationRule) error {
@@ -455,10 +464,15 @@ func applyOpenAPIPatternRule(schema map[string]any, baseType string, array bool,
 	}
 }
 
-func applyOpenAPIEnumRule(schema map[string]any, value any) {
-	if values := openAPIEnumValues(value); len(values) > 0 {
+func applyOpenAPIEnumRule(schema map[string]any, field OpenAPIFieldSpec, value any) error {
+	values, err := openAPIEnumValues(value)
+	if err != nil {
+		return fmt.Errorf("apptheory: openapi field %s enum contains invalid number", openAPIFieldLabel(field))
+	}
+	if len(values) > 0 {
 		schema["enum"] = values
 	}
+	return nil
 }
 
 func applyOpenAPILength(schema map[string]any, baseType string, array bool, kind string, value json.Number) {
@@ -585,20 +599,24 @@ func sortedOpenAPITags(tags []string) []string {
 	return out
 }
 
-func openAPIEnumValues(value any) []string {
+func openAPIEnumValues(value any) ([]string, error) {
 	switch typed := value.(type) {
 	case []string:
 		out := make([]string, 0, len(typed))
 		for _, item := range typed {
 			out = append(out, strings.TrimSpace(item))
 		}
-		return out
+		return out, nil
 	case []any:
 		out := make([]string, 0, len(typed))
 		for _, item := range typed {
-			out = append(out, strings.TrimSpace(fmt.Sprint(item)))
+			text, err := openAPIEnumItemValue(item)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, text)
 		}
-		return out
+		return out, nil
 	case string:
 		parts := strings.Split(typed, "|")
 		out := make([]string, 0, len(parts))
@@ -608,13 +626,42 @@ func openAPIEnumValues(value any) []string {
 				out = append(out, part)
 			}
 		}
-		return out
+		return out, nil
 	default:
 		if value == nil {
-			return nil
+			return nil, nil
 		}
-		return []string{strings.TrimSpace(fmt.Sprint(value))}
+		reflected := reflect.ValueOf(value)
+		if reflected.IsValid() && (reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array) {
+			out := make([]string, 0, reflected.Len())
+			for index := 0; index < reflected.Len(); index++ {
+				text, err := openAPIEnumItemValue(reflected.Index(index).Interface())
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, text)
+			}
+			return out, nil
+		}
+		text, err := openAPIEnumItemValue(value)
+		if err != nil {
+			return nil, err
+		}
+		return []string{text}, nil
 	}
+}
+
+func openAPIEnumItemValue(value any) (string, error) {
+	if text, ok := value.(string); ok {
+		return strings.TrimSpace(text), nil
+	}
+	if number, ok := openAPINumberValue(value); ok {
+		return number.String(), nil
+	}
+	if isOpenAPINumericKind(value) {
+		return "", errors.New("invalid enum number")
+	}
+	return strings.TrimSpace(fmt.Sprint(value)), nil
 }
 
 func openAPINumberValue(value any) (json.Number, bool) {
@@ -631,7 +678,7 @@ func openAPINumberValue(value any) (json.Number, bool) {
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return json.Number(strconv.FormatUint(reflected.Uint(), 10)), true
 	case reflect.Float32, reflect.Float64:
-		return openAPIValidNumber(json.Number(strconv.FormatFloat(reflected.Float(), 'f', -1, 64)))
+		return openAPIValidFloat(reflected.Float())
 	default:
 		return "", false
 	}
@@ -652,11 +699,38 @@ func openAPIIntegerValue(value any) (json.Number, bool) {
 }
 
 func openAPIValidNumber(value json.Number) (json.Number, bool) {
-	if strings.TrimSpace(value.String()) == "" {
+	text := strings.TrimSpace(value.String())
+	if text == "" || !openAPIJSONNumberPattern.MatchString(text) {
 		return "", false
 	}
-	if _, err := strconv.ParseFloat(value.String(), 64); err != nil {
+	parsed, err := strconv.ParseFloat(text, 64)
+	if err != nil {
 		return "", false
 	}
-	return value, true
+	return openAPIValidFloat(parsed)
+}
+
+func openAPIValidFloat(value float64) (json.Number, bool) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return "", false
+	}
+	if value == 0 {
+		return json.Number("0"), true
+	}
+	return json.Number(strconv.FormatFloat(value, 'f', -1, 64)), true
+}
+
+func isOpenAPINumericKind(value any) bool {
+	reflected := reflect.ValueOf(value)
+	if !reflected.IsValid() {
+		return false
+	}
+	switch reflected.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	default:
+		return false
+	}
 }

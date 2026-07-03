@@ -249,6 +249,7 @@
         "profile_validation_errors": { "$ref": "#/$defs/stringArray" },
         "logging_profile_catalog": { "type": "object", "additionalProperties": true },
         "microvm_contract_validation": { "type": "object", "additionalProperties": true },
+        "microvm_lifecycle_adapter": { "type": "object", "additionalProperties": true },
         "microvm_controller_route": { "type": "object", "additionalProperties": true }
       }
     }

@@ -129,6 +129,60 @@ class OpenAPITests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "min_length must be an integer"):
             apptheory.generate_openapi(invalid_integer_rule)
 
+        invalid_empty_integer_rule = {
+            "title": "API",
+            "version": "v1",
+            "routes": [
+                {
+                    "method": "GET",
+                    "path": "/x",
+                    "operation_id": "one",
+                    "request": {
+                        "fields": [
+                            {
+                                "field": "name",
+                                "source": "query",
+                                "name": "name",
+                                "type": "string",
+                                "validation": [{"rule": "min_length", "value": ""}],
+                            }
+                        ]
+                    },
+                    "response": {},
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "min_length must be an integer"):
+            apptheory.generate_openapi(invalid_empty_integer_rule)
+
+        for invalid_number in ("", "0x10", "nan", "1_000"):
+            with self.subTest(invalid_number=invalid_number):
+                invalid_numeric_rule = {
+                    "title": "API",
+                    "version": "v1",
+                    "routes": [
+                        {
+                            "method": "GET",
+                            "path": "/x",
+                            "operation_id": "one",
+                            "request": {
+                                "fields": [
+                                    {
+                                        "field": "count",
+                                        "source": "query",
+                                        "name": "count",
+                                        "type": "integer",
+                                        "validation": [{"rule": "min", "value": invalid_number}],
+                                    }
+                                ]
+                            },
+                            "response": {},
+                        }
+                    ],
+                }
+                with self.assertRaisesRegex(ValueError, "min must be a number"):
+                    apptheory.generate_openapi(invalid_numeric_rule)
+
 
 if __name__ == "__main__":
     unittest.main()

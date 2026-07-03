@@ -25,4 +25,4 @@ quick_start:
   - { title: "Universal Lambda dispatcher", desc: "One HandleLambda for HTTP, AppSync, SQS, and EventBridge.",             url: /api-reference/,                    icon: shuffle }
   - { title: "MCP server in one Lambda",  desc: "Go Streamable HTTP runtime, sessions, and resumable SSE.",                url: /integrations/mcp/,                 icon: share }
   - { title: "Source provenance",         desc: "Safe HTTP source IP from provider context — never client headers.",       url: /features/source-provenance/,       icon: shield-check }
-  - { title: "Contract fixtures",         desc: "The 168-fixture covenant every runtime is tested against.",                url: /reference/contract-fixtures/,      icon: list-checks } # apptheory-fixture-count
+  - { title: "Contract fixtures",         desc: "The 169-fixture covenant every runtime is tested against.",                url: /reference/contract-fixtures/,      icon: list-checks } # apptheory-fixture-count

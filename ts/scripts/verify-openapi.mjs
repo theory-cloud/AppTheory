@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,12 +9,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..");
 const fixtureDir = join(repoRoot, "contract-tests", "fixtures", "openapi");
 
-const fixtureNames = [
-  "canonical-edge-parity.json",
-  "invalid-integer-rule.json",
-  "invalid-success-status-zero.json",
-  "descriptive-validation.json",
-];
+const fixtureNames = readdirSync(fixtureDir)
+  .filter((name) => name.endsWith(".json"))
+  .sort();
 
 for (const fixtureName of fixtureNames) {
   const fixture = JSON.parse(
@@ -34,6 +31,16 @@ for (const fixtureName of fixtureNames) {
   }
 
   assert.equal(generateOpenAPIJSON(spec), fixture.expect?.output_json, fixtureName);
+}
+
+for (const invalidNumber of ["", "0x10", "nan", "1_000"]) {
+  assert.throws(
+    () => generateOpenAPIJSON(invalidNumericRuleSpec(invalidNumber)),
+    (err) =>
+      err instanceof Error &&
+      err.message === "apptheory: openapi field count min must be a number",
+    `invalid numeric rule ${invalidNumber}`,
+  );
 }
 
 function normalizeOpenAPISpecForRuntime(spec) {
@@ -83,4 +90,30 @@ function normalizeOpenAPIFields(fields) {
         }
       : {}),
   }));
+}
+
+function invalidNumericRuleSpec(value) {
+  return {
+    title: "Invalid Number API",
+    version: "2026-07",
+    routes: [
+      {
+        method: "GET",
+        path: "/counts",
+        operationId: "listCounts",
+        request: {
+          fields: [
+            {
+              field: "count",
+              source: "query",
+              name: "count",
+              type: "integer",
+              validation: [{ rule: "min", value }],
+            },
+          ],
+        },
+        response: {},
+      },
+    ],
+  };
 }

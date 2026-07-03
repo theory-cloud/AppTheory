@@ -1,7 +1,7 @@
 {
   "id": "p0.openapi.invalid_integer_rule_fails_closed",
   "tier": "p0",
-  "name": "OpenAPI integer-valued validation rules fail closed on decimals",
+  "name": "OpenAPI integer-valued validation rules fail closed on empty strings",
   "setup": {
     "openapi": {
       "title": "Invalid Length API",
@@ -21,7 +21,7 @@
                 "validation": [
                   {
                     "rule": "min_length",
-                    "value": 3.5
+                    "value": ""
                   }
                 ]
               }

@@ -20,6 +20,8 @@ type OpenAPIValidationRuleValue =
   | readonly (number | string)[]
   | undefined;
 
+const JSON_NUMBER_PATTERN = /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/;
+
 export type OpenAPIFieldSource =
   | "body"
   | "query"
@@ -344,17 +346,23 @@ function fieldSchema(field: OpenAPIFieldSpec): JsonObject {
       case VALIDATION_RULE_MIN:
         if (!field.array && (baseType === "integer" || baseType === "number")) {
           const value = numberValue(rule.value);
-          if (value !== null) {
-            schema["minimum"] = value;
+          if (value === null) {
+            throw new Error(
+              `apptheory: openapi field ${fieldLabel(field)} ${VALIDATION_RULE_MIN} must be a number`,
+            );
           }
+          schema["minimum"] = value;
         }
         break;
       case VALIDATION_RULE_MAX:
         if (!field.array && (baseType === "integer" || baseType === "number")) {
           const value = numberValue(rule.value);
-          if (value !== null) {
-            schema["maximum"] = value;
+          if (value === null) {
+            throw new Error(
+              `apptheory: openapi field ${fieldLabel(field)} ${VALIDATION_RULE_MAX} must be a number`,
+            );
           }
+          schema["maximum"] = value;
         }
         break;
       case VALIDATION_RULE_MIN_LENGTH: {
@@ -514,7 +522,9 @@ function sortedTags(tags: readonly string[]): string[] {
 
 function enumValues(value: OpenAPIValidationRuleValue): string[] {
   if (isReadonlyEnumArray(value)) {
-    return value.map((item) => String(item).trim());
+    return value.map((item) =>
+      typeof item === "number" ? canonicalNumberString(item) : item.trim(),
+    );
   }
   if (typeof value === "string") {
     return value
@@ -523,7 +533,7 @@ function enumValues(value: OpenAPIValidationRuleValue): string[] {
       .filter(Boolean);
   }
   if (typeof value === "number") {
-    return [String(value)];
+    return [canonicalNumberString(value)];
   }
   return [];
 }
@@ -545,7 +555,11 @@ function numberValue(value: OpenAPIValidationRuleValue): number | null {
     return value;
   }
   if (typeof value === "string") {
-    const parsed = Number(value.trim());
+    const trimmed = value.trim();
+    if (!JSON_NUMBER_PATTERN.test(trimmed)) {
+      return null;
+    }
+    const parsed = Number(trimmed);
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
@@ -584,6 +598,9 @@ function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((item) => stableStringify(item)).join(",")}]`;
   }
+  if (typeof value === "number") {
+    return canonicalNumberString(value);
+  }
   if (typeof value === "object") {
     const record = value as Record<string, unknown>;
     const keys = Object.keys(record).sort(compareCanonicalStrings);
@@ -592,6 +609,45 @@ function stableStringify(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value) ?? "null";
+}
+
+function canonicalNumberString(value: number): string {
+  if (!Number.isFinite(value)) {
+    throw new Error("apptheory: openapi number must be finite");
+  }
+  if (Object.is(value, -0) || value === 0) {
+    return "0";
+  }
+  const text = String(value);
+  if (!/[eE]/.test(text)) {
+    return text;
+  }
+  return expandExponentialNumber(text);
+}
+
+function expandExponentialNumber(value: string): string {
+  const sign = value.startsWith("-") ? "-" : "";
+  const unsigned = sign ? value.slice(1) : value;
+  const [coefficient = "", exponentText = "0"] = unsigned.split(/[eE]/);
+  const exponent = Number(exponentText);
+  const [whole = "", fraction = ""] = coefficient.split(".");
+  const digits = `${whole}${fraction}`.replace(/^0+(?=\d)/, "") || "0";
+  const decimalIndex = whole.length + exponent;
+  let expanded: string;
+  if (decimalIndex <= 0) {
+    expanded = `0.${"0".repeat(-decimalIndex)}${digits}`;
+  } else if (decimalIndex >= digits.length) {
+    expanded = `${digits}${"0".repeat(decimalIndex - digits.length)}`;
+  } else {
+    expanded = `${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
+  }
+  if (expanded.includes(".")) {
+    expanded = expanded.replace(/0+$/, "").replace(/\.$/, "");
+  }
+  if (expanded === "0") {
+    return "0";
+  }
+  return `${sign}${expanded}`;
 }
 
 function isJsonObject(value: JsonValue | undefined): value is JsonObject {
