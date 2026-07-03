@@ -85,11 +85,38 @@ func runFixtureP2(f Fixture) error {
 			},
 		}),
 		apptheory.WithPolicyHook(func(ctx *apptheory.Context) (*apptheory.PolicyDecision, error) {
+			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-rate-limit-content-type-lowercase")) != "" {
+				return &apptheory.PolicyDecision{
+					Code:    "app.rate_limited",
+					Message: "rate limited",
+					Headers: map[string][]string{"retry-after": {"1"}, "content-type": {"text/plain; charset=utf-8"}},
+				}, nil
+			}
 			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-rate-limit-content-type")) != "" {
 				return &apptheory.PolicyDecision{
 					Code:    "app.rate_limited",
 					Message: "rate limited",
 					Headers: map[string][]string{"retry-after": {"1"}, "Content-Type": {"text/plain; charset=utf-8"}},
+				}, nil
+			}
+			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-rate-limit-multi-window")) != "" {
+				return &apptheory.PolicyDecision{
+					Code:    "app.rate_limited",
+					Message: "rate limited",
+					Headers: map[string][]string{
+						"retry-after":           {"30"},
+						"x-ratelimit-limit":     {"2"},
+						"x-ratelimit-remaining": {"0"},
+						"x-ratelimit-reset":     {"60"},
+						"x-ratelimit-window":    {"1m"},
+					},
+				}, nil
+			}
+			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-rate-limit-store-failure")) != "" {
+				return &apptheory.PolicyDecision{
+					Code:    "app.overloaded",
+					Message: "overloaded",
+					Headers: map[string][]string{"retry-after": {"1"}, "x-rate-limit-fail-closed": {"true"}},
 				}, nil
 			}
 			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-rate-limit")) != "" {
