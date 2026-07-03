@@ -5,7 +5,7 @@ description: The TypeScript implementation of the AppTheory contract — bundled
 
 # TypeScript Runtime
 
-The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. The [194 contract fixtures](../reference/contract-fixtures.md) arbitrate when Go, TS, and Python disagree. <!-- apptheory-fixture-count -->
+The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the shared non-MCP corpus from the [194 contract fixtures](../reference/contract-fixtures.md); the contract gate schema-checks the 11 SP09 MCP fixtures, and the TypeScript runner loads them and explicitly skips them as future-runtime work pending SP10. <!-- apptheory-fixture-count -->
 
 ## Install
 
@@ -129,7 +129,7 @@ See [CDK Getting Started](../cdk/getting-started.md).
 
 ## What's verified
 
-The TypeScript runtime passes all 194 contract fixtures on every commit, <!-- apptheory-fixture-count --> against the same fixture corpus as Go and Python. The `ts/dist/` build output is checked in and gated by `make rubric`.
+The TypeScript runtime passes the 183 shared non-MCP contract fixtures on every commit. <!-- apptheory-fixture-count --> The runner loads the full 194-fixture tree and reports `skipped=11 mcp future-runtime fixtures` for the SP09 MCP tier until SP10 adds the TypeScript MCP runtime. That skip is intentional staging, not parity proof. The `ts/dist/` build output is checked in and gated by `make rubric`.
 
 ## Next reads
 
