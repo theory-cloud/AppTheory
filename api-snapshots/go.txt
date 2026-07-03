@@ -1721,6 +1721,7 @@ type Context struct {
 	ids     IDGenerator
 
 	RequestID       string
+	TraceID         string
 	TenantID        string
 	AuthIdentity    string
 	AuthPrincipal   *AuthPrincipal
@@ -1877,6 +1878,7 @@ type LogRecord struct {
 	Level      string
 	Event      string
 	RequestID  string
+	TraceID    string
 	TenantID   string
 	Method     string
 	Path       string
@@ -1992,6 +1994,8 @@ type Request struct {
 	IsBase64 bool
 
 	SourceProvenance SourceProvenance
+
+	TraceID string
 }
 
 type Response struct {
@@ -2340,6 +2344,8 @@ func (*Context) Set(string, any)
 func (*Context) SourceIP() string
 
 func (*Context) SourceProvenance() SourceProvenance
+
+func (*Context) TraceContextID() string
 
 func (*EventContext) Context() context.Context
 

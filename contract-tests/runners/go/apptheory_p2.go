@@ -57,6 +57,7 @@ func runFixtureP2(f Fixture) error {
 					Level:      r.Level,
 					Event:      r.Event,
 					RequestID:  r.RequestID,
+					TraceID:    r.TraceID,
 					TenantID:   r.TenantID,
 					Method:     r.Method,
 					Path:       r.Path,

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -175,6 +176,16 @@ func errorResponseWithRequestIDAndFormat(
 	headers map[string][]string,
 	requestID string,
 ) Response {
+	return errorResponseWithRequestIDTraceIDAndFormat(format, code, message, headers, requestID, "")
+}
+
+func errorResponseWithRequestIDTraceIDAndFormat(
+	format HTTPErrorFormat,
+	code, message string,
+	headers map[string][]string,
+	requestID string,
+	traceID string,
+) Response {
 	headers = canonicalizeHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
@@ -185,6 +196,11 @@ func errorResponseWithRequestIDAndFormat(
 	}
 	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested && requestID != "" {
 		errBody["request_id"] = requestID
+	}
+	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested {
+		if traceID = strings.TrimSpace(traceID); traceID != "" {
+			errBody["trace_id"] = traceID
+		}
 	}
 	body, err := marshalHTTPErrorBody(format, errBody)
 	if err != nil {
@@ -221,15 +237,24 @@ func responseForErrorWithRequestID(err error, requestID string) Response {
 }
 
 func responseForErrorWithRequestIDAndFormat(format HTTPErrorFormat, err error, requestID string) Response {
+	return responseForErrorWithRequestIDTraceIDAndFormat(format, err, requestID, "")
+}
+
+func responseForErrorWithRequestIDTraceIDAndFormat(format HTTPErrorFormat, err error, requestID string, traceID string) Response {
 	var portableErr *AppTheoryError
 	if errors.As(err, &portableErr) {
+		if strings.TrimSpace(portableErr.TraceID) == "" && strings.TrimSpace(traceID) != "" {
+			copied := *portableErr
+			copied.TraceID = strings.TrimSpace(traceID)
+			portableErr = &copied
+		}
 		return errorResponseFromAppTheoryErrorWithFormat(format, portableErr, nil, requestID)
 	}
 	var appErr *AppError
 	if errors.As(err, &appErr) {
-		return errorResponseWithRequestIDAndFormat(format, appErr.Code, appErr.Message, nil, requestID)
+		return errorResponseWithRequestIDTraceIDAndFormat(format, appErr.Code, appErr.Message, nil, requestID, traceID)
 	}
-	return errorResponseWithRequestIDAndFormat(format, errorCodeInternal, errorMessageInternal, nil, requestID)
+	return errorResponseWithRequestIDTraceIDAndFormat(format, errorCodeInternal, errorMessageInternal, nil, requestID, traceID)
 }
 
 func marshalHTTPErrorBody(format HTTPErrorFormat, errBody map[string]any) ([]byte, error) {
