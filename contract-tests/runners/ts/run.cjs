@@ -1925,6 +1925,14 @@ async function runFixture(fixture) {
     .trim()
     .toLowerCase();
 
+  if (tier === "mcp") {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "SP09 MCP fixtures are Go-runtime enforced; TS MCP runtime parity is SP10",
+    };
+  }
+
   if (tier === "p0") {
     const result = await runFixtureP0(fixture);
     if (expectsSetupError(fixture)) {
@@ -5080,7 +5088,14 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`contract-tests(ts): PASS (${fixtures.length} fixtures)`);
+  const skippedCount = fixtures.filter((fixture) => String(fixture.tier ?? "").trim().toLowerCase() === "mcp").length;
+  if (skippedCount > 0) {
+    console.log(
+      `contract-tests(ts): PASS (${fixtures.length} fixtures, skipped=${skippedCount} mcp future-runtime fixtures)`,
+    );
+  } else {
+    console.log(`contract-tests(ts): PASS (${fixtures.length} fixtures)`);
+  }
 }
 
 async function runAllFixtures({ fixturesRoot, fixtureID = "" } = {}) {
@@ -5090,12 +5105,17 @@ async function runAllFixtures({ fixturesRoot, fixtureID = "" } = {}) {
   }
 
   const failures = [];
+  const skipped = [];
   for (const fixture of fixtures) {
     const result = await runFixture(fixture);
+    if (result.skipped) {
+      skipped.push({ fixture, result });
+      continue;
+    }
     if (!result.ok) failures.push({ fixture, result });
   }
 
-  return { fixtures, failures };
+  return { fixtures, failures, skipped };
 }
 
 module.exports = {

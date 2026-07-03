@@ -9,7 +9,7 @@
   "properties": {
     "id": {
       "type": "string",
-      "pattern": "^(p0|p1|p2|m1|m2|m3|m12|m14|m15|m16)(\\.|_)[A-Za-z0-9_.-]+$"
+      "pattern": "^(p0|p1|p2|m1|m2|m3|m12|m14|m15|m16|mcp)(\\.|_)[A-Za-z0-9_.-]+$"
     },
     "tier": { "$ref": "#/$defs/tier" },
     "name": { "type": "string", "minLength": 1 },
@@ -20,7 +20,7 @@
   "$defs": {
     "tier": {
       "type": "string",
-      "enum": ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15", "m16"]
+      "enum": ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15", "m16", "mcp"]
     },
     "stringArray": {
       "type": "array",
@@ -87,7 +87,135 @@
         "environment": { "$ref": "#/$defs/stringMap" },
         "openapi": { "$ref": "#/$defs/openapiSpec" },
         "microvm_contract": { "type": "object", "additionalProperties": true },
-        "microvm_controller_route": { "type": "object", "additionalProperties": true }
+        "microvm_controller_route": { "type": "object", "additionalProperties": true },
+        "mcp": { "$ref": "#/$defs/mcpSetup" }
+      }
+    },
+    "mcpSetup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "server": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "id_sequence": { "$ref": "#/$defs/stringArray" },
+        "stream_id_sequence": { "$ref": "#/$defs/stringArray" },
+        "tools": { "type": "array", "items": { "$ref": "#/$defs/mcpTool" } },
+        "resources": { "type": "array", "items": { "$ref": "#/$defs/mcpResource" } },
+        "resource_templates": { "type": "array", "items": { "$ref": "#/$defs/mcpResourceTemplate" } },
+        "prompts": { "type": "array", "items": { "$ref": "#/$defs/mcpPrompt" } },
+        "session_store": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "seed": { "type": "array", "items": { "$ref": "#/$defs/mcpSession" } }
+          }
+        },
+        "task_runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "default_ttl_ms": { "type": "integer" },
+            "max_ttl_ms": { "type": "integer" },
+            "poll_interval_ms": { "type": "integer" },
+            "list_limit": { "type": "integer" },
+            "model_immediate_response": { "type": "string" },
+            "clock_unix_ms": { "type": "integer" },
+            "update_clock_unix_ms": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "mcpTool": {
+      "type": "object",
+      "required": ["name", "input_schema", "handler"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "input_schema": {},
+        "output_schema": {},
+        "handler": { "type": "string", "minLength": 1 },
+        "streaming": { "type": "boolean" },
+        "task_support": { "type": "string", "enum": ["forbidden", "optional", "required"] }
+      }
+    },
+    "mcpResource": {
+      "type": "object",
+      "required": ["uri", "name", "contents"],
+      "additionalProperties": false,
+      "properties": {
+        "uri": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "mime_type": { "type": "string" },
+        "size": { "type": "integer" },
+        "contents": { "type": "array", "items": { "$ref": "#/$defs/mcpResourceContent" } }
+      }
+    },
+    "mcpResourceTemplate": {
+      "type": "object",
+      "required": ["uri_template", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "uri_template": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "mime_type": { "type": "string" }
+      }
+    },
+    "mcpResourceContent": {
+      "type": "object",
+      "required": ["uri"],
+      "additionalProperties": false,
+      "properties": {
+        "uri": { "type": "string", "minLength": 1 },
+        "mime_type": { "type": "string" },
+        "text": { "type": "string" },
+        "blob": { "type": "string" }
+      }
+    },
+    "mcpPrompt": {
+      "type": "object",
+      "required": ["name", "handler"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "arguments": { "type": "array", "items": { "$ref": "#/$defs/mcpPromptArgument" } },
+        "handler": { "type": "string", "minLength": 1 }
+      }
+    },
+    "mcpPromptArgument": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "required": { "type": "boolean" }
+      }
+    },
+    "mcpSession": {
+      "type": "object",
+      "required": ["id", "expires_unix_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "created_unix_ms": { "type": "integer" },
+        "expires_unix_ms": { "type": "integer" },
+        "data": { "$ref": "#/$defs/stringMap" }
       }
     },
     "openapiSpec": {
@@ -206,7 +334,26 @@
         "aws_event": { "$ref": "#/$defs/awsEvent" },
         "context": { "$ref": "#/$defs/context" },
         "logging_event": { "type": "object", "additionalProperties": true },
-        "logging_profile_catalog": { "type": "boolean" }
+        "logging_profile_catalog": { "type": "boolean" },
+        "mcp": { "$ref": "#/$defs/mcpInput" }
+      }
+    },
+    "mcpInput": {
+      "type": "object",
+      "required": ["steps"],
+      "additionalProperties": false,
+      "properties": {
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/mcpStep" } }
+      }
+    },
+    "mcpStep": {
+      "type": "object",
+      "required": ["name", "request"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "request": { "$ref": "#/$defs/request" },
+        "read_body": { "type": "boolean" }
       }
     },
     "response": {
@@ -251,7 +398,40 @@
         "logging_profile_catalog": { "type": "object", "additionalProperties": true },
         "microvm_contract_validation": { "type": "object", "additionalProperties": true },
         "microvm_lifecycle_adapter": { "type": "object", "additionalProperties": true },
-        "microvm_controller_route": { "type": "object", "additionalProperties": true }
+        "microvm_controller_route": { "type": "object", "additionalProperties": true },
+        "mcp": { "$ref": "#/$defs/mcpExpect" }
+      }
+    },
+    "mcpExpect": {
+      "type": "object",
+      "required": ["steps"],
+      "additionalProperties": false,
+      "properties": {
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/mcpExpectedStep" } }
+      }
+    },
+    "mcpExpectedStep": {
+      "type": "object",
+      "required": ["status", "headers", "cookies", "is_base64"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "type": "integer" },
+        "headers": { "type": "object", "additionalProperties": true },
+        "cookies": { "$ref": "#/$defs/stringArray" },
+        "body": {},
+        "body_json": {},
+        "sse_frames": { "type": "array", "items": { "$ref": "#/$defs/mcpSSEFrame" } },
+        "is_base64": { "type": "boolean" }
+      }
+    },
+    "mcpSSEFrame": {
+      "type": "object",
+      "required": ["id", "data"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "event": { "type": "string" },
+        "data": { "type": "string" }
       }
     }
   }

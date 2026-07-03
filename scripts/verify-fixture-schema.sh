@@ -180,6 +180,7 @@ FIXTURE_DOMAIN_TIERS = {
     "edge-streaming-html": "m14",
     "microvm-foundation": "m15",
     "microvm-operations": "m16",
+    "mcp": "mcp",
     "errors": "p0",
     "routing": "p0",
     "binding": "p0",
