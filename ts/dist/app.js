@@ -270,6 +270,7 @@ export class App {
                 return respondToServeError(err, normalized, String(contextOptions?.fallbackRequestId ?? "").trim());
             }
         }
+        const startedAtMs = this._clock.now().valueOf();
         const preHeaders = canonicalizeHeaders(request.headers);
         const preQuery = cloneQuery(request.query);
         let method = normalizeMethod(request.method);
@@ -298,6 +299,7 @@ export class App {
                     tenantId,
                     status: out.status,
                     errorCode: errCode ?? "",
+                    durationMs: durationMs(startedAtMs, this._clock.now().valueOf()),
                 });
             }
             return out;
@@ -1232,6 +1234,7 @@ function recordEventObservability(hooks, observation, outcome, errorCode) {
             path: "",
             status: 0,
             errorCode,
+            durationMs: 0,
         };
         addNonEmptyLogField(record, "trigger", observation.trigger);
         addNonEmptyLogField(record, "correlationId", observation.correlationId);
@@ -1246,6 +1249,7 @@ function recordEventObservability(hooks, observation, outcome, errorCode) {
         hooks.metric({
             name: "apptheory.event",
             value: 1,
+            durationMs: 0,
             tags: eventMetricTags(observation, outcome, errorCode),
         });
     }
@@ -1306,9 +1310,10 @@ function eventSpanAttributes(observation, outcome, errorCode) {
     }
     return attrs;
 }
-function recordObservability(hooks, { method, path, requestId, tenantId, status, errorCode, }) {
+function recordObservability(hooks, { method, path, requestId, tenantId, status, errorCode, durationMs: requestDurationMs, }) {
     if (!hooks)
         return;
+    const observedDurationMs = Math.max(0, Math.trunc(requestDurationMs));
     let level = "info";
     if (status >= 500) {
         level = "error";
@@ -1326,12 +1331,14 @@ function recordObservability(hooks, { method, path, requestId, tenantId, status,
             path,
             status,
             errorCode,
+            durationMs: observedDurationMs,
         });
     }
     if (typeof hooks.metric === "function") {
         hooks.metric({
             name: "apptheory.request",
             value: 1,
+            durationMs: observedDurationMs,
             tags: {
                 method,
                 path,
@@ -1354,6 +1361,10 @@ function recordObservability(hooks, { method, path, requestId, tenantId, status,
             },
         });
     }
+}
+function durationMs(startedAtMs, finishedAtMs) {
+    const delta = Math.trunc(finishedAtMs - startedAtMs);
+    return delta > 0 ? delta : 0;
 }
 function formatAllowHeader(methods) {
     const unique = new Set();

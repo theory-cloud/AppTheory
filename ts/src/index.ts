@@ -52,6 +52,7 @@ export * from "./sanitization.js";
 export * from "./jobs.js";
 export * from "./logger.js";
 export * from "./logging-profile.js";
+export * from "./emf.js";
 export * from "./event-workloads.js";
 export * from "./kinesis-cloudwatch-logs.js";
 export * from "./kinesis-producer.js";

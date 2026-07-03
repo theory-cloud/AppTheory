@@ -1,11 +1,11 @@
 ---
 title: Contract Fixtures
-description: The 169 shared fixtures that arbitrate behavior across Go, TypeScript, and Python. # apptheory-fixture-count
+description: The 171 shared fixtures that arbitrate behavior across Go, TypeScript, and Python. # apptheory-fixture-count
 ---
 
 # Contract Fixtures
 
-AppTheory ships **169 contract test fixtures** in `contract-tests/fixtures/` <!-- apptheory-fixture-count --> that define the language-neutral behavior every runtime must produce. The Go, TypeScript, and Python runtimes are each independently verified against the same fixture corpus on every commit.
+AppTheory ships **171 contract test fixtures** in `contract-tests/fixtures/` <!-- apptheory-fixture-count --> that define the language-neutral behavior every runtime must produce. The Go, TypeScript, and Python runtimes are each independently verified against the same fixture corpus on every commit.
 
 This page explains what the fixtures are, what they cover, and how to evolve them safely.
 
@@ -38,6 +38,7 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 | `openapi/` | `p0.openapi.*` / `tier = p0` | Descriptive OpenAPI generation and byte-pinned canonical JSON output. |
 | `middleware-guardrails/` | `p1.*` / `tier = p1` | P1 request-id, tenant, auth, CORS, guardrails, and legacy flat-error behavior. |
 | `appsync-observability-policies/` | `p2.*` / `tier = p2` | P2 AppSync, observability, logging profiles, rate limiting, and load shedding. |
+| `observability/` | `p2.*` / `tier = p2` | Request-duration observability records and first-party CloudWatch EMF metric JSON lines. |
 | `event-sources/` | `m1.*` / `tier = m1` | SQS, EventBridge, DynamoDB Streams, Kinesis, SNS, and non-HTTP middleware behavior. |
 | `websockets/` | `m2.*` / `tier = m2` | API Gateway WebSockets and management client fakes. |
 | `api-gateway-rest-sse/` | `m3.*` / `tier = m3` | API Gateway REST v1, Remote MCP path normalization, and SSE. |
@@ -48,7 +49,7 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 
 ## Categories
 
-The 169 fixtures span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory): <!-- apptheory-fixture-count -->
+The 171 fixtures span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory): <!-- apptheory-fixture-count -->
 
 | Category | Covers |
 | --- | --- |
@@ -59,6 +60,7 @@ The 169 fixtures span these behavior areas (counts approximate; see `contract-te
 | Declarative validation | Required/min/max/length/pattern/enum rules, canonical 422 status, field-error aggregation, and binding precedence. |
 | OpenAPI | Descriptive OpenAPI 3.1 output generated from an explicit OpenAPISpec covering route, binding, response, and validation metadata. |
 | Middleware tiers | P0 / P1 / P2 inclusion sets, ordering, request-id, tenant, auth, CORS, guardrails. |
+| Observability | P2 request duration records and the blessed CloudWatch EMF request count/duration/error metric line. |
 | Source provenance | `SourceProvenance` shape, canonical IP form, fail-closed `provider = "unknown"`. |
 | Lambda Function URL | Streaming vs buffered, request shape, response headers. |
 | API Gateway v2 | Event shape, route key, response shape, cookies. |

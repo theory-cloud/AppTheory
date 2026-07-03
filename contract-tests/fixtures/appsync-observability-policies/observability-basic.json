@@ -42,7 +42,8 @@
         "method": "GET",
         "path": "/context",
         "status": 200,
-        "error_code": ""
+        "error_code": "",
+        "duration_ms": 0
       }
     ],
     "metrics": [
@@ -55,7 +56,8 @@
           "status": "200",
           "error_code": "",
           "tenant_id": "tenant_abc"
-        }
+        },
+        "duration_ms": 0
       }
     ],
     "spans": [

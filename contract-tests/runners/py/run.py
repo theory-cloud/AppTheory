@@ -473,6 +473,7 @@ class FixtureApp:
         self.logs: list[dict[str, Any]] = []
         self.metrics: list[dict[str, Any]] = []
         self.spans: list[dict[str, Any]] = []
+        self.emf_logs: list[str] = []
 
     def record_p2(self, req: CanonicalRequest, resp: CanonicalResponse, error_code: str) -> None:
         if not self.enable_p2:
@@ -1611,7 +1612,7 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
         if (fixture.get("expect", {}).get("spans") or []) != app.spans:
             return False, "spans mismatch", actual, expected, app
 
-        return True, "", actual, expected, app
+        return compare_emf_logs_if_expected(fixture, actual, expected, app)
 
     if expected.get("body") is not None:
         expected_bytes = decode_fixture_body(expected.get("body"))
@@ -1625,7 +1626,7 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
         if (fixture.get("expect", {}).get("spans") or []) != app.spans:
             return False, "spans mismatch", actual, expected, app
 
-        return True, "", actual, expected, app
+        return compare_emf_logs_if_expected(fixture, actual, expected, app)
 
     if actual.body != b"":
         return False, "body mismatch", actual, expected, app
@@ -1637,7 +1638,7 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
     if (fixture.get("expect", {}).get("spans") or []) != app.spans:
         return False, "spans mismatch", actual, expected, app
 
-    return True, "", actual, expected, app
+    return compare_emf_logs_if_expected(fixture, actual, expected, app)
 
 
 class _DummyEffectsApp:
@@ -1645,6 +1646,7 @@ class _DummyEffectsApp:
         self.logs: list[Any] = []
         self.metrics: list[Any] = []
         self.spans: list[Any] = []
+        self.emf_logs: list[str] = []
 
 
 def is_openapi_contract_fixture(fixture: dict[str, Any]) -> bool:
@@ -3434,12 +3436,52 @@ def run_fixture_p1(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
     return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
 
 
+class _EMFListWriter:
+    def __init__(self, lines: list[str]) -> None:
+        self.lines = lines
+
+    def write(self, value: str) -> int:
+        text = str(value)
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped:
+                self.lines.append(stripped)
+        return len(text)
+
+
+def _built_in_apptheory_handler_p2(runtime: Any, name: str, effects: Any, clock: Any):
+    name = str(name or "").strip()
+    if name == "advance_clock_25ms":
+
+        def handler(_ctx):
+            clock.advance(dt.timedelta(milliseconds=25))
+            return runtime.text(200, "advanced")
+
+        return handler
+
+    if name == "advance_clock_13ms_internal":
+
+        def handler(_ctx):
+            clock.advance(dt.timedelta(milliseconds=13))
+            raise runtime.AppTheoryError("app.internal", "internal error")
+
+        return handler
+
+    return _built_in_apptheory_handler(runtime, name, effects)
+
+
 def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     runtime = _load_apptheory_runtime()
     ids = runtime.ManualIdGenerator()
     ids.push("req_test_123")
+    clock = runtime.ManualClock(dt.datetime.fromtimestamp(0, tz=dt.UTC))
 
     effects = _DummyEffectsApp()
+    emf_sink = (
+        runtime.create_emf_metric_sink(clock=clock.now, writer=_EMFListWriter(effects.emf_logs))
+        if "emf_logs" in (fixture.get("expect", {}) or {})
+        else None
+    )
 
     setup = fixture.get("setup", {})
     limits = setup.get("limits", {}) or {}
@@ -3466,6 +3508,7 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
         tier="p2",
         http_error_format=str(setup.get("http_error_format") or ""),
         id_generator=ids,
+        clock=clock,
         limits=runtime.Limits(
             max_request_bytes=int(limits.get("max_request_bytes") or 0),
             max_response_bytes=int(limits.get("max_response_bytes") or 0),
@@ -3484,16 +3527,22 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
                     "path": r.path,
                     "status": r.status,
                     "error_code": r.error_code,
+                    "duration_ms": r.duration_ms,
                 }
             ),
-            metric=lambda r: effects.metrics.append({"name": r.name, "value": r.value, "tags": r.tags}),
+            metric=lambda r: (
+                effects.metrics.append(
+                    {"name": r.name, "value": r.value, "duration_ms": r.duration_ms, "tags": r.tags}
+                ),
+                emf_sink.record_metric(r) if emf_sink is not None else None,
+            ),
             span=lambda r: effects.spans.append({"name": r.name, "attributes": r.attributes}),
         ),
     )
 
     for route in setup.get("routes", []) or []:
         name = str(route.get("handler", ""))
-        handler = _built_in_apptheory_handler(runtime, name)
+        handler = _built_in_apptheory_handler_p2(runtime, name, effects, clock)
         if handler is None:
             raise RuntimeError(f"unknown handler {name!r}")
         app.handle(
@@ -3678,6 +3727,20 @@ def _fixture_auth_hook(runtime, ctx):
     return "authorized"
 
 
+def compare_emf_logs_if_expected(
+    fixture: dict[str, Any],
+    actual: CanonicalResponse,
+    expected: dict[str, Any],
+    app: FixtureApp,
+) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+    expect = fixture.get("expect", {}) or {}
+    if "emf_logs" not in expect:
+        return True, "", actual, expected, app
+    if (expect.get("emf_logs") or []) != getattr(app, "emf_logs", []):
+        return False, "emf_logs mismatch", actual, expected, app
+    return True, "", actual, expected, app
+
+
 def run_fixture_compare(
     fixture: dict[str, Any],
     actual: CanonicalResponse,
@@ -3715,7 +3778,7 @@ def run_fixture_compare(
         if (fixture.get("expect", {}).get("spans") or []) != app.spans:
             return False, "spans mismatch", actual, expected, app
 
-        return True, "", actual, expected, app
+        return compare_emf_logs_if_expected(fixture, actual, expected, app)
 
     expected_chunks_raw = expected.get("chunks")
     if isinstance(expected_chunks_raw, list) and len(expected_chunks_raw) > 0:
@@ -3736,7 +3799,7 @@ def run_fixture_compare(
         if (fixture.get("expect", {}).get("spans") or []) != app.spans:
             return False, "spans mismatch", actual, expected, app
 
-        return True, "", actual, expected, app
+        return compare_emf_logs_if_expected(fixture, actual, expected, app)
 
     if expected.get("body") is not None:
         expected_bytes = decode_fixture_body(expected.get("body"))
@@ -3750,7 +3813,7 @@ def run_fixture_compare(
         if (fixture.get("expect", {}).get("spans") or []) != app.spans:
             return False, "spans mismatch", actual, expected, app
 
-        return True, "", actual, expected, app
+        return compare_emf_logs_if_expected(fixture, actual, expected, app)
 
     if actual.body != b"":
         return False, "body mismatch", actual, expected, app
@@ -3762,7 +3825,7 @@ def run_fixture_compare(
     if (fixture.get("expect", {}).get("spans") or []) != app.spans:
         return False, "spans mismatch", actual, expected, app
 
-    return True, "", actual, expected, app
+    return compare_emf_logs_if_expected(fixture, actual, expected, app)
 
 
 def debug_actual_for_expected(actual: CanonicalResponse, expected: dict[str, Any]) -> dict[str, Any]:

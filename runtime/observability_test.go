@@ -22,13 +22,16 @@ func TestRecordObservability_EmitsAllHooks(t *testing.T) {
 		},
 	}))
 
-	app.recordObservability("GET", "/x", "req_1", "tenant_1", 503, errorCodeOverloaded)
+	app.recordObservability("GET", "/x", "req_1", "tenant_1", 503, errorCodeOverloaded, 42)
 
 	if gotLog == nil || gotMetric == nil || gotSpan == nil {
 		t.Fatalf("expected all hooks to be invoked (log=%v metric=%v span=%v)", gotLog, gotMetric, gotSpan)
 	}
 	if gotLog.Level != "error" {
 		t.Fatalf("expected error log level for 5xx, got %q", gotLog.Level)
+	}
+	if gotLog.DurationMS != 42 || gotMetric.DurationMS != 42 {
+		t.Fatalf("expected duration to be propagated, log=%d metric=%d", gotLog.DurationMS, gotMetric.DurationMS)
 	}
 	if gotMetric.Tags["status"] != "503" || gotMetric.Tags["tenant_id"] != "tenant_1" {
 		t.Fatalf("unexpected metric tags: %v", gotMetric.Tags)

@@ -44,6 +44,7 @@ from apptheory.cache import cache_control_isr, cache_control_ssg, cache_control_
 from apptheory.clock import Clock, ManualClock, RealClock
 from apptheory.cloudfront import client_ip, origin_url, original_host, original_uri
 from apptheory.context import AppSyncContext, Context, EventContext, WebSocketContext
+from apptheory.emf import EMFMetricSink, create_emf_metric_sink, hooks_from_emf_metric_sink
 from apptheory.errors import (
     HTTP_ERROR_FORMAT_FLAT_LEGACY,
     HTTP_ERROR_FORMAT_NESTED,
@@ -606,6 +607,7 @@ __all__ = [
     "Context",
     "DynamoDBStreamRecordSummary",
     "DynamoJobLedger",
+    "EMFMetricSink",
     "EnvJobsTableName",
     "EventBridgeScheduledWorkloadResultSummary",
     "EventBridgeScheduledWorkloadSummary",
@@ -740,6 +742,7 @@ __all__ = [
     "create_app",
     "create_aws_lambda_microvm_client",
     "create_aws_lambda_microvm_provider",
+    "create_emf_metric_sink",
     "create_fake_microvm_client",
     "create_fake_microvm_provider",
     "create_fake_websocket_client_factory",
@@ -773,6 +776,7 @@ __all__ = [
     "generate_openapi_json",
     "get_logger",
     "header",
+    "hooks_from_emf_metric_sink",
     "hooks_from_logger",
     "hooks_from_profile_logger",
     "html",

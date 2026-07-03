@@ -255,6 +255,7 @@ func (a *App) servePortable(ctx context.Context, req Request, tier Tier, opts se
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	startedAt := clockNow(a.clock)
 
 	state := portableServeState{}
 	defer func() {
@@ -264,7 +265,7 @@ func (a *App) servePortable(ctx context.Context, req Request, tier Tier, opts se
 		}
 		resp = finalizeP1Response(resp, state.requestID, state.origin, a.cors)
 		if tier == TierP2 {
-			a.recordObservability(state.method, state.path, state.requestID, state.tenantID, resp.Status, state.errorCode)
+			a.recordObservability(state.method, state.path, state.requestID, state.tenantID, resp.Status, state.errorCode, durationMS(startedAt, clockNow(a.clock)))
 		}
 	}()
 
@@ -367,6 +368,24 @@ func (a *App) servePortableCore(ctx context.Context, req Request, tier Tier, sta
 	resp = limitStreamedResponse(resp, a.limits.MaxResponseBytes)
 
 	return resp
+}
+
+func clockNow(clock Clock) time.Time {
+	if clock == nil {
+		return time.Now()
+	}
+	return clock.Now()
+}
+
+func durationMS(startedAt time.Time, finishedAt time.Time) int {
+	if startedAt.IsZero() || finishedAt.IsZero() {
+		return 0
+	}
+	duration := finishedAt.Sub(startedAt).Milliseconds()
+	if duration < 0 {
+		return 0
+	}
+	return int(duration)
 }
 
 func requestForNormalizeError(fallback Request, normalized Request, errorCode string) Request {

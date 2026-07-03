@@ -172,6 +172,7 @@ FIXTURE_DOMAIN_TIERS = {
     "http-core": "p0",
     "middleware-guardrails": "p1",
     "appsync-observability-policies": "p2",
+    "observability": "p2",
     "event-sources": "m1",
     "websockets": "m2",
     "api-gateway-rest-sse": "m3",

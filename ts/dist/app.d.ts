@@ -34,6 +34,7 @@ export interface LogRecord {
     path: string;
     status: number;
     errorCode: string;
+    durationMs: number;
     trigger?: string;
     correlationId?: string;
     source?: string;
@@ -45,6 +46,7 @@ export interface LogRecord {
 export interface MetricRecord {
     name: string;
     value: number;
+    durationMs: number;
     tags: Record<string, string>;
 }
 export interface SpanRecord {

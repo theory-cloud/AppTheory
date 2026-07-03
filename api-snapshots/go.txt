@@ -775,6 +775,15 @@ const LoggingProfilePayTheoryAlertV1 = "paytheory-alert-v1"
 
 const LoggingProfileSchemaVersion = "apptheory.logging/v1"
 
+type EMFMetricSink struct {
+	namespace string
+	service   string
+	writer    io.Writer
+	clock     func() time.Time
+}
+
+type EMFMetricSinkOption func(*EMFMetricSink)
+
 type ErrorNotifier interface {
 	Notify(context.Context, LogEntry) error
 }
@@ -982,13 +991,19 @@ func EncodeLoggingProfileEvent(LoggingProfileConfig, map[string]string, LoggingP
 
 func EncodeLoggingProfileEventWithSanitizer(LoggingProfileConfig, map[string]string, LoggingProfileEvent, SanitizerFunc) (map[string]any, error)
 
+func HooksFromEMFMetricSink(*EMFMetricSink) apptheory.ObservabilityHooks
+
 func HooksFromLogger(StructuredLogger) apptheory.ObservabilityHooks
+
+func HooksFromLoggerAndEMFMetricSink(StructuredLogger, *EMFMetricSink) apptheory.ObservabilityHooks
 
 func HooksFromProfileLogger(LoggingProfileConfig, ...ProfileLoggerOption) (apptheory.ObservabilityHooks, *ProfileLogger, error)
 
 func LoggingProfileCatalog() map[string]any
 
 func LoggingProfileValidationErrors(LoggingProfileConfig) []string
+
+func NewEMFMetricSink(...EMFMetricSinkOption) *EMFMetricSink
 
 func NewNoOpLogger() StructuredLogger
 
@@ -998,6 +1013,14 @@ func NewTestLogger() *TestLogger
 
 func ValidateLoggingProfile(LoggingProfileConfig) error
 
+func WithEMFClock(func() time.Time) EMFMetricSinkOption
+
+func WithEMFNamespace(string) EMFMetricSinkOption
+
+func WithEMFService(string) EMFMetricSinkOption
+
+func WithEMFWriter(io.Writer) EMFMetricSinkOption
+
 func WithProfileClock(func() time.Time) ProfileLoggerOption
 
 func WithProfileEnvironment(map[string]string) ProfileLoggerOption
@@ -1005,6 +1028,10 @@ func WithProfileEnvironment(map[string]string) ProfileLoggerOption
 func WithProfileSanitizer(SanitizerFunc) ProfileLoggerOption
 
 func WithProfileWriter(io.Writer) ProfileLoggerOption
+
+func (*EMFMetricSink) EncodeMetric(apptheory.MetricRecord) ([]byte, error)
+
+func (*EMFMetricSink) RecordMetric(apptheory.MetricRecord)
 
 func (*LoggingProfileValidationError) Error() string
 
@@ -1847,14 +1874,15 @@ type Limits struct {
 }
 
 type LogRecord struct {
-	Level     string
-	Event     string
-	RequestID string
-	TenantID  string
-	Method    string
-	Path      string
-	Status    int
-	ErrorCode string
+	Level      string
+	Event      string
+	RequestID  string
+	TenantID   string
+	Method     string
+	Path       string
+	Status     int
+	ErrorCode  string
+	DurationMS int
 
 	Trigger       string
 	CorrelationID string
@@ -1866,9 +1894,10 @@ type LogRecord struct {
 }
 
 type MetricRecord struct {
-	Name  string
-	Value int
-	Tags  map[string]string
+	Name       string
+	Value      int
+	DurationMS int
+	Tags       map[string]string
 }
 
 type Middleware func(Handler) Handler
