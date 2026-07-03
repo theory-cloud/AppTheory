@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.15.1-rc](https://github.com/theory-cloud/AppTheory/compare/v1.15.0...v1.15.1-rc) (2026-07-03)
+
+
+### Bug Fixes
+
+* **microvm:** accept M16 real lifecycle adapters ([48fe6cd](https://github.com/theory-cloud/AppTheory/commit/48fe6cdeb49032ea79f49c68015da6564d8efc4f))
+* **microvm:** accept M16 real lifecycle adapters ([740768f](https://github.com/theory-cloud/AppTheory/commit/740768f55fd5ffdbf8bbf6da8cda64af4bdb80be))
+
 ## [1.15.0](https://github.com/theory-cloud/AppTheory/compare/v1.14.0...v1.15.0) (2026-06-25)
 
 
