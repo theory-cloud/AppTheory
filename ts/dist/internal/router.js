@@ -1,19 +1,26 @@
+import { AppTheoryError } from "../errors.js";
 import { normalizeMethod, normalizePath, splitPath } from "./http.js";
 export class Router {
     _routes = [];
     addStrict(method, pattern, handler, options = {}) {
         if (handler === null || handler === undefined) {
-            throw new Error("apptheory: route handler is nil");
+            throw routeRegistrationError("route handler is nil");
         }
         const normalizedMethod = normalizeMethod(method);
         const normalizedPattern = normalizePath(pattern);
         const parsed = parseRouteSegments(splitPath(normalizedPattern));
         if (!parsed.ok) {
-            throw new Error(`apptheory: invalid route pattern: ${JSON.stringify(String(pattern))}: ${parsed.error}`);
+            throw routeRegistrationError("invalid route pattern");
         }
         const normalizedPatternValue = parsed.canonicalSegments.length > 0
             ? `/${parsed.canonicalSegments.join("/")}`
             : "/";
+        for (const route of this._routes) {
+            if (route.method === normalizedMethod &&
+                route.pattern === normalizedPatternValue) {
+                throw routeRegistrationError("duplicate route");
+            }
+        }
         this._routes.push({
             method: normalizedMethod,
             pattern: normalizedPatternValue,
@@ -27,12 +34,7 @@ export class Router {
         });
     }
     add(method, pattern, handler, options = {}) {
-        try {
-            this.addStrict(method, pattern, handler, options);
-        }
-        catch {
-            return;
-        }
+        this.addStrict(method, pattern, handler, options);
     }
     match(method, path) {
         const normalizedMethod = normalizeMethod(method);
@@ -53,6 +55,9 @@ export class Router {
         }
         return { match: best, allowed };
     }
+}
+function routeRegistrationError(message) {
+    return new AppTheoryError("app.bad_request", message, { statusCode: 400 });
 }
 function parseRouteSegments(rawSegments) {
     const segments = [];
@@ -86,6 +91,9 @@ function parseRouteSegments(rawSegments) {
             canonicalSegments.push(`{${inner}}`);
             paramCount += 1;
             continue;
+        }
+        if (raw.includes("{") || raw.includes("}")) {
+            return { ok: false, error: "invalid segment" };
         }
         segments.push({ kind: "static", value: raw });
         canonicalSegments.push(raw);

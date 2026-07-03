@@ -1684,7 +1684,11 @@ async function runFixture(fixture) {
     return compareFixture(fixture, actual, effects);
   }
   if (tier === "m14") {
-    const { actual } = await runFixtureM14(fixture);
+    const result = await runFixtureM14(fixture);
+    if (expectsSetupError(fixture)) {
+      return compareSetupError(fixture, result.actualError);
+    }
+    const { actual } = result;
     return compareFixture(fixture, actual, {
       logs: [],
       metrics: [],
@@ -3326,22 +3330,34 @@ async function runFixtureM14(fixture) {
     },
   });
 
-  for (const name of fixture.setup?.middlewares ?? []) {
-    const mw = builtInMiddleware(runtime, name);
-    if (!mw) {
-      throw new Error(`unknown middleware ${JSON.stringify(name)}`);
+  let actualError = null;
+  try {
+    for (const name of fixture.setup?.middlewares ?? []) {
+      const mw = builtInMiddleware(runtime, name);
+      if (!mw) {
+        throw new Error(`unknown middleware ${JSON.stringify(name)}`);
+      }
+      app.use(mw);
     }
-    app.use(mw);
+
+    for (const route of fixture.setup?.routes ?? []) {
+      const handler = builtInAppTheoryHandler(runtime, route.handler);
+      if (!handler) {
+        throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
+      }
+      app.handle(route.method, route.path, handler, {
+        authRequired: Boolean(route.auth_required),
+      });
+    }
+  } catch (err) {
+    actualError = err;
   }
 
-  for (const route of fixture.setup?.routes ?? []) {
-    const handler = builtInAppTheoryHandler(runtime, route.handler);
-    if (!handler) {
-      throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
-    }
-    app.handle(route.method, route.path, handler, {
-      authRequired: Boolean(route.auth_required),
-    });
+  if (expectsSetupError(fixture)) {
+    return { actualError };
+  }
+  if (actualError) {
+    throw actualError;
   }
 
   const input = fixture.input?.request ?? {};
