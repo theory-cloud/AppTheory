@@ -598,6 +598,13 @@ func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessio
 		return s.handleInitialize(req, selectedPV)
 	case methodPing:
 		return NewResultResponse(req.ID, map[string]any{})
+	default:
+		return s.dispatchRegistryMethod(ctx, req, sessionID)
+	}
+}
+
+func (s *Server) dispatchRegistryMethod(ctx context.Context, req *Request, sessionID string) *Response {
+	switch req.Method {
 	case methodToolsList:
 		return s.handleToolsList(req)
 	case methodToolsCall:
