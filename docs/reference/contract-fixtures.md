@@ -1,11 +1,11 @@
 ---
 title: Contract Fixtures
-description: The 145 shared fixtures that arbitrate behavior across Go, TypeScript, and Python.
+description: The 146 shared fixtures that arbitrate behavior across Go, TypeScript, and Python.
 ---
 
 # Contract Fixtures
 
-AppTheory ships **145 contract test fixtures** in `contract-tests/fixtures/` that define the language-neutral behavior every runtime must produce. The Go, TypeScript, and Python runtimes are each independently verified against the same fixture corpus on every commit.
+AppTheory ships **146 contract test fixtures** in `contract-tests/fixtures/` that define the language-neutral behavior every runtime must produce. The Go, TypeScript, and Python runtimes are each independently verified against the same fixture corpus on every commit.
 
 This page explains what the fixtures are, what they cover, and how to evolve them safely.
 
@@ -27,7 +27,7 @@ When the contract needs to grow, the fixture grows first. When the fixture grows
 
 ## Categories
 
-The 145 fixtures span (counts approximate; see `contract-tests/fixtures/` for the canonical inventory):
+The 146 fixtures span (counts approximate; see `contract-tests/fixtures/` for the canonical inventory):
 
 | Category | Covers |
 | --- | --- |
