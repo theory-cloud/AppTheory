@@ -4120,7 +4120,7 @@ async function runFixtureP2(fixture) {
     },
     observability: {
       log: (r) => {
-        effects.logs.push({
+        const record = {
           level: r.level,
           event: r.event,
           request_id: r.requestId,
@@ -4130,7 +4130,9 @@ async function runFixtureP2(fixture) {
           status: r.status,
           error_code: r.errorCode,
           duration_ms: r.durationMs,
-        });
+        };
+        if (r.traceId) record.trace_id = r.traceId;
+        effects.logs.push(record);
       },
       metric: (r) => {
         effects.metrics.push({
@@ -4255,7 +4257,7 @@ async function runFixtureP2Output(fixture) {
     },
     observability: {
       log: (r) => {
-        effects.logs.push({
+        const record = {
           level: r.level,
           event: r.event,
           request_id: r.requestId,
@@ -4264,7 +4266,9 @@ async function runFixtureP2Output(fixture) {
           path: r.path,
           status: r.status,
           error_code: r.errorCode,
-        });
+        };
+        if (r.traceId) record.trace_id = r.traceId;
+        effects.logs.push(record);
       },
       metric: (r) => {
         effects.metrics.push({ name: r.name, value: r.value, tags: r.tags });

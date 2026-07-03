@@ -9,6 +9,7 @@ export interface NormalizedRequest {
     body: Buffer;
     isBase64: boolean;
     sourceProvenance: SourceProvenance;
+    traceId: string;
 }
 export declare function normalizeRequest(request: Request, maxRequestBytes?: number): NormalizedRequest;
 //# sourceMappingURL=request.d.ts.map

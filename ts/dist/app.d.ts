@@ -35,6 +35,7 @@ export interface LogRecord {
     status: number;
     errorCode: string;
     durationMs: number;
+    traceId?: string;
     trigger?: string;
     correlationId?: string;
     source?: string;
@@ -124,9 +125,9 @@ export declare class App {
     private _applyMiddlewares;
     private _applyEventMiddlewares;
     private _httpErrorResponse;
-    private _httpErrorResponseWithRequestId;
+    private _httpErrorResponseWithRequestIdTraceId;
     private _responseForHTTPError;
-    private _responseForHTTPErrorWithRequestId;
+    private _responseForHTTPErrorWithRequestIdTraceId;
     webSocket(routeKey: string, handler: Handler): this;
     sqs(queueName: string, handler: SQSHandler): this;
     kinesis(streamName: string, handler: KinesisHandler): this;

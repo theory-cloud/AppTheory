@@ -44,9 +44,11 @@ export declare class Context {
         body: Uint8Array;
         isBase64: boolean;
         sourceProvenance: SourceProvenance;
+        traceId: string;
     };
     readonly params: Record<string, string>;
     requestId: string;
+    traceId: string;
     tenantId: string;
     authIdentity: string;
     remainingMs: number;
@@ -63,6 +65,7 @@ export declare class Context {
         ids?: IdGenerator;
         ctx?: unknown;
         requestId?: string;
+        traceId?: string;
         tenantId?: string;
         authIdentity?: string;
         remainingMs?: number;
@@ -77,6 +80,7 @@ export declare class Context {
     get(key: string): unknown;
     sourceProvenance(): SourceProvenance;
     sourceIP(): string;
+    traceContextId(): string;
     jsonValue<T = unknown>(): T;
     asWebSocket(): WebSocketContext | null;
     asAppSync(): AppSyncContext | null;

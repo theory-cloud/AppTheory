@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { AppError } from "../errors.js";
 import { canonicalizeHeaders, cloneQuery, normalizeMethod, normalizePath, parseCookies, toBuffer, } from "./http.js";
 import { normalizeSourceProvenance } from "./source-provenance.js";
+import { extractTraceIdFromHeaders } from "./trace-context.js";
 function decodedBase64Length(value) {
     if (value.length === 0)
         return 0;
@@ -53,6 +54,7 @@ export function normalizeRequest(request, maxRequestBytes = 0) {
         body,
         isBase64,
         sourceProvenance: normalizeSourceProvenance(request.sourceProvenance),
+        traceId: extractTraceIdFromHeaders(headers),
     };
 }
 //# sourceMappingURL=request.js.map

@@ -84,6 +84,7 @@ export class Context {
     request;
     params;
     requestId;
+    traceId;
     tenantId;
     authIdentity;
     remainingMs;
@@ -100,6 +101,7 @@ export class Context {
         this._clock = options.clock ?? new RealClock();
         this._ids = options.ids ?? new RandomIdGenerator();
         this.requestId = options.requestId ?? "";
+        this.traceId = options.traceId ?? this.request.traceId ?? "";
         this.tenantId = options.tenantId ?? "";
         this.authIdentity = options.authIdentity ?? "";
         this.remainingMs = Number(options.remainingMs ?? 0);
@@ -136,6 +138,9 @@ export class Context {
     }
     sourceIP() {
         return this.sourceProvenance().sourceIP;
+    }
+    traceContextId() {
+        return String(this.traceId ?? "").trim();
     }
     jsonValue() {
         if (!hasJSONContentType(this.request.headers)) {
