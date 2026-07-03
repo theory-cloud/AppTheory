@@ -234,6 +234,12 @@ class App:
         return self
 
     def handle_strict(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
+        """Register a route and raise registration errors.
+
+        Deprecated: handle now fails closed on invalid registrations. Use handle
+        for normal application registration and catch errors during tests only
+        when required.
+        """
         self._router.add_strict(method, pattern, handler, auth_required=auth_required)
         return self
 
