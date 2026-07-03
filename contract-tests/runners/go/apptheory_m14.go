@@ -28,7 +28,7 @@ func runFixtureM14(f Fixture) error {
 		for _, name := range f.Setup.Middlewares {
 			mw := builtInM12Middleware(name)
 			if mw == nil {
-				return &apptheory.AppError{Code: appErrorInternal, Message: msgInternal}
+				return apptheory.NewAppTheoryError(appErrorInternal, msgInternal)
 			}
 			app.Use(mw)
 		}
@@ -36,7 +36,7 @@ func runFixtureM14(f Fixture) error {
 		for _, r := range f.Setup.Routes {
 			handler := builtInAppTheoryHandler(r.Handler)
 			if handler == nil {
-				return &apptheory.AppError{Code: appErrorInternal, Message: msgInternal}
+				return apptheory.NewAppTheoryError(appErrorInternal, msgInternal)
 			}
 			var opts []apptheory.RouteOption
 			if r.AuthRequired {
@@ -55,7 +55,7 @@ func runFixtureM14(f Fixture) error {
 	}
 
 	if f.Input.Request == nil {
-		return &apptheory.AppError{Code: appErrorInternal, Message: msgInternal}
+		return apptheory.NewAppTheoryError(appErrorInternal, msgInternal)
 	}
 
 	bodyBytes, err := decodeFixtureBody(f.Input.Request.Body)
@@ -133,6 +133,11 @@ func streamErrorCode(err error) string {
 	if err == nil {
 		return ""
 	}
+	var appTheoryErr *apptheory.AppTheoryError
+	if errors.As(err, &appTheoryErr) && strings.TrimSpace(appTheoryErr.Code) != "" {
+		return strings.TrimSpace(appTheoryErr.Code)
+	}
+	//nolint:staticcheck // Stream fixtures still verify legacy AppError compatibility.
 	var appErr *apptheory.AppError
 	if errors.As(err, &appErr) && strings.TrimSpace(appErr.Code) != "" {
 		return strings.TrimSpace(appErr.Code)

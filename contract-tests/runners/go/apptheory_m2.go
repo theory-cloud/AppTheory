@@ -212,7 +212,7 @@ func builtInWebSocketHandler(name string) apptheory.WebSocketHandler {
 	case "ws_bad_request":
 		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 			_ = ctx
-			return nil, &apptheory.AppError{Code: "app.bad_request", Message: "bad request"}
+			return nil, apptheory.NewAppTheoryError("app.bad_request", "bad request")
 		}
 	default:
 		return nil

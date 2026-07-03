@@ -83,6 +83,11 @@ func streamErrorCode(err error) string {
 	if err == nil {
 		return ""
 	}
+	var appTheoryErr *apptheory.AppTheoryError
+	if errors.As(err, &appTheoryErr) && appTheoryErr.Code != "" {
+		return appTheoryErr.Code
+	}
+	//nolint:staticcheck // Streaming testkit preserves legacy AppError compatibility.
 	var appErr *apptheory.AppError
 	if errors.As(err, &appErr) && appErr.Code != "" {
 		return appErr.Code
