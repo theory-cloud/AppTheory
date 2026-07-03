@@ -19,8 +19,9 @@ edit_on_github: false
     One application model. Three runtimes. {{ site.tabletheory.framework_name }} keeps
     Go, TypeScript, and Python in lock-step on the shared Lambda contract — routing,
     middleware, error envelope, AppSync, WebSockets, and event workloads — verified on
-    every commit by 194 shared contract fixtures. <!-- apptheory-fixture-count --> The Go runtime also carries the MCP
-    Streamable HTTP surface used by Remote MCP deployments.
+    every commit by the shared non-MCP fixture corpus. <!-- apptheory-fixture-count --> The Go runtime also executes the
+    11 MCP fixtures for the Streamable HTTP surface used by Remote MCP deployments; TS/Py
+    explicitly skip those future-runtime fixtures pending SP10/SP11.
   </p>
   <div class="hero__actions">
     <a class="btn btn--primary" href="{{ '/getting-started/' | relative_url }}">
