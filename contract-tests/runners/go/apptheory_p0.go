@@ -541,6 +541,50 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		close(events)
 		return apptheory.SSEStreamResponse(ctx.Context(), 200, events)
 	},
+	"sse_heartbeat_keepalive": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type":  {"text/event-stream"},
+				"cache-control": {"no-cache"},
+				"connection":    {"keep-alive"},
+			},
+			Body:     []byte(": keep-alive\n\nid: 1\nevent: message\ndata: {\"ok\":true}\n\n"),
+			IsBase64: false,
+		}, nil
+	},
+	"sse_client_disconnect_mid_stream": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type":  {"text/event-stream"},
+				"cache-control": {"no-cache"},
+				"connection":    {"keep-alive"},
+			},
+			BodyStream: apptheory.StreamBytes([]byte("id: 1\nevent: message\ndata: before-disconnect\n\n")),
+			IsBase64:   false,
+		}, nil
+	},
+	"sse_late_error_after_first_byte": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		resp := &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type":  {"text/event-stream"},
+				"cache-control": {"no-cache"},
+				"connection":    {"keep-alive"},
+			},
+			Body:     nil,
+			IsBase64: false,
+		}
+		ch := make(chan apptheory.StreamChunk, 2)
+		resp.BodyStream = ch
+		go func() {
+			defer close(ch)
+			ch <- apptheory.StreamChunk{Bytes: []byte("data: hello\n\n")}
+			ch <- apptheory.StreamChunk{Err: apptheory.NewAppTheoryError("app.internal", "boom")}
+		}()
+		return resp, nil
+	},
 	"stream_mutate_headers_after_first_chunk": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		resp := &apptheory.Response{
 			Status: 200,

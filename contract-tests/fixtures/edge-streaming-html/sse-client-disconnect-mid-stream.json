@@ -1,0 +1,54 @@
+{
+  "id": "m14.sse.client_disconnect_mid_stream",
+  "tier": "m14",
+  "name": "SSE: client disconnect after the first event leaves a clean partial stream",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/sse-disconnect",
+        "handler": "sse_client_disconnect_mid_stream"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/sse-disconnect",
+      "query": {},
+      "headers": {},
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": [
+          "text/event-stream"
+        ],
+        "cache-control": [
+          "no-cache"
+        ],
+        "connection": [
+          "keep-alive"
+        ],
+        "x-request-id": [
+          "req_test_123"
+        ]
+      },
+      "cookies": [],
+      "chunks": [
+        {
+          "encoding": "utf8",
+          "value": "id: 1\nevent: message\ndata: before-disconnect\n\n"
+        }
+      ],
+      "is_base64": false
+    }
+  }
+}

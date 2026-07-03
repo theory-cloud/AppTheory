@@ -2077,6 +2077,66 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
 
         return handler
 
+    if name == "sse_heartbeat_keepalive":
+
+        def handler(_ctx):
+            return runtime.Response(
+                status=200,
+                headers={
+                    "content-type": ["text/event-stream"],
+                    "cache-control": ["no-cache"],
+                    "connection": ["keep-alive"],
+                },
+                cookies=[],
+                body=b': keep-alive\n\nid: 1\nevent: message\ndata: {"ok":true}\n\n',
+                is_base64=False,
+            )
+
+        return handler
+
+    if name == "sse_client_disconnect_mid_stream":
+
+        def handler(_ctx):
+            def gen():
+                yield b"id: 1\nevent: message\ndata: before-disconnect\n\n"
+
+            return runtime.Response(
+                status=200,
+                headers={
+                    "content-type": ["text/event-stream"],
+                    "cache-control": ["no-cache"],
+                    "connection": ["keep-alive"],
+                },
+                cookies=[],
+                body=b"",
+                is_base64=False,
+                body_stream=gen(),
+            )
+
+        return handler
+
+    if name == "sse_late_error_after_first_byte":
+
+        def handler(_ctx):
+            def gen():
+                yield b"data: hello\n\n"
+                raise runtime.AppError("app.internal", "boom")
+
+            return runtime.Response(
+                status=200,
+                headers={
+                    "content-type": ["text/event-stream"],
+                    "cache-control": ["no-cache"],
+                    "connection": ["keep-alive"],
+                },
+                cookies=[],
+                body=b"",
+                is_base64=False,
+                body_stream=gen(),
+            )
+
+        return handler
+
     if name == "stream_mutate_headers_after_first_chunk":
 
         def handler(_ctx):
