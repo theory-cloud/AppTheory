@@ -78,7 +78,7 @@ export interface MicroVMLifecycleResult {
 export type MicroVMLifecycleHandler = (event: MicroVMLifecycleEvent) => Promise<void> | void;
 export interface MicroVMLifecycleAdapterOptions {
     contract?: MicroVMLifecycleContract;
-    handlers?: Partial<Record<MicroVMLifecycleHook, MicroVMLifecycleHandler>>;
+    handlers?: Partial<Record<MicroVMLifecycleHook | MicroVMRealLifecycleHook, MicroVMLifecycleHandler>>;
 }
 export declare class MicroVMSafeError extends Error {
     readonly code: string;

@@ -1125,6 +1125,8 @@ def missing_strings(required: list[str], got: Any) -> list[str]:
 def compare_microvm_real_contract_fixture(
     fixture: dict[str, Any],
 ) -> tuple[bool, str, dict[str, Any], dict[str, Any], _DummyEffectsApp]:
+    if "microvm_lifecycle_adapter" in (fixture.get("expect") or {}):
+        return compare_microvm_real_lifecycle_adapter_fixture(fixture)
     if "microvm_controller_route" in (fixture.get("expect") or {}):
         return compare_microvm_controller_route_fixture(fixture)
 
@@ -1183,6 +1185,122 @@ def validate_microvm_real_contract_fixture(contract: Any) -> dict[str, Any]:
         }
 
     return {"valid": True, "kind": kind, "version": version}
+
+
+def compare_microvm_real_lifecycle_adapter_fixture(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, dict[str, Any], dict[str, Any], _DummyEffectsApp]:
+    actual = validate_microvm_real_lifecycle_adapter_fixture((fixture.get("setup") or {}).get("microvm_contract"))
+    expected = (fixture.get("expect") or {}).get("microvm_lifecycle_adapter")
+    if not isinstance(expected, dict):
+        return (
+            False,
+            "missing expect.microvm_lifecycle_adapter",
+            actual,
+            {"microvm_lifecycle_adapter": None},
+            _DummyEffectsApp(),
+        )
+    if actual == expected:
+        return True, "", actual, expected, _DummyEffectsApp()
+    return False, "microvm_lifecycle_adapter mismatch", actual, expected, _DummyEffectsApp()
+
+
+def validate_microvm_real_lifecycle_adapter_fixture(contract: Any) -> dict[str, Any]:
+    if not isinstance(contract, dict):
+        return invalid_microvm_lifecycle_adapter(
+            "m15.microvm.invalid_contract",
+            "apptheory: microvm contract fixture missing",
+        )
+
+    kind = str(contract.get("kind", "")).strip()
+    version = str(contract.get("version", "")).strip()
+    if str(contract.get("contract", "")).strip() != MICROVM_CONTRACT_NAME or version != "m16.microvm/v1":
+        return invalid_microvm_lifecycle_adapter(
+            "m15.microvm.invalid_contract",
+            "apptheory: microvm contract must be named and versioned",
+        )
+    if kind != "lifecycle":
+        return invalid_microvm_lifecycle_adapter(
+            "m15.microvm.invalid_contract",
+            "apptheory: microvm lifecycle adapter requires lifecycle contract kind",
+        )
+
+    runtime = _load_apptheory_runtime()
+    escape_hatch_error = validate_microvm_escape_hatches(runtime, kind, version, contract.get("escape_hatches") or {})
+    if escape_hatch_error:
+        return invalid_microvm_lifecycle_adapter(
+            str(escape_hatch_error.get("error_code", "")),
+            str(escape_hatch_error.get("error_message", "")),
+        )
+
+    lifecycle = contract.get("lifecycle") or {}
+    try:
+        runtime.validate_microvm_real_lifecycle_contract(lifecycle)
+    except Exception as exc:  # noqa: BLE001
+        return microvm_lifecycle_adapter_from_error(exc, "m16.microvm.lifecycle_incomplete")
+
+    handler_states: list[str] = []
+
+    def record_state(event: Any) -> None:
+        handler_states.append(str(getattr(event, "state", "")))
+
+    handlers = {hook: record_state for hook in microvm_real_lifecycle_fixture_hooks()}
+    try:
+        adapter = runtime.create_microvm_lifecycle_adapter(contract=lifecycle, handlers=handlers)
+    except Exception as exc:  # noqa: BLE001
+        return microvm_lifecycle_adapter_from_error(exc, "m16.microvm.lifecycle_incomplete")
+
+    state = "requested"
+    for hook in ["validate", "run", "ready", "suspend", "resume", "terminate"]:
+        result = adapter.handle(
+            {
+                "request_id": "m16-lifecycle-adapter-fixture",
+                "tenant_id": "tenant-fixture",
+                "namespace": "namespace-fixture",
+                "session_id": "session-fixture",
+                "hook": hook,
+                "state": state,
+            }
+        )
+        if result.error:
+            return invalid_microvm_lifecycle_adapter(result.error.code, result.error.message)
+        state = str(result.state or "")
+
+    failure = adapter.handle(
+        {
+            "request_id": "m16-lifecycle-adapter-fixture-failure",
+            "tenant_id": "tenant-fixture",
+            "namespace": "namespace-fixture",
+            "session_id": "session-fixture",
+            "hook": "failure",
+            "state": "running",
+        }
+    )
+    if failure.error:
+        return invalid_microvm_lifecycle_adapter(failure.error.code, failure.error.message)
+
+    return {
+        "valid": True,
+        "version": version,
+        "final_state": state,
+        "failure_state": str(failure.state or ""),
+        "handler_states": handler_states,
+    }
+
+
+def microvm_real_lifecycle_fixture_hooks() -> list[str]:
+    return ["validate", "run", "ready", "suspend", "resume", "terminate", "failure"]
+
+
+def invalid_microvm_lifecycle_adapter(error_code: str, error_message: str) -> dict[str, Any]:
+    return {"valid": False, "error_code": error_code, "error_message": error_message}
+
+
+def microvm_lifecycle_adapter_from_error(exc: Exception, default_code: str) -> dict[str, Any]:
+    return invalid_microvm_lifecycle_adapter(
+        str(getattr(exc, "code", default_code)),
+        str(getattr(exc, "message", str(exc))),
+    )
 
 
 def compare_microvm_controller_route_fixture(
