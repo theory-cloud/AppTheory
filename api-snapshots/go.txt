@@ -2643,9 +2643,11 @@ type ResourceDef struct {
 type ResourceHandler func(context.Context) ([]ResourceContent, error)
 
 type ResourceRegistry struct {
-	mu        sync.RWMutex
-	resources []registeredResource
-	index     map[string]int
+	mu            sync.RWMutex
+	resources     []registeredResource
+	index         map[string]int
+	templates     []ResourceTemplateDef
+	templateIndex map[string]int
 }
 
 type ResourceSubscription struct {
@@ -2654,6 +2656,14 @@ type ResourceSubscription struct {
 }
 
 type ResourceSubscriptionHook func(context.Context, ResourceSubscription) error
+
+type ResourceTemplateDef struct {
+	URITemplate string `json:"uriTemplate"`
+	Name        string `json:"name"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
 
 type Response struct {
 	JSONRPC string    `json:"jsonrpc"`
@@ -2998,9 +3008,13 @@ func (*ResourceRegistry) Len() int
 
 func (*ResourceRegistry) List() []ResourceDef
 
+func (*ResourceRegistry) ListTemplates() []ResourceTemplateDef
+
 func (*ResourceRegistry) Read(context.Context, string) ([]ResourceContent, error)
 
 func (*ResourceRegistry) RegisterResource(ResourceDef, ResourceHandler) error
+
+func (*ResourceRegistry) RegisterResourceTemplate(ResourceTemplateDef) error
 
 func (*Server) Handler() apptheory.Handler
 

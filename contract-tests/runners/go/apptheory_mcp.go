@@ -94,8 +94,10 @@ func newFixtureMCPServer(setup FixtureMCPSetup) (*mcp.Server, error) {
 			return nil, err
 		}
 	}
-	if len(setup.ResourceTemplates) > 0 {
-		return nil, errors.New("resource templates are not supported by this Go MCP runner yet")
+	for _, template := range setup.ResourceTemplates {
+		if err := registerFixtureMCPResourceTemplate(server, template); err != nil {
+			return nil, err
+		}
 	}
 	for _, prompt := range setup.Prompts {
 		if err := registerFixtureMCPPrompt(server, prompt); err != nil {
@@ -287,6 +289,16 @@ func registerFixtureMCPResource(server *mcp.Server, resource FixtureMCPResource)
 	}, func(context.Context) ([]mcp.ResourceContent, error) {
 		out := append([]mcp.ResourceContent(nil), contents...)
 		return out, nil
+	})
+}
+
+func registerFixtureMCPResourceTemplate(server *mcp.Server, template FixtureMCPResourceTemplate) error {
+	return server.Resources().RegisterResourceTemplate(mcp.ResourceTemplateDef{
+		URITemplate: template.URITemplate,
+		Name:        template.Name,
+		Title:       template.Title,
+		Description: template.Description,
+		MimeType:    template.MimeType,
 	})
 }
 
