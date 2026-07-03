@@ -43,6 +43,18 @@
                 ]
               },
               {
+                "field": "epsilon",
+                "source": "query",
+                "name": "epsilon",
+                "type": "number",
+                "validation": [
+                  {
+                    "rule": "min",
+                    "value": 1e-05
+                  }
+                ]
+              },
+              {
                 "field": "rank",
                 "source": "query",
                 "name": "rank",
@@ -51,9 +63,20 @@
                   {
                     "rule": "enum",
                     "value": [
-                      1,
-                      2
+                      1000000
                     ]
+                  }
+                ]
+              },
+              {
+                "field": "score",
+                "source": "query",
+                "name": "score",
+                "type": "number",
+                "validation": [
+                  {
+                    "rule": "min",
+                    "value": 100.0
                   }
                 ]
               }
@@ -76,6 +99,6 @@
     }
   },
   "expect": {
-    "output_json": "{\"components\":{\"responses\":{\"AppBadRequest\":{\"content\":{\"application/json\":{\"schema\":{\"$ref\":\"#/components/schemas/AppTheoryError\"}}},\"description\":\"AppTheory bad request error envelope\"},\"AppValidationFailed\":{\"content\":{\"application/json\":{\"schema\":{\"$ref\":\"#/components/schemas/AppTheoryError\"}}},\"description\":\"AppTheory validation failure error envelope\"}},\"schemas\":{\"AppTheoryError\":{\"additionalProperties\":false,\"properties\":{\"error\":{\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"},\"details\":{\"additionalProperties\":true,\"type\":\"object\"},\"message\":{\"type\":\"string\"},\"request_id\":{\"type\":\"string\"}},\"required\":[\"code\",\"message\"],\"type\":\"object\"}},\"required\":[\"error\"],\"type\":\"object\"}}},\"info\":{\"title\":\"Canonical API\",\"version\":\"2026-07\"},\"openapi\":\"3.1.0\",\"paths\":{\"/search\":{\"get\":{\"operationId\":\"searchWidgets\",\"parameters\":[{\"in\":\"query\",\"name\":\"Zebra\",\"required\":false,\"schema\":{\"type\":\"string\"}},{\"in\":\"query\",\"name\":\"apple\",\"required\":false,\"schema\":{\"type\":\"string\"}},{\"in\":\"query\",\"name\":\"code\",\"required\":false,\"schema\":{\"pattern\":\"^[^<>]+$\",\"type\":\"string\"}},{\"in\":\"query\",\"name\":\"rank\",\"required\":false,\"schema\":{\"enum\":[\"1\",\"2\"],\"type\":\"string\"}}],\"responses\":{\"200\":{\"content\":{\"application/json\":{\"schema\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}}},\"description\":\"ok <ready>\"},\"400\":{\"$ref\":\"#/components/responses/AppBadRequest\"},\"422\":{\"$ref\":\"#/components/responses/AppValidationFailed\"}},\"summary\":\"Widgets & Gadgets\",\"tags\":[\"inventory\",\"openapi\"]}}}}"
+    "output_json": "{\"components\":{\"responses\":{\"AppBadRequest\":{\"content\":{\"application/json\":{\"schema\":{\"$ref\":\"#/components/schemas/AppTheoryError\"}}},\"description\":\"AppTheory bad request error envelope\"},\"AppValidationFailed\":{\"content\":{\"application/json\":{\"schema\":{\"$ref\":\"#/components/schemas/AppTheoryError\"}}},\"description\":\"AppTheory validation failure error envelope\"}},\"schemas\":{\"AppTheoryError\":{\"additionalProperties\":false,\"properties\":{\"error\":{\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"},\"details\":{\"additionalProperties\":true,\"type\":\"object\"},\"message\":{\"type\":\"string\"},\"request_id\":{\"type\":\"string\"}},\"required\":[\"code\",\"message\"],\"type\":\"object\"}},\"required\":[\"error\"],\"type\":\"object\"}}},\"info\":{\"title\":\"Canonical API\",\"version\":\"2026-07\"},\"openapi\":\"3.1.0\",\"paths\":{\"/search\":{\"get\":{\"operationId\":\"searchWidgets\",\"parameters\":[{\"in\":\"query\",\"name\":\"Zebra\",\"required\":false,\"schema\":{\"type\":\"string\"}},{\"in\":\"query\",\"name\":\"apple\",\"required\":false,\"schema\":{\"type\":\"string\"}},{\"in\":\"query\",\"name\":\"code\",\"required\":false,\"schema\":{\"pattern\":\"^[^<>]+$\",\"type\":\"string\"}},{\"in\":\"query\",\"name\":\"epsilon\",\"required\":false,\"schema\":{\"minimum\":0.00001,\"type\":\"number\"}},{\"in\":\"query\",\"name\":\"rank\",\"required\":false,\"schema\":{\"enum\":[\"1000000\"],\"type\":\"string\"}},{\"in\":\"query\",\"name\":\"score\",\"required\":false,\"schema\":{\"minimum\":100,\"type\":\"number\"}}],\"responses\":{\"200\":{\"content\":{\"application/json\":{\"schema\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}}},\"description\":\"ok <ready>\"},\"400\":{\"$ref\":\"#/components/responses/AppBadRequest\"},\"422\":{\"$ref\":\"#/components/responses/AppValidationFailed\"}},\"summary\":\"Widgets & Gadgets\",\"tags\":[\"inventory\",\"openapi\"]}}}}"
   }
 }

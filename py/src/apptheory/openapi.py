@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json as jsonlib
+import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, is_dataclass
+from decimal import Decimal
 from typing import Any
 
 from apptheory.validate import (
@@ -14,6 +17,8 @@ from apptheory.validate import (
     VALIDATION_RULE_PATTERN,
     VALIDATION_RULE_REQUIRED,
 )
+
+_JSON_NUMBER_PATTERN = re.compile(r"^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,7 +106,7 @@ def generate_openapi(spec: OpenAPISpec | Mapping[str, Any]) -> dict[str, Any]:
 
 
 def generate_openapi_json(spec: OpenAPISpec | Mapping[str, Any]) -> str:
-    return jsonlib.dumps(generate_openapi(spec), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return _stable_json(generate_openapi(spec))
 
 
 def _openapi_components() -> dict[str, Any]:
@@ -283,12 +288,14 @@ def _apply_validation_rule(
         return
     if rule_name == VALIDATION_RULE_MIN and not is_array and base_type in {"integer", "number"}:
         number = _number_value(value)
-        if number is not None:
-            schema["minimum"] = number
+        if number is None:
+            raise ValueError(f"apptheory: openapi field {_field_label(field)} {rule_name} must be a number")
+        schema["minimum"] = number
     elif rule_name == VALIDATION_RULE_MAX and not is_array and base_type in {"integer", "number"}:
         number = _number_value(value)
-        if number is not None:
-            schema["maximum"] = number
+        if number is None:
+            raise ValueError(f"apptheory: openapi field {_field_label(field)} {rule_name} must be a number")
+        schema["maximum"] = number
     elif rule_name == VALIDATION_RULE_MIN_LENGTH:
         integer = _integer_value(value)
         if integer is None:
@@ -379,23 +386,38 @@ def _sorted_tags(tags: Sequence[Any]) -> list[str]:
 
 def _enum_values(value: Any) -> list[str]:
     if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
-        return [str(item).strip() for item in value]
+        return [_enum_item_value(item) for item in value]
     if isinstance(value, str):
         return [part.strip() for part in value.split("|") if part.strip()]
     if value is None:
         return []
-    return [str(value).strip()]
+    return [_enum_item_value(value)]
+
+
+def _enum_item_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return str(value).strip()
+    if isinstance(value, int | float):
+        return _canonical_number_string(value)
+    return str(value).strip()
 
 
 def _number_value(value: Any) -> int | float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, int | float):
-        return value
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        return int(value) if isinstance(value, float) and value.is_integer() else value
     if isinstance(value, str):
+        trimmed = value.strip()
+        if _JSON_NUMBER_PATTERN.fullmatch(trimmed) is None:
+            return None
         try:
-            parsed = float(value.strip())
+            parsed = float(trimmed)
         except ValueError:
+            return None
+        if not math.isfinite(parsed):
             return None
         return int(parsed) if parsed.is_integer() else parsed
     return None
@@ -429,3 +451,44 @@ def _first(mapping: Mapping[str, Any], *keys: str) -> Any:
         if key in mapping:
             return mapping[key]
     return None
+
+
+def _stable_json(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return jsonlib.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return _canonical_number_string(value)
+    if isinstance(value, Mapping):
+        parts = [
+            f"{jsonlib.dumps(str(key), ensure_ascii=False, separators=(',', ':'))}:{_stable_json(value[key])}"
+            for key in sorted(value)
+        ]
+        return "{" + ",".join(parts) + "}"
+    if isinstance(value, Sequence) and not isinstance(value, bytes | bytearray):
+        return "[" + ",".join(_stable_json(item) for item in value) + "]"
+    return jsonlib.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _canonical_number_string(value: int | float) -> str:
+    if isinstance(value, bool):
+        raise ValueError("apptheory: openapi number must be finite")
+    if isinstance(value, int):
+        return str(value)
+    if not math.isfinite(value):
+        raise ValueError("apptheory: openapi number must be finite")
+    if value == 0:
+        return "0"
+    if value.is_integer():
+        return str(int(value))
+    text = repr(value)
+    if "e" in text or "E" in text:
+        text = format(Decimal(text), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return "0" if text in {"-0", ""} else text

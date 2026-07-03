@@ -204,6 +204,16 @@ func TestGenerateOpenAPIFailsClosed(t *testing.T) {
 			spec: OpenAPISpec{Title: "Widgets", Version: "1", Routes: []OpenAPIRouteSpec{{Method: "GET", Path: "/widgets", OperationID: "listWidgets", Response: OpenAPIResponseSpec{Fields: []OpenAPIFieldSpec{{Field: "id", Source: openAPISourceResponse, Name: "id", Validation: []OpenAPIValidationRule{{Rule: ValidationRuleMinLength, Value: 1.25}}}}}}}},
 			want: "must be an integer",
 		},
+		{
+			name: "empty string length rule",
+			spec: OpenAPISpec{Title: "Widgets", Version: "1", Routes: []OpenAPIRouteSpec{{Method: "GET", Path: "/widgets", OperationID: "listWidgets", Response: OpenAPIResponseSpec{Fields: []OpenAPIFieldSpec{{Field: "id", Source: openAPISourceResponse, Name: "id", Validation: []OpenAPIValidationRule{{Rule: ValidationRuleMinLength, Value: ""}}}}}}}},
+			want: "must be an integer",
+		},
+		{
+			name: "non canonical numeric rule",
+			spec: OpenAPISpec{Title: "Widgets", Version: "1", Routes: []OpenAPIRouteSpec{{Method: "GET", Path: "/widgets", OperationID: "listWidgets", Response: OpenAPIResponseSpec{Fields: []OpenAPIFieldSpec{{Field: "count", Source: openAPISourceResponse, Name: "count", Type: openAPITypeInteger, Validation: []OpenAPIValidationRule{{Rule: ValidationRuleMin, Value: "0x10"}}}}}}}},
+			want: "must be a number",
+		},
 	}
 
 	for _, tt := range tests {
@@ -270,17 +280,29 @@ func TestOpenAPIValidationHelpers(t *testing.T) {
 		t.Fatalf("array object items should allow additional properties: %#v", arrayObjectSchema)
 	}
 
-	if values := openAPIEnumValues([]any{"a", 2}); !stringSliceEqual(values, []string{"a", "2"}) {
+	if values, err := openAPIEnumValues([]any{"a", 2}); err != nil || !stringSliceEqual(values, []string{"a", "2"}) {
 		t.Fatalf("[]any enum values = %#v", values)
 	}
-	if values := openAPIEnumValues(7); !stringSliceEqual(values, []string{"7"}) {
+	if values, err := openAPIEnumValues([]any{1000000.0}); err != nil || !stringSliceEqual(values, []string{"1000000"}) {
+		t.Fatalf("large numeric enum values = %#v", values)
+	}
+	if values, err := openAPIEnumValues(7); err != nil || !stringSliceEqual(values, []string{"7"}) {
 		t.Fatalf("scalar enum values = %#v", values)
 	}
-	if values := openAPIEnumValues(nil); values != nil {
+	if values, err := openAPIEnumValues(nil); err != nil || values != nil {
 		t.Fatalf("nil enum values = %#v", values)
 	}
 	if _, ok := openAPINumberValue("not-a-number"); ok {
 		t.Fatal("invalid number string accepted")
+	}
+	if _, ok := openAPINumberValue("nan"); ok {
+		t.Fatal("nan number string accepted")
+	}
+	if _, ok := openAPINumberValue("1_000"); ok {
+		t.Fatal("underscore number string accepted")
+	}
+	if _, ok := openAPINumberValue("0x10"); ok {
+		t.Fatal("hex number string accepted")
 	}
 	if _, ok := openAPIIntegerValue(1.25); ok {
 		t.Fatal("fractional value accepted as integer")
