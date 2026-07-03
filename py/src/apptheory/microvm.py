@@ -176,13 +176,13 @@ class MicroVMLifecycleAdapter:
             normalized_hook = _normalize_hook(hook)
             if normalized_hook and handler is not None:
                 self.handlers[normalized_hook] = handler
-        validate_microvm_lifecycle_contract(self.contract)
+        _validate_lifecycle_adapter_contract(self.contract)
 
     def handle(self, event: MicroVMLifecycleEvent | dict[str, Any]) -> MicroVMLifecycleResult:
         try:
-            validate_microvm_lifecycle_contract(self.contract)
+            _validate_lifecycle_adapter_contract(self.contract)
         except Exception as exc:  # noqa: BLE001
-            safe = _safe_error(MICROVM_ERROR_LIFECYCLE_INCOMPLETE, str(exc), _event_request_id(event))
+            safe = _lifecycle_contract_validation_error(exc, _event_request_id(event))
             return _lifecycle_error_result(event, STATE_FAILED, safe)
 
         normalized = _normalize_lifecycle_event(event)
@@ -1218,6 +1218,52 @@ def _validate_lifecycle_failure_transitions(transitions: _TransitionSet) -> None
                 f"apptheory: microvm lifecycle missing failure transition from {state}",
                 "",
             )
+
+
+def _validate_lifecycle_adapter_contract(contract: MicroVMLifecycleContract) -> None:
+    if _is_real_lifecycle_contract_shape(contract):
+        validate_microvm_real_lifecycle_contract(contract)
+        return
+    validate_microvm_lifecycle_contract(contract)
+
+
+def _is_real_lifecycle_contract_shape(contract: MicroVMLifecycleContract) -> bool:
+    for hook in contract.hooks:
+        if _real_lifecycle_only_hook(hook.name):
+            return True
+    for state in contract.states:
+        if _real_lifecycle_only_state(state):
+            return True
+    for transition in contract.transitions:
+        if (
+            _real_lifecycle_only_hook(transition.hook)
+            or _real_lifecycle_only_state(transition.from_state)
+            or _real_lifecycle_only_state(transition.to)
+        ):
+            return True
+    return False
+
+
+def _real_lifecycle_only_hook(hook: object) -> bool:
+    return str(hook or "").strip() in {HOOK_VALIDATE, HOOK_RUN, HOOK_READY, HOOK_SUSPEND, HOOK_RESUME, HOOK_TERMINATE}
+
+
+def _real_lifecycle_only_state(state: object) -> bool:
+    return str(state or "").strip() in {
+        STATE_VALIDATING,
+        STATE_VALIDATED,
+        STATE_RUNNING,
+        STATE_SUSPENDING,
+        STATE_SUSPENDED,
+        STATE_RESUMING,
+        STATE_TERMINATING,
+    }
+
+
+def _lifecycle_contract_validation_error(exc: Exception, request_id: str) -> MicroVMSafeError:
+    if isinstance(exc, MicroVMSafeError):
+        return _safe_error(exc.code, exc.message, request_id)
+    return _safe_error(MICROVM_ERROR_LIFECYCLE_INCOMPLETE, str(exc), request_id)
 
 
 def _normalize_lifecycle_event(
