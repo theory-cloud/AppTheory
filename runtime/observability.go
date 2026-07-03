@@ -1,6 +1,9 @@
 package apptheory
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 const (
 	logLevelInfo               = "info"
@@ -13,6 +16,7 @@ type LogRecord struct {
 	Level      string
 	Event      string
 	RequestID  string
+	TraceID    string
 	TenantID   string
 	Method     string
 	Path       string
@@ -47,7 +51,7 @@ type ObservabilityHooks struct {
 	Span   func(SpanRecord)
 }
 
-func (a *App) recordObservability(method, path, requestID, tenantID string, status int, errorCode string, durationMS int) {
+func (a *App) recordObservability(method, path, requestID, traceID, tenantID string, status int, errorCode string, durationMS int) {
 	if a == nil {
 		return
 	}
@@ -67,6 +71,7 @@ func (a *App) recordObservability(method, path, requestID, tenantID string, stat
 			Level:      level,
 			Event:      "request.completed",
 			RequestID:  requestID,
+			TraceID:    traceID,
 			TenantID:   tenantID,
 			Method:     method,
 			Path:       path,
@@ -92,16 +97,20 @@ func (a *App) recordObservability(method, path, requestID, tenantID string, stat
 	}
 
 	if a.obs.Span != nil {
+		attrs := map[string]string{
+			"http.method":      method,
+			"http.route":       path,
+			"http.status_code": strconv.Itoa(status),
+			"request.id":       requestID,
+			"tenant.id":        tenantID,
+			"error.code":       errorCode,
+		}
+		if traceID = strings.TrimSpace(traceID); traceID != "" {
+			attrs["trace.id"] = traceID
+		}
 		a.obs.Span(SpanRecord{
-			Name: "http " + method + " " + path,
-			Attributes: map[string]string{
-				"http.method":      method,
-				"http.route":       path,
-				"http.status_code": strconv.Itoa(status),
-				"request.id":       requestID,
-				"tenant.id":        tenantID,
-				"error.code":       errorCode,
-			},
+			Name:       "http " + method + " " + path,
+			Attributes: attrs,
 		})
 	}
 }

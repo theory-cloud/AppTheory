@@ -230,6 +230,7 @@ type FixtureLogRecord struct {
 	Level         string `json:"level"`
 	Event         string `json:"event"`
 	RequestID     string `json:"request_id"`
+	TraceID       string `json:"trace_id,omitempty"`
 	TenantID      string `json:"tenant_id"`
 	Method        string `json:"method"`
 	Path          string `json:"path"`
