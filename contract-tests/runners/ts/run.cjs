@@ -1551,14 +1551,83 @@ function microVMControllerRouteErrorCode(body) {
   return String(err.code ?? "");
 }
 
+function expectsSetupError(fixture) {
+  const expect = fixture.expect ?? {};
+  return (
+    Object.prototype.hasOwnProperty.call(expect, "error") &&
+    !Object.prototype.hasOwnProperty.call(expect, "response") &&
+    !Object.prototype.hasOwnProperty.call(expect, "output_json") &&
+    !fixture.input?.request &&
+    !fixture.input?.aws_event
+  );
+}
+
+function compareSetupError(fixture, actualError) {
+  const expected = fixture.expect?.error ?? {};
+  if (!actualError) {
+    return {
+      ok: false,
+      reason: "expected setup error, got none",
+      expected_error: expected,
+      actual_error: null,
+    };
+  }
+  const actual = {
+    code: String(actualError?.code ?? "").trim(),
+    message: String(actualError?.message ?? actualError),
+    status_code: Number(actualError?.statusCode ?? 0),
+  };
+  const expectedCode = String(expected.code ?? "").trim();
+  if (expectedCode && actual.code !== expectedCode) {
+    return {
+      ok: false,
+      reason: "setup error code mismatch",
+      expected_error: expected,
+      actual_error: actual,
+    };
+  }
+  const expectedStatusCode = Number(expected.status_code ?? 0);
+  if (expectedStatusCode && actual.status_code !== expectedStatusCode) {
+    return {
+      ok: false,
+      reason: "setup error status_code mismatch",
+      expected_error: expected,
+      actual_error: actual,
+    };
+  }
+  const expectedMessage = String(expected.message ?? "");
+  if (expectedMessage && !actual.message.includes(expectedMessage)) {
+    return {
+      ok: false,
+      reason: "setup error message mismatch",
+      expected_error: expected,
+      actual_error: actual,
+    };
+  }
+  return { ok: true };
+}
+
+function routeHandlerForRegistration(runtime, route, effects) {
+  const name = String(route?.handler ?? "").trim();
+  if (!name) return null;
+  const handler = builtInAppTheoryHandler(runtime, name, effects);
+  if (!handler) {
+    throw new Error(`unknown handler ${JSON.stringify(route?.handler)}`);
+  }
+  return handler;
+}
+
 async function runFixture(fixture) {
   const tier = String(fixture.tier ?? "")
     .trim()
     .toLowerCase();
 
   if (tier === "p0") {
-    const { actual, effects } = await runFixtureP0(fixture);
-    return compareFixture(fixture, actual, effects);
+    const result = await runFixtureP0(fixture);
+    if (expectsSetupError(fixture)) {
+      return compareSetupError(fixture, result.actualError);
+    }
+    return compareFixture(fixture, result.actual, result.effects);
   }
   if (tier === "p1") {
     const { actual, effects } = await runFixtureP1(fixture);
@@ -3331,14 +3400,27 @@ async function runFixtureM14(fixture) {
 
 async function runFixtureP0(fixture) {
   const runtime = await loadAppTheoryRuntime();
-  const app = runtime.createApp({ tier: "p0" });
+  const app = runtime.createApp({
+    tier: "p0",
+    ...(fixture.setup?.http_error_format
+      ? { httpErrorFormat: fixture.setup.http_error_format }
+      : {}),
+  });
 
-  for (const route of fixture.setup?.routes ?? []) {
-    const handler = builtInAppTheoryHandler(runtime, route.handler);
-    if (!handler) {
-      throw new Error(`unknown handler ${JSON.stringify(route.handler)}`);
+  let actualError = null;
+  try {
+    for (const route of fixture.setup?.routes ?? []) {
+      app.handle(route.method, route.path, routeHandlerForRegistration(runtime, route));
     }
-    app.handle(route.method, route.path, handler);
+  } catch (err) {
+    actualError = err;
+  }
+
+  if (expectsSetupError(fixture)) {
+    return { actualError, effects: { logs: [], metrics: [], spans: [] } };
+  }
+  if (actualError) {
+    throw actualError;
   }
 
   const awsEvent = fixture.input?.aws_event ?? null;
@@ -3897,6 +3979,49 @@ function builtInAppTheoryHandler(runtime, name, effects) {
         });
     case "parse_json_echo":
       return (ctx) => runtime.json(200, ctx.jsonValue());
+    case "json_required_echo":
+      return (ctx) => {
+        const headers = ctx.request?.headers ?? {};
+        const contentTypes = Array.isArray(headers["content-type"])
+          ? headers["content-type"]
+          : [];
+        if (
+          !contentTypes.some((value) =>
+            String(value).trim().toLowerCase().startsWith("application/json"),
+          )
+        ) {
+          throw new runtime.AppTheoryError("app.bad_request", "invalid json", {
+            statusCode: 400,
+          });
+        }
+        const body = Buffer.from(ctx.request?.body ?? []);
+        if (body.length === 0) {
+          throw new runtime.AppTheoryError("EMPTY_BODY", "Request body is empty", {
+            statusCode: 400,
+          });
+        }
+        try {
+          return runtime.json(200, JSON.parse(body.toString("utf8")));
+        } catch (err) {
+          throw new runtime.AppTheoryError(
+            "INVALID_JSON",
+            "Invalid JSON in request body",
+            { statusCode: 400, cause: err },
+          );
+        }
+      };
+    case "bind_query_count":
+      return (ctx) => {
+        const raw = ctx.request?.query?.count?.[0] ?? "";
+        if (!/^-?\d+$/.test(String(raw))) {
+          throw new runtime.AppTheoryError(
+            "app.bad_request",
+            "invalid query binding for Count",
+            { statusCode: 400 },
+          );
+        }
+        return runtime.json(200, { count: Number(raw) });
+      };
     case "echo_appsync_context":
       return (ctx) => {
         const appsync = ctx.asAppSync();

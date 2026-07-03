@@ -156,7 +156,9 @@ type FixtureMicroVMControllerRoute struct {
 }
 
 type FixtureError struct {
-	Message string `json:"message"`
+	Code       string `json:"code,omitempty"`
+	Message    string `json:"message"`
+	StatusCode int    `json:"status_code,omitempty"`
 }
 
 type FixtureResponse struct {
