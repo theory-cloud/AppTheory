@@ -15,6 +15,7 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/edge-streaming-html/` — M14 streaming, catch-all routing, HTML/cache/CloudFront helpers, and Step Functions helpers
 - `contract-tests/fixtures/microvm-foundation/` — M15 Lambda MicroVM validation-only lifecycle/controller/session vocabulary
 - `contract-tests/fixtures/microvm-operations/` — M16 real Lambda MicroVM operation, route, provider-state, tenant, and token-safety contracts
+- `contract-tests/fixtures/openapi/` — P0 typed-handler OpenAPI generation with byte-pinned canonical JSON output
 
 Each fixture is a single JSON object.
 
@@ -54,6 +55,7 @@ while provider/runtime payload objects remain open so behavior-specific contract
   - `chunks` (array, optional): expected streamed response chunks (when using the streaming test harness).
   - `stream_error_code` (string, optional): expected error code when an error occurs after streaming begins.
 - `expect.output_json` (any, optional): expected output value for non-HTTP fixtures (for example: `m1`).
+  - OpenAPI fixtures use a string value containing the exact canonical JSON bytes emitted by the generator.
   - For AppSync fixtures, portable AppTheory/AppError payloads retain their intended messages, while non-portable
     exceptions must surface the generic `internal error` message.
 - `expect.error` (object, optional): expected thrown error (for example: fail-closed `m1` routing).

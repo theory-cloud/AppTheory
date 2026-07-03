@@ -183,6 +183,7 @@ FIXTURE_DOMAIN_TIERS = {
     "routing": "p0",
     "binding": "p0",
     "validation": "p0",
+    "openapi": "p0",
 }
 
 

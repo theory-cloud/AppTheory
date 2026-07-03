@@ -5,7 +5,7 @@ description: The Go implementation of the AppTheory contract — routing, middle
 
 # Go Runtime
 
-The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — the [164 contract fixtures](../reference/contract-fixtures.md) arbitrate when the three runtimes disagree. <!-- apptheory-fixture-count -->
+The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — the [165 contract fixtures](../reference/contract-fixtures.md) arbitrate when the three runtimes disagree. <!-- apptheory-fixture-count -->
 
 ## Install
 
@@ -161,11 +161,11 @@ See the [MCP Method Surface](../integrations/mcp.md) for the full Streamable HTT
 
 ## What's verified
 
-The Go runtime passes all 164 contract fixtures on every commit. <!-- apptheory-fixture-count --> Any behavioral divergence between Go, TypeScript, and Python is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds in all three runtimes.
+The Go runtime passes all 165 contract fixtures on every commit. <!-- apptheory-fixture-count --> Any behavioral divergence between Go, TypeScript, and Python is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds in all three runtimes.
 
 ## Next reads
 
 - [API Reference](../api-reference.md) — full surface table
 - [HTTP Runtime tiers](../features/http-runtime.md) — P0 / P1 / P2
 - [Event Shape Dispatch](../reference/event-shapes.md) — when `HandleLambda` calls what
-- [Contract Fixtures](../reference/contract-fixtures.md) — the 164-fixture covenant <!-- apptheory-fixture-count -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — the 165-fixture covenant <!-- apptheory-fixture-count -->
