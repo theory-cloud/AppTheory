@@ -1429,6 +1429,9 @@ def _empty_response() -> CanonicalResponse:
 
 
 def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+    if is_openapi_contract_fixture(fixture):
+        return compare_openapi_contract(fixture)
+
     tier = str(fixture.get("tier", "")).strip().lower()
     if tier == "p0":
         return run_fixture_p0(fixture)
@@ -1524,6 +1527,23 @@ class _DummyEffectsApp:
         self.logs: list[Any] = []
         self.metrics: list[Any] = []
         self.spans: list[Any] = []
+
+
+def is_openapi_contract_fixture(fixture: dict[str, Any]) -> bool:
+    setup = fixture.get("setup") or {}
+    return isinstance(setup, dict) and "openapi" in setup
+
+
+def compare_openapi_contract(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, str, str | None, _DummyEffectsApp]:
+    runtime = _load_apptheory_runtime()
+    setup = fixture.get("setup") or {}
+    actual = runtime.generate_openapi_json(setup.get("openapi") or {})
+    expected = (fixture.get("expect") or {}).get("output_json")
+    if actual == expected:
+        return True, "", actual, expected, _DummyEffectsApp()
+    return False, "openapi canonical json mismatch", actual, expected, _DummyEffectsApp()
 
 
 def _load_apptheory_runtime():
