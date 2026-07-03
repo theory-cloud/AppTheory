@@ -1,0 +1,36 @@
+{
+  "id": "p0.binding.query_conversion_error",
+  "tier": "p0",
+  "name": "Typed query conversion errors use the canonical binding envelope",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/typed/{tenant}", "handler": "bind_all_sources" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/typed/tenant_123",
+      "query": { "limit": ["not-an-int"] },
+      "headers": { "x-request-id": ["req_1"] },
+      "body": { "encoding": "utf8", "value": "{\"name\":\"bob\"}" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.bad_request",
+          "message": "invalid query binding for Limit",
+          "status_code": 400,
+          "details": { "source": "query", "name": "limit", "field": "Limit" }
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

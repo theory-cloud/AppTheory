@@ -181,6 +181,8 @@ FIXTURE_DOMAIN_TIERS = {
     "microvm-operations": "m16",
     "errors": "p0",
     "routing": "p0",
+    "binding": "p0",
+    "validation": "p0",
 }
 
 

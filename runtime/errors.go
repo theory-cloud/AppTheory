@@ -22,8 +22,10 @@ func (e *AppError) Error() string {
 
 func statusForErrorCode(code string) int {
 	switch code {
-	case errorCodeBadRequest, errorCodeValidationFailed:
+	case errorCodeBadRequest:
 		return 400
+	case errorCodeValidationFailed:
+		return 422
 	case errorCodeUnauthorized:
 		return 401
 	case errorCodeForbidden:

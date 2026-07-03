@@ -1,11 +1,11 @@
 ---
 title: Contract Fixtures
-description: The 156 shared fixtures that arbitrate behavior across Go, TypeScript, and Python. # apptheory-fixture-count
+description: The 162 shared fixtures that arbitrate behavior across Go, TypeScript, and Python. # apptheory-fixture-count
 ---
 
 # Contract Fixtures
 
-AppTheory ships **156 contract test fixtures** in `contract-tests/fixtures/` <!-- apptheory-fixture-count --> that define the language-neutral behavior every runtime must produce. The Go, TypeScript, and Python runtimes are each independently verified against the same fixture corpus on every commit.
+AppTheory ships **162 contract test fixtures** in `contract-tests/fixtures/` <!-- apptheory-fixture-count --> that define the language-neutral behavior every runtime must produce. The Go, TypeScript, and Python runtimes are each independently verified against the same fixture corpus on every commit.
 
 This page explains what the fixtures are, what they cover, and how to evolve them safely.
 
@@ -33,6 +33,8 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 | Directory | Fixture metadata | Covers |
 | --- | --- | --- |
 | `http-core/` | `p0.*` / `tier = p0` | P0 runtime core: routing, normalization, errors, source provenance, Lambda URL/ALB adapters. |
+| `binding/` | `p0.binding.*` / `tier = p0` | Canonical typed-handler body/query/path/header binding, conversions, strict JSON, and binding-error envelopes. |
+| `validation/` | `p0.validation.*` / `tier = p0` | Declarative validation vocabulary, canonical 422 field-error envelope, and binding/validation precedence. |
 | `middleware-guardrails/` | `p1.*` / `tier = p1` | P1 request-id, tenant, auth, CORS, guardrails, and legacy flat-error behavior. |
 | `appsync-observability-policies/` | `p2.*` / `tier = p2` | P2 AppSync, observability, logging profiles, rate limiting, and load shedding. |
 | `event-sources/` | `m1.*` / `tier = m1` | SQS, EventBridge, DynamoDB Streams, Kinesis, SNS, and non-HTTP middleware behavior. |
@@ -45,13 +47,15 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 
 ## Categories
 
-The 156 fixtures span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory): <!-- apptheory-fixture-count -->
+The 162 fixtures span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory): <!-- apptheory-fixture-count -->
 
 | Category | Covers |
 | --- | --- |
 | HTTP routing | Method/path matching, parameter extraction, strict vs lenient registration, registration-order tie-breaking. |
 | HTTP normalization | Header lower-casing, body decoding, query parsing, cookie handling. |
 | HTTP error envelope | Nested vs flat-legacy shape, `error.code` / `error.message` / `error.details`, `request_id` propagation. |
+| Typed handlers | Body/query/path/header binding, typed conversion, strict unknown-field rejection, and binding-error details. |
+| Declarative validation | Required/min/max/length/pattern/enum rules, canonical 422 status, field-error aggregation, and binding precedence. |
 | Middleware tiers | P0 / P1 / P2 inclusion sets, ordering, request-id, tenant, auth, CORS, guardrails. |
 | Source provenance | `SourceProvenance` shape, canonical IP form, fail-closed `provider = "unknown"`. |
 | Lambda Function URL | Streaming vs buffered, request shape, response headers. |

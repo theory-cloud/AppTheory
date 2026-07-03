@@ -203,15 +203,15 @@ export class Context {
     return this.sourceProvenance().sourceIP;
   }
 
-  jsonValue(): unknown {
+  jsonValue<T = unknown>(): T {
     if (!hasJSONContentType(this.request.headers)) {
       throw new AppError("app.bad_request", "invalid json");
     }
     if (this.request.body.length === 0) {
-      return null;
+      return null as T;
     }
     try {
-      return JSON.parse(Buffer.from(this.request.body).toString("utf8"));
+      return JSON.parse(Buffer.from(this.request.body).toString("utf8")) as T;
     } catch {
       throw new AppError("app.bad_request", "invalid json");
     }

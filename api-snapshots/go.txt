@@ -1536,6 +1536,20 @@ const TierP1 Tier = "p1"
 
 const TierP2 Tier = "p2"
 
+const ValidationRuleEnum = "enum"
+
+const ValidationRuleMax = "max"
+
+const ValidationRuleMaxLength = "max_length"
+
+const ValidationRuleMin = "min"
+
+const ValidationRuleMinLength = "min_length"
+
+const ValidationRulePattern = "pattern"
+
+const ValidationRuleRequired = "required"
+
 type App struct {
 	router           *router
 	clock            Clock
@@ -1958,6 +1972,12 @@ type TimeoutConfig struct {
 	OperationTimeouts map[string]time.Duration
 	TenantTimeouts    map[string]time.Duration
 	TimeoutMessage    string
+}
+
+type ValidationFieldError struct {
+	Field   string `json:"field"`
+	Rule    string `json:"rule"`
+	Message string `json:"message"`
 }
 
 type WebSocketClientFactory func(context.Context, string) (streamer.Client, error)

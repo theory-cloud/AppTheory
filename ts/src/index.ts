@@ -43,6 +43,8 @@ export * from "./ids.js";
 export * from "./context.js";
 export * from "./response.js";
 export * from "./http-error-format.js";
+export * from "./validate.js";
+export * from "./bind-handler.js";
 export * from "./sse.js";
 export * from "./naming.js";
 export * from "./sanitization.js";

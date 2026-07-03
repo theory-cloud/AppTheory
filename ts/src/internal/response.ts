@@ -66,8 +66,9 @@ export function hasJSONContentType(headers: Headers): boolean {
 function statusForErrorCode(code: string): number {
   switch (code) {
     case "app.bad_request":
-    case "app.validation_failed":
       return 400;
+    case "app.validation_failed":
+      return 422;
     case "app.unauthorized":
       return 401;
     case "app.forbidden":

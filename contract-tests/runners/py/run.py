@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime as dt
 import json
 import sys
 import threading
@@ -65,8 +66,6 @@ def list_fixture_files(fixtures_root: Path) -> list[Path]:
     return sorted(files)
 
 
-
-
 def selected_fixture_id(fixture_id: str, fixture_filter: str) -> str:
     fixture_id = str(fixture_id or "").strip()
     fixture_filter = str(fixture_filter or "").strip()
@@ -80,6 +79,7 @@ def filter_fixtures_by_id(fixtures: list[dict[str, Any]], fixture_id: str) -> li
     if len(matches) != 1:
         raise RuntimeError(f"fixture id {fixture_id!r} matched {len(matches)} fixtures")
     return matches
+
 
 def load_fixtures(fixtures_root: Path) -> list[dict[str, Any]]:
     files = list_fixture_files(fixtures_root)
@@ -1649,6 +1649,77 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
             return runtime.json(200, {"count": count})
 
         return handler
+
+    if name in {"bind_all_sources", "bind_all_sources_strict"}:
+
+        @dataclass
+        class BindAllSourcesRequest:
+            Name: str = runtime.body("name")
+            Tenant: str = runtime.path("tenant")
+            RequestID: str = runtime.header("x-request-id")
+            Limit: int = runtime.query("limit", value_type="int")
+            Enabled: bool = runtime.query("enabled", value_type="bool")
+            Ratio: float = runtime.query("ratio", value_type="float")
+            Tags: list[str] = runtime.query("tag", value_type="string", array=True)
+            TTL: dt.timedelta = runtime.query("ttl", value_type="duration")
+
+        return runtime.bind_handler(
+            runtime.BindConfig(
+                model=BindAllSourcesRequest,
+                body=True,
+                query=True,
+                path=True,
+                headers=True,
+                strict_json=name == "bind_all_sources_strict",
+            ),
+            lambda _ctx, req: {
+                "name": req.Name,
+                "tenant": req.Tenant,
+                "request_id": req.RequestID,
+                "limit": req.Limit,
+                "enabled": req.Enabled,
+                "ratio": req.Ratio,
+                "tags": req.Tags,
+                "ttl": runtime.format_duration(req.TTL),
+            },
+        )
+
+    if name == "validate_profile":
+
+        @dataclass
+        class ValidateProfileRequest:
+            name: str = runtime.body("name", validate=[runtime.required()])
+            age: int = runtime.body("age", value_type="int", validate=[runtime.min_value(18)])
+            score: int = runtime.body("score", value_type="int", validate=[runtime.max_value(10)])
+            nickname: str = runtime.body("nickname", validate=[runtime.min_length(2)])
+            bio: str = runtime.body("bio", validate=[runtime.max_length(5)])
+            email: str = runtime.body("email", validate=[runtime.pattern(r"^[^@]+@[^@]+\.[^@]+$")])
+            role: str = runtime.body("role", validate=[runtime.one_of(["admin", "member"])])
+
+        return runtime.bind_handler(
+            runtime.BindConfig(model=ValidateProfileRequest, body=True),
+            lambda _ctx, req: {
+                "name": req.name,
+                "age": req.age,
+                "score": req.score,
+                "nickname": req.nickname,
+                "bio": req.bio,
+                "email": req.email,
+                "role": req.role,
+            },
+        )
+
+    if name == "validate_profile_query":
+
+        @dataclass
+        class ValidateProfileQueryRequest:
+            Name: str = runtime.body("name", validate=[runtime.required()])
+            Age: int = runtime.query("age", value_type="int", validate=[runtime.min_value(18)])
+
+        return runtime.bind_handler(
+            runtime.BindConfig(model=ValidateProfileQueryRequest, body=True, query=True),
+            lambda _ctx, req: {"name": req.Name, "age": req.Age},
+        )
 
     if name == "echo_appsync_context":
 

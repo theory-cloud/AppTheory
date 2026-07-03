@@ -242,11 +242,52 @@ func TestBindRequest_ValidateMapsToValidationFailed(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected AppTheoryError, got %T", err)
 	}
-	if appErr.Code != errorCodeValidationFailed || appErr.StatusCode != 400 {
+	if appErr.Code != errorCodeValidationFailed || appErr.StatusCode != 422 {
 		t.Fatalf("unexpected validation payload: %#v", appErr)
 	}
 	if appErr.Cause == nil {
 		t.Fatal("expected validation failure to preserve cause")
+	}
+}
+
+func TestBindRequest_DeclarativeValidationReturnsCanonicalFieldErrors(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Name string `json:"name" validate:"required"`
+		Age  int    `json:"age" validate:"min=18"`
+	}
+
+	_, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"name":"","age":17}`),
+		},
+	}, BindConfig[requestModel]{
+		Body: true,
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Code != errorCodeValidationFailed || appErr.StatusCode != 422 {
+		t.Fatalf("unexpected validation payload: %#v", appErr)
+	}
+	errorsValue, ok := appErr.Details["errors"].([]ValidationFieldError)
+	if !ok {
+		t.Fatalf("expected validation field errors, got %#v", appErr.Details["errors"])
+	}
+	if len(errorsValue) != 2 {
+		t.Fatalf("expected 2 field errors, got %#v", errorsValue)
+	}
+	if errorsValue[0] != (ValidationFieldError{Field: "name", Rule: ValidationRuleRequired, Message: "name is required"}) {
+		t.Fatalf("unexpected required field error: %#v", errorsValue[0])
+	}
+	if errorsValue[1] != (ValidationFieldError{Field: "age", Rule: ValidationRuleMin, Message: "age must be >= 18"}) {
+		t.Fatalf("unexpected min field error: %#v", errorsValue[1])
 	}
 }
 
@@ -351,5 +392,97 @@ func TestBindRequest_ValidationPreservesAppTheoryAndAppErrors(t *testing.T) {
 	}
 	if appErr.Code != errorCodeConflict || appErr.StatusCode != 409 {
 		t.Fatalf("unexpected mapped AppError: %#v", appErr)
+	}
+}
+
+func TestValidateBoundRequest_RuleVocabularyAggregates(t *testing.T) {
+	t.Parallel()
+
+	type embeddedModel struct {
+		Code string `json:"code" validate:"pattern=^[A-Z]+$"`
+	}
+	type requestModel struct {
+		embeddedModel
+		Title    string            `json:"title" validate:"min_length=3,max_length=5"`
+		Quantity int               `json:"quantity" validate:"max=10"`
+		Level    int               `json:"level" validate:"enum=1|2"`
+		State    string            `json:"state" validate:"enum=open|closed"`
+		Tags     []string          `json:"tags" validate:"min_length=2"`
+		Labels   map[string]string `json:"labels" validate:"max_length=1"`
+		Ptr      *int              `json:"ptr" validate:"required"`
+	}
+
+	err := validateBoundRequest(requestModel{
+		embeddedModel: embeddedModel{Code: "abc"},
+		Title:         "xx",
+		Quantity:      11,
+		Level:         3,
+		State:         "pending",
+		Tags:          []string{"one"},
+		Labels:        map[string]string{"a": "1", "b": "2"},
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	got, ok := appErr.Details["errors"].([]ValidationFieldError)
+	if !ok {
+		t.Fatalf("expected validation field errors, got %#v", appErr.Details["errors"])
+	}
+	want := []ValidationFieldError{
+		{Field: "code", Rule: ValidationRulePattern, Message: "code must match pattern"},
+		{Field: "title", Rule: ValidationRuleMinLength, Message: "title length must be >= 3"},
+		{Field: "quantity", Rule: ValidationRuleMax, Message: "quantity must be <= 10"},
+		{Field: "level", Rule: ValidationRuleEnum, Message: "level must be one of 1, 2"},
+		{Field: "state", Rule: ValidationRuleEnum, Message: "state must be one of open, closed"},
+		{Field: "tags", Rule: ValidationRuleMinLength, Message: "tags length must be >= 2"},
+		{Field: "labels", Rule: ValidationRuleMaxLength, Message: "labels length must be <= 1"},
+		{Field: "ptr", Rule: ValidationRuleRequired, Message: "ptr is required"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d errors, got %#v", len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("error %d: expected %#v, got %#v", i, want[i], got[i])
+		}
+	}
+}
+
+func TestValidateBoundRequest_PassesRulesAndIgnoresMalformedRules(t *testing.T) {
+	t.Parallel()
+
+	value := 3
+	type requestModel struct {
+		Name   string  `json:"name" validate:"required,min_length=2,max_length=5,unknown=1"`
+		Count  uint    `query:"count" validate:"min=2,max=4"`
+		Ratio  float64 `path:"ratio" validate:"min=1.5"`
+		State  string  `header:"x-state" validate:"enum=open|closed"`
+		Labels []int   `json:"labels" validate:"min_length=1,max_length=2"`
+		Value  *int    `json:"value" validate:"required"`
+		Loose  string  `json:"loose" validate:"min=bad,max=bad,min_length=bad,max_length=bad,pattern=["`
+		Empty  string  `json:"empty" validate:"enum="`
+	}
+
+	err := validateBoundRequest(requestModel{
+		Name:   "bob",
+		Count:  3,
+		Ratio:  1.5,
+		State:  "closed",
+		Labels: []int{1, 2},
+		Value:  &value,
+	})
+	if err != nil {
+		t.Fatalf("expected valid model to pass, got %v", err)
+	}
+	if err := validateBoundRequest("not a struct"); err != nil {
+		t.Fatalf("expected non-struct validation to no-op, got %v", err)
+	}
+	if err := validateBoundRequest(nil); err != nil {
+		t.Fatalf("expected nil validation to no-op, got %v", err)
 	}
 }
