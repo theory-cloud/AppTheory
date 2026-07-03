@@ -37,6 +37,7 @@ const (
 	methodToolsCall                = "tools/call"
 	methodResourcesList            = "resources/list"
 	methodResourcesRead            = "resources/read"
+	methodResourcesTemplatesList   = "resources/templates/list"
 	methodResourcesSubscribe       = "resources/subscribe"
 	methodResourcesUnsubscribe     = "resources/unsubscribe"
 	methodLoggingSetLevel          = "logging/setLevel"
@@ -605,6 +606,8 @@ func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessio
 		return s.handleResourcesList(req)
 	case methodResourcesRead:
 		return s.handleResourcesRead(ctx, req)
+	case methodResourcesTemplatesList:
+		return s.handleResourcesTemplatesList(req)
 	case methodResourcesSubscribe:
 		return s.handleResourcesSubscribe(ctx, req, sessionID)
 	case methodResourcesUnsubscribe:
@@ -659,6 +662,7 @@ func methodAllowedForProtocol(pv string, method string) bool {
 		methodToolsCall,
 		methodResourcesList,
 		methodResourcesRead,
+		methodResourcesTemplatesList,
 		methodResourcesSubscribe,
 		methodResourcesUnsubscribe,
 		methodLoggingSetLevel,
