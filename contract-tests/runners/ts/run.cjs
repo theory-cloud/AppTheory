@@ -3448,6 +3448,35 @@ function builtInWebSocketHandler(runtime, name) {
           request_id: ctx.requestId,
         });
       };
+    case "ws_default_send_json_fail":
+      return async (ctx) => {
+        const ws = ctx.asWebSocket?.();
+        if (!ws) {
+          throw new Error("missing websocket context");
+        }
+        await ws.sendJSONMessage({ ok: true });
+        return runtime.json(200, { sent: true });
+      };
+    case "ws_default_body_size":
+      return async (ctx) => {
+        const ws = ctx.asWebSocket?.();
+        if (!ws) {
+          throw new Error("missing websocket context");
+        }
+        return runtime.json(200, {
+          handler: "default",
+          body_len: ws.body.length,
+          route_key: ws.routeKey,
+          event_type: ws.eventType,
+          connection_id: ws.connectionId,
+          management_endpoint: ws.managementEndpoint,
+          request_id: ctx.requestId,
+        });
+      };
+    case "ws_connect_deny":
+      return async () => {
+        throw new runtime.AppError("app.unauthorized", "unauthorized");
+      };
     case "ws_bad_request":
       return async () => {
         throw new runtime.AppError("app.bad_request", "bad request");
@@ -3465,6 +3494,12 @@ async function runFixtureM2(fixture) {
     tier: "p0",
     webSocketClientFactory: (endpoint) => {
       wsClient = new runtime.FakeWebSocketManagementClient({ endpoint });
+      for (const route of fixture.setup?.websockets ?? []) {
+        if (String(route?.handler ?? "").trim() === "ws_default_send_json_fail") {
+          wsClient.postError = new Error("testkit: post failed");
+          break;
+        }
+      }
       return wsClient;
     },
   });
