@@ -235,11 +235,11 @@ func (a *App) serveP0(ctx context.Context, req Request, opts serveOptions) (resp
 }
 
 func (a *App) serveP1(ctx context.Context, req Request, opts serveOptions) (resp Response) {
-	return a.servePortable(ctx, req, false, opts)
+	return a.servePortable(ctx, req, TierP1, opts)
 }
 
 func (a *App) serveP2(ctx context.Context, req Request, opts serveOptions) (resp Response) {
-	return a.servePortable(ctx, req, true, opts)
+	return a.servePortable(ctx, req, TierP2, opts)
 }
 
 type portableServeState struct {
@@ -251,7 +251,7 @@ type portableServeState struct {
 	errorCode string
 }
 
-func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool, opts serveOptions) (resp Response) {
+func (a *App) servePortable(ctx context.Context, req Request, tier Tier, opts serveOptions) (resp Response) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -263,16 +263,16 @@ func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool, opt
 			resp = a.respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, req, state.requestID)
 		}
 		resp = finalizeP1Response(resp, state.requestID, state.origin, a.cors)
-		if enableP2 {
+		if tier == TierP2 {
 			a.recordObservability(state.method, state.path, state.requestID, state.tenantID, resp.Status, state.errorCode)
 		}
 	}()
 
-	resp = a.servePortableCore(ctx, req, enableP2, &state, opts)
+	resp = a.servePortableCore(ctx, req, tier, &state, opts)
 	return resp
 }
 
-func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool, state *portableServeState, opts serveOptions) Response {
+func (a *App) servePortableCore(ctx context.Context, req Request, tier Tier, state *portableServeState, opts serveOptions) Response {
 	headers := canonicalizeHeaders(req.Headers)
 	query := cloneQuery(req.Query)
 
@@ -335,7 +335,7 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 	}
 	requestCtx.Params = match.Params
 
-	if resp, errorCode, ok := a.applyPolicy(enableP2, requestCtx, state.requestID, opts.errorResponder); ok {
+	if resp, errorCode, ok := a.applyPolicy(tier, requestCtx, state.requestID, opts.errorResponder); ok {
 		state.errorCode = errorCode
 		return resp
 	}
@@ -430,12 +430,12 @@ func (a *App) routeNotFoundResponse(allowed []string, requestID string) (Respons
 }
 
 func (a *App) applyPolicy(
-	enableP2 bool,
+	tier Tier,
 	requestCtx *Context,
 	requestID string,
 	errorResponder requestErrorResponder,
 ) (Response, string, bool) {
-	if !enableP2 || a.policy == nil {
+	if tier != TierP2 || a.policy == nil {
 		return Response{}, "", false
 	}
 
