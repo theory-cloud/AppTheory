@@ -1,0 +1,50 @@
+{
+  "id": "p0.errors.json_empty_body",
+  "tier": "p0",
+  "name": "Empty typed JSON bodies use the canonical AppTheory error envelope",
+  "setup": {
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/json",
+        "handler": "json_required_echo"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/json",
+      "query": {},
+      "headers": {
+        "content-type": [
+          "application/json"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.bad_request",
+          "message": "request body is empty",
+          "status_code": 400
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

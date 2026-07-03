@@ -19,14 +19,20 @@ import (
 )
 
 func runFixtureP0(f Fixture) error {
-	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	var app *apptheory.App
+	setupErr := captureSetupError(func() error {
+		app = apptheory.New(
+			apptheory.WithTier(apptheory.TierP0),
+			apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormat(f.Setup.HTTPErrorFormat)),
+		)
+		return registerAppTheoryFixtureRoutes(app, f.Setup.Routes)
+	})
 
-	for _, r := range f.Setup.Routes {
-		handler := builtInAppTheoryHandler(r.Handler)
-		if handler == nil {
-			return fmt.Errorf("unknown handler %q", r.Handler)
-		}
-		app.Handle(r.Method, r.Path, handler)
+	if expectsSetupError(f) {
+		return compareExpectedSetupError(f, setupErr)
+	}
+	if setupErr != nil {
+		return fmt.Errorf("setup app: %w", setupErr)
 	}
 
 	actual, err := serveFixtureP0(app, f)
@@ -91,15 +97,14 @@ func serveFixtureP0AWS(app *apptheory.App, awsEvent *FixtureAWSEvent) (apptheory
 }
 
 func printFailureP0(f Fixture) {
-	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
-	for _, r := range f.Setup.Routes {
-		handler := builtInAppTheoryHandler(r.Handler)
-		if handler == nil {
-			fmt.Fprintf(os.Stderr, "  got: <unavailable>\n")
-			printExpected(f)
-			return
-		}
-		app.Handle(r.Method, r.Path, handler)
+	app := apptheory.New(
+		apptheory.WithTier(apptheory.TierP0),
+		apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormat(f.Setup.HTTPErrorFormat)),
+	)
+	if err := registerAppTheoryFixtureRoutes(app, f.Setup.Routes); err != nil {
+		fmt.Fprintf(os.Stderr, "  got: <unavailable>\n")
+		printExpected(f)
+		return
 	}
 
 	actual, err := serveFixtureP0(app, f)
@@ -247,6 +252,79 @@ func responseFromALBTargetGroup(resp events.ALBTargetGroupResponse) (apptheory.R
 	}, nil
 }
 
+type bindQueryCountRequest struct {
+	Count int `query:"count"`
+}
+
+func registerAppTheoryFixtureRoutes(app *apptheory.App, routes []FixtureRoute) error {
+	for _, r := range routes {
+		name := strings.TrimSpace(r.Handler)
+		var handler apptheory.Handler
+		if name != "" {
+			handler = builtInAppTheoryHandler(name)
+			if handler == nil {
+				return fmt.Errorf("unknown handler %q", r.Handler)
+			}
+		}
+		var opts []apptheory.RouteOption
+		if r.AuthRequired {
+			opts = append(opts, apptheory.RequireAuth())
+		}
+		app.Handle(r.Method, r.Path, handler, opts...)
+	}
+	return nil
+}
+
+func captureSetupError(setup func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if recoveredErr, ok := r.(error); ok {
+				err = recoveredErr
+				return
+			}
+			err = fmt.Errorf("%v", r)
+		}
+	}()
+	return setup()
+}
+
+func expectsSetupError(f Fixture) bool {
+	return f.Expect.Error != nil && f.Expect.Response == nil && len(f.Expect.Output) == 0 && f.Input.Request == nil && f.Input.AWSEvent == nil
+}
+
+func compareExpectedSetupError(f Fixture, err error) error {
+	if err == nil {
+		return fmt.Errorf("expected setup error, got none")
+	}
+	actual := fixtureErrorFromError(err)
+	expected := f.Expect.Error
+	if strings.TrimSpace(expected.Code) != "" && actual.Code != strings.TrimSpace(expected.Code) {
+		return fmt.Errorf("setup error code: expected %q, got %q", expected.Code, actual.Code)
+	}
+	if expected.StatusCode != 0 && actual.StatusCode != expected.StatusCode {
+		return fmt.Errorf("setup error status_code: expected %d, got %d", expected.StatusCode, actual.StatusCode)
+	}
+	if expected.Message != "" && !strings.Contains(actual.Message, expected.Message) {
+		return fmt.Errorf("setup error message: expected %q, got %q", expected.Message, actual.Message)
+	}
+	return nil
+}
+
+func fixtureErrorFromError(err error) FixtureError {
+	if err == nil {
+		return FixtureError{}
+	}
+	var appTheoryErr *apptheory.AppTheoryError
+	if errors.As(err, &appTheoryErr) {
+		return FixtureError{Code: strings.TrimSpace(appTheoryErr.Code), Message: appTheoryErr.Message, StatusCode: appTheoryErr.StatusCode}
+	}
+	var appErr *apptheory.AppError
+	if errors.As(err, &appErr) {
+		return FixtureError{Code: strings.TrimSpace(appErr.Code), Message: appErr.Message}
+	}
+	return FixtureError{Message: err.Error()}
+}
+
 var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 	"static_pong": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		return apptheory.Text(200, "pong"), nil
@@ -278,6 +356,15 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		}
 		return apptheory.JSON(200, value)
 	},
+	"json_required_echo": apptheory.JSONHandler(func(_ *apptheory.Context, req map[string]any) (map[string]any, error) {
+		return req, nil
+	}),
+	"bind_query_count": apptheory.BindHandler(
+		apptheory.BindConfig[bindQueryCountRequest]{Query: true},
+		func(_ *apptheory.Context, req bindQueryCountRequest) (map[string]any, error) {
+			return map[string]any{"count": req.Count}, nil
+		},
+	),
 	"echo_appsync_context": func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		appsync := ctx.AsAppSync()
 		if appsync == nil {

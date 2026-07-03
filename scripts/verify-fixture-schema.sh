@@ -92,6 +92,20 @@ def validate(root: dict[str, Any], schema: dict[str, Any], value: Any, path: str
     if "$ref" in schema:
         return validate(root, resolve_ref(root, str(schema["$ref"])), value, path)
 
+    if "anyOf" in schema:
+        choices = schema["anyOf"]
+        if not isinstance(choices, list) or not choices:
+            raise ValidationError(f"{path}: anyOf must be a non-empty list")
+        nested_errors: list[str] = []
+        for choice in choices:
+            if not isinstance(choice, dict):
+                raise ValidationError(f"{path}: anyOf entries must be schema objects")
+            choice_errors = validate(root, choice, value, path)
+            if not choice_errors:
+                return []
+            nested_errors.extend(choice_errors)
+        return [f"{path}: does not match any allowed schema"] + nested_errors
+
     if "enum" in schema and value not in schema["enum"]:
         errors.append(f"{path}: expected one of {schema['enum']!r}, got {value!r}")
 
@@ -165,6 +179,8 @@ FIXTURE_DOMAIN_TIERS = {
     "edge-streaming-html": "m14",
     "microvm-foundation": "m15",
     "microvm-operations": "m16",
+    "errors": "p0",
+    "routing": "p0",
 }
 
 

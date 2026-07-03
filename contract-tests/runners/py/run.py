@@ -1365,6 +1365,69 @@ def _load_apptheory_microvm_runtime() -> Any:
     return importlib.import_module("apptheory.microvm")
 
 
+def expects_setup_error(fixture: dict[str, Any]) -> bool:
+    expect_obj = fixture.get("expect", {}) or {}
+    input_obj = fixture.get("input", {}) or {}
+    return (
+        "error" in expect_obj
+        and "response" not in expect_obj
+        and "output_json" not in expect_obj
+        and not input_obj.get("request")
+        and not input_obj.get("aws_event")
+    )
+
+
+def _route_handler_for_registration(runtime: Any, route: dict[str, Any], effects: Any | None = None) -> Any | None:
+    name = str(route.get("handler") or "").strip()
+    if not name:
+        return None
+    handler = _built_in_apptheory_handler(runtime, name, effects)
+    if handler is None:
+        raise RuntimeError(f"unknown handler {name!r}")
+    return handler
+
+
+def compare_setup_error(
+    fixture: dict[str, Any],
+    actual_error: Exception | None,
+) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+    expected = (fixture.get("expect", {}) or {}).get("error") or {}
+    if actual_error is None:
+        return False, "expected setup error, got none", None, expected, _DummyEffectsApp()
+
+    actual = {
+        "code": str(getattr(actual_error, "code", "") or "").strip(),
+        "message": str(getattr(actual_error, "message", "") or str(actual_error)),
+        "status_code": int(getattr(actual_error, "status_code", 0) or 0),
+    }
+    expected_code = str(expected.get("code") or "").strip()
+    if expected_code and actual["code"] != expected_code:
+        return False, "setup error code mismatch", actual, expected, _DummyEffectsApp()
+    expected_status_code = int(expected.get("status_code") or 0)
+    if expected_status_code and actual["status_code"] != expected_status_code:
+        return (
+            False,
+            "setup error status_code mismatch",
+            actual,
+            expected,
+            _DummyEffectsApp(),
+        )
+    expected_message = str(expected.get("message") or "")
+    if expected_message and expected_message not in actual["message"]:
+        return (
+            False,
+            "setup error message mismatch",
+            actual,
+            expected,
+            _DummyEffectsApp(),
+        )
+    return True, "", {}, expected, _DummyEffectsApp()
+
+
+def _empty_response() -> CanonicalResponse:
+    return CanonicalResponse(status=0, headers={}, cookies=[], body=b"", is_base64=False)
+
+
 def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     tier = str(fixture.get("tier", "")).strip().lower()
     if tier == "p0":
@@ -1545,6 +1608,46 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
 
     if name == "parse_json_echo":
         return lambda ctx: runtime.json(200, ctx.json_value())
+
+    if name == "json_required_echo":
+
+        def handler(ctx):
+            content_types = (ctx.request.headers or {}).get("content-type") or []
+            if not any(str(value).strip().lower().startswith("application/json") for value in content_types):
+                raise runtime.AppTheoryError("app.bad_request", "invalid json", status_code=400)
+            body = bytes(ctx.request.body or b"")
+            if not body:
+                raise runtime.AppTheoryError("EMPTY_BODY", "Request body is empty", status_code=400)
+            try:
+                payload = json.loads(body.decode("utf-8"))
+            except Exception as exc:  # noqa: BLE001
+                raise runtime.AppTheoryError(
+                    "INVALID_JSON",
+                    "Invalid JSON in request body",
+                    status_code=400,
+                    cause=exc,
+                ) from exc
+            return runtime.json(200, payload)
+
+        return handler
+
+    if name == "bind_query_count":
+
+        def handler(ctx):
+            values = (ctx.request.query or {}).get("count") or []
+            raw = str(values[0] if values else "")
+            try:
+                count = int(raw)
+            except ValueError as exc:
+                raise runtime.AppTheoryError(
+                    "app.bad_request",
+                    "invalid query binding for Count",
+                    status_code=400,
+                    cause=exc,
+                ) from exc
+            return runtime.json(200, {"count": count})
+
+        return handler
 
     if name == "echo_appsync_context":
 
@@ -2903,15 +3006,24 @@ def run_fixture_m14(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespon
 
 def run_fixture_p0(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     runtime = _load_apptheory_runtime()
-    app = runtime.create_app(tier="p0")
+    setup = fixture.get("setup", {}) or {}
+    app = runtime.create_app(tier="p0", http_error_format=str(setup.get("http_error_format") or ""))
 
-    setup = fixture.get("setup", {})
-    for route in setup.get("routes", []) or []:
-        name = str(route.get("handler", ""))
-        handler = _built_in_apptheory_handler(runtime, name)
-        if handler is None:
-            raise RuntimeError(f"unknown handler {name!r}")
-        app.handle(route.get("method", ""), route.get("path", ""), handler)
+    actual_error: Exception | None = None
+    try:
+        for route in setup.get("routes", []) or []:
+            app.handle(
+                route.get("method", ""),
+                route.get("path", ""),
+                _route_handler_for_registration(runtime, route),
+            )
+    except Exception as exc:  # noqa: BLE001
+        actual_error = exc
+
+    if expects_setup_error(fixture):
+        return compare_setup_error(fixture, actual_error)
+    if actual_error is not None:
+        raise actual_error
 
     aws_event = (fixture.get("input", {}) or {}).get("aws_event")
     if aws_event:
