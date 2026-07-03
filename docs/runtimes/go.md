@@ -5,7 +5,7 @@ description: The Go implementation of the AppTheory contract — routing, middle
 
 # Go Runtime
 
-The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — the [145 contract fixtures](../reference/contract-fixtures.md) arbitrate when the three runtimes disagree.
+The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — the [146 contract fixtures](../reference/contract-fixtures.md) arbitrate when the three runtimes disagree.
 
 ## Install
 
@@ -161,7 +161,7 @@ See the [MCP Method Surface](../integrations/mcp.md) for the full Streamable HTT
 
 ## What's verified
 
-The Go runtime passes all 145 contract fixtures on every commit. Any behavioral divergence between Go, TypeScript, and Python is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds in all three runtimes.
+The Go runtime passes all 146 contract fixtures on every commit. Any behavioral divergence between Go, TypeScript, and Python is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds in all three runtimes.
 
 ## Next reads
 

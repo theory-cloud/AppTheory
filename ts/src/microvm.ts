@@ -121,7 +121,12 @@ export type MicroVMLifecycleHandler = (
 
 export interface MicroVMLifecycleAdapterOptions {
   contract?: MicroVMLifecycleContract;
-  handlers?: Partial<Record<MicroVMLifecycleHook, MicroVMLifecycleHandler>>;
+  handlers?: Partial<
+    Record<
+      MicroVMLifecycleHook | MicroVMRealLifecycleHook,
+      MicroVMLifecycleHandler
+    >
+  >;
 }
 
 export class MicroVMSafeError extends Error {
@@ -297,31 +302,32 @@ export function validateMicroVMLifecycleContract(
 
 export class MicroVMLifecycleAdapter {
   private readonly contract: MicroVMLifecycleContract;
-  private readonly handlers: Map<MicroVMLifecycleHook, MicroVMLifecycleHandler>;
+  private readonly handlers: Map<string, MicroVMLifecycleHandler>;
 
   constructor(options: MicroVMLifecycleAdapterOptions = {}) {
     this.contract = cloneMicroVMLifecycleContract(
       options.contract ?? defaultMicroVMLifecycleContract(),
     );
-    this.handlers = new Map<MicroVMLifecycleHook, MicroVMLifecycleHandler>();
+    this.handlers = new Map<string, MicroVMLifecycleHandler>();
     for (const [hook, handler] of Object.entries(
       options.handlers ?? {},
-    ) as Array<[MicroVMLifecycleHook, MicroVMLifecycleHandler | undefined]>) {
+    ) as Array<
+      [
+        MicroVMLifecycleHook | MicroVMRealLifecycleHook,
+        MicroVMLifecycleHandler | undefined,
+      ]
+    >) {
       const normalizedHook = normalizeMicroVMLifecycleHook(hook);
       if (normalizedHook && handler) this.handlers.set(normalizedHook, handler);
     }
-    validateMicroVMLifecycleContract(this.contract);
+    validateMicroVMLifecycleAdapterContract(this.contract);
   }
 
   async handle(event: MicroVMLifecycleEvent): Promise<MicroVMLifecycleResult> {
     try {
-      validateMicroVMLifecycleContract(this.contract);
+      validateMicroVMLifecycleAdapterContract(this.contract);
     } catch (err) {
-      const safe = safeError(
-        MICROVM_ERROR_LIFECYCLE_INCOMPLETE,
-        err instanceof Error ? err.message : String(err),
-        event.request_id,
-      );
+      const safe = lifecycleContractValidationError(err, event.request_id);
       return lifecycleErrorResult(event, MicroVMState.Failed, safe);
     }
 
@@ -1900,6 +1906,84 @@ function validateMicroVMLifecycleFailureTransitions(
       );
     }
   }
+}
+
+function validateMicroVMLifecycleAdapterContract(
+  contract: MicroVMLifecycleContract,
+): void {
+  if (isMicroVMRealLifecycleContractShape(contract)) {
+    validateMicroVMRealLifecycleContract(contract);
+    return;
+  }
+  validateMicroVMLifecycleContract(contract);
+}
+
+function isMicroVMRealLifecycleContractShape(
+  contract: MicroVMLifecycleContract,
+): boolean {
+  for (const hook of contract.hooks ?? []) {
+    if (microVMRealLifecycleOnlyHook(hook.name)) return true;
+  }
+  for (const state of contract.states ?? []) {
+    if (microVMRealLifecycleOnlyState(state)) return true;
+  }
+  for (const transition of contract.transitions ?? []) {
+    if (
+      microVMRealLifecycleOnlyHook(transition.hook) ||
+      microVMRealLifecycleOnlyState(transition.from) ||
+      microVMRealLifecycleOnlyState(transition.to)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function microVMRealLifecycleOnlyHook(
+  hook: MicroVMLifecycleHook | MicroVMRealLifecycleHook | string,
+): boolean {
+  switch (String(hook ?? "").trim()) {
+    case MicroVMRealHook.Validate:
+    case MicroVMRealHook.Run:
+    case MicroVMRealHook.Ready:
+    case MicroVMRealHook.Suspend:
+    case MicroVMRealHook.Resume:
+    case MicroVMRealHook.Terminate:
+      return true;
+    default:
+      return false;
+  }
+}
+
+function microVMRealLifecycleOnlyState(
+  state: MicroVMLifecycleState | MicroVMRealLifecycleState | string,
+): boolean {
+  switch (String(state ?? "").trim()) {
+    case MicroVMRealState.Validating:
+    case MicroVMRealState.Validated:
+    case MicroVMRealState.Running:
+    case MicroVMRealState.Suspending:
+    case MicroVMRealState.Suspended:
+    case MicroVMRealState.Resuming:
+    case MicroVMRealState.Terminating:
+      return true;
+    default:
+      return false;
+  }
+}
+
+function lifecycleContractValidationError(
+  err: unknown,
+  requestID: string,
+): MicroVMSafeError {
+  if (err instanceof MicroVMSafeError) {
+    return safeError(err.code, err.message, requestID);
+  }
+  return safeError(
+    MICROVM_ERROR_LIFECYCLE_INCOMPLETE,
+    err instanceof Error ? err.message : String(err),
+    requestID,
+  );
 }
 
 function normalizeMicroVMLifecycleEvent(

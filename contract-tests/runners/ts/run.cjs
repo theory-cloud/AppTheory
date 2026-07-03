@@ -1240,6 +1240,9 @@ function missingStrings(required, got) {
 }
 
 async function compareMicroVMRealContractFixture(fixture) {
+  if (fixture.expect?.microvm_lifecycle_adapter) {
+    return await compareMicroVMRealLifecycleAdapterFixture(fixture);
+  }
   if (fixture.expect?.microvm_controller_route) {
     return await compareMicroVMControllerRouteFixture(fixture);
   }
@@ -1322,6 +1325,173 @@ function validateMicroVMRealContractFixture(contract, runtime) {
   }
 
   return { valid: true, kind, version };
+}
+
+async function compareMicroVMRealLifecycleAdapterFixture(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const actual = await validateMicroVMRealLifecycleAdapterFixture(
+    fixture.setup?.microvm_contract,
+    runtime,
+  );
+  const expected = fixture.expect?.microvm_lifecycle_adapter;
+  if (!expected) {
+    return {
+      ok: false,
+      reason: "missing expect.microvm_lifecycle_adapter",
+      expected_microvm_lifecycle_adapter: null,
+      actual_microvm_lifecycle_adapter: actual,
+    };
+  }
+  if (deepEqual(actual, expected)) return { ok: true };
+  return {
+    ok: false,
+    reason: "microvm_lifecycle_adapter mismatch",
+    expected_microvm_lifecycle_adapter: expected,
+    actual_microvm_lifecycle_adapter: actual,
+  };
+}
+
+async function validateMicroVMRealLifecycleAdapterFixture(contract, runtime) {
+  if (!contract || typeof contract !== "object" || Array.isArray(contract)) {
+    return invalidMicroVMLifecycleAdapter(
+      "m15.microvm.invalid_contract",
+      "apptheory: microvm contract fixture missing",
+    );
+  }
+
+  const kind = String(contract.kind ?? "").trim();
+  const version = String(contract.version ?? "").trim();
+  if (
+    String(contract.contract ?? "").trim() !== MICROVM_CONTRACT_NAME ||
+    version !== "m16.microvm/v1"
+  ) {
+    return invalidMicroVMLifecycleAdapter(
+      "m15.microvm.invalid_contract",
+      "apptheory: microvm contract must be named and versioned",
+    );
+  }
+  if (kind !== "lifecycle") {
+    return invalidMicroVMLifecycleAdapter(
+      "m15.microvm.invalid_contract",
+      "apptheory: microvm lifecycle adapter requires lifecycle contract kind",
+    );
+  }
+
+  const escapeHatchError = validateMicroVMEscapeHatches(
+    runtime,
+    kind,
+    version,
+    contract.escape_hatches ?? {},
+  );
+  if (escapeHatchError) {
+    return invalidMicroVMLifecycleAdapter(
+      escapeHatchError.error_code,
+      escapeHatchError.error_message,
+    );
+  }
+
+  const lifecycle = contract.lifecycle ?? {};
+  try {
+    runtime.validateMicroVMRealLifecycleContract(lifecycle);
+  } catch (err) {
+    return microVMLifecycleAdapterFromError(
+      err,
+      "m16.microvm.lifecycle_incomplete",
+    );
+  }
+
+  const handlerStates = [];
+  const handlers = {};
+  for (const hook of microVMRealLifecycleFixtureHooks()) {
+    handlers[hook] = (event) => {
+      handlerStates.push(String(event.state ?? ""));
+    };
+  }
+
+  let adapter;
+  try {
+    adapter = runtime.createMicroVMLifecycleAdapter({
+      contract: lifecycle,
+      handlers,
+    });
+  } catch (err) {
+    return microVMLifecycleAdapterFromError(
+      err,
+      "m16.microvm.lifecycle_incomplete",
+    );
+  }
+
+  let state = "requested";
+  for (const hook of [
+    "validate",
+    "run",
+    "ready",
+    "suspend",
+    "resume",
+    "terminate",
+  ]) {
+    const result = await adapter.handle({
+      request_id: "m16-lifecycle-adapter-fixture",
+      tenant_id: "tenant-fixture",
+      namespace: "namespace-fixture",
+      session_id: "session-fixture",
+      hook,
+      state,
+    });
+    if (result.error) {
+      return invalidMicroVMLifecycleAdapter(
+        result.error.code,
+        result.error.message,
+      );
+    }
+    state = String(result.state ?? "");
+  }
+
+  const failure = await adapter.handle({
+    request_id: "m16-lifecycle-adapter-fixture-failure",
+    tenant_id: "tenant-fixture",
+    namespace: "namespace-fixture",
+    session_id: "session-fixture",
+    hook: "failure",
+    state: "running",
+  });
+  if (failure.error) {
+    return invalidMicroVMLifecycleAdapter(
+      failure.error.code,
+      failure.error.message,
+    );
+  }
+
+  return {
+    valid: true,
+    version,
+    final_state: state,
+    failure_state: String(failure.state ?? ""),
+    handler_states: handlerStates,
+  };
+}
+
+function microVMRealLifecycleFixtureHooks() {
+  return [
+    "validate",
+    "run",
+    "ready",
+    "suspend",
+    "resume",
+    "terminate",
+    "failure",
+  ];
+}
+
+function invalidMicroVMLifecycleAdapter(errorCode, errorMessage) {
+  return { valid: false, error_code: errorCode, error_message: errorMessage };
+}
+
+function microVMLifecycleAdapterFromError(err, defaultCode) {
+  return invalidMicroVMLifecycleAdapter(
+    String(err?.code ?? defaultCode),
+    err?.message ?? String(err),
+  );
 }
 
 async function compareMicroVMControllerRouteFixture(fixture) {

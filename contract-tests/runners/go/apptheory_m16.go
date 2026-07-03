@@ -29,6 +29,9 @@ type microVMContractFixtureM16 struct {
 }
 
 func runFixtureM16(f Fixture) error {
+	if f.Expect.MicroVMLifecycleAdapter != nil {
+		return compareMicroVMLifecycleAdapterFixtureM16(f)
+	}
 	if f.Expect.MicroVMControllerRoute != nil {
 		return compareMicroVMControllerRouteFixtureM16(f)
 	}
@@ -42,6 +45,133 @@ func runFixtureM16(f Fixture) error {
 		return fmt.Errorf("microvm_contract_validation mismatch: expected %+v, got %+v", *expected, actual)
 	}
 	return nil
+}
+
+func compareMicroVMLifecycleAdapterFixtureM16(f Fixture) error {
+	expected := f.Expect.MicroVMLifecycleAdapter
+	if expected == nil {
+		return fmt.Errorf("fixture missing expect.microvm_lifecycle_adapter")
+	}
+	actual := validateMicroVMLifecycleAdapterFixtureM16(f.Setup.MicroVMContract)
+	if !reflect.DeepEqual(*expected, actual) {
+		return fmt.Errorf("microvm_lifecycle_adapter mismatch: expected %+v, got %+v", *expected, actual)
+	}
+	return nil
+}
+
+func validateMicroVMLifecycleAdapterFixtureM16(raw json.RawMessage) FixtureMicroVMLifecycleAdapter {
+	if len(raw) == 0 {
+		return invalidMicroVMLifecycleAdapter(microVMErrInvalidContract, "apptheory: microvm contract fixture missing")
+	}
+
+	var contract microVMContractFixtureM16
+	if err := json.Unmarshal(raw, &contract); err != nil {
+		return invalidMicroVMLifecycleAdapter(microVMErrInvalidContract, "apptheory: microvm contract fixture is not parseable")
+	}
+
+	version := strings.TrimSpace(contract.Version)
+	if strings.TrimSpace(contract.Contract) != microVMContractName || version != microVMContractVersionM16 {
+		return invalidMicroVMLifecycleAdapter(microVMErrInvalidContract, "apptheory: microvm contract must be named and versioned")
+	}
+	if strings.TrimSpace(contract.Kind) != microVMKindLifecycle {
+		return invalidMicroVMLifecycleAdapter(microVMErrInvalidContract, "apptheory: microvm lifecycle adapter requires lifecycle contract kind")
+	}
+	if invalid := validateMicroVMEscapeHatches(
+		FixtureMicroVMContractValidation{Kind: microVMKindLifecycle, Version: version},
+		contract.EscapeHatches,
+	); invalid != nil {
+		return invalidMicroVMLifecycleAdapter(invalid.ErrorCode, invalid.ErrorMessage)
+	}
+
+	lifecycle := runtimeLifecycleContract(contract.Lifecycle)
+	if err := runtimemicrovm.ValidateRealLifecycleContract(lifecycle); err != nil {
+		return microVMLifecycleAdapterFromError(runtimemicrovm.ErrorCodeRealLifecycleIncomplete, err)
+	}
+
+	handlerStates := []string{}
+	handler := recordMicroVMRealLifecycleState(&handlerStates)
+	opts := []runtimemicrovm.LifecycleOption{runtimemicrovm.WithLifecycleContract(lifecycle)}
+	for _, hook := range microVMRealLifecycleFixtureHooks() {
+		opts = append(opts, runtimemicrovm.WithLifecycleHandler(hook, handler))
+	}
+	adapter, err := runtimemicrovm.NewLifecycleAdapter(opts...)
+	if err != nil {
+		return microVMLifecycleAdapterFromError(runtimemicrovm.ErrorCodeRealLifecycleIncomplete, err)
+	}
+
+	state := runtimemicrovm.StateRequested
+	for _, hook := range []runtimemicrovm.LifecycleHook{
+		runtimemicrovm.HookValidate,
+		runtimemicrovm.HookRun,
+		runtimemicrovm.HookReady,
+		runtimemicrovm.HookSuspend,
+		runtimemicrovm.HookResume,
+		runtimemicrovm.HookTerminate,
+	} {
+		result, handleErr := adapter.Handle(context.Background(), runtimemicrovm.LifecycleEvent{
+			RequestID: "m16-lifecycle-adapter-fixture",
+			TenantID:  "tenant-fixture",
+			Namespace: "namespace-fixture",
+			SessionID: "session-fixture",
+			Hook:      hook,
+			State:     state,
+		})
+		if handleErr != nil {
+			return microVMLifecycleAdapterFromError(runtimemicrovm.ErrorCodeInvalidLifecycleEvent, handleErr)
+		}
+		state = result.State
+	}
+
+	failure, err := adapter.Handle(context.Background(), runtimemicrovm.LifecycleEvent{
+		RequestID: "m16-lifecycle-adapter-fixture-failure",
+		TenantID:  "tenant-fixture",
+		Namespace: "namespace-fixture",
+		SessionID: "session-fixture",
+		Hook:      runtimemicrovm.HookFailure,
+		State:     runtimemicrovm.StateRunning,
+	})
+	if err != nil {
+		return microVMLifecycleAdapterFromError(runtimemicrovm.ErrorCodeInvalidLifecycleEvent, err)
+	}
+
+	return FixtureMicroVMLifecycleAdapter{
+		Valid:         true,
+		Version:       version,
+		FinalState:    string(state),
+		FailureState:  string(failure.State),
+		HandlerStates: handlerStates,
+	}
+}
+
+func microVMRealLifecycleFixtureHooks() []runtimemicrovm.LifecycleHook {
+	return []runtimemicrovm.LifecycleHook{
+		runtimemicrovm.HookValidate,
+		runtimemicrovm.HookRun,
+		runtimemicrovm.HookReady,
+		runtimemicrovm.HookSuspend,
+		runtimemicrovm.HookResume,
+		runtimemicrovm.HookTerminate,
+		runtimemicrovm.HookFailure,
+	}
+}
+
+func recordMicroVMRealLifecycleState(states *[]string) runtimemicrovm.LifecycleHandler {
+	return func(_ context.Context, event runtimemicrovm.LifecycleEvent) error {
+		*states = append(*states, string(event.State))
+		return nil
+	}
+}
+
+func invalidMicroVMLifecycleAdapter(code, message string) FixtureMicroVMLifecycleAdapter {
+	return FixtureMicroVMLifecycleAdapter{Valid: false, ErrorCode: code, ErrorMessage: message}
+}
+
+func microVMLifecycleAdapterFromError(defaultCode string, err error) FixtureMicroVMLifecycleAdapter {
+	var safe runtimemicrovm.SafeError
+	if errors.As(err, &safe) {
+		return invalidMicroVMLifecycleAdapter(safe.Code, safe.Message)
+	}
+	return invalidMicroVMLifecycleAdapter(defaultCode, err.Error())
 }
 
 func validateMicroVMContractFixtureM16(raw json.RawMessage) FixtureMicroVMContractValidation {
