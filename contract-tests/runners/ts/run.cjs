@@ -4017,7 +4017,10 @@ function builtInAppTheoryHandler(runtime, name, effects) {
           throw new runtime.AppTheoryError(
             "app.bad_request",
             "invalid query binding for Count",
-            { statusCode: 400 },
+            {
+              statusCode: 400,
+              details: { source: "query", name: "count", field: "Count" },
+            },
           );
         }
         return runtime.json(200, { count: Number(raw) });

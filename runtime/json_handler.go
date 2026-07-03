@@ -17,8 +17,13 @@ const (
 // It parses the request body as JSON into Req, invokes the typed handler,
 // and returns a 200 JSON response with the handler's response value.
 //
-// On empty or invalid JSON bodies, it returns a 400 AppTheoryError with
-// Lift-compatible error codes/messages.
+// On empty or invalid JSON bodies, it returns a 400 AppTheoryError. The
+// default nested HTTP error envelope remaps the legacy Lift codes to
+// app.bad_request; WithLegacyHTTPErrorShape preserves EMPTY_BODY and
+// INVALID_JSON for Lift-compatible callers.
+//
+// Deprecated: use BindHandler for typed request bodies in new code. It uses
+// the canonical AppTheory error code path directly.
 func JSONHandler[Req, Resp any](handler func(*Context, Req) (Resp, error)) Handler {
 	return func(ctx *Context) (*Response, error) {
 		req, err := parseJSONRequest[Req](ctx)
@@ -36,6 +41,8 @@ func JSONHandler[Req, Resp any](handler func(*Context, Req) (Resp, error)) Handl
 }
 
 // JSONHandlerContext adapts a typed JSON handler that uses context.Context.
+//
+// Deprecated: use BindHandlerContext for typed request bodies in new code.
 func JSONHandlerContext[Req, Resp any](handler func(context.Context, Req) (Resp, error)) Handler {
 	return JSONHandler(func(ctx *Context, req Req) (Resp, error) {
 		return handler(ctx.Context(), req)

@@ -7,7 +7,10 @@ import (
 	"time"
 )
 
-// AppError is a portable, client-safe error with a stable error code.
+// AppError is a legacy portable, client-safe error with a stable error code.
+//
+// Deprecated: return AppTheoryError from new code so status, request, trace,
+// timestamp, details, and cause metadata use the canonical AppTheory error path.
 type AppError struct {
 	Code    string
 	Message string
@@ -46,6 +49,29 @@ func statusForErrorCode(code string) int {
 	}
 }
 
+func canonicalHTTPErrorFields(format HTTPErrorFormat, code, message string) (string, string) {
+	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatFlatLegacy {
+		return code, message
+	}
+	switch code {
+	case jsonHandlerErrorCodeEmptyBody:
+		return errorCodeBadRequest, "request body is empty"
+	case jsonHandlerErrorCodeInvalidJSON:
+		return errorCodeBadRequest, errorMessageInvalidJSON
+	default:
+		return code, message
+	}
+}
+
+func canonicalRuntimeErrorCode(code string) string {
+	switch code {
+	case jsonHandlerErrorCodeEmptyBody, jsonHandlerErrorCodeInvalidJSON:
+		return errorCodeBadRequest
+	default:
+		return code
+	}
+}
+
 func errorResponse(code, message string, headers map[string][]string) Response {
 	return errorResponseWithFormat(HTTPErrorFormatNested, code, message, headers)
 }
@@ -54,16 +80,17 @@ func errorResponseWithFormat(format HTTPErrorFormat, code, message string, heade
 	headers = canonicalizeHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
+	bodyCode, bodyMessage := canonicalHTTPErrorFields(format, code, message)
 	body, err := marshalHTTPErrorBody(format, map[string]any{
-		"code":    code,
-		"message": message,
+		"code":    bodyCode,
+		"message": bodyMessage,
 	})
 	if err != nil {
 		body = fallbackHTTPErrorBody(format)
 	}
 
 	return Response{
-		Status:   statusForErrorCode(code),
+		Status:   statusForErrorCode(canonicalRuntimeErrorCode(code)),
 		Headers:  headers,
 		Cookies:  nil,
 		Body:     body,
@@ -88,15 +115,16 @@ func errorResponseFromAppTheoryErrorWithFormat(
 	if code == "" {
 		code = errorCodeInternal
 	}
+	bodyCode, bodyMessage := canonicalHTTPErrorFields(format, code, err.Message)
 
 	status := err.StatusCode
 	if status == 0 {
-		status = statusForErrorCode(code)
+		status = statusForErrorCode(bodyCode)
 	}
 
 	errBody := map[string]any{
-		"code":    code,
-		"message": err.Message,
+		"code":    bodyCode,
+		"message": bodyMessage,
 	}
 	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested && err.StatusCode != 0 {
 		errBody["status_code"] = err.StatusCode
@@ -148,9 +176,10 @@ func errorResponseWithRequestIDAndFormat(
 	headers = canonicalizeHeaders(headers)
 	headers["content-type"] = []string{"application/json; charset=utf-8"}
 
+	bodyCode, bodyMessage := canonicalHTTPErrorFields(format, code, message)
 	errBody := map[string]any{
-		"code":    code,
-		"message": message,
+		"code":    bodyCode,
+		"message": bodyMessage,
 	}
 	if normalizeHTTPErrorFormat(format) == HTTPErrorFormatNested && requestID != "" {
 		errBody["request_id"] = requestID
@@ -161,7 +190,7 @@ func errorResponseWithRequestIDAndFormat(
 	}
 
 	return Response{
-		Status:   statusForErrorCode(code),
+		Status:   statusForErrorCode(canonicalRuntimeErrorCode(code)),
 		Headers:  headers,
 		Cookies:  nil,
 		Body:     body,
