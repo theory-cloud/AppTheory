@@ -35,10 +35,10 @@ func TestHTTPVerbHelpers_StrictAndNonStrict(t *testing.T) {
 	if got := app.Options("/options", handler); got == nil {
 		t.Fatalf("Options: expected non-nil app")
 	}
-	if got := app.Put("/put", handler); got == nil {
+	if got := app.Put("/put-fluent", handler); got == nil {
 		t.Fatalf("Put: expected non-nil app")
 	}
-	if got := app.Delete("/delete", handler); got == nil {
+	if got := app.Delete("/delete-fluent", handler); got == nil {
 		t.Fatalf("Delete: expected non-nil app")
 	}
 

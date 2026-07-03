@@ -98,9 +98,9 @@ func TestHello(t *testing.T) {
 
 `env.IDs.Queue(...)` pre-fills the ID generator so any `ctx.NewID()` call returns the queued value in order — handler tests stay deterministic across rerolls.
 
-## Strict routes
+## Route registration
 
-Default route registration is compatibility-oriented and may silently ignore invalid patterns. In tests and CI, prefer the strict variants:
+Fluent route registration fails closed: invalid patterns, duplicate method/pattern pairs, and nil handlers panic during registration instead of silently producing a dead route. The strict helpers remain as deprecated compatibility wrappers when a caller still needs an error-returning shape:
 
 ```go
 if _, err := app.GetStrict("/users/{id}", h); err != nil {
@@ -108,7 +108,7 @@ if _, err := app.GetStrict("/users/{id}", h); err != nil {
 }
 ```
 
-Go strict helpers return `(*App, error)` on invalid patterns at registration time so a bad route fails the build instead of silently 404-ing in production. TypeScript strict helpers throw and Python strict helpers raise.
+TypeScript and Python follow the same fail-closed registration contract.
 
 ## HTTP error format
 

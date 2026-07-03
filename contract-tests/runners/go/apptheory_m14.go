@@ -21,26 +21,37 @@ type streamCapturedResponse struct {
 
 func runFixtureM14(f Fixture) error {
 	now := time.Unix(0, 0).UTC()
-	app := newAppTheoryFixtureAppP1(now, f.Setup.Limits, f.Setup.CORS, f.Setup.HTTPErrorFormat)
+	var app *apptheory.App
+	setupErr := captureSetupError(func() error {
+		app = newAppTheoryFixtureAppP1(now, f.Setup.Limits, f.Setup.CORS, f.Setup.HTTPErrorFormat)
 
-	for _, name := range f.Setup.Middlewares {
-		mw := builtInM12Middleware(name)
-		if mw == nil {
-			return &apptheory.AppError{Code: appErrorInternal, Message: msgInternal}
+		for _, name := range f.Setup.Middlewares {
+			mw := builtInM12Middleware(name)
+			if mw == nil {
+				return &apptheory.AppError{Code: appErrorInternal, Message: msgInternal}
+			}
+			app.Use(mw)
 		}
-		app.Use(mw)
+
+		for _, r := range f.Setup.Routes {
+			handler := builtInAppTheoryHandler(r.Handler)
+			if handler == nil {
+				return &apptheory.AppError{Code: appErrorInternal, Message: msgInternal}
+			}
+			var opts []apptheory.RouteOption
+			if r.AuthRequired {
+				opts = append(opts, apptheory.RequireAuth())
+			}
+			app.Handle(r.Method, r.Path, handler, opts...)
+		}
+		return nil
+	})
+
+	if expectsSetupError(f) {
+		return compareExpectedSetupError(f, setupErr)
 	}
-
-	for _, r := range f.Setup.Routes {
-		handler := builtInAppTheoryHandler(r.Handler)
-		if handler == nil {
-			return &apptheory.AppError{Code: appErrorInternal, Message: msgInternal}
-		}
-		var opts []apptheory.RouteOption
-		if r.AuthRequired {
-			opts = append(opts, apptheory.RequireAuth())
-		}
-		app.Handle(r.Method, r.Path, handler, opts...)
+	if setupErr != nil {
+		return fmt.Errorf("setup app: %w", setupErr)
 	}
 
 	if f.Input.Request == nil {
