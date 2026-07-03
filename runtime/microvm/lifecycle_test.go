@@ -107,6 +107,65 @@ func TestLifecycleAdapterRunsFailureHook(t *testing.T) {
 	require.True(t, IsTerminalState(result.State))
 }
 
+func TestLifecycleAdapterAcceptsRealLifecycleContract(t *testing.T) {
+	calls := make([]LifecycleEvent, 0, 7)
+	adapter, err := NewLifecycleAdapter(
+		WithLifecycleContract(DefaultRealLifecycleContract()),
+		WithLifecycleHandler(HookValidate, recordLifecycleCall(&calls)),
+		WithLifecycleHandler(HookRun, recordLifecycleCall(&calls)),
+		WithLifecycleHandler(HookReady, recordLifecycleCall(&calls)),
+		WithLifecycleHandler(HookSuspend, recordLifecycleCall(&calls)),
+		WithLifecycleHandler(HookResume, recordLifecycleCall(&calls)),
+		WithLifecycleHandler(HookTerminate, recordLifecycleCall(&calls)),
+		WithLifecycleHandler(HookFailure, recordLifecycleCall(&calls)),
+	)
+	require.NoError(t, err)
+
+	state := StateRequested
+	for _, hook := range []LifecycleHook{HookValidate, HookRun, HookReady, HookSuspend, HookResume, HookTerminate} {
+		result, handleErr := adapter.Handle(context.Background(), LifecycleEvent{
+			RequestID: "req-1",
+			TenantID:  "tenant-1",
+			Namespace: "ns-1",
+			SessionID: "session-1",
+			Hook:      hook,
+			State:     state,
+		})
+		require.NoError(t, handleErr)
+		state = result.State
+	}
+	require.Equal(t, StateTerminated, state)
+
+	failure, err := adapter.Handle(context.Background(), LifecycleEvent{
+		RequestID: "req-2",
+		TenantID:  "tenant-1",
+		Namespace: "ns-1",
+		SessionID: "session-1",
+		Hook:      HookFailure,
+		State:     StateRunning,
+	})
+	require.NoError(t, err)
+	require.Equal(t, StateFailed, failure.State)
+	require.Len(t, calls, 7)
+	require.Equal(t, []LifecycleState{
+		StateValidating,
+		StateRunning,
+		StateReady,
+		StateSuspending,
+		StateResuming,
+		StateTerminating,
+		StateFailed,
+	}, []LifecycleState{
+		calls[0].State,
+		calls[1].State,
+		calls[2].State,
+		calls[3].State,
+		calls[4].State,
+		calls[5].State,
+		calls[6].State,
+	})
+}
+
 func recordLifecycleCall(calls *[]LifecycleEvent) LifecycleHandler {
 	return func(_ context.Context, event LifecycleEvent) error {
 		*calls = append(*calls, event)
