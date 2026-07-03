@@ -602,53 +602,55 @@ func sortedOpenAPITags(tags []string) []string {
 func openAPIEnumValues(value any) ([]string, error) {
 	switch typed := value.(type) {
 	case []string:
-		out := make([]string, 0, len(typed))
-		for _, item := range typed {
-			out = append(out, strings.TrimSpace(item))
-		}
-		return out, nil
+		return openAPIEnumStringValues(typed), nil
 	case []any:
-		out := make([]string, 0, len(typed))
-		for _, item := range typed {
-			text, err := openAPIEnumItemValue(item)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, text)
-		}
-		return out, nil
+		return openAPIEnumSliceValues(reflect.ValueOf(typed))
 	case string:
-		parts := strings.Split(typed, "|")
-		out := make([]string, 0, len(parts))
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			if part != "" {
-				out = append(out, part)
-			}
+		return openAPIEnumPipeValues(typed), nil
+	case nil:
+		return nil, nil
+	}
+	reflected := reflect.ValueOf(value)
+	if reflected.IsValid() && (reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array) {
+		return openAPIEnumSliceValues(reflected)
+	}
+	text, err := openAPIEnumItemValue(value)
+	if err != nil {
+		return nil, err
+	}
+	return []string{text}, nil
+}
+
+func openAPIEnumStringValues(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, item := range values {
+		out = append(out, strings.TrimSpace(item))
+	}
+	return out
+}
+
+func openAPIEnumPipeValues(value string) []string {
+	parts := strings.Split(value, "|")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
 		}
-		return out, nil
-	default:
-		if value == nil {
-			return nil, nil
-		}
-		reflected := reflect.ValueOf(value)
-		if reflected.IsValid() && (reflected.Kind() == reflect.Slice || reflected.Kind() == reflect.Array) {
-			out := make([]string, 0, reflected.Len())
-			for index := 0; index < reflected.Len(); index++ {
-				text, err := openAPIEnumItemValue(reflected.Index(index).Interface())
-				if err != nil {
-					return nil, err
-				}
-				out = append(out, text)
-			}
-			return out, nil
-		}
-		text, err := openAPIEnumItemValue(value)
+	}
+	return out
+}
+
+func openAPIEnumSliceValues(values reflect.Value) ([]string, error) {
+	out := make([]string, 0, values.Len())
+	for index := 0; index < values.Len(); index++ {
+		text, err := openAPIEnumItemValue(values.Index(index).Interface())
 		if err != nil {
 			return nil, err
 		}
-		return []string{text}, nil
+		out = append(out, text)
 	}
+	return out, nil
 }
 
 func openAPIEnumItemValue(value any) (string, error) {

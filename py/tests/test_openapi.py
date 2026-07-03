@@ -75,6 +75,8 @@ class OpenAPITests(unittest.TestCase):
     def test_validation_errors_fail_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "title is required"):
             apptheory.generate_openapi({"title": "", "version": "v1", "routes": []})
+        with self.assertRaisesRegex(ValueError, "version is required"):
+            apptheory.generate_openapi({"title": "API", "version": "", "routes": []})
 
         duplicate = {
             "title": "API",
@@ -102,6 +104,45 @@ class OpenAPITests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "unsupported source"):
             apptheory.generate_openapi(invalid_source)
+
+        invalid_status = {
+            "title": "API",
+            "version": "v1",
+            "routes": [{"method": "GET", "path": "/x", "operation_id": "one", "success_status": 99, "response": {}}],
+        }
+        with self.assertRaisesRegex(ValueError, "success_status must be an HTTP status"):
+            apptheory.generate_openapi(invalid_status)
+
+        blank_parameter_name = {
+            "title": "API",
+            "version": "v1",
+            "routes": [
+                {
+                    "method": "GET",
+                    "path": "/x",
+                    "operation_id": "one",
+                    "request": {"fields": [{"field": "raw", "source": "query", "name": "", "type": "string"}]},
+                    "response": {},
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "name is required"):
+            apptheory.generate_openapi(blank_parameter_name)
+
+        blank_response_name = {
+            "title": "API",
+            "version": "v1",
+            "routes": [
+                {
+                    "method": "GET",
+                    "path": "/x",
+                    "operation_id": "one",
+                    "response": {"fields": [{"field": "raw", "source": "response", "name": "", "type": "string"}]},
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "name is required"):
+            apptheory.generate_openapi(blank_response_name)
 
         invalid_integer_rule = {
             "title": "API",
@@ -182,6 +223,32 @@ class OpenAPITests(unittest.TestCase):
                 }
                 with self.assertRaisesRegex(ValueError, "min must be a number"):
                     apptheory.generate_openapi(invalid_numeric_rule)
+
+        invalid_float_nan = {
+            "title": "API",
+            "version": "v1",
+            "routes": [
+                {
+                    "method": "GET",
+                    "path": "/x",
+                    "operation_id": "one",
+                    "request": {
+                        "fields": [
+                            {
+                                "field": "count",
+                                "source": "query",
+                                "name": "count",
+                                "type": "integer",
+                                "validation": [{"rule": "min", "value": float("nan")}],
+                            }
+                        ]
+                    },
+                    "response": {},
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "min must be a number"):
+            apptheory.generate_openapi(invalid_float_nan)
 
 
 if __name__ == "__main__":
