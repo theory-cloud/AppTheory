@@ -1,0 +1,79 @@
+{
+  "id": "mcp.transport.session_expired_rejected",
+  "tier": "mcp",
+  "name": "MCP expired sessions fail closed as not found",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      },
+      "session_store": {
+        "seed": [
+          {
+            "id": "sess-expired",
+            "created_unix_ms": 1,
+            "expires_unix_ms": 1000,
+            "data": {
+              "protocolVersion": "2025-11-25"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "ping_expired",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "mcp-session-id": [
+                "sess-expired"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "content-type": [
+                "application/json"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"expired\",\"method\":\"ping\"}"
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 404,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "error": "session not found"
+          }
+        }
+      ]
+    }
+  }
+}

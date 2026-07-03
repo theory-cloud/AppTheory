@@ -1,0 +1,192 @@
+{
+  "id": "mcp.transport.session_lifecycle_create_delete_reject",
+  "tier": "mcp",
+  "name": "MCP sessions are created by initialize, accepted for requests, deleted, then rejected",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      },
+      "id_sequence": [
+        "sess-lifecycle"
+      ]
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "initialize",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"init\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\"}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "ping",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "mcp-session-id": [
+                "sess-lifecycle"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "content-type": [
+                "application/json"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"ping\",\"method\":\"ping\"}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "delete_session",
+          "request": {
+            "method": "DELETE",
+            "path": "/mcp",
+            "headers": {
+              "mcp-session-id": [
+                "sess-lifecycle"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": ""
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "ping_after_delete",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "mcp-session-id": [
+                "sess-lifecycle"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "content-type": [
+                "application/json"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"after\",\"method\":\"ping\"}"
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ],
+            "mcp-session-id": [
+              "sess-lifecycle"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "init",
+            "result": {
+              "protocolVersion": "2025-11-25",
+              "capabilities": {},
+              "serverInfo": {
+                "name": "ContractMCP",
+                "version": "sp09"
+              }
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "ping",
+            "result": {}
+          }
+        },
+        {
+          "status": 202,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false
+        },
+        {
+          "status": 404,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "error": "session not found"
+          }
+        }
+      ]
+    }
+  }
+}

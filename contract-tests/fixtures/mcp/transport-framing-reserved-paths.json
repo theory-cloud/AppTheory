@@ -1,0 +1,237 @@
+{
+  "id": "mcp.transport.streamable_http_framing_reserved_paths",
+  "tier": "mcp",
+  "name": "MCP Streamable HTTP framing pins GET SSE, response acceptance, header rejection, and reserved path behavior",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      },
+      "id_sequence": [
+        "sess-transport"
+      ]
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "initialize",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"init\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\"}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "get_listener",
+          "request": {
+            "method": "GET",
+            "path": "/mcp",
+            "headers": {
+              "mcp-session-id": [
+                "sess-transport"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "accept": [
+                "text/event-stream"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": ""
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "post_missing_sse_accept",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"bad\",\"method\":\"ping\"}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "jsonrpc_response_accepted",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "mcp-session-id": [
+                "sess-transport"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "content-type": [
+                "application/json"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"client-rsp\",\"result\":{\"ok\":true}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "reserved_suffix_path",
+          "request": {
+            "method": "POST",
+            "path": "/mcp/reserved",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"reserved\",\"method\":\"ping\"}"
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ],
+            "mcp-session-id": [
+              "sess-transport"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "init",
+            "result": {
+              "protocolVersion": "2025-11-25",
+              "capabilities": {},
+              "serverInfo": {
+                "name": "ContractMCP",
+                "version": "sp09"
+              }
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "text/event-stream"
+            ],
+            "cache-control": [
+              "no-cache"
+            ],
+            "connection": [
+              "keep-alive"
+            ],
+            "mcp-session-id": [
+              "sess-transport"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body": {
+            "encoding": "utf8",
+            "value": ": keepalive\n\n"
+          }
+        },
+        {
+          "status": 400,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "error": "POST /mcp requires Accept: application/json and text/event-stream"
+          }
+        },
+        {
+          "status": 202,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false
+        },
+        {
+          "status": 404,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json; charset=utf-8"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "error": {
+              "code": "app.not_found",
+              "message": "not found",
+              "request_id": "req_mcp_123"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
