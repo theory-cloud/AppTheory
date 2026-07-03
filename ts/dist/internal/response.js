@@ -64,11 +64,34 @@ function statusForErrorCode(code) {
             return 500;
     }
 }
+function canonicalHTTPErrorFields(format, code, message) {
+    if (normalizeHTTPErrorFormat(format) === HTTP_ERROR_FORMAT_FLAT_LEGACY) {
+        return { code, message };
+    }
+    switch (code) {
+        case "EMPTY_BODY":
+            return { code: "app.bad_request", message: "request body is empty" };
+        case "INVALID_JSON":
+            return { code: "app.bad_request", message: "invalid json" };
+        default:
+            return { code, message };
+    }
+}
+function canonicalRuntimeErrorCode(code) {
+    switch (code) {
+        case "EMPTY_BODY":
+        case "INVALID_JSON":
+            return "app.bad_request";
+        default:
+            return code;
+    }
+}
 function errorBodyFromAppTheoryError(format, err, requestId) {
     const code = String(err.code ?? "").trim() || "app.internal";
+    const canonical = canonicalHTTPErrorFields(format, code, String(err.message ?? ""));
     const error = {
-        code,
-        message: String(err.message ?? ""),
+        code: canonical.code,
+        message: canonical.message,
     };
     if (normalizeHTTPErrorFormat(format) !== HTTP_ERROR_FORMAT_FLAT_LEGACY &&
         typeof err.statusCode === "number" &&
@@ -105,9 +128,10 @@ function errorResponseFromAppTheoryErrorWithFormat(format, err, headers = {}, re
     const outHeaders = { ...canonicalizeHeaders(headers) };
     outHeaders["content-type"] = ["application/json; charset=utf-8"];
     const code = String(err.code ?? "").trim() || "app.internal";
+    const canonical = canonicalHTTPErrorFields(format, code, err.message);
     const status = typeof err.statusCode === "number" && err.statusCode > 0
         ? err.statusCode
-        : statusForErrorCode(code);
+        : statusForErrorCode(canonical.code);
     return normalizeResponse({
         status,
         headers: outHeaders,
@@ -123,10 +147,10 @@ export function errorResponseWithFormat(format, code, message, headers = {}) {
     const outHeaders = { ...canonicalizeHeaders(headers) };
     outHeaders["content-type"] = ["application/json; charset=utf-8"];
     return normalizeResponse({
-        status: statusForErrorCode(code),
+        status: statusForErrorCode(canonicalRuntimeErrorCode(code)),
         headers: outHeaders,
         cookies: [],
-        body: serializeHTTPErrorBody(format, { code, message }),
+        body: serializeHTTPErrorBody(format, canonicalHTTPErrorFields(format, code, message)),
         isBase64: false,
     });
 }
@@ -136,13 +160,17 @@ export function errorResponseWithRequestId(code, message, headers = {}, requestI
 export function errorResponseWithRequestIdAndFormat(format, code, message, headers = {}, requestId = "") {
     const outHeaders = { ...canonicalizeHeaders(headers) };
     outHeaders["content-type"] = ["application/json; charset=utf-8"];
-    const error = { code, message };
+    const canonical = canonicalHTTPErrorFields(format, code, message);
+    const error = {
+        code: canonical.code,
+        message: canonical.message,
+    };
     if (normalizeHTTPErrorFormat(format) !== HTTP_ERROR_FORMAT_FLAT_LEGACY &&
         requestId) {
         error["request_id"] = String(requestId);
     }
     return normalizeResponse({
-        status: statusForErrorCode(code),
+        status: statusForErrorCode(canonicalRuntimeErrorCode(code)),
         headers: outHeaders,
         cookies: [],
         body: serializeHTTPErrorBody(format, error),
