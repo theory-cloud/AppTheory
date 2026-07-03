@@ -17,8 +17,6 @@ import (
 	"github.com/theory-cloud/apptheory/runtime/mcp"
 )
 
-const mcpProtocolVersion = "2025-11-25"
-
 func runFixtureMCP(f Fixture) error {
 	if f.Input.MCP == nil {
 		return errors.New("fixture missing input.mcp")
@@ -64,7 +62,10 @@ func newFixtureMCPServer(setup FixtureMCPSetup) (*mcp.Server, error) {
 
 	serverIDs := newSequenceIDGenerator(setup.IDSequence, "mcp-id")
 	streamIDs := newSequenceIDGenerator(setup.StreamIDSequence, "mcp-stream")
-	sessionStore := newFixtureMCPSessionStore(setup.SessionStore)
+	sessionStore, err := newFixtureMCPSessionStore(setup.SessionStore)
+	if err != nil {
+		return nil, fmt.Errorf("seed session store: %w", err)
+	}
 	streamStore := mcp.NewMemoryStreamStore(mcp.WithStreamIDGenerator(streamIDs))
 
 	opts := []mcp.ServerOption{
@@ -139,7 +140,7 @@ func (g *sequenceIDGenerator) NewID() string {
 	return fmt.Sprintf("%s-%d", g.fallback, g.next)
 }
 
-func newFixtureMCPSessionStore(config FixtureMCPSessionStore) *mcp.MemorySessionStore {
+func newFixtureMCPSessionStore(config FixtureMCPSessionStore) (*mcp.MemorySessionStore, error) {
 	store := mcp.NewMemorySessionStore(mcp.WithClock(fixedClock{now: time.Unix(1700000000, 0).UTC()}))
 	for _, seed := range config.Seed {
 		created := timeFromUnixMilliseconds(seed.CreatedUnixMS)
@@ -152,9 +153,11 @@ func newFixtureMCPSessionStore(config FixtureMCPSessionStore) *mcp.MemorySession
 			ExpiresAt: timeFromUnixMilliseconds(seed.ExpiresUnixMS),
 			Data:      cloneStringMap(seed.Data),
 		}
-		_ = store.Put(context.Background(), sess)
+		if err := store.Put(context.Background(), sess); err != nil {
+			return nil, fmt.Errorf("seed session %q: %w", seed.ID, err)
+		}
 	}
-	return store
+	return store, nil
 }
 
 func timeFromUnixMilliseconds(ms int64) time.Time {
@@ -336,15 +339,15 @@ func fixtureMCPPromptHandler(name string) (mcp.PromptHandler, error) {
 					return nil, err
 				}
 			}
-			name := strings.TrimSpace(payload.Name)
-			if name == "" {
-				name = "friend"
+			renderedName := strings.TrimSpace(payload.Name)
+			if renderedName == "" {
+				renderedName = "friend"
 			}
 			return &mcp.PromptResult{
 				Description: "Rendered greeting",
 				Messages: []mcp.PromptMessage{{
 					Role:    "user",
-					Content: mcp.ContentBlock{Type: "text", Text: "Hello, " + name + "."},
+					Content: mcp.ContentBlock{Type: "text", Text: "Hello, " + renderedName + "."},
 				}},
 			}, nil
 		}, nil
@@ -368,9 +371,9 @@ func invokeMCPFixtureStep(app *apptheory.App, step FixtureMCPStep) (fixtureMCPAc
 		return fixtureMCPActualStep{}, fmt.Errorf("decode request body: %w", err)
 	}
 	if step.Request.IsBase64 {
-		decoded, err := decodeBase64String(string(body))
-		if err != nil {
-			return fixtureMCPActualStep{}, fmt.Errorf("decode base64 request body: %w", err)
+		decoded, decodeErr := decodeBase64String(string(body))
+		if decodeErr != nil {
+			return fixtureMCPActualStep{}, fmt.Errorf("decode base64 request body: %w", decodeErr)
 		}
 		body = decoded
 	}
@@ -388,9 +391,9 @@ func invokeMCPFixtureStep(app *apptheory.App, step FixtureMCPStep) (fixtureMCPAc
 
 	actualBody := append([]byte(nil), resp.Body...)
 	if resp.BodyReader != nil {
-		read, err := io.ReadAll(resp.BodyReader)
-		if err != nil {
-			return fixtureMCPActualStep{}, fmt.Errorf("read response body: %w", err)
+		read, readErr := io.ReadAll(resp.BodyReader)
+		if readErr != nil {
+			return fixtureMCPActualStep{}, fmt.Errorf("read response body: %w", readErr)
 		}
 		actualBody = append(actualBody, read...)
 	}
