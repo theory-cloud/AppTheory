@@ -2939,23 +2939,32 @@ def run_fixture_m14(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespon
         auth_hook=lambda ctx: _fixture_auth_hook(runtime, ctx),
     )
 
-    for name in setup.get("middlewares", []) or []:
-        mw = _built_in_m12_middleware(runtime, str(name or "").strip())
-        if mw is None:
-            raise RuntimeError(f"unknown middleware {name!r}")
-        app.use(mw)
+    actual_error: Exception | None = None
+    try:
+        for name in setup.get("middlewares", []) or []:
+            mw = _built_in_m12_middleware(runtime, str(name or "").strip())
+            if mw is None:
+                raise RuntimeError(f"unknown middleware {name!r}")
+            app.use(mw)
 
-    for route in setup.get("routes", []) or []:
-        name = str(route.get("handler", ""))
-        handler = _built_in_apptheory_handler(runtime, name)
-        if handler is None:
-            raise RuntimeError(f"unknown handler {name!r}")
-        app.handle(
-            route.get("method", ""),
-            route.get("path", ""),
-            handler,
-            auth_required=bool(route.get("auth_required")),
-        )
+        for route in setup.get("routes", []) or []:
+            name = str(route.get("handler", ""))
+            handler = _built_in_apptheory_handler(runtime, name)
+            if handler is None:
+                raise RuntimeError(f"unknown handler {name!r}")
+            app.handle(
+                route.get("method", ""),
+                route.get("path", ""),
+                handler,
+                auth_required=bool(route.get("auth_required")),
+            )
+    except Exception as exc:  # noqa: BLE001
+        actual_error = exc
+
+    if expects_setup_error(fixture):
+        return compare_setup_error(fixture, actual_error)
+    if actual_error is not None:
+        raise actual_error
 
     input_ = fixture.get("input", {}).get("request", {})
     req_body = decode_fixture_body(input_.get("body"))
