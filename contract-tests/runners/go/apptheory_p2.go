@@ -84,57 +84,7 @@ func runFixtureP2(f Fixture) error {
 				})
 			},
 		}),
-		apptheory.WithPolicyHook(func(ctx *apptheory.Context) (*apptheory.PolicyDecision, error) {
-			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-rate-limit-content-type-lowercase")) != "" {
-				return &apptheory.PolicyDecision{
-					Code:    "app.rate_limited",
-					Message: "rate limited",
-					Headers: map[string][]string{"retry-after": {"1"}, "content-type": {"text/plain; charset=utf-8"}},
-				}, nil
-			}
-			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-rate-limit-content-type")) != "" {
-				return &apptheory.PolicyDecision{
-					Code:    "app.rate_limited",
-					Message: "rate limited",
-					Headers: map[string][]string{"retry-after": {"1"}, "Content-Type": {"text/plain; charset=utf-8"}},
-				}, nil
-			}
-			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-rate-limit-multi-window")) != "" {
-				return &apptheory.PolicyDecision{
-					Code:    "app.rate_limited",
-					Message: "rate limited",
-					Headers: map[string][]string{
-						"retry-after":           {"30"},
-						"x-ratelimit-limit":     {"2"},
-						"x-ratelimit-remaining": {"0"},
-						"x-ratelimit-reset":     {"60"},
-						"x-ratelimit-window":    {"1m"},
-					},
-				}, nil
-			}
-			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-rate-limit-store-failure")) != "" {
-				return &apptheory.PolicyDecision{
-					Code:    "app.overloaded",
-					Message: "overloaded",
-					Headers: map[string][]string{"retry-after": {"1"}, "x-rate-limit-fail-closed": {"true"}},
-				}, nil
-			}
-			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-rate-limit")) != "" {
-				return &apptheory.PolicyDecision{
-					Code:    "app.rate_limited",
-					Message: "rate limited",
-					Headers: map[string][]string{"retry-after": {"1"}},
-				}, nil
-			}
-			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-shed")) != "" {
-				return &apptheory.PolicyDecision{
-					Code:    "app.overloaded",
-					Message: "overloaded",
-					Headers: map[string][]string{"retry-after": {"1"}},
-				}, nil
-			}
-			return nil, nil
-		}),
+		apptheory.WithPolicyHook(fixtureP2PolicyDecision),
 	)
 
 	for _, r := range f.Setup.Routes {
@@ -185,6 +135,56 @@ func runFixtureP2(f Fixture) error {
 
 	actual := app.Serve(ctx, req)
 	return compareFixtureResponse(f, actual, logs, metrics, spans, splitEMFLogLines(emfBuffer.Bytes()))
+}
+
+func fixtureP2PolicyDecision(ctx *apptheory.Context) (*apptheory.PolicyDecision, error) {
+	headers := ctx.Request.Headers
+	switch {
+	case strings.TrimSpace(headerFirstValue(headers, "x-force-rate-limit-content-type-lowercase")) != "":
+		return &apptheory.PolicyDecision{
+			Code:    "app.rate_limited",
+			Message: "rate limited",
+			Headers: map[string][]string{"retry-after": {"1"}, "content-type": {"text/plain; charset=utf-8"}},
+		}, nil
+	case strings.TrimSpace(headerFirstValue(headers, "x-force-rate-limit-content-type")) != "":
+		return &apptheory.PolicyDecision{
+			Code:    "app.rate_limited",
+			Message: "rate limited",
+			Headers: map[string][]string{"retry-after": {"1"}, "Content-Type": {"text/plain; charset=utf-8"}},
+		}, nil
+	case strings.TrimSpace(headerFirstValue(headers, "x-force-rate-limit-multi-window")) != "":
+		return &apptheory.PolicyDecision{
+			Code:    "app.rate_limited",
+			Message: "rate limited",
+			Headers: map[string][]string{
+				"retry-after":           {"30"},
+				"x-ratelimit-limit":     {"2"},
+				"x-ratelimit-remaining": {"0"},
+				"x-ratelimit-reset":     {"60"},
+				"x-ratelimit-window":    {"1m"},
+			},
+		}, nil
+	case strings.TrimSpace(headerFirstValue(headers, "x-force-rate-limit-store-failure")) != "":
+		return &apptheory.PolicyDecision{
+			Code:    "app.overloaded",
+			Message: "overloaded",
+			Headers: map[string][]string{"retry-after": {"1"}, "x-rate-limit-fail-closed": {"true"}},
+		}, nil
+	case strings.TrimSpace(headerFirstValue(headers, "x-force-rate-limit")) != "":
+		return &apptheory.PolicyDecision{
+			Code:    "app.rate_limited",
+			Message: "rate limited",
+			Headers: map[string][]string{"retry-after": {"1"}},
+		}, nil
+	case strings.TrimSpace(headerFirstValue(headers, "x-force-shed")) != "":
+		return &apptheory.PolicyDecision{
+			Code:    "app.overloaded",
+			Message: "overloaded",
+			Headers: map[string][]string{"retry-after": {"1"}},
+		}, nil
+	default:
+		return nil, nil
+	}
 }
 
 func newFixtureEMFMetricSink(
