@@ -34,25 +34,16 @@ func RegisterControllerRoutes(app *apptheory.App, controller *Controller) (*appt
 		{"POST", "/microvms/{session_id}/shell-token", CommandShellAuthToken},
 	}
 	for _, route := range routes {
-		if err := registerControllerRoute(app, route.method, route.path, controllerRouteHandler(controller, route.command)); err != nil {
+		if _, err := app.HandleStrict( //nolint:staticcheck // RegisterControllerRoutes preserves its error-returning API.
+			route.method,
+			route.path,
+			controllerRouteHandler(controller, route.command),
+			apptheory.RequireAuth(),
+		); err != nil {
 			return app, err
 		}
 	}
 	return app, nil
-}
-
-func registerControllerRoute(app *apptheory.App, method, path string, handler apptheory.Handler) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			if recoveredErr, ok := r.(error); ok {
-				err = recoveredErr
-				return
-			}
-			err = errors.New("apptheory: microvm controller route registration failed")
-		}
-	}()
-	app.Handle(method, path, handler, apptheory.RequireAuth())
-	return nil
 }
 
 // RegisterMicroVMControllerRoutes is an explicit alias for RegisterControllerRoutes.
