@@ -4769,6 +4769,55 @@ function builtInAppTheoryHandler(runtime, name, effects) {
           isBase64: false,
         };
       };
+    case "sse_heartbeat_keepalive":
+      return () => ({
+        status: 200,
+        headers: {
+          "content-type": ["text/event-stream"],
+          "cache-control": ["no-cache"],
+          connection: ["keep-alive"],
+        },
+        cookies: [],
+        body: Buffer.from(
+          ': keep-alive\n\nid: 1\nevent: message\ndata: {"ok":true}\n\n',
+          "utf8",
+        ),
+        isBase64: false,
+      });
+    case "sse_client_disconnect_mid_stream":
+      return () => ({
+        status: 200,
+        headers: {
+          "content-type": ["text/event-stream"],
+          "cache-control": ["no-cache"],
+          connection: ["keep-alive"],
+        },
+        cookies: [],
+        body: Buffer.alloc(0),
+        bodyStream: (async function* () {
+          yield Buffer.from(
+            "id: 1\nevent: message\ndata: before-disconnect\n\n",
+            "utf8",
+          );
+        })(),
+        isBase64: false,
+      });
+    case "sse_late_error_after_first_byte":
+      return () => ({
+        status: 200,
+        headers: {
+          "content-type": ["text/event-stream"],
+          "cache-control": ["no-cache"],
+          connection: ["keep-alive"],
+        },
+        cookies: [],
+        body: Buffer.alloc(0),
+        bodyStream: (async function* () {
+          yield Buffer.from("data: hello\n\n", "utf8");
+          throw new runtime.AppError("app.internal", "boom");
+        })(),
+        isBase64: false,
+      });
     case "stream_mutate_headers_after_first_chunk":
       return () => {
         const resp = {
