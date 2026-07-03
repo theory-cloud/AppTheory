@@ -126,6 +126,7 @@ function errorBodyFromAppTheoryError(
   format: HTTPErrorFormat,
   err: AppTheoryError,
   requestId: string,
+  traceId: string = "",
 ): Record<string, unknown> {
   const code = String(err.code ?? "").trim() || "app.internal";
   const canonical = canonicalHTTPErrorFields(
@@ -155,8 +156,10 @@ function errorBodyFromAppTheoryError(
     if (resolvedRequestId) {
       error["request_id"] = resolvedRequestId;
     }
-    if (String(err.traceId ?? "").trim()) {
-      error["trace_id"] = String(err.traceId);
+    const resolvedTraceId =
+      String(err.traceId ?? "").trim() || String(traceId ?? "").trim();
+    if (resolvedTraceId) {
+      error["trace_id"] = resolvedTraceId;
     }
     if (String(err.timestamp ?? "").trim()) {
       error["timestamp"] = String(err.timestamp);
@@ -184,6 +187,7 @@ function errorResponseFromAppTheoryErrorWithFormat(
   err: AppTheoryError,
   headers: Headers = {},
   requestId: string = "",
+  traceId: string = "",
 ): NormalizedResponse {
   const outHeaders = { ...canonicalizeHeaders(headers) };
   outHeaders["content-type"] = ["application/json; charset=utf-8"];
@@ -201,7 +205,7 @@ function errorResponseFromAppTheoryErrorWithFormat(
     cookies: [],
     body: serializeHTTPErrorBody(
       format,
-      errorBodyFromAppTheoryError(format, err, requestId),
+      errorBodyFromAppTheoryError(format, err, requestId, traceId),
     ),
     isBase64: false,
   });
@@ -263,6 +267,24 @@ export function errorResponseWithRequestIdAndFormat(
   headers: Headers = {},
   requestId: string = "",
 ): NormalizedResponse {
+  return errorResponseWithRequestIdTraceIdAndFormat(
+    format,
+    code,
+    message,
+    headers,
+    requestId,
+    "",
+  );
+}
+
+export function errorResponseWithRequestIdTraceIdAndFormat(
+  format: HTTPErrorFormat,
+  code: string,
+  message: string,
+  headers: Headers = {},
+  requestId: string = "",
+  traceId: string = "",
+): NormalizedResponse {
   const outHeaders = { ...canonicalizeHeaders(headers) };
   outHeaders["content-type"] = ["application/json; charset=utf-8"];
 
@@ -276,6 +298,10 @@ export function errorResponseWithRequestIdAndFormat(
     requestId
   ) {
     error["request_id"] = String(requestId);
+  }
+  if (normalizeHTTPErrorFormat(format) !== HTTP_ERROR_FORMAT_FLAT_LEGACY) {
+    const resolvedTraceId = String(traceId ?? "").trim();
+    if (resolvedTraceId) error["trace_id"] = resolvedTraceId;
   }
 
   return normalizeResponse({
@@ -320,28 +346,45 @@ export function responseForErrorWithRequestIdAndFormat(
   err: unknown,
   requestId: string,
 ): NormalizedResponse {
+  return responseForErrorWithRequestIdTraceIdAndFormat(
+    format,
+    err,
+    requestId,
+    "",
+  );
+}
+
+export function responseForErrorWithRequestIdTraceIdAndFormat(
+  format: HTTPErrorFormat,
+  err: unknown,
+  requestId: string,
+  traceId: string,
+): NormalizedResponse {
   if (err instanceof AppTheoryError) {
     return errorResponseFromAppTheoryErrorWithFormat(
       format,
       err,
       {},
       requestId,
+      traceId,
     );
   }
   if (err instanceof AppError) {
-    return errorResponseWithRequestIdAndFormat(
+    return errorResponseWithRequestIdTraceIdAndFormat(
       format,
       err.code,
       err.message,
       {},
       requestId,
+      traceId,
     );
   }
-  return errorResponseWithRequestIdAndFormat(
+  return errorResponseWithRequestIdTraceIdAndFormat(
     format,
     "app.internal",
     "internal error",
     {},
     requestId,
+    traceId,
   );
 }

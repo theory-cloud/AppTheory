@@ -125,10 +125,12 @@ export class Context {
     body: Uint8Array;
     isBase64: boolean;
     sourceProvenance: SourceProvenance;
+    traceId: string;
   };
   readonly params: Record<string, string>;
 
   requestId: string;
+  traceId: string;
   tenantId: string;
   authIdentity: string;
   remainingMs: number;
@@ -147,6 +149,7 @@ export class Context {
     ids?: IdGenerator;
     ctx?: unknown;
     requestId?: string;
+    traceId?: string;
     tenantId?: string;
     authIdentity?: string;
     remainingMs?: number;
@@ -160,6 +163,7 @@ export class Context {
     this._clock = options.clock ?? new RealClock();
     this._ids = options.ids ?? new RandomIdGenerator();
     this.requestId = options.requestId ?? "";
+    this.traceId = options.traceId ?? this.request.traceId ?? "";
     this.tenantId = options.tenantId ?? "";
     this.authIdentity = options.authIdentity ?? "";
     this.remainingMs = Number(options.remainingMs ?? 0);
@@ -201,6 +205,10 @@ export class Context {
 
   sourceIP(): string {
     return this.sourceProvenance().sourceIP;
+  }
+
+  traceContextId(): string {
+    return String(this.traceId ?? "").trim();
   }
 
   jsonValue<T = unknown>(): T {

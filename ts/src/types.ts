@@ -19,6 +19,7 @@ export interface Request {
   body?: Uint8Array;
   isBase64?: boolean;
   sourceProvenance?: SourceProvenance;
+  traceId?: string;
 }
 
 export interface Response {

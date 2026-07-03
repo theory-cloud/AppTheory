@@ -90,14 +90,15 @@ import {
   errorResponse,
   errorResponseWithFormat,
   errorResponseWithRequestId,
-  errorResponseWithRequestIdAndFormat,
+  errorResponseWithRequestIdTraceIdAndFormat,
   normalizeResponse,
   responseForError,
   responseForErrorWithFormat,
   responseForErrorWithRequestId,
-  responseForErrorWithRequestIdAndFormat,
+  responseForErrorWithRequestIdTraceIdAndFormat,
 } from "./internal/response.js";
 import { Router } from "./internal/router.js";
+import { extractTraceIdFromHeaders } from "./internal/trace-context.js";
 import { vary } from "./response.js";
 import type { BodyStream, Headers, Query, Request, Response } from "./types.js";
 import { WebSocketManagementClient } from "./websocket-management.js";
@@ -157,6 +158,7 @@ export interface LogRecord {
   status: number;
   errorCode: string;
   durationMs: number;
+  traceId?: string;
   trigger?: string;
   correlationId?: string;
   source?: string;
@@ -245,6 +247,7 @@ type RequestContextOptions = {
     err: unknown,
     request: Request,
     requestId: string,
+    traceId?: string,
   ) => Response;
   fallbackRequestId?: string;
 };
@@ -435,18 +438,20 @@ export class App {
     );
   }
 
-  private _httpErrorResponseWithRequestId(
+  private _httpErrorResponseWithRequestIdTraceId(
     code: string,
     message: string,
     headers: Headers = {},
     requestId: string = "",
+    traceId: string = "",
   ): Response {
-    return errorResponseWithRequestIdAndFormat(
+    return errorResponseWithRequestIdTraceIdAndFormat(
       this._httpErrorFormat,
       code,
       message,
       headers,
       requestId,
+      traceId,
     );
   }
 
@@ -454,14 +459,16 @@ export class App {
     return responseForErrorWithFormat(this._httpErrorFormat, err);
   }
 
-  private _responseForHTTPErrorWithRequestId(
+  private _responseForHTTPErrorWithRequestIdTraceId(
     err: unknown,
     requestId: string,
+    traceId: string,
   ): Response {
-    return responseForErrorWithRequestIdAndFormat(
+    return responseForErrorWithRequestIdTraceIdAndFormat(
       this._httpErrorFormat,
       err,
       requestId,
+      traceId,
     );
   }
 
@@ -528,12 +535,25 @@ export class App {
       err: unknown,
       errorRequest: Request,
       requestId: string,
+      traceId = "",
     ): Response => {
       if (typeof contextOptions?.errorResponder === "function") {
-        return contextOptions.errorResponder(err, errorRequest, requestId);
+        return contextOptions.errorResponder(
+          err,
+          errorRequest,
+          requestId,
+          traceId,
+        );
       }
       if (requestId) {
-        return this._responseForHTTPErrorWithRequestId(err, requestId);
+        const resolvedTraceId =
+          String(traceId ?? "").trim() ||
+          String(errorRequest?.traceId ?? "").trim();
+        return this._responseForHTTPErrorWithRequestIdTraceId(
+          err,
+          requestId,
+          resolvedTraceId,
+        );
       }
       return this._responseForHTTPError(err);
     };
@@ -587,6 +607,7 @@ export class App {
         clock: this._clock,
         ids: this._ids,
         ctx,
+        traceId: normalized.traceId,
         appSync: contextOptions?.appSync ?? null,
       });
       contextOptions?.configure?.(requestCtx);
@@ -614,6 +635,7 @@ export class App {
     const startedAtMs = this._clock.now().valueOf();
     const preHeaders = canonicalizeHeaders(request.headers);
     const preQuery = cloneQuery(request.query);
+    let traceId = extractTraceIdFromHeaders(preHeaders);
     let method = normalizeMethod(request.method);
     let path = normalizePath(request.path);
 
@@ -641,6 +663,7 @@ export class App {
           path,
           requestId,
           tenantId,
+          traceId,
           status: out.status,
           errorCode: errCode ?? "",
           durationMs: durationMs(startedAtMs, this._clock.now().valueOf()),
@@ -669,11 +692,15 @@ export class App {
       normalized = normalizeRequest(request, this._limits.maxRequestBytes);
     } catch (err) {
       const code = errorCodeFrom(err);
-      return finish(respondToServeError(err, request, requestId), code);
+      return finish(
+        respondToServeError(err, request, requestId, traceId),
+        code,
+      );
     }
 
     method = normalized.method;
     path = normalized.path;
+    traceId = normalized.traceId;
 
     if (
       this._limits.maxRequestBytes > 0 &&
@@ -685,16 +712,18 @@ export class App {
             new AppError("app.too_large", "request too large"),
             normalized,
             requestId,
+            traceId,
           ),
           "app.too_large",
         );
       }
       return finish(
-        this._httpErrorResponseWithRequestId(
+        this._httpErrorResponseWithRequestIdTraceId(
           "app.too_large",
           "request too large",
           {},
           requestId,
+          traceId,
         ),
         "app.too_large",
       );
@@ -712,6 +741,7 @@ export class App {
               new AppError("app.method_not_allowed", "method not allowed"),
               normalized,
               requestId,
+              traceId,
             ),
             "app.method_not_allowed",
           );
@@ -721,27 +751,30 @@ export class App {
             new AppError("app.not_found", "not found"),
             normalized,
             requestId,
+            traceId,
           ),
           "app.not_found",
         );
       }
       if (allowed.length > 0) {
         return finish(
-          this._httpErrorResponseWithRequestId(
+          this._httpErrorResponseWithRequestIdTraceId(
             "app.method_not_allowed",
             "method not allowed",
             { allow: [formatAllowHeader(allowed)] },
             requestId,
+            traceId,
           ),
           "app.method_not_allowed",
         );
       }
       return finish(
-        this._httpErrorResponseWithRequestId(
+        this._httpErrorResponseWithRequestIdTraceId(
           "app.not_found",
           "not found",
           {},
           requestId,
+          traceId,
         ),
         "app.not_found",
       );
@@ -754,6 +787,7 @@ export class App {
       ids: this._ids,
       ctx,
       requestId,
+      traceId,
       tenantId,
       authIdentity: "",
       remainingMs,
@@ -768,7 +802,10 @@ export class App {
         decision = await this._policyHook(requestCtx);
       } catch (err) {
         const code = errorCodeFrom(err);
-        return finish(respondToServeError(err, normalized, requestId), code);
+        return finish(
+          respondToServeError(err, normalized, requestId, traceId),
+          code,
+        );
       }
 
       const code = String(decision?.code ?? "").trim();
@@ -781,16 +818,18 @@ export class App {
               new AppError(code, message),
               normalized,
               requestId,
+              traceId,
             ),
             code,
           );
         }
         return finish(
-          this._httpErrorResponseWithRequestId(
+          this._httpErrorResponseWithRequestIdTraceId(
             code,
             message,
             decision?.headers ?? {},
             requestId,
+            traceId,
           ),
           code,
         );
@@ -810,7 +849,10 @@ export class App {
         requestCtx.authIdentity = String(identity);
       } catch (err) {
         const code = errorCodeFrom(err);
-        return finish(respondToServeError(err, normalized, requestId), code);
+        return finish(
+          respondToServeError(err, normalized, requestId, traceId),
+          code,
+        );
       }
     }
 
@@ -822,7 +864,10 @@ export class App {
       out = await handler(requestCtx);
     } catch (err) {
       const code = errorCodeFrom(err);
-      return finish(respondToServeError(err, normalized, requestId), code);
+      return finish(
+        respondToServeError(err, normalized, requestId, traceId),
+        code,
+      );
     }
 
     if (!out) {
@@ -831,6 +876,7 @@ export class App {
           new AppError("app.internal", "internal error"),
           normalized,
           requestId,
+          traceId,
         ),
         "app.internal",
       );
@@ -841,7 +887,10 @@ export class App {
       resp = normalizeResponse(out);
     } catch (err) {
       const code = errorCodeFrom(err);
-      return finish(respondToServeError(err, normalized, requestId), code);
+      return finish(
+        respondToServeError(err, normalized, requestId, traceId),
+        code,
+      );
     }
 
     if (
@@ -854,16 +903,18 @@ export class App {
             new AppError("app.too_large", "response too large"),
             normalized,
             requestId,
+            traceId,
           ),
           "app.too_large",
         );
       }
       return finish(
-        this._httpErrorResponseWithRequestId(
+        this._httpErrorResponseWithRequestIdTraceId(
           "app.too_large",
           "response too large",
           {},
           requestId,
+          traceId,
         ),
         "app.too_large",
       );
@@ -1555,6 +1606,7 @@ function cloneContextWithTimeoutCarrier(
     ids: ctxInternal._ids,
     ctx: carrier,
     requestId: ctx.requestId,
+    traceId: ctx.traceId,
     tenantId: ctx.tenantId,
     authIdentity: ctx.authIdentity,
     remainingMs: ctx.remainingMs,
@@ -2064,6 +2116,7 @@ function recordObservability(
     path,
     requestId,
     tenantId,
+    traceId,
     status,
     errorCode,
     durationMs: requestDurationMs,
@@ -2072,6 +2125,7 @@ function recordObservability(
     path: string;
     requestId: string;
     tenantId: string;
+    traceId: string;
     status: number;
     errorCode: string;
     durationMs: number;
@@ -2089,7 +2143,7 @@ function recordObservability(
   }
 
   if (typeof hooks.log === "function") {
-    hooks.log({
+    const logRecord: LogRecord = {
       level,
       event: "request.completed",
       requestId,
@@ -2099,7 +2153,12 @@ function recordObservability(
       status,
       errorCode,
       durationMs: observedDurationMs,
-    });
+    };
+    const resolvedTraceId = String(traceId ?? "").trim();
+    if (resolvedTraceId) {
+      logRecord.traceId = resolvedTraceId;
+    }
+    hooks.log(logRecord);
   }
 
   if (typeof hooks.metric === "function") {
@@ -2118,16 +2177,21 @@ function recordObservability(
   }
 
   if (typeof hooks.span === "function") {
+    const attributes: Record<string, string> = {
+      "http.method": method,
+      "http.route": path,
+      "http.status_code": String(status),
+      "request.id": requestId,
+      "tenant.id": tenantId,
+      "error.code": errorCode,
+    };
+    const resolvedTraceId = String(traceId ?? "").trim();
+    if (resolvedTraceId) {
+      attributes["trace.id"] = resolvedTraceId;
+    }
     hooks.span({
       name: `http ${method} ${path}`,
-      attributes: {
-        "http.method": method,
-        "http.route": path,
-        "http.status_code": String(status),
-        "request.id": requestId,
-        "tenant.id": tenantId,
-        "error.code": errorCode,
-      },
+      attributes,
     });
   }
 }

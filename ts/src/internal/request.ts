@@ -12,6 +12,7 @@ import {
   toBuffer,
 } from "./http.js";
 import { normalizeSourceProvenance } from "./source-provenance.js";
+import { extractTraceIdFromHeaders } from "./trace-context.js";
 
 export interface NormalizedRequest {
   method: string;
@@ -22,6 +23,7 @@ export interface NormalizedRequest {
   body: Buffer;
   isBase64: boolean;
   sourceProvenance: SourceProvenance;
+  traceId: string;
 }
 
 function decodedBase64Length(value: string): number {
@@ -76,5 +78,6 @@ export function normalizeRequest(
     body,
     isBase64,
     sourceProvenance: normalizeSourceProvenance(request.sourceProvenance),
+    traceId: extractTraceIdFromHeaders(headers),
   };
 }
