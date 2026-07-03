@@ -5,7 +5,7 @@ description: Tiered middleware, routing, normalization, and the AppTheory error 
 
 # HTTP Runtime (P0–P2)
 
-The HTTP runtime is AppTheory's largest contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the [192 contract fixtures](../reference/contract-fixtures.md). <!-- apptheory-fixture-count -->
+The HTTP runtime is AppTheory's largest contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the [194 contract fixtures](../reference/contract-fixtures.md). <!-- apptheory-fixture-count -->
 
 The runtime is **tiered.** You opt into a tier when you create the app:
 
@@ -161,4 +161,4 @@ You almost never need these directly — use `HandleLambda` / `handleLambda` / `
 - [Logging Profiles](logging-profiles.md) — profile-backed structured JSON log output
 - [Sanitization](sanitization.md) — safe logging helpers
 - [Event Workloads](event-workloads.md) — the non-HTTP side of the runtime
-- [Contract Fixtures](../reference/contract-fixtures.md) — the 192-fixture covenant <!-- apptheory-fixture-count -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — the 194-fixture covenant <!-- apptheory-fixture-count -->
