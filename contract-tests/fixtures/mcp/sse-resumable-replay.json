@@ -1,0 +1,234 @@
+{
+  "id": "mcp.sse.resumable_replay_from_last_event_id",
+  "tier": "mcp",
+  "name": "MCP resumable SSE assigns event IDs and replays after Last-Event-ID",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      },
+      "id_sequence": [
+        "sess-sse"
+      ],
+      "stream_id_sequence": [
+        "stream-1"
+      ],
+      "tools": [
+        {
+          "name": "streamer",
+          "description": "Stream progress",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ]
+          },
+          "handler": "stream_progress",
+          "streaming": true
+        }
+      ]
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "initialize",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"init\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\"}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "stream_call",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "mcp-session-id": [
+                "sess-sse"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "content-type": [
+                "application/json"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"stream\",\"method\":\"tools/call\",\"params\":{\"name\":\"streamer\",\"arguments\":{\"message\":\"stream complete\"},\"_meta\":{\"progressToken\":\"pt-1\"}}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "replay_after_priming",
+          "request": {
+            "method": "GET",
+            "path": "/mcp",
+            "headers": {
+              "mcp-session-id": [
+                "sess-sse"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "accept": [
+                "text/event-stream"
+              ],
+              "last-event-id": [
+                "1"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": ""
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ],
+            "mcp-session-id": [
+              "sess-sse"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "init",
+            "result": {
+              "protocolVersion": "2025-11-25",
+              "capabilities": {
+                "tools": {}
+              },
+              "serverInfo": {
+                "name": "ContractMCP",
+                "version": "sp09"
+              }
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "text/event-stream"
+            ],
+            "cache-control": [
+              "no-cache"
+            ],
+            "connection": [
+              "keep-alive"
+            ],
+            "mcp-session-id": [
+              "sess-sse"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "sse_frames": [
+            {
+              "id": "1",
+              "data": ""
+            },
+            {
+              "id": "2",
+              "event": "message",
+              "data": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"message\":\"half\",\"progress\":1,\"progressToken\":\"pt-1\",\"total\":2}}"
+            },
+            {
+              "id": "3",
+              "event": "message",
+              "data": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"message\":\"done\",\"progress\":2,\"progressToken\":\"pt-1\",\"total\":2}}"
+            },
+            {
+              "id": "4",
+              "event": "message",
+              "data": "{\"jsonrpc\":\"2.0\",\"id\":\"stream\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"stream complete\"}]}}"
+            }
+          ]
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "text/event-stream"
+            ],
+            "cache-control": [
+              "no-cache"
+            ],
+            "connection": [
+              "keep-alive"
+            ],
+            "mcp-session-id": [
+              "sess-sse"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "sse_frames": [
+            {
+              "id": "2",
+              "event": "message",
+              "data": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"message\":\"half\",\"progress\":1,\"progressToken\":\"pt-1\",\"total\":2}}"
+            },
+            {
+              "id": "3",
+              "event": "message",
+              "data": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"message\":\"done\",\"progress\":2,\"progressToken\":\"pt-1\",\"total\":2}}"
+            },
+            {
+              "id": "4",
+              "event": "message",
+              "data": "{\"jsonrpc\":\"2.0\",\"id\":\"stream\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"stream complete\"}]}}"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
