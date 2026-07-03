@@ -103,6 +103,13 @@ export declare class App {
     });
     getHTTPErrorFormat(): HTTPErrorFormat;
     handle(method: string, pattern: string, handler: Handler, options?: RouteOptions): this;
+    /**
+     * Registers a route and throws registration errors.
+     *
+     * @deprecated handle now fails closed on invalid registrations. Use handle
+     * for normal application registration and catch errors during tests only when
+     * required.
+     */
     handleStrict(method: string, pattern: string, handler: Handler, options?: RouteOptions): this;
     get(pattern: string, handler: Handler): this;
     post(pattern: string, handler: Handler): this;

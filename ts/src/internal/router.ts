@@ -1,3 +1,5 @@
+import { AppTheoryError } from "../errors.js";
+
 import { normalizeMethod, normalizePath, splitPath } from "./http.js";
 
 export interface RouteOptions {
@@ -51,22 +53,29 @@ export class Router<THandler> {
     options: RouteOptions = {},
   ): void {
     if (handler === null || handler === undefined) {
-      throw new Error("apptheory: route handler is nil");
+      throw routeRegistrationError("route handler is nil");
     }
 
     const normalizedMethod = normalizeMethod(method);
     const normalizedPattern = normalizePath(pattern);
     const parsed = parseRouteSegments(splitPath(normalizedPattern));
     if (!parsed.ok) {
-      throw new Error(
-        `apptheory: invalid route pattern: ${JSON.stringify(String(pattern))}: ${parsed.error}`,
-      );
+      throw routeRegistrationError("invalid route pattern");
     }
 
     const normalizedPatternValue =
       parsed.canonicalSegments.length > 0
         ? `/${parsed.canonicalSegments.join("/")}`
         : "/";
+
+    for (const route of this._routes) {
+      if (
+        route.method === normalizedMethod &&
+        route.pattern === normalizedPatternValue
+      ) {
+        throw routeRegistrationError("duplicate route");
+      }
+    }
 
     this._routes.push({
       method: normalizedMethod,
@@ -87,11 +96,7 @@ export class Router<THandler> {
     handler: THandler,
     options: RouteOptions = {},
   ): void {
-    try {
-      this.addStrict(method, pattern, handler, options);
-    } catch {
-      return;
-    }
+    this.addStrict(method, pattern, handler, options);
   }
 
   match(
@@ -123,6 +128,10 @@ export class Router<THandler> {
     }
     return { match: best, allowed };
   }
+}
+
+function routeRegistrationError(message: string): AppTheoryError {
+  return new AppTheoryError("app.bad_request", message, { statusCode: 400 });
 }
 
 function parseRouteSegments(
@@ -160,6 +169,10 @@ function parseRouteSegments(
       canonicalSegments.push(`{${inner}}`);
       paramCount += 1;
       continue;
+    }
+
+    if (raw.includes("{") || raw.includes("}")) {
+      return { ok: false, error: "invalid segment" };
     }
 
     segments.push({ kind: "static", value: raw });
