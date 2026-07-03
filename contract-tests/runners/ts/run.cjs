@@ -75,6 +75,76 @@ function isLoggingProfileContractFixture(fixture) {
   );
 }
 
+function isOpenAPIContractFixture(fixture) {
+  return Object.prototype.hasOwnProperty.call(fixture.setup ?? {}, "openapi");
+}
+
+async function compareOpenAPIContract(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const actual = runtime.generateOpenAPIJSON(
+    normalizeOpenAPISpecForRuntime(fixture.setup?.openapi ?? {}),
+  );
+  const expected = fixture.expect?.output_json;
+  if (actual === expected) return { ok: true };
+  return {
+    ok: false,
+    reason: "openapi canonical json mismatch",
+    expected_output_json: expected,
+    actual_output_json: actual,
+  };
+}
+
+function normalizeOpenAPISpecForRuntime(spec) {
+  return {
+    title: String(spec?.title ?? ""),
+    version: String(spec?.version ?? ""),
+    routes: (spec?.routes ?? []).map((route) => ({
+      method: String(route?.method ?? ""),
+      path: String(route?.path ?? ""),
+      operationId: String(route?.operation_id ?? route?.operationId ?? ""),
+      ...(route?.summary !== undefined ? { summary: String(route.summary) } : {}),
+      ...(Array.isArray(route?.tags)
+        ? { tags: route.tags.map((tag) => String(tag)) }
+        : {}),
+      ...(route?.success_status !== undefined || route?.successStatus !== undefined
+        ? { successStatus: Number(route?.success_status ?? route?.successStatus) }
+        : {}),
+      request: {
+        fields: normalizeOpenAPIFields(route?.request?.fields ?? []),
+      },
+      response: {
+        ...(route?.response?.description !== undefined
+          ? { description: String(route.response.description) }
+          : {}),
+        fields: normalizeOpenAPIFields(route?.response?.fields ?? []),
+      },
+    })),
+  };
+}
+
+function normalizeOpenAPIFields(fields) {
+  return (fields ?? []).map((field) => ({
+    field: String(field?.field ?? ""),
+    source: String(field?.source ?? ""),
+    name: String(field?.name ?? ""),
+    type: String(field?.type ?? ""),
+    ...(field?.array !== undefined ? { array: Boolean(field.array) } : {}),
+    ...(field?.required !== undefined
+      ? { required: Boolean(field.required) }
+      : {}),
+    ...(Array.isArray(field?.validation)
+      ? {
+          validation: field.validation.map((rule) => ({
+            rule: String(rule?.rule ?? ""),
+            ...(Object.prototype.hasOwnProperty.call(rule ?? {}, "value")
+              ? { value: rule.value }
+              : {}),
+          })),
+        }
+      : {}),
+  }));
+}
+
 async function compareLoggingProfileContract(fixture) {
   const runtime = await loadAppTheoryRuntime();
   const setup = fixture.setup ?? {};
@@ -1618,6 +1688,10 @@ function routeHandlerForRegistration(runtime, route, effects) {
 }
 
 async function runFixture(fixture) {
+  if (isOpenAPIContractFixture(fixture)) {
+    return await compareOpenAPIContract(fixture);
+  }
+
   const tier = String(fixture.tier ?? "")
     .trim()
     .toLowerCase();
