@@ -77,7 +77,7 @@ export declare class Context {
     get(key: string): unknown;
     sourceProvenance(): SourceProvenance;
     sourceIP(): string;
-    jsonValue(): unknown;
+    jsonValue<T = unknown>(): T;
     asWebSocket(): WebSocketContext | null;
     asAppSync(): AppSyncContext | null;
 }

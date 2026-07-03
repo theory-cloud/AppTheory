@@ -91,8 +91,10 @@ def app_theory_error_from_app_error(exc: AppError) -> AppTheoryError:
 
 def status_for_error_code(code: str) -> int:
     match code:
-        case "app.bad_request" | "app.validation_failed":
+        case "app.bad_request":
             return 400
+        case "app.validation_failed":
+            return 422
         case "app.unauthorized":
             return 401
         case "app.forbidden":

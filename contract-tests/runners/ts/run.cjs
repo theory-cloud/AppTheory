@@ -4041,6 +4041,103 @@ function builtInAppTheoryHandler(runtime, name, effects) {
         }
         return runtime.json(200, { count: Number(raw) });
       };
+    case "bind_all_sources":
+    case "bind_all_sources_strict":
+      return runtime.bindHandler(
+        {
+          body: true,
+          query: true,
+          path: true,
+          headers: true,
+          strictJson: name === "bind_all_sources_strict",
+          fields: {
+            Name: { source: "body", name: "name", field: "Name" },
+            Tenant: { source: "path", name: "tenant", field: "Tenant" },
+            RequestID: {
+              source: "header",
+              name: "x-request-id",
+              field: "RequestID",
+            },
+            Limit: { source: "query", name: "limit", type: "int", field: "Limit" },
+            Enabled: {
+              source: "query",
+              name: "enabled",
+              type: "bool",
+              field: "Enabled",
+            },
+            Ratio: {
+              source: "query",
+              name: "ratio",
+              type: "float",
+              field: "Ratio",
+            },
+            Tags: {
+              source: "query",
+              name: "tag",
+              type: "string",
+              array: true,
+              field: "Tags",
+            },
+            TTL: {
+              source: "query",
+              name: "ttl",
+              type: "duration",
+              field: "TTL",
+            },
+          },
+        },
+        (_ctx, req) => ({
+          name: req.Name,
+          tenant: req.Tenant,
+          request_id: req.RequestID,
+          limit: req.Limit,
+          enabled: req.Enabled,
+          ratio: req.Ratio,
+          tags: req.Tags,
+          ttl: req.TTL,
+        }),
+      );
+    case "validate_profile":
+      return runtime.bindHandler(
+        {
+          body: true,
+          fields: {
+            name: { source: "body", name: "name" },
+            age: { source: "body", name: "age", type: "int" },
+            score: { source: "body", name: "score", type: "int" },
+            nickname: { source: "body", name: "nickname" },
+            bio: { source: "body", name: "bio" },
+            email: { source: "body", name: "email" },
+            role: { source: "body", name: "role" },
+          },
+          validation: {
+            name: [runtime.required()],
+            age: [runtime.min(18)],
+            score: [runtime.max(10)],
+            nickname: [runtime.minLength(2)],
+            bio: [runtime.maxLength(5)],
+            email: [runtime.pattern("^[^@]+@[^@]+\\.[^@]+$")],
+            role: [runtime.oneOf(["admin", "member"])],
+          },
+        },
+        (_ctx, req) => req,
+      );
+    case "validate_profile_query":
+      return runtime.bindHandler(
+        {
+          body: true,
+          query: true,
+          fields: {
+            Name: { source: "body", name: "name", field: "Name" },
+            Age: { source: "query", name: "age", type: "int", field: "Age" },
+          },
+          validation: {
+            Name: [runtime.required()],
+            Age: [runtime.min(18)],
+          },
+        },
+        (_ctx, req) => ({ name: req.Name, age: req.Age }),
+      );
     case "echo_appsync_context":
       return (ctx) => {
         const appsync = ctx.asAppSync();

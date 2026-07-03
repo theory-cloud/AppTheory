@@ -256,6 +256,32 @@ type bindQueryCountRequest struct {
 	Count int `query:"count"`
 }
 
+type bindAllSourcesRequest struct {
+	Name      string        `json:"name"`
+	Tenant    string        `path:"tenant"`
+	RequestID string        `header:"x-request-id"`
+	Limit     int           `query:"limit"`
+	Enabled   bool          `query:"enabled"`
+	Ratio     float64       `query:"ratio"`
+	Tags      []string      `query:"tag"`
+	TTL       time.Duration `query:"ttl"`
+}
+
+type validateProfileRequest struct {
+	Name     string `json:"name" validate:"required"`
+	Age      int    `json:"age" validate:"min=18"`
+	Score    int    `json:"score" validate:"max=10"`
+	Nickname string `json:"nickname" validate:"min_length=2"`
+	Bio      string `json:"bio" validate:"max_length=5"`
+	Email    string `json:"email" validate:"pattern=^[^@]+@[^@]+\\.[^@]+$"`
+	Role     string `json:"role" validate:"enum=admin|member"`
+}
+
+type validateProfileQueryRequest struct {
+	Name string `json:"name" validate:"required"`
+	Age  int    `query:"age" validate:"min=18"`
+}
+
 func registerAppTheoryFixtureRoutes(app *apptheory.App, routes []FixtureRoute) error {
 	for _, r := range routes {
 		name := strings.TrimSpace(r.Handler)
@@ -364,6 +390,58 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		apptheory.BindConfig[bindQueryCountRequest]{Query: true},
 		func(_ *apptheory.Context, req bindQueryCountRequest) (map[string]any, error) {
 			return map[string]any{"count": req.Count}, nil
+		},
+	),
+	"bind_all_sources": apptheory.BindHandler(
+		apptheory.BindConfig[bindAllSourcesRequest]{Body: true, Query: true, Path: true, Headers: true},
+		func(_ *apptheory.Context, req bindAllSourcesRequest) (map[string]any, error) {
+			return map[string]any{
+				"name":       req.Name,
+				"tenant":     req.Tenant,
+				"request_id": req.RequestID,
+				"limit":      req.Limit,
+				"enabled":    req.Enabled,
+				"ratio":      req.Ratio,
+				"tags":       req.Tags,
+				"ttl":        req.TTL.String(),
+			}, nil
+		},
+	),
+	"bind_all_sources_strict": apptheory.BindHandler(
+		apptheory.BindConfig[bindAllSourcesRequest]{
+			Body:       true,
+			Query:      true,
+			Path:       true,
+			Headers:    true,
+			StrictJSON: true,
+		},
+		func(_ *apptheory.Context, req bindAllSourcesRequest) (map[string]any, error) {
+			return map[string]any{
+				"name":       req.Name,
+				"tenant":     req.Tenant,
+				"request_id": req.RequestID,
+				"limit":      req.Limit,
+			}, nil
+		},
+	),
+	"validate_profile": apptheory.BindHandler(
+		apptheory.BindConfig[validateProfileRequest]{Body: true},
+		func(_ *apptheory.Context, req validateProfileRequest) (map[string]any, error) {
+			return map[string]any{
+				"name":     req.Name,
+				"age":      req.Age,
+				"score":    req.Score,
+				"nickname": req.Nickname,
+				"bio":      req.Bio,
+				"email":    req.Email,
+				"role":     req.Role,
+			}, nil
+		},
+	),
+	"validate_profile_query": apptheory.BindHandler(
+		apptheory.BindConfig[validateProfileQueryRequest]{Body: true, Query: true},
+		func(_ *apptheory.Context, req validateProfileQueryRequest) (map[string]any, error) {
+			return map[string]any{"name": req.Name, "age": req.Age}, nil
 		},
 	),
 	"echo_appsync_context": func(ctx *apptheory.Context) (*apptheory.Response, error) {

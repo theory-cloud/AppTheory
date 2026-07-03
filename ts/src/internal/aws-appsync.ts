@@ -186,8 +186,9 @@ export function appSyncPayloadFromResponse(response: Response): unknown {
 function statusForErrorCode(code: string): number {
   switch (String(code ?? "").trim()) {
     case "app.bad_request":
-    case "app.validation_failed":
       return 400;
+    case "app.validation_failed":
+      return 422;
     case "app.unauthorized":
       return 401;
     case "app.forbidden":

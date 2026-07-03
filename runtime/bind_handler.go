@@ -19,6 +19,7 @@ const (
 	bindErrorMessageInvalidBinding = "invalid request binding"
 	bindErrorMessageValidation     = "validation failed"
 	bindErrorMessageStructRequired = "request binding requires a struct target"
+	bindSourceBody                 = "body"
 	bindSourceQuery                = "query"
 	bindSourcePath                 = "path"
 	bindSourceHeader               = "header"
@@ -79,6 +80,10 @@ func BindRequest[Req any](ctx *Context, config BindConfig[Req]) (Req, error) {
 		}
 	}
 
+	if err := validateBoundRequest(req); err != nil {
+		return req, err
+	}
+
 	if config.Validate != nil {
 		if err := config.Validate(ctx, req); err != nil {
 			return req, normalizeValidationError(err)
@@ -97,7 +102,7 @@ func bindBody(target any, ctx *Context, strict bool) error {
 		decoder := json.NewDecoder(bytes.NewReader(ctx.Request.Body))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(target); err != nil {
-			return bindBadRequest(errorMessageInvalidJSON, err)
+			return bindBodyDecodeError(err)
 		}
 		var extra any
 		if err := decoder.Decode(&extra); err != io.EOF {
@@ -295,6 +300,26 @@ func parseBoundValue(field reflect.Value, raw string) error {
 	}
 }
 
+func bindBodyDecodeError(cause error) *AppTheoryError {
+	if name, ok := unknownJSONFieldName(cause); ok {
+		return bindSourceError(bindSourceBody, name, "", cause)
+	}
+	return bindBadRequest(errorMessageInvalidJSON, cause)
+}
+
+func unknownJSONFieldName(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	message := err.Error()
+	const prefix = "json: unknown field "
+	if !strings.HasPrefix(message, prefix) {
+		return "", false
+	}
+	name := strings.Trim(strings.TrimSpace(strings.TrimPrefix(message, prefix)), "\"")
+	return name, name != ""
+}
+
 func bindBadRequest(message string, cause error) *AppTheoryError {
 	err := NewAppTheoryError(errorCodeBadRequest, strings.TrimSpace(message)).WithStatusCode(400)
 	if err.Message == "" {
@@ -311,11 +336,14 @@ func bindSourceError(source, name, field string, cause error) *AppTheoryError {
 	if strings.TrimSpace(field) != "" {
 		message = fmt.Sprintf("invalid %s binding for %s", source, field)
 	}
-	return bindBadRequest(message, cause).WithDetails(map[string]any{
+	details := map[string]any{
 		"source": source,
 		"name":   name,
-		"field":  field,
-	})
+	}
+	if strings.TrimSpace(field) != "" {
+		details["field"] = field
+	}
+	return bindBadRequest(message, cause).WithDetails(details)
 }
 
 func normalizeValidationError(err error) error {
@@ -323,6 +351,9 @@ func normalizeValidationError(err error) error {
 		return nil
 	}
 	if appErr, ok := AsAppTheoryError(err); ok {
+		if appErr.Code == errorCodeValidationFailed && appErr.StatusCode == 0 {
+			return appErr.WithStatusCode(422)
+		}
 		return appErr
 	}
 	var appErr *AppError
@@ -330,7 +361,7 @@ func normalizeValidationError(err error) error {
 		return AppTheoryErrorFromAppError(appErr).WithStatusCode(statusForErrorCode(appErr.Code))
 	}
 	return NewAppTheoryError(errorCodeValidationFailed, bindErrorMessageValidation).
-		WithStatusCode(400).
+		WithStatusCode(422).
 		WithCause(err)
 }
 

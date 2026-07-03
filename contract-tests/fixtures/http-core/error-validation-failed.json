@@ -19,7 +19,7 @@
   },
   "expect": {
     "response": {
-      "status": 400,
+      "status": 422,
       "headers": { "content-type": ["application/json; charset=utf-8"] },
       "cookies": [],
       "body_json": { "error": { "code": "app.validation_failed", "message": "validation failed" } },

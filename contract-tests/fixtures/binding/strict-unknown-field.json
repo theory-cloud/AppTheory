@@ -1,0 +1,36 @@
+{
+  "id": "p0.binding.strict_unknown_field",
+  "tier": "p0",
+  "name": "Strict typed body binding rejects unknown JSON fields",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/typed/{tenant}", "handler": "bind_all_sources_strict" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/typed/tenant_123",
+      "query": { "limit": ["7"] },
+      "headers": { "x-request-id": ["req_1"] },
+      "body": { "encoding": "utf8", "value": "{\"name\":\"bob\",\"extra\":true}" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.bad_request",
+          "message": "invalid body binding: extra",
+          "status_code": 400,
+          "details": { "source": "body", "name": "extra" }
+        }
+      },
+      "is_base64": false
+    }
+  }
+}
