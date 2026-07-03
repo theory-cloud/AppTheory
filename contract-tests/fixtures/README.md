@@ -237,6 +237,11 @@ and `failure`) and real states such as `running`, `suspending`, `suspended`, `re
 M15 `start`/`stop` lifecycle hooks are not valid in the M16 real lifecycle contract. Provider-state mappings pin the
 minimum AWS adapter vocabulary needed by later milestones.
 
+`expect.microvm_lifecycle_adapter` fixtures prove that the runtime lifecycle adapter itself accepts the M16 real
+vocabulary, not only that the standalone validator accepts it. Runners construct the adapter from the fixture lifecycle
+contract, execute the real hook sequence through sanitized events, and compare the final state plus handler-observed
+active states across Go, TypeScript, and Python.
+
 Token fixtures allow `auth-token` and `shell-token` only as sanitized issuance metadata: `token_id`, `token_type`,
 `expires_at`, and `scope`. Plaintext bearer/session token fields, raw AWS credentials, raw SDK clients, provider
 secrets, lifecycle payloads, and generated secrets must never appear as records, metadata, errors, logs, or response
