@@ -41,7 +41,7 @@ func runFixtureP2(f Fixture) error {
 		apptheory.WithAuthHook(func(ctx *apptheory.Context) (string, error) {
 			authz := strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "authorization"))
 			if authz == "" {
-				return "", &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
+				return "", apptheory.NewAppTheoryError("app.unauthorized", "unauthorized")
 			}
 			return "authorized", nil
 		}),
@@ -101,7 +101,7 @@ func runFixtureP2(f Fixture) error {
 	for _, r := range f.Setup.Routes {
 		handler := builtInAppTheoryHandler(r.Handler)
 		if handler == nil {
-			return &apptheory.AppError{Code: "app.internal", Message: "internal error"}
+			return apptheory.NewAppTheoryError("app.internal", "internal error")
 		}
 		var opts []apptheory.RouteOption
 		if r.AuthRequired {
@@ -120,7 +120,7 @@ func runFixtureP2(f Fixture) error {
 	}
 
 	if f.Input.Request == nil {
-		return &apptheory.AppError{Code: "app.internal", Message: "internal error"}
+		return apptheory.NewAppTheoryError("app.internal", "internal error")
 	}
 
 	bodyBytes, err := decodeFixtureBody(f.Input.Request.Body)

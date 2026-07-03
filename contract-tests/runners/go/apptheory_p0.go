@@ -318,6 +318,7 @@ func fixtureErrorFromError(err error) FixtureError {
 	if errors.As(err, &appTheoryErr) {
 		return FixtureError{Code: strings.TrimSpace(appTheoryErr.Code), Message: appTheoryErr.Message, StatusCode: appTheoryErr.StatusCode}
 	}
+	//nolint:staticcheck // Setup comparison preserves legacy AppError compatibility.
 	var appErr *apptheory.AppError
 	if errors.As(err, &appErr) {
 		return FixtureError{Code: strings.TrimSpace(appErr.Code), Message: appErr.Message}
@@ -356,7 +357,7 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		}
 		return apptheory.JSON(200, value)
 	},
-	"json_required_echo": apptheory.JSONHandler(func(_ *apptheory.Context, req map[string]any) (map[string]any, error) {
+	"json_required_echo": apptheory.JSONHandler(func(_ *apptheory.Context, req map[string]any) (map[string]any, error) { //nolint:staticcheck // Fixture exercises deprecated Lift-compatible JSONHandler codes.
 		return req, nil
 	}),
 	"bind_query_count": apptheory.BindHandler(
@@ -427,10 +428,10 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		})
 	},
 	"unauthorized": func(_ *apptheory.Context) (*apptheory.Response, error) {
-		return nil, &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
+		return nil, apptheory.NewAppTheoryError("app.unauthorized", "unauthorized")
 	},
 	"validation_failed": func(_ *apptheory.Context) (*apptheory.Response, error) {
-		return nil, &apptheory.AppError{Code: "app.validation_failed", Message: "validation failed"}
+		return nil, apptheory.NewAppTheoryError("app.validation_failed", "validation failed")
 	},
 	"portable_error": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		err := apptheory.NewAppTheoryError("app.conflict", "conflict").
@@ -504,7 +505,7 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		go func() {
 			defer close(ch)
 			ch <- apptheory.StreamChunk{Bytes: []byte("hello")}
-			ch <- apptheory.StreamChunk{Err: &apptheory.AppError{Code: "app.internal", Message: "boom"}}
+			ch <- apptheory.StreamChunk{Err: apptheory.NewAppTheoryError("app.internal", "boom")}
 		}()
 		return resp, nil
 	},

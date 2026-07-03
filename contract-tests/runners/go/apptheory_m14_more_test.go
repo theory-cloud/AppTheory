@@ -18,10 +18,10 @@ func TestStreamErrorCode_Variants(t *testing.T) {
 	if got := streamErrorCode(errors.New("boom")); got != "app.internal" {
 		t.Fatalf("expected internal code for non-app error, got %q", got)
 	}
-	if got := streamErrorCode(&apptheory.AppError{Code: " app.test ", Message: "x"}); got != "app.test" {
+	if got := streamErrorCode(apptheory.NewAppTheoryError(" app.test ", "x")); got != "app.test" {
 		t.Fatalf("expected trimmed app error code, got %q", got)
 	}
-	if got := streamErrorCode(&apptheory.AppError{Code: "   ", Message: "x"}); got != "app.internal" {
+	if got := streamErrorCode(&apptheory.AppError{Code: "   ", Message: "x"}); got != "app.internal" { //nolint:staticcheck // Legacy AppError compatibility coverage.
 		t.Fatalf("expected internal code for blank app error code, got %q", got)
 	}
 }
@@ -53,7 +53,7 @@ func TestCaptureStreamResponse_CapturesBodyReaderAndStream(t *testing.T) {
 
 	captured, err = captureStreamResponse(ctx, apptheory.Response{
 		Status:     200,
-		BodyStream: apptheory.StreamError(&apptheory.AppError{Code: "app.stream", Message: "boom"}),
+		BodyStream: apptheory.StreamError(apptheory.NewAppTheoryError("app.stream", "boom")),
 	})
 	if err != nil {
 		t.Fatalf("captureStreamResponse(stream error): %v", err)
