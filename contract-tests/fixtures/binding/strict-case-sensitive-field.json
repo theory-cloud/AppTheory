@@ -1,0 +1,58 @@
+{
+  "id": "p0.binding.strict_body_case_sensitive_fields",
+  "tier": "p0",
+  "name": "Strict typed body binding treats JSON field names as case-sensitive",
+  "setup": {
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/typed/{tenant}",
+        "handler": "bind_all_sources_strict"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/typed/tenant_123",
+      "query": {
+        "limit": [
+          "7"
+        ]
+      },
+      "headers": {
+        "x-request-id": [
+          "req_1"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"Name\":\"bob\"}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.bad_request",
+          "message": "invalid body binding: Name",
+          "status_code": 400,
+          "details": {
+            "source": "body",
+            "name": "Name"
+          }
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

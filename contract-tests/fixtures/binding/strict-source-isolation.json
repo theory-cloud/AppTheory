@@ -1,0 +1,49 @@
+{
+  "id": "p0.binding.strict_body_source_isolation",
+  "tier": "p0",
+  "name": "Strict typed body binding rejects keys for non-body-bound fields",
+  "setup": {
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/typed/{tenant}",
+        "handler": "bind_all_sources_strict"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/typed/tenant_123",
+      "headers": {},
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"name\":\"bob\",\"limit\":3}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.bad_request",
+          "message": "invalid body binding: limit",
+          "status_code": 400,
+          "details": {
+            "source": "body",
+            "name": "limit"
+          }
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

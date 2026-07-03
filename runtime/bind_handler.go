@@ -99,25 +99,170 @@ func bindBody(target any, ctx *Context, strict bool) error {
 	}
 
 	if strict {
-		decoder := json.NewDecoder(bytes.NewReader(ctx.Request.Body))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(target); err != nil {
-			return bindBodyDecodeError(err)
-		}
-		var extra any
-		if err := decoder.Decode(&extra); err != io.EOF {
-			if err == nil {
-				err = fmt.Errorf("multiple json values")
-			}
-			return bindBadRequest(errorMessageInvalidJSON, err)
-		}
-		return nil
+		return bindStrictBody(target, ctx.Request.Body)
 	}
 
 	if err := json.Unmarshal(ctx.Request.Body, target); err != nil {
 		return bindBadRequest(errorMessageInvalidJSON, err)
 	}
 	return nil
+}
+
+type orderedRawJSONObject struct {
+	keys   []string
+	values map[string]json.RawMessage
+}
+
+func decodeOrderedRawJSONObject(decoder *json.Decoder) (orderedRawJSONObject, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return orderedRawJSONObject{}, err
+	}
+	delim, isDelim := token.(json.Delim)
+	if !isDelim || delim != '{' {
+		return orderedRawJSONObject{}, fmt.Errorf("request body must be a JSON object")
+	}
+
+	payload := orderedRawJSONObject{
+		values: make(map[string]json.RawMessage),
+	}
+	for decoder.More() {
+		token, err = decoder.Token()
+		if err != nil {
+			return orderedRawJSONObject{}, err
+		}
+		key, isString := token.(string)
+		if !isString {
+			return orderedRawJSONObject{}, fmt.Errorf("request body object key must be a string")
+		}
+
+		var value json.RawMessage
+		if decodeErr := decoder.Decode(&value); decodeErr != nil {
+			return orderedRawJSONObject{}, decodeErr
+		}
+		if _, exists := payload.values[key]; !exists {
+			payload.keys = append(payload.keys, key)
+		}
+		payload.values[key] = value
+	}
+
+	token, err = decoder.Token()
+	if err != nil {
+		return orderedRawJSONObject{}, err
+	}
+	delim, isDelim = token.(json.Delim)
+	if !isDelim || delim != '}' {
+		return orderedRawJSONObject{}, fmt.Errorf("request body must be a JSON object")
+	}
+	return payload, nil
+}
+
+func bindStrictBody(target any, body []byte) error {
+	root := prepareBindTarget(reflect.ValueOf(target))
+	if !root.IsValid() || root.Kind() != reflect.Struct {
+		return decodeStrictBodyDirect(target, body)
+	}
+
+	fields := strictBodyFields(root)
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	payload, err := decodeOrderedRawJSONObject(decoder)
+	if err != nil {
+		return bindBodyDecodeError(err)
+	}
+	if err := rejectTrailingJSONValue(decoder); err != nil {
+		return err
+	}
+
+	for _, key := range payload.keys {
+		field, ok := fields[key]
+		if !ok {
+			return bindSourceError(bindSourceBody, key, "", fmt.Errorf("json: unknown field %q", key))
+		}
+		if err := json.Unmarshal(payload.values[key], field.Addr().Interface()); err != nil {
+			return bindBadRequest(errorMessageInvalidJSON, err)
+		}
+	}
+	return nil
+}
+
+func decodeStrictBodyDirect(target any, body []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return bindBodyDecodeError(err)
+	}
+	return rejectTrailingJSONValue(decoder)
+}
+
+func rejectTrailingJSONValue(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			err = fmt.Errorf("multiple json values")
+		}
+		return bindBadRequest(errorMessageInvalidJSON, err)
+	}
+	return nil
+}
+
+func strictBodyFields(root reflect.Value) map[string]reflect.Value {
+	fields := make(map[string]reflect.Value)
+	collectStrictBodyFields(root, fields)
+	return fields
+}
+
+func collectStrictBodyFields(target reflect.Value, fields map[string]reflect.Value) {
+	targetType := target.Type()
+	for i := 0; i < target.NumField(); i++ {
+		fieldType := targetType.Field(i)
+		fieldValue := target.Field(i)
+
+		if fieldType.PkgPath != "" && !fieldType.Anonymous {
+			continue
+		}
+		if hasNonBodyBindTag(fieldType) {
+			continue
+		}
+
+		name, skip := jsonBodyFieldName(fieldType)
+		if skip {
+			continue
+		}
+
+		if fieldType.Anonymous && strings.TrimSpace(fieldType.Tag.Get("json")) == "" {
+			embedded := prepareFieldValue(fieldValue)
+			if embedded.IsValid() && embedded.Kind() == reflect.Struct {
+				collectStrictBodyFields(embedded, fields)
+				continue
+			}
+		}
+
+		if !fieldValue.CanSet() {
+			continue
+		}
+		fields[name] = fieldValue
+	}
+}
+
+func hasNonBodyBindTag(field reflect.StructField) bool {
+	return bindTagValue(field, "path") != "" ||
+		bindTagValue(field, "query") != "" ||
+		bindTagValue(field, "header") != ""
+}
+
+func jsonBodyFieldName(field reflect.StructField) (string, bool) {
+	value := strings.TrimSpace(field.Tag.Get("json"))
+	if value == "-" {
+		return "", true
+	}
+	if idx := strings.IndexByte(value, ','); idx >= 0 {
+		value = value[:idx]
+	}
+	value = strings.TrimSpace(value)
+	if value != "" {
+		return value, false
+	}
+	return field.Name, false
 }
 
 func bindTaggedRequestFields[Req any](target *Req, ctx *Context, config BindConfig[Req]) error {

@@ -160,6 +160,204 @@ func TestBindRequest_StrictJSONRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestBindRequest_StrictJSONRejectsNonBodySourceFields(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Name  string `json:"name"`
+		Limit int    `query:"limit"`
+	}
+
+	_, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"name":"bob","limit":3}`),
+		},
+	}, BindConfig[requestModel]{
+		Body:       true,
+		Query:      true,
+		StrictJSON: true,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 {
+		t.Fatalf("unexpected error payload: %#v", appErr)
+	}
+	if appErr.Message != "invalid body binding: limit" {
+		t.Fatalf("unexpected error message: %q", appErr.Message)
+	}
+	if appErr.Details["source"] != bindSourceBody || appErr.Details["name"] != "limit" {
+		t.Fatalf("unexpected error details: %#v", appErr.Details)
+	}
+	if appErr.Cause == nil {
+		t.Fatal("expected strict json failure to preserve cause")
+	}
+}
+
+func TestBindRequest_StrictJSONUsesCaseSensitiveBodyFieldNames(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Name string `json:"name"`
+	}
+
+	_, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"Name":"bob"}`),
+		},
+	}, BindConfig[requestModel]{
+		Body:       true,
+		StrictJSON: true,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 {
+		t.Fatalf("unexpected error payload: %#v", appErr)
+	}
+	if appErr.Message != "invalid body binding: Name" {
+		t.Fatalf("unexpected error message: %q", appErr.Message)
+	}
+	if appErr.Details["source"] != bindSourceBody || appErr.Details["name"] != "Name" {
+		t.Fatalf("unexpected error details: %#v", appErr.Details)
+	}
+}
+
+func TestBindRequest_StrictJSONBindsBodyAndRequestSources(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Name  string `json:"name"`
+		Limit int    `query:"limit"`
+	}
+
+	out, err := BindRequest(&Context{
+		Request: Request{
+			Body:  []byte(`{"name":"bob"}`),
+			Query: map[string][]string{"limit": {"7"}},
+		},
+	}, BindConfig[requestModel]{
+		Body:       true,
+		Query:      true,
+		StrictJSON: true,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if out.Name != "bob" || out.Limit != 7 {
+		t.Fatalf("unexpected binding: %#v", out)
+	}
+}
+
+func TestBindRequest_StrictJSONSupportsEmbeddedBodyFields(t *testing.T) {
+	t.Parallel()
+
+	type embeddedModel struct {
+		Name string `json:"name"`
+	}
+	type requestModel struct {
+		embeddedModel
+		Limit int `query:"limit"`
+	}
+
+	out, err := BindRequest(&Context{
+		Request: Request{
+			Body:  []byte(`{"name":"bob"}`),
+			Query: map[string][]string{"limit": {"7"}},
+		},
+	}, BindConfig[requestModel]{
+		Body:       true,
+		Query:      true,
+		StrictJSON: true,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if out.Name != "bob" || out.Limit != 7 {
+		t.Fatalf("unexpected embedded binding: %#v", out)
+	}
+}
+
+func TestBindRequest_StrictJSONSupportsDefaultFieldNames(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Name string
+	}
+
+	out, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"Name":"bob"}`),
+		},
+	}, BindConfig[requestModel]{
+		Body:       true,
+		StrictJSON: true,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if out.Name != "bob" {
+		t.Fatalf("unexpected default-name binding: %#v", out)
+	}
+}
+
+func TestBindRequest_StrictJSONRejectsInvalidBodyFieldValue(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Limit int `json:"limit"`
+	}
+
+	_, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"limit":"bad"}`),
+		},
+	}, BindConfig[requestModel]{
+		Body:       true,
+		StrictJSON: true,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 || appErr.Message != errorMessageInvalidJSON {
+		t.Fatalf("unexpected error payload: %#v", appErr)
+	}
+}
+
+func TestBindRequest_StrictJSONFallsBackForNonStructTargets(t *testing.T) {
+	t.Parallel()
+
+	out, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"name":"bob"}`),
+		},
+	}, BindConfig[map[string]string]{
+		Body:       true,
+		StrictJSON: true,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if out["name"] != "bob" {
+		t.Fatalf("unexpected map binding: %#v", out)
+	}
+}
+
 func TestBindRequest_StrictJSONRejectsTrailingValues(t *testing.T) {
 	t.Parallel()
 
