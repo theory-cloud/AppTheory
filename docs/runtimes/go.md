@@ -112,7 +112,7 @@ Go strict helpers return `(*App, error)` on invalid patterns at registration tim
 
 ## HTTP error format
 
-Default HTTP error envelopes are nested under `error`. To match Lift's flat shape:
+Default HTTP error envelopes are nested under `error`. `AppTheoryError` is the canonical client-safe error type for new code; `AppError` remains supported for code/message compatibility. Legacy `JSONHandler` emits Lift-era `EMPTY_BODY` and `INVALID_JSON` internally, but the default HTTP envelope remaps those to `app.bad_request`. To match Lift's flat shape and preserve those legacy codes:
 
 ```go
 app := apptheory.New(apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormatFlatLegacy))

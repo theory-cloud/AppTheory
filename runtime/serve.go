@@ -390,13 +390,13 @@ func errorCodeForError(err error) string {
 	var portableErr *AppTheoryError
 	if errors.As(err, &portableErr) {
 		if strings.TrimSpace(portableErr.Code) != "" {
-			return portableErr.Code
+			return canonicalRuntimeErrorCode(portableErr.Code)
 		}
 		return errorCodeInternal
 	}
 	var appErr *AppError
 	if errors.As(err, &appErr) {
-		return appErr.Code
+		return canonicalRuntimeErrorCode(appErr.Code)
 	}
 	return errorCodeInternal
 }

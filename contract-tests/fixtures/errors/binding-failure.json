@@ -41,7 +41,12 @@
         "error": {
           "code": "app.bad_request",
           "message": "invalid query binding for Count",
-          "status_code": 400
+          "status_code": 400,
+          "details": {
+            "source": "query",
+            "name": "count",
+            "field": "Count"
+          }
         }
       },
       "is_base64": false

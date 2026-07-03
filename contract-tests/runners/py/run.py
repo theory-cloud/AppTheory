@@ -1643,6 +1643,7 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
                     "app.bad_request",
                     "invalid query binding for Count",
                     status_code=400,
+                    details={"source": "query", "name": "count", "field": "Count"},
                     cause=exc,
                 ) from exc
             return runtime.json(200, {"count": count})
