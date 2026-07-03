@@ -4,9 +4,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
+)
+
+const (
+	openAPISourceResponse = "response"
+	openAPITypeInteger    = "integer"
+	openAPITypeNumber     = "number"
+	openAPITypeObject     = "object"
+	openAPITypeString     = "string"
 )
 
 // OpenAPISpec describes the typed-handler route table used for deterministic OpenAPI generation.
@@ -107,8 +116,8 @@ func GenerateOpenAPI(spec OpenAPISpec) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
-		pathItem, _ := paths[path].(map[string]any)
-		if pathItem == nil {
+		pathItem, ok := paths[path].(map[string]any)
+		if !ok {
 			pathItem = map[string]any{}
 			paths[path] = pathItem
 		}
@@ -162,17 +171,17 @@ func openAPIComponents() map[string]any {
 					"error": map[string]any{
 						"additionalProperties": true,
 						"properties": map[string]any{
-							"code":       map[string]any{"type": "string"},
-							"details":    map[string]any{"additionalProperties": true, "type": "object"},
-							"message":    map[string]any{"type": "string"},
-							"request_id": map[string]any{"type": "string"},
+							"code":       map[string]any{"type": openAPITypeString},
+							"details":    map[string]any{"additionalProperties": true, "type": openAPITypeObject},
+							"message":    map[string]any{"type": openAPITypeString},
+							"request_id": map[string]any{"type": openAPITypeString},
 						},
 						"required": []string{"code", "message"},
-						"type":     "object",
+						"type":     openAPITypeObject,
 					},
 				},
 				"required": []string{"error"},
-				"type":     "object",
+				"type":     openAPITypeObject,
 			},
 		},
 	}
@@ -209,7 +218,7 @@ func openAPIOperation(route OpenAPIRouteSpec, operationID string) (map[string]an
 		operation["parameters"] = parameters
 	}
 
-	bodyFields, err := openAPIFieldsForSource(route.Request.Fields, "body")
+	bodyFields, err := openAPIFieldsForSource(route.Request.Fields, bindSourceBody)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +250,7 @@ func openAPISuccessResponse(response OpenAPIResponseSpec) (map[string]any, error
 		description = "success"
 	}
 	out := map[string]any{"description": description}
-	fields, err := openAPIFieldsForSource(response.Fields, "response")
+	fields, err := openAPIFieldsForSource(response.Fields, openAPISourceResponse)
 	if err != nil {
 		return nil, err
 	}
@@ -260,10 +269,10 @@ func openAPIParameters(fields []OpenAPIFieldSpec) ([]any, error) {
 	for _, field := range fields {
 		source := normalizeOpenAPISource(field.Source)
 		switch source {
-		case "path", "query", "header":
+		case bindSourcePath, bindSourceQuery, bindSourceHeader:
 			field.Source = source
 			params = append(params, field)
-		case "body":
+		case bindSourceBody:
 			continue
 		default:
 			return nil, fmt.Errorf("apptheory: openapi request field %s has unsupported source %q", field.Field, field.Source)
@@ -299,8 +308,8 @@ func openAPIFieldsForSource(fields []OpenAPIFieldSpec, source string) ([]OpenAPI
 	out := make([]OpenAPIFieldSpec, 0, len(fields))
 	for _, field := range fields {
 		fieldSource := normalizeOpenAPISource(field.Source)
-		if source == "response" && fieldSource == "" {
-			fieldSource = "response"
+		if source == openAPISourceResponse && fieldSource == "" {
+			fieldSource = openAPISourceResponse
 		}
 		if fieldSource != source {
 			continue
@@ -330,7 +339,7 @@ func openAPIObjectSchema(fields []OpenAPIFieldSpec) map[string]any {
 	schema := map[string]any{
 		"additionalProperties": false,
 		"properties":           properties,
-		"type":                 "object",
+		"type":                 openAPITypeObject,
 	}
 	if len(required) > 0 {
 		schema["required"] = required
@@ -343,72 +352,95 @@ func openAPIFieldSchema(field OpenAPIFieldSpec) map[string]any {
 	var schema map[string]any
 	if field.Array {
 		items := map[string]any{"type": baseType}
-		if baseType == "object" {
+		if baseType == openAPITypeObject {
 			items["additionalProperties"] = true
 		}
 		schema = map[string]any{"items": items, "type": "array"}
 	} else {
 		schema = map[string]any{"type": baseType}
-		if baseType == "object" {
+		if baseType == openAPITypeObject {
 			schema["additionalProperties"] = true
 		}
 	}
 
 	for _, rule := range field.Validation {
-		switch strings.TrimSpace(rule.Rule) {
-		case ValidationRuleRequired:
-			continue
-		case ValidationRuleMin:
-			if !field.Array && (baseType == "integer" || baseType == "number") {
-				if value, ok := openAPINumberValue(rule.Value); ok {
-					schema["minimum"] = value
-				}
-			}
-		case ValidationRuleMax:
-			if !field.Array && (baseType == "integer" || baseType == "number") {
-				if value, ok := openAPINumberValue(rule.Value); ok {
-					schema["maximum"] = value
-				}
-			}
-		case ValidationRuleMinLength:
-			if value, ok := openAPIIntegerValue(rule.Value); ok {
-				applyOpenAPILength(schema, baseType, field.Array, "min", value)
-			}
-		case ValidationRuleMaxLength:
-			if value, ok := openAPIIntegerValue(rule.Value); ok {
-				applyOpenAPILength(schema, baseType, field.Array, "max", value)
-			}
-		case ValidationRulePattern:
-			if !field.Array && baseType == "string" {
-				schema["pattern"] = fmt.Sprint(rule.Value)
-			}
-		case ValidationRuleEnum:
-			if values := openAPIEnumValues(rule.Value); len(values) > 0 {
-				schema["enum"] = values
-			}
-		}
+		applyOpenAPIValidationRule(schema, baseType, field.Array, rule)
 	}
 	return schema
 }
 
-func applyOpenAPILength(schema map[string]any, baseType string, array bool, kind string, value int) {
+func applyOpenAPIValidationRule(schema map[string]any, baseType string, array bool, rule OpenAPIValidationRule) {
+	switch strings.TrimSpace(rule.Rule) {
+	case ValidationRuleRequired:
+		return
+	case ValidationRuleMin, ValidationRuleMax:
+		applyOpenAPINumericRule(schema, baseType, array, rule)
+	case ValidationRuleMinLength, ValidationRuleMaxLength:
+		applyOpenAPILengthRule(schema, baseType, array, rule)
+	case ValidationRulePattern:
+		applyOpenAPIPatternRule(schema, baseType, array, rule.Value)
+	case ValidationRuleEnum:
+		applyOpenAPIEnumRule(schema, rule.Value)
+	}
+}
+
+func applyOpenAPINumericRule(schema map[string]any, baseType string, array bool, rule OpenAPIValidationRule) {
+	if array || (baseType != openAPITypeInteger && baseType != openAPITypeNumber) {
+		return
+	}
+	value, ok := openAPINumberValue(rule.Value)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(rule.Rule) == ValidationRuleMin {
+		schema["minimum"] = value
+		return
+	}
+	schema["maximum"] = value
+}
+
+func applyOpenAPILengthRule(schema map[string]any, baseType string, array bool, rule OpenAPIValidationRule) {
+	value, ok := openAPIIntegerValue(rule.Value)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(rule.Rule) == ValidationRuleMinLength {
+		applyOpenAPILength(schema, baseType, array, ValidationRuleMin, value)
+		return
+	}
+	applyOpenAPILength(schema, baseType, array, ValidationRuleMax, value)
+}
+
+func applyOpenAPIPatternRule(schema map[string]any, baseType string, array bool, value any) {
+	if !array && baseType == openAPITypeString {
+		schema["pattern"] = fmt.Sprint(value)
+	}
+}
+
+func applyOpenAPIEnumRule(schema map[string]any, value any) {
+	if values := openAPIEnumValues(value); len(values) > 0 {
+		schema["enum"] = values
+	}
+}
+
+func applyOpenAPILength(schema map[string]any, baseType string, array bool, kind string, value json.Number) {
 	if array {
-		if kind == "min" {
+		if kind == ValidationRuleMin {
 			schema["minItems"] = value
 		} else {
 			schema["maxItems"] = value
 		}
 		return
 	}
-	if baseType == "object" {
-		if kind == "min" {
+	if baseType == openAPITypeObject {
+		if kind == ValidationRuleMin {
 			schema["minProperties"] = value
 		} else {
 			schema["maxProperties"] = value
 		}
 		return
 	}
-	if kind == "min" {
+	if kind == ValidationRuleMin {
 		schema["minLength"] = value
 	} else {
 		schema["maxLength"] = value
@@ -416,7 +448,7 @@ func applyOpenAPILength(schema map[string]any, baseType string, array bool, kind
 }
 
 func openAPIFieldRequired(field OpenAPIFieldSpec) bool {
-	if normalizeOpenAPISource(field.Source) == "path" || field.Required {
+	if normalizeOpenAPISource(field.Source) == bindSourcePath || field.Required {
 		return true
 	}
 	for _, rule := range field.Validation {
@@ -449,15 +481,15 @@ func normalizeOpenAPISource(source string) string {
 func normalizeOpenAPIType(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "int", "integer":
-		return "integer"
+		return openAPITypeInteger
 	case "float", "number":
-		return "number"
+		return openAPITypeNumber
 	case "bool", "boolean":
 		return "boolean"
 	case "object", "map":
-		return "object"
+		return openAPITypeObject
 	default:
-		return "string"
+		return openAPITypeString
 	}
 }
 
@@ -473,15 +505,15 @@ func methodRank(method string) int {
 
 func sourceRank(source string) int {
 	switch source {
-	case "path":
+	case bindSourcePath:
 		return 0
-	case "query":
+	case bindSourceQuery:
 		return 1
-	case "header":
+	case bindSourceHeader:
 		return 2
-	case "body":
+	case bindSourceBody:
 		return 3
-	case "response":
+	case openAPISourceResponse:
 		return 4
 	default:
 		return 99
@@ -537,66 +569,46 @@ func openAPIEnumValues(value any) []string {
 	}
 }
 
-func openAPINumberValue(value any) (any, bool) {
+func openAPINumberValue(value any) (json.Number, bool) {
 	switch typed := value.(type) {
-	case int:
-		return typed, true
-	case int8:
-		return int(typed), true
-	case int16:
-		return int(typed), true
-	case int32:
-		return int(typed), true
-	case int64:
-		return typed, true
-	case uint:
-		return typed, true
-	case uint8:
-		return uint(typed), true
-	case uint16:
-		return uint(typed), true
-	case uint32:
-		return uint(typed), true
-	case uint64:
-		return typed, true
-	case float32:
-		return float64(typed), true
-	case float64:
-		return typed, true
 	case json.Number:
-		if i, err := typed.Int64(); err == nil {
-			return i, true
-		}
-		if f, err := typed.Float64(); err == nil {
-			return f, true
-		}
+		return openAPIValidNumber(typed)
 	case string:
-		if i, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64); err == nil {
-			return i, true
-		}
-		if f, err := strconv.ParseFloat(strings.TrimSpace(typed), 64); err == nil {
-			return f, true
-		}
+		return openAPIValidNumber(json.Number(strings.TrimSpace(typed)))
 	}
-	return nil, false
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return json.Number(strconv.FormatInt(reflected.Int(), 10)), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return json.Number(strconv.FormatUint(reflected.Uint(), 10)), true
+	case reflect.Float32, reflect.Float64:
+		return openAPIValidNumber(json.Number(strconv.FormatFloat(reflected.Float(), 'f', -1, 64)))
+	default:
+		return "", false
+	}
 }
 
-func openAPIIntegerValue(value any) (int, bool) {
-	value, ok := openAPINumberValue(value)
+func openAPIIntegerValue(value any) (json.Number, bool) {
+	number, ok := openAPINumberValue(value)
 	if !ok {
-		return 0, false
+		return "", false
 	}
-	switch typed := value.(type) {
-	case int:
-		return typed, true
-	case int64:
-		return int(typed), true
-	case uint:
-		return int(typed), true
-	case uint64:
-		return int(typed), true
-	case float64:
-		return int(typed), true
+	if _, err := strconv.ParseInt(number.String(), 10, 64); err == nil {
+		return number, true
 	}
-	return 0, false
+	if _, err := strconv.ParseUint(number.String(), 10, 64); err == nil {
+		return number, true
+	}
+	return "", false
+}
+
+func openAPIValidNumber(value json.Number) (json.Number, bool) {
+	if strings.TrimSpace(value.String()) == "" {
+		return "", false
+	}
+	if _, err := strconv.ParseFloat(value.String(), 64); err != nil {
+		return "", false
+	}
+	return value, true
 }
