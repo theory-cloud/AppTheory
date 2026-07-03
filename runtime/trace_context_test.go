@@ -44,7 +44,6 @@ func TestExtractTraceIDFromHeaders(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			if got := extractTraceIDFromHeaders(tt.headers); got != tt.want {
@@ -72,7 +71,6 @@ func TestTraceIDFromTraceParent(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			if got := traceIDFromTraceParent(tt.value); got != tt.want {
@@ -106,7 +104,6 @@ func TestTraceIDFromXAmznTraceID(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			if got := traceIDFromXAmznTraceID(tt.value); got != tt.want {
