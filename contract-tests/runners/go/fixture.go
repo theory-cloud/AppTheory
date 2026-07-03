@@ -27,6 +27,7 @@ type FixtureSetup struct {
 	CORS            FixtureCORSConfig         `json:"cors,omitempty"`
 	Environment     map[string]string         `json:"environment,omitempty"`
 	LoggingProfile  json.RawMessage           `json:"logging_profile,omitempty"`
+	OpenAPI         json.RawMessage           `json:"openapi,omitempty"`
 	WebSockets      []FixtureWebSocketRoute   `json:"websockets,omitempty"`
 	SQS             []FixtureSQSRoute         `json:"sqs,omitempty"`
 	Kinesis         []FixtureKinesisRoute     `json:"kinesis,omitempty"`

@@ -1879,6 +1879,47 @@ type ObservabilityHooks struct {
 	Span   func(SpanRecord)
 }
 
+type OpenAPIFieldSpec struct {
+	Field      string                  `json:"field"`
+	Source     string                  `json:"source"`
+	Name       string                  `json:"name"`
+	Type       string                  `json:"type"`
+	Array      bool                    `json:"array,omitempty"`
+	Required   bool                    `json:"required,omitempty"`
+	Validation []OpenAPIValidationRule `json:"validation,omitempty"`
+}
+
+type OpenAPIRequestSpec struct {
+	Fields []OpenAPIFieldSpec `json:"fields,omitempty"`
+}
+
+type OpenAPIResponseSpec struct {
+	Description string             `json:"description,omitempty"`
+	Fields      []OpenAPIFieldSpec `json:"fields,omitempty"`
+}
+
+type OpenAPIRouteSpec struct {
+	Method        string              `json:"method"`
+	Path          string              `json:"path"`
+	OperationID   string              `json:"operation_id"`
+	Summary       string              `json:"summary,omitempty"`
+	Tags          []string            `json:"tags,omitempty"`
+	SuccessStatus int                 `json:"success_status,omitempty"`
+	Request       OpenAPIRequestSpec  `json:"request,omitempty"`
+	Response      OpenAPIResponseSpec `json:"response"`
+}
+
+type OpenAPISpec struct {
+	Title   string             `json:"title"`
+	Version string             `json:"version"`
+	Routes  []OpenAPIRouteSpec `json:"routes"`
+}
+
+type OpenAPIValidationRule struct {
+	Rule  string `json:"rule"`
+	Value any    `json:"value,omitempty"`
+}
+
 type Option func(*App)
 
 type PolicyDecision struct {
@@ -2038,6 +2079,10 @@ func ETag([]byte) string
 func EventBridgePattern(string, string) EventBridgeSelector
 
 func EventBridgeRule(string) EventBridgeSelector
+
+func GenerateOpenAPI(OpenAPISpec) (map[string]any, error)
+
+func GenerateOpenAPIJSON(OpenAPISpec) ([]byte, error)
 
 func HTML(int, any) *Response
 
