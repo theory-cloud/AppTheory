@@ -1,0 +1,111 @@
+{
+  "id": "p2.rate_limit.multi_window_rejected",
+  "tier": "p2",
+  "name": "Rate limiting pins multi-window rejection headers from the active limiting window",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/limited/multi-window",
+        "handler": "echo_context"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/limited/multi-window",
+      "query": {},
+      "headers": {
+        "x-force-rate-limit-multi-window": [
+          "minute"
+        ],
+        "x-tenant-id": [
+          "tenant_multi"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 429,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ],
+        "x-request-id": [
+          "req_test_123"
+        ],
+        "retry-after": [
+          "30"
+        ],
+        "x-ratelimit-limit": [
+          "2"
+        ],
+        "x-ratelimit-remaining": [
+          "0"
+        ],
+        "x-ratelimit-reset": [
+          "60"
+        ],
+        "x-ratelimit-window": [
+          "1m"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.rate_limited",
+          "message": "rate limited",
+          "request_id": "req_test_123"
+        }
+      },
+      "is_base64": false
+    },
+    "logs": [
+      {
+        "level": "warn",
+        "event": "request.completed",
+        "request_id": "req_test_123",
+        "tenant_id": "tenant_multi",
+        "method": "GET",
+        "path": "/limited/multi-window",
+        "status": 429,
+        "error_code": "app.rate_limited",
+        "duration_ms": 0
+      }
+    ],
+    "metrics": [
+      {
+        "name": "apptheory.request",
+        "value": 1,
+        "tags": {
+          "method": "GET",
+          "path": "/limited/multi-window",
+          "status": "429",
+          "error_code": "app.rate_limited",
+          "tenant_id": "tenant_multi"
+        },
+        "duration_ms": 0
+      }
+    ],
+    "spans": [
+      {
+        "name": "http GET /limited/multi-window",
+        "attributes": {
+          "http.method": "GET",
+          "http.route": "/limited/multi-window",
+          "http.status_code": "429",
+          "request.id": "req_test_123",
+          "tenant.id": "tenant_multi",
+          "error.code": "app.rate_limited"
+        }
+      }
+    ]
+  }
+}

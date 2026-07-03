@@ -1,0 +1,102 @@
+{
+  "id": "p2.rate_limit.store_failure_fail_closed",
+  "tier": "p2",
+  "name": "Limiter store failures fail closed through the P2 policy envelope",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/limited/store-failure",
+        "handler": "echo_context"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/limited/store-failure",
+      "query": {},
+      "headers": {
+        "x-force-rate-limit-store-failure": [
+          "true"
+        ],
+        "x-tenant-id": [
+          "tenant_store"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 503,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ],
+        "x-request-id": [
+          "req_test_123"
+        ],
+        "retry-after": [
+          "1"
+        ],
+        "x-rate-limit-fail-closed": [
+          "true"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.overloaded",
+          "message": "overloaded",
+          "request_id": "req_test_123"
+        }
+      },
+      "is_base64": false
+    },
+    "logs": [
+      {
+        "level": "error",
+        "event": "request.completed",
+        "request_id": "req_test_123",
+        "tenant_id": "tenant_store",
+        "method": "GET",
+        "path": "/limited/store-failure",
+        "status": 503,
+        "error_code": "app.overloaded",
+        "duration_ms": 0
+      }
+    ],
+    "metrics": [
+      {
+        "name": "apptheory.request",
+        "value": 1,
+        "tags": {
+          "method": "GET",
+          "path": "/limited/store-failure",
+          "status": "503",
+          "error_code": "app.overloaded",
+          "tenant_id": "tenant_store"
+        },
+        "duration_ms": 0
+      }
+    ],
+    "spans": [
+      {
+        "name": "http GET /limited/store-failure",
+        "attributes": {
+          "http.method": "GET",
+          "http.route": "/limited/store-failure",
+          "http.status_code": "503",
+          "request.id": "req_test_123",
+          "tenant.id": "tenant_store",
+          "error.code": "app.overloaded"
+        }
+      }
+    ]
+  }
+}

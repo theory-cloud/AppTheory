@@ -4090,6 +4090,21 @@ async function runFixtureP2(fixture) {
       if (
         firstHeaderValue(
           ctx.request.headers ?? {},
+          "x-force-rate-limit-content-type-lowercase",
+        )
+      ) {
+        return {
+          code: "app.rate_limited",
+          message: "rate limited",
+          headers: {
+            "retry-after": ["1"],
+            "content-type": ["text/plain; charset=utf-8"],
+          },
+        };
+      }
+      if (
+        firstHeaderValue(
+          ctx.request.headers ?? {},
           "x-force-rate-limit-content-type",
         )
       ) {
@@ -4099,6 +4114,39 @@ async function runFixtureP2(fixture) {
           headers: {
             "retry-after": ["1"],
             "Content-Type": ["text/plain; charset=utf-8"],
+          },
+        };
+      }
+      if (
+        firstHeaderValue(
+          ctx.request.headers ?? {},
+          "x-force-rate-limit-multi-window",
+        )
+      ) {
+        return {
+          code: "app.rate_limited",
+          message: "rate limited",
+          headers: {
+            "retry-after": ["30"],
+            "x-ratelimit-limit": ["2"],
+            "x-ratelimit-remaining": ["0"],
+            "x-ratelimit-reset": ["60"],
+            "x-ratelimit-window": ["1m"],
+          },
+        };
+      }
+      if (
+        firstHeaderValue(
+          ctx.request.headers ?? {},
+          "x-force-rate-limit-store-failure",
+        )
+      ) {
+        return {
+          code: "app.overloaded",
+          message: "overloaded",
+          headers: {
+            "retry-after": ["1"],
+            "x-rate-limit-fail-closed": ["true"],
           },
         };
       }
@@ -4227,6 +4275,21 @@ async function runFixtureP2Output(fixture) {
       if (
         firstHeaderValue(
           ctx.request.headers ?? {},
+          "x-force-rate-limit-content-type-lowercase",
+        )
+      ) {
+        return {
+          code: "app.rate_limited",
+          message: "rate limited",
+          headers: {
+            "retry-after": ["1"],
+            "content-type": ["text/plain; charset=utf-8"],
+          },
+        };
+      }
+      if (
+        firstHeaderValue(
+          ctx.request.headers ?? {},
           "x-force-rate-limit-content-type",
         )
       ) {
@@ -4236,6 +4299,39 @@ async function runFixtureP2Output(fixture) {
           headers: {
             "retry-after": ["1"],
             "Content-Type": ["text/plain; charset=utf-8"],
+          },
+        };
+      }
+      if (
+        firstHeaderValue(
+          ctx.request.headers ?? {},
+          "x-force-rate-limit-multi-window",
+        )
+      ) {
+        return {
+          code: "app.rate_limited",
+          message: "rate limited",
+          headers: {
+            "retry-after": ["30"],
+            "x-ratelimit-limit": ["2"],
+            "x-ratelimit-remaining": ["0"],
+            "x-ratelimit-reset": ["60"],
+            "x-ratelimit-window": ["1m"],
+          },
+        };
+      }
+      if (
+        firstHeaderValue(
+          ctx.request.headers ?? {},
+          "x-force-rate-limit-store-failure",
+        )
+      ) {
+        return {
+          code: "app.overloaded",
+          message: "overloaded",
+          headers: {
+            "retry-after": ["1"],
+            "x-rate-limit-fail-closed": ["true"],
           },
         };
       }

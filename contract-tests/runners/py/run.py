@@ -3691,11 +3691,35 @@ def run_fixture_p2_output(fixture: dict[str, Any]) -> tuple[bool, str, dict[str,
 
 def _fixture_policy_hook(runtime, ctx):
     headers = getattr(getattr(ctx, "request", None), "headers", {}) or {}
+    if str((headers.get("x-force-rate-limit-content-type-lowercase") or [""])[0]).strip():
+        return runtime.PolicyDecision(
+            code="app.rate_limited",
+            message="rate limited",
+            headers={"retry-after": ["1"], "content-type": ["text/plain; charset=utf-8"]},
+        )
     if str((headers.get("x-force-rate-limit-content-type") or [""])[0]).strip():
         return runtime.PolicyDecision(
             code="app.rate_limited",
             message="rate limited",
             headers={"retry-after": ["1"], "Content-Type": ["text/plain; charset=utf-8"]},
+        )
+    if str((headers.get("x-force-rate-limit-multi-window") or [""])[0]).strip():
+        return runtime.PolicyDecision(
+            code="app.rate_limited",
+            message="rate limited",
+            headers={
+                "retry-after": ["30"],
+                "x-ratelimit-limit": ["2"],
+                "x-ratelimit-remaining": ["0"],
+                "x-ratelimit-reset": ["60"],
+                "x-ratelimit-window": ["1m"],
+            },
+        )
+    if str((headers.get("x-force-rate-limit-store-failure") or [""])[0]).strip():
+        return runtime.PolicyDecision(
+            code="app.overloaded",
+            message="overloaded",
+            headers={"retry-after": ["1"], "x-rate-limit-fail-closed": ["true"]},
         )
     if str((headers.get("x-force-rate-limit") or [""])[0]).strip():
         return runtime.PolicyDecision(
