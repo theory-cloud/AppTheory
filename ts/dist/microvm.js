@@ -196,14 +196,14 @@ export class MicroVMLifecycleAdapter {
             if (normalizedHook && handler)
                 this.handlers.set(normalizedHook, handler);
         }
-        validateMicroVMLifecycleContract(this.contract);
+        validateMicroVMLifecycleAdapterContract(this.contract);
     }
     async handle(event) {
         try {
-            validateMicroVMLifecycleContract(this.contract);
+            validateMicroVMLifecycleAdapterContract(this.contract);
         }
         catch (err) {
-            const safe = safeError(MICROVM_ERROR_LIFECYCLE_INCOMPLETE, err instanceof Error ? err.message : String(err), event.request_id);
+            const safe = lifecycleContractValidationError(err, event.request_id);
             return lifecycleErrorResult(event, MicroVMState.Failed, safe);
         }
         const normalizedResult = normalizeMicroVMLifecycleEvent(event);
@@ -1113,6 +1113,64 @@ function validateMicroVMLifecycleFailureTransitions(transitions) {
             throw safeError(MICROVM_ERROR_LIFECYCLE_INCOMPLETE, `apptheory: microvm lifecycle missing failure transition from ${state}`, "");
         }
     }
+}
+function validateMicroVMLifecycleAdapterContract(contract) {
+    if (isMicroVMRealLifecycleContractShape(contract)) {
+        validateMicroVMRealLifecycleContract(contract);
+        return;
+    }
+    validateMicroVMLifecycleContract(contract);
+}
+function isMicroVMRealLifecycleContractShape(contract) {
+    for (const hook of contract.hooks ?? []) {
+        if (microVMRealLifecycleOnlyHook(hook.name))
+            return true;
+    }
+    for (const state of contract.states ?? []) {
+        if (microVMRealLifecycleOnlyState(state))
+            return true;
+    }
+    for (const transition of contract.transitions ?? []) {
+        if (microVMRealLifecycleOnlyHook(transition.hook) ||
+            microVMRealLifecycleOnlyState(transition.from) ||
+            microVMRealLifecycleOnlyState(transition.to)) {
+            return true;
+        }
+    }
+    return false;
+}
+function microVMRealLifecycleOnlyHook(hook) {
+    switch (String(hook ?? "").trim()) {
+        case MicroVMRealHook.Validate:
+        case MicroVMRealHook.Run:
+        case MicroVMRealHook.Ready:
+        case MicroVMRealHook.Suspend:
+        case MicroVMRealHook.Resume:
+        case MicroVMRealHook.Terminate:
+            return true;
+        default:
+            return false;
+    }
+}
+function microVMRealLifecycleOnlyState(state) {
+    switch (String(state ?? "").trim()) {
+        case MicroVMRealState.Validating:
+        case MicroVMRealState.Validated:
+        case MicroVMRealState.Running:
+        case MicroVMRealState.Suspending:
+        case MicroVMRealState.Suspended:
+        case MicroVMRealState.Resuming:
+        case MicroVMRealState.Terminating:
+            return true;
+        default:
+            return false;
+    }
+}
+function lifecycleContractValidationError(err, requestID) {
+    if (err instanceof MicroVMSafeError) {
+        return safeError(err.code, err.message, requestID);
+    }
+    return safeError(MICROVM_ERROR_LIFECYCLE_INCOMPLETE, err instanceof Error ? err.message : String(err), requestID);
 }
 function normalizeMicroVMLifecycleEvent(event) {
     const normalizedInput = {
