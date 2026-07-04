@@ -3948,13 +3948,23 @@ func (realClock) Now() time.Time
 
 ## github.com/theory-cloud/apptheory/runtime/oauth
 
+const ContextKeyBearerClaims = "oauth.bearer_claims"
+
 const ContextKeyBearerToken = "oauth.bearer_token"
 
 var ErrAuthorizationCodeExpired = errors.New("authorization code expired")
 
 var ErrAuthorizationCodeNotFound = errors.New("authorization code not found")
 
+var ErrBearerTokenExpired = errors.New("bearer token expired")
+
+var ErrBearerTokenInsufficientScope = errors.New("bearer token insufficient scope")
+
+var ErrBearerTokenInvalidAudience = errors.New("bearer token invalid audience")
+
 var ErrInvalidAuthorizationHeader = errors.New("invalid authorization header")
+
+var ErrInvalidBearerToken = errors.New("invalid bearer token")
 
 var ErrInvalidURL = errors.New("invalid url")
 
@@ -3992,6 +4002,30 @@ type AuthorizationServerMetadata struct {
 	ScopesSupported                   []string `json:"scopes_supported,omitempty"`
 	SubjectTypesSupported             []string `json:"subject_types_supported,omitempty"`
 	IDTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported,omitempty"`
+}
+
+type BearerTokenClaims struct {
+	Subject   string
+	Audience  string
+	Scopes    []string
+	ExpiresAt time.Time
+}
+
+type BearerTokenClaimsValidator func(context.Context, string) (*BearerTokenClaims, error)
+
+type BearerTokenRecord struct {
+	Token     string
+	Subject   string
+	Audience  string
+	Scope     string
+	Scopes    []string
+	ExpiresAt time.Time
+}
+
+type BearerTokenValidationOptions struct {
+	RequiredAudience string
+	RequiredScopes   []string
+	Now              func() time.Time
 }
 
 type BearerTokenValidator func(context.Context, string) error
@@ -4056,9 +4090,13 @@ type RequireBearerTokenOptions struct {
 	ResourceMetadataURL string
 
 	Validator BearerTokenValidator
+
+	ClaimsValidator BearerTokenClaimsValidator
 }
 
 func AuthorizationServerMetadataHandler(*AuthorizationServerMetadata) apptheory.Handler
+
+func BearerTokenClaimsFromContext(*apptheory.Context) (BearerTokenClaims, bool)
 
 func BearerTokenFromHeaders(map[string][]string) (string, error)
 
@@ -4071,6 +4109,8 @@ func ClaudeDynamicClientRegistrationPolicy() DynamicClientRegistrationPolicy
 func NewAuthorizationServerMetadata(string) (*AuthorizationServerMetadata, error)
 
 func NewMemoryAuthorizationCodeStore() *MemoryAuthorizationCodeStore
+
+func NewMemoryBearerTokenValidator([]BearerTokenRecord, BearerTokenValidationOptions) BearerTokenClaimsValidator
 
 func NewMemoryRefreshTokenStore() *MemoryRefreshTokenStore
 
