@@ -109,6 +109,7 @@ for required_path in \
   '"docs/cdk/**"' \
   '"docs/features/**"' \
   '"docs/integrations/**"' \
+  '"docs/guides/**"' \
   '"docs/migration/**"' \
   '"docs/llm-faq/**"' \
   '"scripts/stage-theorycloud-apptheory-subtree.sh"' \

@@ -75,6 +75,7 @@ groups:
     items:
       - { id: testing-guide,          title: Testing,                 url: /testing-guide/,              icon: check }
       - { id: troubleshooting,        title: Troubleshooting,         url: /troubleshooting/,            icon: life-buoy }
+      - { id: operations,             title: Operations,              url: /guides/operations/,         icon: activity,     tag: new }
       - { id: dependency-automation, title: Dependency Automation,  url: /dependency-automation/,     icon: refresh-cw }
       - { id: release-process,        title: Release Process,         url: /release-process/,            icon: tag }
       - { id: development-guidelines, title: Development Guidelines,  url: /development-guidelines/,     icon: check-square }
@@ -124,6 +125,7 @@ order:
   - mig-appsync
   - testing-guide
   - troubleshooting
+  - operations
   - dependency-automation
   - release-process
   - development-guidelines
@@ -173,6 +175,7 @@ url_to_id:
   /migration/appsync-lambda-resolvers/:         mig-appsync
   /testing-guide/:                              testing-guide
   /troubleshooting/:                            troubleshooting
+  /guides/operations/:                         operations
   /dependency-automation/:                     dependency-automation
   /release-process/:                            release-process
   /development-guidelines/:                     development-guidelines
