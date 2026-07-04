@@ -104,21 +104,23 @@ Fix:
 - treat request headers as case-insensitive
 - assert lowercase response header keys in tests and examples
 
-## Issue: a route silently never registers
+## Issue: route registration fails during startup
 
 Symptoms:
 
-- expected handler returns `404`
-- a route pattern looks invalid but no startup failure occurred
+- application initialization raises or panics before the first request
+- the error mentions `app.bad_request`, duplicate route registration, an invalid pattern, or a nil/undefined handler
 
 Cause:
 
-- default route registration is compatibility-oriented and invalid patterns can be ignored
+- AppTheory route registration is fail-closed. A route that older v1 lines could silently ignore now fails during
+  construction so the deployed app cannot drift into unexpected `404` behavior.
 
 Fix:
 
-- use `GetStrict` / `HandleStrict` / `handleStrict` / `handle_strict` in tests and CI
-- correct the route pattern before relying on the non-strict registration path
+- correct the route pattern or duplicate method/path pair in the normal fluent registration path
+- keep strict helpers only for deprecated compatibility tests that intentionally assert the older helper shape
+- see `UPGRADING.md` for the v1.15 deprecation notes
 
 ## Issue: one Lambda behaves differently across HTTP, queue, or stream triggers
 

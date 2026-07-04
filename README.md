@@ -275,6 +275,7 @@ The single-path philosophy applies here: one way to register a route, one way to
 - [LICENSE](LICENSE) — Apache-2.0
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [CHANGELOG.md](CHANGELOG.md)
+- [UPGRADING.md](UPGRADING.md)
 - [THEORY_CLOUD.md](THEORY_CLOUD.md)
 
 <p align="center"><sub>Made with <a href="https://github.com/theory-cloud">Theory Cloud</a> · <a href="https://apptheory.theorycloud.ai/">docs</a></sub></p>

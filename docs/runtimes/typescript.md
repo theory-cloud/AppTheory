@@ -84,13 +84,15 @@ test("ping", async () => {
 });
 ```
 
-## Strict routes
+## Route registration
 
 ```ts
-app.handleStrict("GET", "/users/{id}", handler);
+app.handle("GET", "/users/{id}", handler);
+app.get("/users/{id}", handler);
 ```
 
-Strict registration throws on invalid patterns at registration time — preferred for CI and unit tests.
+Normal fluent registration fails closed on invalid patterns, duplicates, and undefined handlers. `handleStrict` remains
+as a deprecated compatibility wrapper for callers that still need the old helper shape.
 
 ## HTTP error format
 
