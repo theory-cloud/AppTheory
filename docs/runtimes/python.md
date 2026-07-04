@@ -5,7 +5,7 @@ description: The Python implementation of the AppTheory contract — typed, asyn
 
 # Python Runtime
 
-The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes the shared non-MCP corpus from the [195 contract fixtures](../reference/contract-fixtures.md); the contract gate schema-checks the SP09 MCP fixture tier, and the Python runner loads them and explicitly skips them as future-runtime work pending SP11. <!-- apptheory-fixture-count: 195 -->
+The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes all [199 contract fixtures](../reference/contract-fixtures.md), including the SP09 MCP tier and SP12 OAuth tier. <!-- apptheory-fixture-count: 199 -->
 
 ## Install
 
@@ -103,7 +103,7 @@ Applies to HTTP error serialization only.
 
 ## What's verified
 
-The Python runtime passes the shared non-MCP contract corpus on every commit. <!-- apptheory-fixture-count: 195 --> The runner loads the full 195-fixture tree and reports the MCP future-runtime skip tier for the SP09 MCP tier until SP11 adds the Python MCP runtime. That skip is intentional staging, not parity proof. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
+The Python runtime passes the full contract corpus on every commit. <!-- apptheory-fixture-count: 199 --> The runner loads and executes the full 199-fixture tree, including the SP09 MCP tier and SP12 OAuth tier. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
 
 ## Next reads
 
