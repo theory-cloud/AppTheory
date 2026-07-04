@@ -30,6 +30,7 @@ type FixtureSetup struct {
 	OpenAPI              json.RawMessage                  `json:"openapi,omitempty"`
 	MCP                  FixtureMCPSetup                  `json:"mcp,omitempty"`
 	OAuth                FixtureOAuthSetup                `json:"oauth,omitempty"`
+	ObjectStore          FixtureObjectStoreSetup          `json:"objectstore,omitempty"`
 	WebSockets           []FixtureWebSocketRoute          `json:"websockets,omitempty"`
 	SQS                  []FixtureSQSRoute                `json:"sqs,omitempty"`
 	Kinesis              []FixtureKinesisRoute            `json:"kinesis,omitempty"`
@@ -87,13 +88,14 @@ type FixtureDynamoDBRoute struct {
 }
 
 type FixtureInput struct {
-	Context               FixtureContext     `json:"context,omitempty"`
-	Request               *FixtureRequest    `json:"request,omitempty"`
-	AWSEvent              *FixtureAWSEvent   `json:"aws_event,omitempty"`
-	LoggingEvent          json.RawMessage    `json:"logging_event,omitempty"`
-	LoggingProfileCatalog bool               `json:"logging_profile_catalog,omitempty"`
-	MCP                   *FixtureMCPInput   `json:"mcp,omitempty"`
-	OAuth                 *FixtureOAuthInput `json:"oauth,omitempty"`
+	Context               FixtureContext          `json:"context,omitempty"`
+	Request               *FixtureRequest         `json:"request,omitempty"`
+	AWSEvent              *FixtureAWSEvent        `json:"aws_event,omitempty"`
+	LoggingEvent          json.RawMessage         `json:"logging_event,omitempty"`
+	LoggingProfileCatalog bool                    `json:"logging_profile_catalog,omitempty"`
+	MCP                   *FixtureMCPInput        `json:"mcp,omitempty"`
+	OAuth                 *FixtureOAuthInput      `json:"oauth,omitempty"`
+	ObjectStore           FixtureObjectStoreInput `json:"objectstore,omitempty"`
 }
 
 type FixtureAWSEvent struct {

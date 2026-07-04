@@ -49,6 +49,8 @@ func runFixture(f Fixture) error {
 		return runFixtureMCP(f)
 	case "oauth":
 		return runFixtureOAuth(f)
+	case "objectstore":
+		return runFixtureObjectStore(f)
 	default:
 		return runFixtureLegacy(f)
 	}
