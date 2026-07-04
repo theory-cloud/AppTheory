@@ -12,7 +12,11 @@ if [[ ! -d "cdk-go/apptheorycdk" ]]; then
   echo "cdk-go: FAIL (missing cdk-go/apptheorycdk)" >&2
   exit 1
 fi
+if [[ ! -f "cdk-go/go.mod" ]]; then
+  echo "cdk-go: FAIL (missing nested cdk-go/go.mod)" >&2
+  exit 1
+fi
 
-go test ./cdk-go/apptheorycdk/... >/dev/null
+(cd cdk-go && go test ./... >/dev/null)
 
 echo "cdk-go: PASS"

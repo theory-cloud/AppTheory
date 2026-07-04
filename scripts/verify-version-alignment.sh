@@ -13,9 +13,10 @@ if [[ "${1:-}" == "--self-test" ]]; then
   }
   trap cleanup EXIT
 
-  mkdir -p "${tmp_dir}/scripts" "${tmp_dir}/ts" "${tmp_dir}/cdk" "${tmp_dir}/py" "${tmp_dir}/examples/cdk"
+  mkdir -p "${tmp_dir}/scripts" "${tmp_dir}/ts" "${tmp_dir}/cdk" "${tmp_dir}/cdk-go" "${tmp_dir}/py" "${tmp_dir}/examples/cdk"
   cp VERSION go.mod .release-please-manifest.json .release-please-manifest.premain.json \
     release-please-config.json release-please-config.premain.json "${tmp_dir}/"
+  cp cdk-go/go.mod "${tmp_dir}/cdk-go/"
   cp scripts/read-version.sh scripts/verify-version-alignment.sh "${tmp_dir}/scripts/"
   cp ts/package.json ts/package-lock.json "${tmp_dir}/ts/"
   cp cdk/package.json cdk/package-lock.json cdk/.jsii "${tmp_dir}/cdk/"
@@ -52,6 +53,7 @@ PY
 fi
 
 expected_module="github.com/theory-cloud/apptheory"
+expected_cdk_go_module="github.com/theory-cloud/apptheory/cdk-go"
 
 if [[ ! -f "VERSION" ]]; then
   echo "version-alignment: FAIL (missing VERSION)"
@@ -77,6 +79,17 @@ fi
 observed_module="$(awk '/^module[[:space:]]+/{print $2; exit}' go.mod || true)"
 if [[ "${observed_module}" != "${expected_module}" ]]; then
   echo "version-alignment: FAIL (go.mod module '${observed_module}' != '${expected_module}')"
+  exit 1
+fi
+
+if [[ ! -f "cdk-go/go.mod" ]]; then
+  echo "version-alignment: FAIL (missing cdk-go/go.mod)"
+  exit 1
+fi
+
+observed_cdk_go_module="$(awk '/^module[[:space:]]+/{print $2; exit}' cdk-go/go.mod || true)"
+if [[ "${observed_cdk_go_module}" != "${expected_cdk_go_module}" ]]; then
+  echo "version-alignment: FAIL (cdk-go/go.mod module '${observed_cdk_go_module}' != '${expected_cdk_go_module}')"
   exit 1
 fi
 
