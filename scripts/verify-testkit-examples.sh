@@ -15,6 +15,9 @@ fi
 
 node examples/testkit/ts.mjs
 node examples/testkit/ts-streaming.mjs
+node --check examples/mcp/tools-only-ts/server.mjs
+node --check examples/mcp/tools-only-ts/server.test.mjs
+node examples/mcp/tools-only-ts/server.test.mjs
 python3 examples/testkit/py.py
 
 echo "examples: PASS"
