@@ -26,10 +26,10 @@ func TestScaffoldTypeScriptProject(t *testing.T) {
 
 func TestScaffoldRefusesNonEmptyTarget(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "hello-app")
-	if err := os.MkdirAll(target, 0o755); err != nil {
+	if err := os.MkdirAll(target, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(target, "existing.txt"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(target, "existing.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := run([]string{"--lang=go", "--version=1.2.3", target}); err == nil {
@@ -52,7 +52,7 @@ func TestNormalizeLang(t *testing.T) {
 
 func readFile(t *testing.T, path string) string {
 	t.Helper()
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) //nolint:gosec // test helper reads files created under t.TempDir or generated scaffold output.
 	if err != nil {
 		t.Fatal(err)
 	}
