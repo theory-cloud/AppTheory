@@ -1,11 +1,11 @@
 ---
 title: Contract Fixtures
-description: The 146 shared fixtures that arbitrate behavior across Go, TypeScript, and Python.
+description: The 147 shared fixtures that arbitrate behavior across Go, TypeScript, and Python.
 ---
 
 # Contract Fixtures
 
-AppTheory ships **146 contract test fixtures** in `contract-tests/fixtures/` that define the language-neutral behavior every runtime must produce. The Go, TypeScript, and Python runtimes are each independently verified against the same fixture corpus on every commit.
+AppTheory ships **147 contract test fixtures** in `contract-tests/fixtures/` that define the language-neutral behavior every runtime must produce. The Go, TypeScript, and Python runtimes are each independently verified against the same fixture corpus on every commit.
 
 This page explains what the fixtures are, what they cover, and how to evolve them safely.
 
@@ -27,7 +27,7 @@ When the contract needs to grow, the fixture grows first. When the fixture grows
 
 ## Categories
 
-The 146 fixtures span (counts approximate; see `contract-tests/fixtures/` for the canonical inventory):
+The 147 fixtures span (counts approximate; see `contract-tests/fixtures/` for the canonical inventory):
 
 | Category | Covers |
 | --- | --- |
@@ -47,7 +47,7 @@ The 146 fixtures span (counts approximate; see `contract-tests/fixtures/` for th
 | Kinesis | Partial-batch response, stream routing, fail-closed for unregistered streams, CloudWatch Logs subscription envelope decoding. |
 | Remote MCP path dispatch | API Gateway REST proxy path normalization for Remote MCP and protected-resource metadata routes. The shared fixtures do **not** cover MCP JSON-RPC methods, session stores, DCR, PKCE, bearer-token validation, or OAuth challenges. |
 | Sanitization | Token-like value redaction, JSON/XML safe-logging output. |
-| Lambda MicroVM support | M15 foundation fixtures plus M16 real operations `run/get/list/suspend/resume/terminate/auth-token/shell-auth-token`, provider-state mappings, protected controller routes, tenant-bound list/recovery, token no-leak denial, and raw SDK/lifecycle bypass denial. The feature line is evidence-bounded to repo-local runtime/CDK/example/conformance harness proof, not live AWS, EqualToAI/Host, customer workload, or unauthenticated-controller proof. |
+| Lambda MicroVM support | M15 foundation fixtures plus M16 real operations `run/get/list/suspend/resume/terminate/auth-token/shell-auth-token`, provider-state mappings, protected controller routes, deployment execution-role propagation, tenant-bound list/recovery, token no-leak denial, and raw SDK/lifecycle bypass denial. The feature line is evidence-bounded to repo-local runtime/CDK/example/conformance harness proof, not live AWS, EqualToAI/Host, customer workload, or unauthenticated-controller proof. |
 
 ## Running the fixtures
 

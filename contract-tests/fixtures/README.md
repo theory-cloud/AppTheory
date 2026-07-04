@@ -242,6 +242,11 @@ vocabulary, not only that the standalone validator accepts it. Runners construct
 contract, execute the real hook sequence through sanitized events, and compare the final state plus handler-observed
 active states across Go, TypeScript, and Python.
 
+`expect.microvm_execution_role` fixtures prove that the deployment-owned execution role crosses the AppTheory runtime
+boundary. Runners set `APPTHEORY_MICROVM_EXECUTION_ROLE_ARN`, construct the real controller, execute `run`, and require
+the provider request to carry the same safe `execution_role_arn` value. This pins CDK `executionRole` as runtime
+behavior, not merely environment/`iam:PassRole` wiring.
+
 Token fixtures allow `auth-token` and `shell-token` only as sanitized issuance metadata: `token_id`, `token_type`,
 `expires_at`, and `scope`. Plaintext bearer/session token fields, raw AWS credentials, raw SDK clients, provider
 secrets, lifecycle payloads, and generated secrets must never appear as records, metadata, errors, logs, or response

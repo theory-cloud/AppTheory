@@ -64,6 +64,7 @@ type ProviderRunInput struct {
 	SessionSpec                 SessionSpec         `json:"session_spec,omitempty"`
 	IdlePolicy                  *ProviderIdlePolicy `json:"idle_policy,omitempty"`
 	MaximumDurationSeconds      int32               `json:"maximum_duration_seconds,omitempty"`
+	ExecutionRoleArn            string              `json:"execution_role_arn,omitempty"`
 }
 
 // ProviderSessionBinding binds an AppTheory session to a provider MicroVM identifier.
@@ -272,6 +273,9 @@ func validateProviderRunInput(input ProviderRunInput) (ProviderRunInput, error) 
 	if err := validateProviderRunSafeFields(input); err != nil {
 		return ProviderRunInput{}, err
 	}
+	if err := validateExecutionRoleArn(input.ExecutionRoleArn, input.RequestID); err != nil {
+		return ProviderRunInput{}, err
+	}
 	if err := validateProviderIdlePolicy(input.RequestID, input.IdlePolicy); err != nil {
 		return ProviderRunInput{}, err
 	}
@@ -475,6 +479,7 @@ func normalizeProviderRunInput(input ProviderRunInput) ProviderRunInput {
 	input.IngressNetworkConnectorRefs = normalizeStringSlice(input.IngressNetworkConnectorRefs)
 	input.EgressNetworkConnectorRefs = normalizeStringSlice(input.EgressNetworkConnectorRefs)
 	input.SessionSpec.Metadata = cloneStringMap(input.SessionSpec.Metadata)
+	input.ExecutionRoleArn = strings.TrimSpace(input.ExecutionRoleArn)
 	return input
 }
 
