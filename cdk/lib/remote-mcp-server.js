@@ -160,7 +160,7 @@ class AppTheoryRemoteMcpServer extends constructs_1.Construct {
 }
 exports.AppTheoryRemoteMcpServer = AppTheoryRemoteMcpServer;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryRemoteMcpServer[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServer", version: "1.15.1" };
+AppTheoryRemoteMcpServer[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServer", version: "1.15.2-rc" };
 function streamSpillExpirationDays(ttlMinutes) {
     if (!Number.isFinite(ttlMinutes) || ttlMinutes <= 0) {
         return 1;
