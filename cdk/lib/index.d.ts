@@ -4,6 +4,7 @@ export * from "./observability";
 export * from "./hosted-zone";
 export * from "./certificate";
 export * from "./api-domain";
+export * from "./regional-waf";
 export * from "./codebuild-job-runner";
 export * from "./kms-key";
 export * from "./enhanced-security";

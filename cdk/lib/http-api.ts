@@ -1,14 +1,14 @@
-import { ArnFormat, Duration, Stack } from "aws-cdk-lib";
+import { Duration } from "aws-cdk-lib";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import type * as route53 from "aws-cdk-lib/aws-route53";
-import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import { Construct } from "constructs";
 
 import { AppTheoryApiDomain } from "./api-domain";
+import type { AppTheoryRegionalWafOptions } from "./regional-waf";
 
 export interface AppTheoryHttpApiCorsOptions {
   /**
@@ -141,33 +141,12 @@ export interface AppTheoryHttpApiStageOptions {
   readonly throttlingBurstLimit?: number;
 }
 
-export interface AppTheoryHttpApiWafOptions {
-  /**
-   * Existing regional WAFv2 WebACL ARN to associate with the HTTP API stage.
-   *
-   * When omitted, AppTheory creates a regional WebACL with AWS managed baseline rules.
-   * @default undefined
-   */
-  readonly webAclArn?: string;
-
-  /**
-   * WebACL name when AppTheory creates one.
-   * @default derived from apiName
-   */
-  readonly name?: string;
-
-  /**
-   * CloudWatch metric name for the WebACL.
-   * @default derived from apiName
-   */
-  readonly metricName?: string;
-
-  /**
-   * Optional request rate limit rule threshold per five-minute window.
-   * @default undefined
-   */
-  readonly rateLimit?: number;
-}
+/**
+ * @deprecated API Gateway v2 HTTP API stages are not supported WAFv2 regional
+ * association targets. Use AppTheoryRestApi or AppTheoryRestApiRouter with
+ * AppTheoryRegionalWafOptions for WAF-protected REST API stages.
+ */
+export interface AppTheoryHttpApiWafOptions extends AppTheoryRegionalWafOptions {}
 
 export interface AppTheoryHttpApiProps {
   readonly handler: lambda.IFunction;
@@ -191,8 +170,14 @@ export interface AppTheoryHttpApiProps {
   readonly stage?: AppTheoryHttpApiStageOptions;
 
   /**
-   * Regional WAF attachment. Set to true for an AppTheory-managed WebACL.
+   * Regional WAF attachment is intentionally unavailable for API Gateway v2
+   * HTTP APIs. Supplying this prop fails closed during synthesis instead of
+   * producing an unsupported `/apis/.../stages/...` WebACL association.
+   *
+   * Use AppTheoryRestApi or AppTheoryRestApiRouter when a WAF-protected API
+   * Gateway stage is required.
    * @default undefined
+   * @deprecated HTTP API WAF association is unsupported by AWS WAFv2.
    */
   readonly waf?: boolean | AppTheoryHttpApiWafOptions;
 }
@@ -202,11 +187,15 @@ export class AppTheoryHttpApi extends Construct {
   public readonly stage: apigwv2.IStage;
   public readonly accessLogGroup?: logs.ILogGroup;
   public readonly domain?: AppTheoryApiDomain;
-  public readonly webAcl?: wafv2.CfnWebACL;
-  public readonly wafAssociation?: wafv2.CfnWebACLAssociation;
 
   constructor(scope: Construct, id: string, props: AppTheoryHttpApiProps) {
     super(scope, id);
+
+    if (props.waf) {
+      throw new Error(
+        "AppTheoryHttpApi does not support WAFv2 regional WebACL associations for API Gateway v2 HTTP APIs; use AppTheoryRestApi or AppTheoryRestApiRouter for WAF-protected REST stages",
+      );
+    }
 
     const stageOpts = props.stage ?? {};
     const stageName = stageOpts.stageName ?? "$default";
@@ -258,10 +247,6 @@ export class AppTheoryHttpApi extends Construct {
 
     if (props.domain) {
       this.configureDomain(props.domain);
-    }
-
-    if (props.waf) {
-      this.configureWaf(props.waf === true ? {} : props.waf);
     }
   }
 
@@ -316,58 +301,6 @@ export class AppTheoryHttpApi extends Construct {
     });
     (this as { domain?: AppTheoryApiDomain }).domain = domain;
   }
-
-  private configureWaf(options: AppTheoryHttpApiWafOptions): void {
-    const webAclArn = options.webAclArn ?? this.createWebAcl(options).attrArn;
-    const association = new wafv2.CfnWebACLAssociation(this, "WebAclAssociation", {
-      resourceArn: httpApiStageArn(this.api, this.stage),
-      webAclArn,
-    });
-    (this as { wafAssociation?: wafv2.CfnWebACLAssociation }).wafAssociation = association;
-  }
-
-  private createWebAcl(options: AppTheoryHttpApiWafOptions): wafv2.CfnWebACL {
-    const baseName = sanitizeMetricName(options.metricName ?? options.name ?? this.api.httpApiName ?? "AppTheoryHttpApi");
-    const rules: wafv2.CfnWebACL.RuleProperty[] = [
-      {
-        name: "AWSManagedRulesCommonRuleSet",
-        priority: 0,
-        overrideAction: { none: {} },
-        statement: {
-          managedRuleGroupStatement: {
-            vendorName: "AWS",
-            name: "AWSManagedRulesCommonRuleSet",
-          },
-        },
-        visibilityConfig: wafVisibility(`${baseName}Common`),
-      },
-    ];
-
-    if (options.rateLimit !== undefined) {
-      rules.push({
-        name: "RateLimit",
-        priority: 1,
-        action: { block: {} },
-        statement: {
-          rateBasedStatement: {
-            limit: Math.trunc(options.rateLimit),
-            aggregateKeyType: "IP",
-          },
-        },
-        visibilityConfig: wafVisibility(`${baseName}RateLimit`),
-      });
-    }
-
-    const webAcl = new wafv2.CfnWebACL(this, "WebAcl", {
-      name: options.name,
-      scope: "REGIONAL",
-      defaultAction: { allow: {} },
-      visibilityConfig: wafVisibility(baseName),
-      rules,
-    });
-    (this as { webAcl?: wafv2.CfnWebACL }).webAcl = webAcl;
-    return webAcl;
-  }
 }
 
 function buildCorsPreflight(input?: boolean | AppTheoryHttpApiCorsOptions): apigwv2.CorsPreflightOptions | undefined {
@@ -385,27 +318,4 @@ function buildCorsPreflight(input?: boolean | AppTheoryHttpApiCorsOptions): apig
     allowCredentials: options.allowCredentials ?? false,
     maxAge: options.maxAge ?? Duration.minutes(10),
   };
-}
-
-function httpApiStageArn(api: apigwv2.HttpApi, stage: apigwv2.IStage): string {
-  return Stack.of(api).formatArn({
-    service: "apigateway",
-    account: "",
-    resource: "/apis",
-    resourceName: `${api.apiId}/stages/${stage.stageName}`,
-    arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
-  });
-}
-
-function wafVisibility(metricName: string): wafv2.CfnWebACL.VisibilityConfigProperty {
-  return {
-    cloudWatchMetricsEnabled: true,
-    metricName: sanitizeMetricName(metricName),
-    sampledRequestsEnabled: true,
-  };
-}
-
-function sanitizeMetricName(input: string): string {
-  const sanitized = String(input ?? "AppTheoryHttpApi").replace(/[^A-Za-z0-9_-]/g, "");
-  return sanitized || "AppTheoryHttpApi";
 }

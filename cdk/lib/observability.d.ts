@@ -52,8 +52,13 @@ export interface AppTheoryObservabilityProps {
      */
     readonly serviceName?: string;
     /**
-     * Optional precise dimensions for alarm metrics.
-     * Dashboard search widgets always use the full AppTheory EMF schema.
+     * Optional dimension filters for alarm Metrics Insights queries.
+     *
+     * The runtime emits only the full AppTheory EMF dimension set, so default
+     * alarms use Metrics Insights over that schema instead of service-only
+     * CloudWatch metric dimensions.
+     *
+     * Dashboard search widgets also use the full AppTheory EMF schema.
      * @default { service: serviceName }
      */
     readonly alarmDimensions?: AppTheoryRequestMetricDimensions;

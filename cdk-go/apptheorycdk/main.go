@@ -390,8 +390,6 @@ func init() {
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
 			_jsii_.MemberProperty{JsiiProperty: "stage", GoGetter: "Stage"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
-			_jsii_.MemberProperty{JsiiProperty: "wafAssociation", GoGetter: "WafAssociation"},
-			_jsii_.MemberProperty{JsiiProperty: "webAcl", GoGetter: "WebAcl"},
 			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
 		},
 		func() interface{} {
@@ -960,6 +958,10 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryQueueProps",
 		reflect.TypeOf((*AppTheoryQueueProps)(nil)).Elem(),
 	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryRegionalWafOptions",
+		reflect.TypeOf((*AppTheoryRegionalWafOptions)(nil)).Elem(),
+	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServer",
 		reflect.TypeOf((*AppTheoryRemoteMcpServer)(nil)).Elem(),
@@ -996,6 +998,8 @@ func init() {
 			_jsii_.MemberProperty{JsiiProperty: "api", GoGetter: "Api"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberProperty{JsiiProperty: "wafAssociation", GoGetter: "WafAssociation"},
+			_jsii_.MemberProperty{JsiiProperty: "webAcl", GoGetter: "WebAcl"},
 			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
 		},
 		func() interface{} {
@@ -1026,6 +1030,8 @@ func init() {
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
 			_jsii_.MemberProperty{JsiiProperty: "stage", GoGetter: "Stage"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberProperty{JsiiProperty: "wafAssociation", GoGetter: "WafAssociation"},
+			_jsii_.MemberProperty{JsiiProperty: "webAcl", GoGetter: "WebAcl"},
 			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
 		},
 		func() interface{} {

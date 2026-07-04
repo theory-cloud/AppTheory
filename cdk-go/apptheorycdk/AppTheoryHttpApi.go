@@ -6,7 +6,6 @@ import (
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigatewayv2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awswafv2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
@@ -19,8 +18,6 @@ type AppTheoryHttpApi interface {
 	// The tree node.
 	Node() constructs.Node
 	Stage() awsapigatewayv2.IStage
-	WafAssociation() awswafv2.CfnWebACLAssociation
-	WebAcl() awswafv2.CfnWebACL
 	// Returns a string representation of this construct.
 	ToString() *string
 	// Applies one or more mixins to this construct.
@@ -84,26 +81,6 @@ func (j *jsiiProxy_AppTheoryHttpApi) Stage() awsapigatewayv2.IStage {
 	_jsii_.Get(
 		j,
 		"stage",
-		&returns,
-	)
-	return returns
-}
-
-func (j *jsiiProxy_AppTheoryHttpApi) WafAssociation() awswafv2.CfnWebACLAssociation {
-	var returns awswafv2.CfnWebACLAssociation
-	_jsii_.Get(
-		j,
-		"wafAssociation",
-		&returns,
-	)
-	return returns
-}
-
-func (j *jsiiProxy_AppTheoryHttpApi) WebAcl() awswafv2.CfnWebACL {
-	var returns awswafv2.CfnWebACL
-	_jsii_.Get(
-		j,
-		"webAcl",
 		&returns,
 	)
 	return returns

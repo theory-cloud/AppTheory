@@ -5,9 +5,13 @@ import (
 )
 
 type AppTheoryObservabilityProps struct {
-	// Optional precise dimensions for alarm metrics.
+	// Optional dimension filters for alarm Metrics Insights queries.
 	//
-	// Dashboard search widgets always use the full AppTheory EMF schema.
+	// The runtime emits only the full AppTheory EMF dimension set, so default
+	// alarms use Metrics Insights over that schema instead of service-only
+	// CloudWatch metric dimensions.
+	//
+	// Dashboard search widgets also use the full AppTheory EMF schema.
 	// Default: { service: serviceName }.
 	//
 	AlarmDimensions *AppTheoryRequestMetricDimensions `field:"optional" json:"alarmDimensions" yaml:"alarmDimensions"`
