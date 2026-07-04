@@ -69,6 +69,24 @@ func validateSafeFieldValue(value string, requestID string) error {
 	return nil
 }
 
+func validateExecutionRoleArn(arn string, requestID string) error {
+	arn = strings.TrimSpace(arn)
+	if arn == "" {
+		return nil
+	}
+	if err := validateSafeFieldValue(arn, requestID); err != nil {
+		return err
+	}
+	if strings.ContainsAny(arn, " \t\r\n") || !strings.HasPrefix(arn, "arn:") || !strings.Contains(arn, ":role/") {
+		return safeError(
+			ErrorCodeProviderRequestInvalid,
+			"apptheory: microvm provider execution role arn is invalid",
+			requestID,
+		)
+	}
+	return nil
+}
+
 func forbiddenFieldValue(value string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	if normalized == "" {

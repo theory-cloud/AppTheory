@@ -96,6 +96,10 @@ Reserved environment variables:
 - `APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS`
 - `APPTHEORY_MICROVM_EXECUTION_ROLE_ARN` (only when `executionRole` is supplied)
 
+The real AppTheory MicroVM controllers read `APPTHEORY_MICROVM_EXECUTION_ROLE_ARN` automatically and pass it to provider
+`RunMicrovm` requests. Controller code should use the AppTheory runtime/provider primitives instead of accepting
+caller-provided role ARNs or forking a raw AWS SDK provider.
+
 ## Fail-closed validation
 
 The construct fails synthesis when:
