@@ -92,6 +92,39 @@ for d in "${required_dirs[@]}"; do
   fi
 done
 
+
+config="docs/_config.yml"
+if [[ -f "${config}" ]]; then
+  for excluded_path in '"development/planning/"' '"planning/"'; do
+    if ! grep -Fq "${excluded_path}" "${config}"; then
+      echo "FAIL: ${config} must exclude planning publish path ${excluded_path}" >&2
+      fail=1
+    fi
+  done
+fi
+
+contract="docs/_contract.yaml"
+if [[ -f "${contract}" ]]; then
+  for out_of_scope_path in "docs/development/planning/**" "docs/planning/**"; do
+    if ! grep -Fq "${out_of_scope_path}" "${contract}"; then
+      echo "FAIL: ${contract} must mark ${out_of_scope_path} out_of_scope" >&2
+      fail=1
+    fi
+  done
+fi
+
+for duplicate_migration_entry in "docs/migration/README.md" "docs/migration/index.md"; do
+  if [[ -e "${duplicate_migration_entry}" ]]; then
+    echo "FAIL: duplicate migration entrypoint: ${duplicate_migration_entry}; use docs/migration-guide.md" >&2
+    fail=1
+  fi
+done
+
+if [[ -f "docs/_data/nav.yml" ]] && grep -Eq 'url:[[:space:]]*/migration/(,|[[:space:]]*$)' "docs/_data/nav.yml"; then
+  echo "FAIL: docs/_data/nav.yml must not publish /migration/ as a duplicate migration entrypoint" >&2
+  fail=1
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   exit 1
 fi
