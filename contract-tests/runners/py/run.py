@@ -2763,6 +2763,219 @@ def _compare_oauth_step(expected: dict[str, Any], actual: dict[str, Any]) -> tup
     return True, ""
 
 
+def run_fixture_objectstore(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, Any, Any, _DummyEffectsApp]:
+    runtime = _load_apptheory_runtime()
+    backend = str(
+        ((fixture.get("setup") or {}).get("objectstore") or {}).get("backend") or "fake"
+    ).strip()
+    if backend != "fake":
+        return (
+            False,
+            f"objectstore fixture backend {backend!r} is unsupported",
+            None,
+            None,
+            _DummyEffectsApp(),
+        )
+
+    steps = ((fixture.get("input") or {}).get("objectstore") or {}).get("steps") or []
+    if not steps:
+        return (
+            False,
+            "objectstore fixture missing input.objectstore.steps",
+            None,
+            None,
+            _DummyEffectsApp(),
+        )
+
+    fake = runtime.create_fake_object_store()
+    actual_steps = [_run_objectstore_step(runtime, fake, step) for step in steps]
+    actual_output = {
+        "steps": actual_steps,
+        "calls": _objectstore_calls_json(fake.calls()),
+    }
+    expected_output = (fixture.get("expect") or {}).get("output_json")
+    if stable_json(actual_output) != stable_json(expected_output):
+        return (
+            False,
+            "output_json mismatch",
+            actual_output,
+            expected_output,
+            _DummyEffectsApp(),
+        )
+    return True, "", actual_output, expected_output, _DummyEffectsApp()
+
+
+def _run_objectstore_step(
+    runtime: Any, fake: Any, step: dict[str, Any]
+) -> dict[str, Any]:
+    operation = str(step.get("operation") or "").strip().lower()
+    result: dict[str, Any] = {
+        "name": str(step.get("name") or ""),
+        "operation": operation,
+    }
+    try:
+        if operation == "parse_ref":
+            ref = _objectstore_step_ref(runtime, step)
+            return _objectstore_step_result(result, ref=ref)
+        if operation == "put":
+            ref = fake.put(
+                runtime.ObjectStorePutInput(
+                    ref=_objectstore_step_ref(runtime, step),
+                    payload=decode_fixture_body(step.get("payload")),
+                    content_type=str(step.get("content_type") or ""),
+                    metadata=_objectstore_metadata(step.get("metadata")),
+                )
+            )
+            return _objectstore_step_result(result, ref=ref)
+        if operation == "get":
+            output = fake.get(
+                runtime.ObjectStoreGetInput(
+                    ref=_objectstore_step_ref(runtime, step),
+                    max_bytes=int(step.get("max_bytes") or 0),
+                )
+            )
+            return _objectstore_step_result(result, output=output)
+        if operation == "delete":
+            fake.delete(
+                runtime.ObjectStoreDeleteInput(ref=_objectstore_step_ref(runtime, step))
+            )
+            return _objectstore_step_result(result)
+        if operation in ("list", "presign", "multipart"):
+            _assert_forbidden_objectstore_operation(fake, operation)
+        runtime.unsupported_object_store_operation(operation)
+    except Exception as exc:  # noqa: BLE001
+        return _objectstore_step_result(result, error=exc)
+    return _objectstore_step_result(result)
+
+
+def _objectstore_step_result(
+    result: dict[str, Any],
+    *,
+    ref: Any | None = None,
+    output: Any | None = None,
+    error: Exception | None = None,
+) -> dict[str, Any]:
+    out = dict(result)
+    if error is not None:
+        out["ok"] = False
+        out["error"] = _objectstore_error_json(error)
+        return out
+    out["ok"] = True
+    if output is not None:
+        out["ref"] = _objectstore_ref_json(output.ref)
+        out["payload"] = _objectstore_body_json(bytes(output.payload))
+        if getattr(output, "content_type", ""):
+            out["content_type"] = output.content_type
+        if getattr(output, "metadata", None):
+            out["metadata"] = _objectstore_metadata(output.metadata)
+        return out
+    if ref is not None:
+        out["ref"] = _objectstore_ref_json(ref)
+    return out
+
+
+def _objectstore_step_ref(runtime: Any, step: dict[str, Any]) -> Any:
+    raw = step.get("ref")
+    if isinstance(raw, str):
+        return runtime.parse_object_ref(raw)
+    if isinstance(raw, dict):
+        ref = runtime.ObjectRef(
+            bucket=str(raw.get("bucket") or ""),
+            key=str(raw.get("key") or ""),
+            version_id=str(raw.get("version_id") or ""),
+        )
+    else:
+        ref = runtime.ObjectRef(bucket="", key="")
+    runtime.validate_object_ref(ref)
+    return ref
+
+
+def _objectstore_error_json(error: Exception) -> dict[str, str]:
+    message = str(error)
+    return {
+        "code": str(
+            getattr(error, "code", "") or _objectstore_error_code_from_message(message)
+        ),
+        "message": message,
+    }
+
+
+def _objectstore_error_code_from_message(message: str) -> str:
+    if message == "objectstore: invalid object ref":
+        return "objectstore.invalid_ref"
+    if message == "objectstore: max bytes must be positive":
+        return "objectstore.invalid_get_limit"
+    if message == "objectstore: object exceeds max bytes":
+        return "objectstore.object_too_large"
+    if message == "objectstore: object not found":
+        return "objectstore.not_found"
+    if message.startswith("objectstore: unsupported operation"):
+        return "objectstore.unsupported_operation"
+    return "objectstore.error"
+
+
+def _assert_forbidden_objectstore_operation(fake: Any, operation: str) -> None:
+    method_names = {
+        "list": ("list", "list_objects"),
+        "presign": ("presign", "presign_get", "presign_put", "public_url"),
+        "multipart": (
+            "multipart",
+            "create_multipart_upload",
+            "upload_part",
+            "complete_multipart_upload",
+            "abort_multipart_upload",
+        ),
+    }
+    for method in method_names.get(operation, ()):
+        if callable(getattr(fake, method, None)):
+            raise RuntimeError(f"objectstore: forbidden operation exposed: {operation}")
+
+
+def _objectstore_calls_json(calls: list[Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for call in calls:
+        item: dict[str, Any] = {
+            "operation": str(call.operation),
+            "ref": _objectstore_ref_json(call.ref),
+        }
+        if int(call.max_bytes or 0) != 0:
+            item["max_bytes"] = int(call.max_bytes)
+        if bytes(getattr(call, "payload", b"")):
+            item["payload"] = _objectstore_body_json(bytes(call.payload))
+        if getattr(call, "content_type", ""):
+            item["content_type"] = call.content_type
+        if getattr(call, "metadata", None):
+            item["metadata"] = _objectstore_metadata(call.metadata)
+        out.append(item)
+    return out
+
+
+def _objectstore_ref_json(ref: Any) -> dict[str, str]:
+    out = {"bucket": str(ref.bucket), "key": str(ref.key)}
+    version_id = str(getattr(ref, "version_id", "") or "")
+    if version_id:
+        out["version_id"] = version_id
+    return out
+
+
+def _objectstore_body_json(payload: bytes) -> dict[str, str]:
+    try:
+        value = payload.decode("utf-8")
+        if value.encode("utf-8") == payload:
+            return {"encoding": "utf8", "value": value}
+    except UnicodeDecodeError:
+        pass
+    return {"encoding": "base64", "value": base64.b64encode(payload).decode("ascii")}
+
+
+def _objectstore_metadata(raw: Any) -> dict[str, str] | None:
+    if not raw:
+        return None
+    return {str(key): str(raw[key]) for key in sorted(raw)}
+
+
 def _empty_response() -> CanonicalResponse:
     return CanonicalResponse(
         status=0, headers={}, cookies=[], body=b"", is_base64=False
@@ -2780,6 +2993,8 @@ def run_fixture(
         return run_fixture_mcp(fixture)
     if tier == "oauth":
         return run_fixture_oauth(fixture)
+    if tier == "objectstore":
+        return run_fixture_objectstore(fixture)
     if tier == "p0":
         return run_fixture_p0(fixture)
     if tier == "p1":
