@@ -106,6 +106,11 @@ adapter and its sanitized event/result contract.
 credentials, or plaintext session tokens. `shell-auth-token` is canonical. `shell-token` may appear in API snapshots or
 runtime compatibility aliases for earlier corrective callers, but it is not the canonical route or command.
 
+The MicroVM execution role is deployment-owned, not caller-owned. When the CDK construct is configured with
+`executionRole`, it sets `APPTHEORY_MICROVM_EXECUTION_ROLE_ARN`; the real controller reads that environment value and
+passes it through the constrained provider request to AWS `RunMicrovm.ExecutionRoleArn`. Product HTTP requests should
+not choose role ARNs, and consumers must not fork the provider or drop to raw SDK calls to add the field.
+
 ## Authentication posture
 
 Controller routes are **protected and fail closed by default**:
