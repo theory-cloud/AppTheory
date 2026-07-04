@@ -13,6 +13,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 _APPTHEORY_RUNTIME: Any | None = None
 CLOUDWATCH_LOGS_SUBSCRIPTION_HANDLER = "kinesis_require_cloudwatch_logs_subscription"
@@ -2515,6 +2516,253 @@ def run_fixture_mcp(
     return True, "", {}, {}, _DummyEffectsApp()
 
 
+class _OAuthSequence:
+    def __init__(self, values: list[Any]) -> None:
+        self._values = [str(value or "").strip() for value in values or []]
+        self._index = 0
+
+    def next(self, prefix: str) -> str:
+        if self._index < len(self._values):
+            out = self._values[self._index]
+            self._index += 1
+            if out:
+                return out
+        self._index += 1
+        return f"{prefix}_{self._index}"
+
+
+def _oauth_path_from_url(raw: str, fallback: str = "/") -> str:
+    parsed = urlparse(str(raw or "").strip())
+    return parsed.path or fallback
+
+
+def _oauth_setup_policy(runtime: Any, setup: dict[str, Any]) -> Any:
+    policy = setup.get("dcr_policy") or {}
+    return runtime.DynamicClientRegistrationPolicy(
+        allowed_redirect_uris=[str(v) for v in policy.get("allowed_redirect_uris") or []],
+        require_public_client=policy.get("require_public_client") is True,
+        require_refresh_token=policy.get("require_refresh_token") is True,
+    )
+
+
+def _oauth_token_records(runtime: Any, setup: dict[str, Any]) -> list[Any]:
+    records = []
+    for record in setup.get("bearer_tokens") or []:
+        expires_at = None
+        if int(record.get("expires_unix") or 0):
+            expires_at = dt.datetime.fromtimestamp(int(record.get("expires_unix") or 0), tz=dt.UTC)
+        records.append(
+            runtime.BearerTokenRecord(
+                token=str(record.get("token") or ""),
+                subject=str(record.get("subject") or ""),
+                audience=str(record.get("audience") or ""),
+                scope=str(record.get("scope") or ""),
+                scopes=[str(v) for v in record.get("scopes") or []],
+                expires_at=expires_at,
+            )
+        )
+    return records
+
+
+def _new_oauth_fixture_app(runtime: Any, setup: dict[str, Any]) -> Any:
+    resource = str(setup.get("resource") or "").strip()
+    metadata_url = runtime.resource_metadata_url_from_mcp_endpoint(resource)
+    if not metadata_url:
+        raise RuntimeError("oauth setup resource is not an absolute URL")
+    state = {
+        "clients": {},
+        "codes": {},
+        "ids": _OAuthSequence(setup.get("id_sequence") or []),
+    }
+    clock_unix = int(setup.get("clock_unix") or 0)
+    fixed_now = dt.datetime.fromtimestamp(clock_unix, tz=dt.UTC)
+    app = runtime.create_app(tier="p0")
+    metadata = runtime.new_protected_resource_metadata(resource, setup.get("authorization_servers") or [])
+    metadata.scopes_supported = [str(v) for v in setup.get("scopes_supported") or []]
+    metadata.bearer_methods_supported = ["header"]
+    app.get(_oauth_path_from_url(metadata_url), runtime.protected_resource_metadata_handler(metadata))
+
+    validator = runtime.new_memory_bearer_token_validator(
+        _oauth_token_records(runtime, setup),
+        runtime.BearerTokenValidationOptions(
+            required_audience=str(setup.get("required_audience") or resource).strip(),
+            required_scopes=[str(v) for v in setup.get("required_scopes") or []],
+            now=lambda: fixed_now,
+        ),
+    )
+    bearer_middleware = runtime.require_bearer_token_middleware(
+        runtime.RequireBearerTokenOptions(
+            resource_metadata_url=metadata_url,
+            claims_validator=validator,
+        )
+    )
+
+    def protected_next(ctx):
+        claims = runtime.bearer_token_claims_from_context(ctx) or runtime.BearerTokenClaims()
+        return runtime.json(
+            200,
+            {
+                "ok": True,
+                "subject": str(getattr(claims, "subject", "") or ""),
+                "scopes": [str(v) for v in getattr(claims, "scopes", []) or []],
+            },
+        )
+
+    app.get(_oauth_path_from_url(resource, "/mcp"), lambda ctx: bearer_middleware(ctx, protected_next))
+
+    policy = _oauth_setup_policy(runtime, setup)
+
+    def register(ctx):
+        try:
+            payload = json.loads(bytes(ctx.request.body or b"").decode("utf-8"))
+            runtime.validate_dynamic_client_registration_request(payload, policy)
+        except Exception:  # noqa: BLE001
+            return _oauth_error_response(runtime, 400, "app.bad_request", "bad request")
+        client_id = state["ids"].next("client")
+        state["clients"][client_id] = payload
+        return runtime.json(201, {"client_id": client_id, "client_id_issued_at": clock_unix})
+
+    def authorize(ctx):
+        q = ctx.request.query or {}
+        client_id = _first_query(q, "client_id")
+        client = state["clients"].get(client_id)
+        if (
+            client is None
+            or _first_query(q, "response_type") != "code"
+            or _first_query(q, "code_challenge_method") != "S256"
+            or _first_query(q, "resource") != resource
+        ):
+            return _oauth_error_response(runtime, 400, "app.bad_request", "bad request")
+        redirect_uri = _first_query(q, "redirect_uri")
+        if redirect_uri not in (client.get("redirect_uris") or []):
+            return _oauth_error_response(runtime, 400, "app.bad_request", "bad request")
+        challenge = _first_query(q, "code_challenge")
+        if not challenge:
+            return _oauth_error_response(runtime, 400, "app.bad_request", "bad request")
+        code = state["ids"].next("code")
+        state["codes"][code] = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "resource": resource,
+            "scope": _first_query(q, "scope"),
+            "code_challenge": challenge,
+        }
+        return runtime.Response(
+            status=302,
+            headers={"location": [_redirect_with_code(redirect_uri, code, _first_query(q, "state"))]},
+            cookies=[],
+            body=b"",
+            is_base64=False,
+        )
+
+    def token(ctx):
+        form = parse_qs(bytes(ctx.request.body or b"").decode("utf-8"), keep_blank_values=True)
+        code = _first_query(form, "code")
+        rec = state["codes"].get(code)
+        if (
+            rec is None
+            or _first_query(form, "grant_type") != "authorization_code"
+            or _first_query(form, "resource") != resource
+            or _first_query(form, "client_id") != rec["client_id"]
+            or _first_query(form, "redirect_uri") != rec["redirect_uri"]
+        ):
+            return _oauth_error_response(runtime, 400, "app.bad_request", "bad request")
+        del state["codes"][code]
+        try:
+            verified = runtime.pkce_verify_s256(_first_query(form, "code_verifier"), rec["code_challenge"])
+        except Exception:  # noqa: BLE001
+            verified = False
+        if not verified:
+            return _oauth_error_response(runtime, 400, "app.bad_request", "bad request")
+        return runtime.json(
+            200,
+            {
+                "access_token": state["ids"].next("access"),
+                "refresh_token": state["ids"].next("refresh"),
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "scope": rec["scope"],
+            },
+        )
+
+    app.post("/register", register)
+    app.get("/authorize", authorize)
+    app.post("/token", token)
+    return app
+
+
+def _oauth_error_response(runtime: Any, status: int, code: str, message: str) -> Any:
+    return runtime.json(status, {"error": {"code": code, "message": message}})
+
+
+def _first_query(query: dict[str, Any], name: str) -> str:
+    values = (query or {}).get(name) or []
+    if isinstance(values, list):
+        return str(values[0] if values else "").strip()
+    return str(values).strip()
+
+
+def _redirect_with_code(redirect_uri: str, code: str, state: str) -> str:
+    parsed = urlparse(redirect_uri)
+    query = [("code", code)]
+    if str(state or "").strip():
+        query.append(("state", str(state).strip()))
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+def run_fixture_oauth(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, Any, Any, _DummyEffectsApp]:
+    runtime = _load_apptheory_runtime()
+    app = _new_oauth_fixture_app(runtime, (fixture.get("setup") or {}).get("oauth") or {})
+    steps = ((fixture.get("input") or {}).get("oauth") or {}).get("steps") or []
+    expected_steps = ((fixture.get("expect") or {}).get("oauth") or {}).get("steps") or []
+    if len(steps) != len(expected_steps):
+        return (
+            False,
+            "oauth steps length mismatch",
+            {"steps": len(steps)},
+            {"steps": len(expected_steps)},
+            _DummyEffectsApp(),
+        )
+    for idx, step in enumerate(steps):
+        req = _mcp_request_from_step(runtime, step)
+        actual = _mcp_collect_response(app.serve(req))
+        ok, reason = _compare_oauth_step(expected_steps[idx], actual)
+        if not ok:
+            return (
+                False,
+                f"step {step.get('name')}: {reason}",
+                actual,
+                expected_steps[idx],
+                _DummyEffectsApp(),
+            )
+    return True, "", {}, {}, _DummyEffectsApp()
+
+
+def _compare_oauth_step(expected: dict[str, Any], actual: dict[str, Any]) -> tuple[bool, str]:
+    if int(expected.get("status") or 0) != actual["status"]:
+        return False, f"status: expected {expected.get('status')}, got {actual['status']}"
+    if bool(expected.get("is_base64")) != bool(actual.get("is_base64")):
+        return False, "is_base64 mismatch"
+    if (expected.get("cookies") or []) != (actual.get("cookies") or []):
+        return False, "cookies mismatch"
+    if not compare_headers(expected.get("headers"), actual.get("headers")):
+        return False, "headers mismatch"
+    if "body_json" in expected:
+        try:
+            actual_json = json.loads(actual.get("body", b"").decode("utf-8"))
+        except Exception:  # noqa: BLE001
+            return False, "body_json mismatch"
+        if expected.get("body_json") != actual_json:
+            return False, "body_json mismatch"
+        return True, ""
+    expected_body = decode_fixture_body(expected.get("body")) if expected.get("body") is not None else b""
+    if expected_body != actual.get("body", b""):
+        return False, "body mismatch"
+    return True, ""
+
+
 def _empty_response() -> CanonicalResponse:
     return CanonicalResponse(
         status=0, headers={}, cookies=[], body=b"", is_base64=False
@@ -2530,6 +2778,8 @@ def run_fixture(
     tier = str(fixture.get("tier", "")).strip().lower()
     if tier == "mcp":
         return run_fixture_mcp(fixture)
+    if tier == "oauth":
+        return run_fixture_oauth(fixture)
     if tier == "p0":
         return run_fixture_p0(fixture)
     if tier == "p1":
