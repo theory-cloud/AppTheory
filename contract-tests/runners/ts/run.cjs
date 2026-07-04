@@ -2652,6 +2652,171 @@ async function runFixtureOAuth(fixture) {
   return { ok: true };
 }
 
+
+async function runFixtureObjectStore(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const backend = String(fixture.setup?.objectstore?.backend ?? "fake").trim();
+  if (backend !== "fake") {
+    return { ok: false, reason: `objectstore fixture backend ${JSON.stringify(backend)} is unsupported` };
+  }
+  const steps = fixture.input?.objectstore?.steps ?? [];
+  if (steps.length === 0) {
+    return { ok: false, reason: "objectstore fixture missing input.objectstore.steps" };
+  }
+  const fake = runtime.createFakeObjectStore();
+  const actualSteps = [];
+  for (const step of steps) {
+    // eslint-disable-next-line no-await-in-loop
+    actualSteps.push(await runObjectStoreStep(runtime, fake, step));
+  }
+  return compareFixtureOutputJson(fixture, {
+    steps: actualSteps,
+    calls: objectStoreCallsJSON(fake.calls()),
+  });
+}
+
+async function runObjectStoreStep(runtime, fake, step) {
+  const operation = String(step.operation ?? "").trim().toLowerCase();
+  const result = { name: String(step.name ?? ""), operation };
+  try {
+    if (operation === "parse_ref") {
+      const ref = objectStoreStepRef(runtime, step);
+      return objectStoreStepResult(result, { ref });
+    }
+    if (operation === "put") {
+      const ref = await fake.put({
+        ref: objectStoreStepRef(runtime, step),
+        payload: decodeFixtureBody(step.payload),
+        ...(step.content_type ? { contentType: String(step.content_type) } : {}),
+        ...(step.metadata ? { metadata: cloneObjectStoreMetadata(step.metadata) } : {}),
+      });
+      return objectStoreStepResult(result, { ref });
+    }
+    if (operation === "get") {
+      const output = await fake.get({
+        ref: objectStoreStepRef(runtime, step),
+        maxBytes: Number(step.max_bytes ?? 0),
+      });
+      return objectStoreStepResult(result, { output });
+    }
+    if (operation === "delete") {
+      await fake.delete({ ref: objectStoreStepRef(runtime, step) });
+      return objectStoreStepResult(result, {});
+    }
+    if (["list", "presign", "multipart"].includes(operation)) {
+      assertForbiddenObjectStoreOperation(runtime, fake, operation);
+    }
+    runtime.unsupportedObjectStoreOperation(operation);
+  } catch (err) {
+    return objectStoreStepResult(result, { error: err });
+  }
+  return objectStoreStepResult(result, {});
+}
+
+function objectStoreStepResult(base, { ref = null, output = null, error = null }) {
+  const result = { ...base };
+  if (error) {
+    result.ok = false;
+    result.error = objectStoreErrorJSON(error);
+    return result;
+  }
+  result.ok = true;
+  if (output) {
+    result.ref = objectStoreRefJSON(output.ref);
+    result.payload = objectStoreBodyJSON(output.payload);
+    if (output.contentType) result.content_type = output.contentType;
+    if (output.metadata && Object.keys(output.metadata).length > 0) {
+      result.metadata = cloneObjectStoreMetadata(output.metadata);
+    }
+    return result;
+  }
+  if (ref) result.ref = objectStoreRefJSON(ref);
+  return result;
+}
+
+function objectStoreStepRef(runtime, step) {
+  if (typeof step.ref === "string") return runtime.parseObjectRef(step.ref);
+  const raw = step.ref && typeof step.ref === "object" ? step.ref : {};
+  const ref = {
+    bucket: String(raw.bucket ?? ""),
+    key: String(raw.key ?? ""),
+    ...(raw.version_id ? { versionId: String(raw.version_id) } : {}),
+  };
+  runtime.validateObjectRef(ref);
+  return ref;
+}
+
+function objectStoreErrorJSON(err) {
+  return {
+    code: String(err?.code ?? objectStoreErrorCodeFromMessage(String(err?.message ?? err))),
+    message: String(err?.message ?? err),
+  };
+}
+
+function objectStoreErrorCodeFromMessage(message) {
+  if (message === "objectstore: invalid object ref") return "objectstore.invalid_ref";
+  if (message === "objectstore: max bytes must be positive") return "objectstore.invalid_get_limit";
+  if (message === "objectstore: object exceeds max bytes") return "objectstore.object_too_large";
+  if (message === "objectstore: object not found") return "objectstore.not_found";
+  if (message.startsWith("objectstore: unsupported operation")) return "objectstore.unsupported_operation";
+  return "objectstore.error";
+}
+
+function assertForbiddenObjectStoreOperation(_runtime, fake, operation) {
+  const methodNames = {
+    list: ["list", "listObjects"],
+    presign: ["presign", "presignGet", "presignPut", "publicURL"],
+    multipart: ["multipart", "createMultipartUpload", "uploadPart", "completeMultipartUpload", "abortMultipartUpload"],
+  };
+  for (const method of methodNames[operation] ?? []) {
+    if (typeof fake?.[method] === "function") {
+      throw new Error(`objectstore: forbidden operation exposed: ${operation}`);
+    }
+  }
+}
+
+function objectStoreCallsJSON(calls) {
+  return (calls ?? []).map((call) => {
+    const out = { operation: String(call.operation ?? ""), ref: objectStoreRefJSON(call.ref ?? {}) };
+    if (call.maxBytes !== undefined) out.max_bytes = Number(call.maxBytes);
+    if (call.payload) out.payload = objectStoreBodyJSON(call.payload);
+    if (call.contentType) out.content_type = String(call.contentType);
+    if (call.metadata && Object.keys(call.metadata).length > 0) {
+      out.metadata = cloneObjectStoreMetadata(call.metadata);
+    }
+    return out;
+  });
+}
+
+function objectStoreRefJSON(ref) {
+  const out = { bucket: String(ref.bucket ?? ""), key: String(ref.key ?? "") };
+  if (ref.versionId) out.version_id = String(ref.versionId);
+  return out;
+}
+
+function objectStoreBodyJSON(payload) {
+  const bytes = Buffer.from(payload ?? []);
+  if (isValidUTF8(bytes)) return { encoding: "utf8", value: bytes.toString("utf8") };
+  return { encoding: "base64", value: bytes.toString("base64") };
+}
+
+function isValidUTF8(bytes) {
+  try {
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return Buffer.from(decoded, "utf8").equals(bytes);
+  } catch (_err) {
+    return false;
+  }
+}
+
+function cloneObjectStoreMetadata(metadata) {
+  return Object.fromEntries(
+    Object.keys(metadata ?? {})
+      .sort()
+      .map((key) => [key, String(metadata[key])]),
+  );
+}
+
 async function runFixture(fixture) {
   if (isOpenAPIContractFixture(fixture)) {
     return await compareOpenAPIContract(fixture);
@@ -2666,6 +2831,9 @@ async function runFixture(fixture) {
   }
   if (tier === "oauth") {
     return await runFixtureOAuth(fixture);
+  }
+  if (tier === "objectstore") {
+    return await runFixtureObjectStore(fixture);
   }
 
   if (tier === "p0") {
