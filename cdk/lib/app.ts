@@ -14,8 +14,8 @@ import {
   AppTheoryHttpApi,
   type AppTheoryHttpApiCorsOptions,
   type AppTheoryHttpApiDomainOptions,
-  type AppTheoryHttpApiWafOptions,
 } from "./http-api";
+import type { AppTheoryRegionalWafOptions } from "./regional-waf";
 
 export interface AppTheoryAppProps {
   readonly appName: string;
@@ -49,7 +49,18 @@ export interface AppTheoryAppProps {
   readonly certificateArn?: string;
   readonly domain?: AppTheoryHttpApiDomainOptions;
   readonly cors?: boolean | AppTheoryHttpApiCorsOptions;
-  readonly waf?: boolean | AppTheoryHttpApiWafOptions;
+  /**
+   * Regional WAF attachment is intentionally unavailable on AppTheoryApp
+   * because this top-level construct deploys an API Gateway v2 HTTP API.
+   * Supplying this prop fails closed during synthesis instead of producing an
+   * unsupported HTTP API WebACL association.
+   *
+   * Use AppTheoryRestApi or AppTheoryRestApiRouter when a WAF-protected API
+   * Gateway stage is required.
+   * @default undefined
+   * @deprecated AppTheoryApp uses AppTheoryHttpApi; HTTP API WAF association is unsupported by AWS WAFv2.
+   */
+  readonly waf?: boolean | AppTheoryRegionalWafOptions;
   readonly hostedZone?: route53.IHostedZone;
   readonly stage?: apigwv2.IStage;
 }
@@ -73,6 +84,11 @@ export class AppTheoryApp extends Construct {
     const code = props.code ?? (props.codeAssetPath ? lambda.Code.fromAsset(props.codeAssetPath) : undefined);
     if (!code) {
       throw new Error("AppTheoryApp requires either props.code or props.codeAssetPath");
+    }
+    if (props.waf) {
+      throw new Error(
+        "AppTheoryApp does not support WAFv2 regional WebACL associations because it deploys an API Gateway v2 HTTP API; use AppTheoryRestApi or AppTheoryRestApiRouter for WAF-protected REST stages",
+      );
     }
 
     const env: Record<string, string> = { ...(props.environment ?? {}) };
@@ -155,7 +171,6 @@ export class AppTheoryApp extends Construct {
       apiName: `${appName}-api`,
       cors: props.cors,
       domain: normalizeDomainOptions(this, props),
-      waf: props.waf,
     });
     (this as { domain?: AppTheoryApiDomain }).domain = this.api.domain;
 

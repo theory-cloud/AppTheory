@@ -40,5 +40,15 @@ type AppTheoryAppProps struct {
 	TimeoutSeconds       *float64                       `field:"optional" json:"timeoutSeconds" yaml:"timeoutSeconds"`
 	Vpc                  awsec2.IVpc                    `field:"optional" json:"vpc" yaml:"vpc"`
 	VpcSubnets           *awsec2.SubnetSelection        `field:"optional" json:"vpcSubnets" yaml:"vpcSubnets"`
-	Waf                  interface{}                    `field:"optional" json:"waf" yaml:"waf"`
+	// Regional WAF attachment is intentionally unavailable on AppTheoryApp because this top-level construct deploys an API Gateway v2 HTTP API.
+	//
+	// Supplying this prop fails closed during synthesis instead of producing an
+	// unsupported HTTP API WebACL association.
+	//
+	// Use AppTheoryRestApi or AppTheoryRestApiRouter when a WAF-protected API
+	// Gateway stage is required.
+	// Default: undefined.
+	//
+	// Deprecated: AppTheoryApp uses AppTheoryHttpApi; HTTP API WAF association is unsupported by AWS WAFv2.
+	Waf interface{} `field:"optional" json:"waf" yaml:"waf"`
 }

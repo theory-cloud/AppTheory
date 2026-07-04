@@ -75,6 +75,18 @@ const fn = new lambda.Function(stack, "Handler", {
 new AppTheoryHttpApi(stack, "Api", { handler: fn, apiName: "my-api" });
 ```
 
+## Production surface notes
+
+- Regional WAF is supported only on `AppTheoryRestApi` and `AppTheoryRestApiRouter`
+  because API Gateway REST API stages use the WAF-supported
+  `/restapis/{apiId}/stages/{stageName}` ARN shape. `AppTheoryHttpApi` and
+  top-level `AppTheoryApp` fail closed if `waf` is supplied because API Gateway
+  v2 HTTP API `/apis/...` stages are not supported WAFv2 association targets.
+- `AppTheoryObservability` alarms query the runtime EMF schema with CloudWatch
+  Metrics Insights over dimensions `service`, `method`, `path`, `status`,
+  `tenant_id`, and `error_code`; dashboards retain SEARCH widgets for
+  exploration.
+
 ## Development
 
 ```bash

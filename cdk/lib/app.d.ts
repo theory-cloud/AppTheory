@@ -7,7 +7,8 @@ import type * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
 import { AppTheoryApiDomain } from "./api-domain";
 import { AppTheoryFunction, type AppTheoryFunctionAliasOptions } from "./function";
-import { AppTheoryHttpApi, type AppTheoryHttpApiCorsOptions, type AppTheoryHttpApiDomainOptions, type AppTheoryHttpApiWafOptions } from "./http-api";
+import { AppTheoryHttpApi, type AppTheoryHttpApiCorsOptions, type AppTheoryHttpApiDomainOptions } from "./http-api";
+import type { AppTheoryRegionalWafOptions } from "./regional-waf";
 export interface AppTheoryAppProps {
     readonly appName: string;
     readonly codeAssetPath?: string;
@@ -36,7 +37,18 @@ export interface AppTheoryAppProps {
     readonly certificateArn?: string;
     readonly domain?: AppTheoryHttpApiDomainOptions;
     readonly cors?: boolean | AppTheoryHttpApiCorsOptions;
-    readonly waf?: boolean | AppTheoryHttpApiWafOptions;
+    /**
+     * Regional WAF attachment is intentionally unavailable on AppTheoryApp
+     * because this top-level construct deploys an API Gateway v2 HTTP API.
+     * Supplying this prop fails closed during synthesis instead of producing an
+     * unsupported HTTP API WebACL association.
+     *
+     * Use AppTheoryRestApi or AppTheoryRestApiRouter when a WAF-protected API
+     * Gateway stage is required.
+     * @default undefined
+     * @deprecated AppTheoryApp uses AppTheoryHttpApi; HTTP API WAF association is unsupported by AWS WAFv2.
+     */
+    readonly waf?: boolean | AppTheoryRegionalWafOptions;
     readonly hostedZone?: route53.IHostedZone;
     readonly stage?: apigwv2.IStage;
 }

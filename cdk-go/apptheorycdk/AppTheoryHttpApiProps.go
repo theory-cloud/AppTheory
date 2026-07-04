@@ -21,10 +21,15 @@ type AppTheoryHttpApiProps struct {
 	// Default: undefined.
 	//
 	Stage *AppTheoryHttpApiStageOptions `field:"optional" json:"stage" yaml:"stage"`
-	// Regional WAF attachment.
+	// Regional WAF attachment is intentionally unavailable for API Gateway v2 HTTP APIs.
 	//
-	// Set to true for an AppTheory-managed WebACL.
+	// Supplying this prop fails closed during synthesis instead of
+	// producing an unsupported `/apis/.../stages/...` WebACL association.
+	//
+	// Use AppTheoryRestApi or AppTheoryRestApiRouter when a WAF-protected API
+	// Gateway stage is required.
 	// Default: undefined.
 	//
+	// Deprecated: HTTP API WAF association is unsupported by AWS WAFv2.
 	Waf interface{} `field:"optional" json:"waf" yaml:"waf"`
 }

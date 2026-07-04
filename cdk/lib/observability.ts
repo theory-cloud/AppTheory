@@ -61,8 +61,13 @@ export interface AppTheoryObservabilityProps {
   readonly serviceName?: string;
 
   /**
-   * Optional precise dimensions for alarm metrics.
-   * Dashboard search widgets always use the full AppTheory EMF schema.
+   * Optional dimension filters for alarm Metrics Insights queries.
+   *
+   * The runtime emits only the full AppTheory EMF dimension set, so default
+   * alarms use Metrics Insights over that schema instead of service-only
+   * CloudWatch metric dimensions.
+   *
+   * Dashboard search widgets also use the full AppTheory EMF schema.
    * @default { service: serviceName }
    */
   readonly alarmDimensions?: AppTheoryRequestMetricDimensions;
@@ -123,27 +128,9 @@ export class AppTheoryObservability extends Construct {
     const period = props.period ?? Duration.minutes(5);
     const alarmDimensions = dimensionsMap(props.alarmDimensions ?? { service });
 
-    this.requestCount = new cloudwatch.Metric({
-      namespace,
-      metricName: "RequestCount",
-      statistic: "Sum",
-      period,
-      dimensionsMap: alarmDimensions,
-    });
-    this.requestDuration = new cloudwatch.Metric({
-      namespace,
-      metricName: "RequestDuration",
-      statistic: "p95",
-      period,
-      dimensionsMap: alarmDimensions,
-    });
-    this.requestErrors = new cloudwatch.Metric({
-      namespace,
-      metricName: "RequestErrors",
-      statistic: "Sum",
-      period,
-      dimensionsMap: alarmDimensions,
-    });
+    this.requestCount = metricInsights(namespace, alarmDimensions, "RequestCount", "SUM", period);
+    this.requestDuration = metricInsights(namespace, alarmDimensions, "RequestDuration", "MAX", period);
+    this.requestErrors = metricInsights(namespace, alarmDimensions, "RequestErrors", "SUM", period);
 
     this.requestErrorsAlarm = new cloudwatch.Alarm(this, "RequestErrorsAlarm", {
       metric: this.requestErrors,
@@ -183,6 +170,36 @@ export class AppTheoryObservability extends Construct {
   }
 }
 
+function metricInsights(
+  namespace: string,
+  dimensions: Record<string, string>,
+  metricName: string,
+  aggregate: "MAX" | "SUM",
+  period: Duration,
+): cloudwatch.MathExpression {
+  return new cloudwatch.MathExpression({
+    expression: metricInsightsQuery(namespace, dimensions, metricName, aggregate),
+    label: metricName,
+    period,
+  });
+}
+
+function metricInsightsQuery(
+  namespace: string,
+  dimensions: Record<string, string>,
+  metricName: string,
+  aggregate: "MAX" | "SUM",
+): string {
+  const where = Object.entries(dimensions)
+    .map(([key, value]) => `${key} = '${escapeSingleQuoted(value)}'`)
+    .join(" AND ");
+  return [
+    `SELECT ${aggregate}(${metricName})`,
+    `FROM SCHEMA("${escapeDoubleQuoted(namespace)}", service, method, path, status, tenant_id, error_code)`,
+    where ? `WHERE ${where}` : "",
+  ].filter(Boolean).join(" ");
+}
+
 function searchMetric(namespace: string, service: string, metricName: string, statistic: string, period: Duration): cloudwatch.MathExpression {
   return new cloudwatch.MathExpression({
     expression: `SEARCH('{${namespace},service,method,path,status,tenant_id,error_code} MetricName="${metricName}" service="${service}"', '${statistic}', ${period.toSeconds()})`,
@@ -204,4 +221,12 @@ function dimensionsMap(input: AppTheoryRequestMetricDimensions): Record<string, 
 function normalized(input: string | undefined, fallback: string): string {
   const value = String(input ?? "").trim();
   return value || fallback;
+}
+
+function escapeDoubleQuoted(input: string): string {
+  return String(input).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function escapeSingleQuoted(input: string): string {
+  return String(input).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }

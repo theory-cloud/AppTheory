@@ -265,7 +265,7 @@ test("AppTheoryHttpApi synthesizes expected template", () => {
   }
 });
 
-test("AppTheoryHttpApi exposes custom domain, CORS, access logs, and regional WAF", () => {
+test("AppTheoryHttpApi exposes custom domain, CORS, and access logs", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
 
@@ -294,11 +294,6 @@ test("AppTheoryHttpApi exposes custom domain, CORS, access logs, and regional WA
       domainName: "api.example.com",
       certificate: cert,
     },
-    waf: {
-      name: "apptheory-prod-waf",
-      metricName: "apptheoryProdWaf",
-      rateLimit: 1000,
-    },
   });
 
   const template = assertions.Template.fromStack(stack).toJSON();
@@ -306,8 +301,6 @@ test("AppTheoryHttpApi exposes custom domain, CORS, access logs, and regional WA
   const api = resources.find((resource) => resource.Type === "AWS::ApiGatewayV2::Api");
   const domainName = resources.find((resource) => resource.Type === "AWS::ApiGatewayV2::DomainName");
   const apiMapping = resources.find((resource) => resource.Type === "AWS::ApiGatewayV2::ApiMapping");
-  const webAcl = resources.find((resource) => resource.Type === "AWS::WAFv2::WebACL");
-  const webAclAssociation = resources.find((resource) => resource.Type === "AWS::WAFv2::WebACLAssociation");
   const accessLogGroup = resources.find(
     (resource) => resource.Type === "AWS::Logs::LogGroup" && resource.Properties?.RetentionInDays === 30,
   );
@@ -315,9 +308,84 @@ test("AppTheoryHttpApi exposes custom domain, CORS, access logs, and regional WA
   assert.deepEqual(api.Properties?.CorsConfiguration?.AllowOrigins, ["*"]);
   assert.ok(domainName, "Should synthesize a custom domain");
   assert.ok(apiMapping, "Should synthesize a domain mapping");
-  assert.equal(webAcl.Properties?.Scope, "REGIONAL");
-  assert.ok(webAclAssociation, "Should associate regional WAF with the HTTP API stage");
   assert.ok(accessLogGroup, "Should synthesize finite-retention access logs");
+});
+
+test("AppTheoryHttpApi rejects unsupported HTTP API WAF associations", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  assert.throws(
+    () => new apptheory.AppTheoryHttpApi(stack, "HttpApi", { handler: fn, waf: true }),
+    /HTTP APIs.*AppTheoryRestApi/,
+  );
+});
+
+test("AppTheoryRestApi regional WAF uses the supported REST stage ARN shape", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  new apptheory.AppTheoryRestApi(stack, "RestApi", {
+    handler: fn,
+    apiName: "apptheory-prod",
+    waf: {
+      name: "apptheory-prod-waf",
+      metricName: "apptheoryProdWaf",
+      rateLimit: 1000,
+    },
+  });
+
+  const resources = Object.values(assertions.Template.fromStack(stack).toJSON().Resources ?? {});
+  const webAcl = resources.find((resource) => resource.Type === "AWS::WAFv2::WebACL");
+  const webAclAssociation = resources.find((resource) => resource.Type === "AWS::WAFv2::WebACLAssociation");
+  const resourceArn = renderedString(webAclAssociation.Properties?.ResourceArn);
+
+  assert.equal(webAcl.Properties?.Scope, "REGIONAL");
+  assert.ok(webAclAssociation, "Should associate regional WAF with the REST API stage");
+  assert.ok(resourceArn.includes("/restapis/"), `expected REST API stage ARN, got ${resourceArn}`);
+  assert.ok(!resourceArn.includes("/apis/"), `must not synthesize unsupported HTTP API stage ARN, got ${resourceArn}`);
+});
+
+test("AppTheoryRestApiRouter regional WAF can reuse an existing WebACL on the REST stage", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const router = new apptheory.AppTheoryRestApiRouter(stack, "Router", {
+    apiName: "apptheory-router",
+    waf: { webAclArn: "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/example/id" },
+  });
+  router.addLambdaIntegration("/{proxy+}", ["ANY"], fn);
+
+  const resources = Object.values(assertions.Template.fromStack(stack).toJSON().Resources ?? {});
+  const webAcls = resources.filter((resource) => resource.Type === "AWS::WAFv2::WebACL");
+  const webAclAssociation = resources.find((resource) => resource.Type === "AWS::WAFv2::WebACLAssociation");
+  const resourceArn = renderedString(webAclAssociation.Properties?.ResourceArn);
+
+  assert.equal(webAcls.length, 0, "Should reuse the provided WebACL ARN");
+  assert.equal(
+    webAclAssociation.Properties?.WebACLArn,
+    "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/example/id",
+  );
+  assert.ok(resourceArn.includes("/restapis/"), `expected REST API stage ARN, got ${resourceArn}`);
+  assert.ok(!resourceArn.includes("/apis/"), `must not synthesize unsupported HTTP API stage ARN, got ${resourceArn}`);
 });
 
 test("AppTheoryHttpIngestionEndpoint synthesizes expected template", () => {
@@ -2171,7 +2239,6 @@ test("AppTheoryApp exposes production deployment surface without raw CDK escape 
     vpc,
     vpcSubnets: { subnets: vpc.privateSubnets },
     cors: { allowOrigins: ["https://app.example.com"], allowCredentials: true },
-    waf: { webAclArn: "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/example/id" },
     alias: {
       name: "live",
       provisionedConcurrentExecutions: 1,
@@ -2188,15 +2255,29 @@ test("AppTheoryApp exposes production deployment surface without raw CDK escape 
   const fn = resources.find((resource) => resource.Type === "AWS::Lambda::Function");
   const alias = resources.find((resource) => resource.Type === "AWS::Lambda::Alias");
   const deploymentConfig = resources.find((resource) => resource.Type === "AWS::CodeDeploy::DeploymentConfig");
-  const webAclAssociation = resources.find((resource) => resource.Type === "AWS::WAFv2::WebACLAssociation");
   const api = resources.find((resource) => resource.Type === "AWS::ApiGatewayV2::Api");
 
   assert.ok(fn.Properties?.VpcConfig, "App function should expose VPC placement");
   assert.equal(alias.Properties?.Name, "live");
   assert.deepEqual(alias.Properties?.ProvisionedConcurrencyConfig, { ProvisionedConcurrentExecutions: 1 });
   assert.equal(deploymentConfig.Properties?.TrafficRoutingConfig?.Type, "TimeBasedLinear");
-  assert.ok(webAclAssociation, "App HTTP API should attach regional WAF");
   assert.deepEqual(api.Properties?.CorsConfiguration?.AllowOrigins, ["https://app.example.com"]);
+});
+
+test("AppTheoryApp rejects top-level WAF because it deploys HTTP API v2", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () => new apptheory.AppTheoryApp(stack, "App", {
+      appName: "apptheory-prod",
+      code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "index.handler",
+      waf: { webAclArn: "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/example/id" },
+    }),
+    /HTTP API.*AppTheoryRestApi/,
+  );
 });
 
 test("AppTheoryObservability synthesizes dashboard and alarms for AppTheory runtime metrics", () => {
@@ -2222,13 +2303,48 @@ test("AppTheoryObservability synthesizes dashboard and alarms for AppTheory runt
   const resources = Object.values(template.Resources ?? {});
   const dashboard = resources.find((resource) => resource.Type === "AWS::CloudWatch::Dashboard");
   const alarms = resources.filter((resource) => resource.Type === "AWS::CloudWatch::Alarm");
-  const alarmMetrics = alarms.map((alarm) => alarm.Properties?.MetricName).sort();
   const dashboardBody = renderedString(dashboard.Properties?.DashboardBody);
+  const alarmExpressions = alarms
+    .map((alarm) => alarm.Properties?.Metrics?.find((metric) => metric.ReturnData === true)?.Expression)
+    .sort();
 
-  assert.deepEqual(alarmMetrics, ["RequestDuration", "RequestErrors"]);
+  assert.equal(alarms.length, 2);
+  for (const alarm of alarms) {
+    assert.equal(alarm.Properties?.MetricName, undefined, "Default alarms must not use service-only metric dimensions");
+    assert.ok(alarm.Properties?.Metrics, "Default alarms should use Metrics Insights queries");
+  }
+  assert.deepEqual(alarmExpressions, [
+    "SELECT MAX(RequestDuration) FROM SCHEMA(\"AppTheory\", service, method, path, status, tenant_id, error_code) WHERE service = 'orders' AND method = 'GET' AND path = '/orders' AND status = '500' AND tenant_id = 'tenant-1' AND error_code = 'app.internal'",
+    "SELECT SUM(RequestErrors) FROM SCHEMA(\"AppTheory\", service, method, path, status, tenant_id, error_code) WHERE service = 'orders' AND method = 'GET' AND path = '/orders' AND status = '500' AND tenant_id = 'tenant-1' AND error_code = 'app.internal'",
+  ]);
   assert.ok(dashboardBody.includes("RequestCount"));
   assert.ok(dashboardBody.includes("RequestDuration"));
   assert.ok(dashboardBody.includes("RequestErrors"));
+});
+
+test("AppTheoryObservability default alarms query the emitted full EMF schema", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryObservability(stack, "Observability", {
+    serviceName: "orders",
+    createDashboard: false,
+  });
+
+  const resources = Object.values(assertions.Template.fromStack(stack).toJSON().Resources ?? {});
+  const alarms = resources.filter((resource) => resource.Type === "AWS::CloudWatch::Alarm");
+  const alarmJson = JSON.stringify(alarms);
+  const alarmExpressions = alarms
+    .map((alarm) => alarm.Properties?.Metrics?.find((metric) => metric.ReturnData === true)?.Expression)
+    .sort();
+
+  assert.equal(alarms.length, 2);
+  assert.equal(alarmJson.includes("\"Dimensions\":[{\"Name\":\"service\",\"Value\":\"orders\"}]"), false);
+  assert.deepEqual(alarmExpressions, [
+    "SELECT MAX(RequestDuration) FROM SCHEMA(\"AppTheory\", service, method, path, status, tenant_id, error_code) WHERE service = 'orders'",
+    "SELECT SUM(RequestErrors) FROM SCHEMA(\"AppTheory\", service, method, path, status, tenant_id, error_code) WHERE service = 'orders'",
+  ]);
+  assert.ok(!alarmJson.includes("SEARCH("), "CloudWatch alarms must not use SEARCH expressions");
 });
 
 test("AppTheorySsrSite synthesizes expected template", () => {

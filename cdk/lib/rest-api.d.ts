@@ -1,9 +1,18 @@
 import * as apigw from "aws-cdk-lib/aws-apigateway";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
+import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import { Construct } from "constructs";
+import type { AppTheoryRegionalWafOptions } from "./regional-waf";
 export interface AppTheoryRestApiProps {
     readonly handler: lambda.IFunction;
     readonly apiName?: string;
+    /**
+     * Regional WAF attachment for the REST API deployment stage. Set to true for
+     * an AppTheory-managed WebACL, or provide options to reuse an existing
+     * regional WebACL.
+     * @default undefined
+     */
+    readonly waf?: boolean | AppTheoryRegionalWafOptions;
     /**
      * Whether API Gateway console test invocations should be granted Lambda invoke permissions.
      *
@@ -30,6 +39,8 @@ export interface AppTheoryRestApiRouteOptions {
 }
 export declare class AppTheoryRestApi extends Construct {
     readonly api: apigw.RestApi;
+    readonly webAcl?: wafv2.CfnWebACL;
+    readonly wafAssociation?: wafv2.CfnWebACLAssociation;
     private readonly handler;
     private readonly allowTestInvoke;
     private readonly scopePermissionToMethod;
