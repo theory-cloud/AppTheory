@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import * as path from "node:path";
 
 import { AppTheoryFunction, AppTheoryHttpApi } from "@theory-cloud/apptheory-cdk";
@@ -54,6 +55,29 @@ function cleanOutputDir(outputDir: string): void {
   mkdirSync(outputDir, { recursive: true });
 }
 
+function assetHashFor(paths: string[]): string {
+  const hash = createHash("sha256");
+  for (const inputPath of [...paths].sort()) {
+    addPathToHash(hash, inputPath, inputPath);
+  }
+  return hash.digest("hex");
+}
+
+function addPathToHash(hash: ReturnType<typeof createHash>, root: string, current: string): void {
+  const stat = statSync(current);
+  const rel = path.relative(path.dirname(root), current).replaceAll(path.sep, "/");
+  hash.update(rel);
+  if (stat.isDirectory()) {
+    for (const entry of readdirSync(current).sort()) {
+      addPathToHash(hash, root, path.join(current, entry));
+    }
+    return;
+  }
+  if (stat.isFile()) {
+    hash.update(readFileSync(current));
+  }
+}
+
 export class HelloWorldStack extends Stack {
   constructor(scope: Construct, id: string, props: HelloWorldStackProps) {
     super(scope, id, props);
@@ -79,6 +103,8 @@ export class HelloWorldStack extends Stack {
           runtime: lambda.Runtime.PROVIDED_AL2023,
           handler: "bootstrap",
           code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "go"), {
+            assetHashType: cdk.AssetHashType.CUSTOM,
+            assetHash: assetHashFor([path.join(__dirname, "..", "handlers", "go")]),
             bundling: {
               image: cdk.DockerImage.fromRegistry("golang:1.26"),
               command: [
@@ -118,6 +144,13 @@ export class HelloWorldStack extends Stack {
           runtime: lambda.Runtime.NODEJS_24_X,
           handler: "handler.handler",
           code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "ts"), {
+            assetHashType: cdk.AssetHashType.CUSTOM,
+            assetHash: assetHashFor([
+              path.join(__dirname, "..", "handlers", "ts", "app.mjs"),
+              path.join(__dirname, "..", "handlers", "ts", "handler.mjs"),
+              path.join(__dirname, "..", "handlers", "ts", "package.json"),
+              path.join(repoRoot, "ts", "dist", "index.js"),
+            ]),
             bundling: {
               image: lambda.Runtime.NODEJS_24_X.bundlingImage,
               command: ["bash", "-c", "cp -R /asset-input/* /asset-output/"],
@@ -142,6 +175,11 @@ export class HelloWorldStack extends Stack {
           runtime: lambda.Runtime.PYTHON_3_14,
           handler: "handler.handler",
           code: lambda.Code.fromAsset(path.join(__dirname, "..", "handlers", "py"), {
+            assetHashType: cdk.AssetHashType.CUSTOM,
+            assetHash: assetHashFor([
+              path.join(__dirname, "..", "handlers", "py", "handler.py"),
+              path.join(repoRoot, "py", "src", "apptheory"),
+            ]),
             bundling: {
               image: lambda.Runtime.PYTHON_3_14.bundlingImage,
               command: ["bash", "-c", "cp -R /asset-input/* /asset-output/"],
