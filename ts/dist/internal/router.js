@@ -1,7 +1,9 @@
 import { AppTheoryError } from "../errors.js";
 import { normalizeMethod, normalizePath, splitPath } from "./http.js";
+/** Fail-closed HTTP route matcher used by the AppTheory runtime. */
 export class Router {
     _routes = [];
+    /** Registers a route through the deprecated strict compatibility path. */
     addStrict(method, pattern, handler, options = {}) {
         if (handler === null || handler === undefined) {
             throw routeRegistrationError("route handler is nil");
@@ -33,9 +35,11 @@ export class Router {
             order: this._routes.length,
         });
     }
+    /** Registers a route using the fail-closed route-registration path. */
     add(method, pattern, handler, options = {}) {
         this.addStrict(method, pattern, handler, options);
     }
+    /** Matches an HTTP method and path against registered routes. */
     match(method, path) {
         const normalizedMethod = normalizeMethod(method);
         const pathSegments = splitPath(normalizePath(path));

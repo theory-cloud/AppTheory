@@ -103,25 +103,31 @@ import { vary } from "./response.js";
 import type { BodyStream, Headers, Query, Request, Response } from "./types.js";
 import { WebSocketManagementClient } from "./websocket-management.js";
 
+/** Runtime tier selected for AppTheory request handling. */
 export type Tier = "p0" | "p1" | "p2";
 
+/** Request and response byte guardrails for the runtime. */
 export interface Limits {
   maxRequestBytes?: number;
   maxResponseBytes?: number;
 }
 
+/** CORS policy applied by P1 and P2 HTTP response finalization. */
 export interface CORSConfig {
   allowedOrigins?: string[];
   allowCredentials?: boolean;
   allowHeaders?: string[];
 }
 
+/** Per-route registration options. */
 export interface RouteOptions {
   authRequired?: boolean;
 }
 
+/** Hook that resolves the authenticated identity for protected routes. */
 export type AuthHook = (ctx: Context) => string | Promise<string>;
 
+/** Decision returned by a P2 policy hook to fail a request closed. */
 export interface PolicyDecision {
   code: string;
   message?: string;
@@ -140,6 +146,7 @@ function errorCodeFrom(err: unknown): string {
   return "app.internal";
 }
 
+/** P2 policy hook used for rate limiting or load shedding decisions. */
 export type PolicyHook = (
   ctx: Context,
 ) =>
@@ -148,6 +155,7 @@ export type PolicyHook = (
   | undefined
   | Promise<PolicyDecision | null | undefined>;
 
+/** Portable P2 request log record emitted by observability hooks. */
 export interface LogRecord {
   level: string;
   event: string;
@@ -168,6 +176,7 @@ export interface LogRecord {
   eventName?: string;
 }
 
+/** Portable P2 metric record emitted by observability hooks. */
 export interface MetricRecord {
   name: string;
   value: number;
@@ -175,17 +184,20 @@ export interface MetricRecord {
   tags: Record<string, string>;
 }
 
+/** Portable P2 span-shaped record emitted by observability hooks. */
 export interface SpanRecord {
   name: string;
   attributes: Record<string, string>;
 }
 
+/** Callbacks that receive AppTheory P2 log, metric, and span records. */
 export interface ObservabilityHooks {
   log?: (record: LogRecord) => void;
   metric?: (record: MetricRecord) => void;
   span?: (record: SpanRecord) => void;
 }
 
+/** Timeout middleware configuration for operations and tenants. */
 export interface TimeoutConfig {
   defaultTimeoutMs?: number;
   operationTimeoutsMs?: Record<string, number>;
@@ -199,22 +211,27 @@ export {
   HTTP_ERROR_FORMAT_NESTED,
 } from "./http-error-format.js";
 
+/** Handler for one SQS message in a batch. */
 export type SQSHandler = (
   ctx: EventContext,
   message: SQSMessage,
 ) => void | Promise<void>;
+/** Handler for one Kinesis record in a batch. */
 export type KinesisHandler = (
   ctx: EventContext,
   record: KinesisEventRecord,
 ) => void | Promise<void>;
+/** Handler for one SNS record. */
 export type SNSHandler = (
   ctx: EventContext,
   record: SNSEventRecord,
 ) => unknown | Promise<unknown>;
+/** Handler for one DynamoDB Streams record in a batch. */
 export type DynamoDBStreamHandler = (
   ctx: EventContext,
   record: DynamoDBStreamRecord,
 ) => void | Promise<void>;
+/** Handler for an EventBridge event. */
 export type EventBridgeHandler = (
   ctx: EventContext,
   event: EventBridgeEvent,
@@ -252,6 +269,7 @@ type RequestContextOptions = {
   fallbackRequestId?: string;
 };
 
+/** Contract-first application container for routes, middleware, and Lambda event dispatch. */
 export class App {
   private readonly _router: Router<Handler>;
   private readonly _clock: Clock;
@@ -317,10 +335,12 @@ export class App {
     this._eventMiddlewares = [];
   }
 
+  /** Returns the configured HTTP error-envelope format. */
   getHTTPErrorFormat(): HTTPErrorFormat {
     return this._httpErrorFormat;
   }
 
+  /** Registers a handler for an HTTP method and route pattern. */
   handle(
     method: string,
     pattern: string,
@@ -348,36 +368,44 @@ export class App {
     return this;
   }
 
+  /** Registers a GET route handler. */
   get(pattern: string, handler: Handler): this {
     return this.handle("GET", pattern, handler);
   }
 
+  /** Registers a POST route handler. */
   post(pattern: string, handler: Handler): this {
     return this.handle("POST", pattern, handler);
   }
 
+  /** Registers a PUT route handler. */
   put(pattern: string, handler: Handler): this {
     return this.handle("PUT", pattern, handler);
   }
 
+  /** Registers a PATCH route handler. */
   patch(pattern: string, handler: Handler): this {
     return this.handle("PATCH", pattern, handler);
   }
 
+  /** Registers an OPTIONS route handler. */
   options(pattern: string, handler: Handler): this {
     return this.handle("OPTIONS", pattern, handler);
   }
 
+  /** Registers a DELETE route handler. */
   delete(pattern: string, handler: Handler): this {
     return this.handle("DELETE", pattern, handler);
   }
 
+  /** Appends HTTP middleware around route handlers. */
   use(middleware: Middleware): this {
     if (typeof middleware !== "function") return this;
     this._middlewares.push(middleware);
     return this;
   }
 
+  /** Appends event middleware around event workload handlers. */
   useEvents(middleware: EventMiddleware): this {
     if (typeof middleware !== "function") return this;
     this._eventMiddlewares.push(middleware);
@@ -472,6 +500,7 @@ export class App {
     );
   }
 
+  /** Registers a WebSocket route handler by route key. */
   webSocket(routeKey: string, handler: Handler): this {
     const key = String(routeKey ?? "").trim();
     if (!key || typeof handler !== "function") return this;
@@ -479,6 +508,7 @@ export class App {
     return this;
   }
 
+  /** Registers an SQS queue handler by queue name. */
   sqs(queueName: string, handler: SQSHandler): this {
     const name = String(queueName ?? "").trim();
     if (!name || typeof handler !== "function") return this;
@@ -486,6 +516,7 @@ export class App {
     return this;
   }
 
+  /** Registers a Kinesis stream handler by stream name. */
   kinesis(streamName: string, handler: KinesisHandler): this {
     const name = String(streamName ?? "").trim();
     if (!name || typeof handler !== "function") return this;
@@ -493,6 +524,7 @@ export class App {
     return this;
   }
 
+  /** Registers an SNS topic handler by topic name. */
   sns(topicName: string, handler: SNSHandler): this {
     const name = String(topicName ?? "").trim();
     if (!name || typeof handler !== "function") return this;
@@ -500,6 +532,7 @@ export class App {
     return this;
   }
 
+  /** Registers an EventBridge handler for a selector. */
   eventBridge(
     selector: EventBridgeSelector,
     handler: EventBridgeHandler,
@@ -515,6 +548,7 @@ export class App {
     return this;
   }
 
+  /** Registers a DynamoDB Streams handler by table name. */
   dynamoDB(tableName: string, handler: DynamoDBStreamHandler): this {
     const name = String(tableName ?? "").trim();
     if (!name || typeof handler !== "function") return this;
@@ -522,6 +556,7 @@ export class App {
     return this;
   }
 
+  /** Serves a normalized AppTheory request and returns a normalized response. */
   async serve(request: Request, ctx?: unknown): Promise<Response> {
     return this._serve(request, ctx);
   }
@@ -934,6 +969,7 @@ export class App {
     return finish(resp, "");
   }
 
+  /** Serves an API Gateway HTTP API v2 event. */
   async serveAPIGatewayV2(
     event: APIGatewayV2HTTPRequest,
     ctx?: unknown,
@@ -948,6 +984,7 @@ export class App {
     return apigatewayV2ResponseFromResponse(resp);
   }
 
+  /** Serves a Lambda Function URL event. */
   async serveLambdaFunctionURL(
     event: LambdaFunctionURLRequest,
     ctx?: unknown,
@@ -964,6 +1001,7 @@ export class App {
     return lambdaFunctionURLResponseFromResponse(resp);
   }
 
+  /** Serves an API Gateway REST proxy event. */
   async serveAPIGatewayProxy(
     event: APIGatewayProxyRequest,
     ctx?: unknown,
@@ -980,6 +1018,7 @@ export class App {
     return apigatewayProxyResponseFromResponse(resp);
   }
 
+  /** Serves an ALB target group event. */
   async serveALB(
     event: ALBTargetGroupRequest,
     ctx?: unknown,
@@ -996,6 +1035,7 @@ export class App {
     return albTargetGroupResponseFromResponse(resp);
   }
 
+  /** Serves an AppSync direct Lambda resolver event. */
   async serveAppSync(
     event: AppSyncResolverEvent,
     ctx?: unknown,
@@ -1047,6 +1087,7 @@ export class App {
     return null;
   }
 
+  /** Serves an API Gateway WebSocket event. */
   async serveWebSocket(
     event: APIGatewayWebSocketProxyRequest,
     ctx?: unknown,
@@ -1188,6 +1229,7 @@ export class App {
     return null;
   }
 
+  /** Serves an SQS event with partial-batch failure output. */
   async serveSQSEvent(
     event: SQSEvent,
     ctx?: unknown,
@@ -1237,6 +1279,7 @@ export class App {
     return null;
   }
 
+  /** Serves a Kinesis event with partial-batch failure output. */
   async serveKinesisEvent(
     event: KinesisEvent,
     ctx?: unknown,
@@ -1287,6 +1330,7 @@ export class App {
     return null;
   }
 
+  /** Serves an SNS event through the registered topic handler. */
   async serveSNSEvent(event: SNSEvent, ctx?: unknown): Promise<unknown[]> {
     const records = Array.isArray(event?.Records) ? event.Records : [];
     const handler = this._snsHandlerForEvent(event);
@@ -1340,6 +1384,7 @@ export class App {
     return null;
   }
 
+  /** Serves an EventBridge event through registered selectors. */
   async serveEventBridge(
     event: EventBridgeEvent,
     ctx?: unknown,
@@ -1381,6 +1426,7 @@ export class App {
     return null;
   }
 
+  /** Serves a DynamoDB Streams event with partial-batch failure output. */
   async serveDynamoDBStream(
     event: DynamoDBStreamEvent,
     ctx?: unknown,
@@ -1422,6 +1468,7 @@ export class App {
     return { batchItemFailures: failures };
   }
 
+  /** Detects and dispatches a supported Lambda event shape through one entrypoint. */
   async handleLambda(event: unknown, ctx?: unknown): Promise<unknown> {
     if (!event || typeof event !== "object") {
       throw new Error("apptheory: event must be an object");
@@ -1505,6 +1552,7 @@ export class App {
   }
 }
 
+/** Creates an AppTheory application with the provided runtime options. */
 export function createApp(
   options: {
     clock?: Clock;
@@ -1522,11 +1570,13 @@ export function createApp(
   return new App(options);
 }
 
+/** Lambda Function URL streaming handler produced for AWS Lambda runtimes. */
 export type LambdaFunctionURLStreamingHandler = (
   event: LambdaFunctionURLRequest,
   ctx?: unknown,
 ) => Promise<unknown>;
 
+/** Creates a Lambda Function URL streaming handler for an AppTheory app. */
 export function createLambdaFunctionURLStreamingHandler(
   app: App,
 ): LambdaFunctionURLStreamingHandler {
@@ -1688,6 +1738,7 @@ function timeoutForContext(
   return timeoutMs;
 }
 
+/** Creates middleware that fails requests closed when timeout policy expires. */
 export function timeoutMiddleware(config: TimeoutConfig = {}): Middleware {
   const cfg = normalizeTimeoutConfig(config);
 

@@ -28,6 +28,7 @@ function errorCodeFrom(err) {
     return "app.internal";
 }
 export { HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED, } from "./http-error-format.js";
+/** Contract-first application container for routes, middleware, and Lambda event dispatch. */
 export class App {
     _router;
     _clock;
@@ -78,9 +79,11 @@ export class App {
         this._middlewares = [];
         this._eventMiddlewares = [];
     }
+    /** Returns the configured HTTP error-envelope format. */
     getHTTPErrorFormat() {
         return this._httpErrorFormat;
     }
+    /** Registers a handler for an HTTP method and route pattern. */
     handle(method, pattern, handler, options = {}) {
         this._router.add(method, pattern, handler, options);
         return this;
@@ -96,30 +99,38 @@ export class App {
         this._router.addStrict(method, pattern, handler, options);
         return this;
     }
+    /** Registers a GET route handler. */
     get(pattern, handler) {
         return this.handle("GET", pattern, handler);
     }
+    /** Registers a POST route handler. */
     post(pattern, handler) {
         return this.handle("POST", pattern, handler);
     }
+    /** Registers a PUT route handler. */
     put(pattern, handler) {
         return this.handle("PUT", pattern, handler);
     }
+    /** Registers a PATCH route handler. */
     patch(pattern, handler) {
         return this.handle("PATCH", pattern, handler);
     }
+    /** Registers an OPTIONS route handler. */
     options(pattern, handler) {
         return this.handle("OPTIONS", pattern, handler);
     }
+    /** Registers a DELETE route handler. */
     delete(pattern, handler) {
         return this.handle("DELETE", pattern, handler);
     }
+    /** Appends HTTP middleware around route handlers. */
     use(middleware) {
         if (typeof middleware !== "function")
             return this;
         this._middlewares.push(middleware);
         return this;
     }
+    /** Appends event middleware around event workload handlers. */
     useEvents(middleware) {
         if (typeof middleware !== "function")
             return this;
@@ -166,6 +177,7 @@ export class App {
     _responseForHTTPErrorWithRequestIdTraceId(err, requestId, traceId) {
         return responseForErrorWithRequestIdTraceIdAndFormat(this._httpErrorFormat, err, requestId, traceId);
     }
+    /** Registers a WebSocket route handler by route key. */
     webSocket(routeKey, handler) {
         const key = String(routeKey ?? "").trim();
         if (!key || typeof handler !== "function")
@@ -173,6 +185,7 @@ export class App {
         this._webSocketRoutes.push({ routeKey: key, handler });
         return this;
     }
+    /** Registers an SQS queue handler by queue name. */
     sqs(queueName, handler) {
         const name = String(queueName ?? "").trim();
         if (!name || typeof handler !== "function")
@@ -180,6 +193,7 @@ export class App {
         this._sqsRoutes.push({ queueName: name, handler });
         return this;
     }
+    /** Registers a Kinesis stream handler by stream name. */
     kinesis(streamName, handler) {
         const name = String(streamName ?? "").trim();
         if (!name || typeof handler !== "function")
@@ -187,6 +201,7 @@ export class App {
         this._kinesisRoutes.push({ streamName: name, handler });
         return this;
     }
+    /** Registers an SNS topic handler by topic name. */
     sns(topicName, handler) {
         const name = String(topicName ?? "").trim();
         if (!name || typeof handler !== "function")
@@ -194,6 +209,7 @@ export class App {
         this._snsRoutes.push({ topicName: name, handler });
         return this;
     }
+    /** Registers an EventBridge handler for a selector. */
     eventBridge(selector, handler) {
         if (typeof handler !== "function")
             return this;
@@ -207,6 +223,7 @@ export class App {
         this._eventBridgeRoutes.push({ selector: sel, handler });
         return this;
     }
+    /** Registers a DynamoDB Streams handler by table name. */
     dynamoDB(tableName, handler) {
         const name = String(tableName ?? "").trim();
         if (!name || typeof handler !== "function")
@@ -214,6 +231,7 @@ export class App {
         this._dynamoDBRoutes.push({ tableName: name, handler });
         return this;
     }
+    /** Serves a normalized AppTheory request and returns a normalized response. */
     async serve(request, ctx) {
         return this._serve(request, ctx);
     }
@@ -438,6 +456,7 @@ export class App {
         }
         return finish(resp, "");
     }
+    /** Serves an API Gateway HTTP API v2 event. */
     async serveAPIGatewayV2(event, ctx) {
         let request;
         try {
@@ -449,6 +468,7 @@ export class App {
         const resp = await this.serve(request, ctx);
         return apigatewayV2ResponseFromResponse(resp);
     }
+    /** Serves a Lambda Function URL event. */
     async serveLambdaFunctionURL(event, ctx) {
         let request;
         try {
@@ -460,6 +480,7 @@ export class App {
         const resp = await this.serve(request, ctx);
         return lambdaFunctionURLResponseFromResponse(resp);
     }
+    /** Serves an API Gateway REST proxy event. */
     async serveAPIGatewayProxy(event, ctx) {
         let request;
         try {
@@ -471,6 +492,7 @@ export class App {
         const resp = await this.serve(request, ctx);
         return apigatewayProxyResponseFromResponse(resp);
     }
+    /** Serves an ALB target group event. */
     async serveALB(event, ctx) {
         let request;
         try {
@@ -482,6 +504,7 @@ export class App {
         const resp = await this.serve(request, ctx);
         return albTargetGroupResponseFromResponse(resp);
     }
+    /** Serves an AppSync direct Lambda resolver event. */
     async serveAppSync(event, ctx) {
         const fallbackRequestId = appSyncRequestIdFromContext(ctx);
         const requestMetadata = appSyncRequestFromEvent(event);
@@ -520,6 +543,7 @@ export class App {
         }
         return null;
     }
+    /** Serves an API Gateway WebSocket event. */
     async serveWebSocket(event, ctx) {
         const handler = this._applyMiddlewares(this._webSocketHandlerForEvent(event));
         let requestId = String(event?.requestContext?.requestId ?? "").trim();
@@ -623,6 +647,7 @@ export class App {
         }
         return null;
     }
+    /** Serves an SQS event with partial-batch failure output. */
     async serveSQSEvent(event, ctx) {
         const records = Array.isArray(event?.Records) ? event.Records : [];
         const handler = this._sqsHandlerForEvent(event);
@@ -666,6 +691,7 @@ export class App {
         }
         return null;
     }
+    /** Serves a Kinesis event with partial-batch failure output. */
     async serveKinesisEvent(event, ctx) {
         const records = Array.isArray(event?.Records) ? event.Records : [];
         const handler = this._kinesisHandlerForEvent(event);
@@ -710,6 +736,7 @@ export class App {
         }
         return null;
     }
+    /** Serves an SNS event through the registered topic handler. */
     async serveSNSEvent(event, ctx) {
         const records = Array.isArray(event?.Records) ? event.Records : [];
         const handler = this._snsHandlerForEvent(event);
@@ -754,6 +781,7 @@ export class App {
         }
         return null;
     }
+    /** Serves an EventBridge event through registered selectors. */
     async serveEventBridge(event, ctx) {
         const handler = this._eventBridgeHandlerForEvent(event);
         if (!handler) {
@@ -785,6 +813,7 @@ export class App {
         }
         return null;
     }
+    /** Serves a DynamoDB Streams event with partial-batch failure output. */
     async serveDynamoDBStream(event, ctx) {
         const records = Array.isArray(event?.Records) ? event.Records : [];
         const handler = this._dynamoDBHandlerForEvent(event);
@@ -815,6 +844,7 @@ export class App {
         failures = failures.filter((f) => f.itemIdentifier);
         return { batchItemFailures: failures };
     }
+    /** Detects and dispatches a supported Lambda event shape through one entrypoint. */
     async handleLambda(event, ctx) {
         if (!event || typeof event !== "object") {
             throw new Error("apptheory: event must be an object");
@@ -876,9 +906,11 @@ export class App {
         throw new Error("apptheory: unknown event type");
     }
 }
+/** Creates an AppTheory application with the provided runtime options. */
 export function createApp(options = {}) {
     return new App(options);
 }
+/** Creates a Lambda Function URL streaming handler for an AppTheory app. */
 export function createLambdaFunctionURLStreamingHandler(app) {
     const aws = globalThis.awslambda;
     if (aws && typeof aws === "object" && "streamifyResponse" in aws) {
@@ -988,6 +1020,7 @@ function timeoutForContext(ctx, config) {
     timeoutMs = Math.floor(timeoutMs);
     return timeoutMs;
 }
+/** Creates middleware that fails requests closed when timeout policy expires. */
 export function timeoutMiddleware(config = {}) {
     const cfg = normalizeTimeoutConfig(config);
     return async (ctx, next) => {
