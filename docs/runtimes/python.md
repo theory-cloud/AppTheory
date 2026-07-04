@@ -83,13 +83,15 @@ def test_ping():
     assert resp["statusCode"] == 200
 ```
 
-## Strict routes
+## Route registration
 
 ```python
-app.handle_strict("GET", "/users/{id}", handler)
+app.handle("GET", "/users/{id}", handler)
+app.get("/users/{id}", handler)
 ```
 
-Strict registration raises on invalid patterns at registration time.
+Normal fluent registration fails closed on invalid patterns, duplicates, and `None` handlers. `handle_strict` remains as
+a deprecated compatibility wrapper for callers that still need the old helper shape.
 
 ## HTTP error format
 

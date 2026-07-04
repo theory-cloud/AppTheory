@@ -254,16 +254,17 @@ Infrastructure note:
 - use `aws-cdk-lib/aws-appsync` for the GraphQL API, schema, auth, and Lambda data source wiring
 - AppTheory does not currently export an AppSync-specific CDK construct
 
-## Strict route registration
+## Route registration
 
-Invalid route patterns are fail closed across runtimes. Default registration remains compatibility-oriented, so invalid
-patterns may be ignored unless you opt into the strict helpers.
+Invalid route patterns, duplicate method/pattern pairs, and nil/undefined handlers fail closed during registration across
+runtimes. Use the normal fluent registration path for new code:
 
-Use these in tests and CI:
+- Go: `app.Get("/users/{id}", h)` or `app.Handle("GET", "/users/{id}", h)`
+- TypeScript: `app.get("/users/{id}", h)` or `app.handle("GET", "/users/{id}", h)`
+- Python: `app.get("/users/{id}", h)` or `app.handle("GET", "/users/{id}", h)`
 
-- Go: `app.GetStrict("/users/{id}", h)` or `app.HandleStrict("GET", "/users/{id}", h)`
-- TypeScript: `app.handleStrict("GET", "/users/{id}", h)`
-- Python: `app.handle_strict("GET", "/users/{id}", h)`
+Strict helpers remain as deprecated compatibility wrappers for code that already depends on their error-returning or
+throwing shape. See `UPGRADING.md` for per-line deprecation notes.
 
 ## Cross-language feature surfaces
 

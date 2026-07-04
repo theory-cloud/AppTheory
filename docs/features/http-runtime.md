@@ -70,24 +70,28 @@ Python: `app.get`, `app.post`, `app.put`, `app.patch`, `app.delete`, `app.handle
 
 If two routes are equally specific, the router prefers **earlier registration order**.
 
-### Strict registration
+### Fail-closed registration
 
-Default registration is compatibility-oriented and may silently ignore invalid patterns. In tests and CI, use the strict helpers:
+Default fluent registration fails closed for invalid patterns, duplicate canonical method/pattern pairs, and nil or
+undefined handlers. Use the normal registration path in new code:
 
 ```go
-app.GetStrict("/users/{id}", handler)
-app.HandleStrict("GET", "/users/{id}", handler)
+app.Get("/users/{id}", handler)
+app.Handle("GET", "/users/{id}", handler)
 ```
 
 ```ts
-app.handleStrict("GET", "/users/{id}", handler);
+app.get("/users/{id}", handler);
+app.handle("GET", "/users/{id}", handler);
 ```
 
 ```python
-app.handle_strict("GET", "/users/{id}", handler)
+app.get("/users/{id}", handler)
+app.handle("GET", "/users/{id}", handler)
 ```
 
-Strict registration fails immediately on bad patterns instead of silently 404-ing in production.
+The strict helpers remain only as deprecated compatibility wrappers for code that depends on their older
+error-returning or throwing shape.
 
 ## Response helpers
 
