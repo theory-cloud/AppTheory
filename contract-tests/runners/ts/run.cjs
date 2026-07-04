@@ -2400,6 +2400,258 @@ async function runFixtureMCP(fixture) {
   return { ok: true };
 }
 
+function oauthPathFromURL(raw, fallback = "/") {
+  try {
+    const url = new URL(String(raw ?? ""));
+    return url.pathname || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function oauthSequence(values) {
+  let index = 0;
+  return {
+    next(prefix) {
+      if (index < (values ?? []).length) {
+        const out = String(values[index] ?? "").trim();
+        index += 1;
+        if (out) return out;
+      }
+      index += 1;
+      return `${prefix}_${index}`;
+    },
+  };
+}
+
+function oauthSetupPolicy(setup) {
+  const policy = setup.dcr_policy ?? {};
+  return {
+    allowedRedirectUris: (policy.allowed_redirect_uris ?? []).map(String),
+    requirePublicClient: policy.require_public_client === true,
+    requireRefreshToken: policy.require_refresh_token === true,
+  };
+}
+
+function oauthTokenRecords(setup) {
+  return (setup.bearer_tokens ?? []).map((record) => ({
+    token: String(record.token ?? ""),
+    subject: String(record.subject ?? ""),
+    audience: String(record.audience ?? ""),
+    scope: String(record.scope ?? ""),
+    scopes: (record.scopes ?? []).map(String),
+    expiresAt: record.expires_unix
+      ? new Date(Number(record.expires_unix) * 1000)
+      : undefined,
+  }));
+}
+
+async function newOAuthFixtureApp(runtime, setup) {
+  const resource = String(setup.resource ?? "").trim();
+  const metadataURL = runtime.resourceMetadataURLFromMcpEndpoint(resource);
+  if (!metadataURL) throw new Error("oauth setup resource is not an absolute URL");
+  const state = {
+    clients: new Map(),
+    codes: new Map(),
+    ids: oauthSequence(setup.id_sequence ?? []),
+  };
+  const clockUnix = Number(setup.clock_unix ?? 0);
+  const fixedNow = () => new Date(clockUnix * 1000);
+  const app = runtime.createApp({ tier: "p0" });
+  const metadata = runtime.newProtectedResourceMetadata(
+    resource,
+    setup.authorization_servers ?? [],
+  );
+  metadata.scopes_supported = (setup.scopes_supported ?? []).map(String);
+  metadata.bearer_methods_supported = ["header"];
+  app.get(oauthPathFromURL(metadataURL), runtime.protectedResourceMetadataHandler(metadata));
+
+  const validator = runtime.newMemoryBearerTokenValidator(oauthTokenRecords(setup), {
+    requiredAudience: String(setup.required_audience ?? resource).trim(),
+    requiredScopes: (setup.required_scopes ?? []).map(String),
+    now: fixedNow,
+  });
+  const bearerMiddleware = runtime.requireBearerTokenMiddleware({
+    resourceMetadataURL: metadataURL,
+    claimsValidator: validator,
+  });
+  const protectedNext = async (ctx) => {
+    const claims = runtime.bearerTokenClaimsFromContext(ctx) ?? {};
+    return runtime.json(200, {
+      ok: true,
+      subject: String(claims.subject ?? ""),
+      scopes: (claims.scopes ?? []).map(String),
+    });
+  };
+  const protectedHandler = async (ctx) => bearerMiddleware(ctx, protectedNext);
+  app.get(oauthPathFromURL(resource, "/mcp"), protectedHandler);
+
+  const policy = oauthSetupPolicy(setup);
+  app.post("/register", async (ctx) => {
+    let payload;
+    try {
+      payload = JSON.parse(Buffer.from(ctx.request.body ?? []).toString("utf8"));
+      runtime.validateDynamicClientRegistrationRequest(payload, policy);
+    } catch {
+      return oauthErrorResponse(runtime, 400, "app.bad_request", "bad request");
+    }
+    const clientId = state.ids.next("client");
+    state.clients.set(clientId, payload);
+    return runtime.json(201, {
+      client_id: clientId,
+      client_id_issued_at: clockUnix,
+    });
+  });
+  app.get("/authorize", async (ctx) => {
+    const q = ctx.request.query ?? {};
+    const clientId = firstQuery(q, "client_id");
+    const client = state.clients.get(clientId);
+    if (
+      !client ||
+      firstQuery(q, "response_type") !== "code" ||
+      firstQuery(q, "code_challenge_method") !== "S256" ||
+      firstQuery(q, "resource") !== resource
+    ) {
+      return oauthErrorResponse(runtime, 400, "app.bad_request", "bad request");
+    }
+    const redirectURI = firstQuery(q, "redirect_uri");
+    if (!Array.isArray(client.redirect_uris) || !client.redirect_uris.includes(redirectURI)) {
+      return oauthErrorResponse(runtime, 400, "app.bad_request", "bad request");
+    }
+    const challenge = firstQuery(q, "code_challenge");
+    if (!challenge) {
+      return oauthErrorResponse(runtime, 400, "app.bad_request", "bad request");
+    }
+    const code = state.ids.next("code");
+    state.codes.set(code, {
+      code,
+      clientId,
+      redirectURI,
+      resource,
+      scope: firstQuery(q, "scope"),
+      codeChallenge: challenge,
+    });
+    return {
+      status: 302,
+      headers: { location: [redirectWithCode(redirectURI, code, firstQuery(q, "state"))] },
+      cookies: [],
+      body: Buffer.alloc(0),
+      isBase64: false,
+    };
+  });
+  app.post("/token", async (ctx) => {
+    const form = new URLSearchParams(Buffer.from(ctx.request.body ?? []).toString("utf8"));
+    const code = form.get("code") ?? "";
+    const rec = state.codes.get(code);
+    if (
+      !rec ||
+      form.get("grant_type") !== "authorization_code" ||
+      form.get("resource") !== resource ||
+      form.get("client_id") !== rec.clientId ||
+      form.get("redirect_uri") !== rec.redirectURI
+    ) {
+      return oauthErrorResponse(runtime, 400, "app.bad_request", "bad request");
+    }
+    state.codes.delete(code);
+    let verified = false;
+    try {
+      verified = runtime.pkceVerifyS256(form.get("code_verifier") ?? "", rec.codeChallenge);
+    } catch {
+      verified = false;
+    }
+    if (!verified) {
+      return oauthErrorResponse(runtime, 400, "app.bad_request", "bad request");
+    }
+    return runtime.json(200, {
+      access_token: state.ids.next("access"),
+      refresh_token: state.ids.next("refresh"),
+      token_type: "Bearer",
+      expires_in: 3600,
+      scope: rec.scope,
+    });
+  });
+  return app;
+}
+
+function oauthErrorResponse(runtime, status, code, message) {
+  return runtime.json(status, { error: { code, message } });
+}
+
+function firstQuery(query, name) {
+  const values = query?.[name] ?? [];
+  return String(Array.isArray(values) ? (values[0] ?? "") : values).trim();
+}
+
+function redirectWithCode(redirectURI, code, state) {
+  const url = new URL(redirectURI);
+  url.searchParams.set("code", code);
+  if (String(state ?? "").trim()) url.searchParams.set("state", String(state).trim());
+  return url.toString();
+}
+
+async function invokeOAuthFixtureStep(app, step) {
+  const req = canonicalizeRequest(step.request ?? {}, {});
+  const response = await app.serve(req);
+  const body = await responseBodyBytes(response);
+  return {
+    status: Number(response.status ?? 0),
+    headers: canonicalizeHeaders(response.headers ?? {}),
+    cookies: Array.isArray(response.cookies) ? response.cookies.map(String) : [],
+    body,
+    is_base64: Boolean(response.isBase64),
+  };
+}
+
+function compareOAuthStep(expected, actual) {
+  if (Number(expected.status ?? 0) !== actual.status) {
+    return { ok: false, reason: `status: expected ${expected.status}, got ${actual.status}`, actual, expected };
+  }
+  if (Boolean(expected.is_base64) !== actual.is_base64) {
+    return { ok: false, reason: `is_base64: expected ${expected.is_base64}, got ${actual.is_base64}`, actual, expected };
+  }
+  if (!deepEqual(expected.cookies ?? [], actual.cookies ?? [])) {
+    return { ok: false, reason: "cookies mismatch", actual, expected };
+  }
+  if (!compareHeaders(expected.headers ?? {}, actual.headers ?? {})) {
+    return { ok: false, reason: "headers mismatch", actual, expected };
+  }
+  if (Object.prototype.hasOwnProperty.call(expected, "body_json")) {
+    let actualJson;
+    try {
+      actualJson = JSON.parse(actual.body.toString("utf8"));
+    } catch {
+      return { ok: false, reason: "body_json mismatch", actual, expected };
+    }
+    if (!deepEqual(expected.body_json, actualJson)) {
+      return { ok: false, reason: "body_json mismatch", actual, expected };
+    }
+    return { ok: true };
+  }
+  const expectedBody = expected.body ? decodeFixtureBody(expected.body) : Buffer.alloc(0);
+  if (!expectedBody.equals(actual.body)) {
+    return { ok: false, reason: "body mismatch", actual, expected };
+  }
+  return { ok: true };
+}
+
+async function runFixtureOAuth(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const app = await newOAuthFixtureApp(runtime, fixture.setup?.oauth ?? {});
+  const steps = fixture.input?.oauth?.steps ?? [];
+  const expectedSteps = fixture.expect?.oauth?.steps ?? [];
+  if (steps.length !== expectedSteps.length) {
+    return { ok: false, reason: "oauth steps length mismatch", actual: steps.length, expected: expectedSteps.length };
+  }
+  for (let i = 0; i < steps.length; i += 1) {
+    const actual = await invokeOAuthFixtureStep(app, steps[i]);
+    const result = compareOAuthStep(expectedSteps[i], actual);
+    if (!result.ok) {
+      return { ...result, reason: `step ${steps[i].name}: ${result.reason}` };
+    }
+  }
+  return { ok: true };
+}
+
 async function runFixture(fixture) {
   if (isOpenAPIContractFixture(fixture)) {
     return await compareOpenAPIContract(fixture);
@@ -2411,6 +2663,9 @@ async function runFixture(fixture) {
 
   if (tier === "mcp") {
     return await runFixtureMCP(fixture);
+  }
+  if (tier === "oauth") {
+    return await runFixtureOAuth(fixture);
   }
 
   if (tier === "p0") {
