@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.15.2](https://github.com/theory-cloud/AppTheory/compare/v1.15.1...v1.15.2) (2026-07-04)
+
+
+### Bug Fixes
+
+* **microvm:** pass execution role to RunMicrovm ([6be9d23](https://github.com/theory-cloud/AppTheory/commit/6be9d238e8e57bacc462f4aa1b7225018e0b4995))
+* **microvm:** pass execution role to RunMicrovm ([25f8c45](https://github.com/theory-cloud/AppTheory/commit/25f8c45e60e7f11a2a8d0af8e38e8d7bb219f811))
+
 ## [1.15.2-rc](https://github.com/theory-cloud/AppTheory/compare/v1.15.1...v1.15.2-rc) (2026-07-04)
 
 
