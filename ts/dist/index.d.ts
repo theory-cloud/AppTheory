@@ -21,6 +21,7 @@ export * from "./kinesis-cloudwatch-logs.js";
 export * from "./kinesis-producer.js";
 export * from "./microvm.js";
 export * from "./mcp/index.js";
+export * from "./oauth/index.js";
 export * from "./app.js";
 export * from "./testkit.js";
 export * from "./testkit/mcp.js";
