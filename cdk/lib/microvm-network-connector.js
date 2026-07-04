@@ -162,7 +162,7 @@ class AppTheoryMicrovmNetworkConnector extends constructs_1.Construct {
 }
 exports.AppTheoryMicrovmNetworkConnector = AppTheoryMicrovmNetworkConnector;
 _a = JSII_RTTI_SYMBOL_1;
-AppTheoryMicrovmNetworkConnector[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector", version: "1.15.1" };
+AppTheoryMicrovmNetworkConnector[_a] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector", version: "1.15.2" };
 /**
  * AppTheory CDK reference to an existing or AWS-managed Lambda MicroVM network connector.
  *
@@ -200,7 +200,7 @@ class AppTheoryMicrovmNetworkConnectorReference extends constructs_1.Construct {
 }
 exports.AppTheoryMicrovmNetworkConnectorReference = AppTheoryMicrovmNetworkConnectorReference;
 _b = JSII_RTTI_SYMBOL_1;
-AppTheoryMicrovmNetworkConnectorReference[_b] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorReference", version: "1.15.1" };
+AppTheoryMicrovmNetworkConnectorReference[_b] = { fqn: "@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnectorReference", version: "1.15.2" };
 function validateRequired(value, propName) {
     if (value === undefined || value === null) {
         throw new Error(`AppTheoryMicrovmNetworkConnector requires props.${propName}`);
