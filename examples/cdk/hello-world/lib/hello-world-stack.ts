@@ -40,6 +40,9 @@ function copyDir(src: string, dest: string): void {
   for (const entry of readdirSync(src, { withFileTypes: true })) {
     const from = path.join(src, entry.name);
     const to = path.join(dest, entry.name);
+    if (shouldSkipAssetEntry(entry.name)) {
+      continue;
+    }
     if (entry.isDirectory()) {
       copyDir(from, to);
       continue;
@@ -48,6 +51,10 @@ function copyDir(src: string, dest: string): void {
       copyFileSync(from, to);
     }
   }
+}
+
+function shouldSkipAssetEntry(name: string): boolean {
+  return name === "__pycache__" || name.endsWith(".pyc") || name.endsWith(".pyo") || name.endsWith(".egg-info");
 }
 
 function cleanOutputDir(outputDir: string): void {
@@ -64,6 +71,9 @@ function assetHashFor(paths: string[]): string {
 }
 
 function addPathToHash(hash: ReturnType<typeof createHash>, root: string, current: string): void {
+  if (shouldSkipAssetEntry(path.basename(current))) {
+    return;
+  }
   const stat = statSync(current);
   const rel = path.relative(path.dirname(root), current).replaceAll(path.sep, "/");
   hash.update(rel);
