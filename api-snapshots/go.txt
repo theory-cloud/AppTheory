@@ -2974,6 +2974,8 @@ const DefaultSessionProviderID = "apptheory.microvm.registry"
 
 const DefaultSessionRegistryTableName = "apptheory-microvm-sessions"
 
+const EnvExecutionRoleArn = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN"
+
 const EnvSessionRegistryTableName = "APPTHEORY_MICROVM_SESSION_REGISTRY_TABLE"
 
 const ErrorCodeControllerCommandFailed = "m15.microvm.controller_command_failed"
@@ -3136,14 +3138,15 @@ type Command string
 type ContractKind string
 
 type Controller struct {
-	client       Client
-	provider     Provider
-	registry     SessionRegistry
-	controllerID string
-	providerID   string
-	clock        Clock
-	ids          IDGenerator
-	ttl          time.Duration
+	client           Client
+	provider         Provider
+	registry         SessionRegistry
+	controllerID     string
+	providerID       string
+	executionRoleArn string
+	clock            Clock
+	ids              IDGenerator
+	ttl              time.Duration
 }
 
 type ControllerAuthContract struct {
@@ -3379,6 +3382,7 @@ type ProviderRunInput struct {
 	SessionSpec                 SessionSpec         `json:"session_spec,omitempty"`
 	IdlePolicy                  *ProviderIdlePolicy `json:"idle_policy,omitempty"`
 	MaximumDurationSeconds      int32               `json:"maximum_duration_seconds,omitempty"`
+	ExecutionRoleArn            string              `json:"execution_role_arn,omitempty"`
 }
 
 type ProviderSession struct {
@@ -3735,6 +3739,8 @@ func WithAWSLambdaMicroVMClock(Clock) AWSLambdaMicroVMProviderOption
 func WithAWSLambdaMicroVMRegion(string) AWSLambdaMicroVMProviderOption
 
 func WithControllerClock(Clock) ControllerOption
+
+func WithControllerExecutionRoleArn(string) ControllerOption
 
 func WithControllerID(string) ControllerOption
 
