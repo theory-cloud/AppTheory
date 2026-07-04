@@ -29,6 +29,7 @@ type FixtureSetup struct {
 	LoggingProfile       json.RawMessage                  `json:"logging_profile,omitempty"`
 	OpenAPI              json.RawMessage                  `json:"openapi,omitempty"`
 	MCP                  FixtureMCPSetup                  `json:"mcp,omitempty"`
+	OAuth                FixtureOAuthSetup                `json:"oauth,omitempty"`
 	WebSockets           []FixtureWebSocketRoute          `json:"websockets,omitempty"`
 	SQS                  []FixtureSQSRoute                `json:"sqs,omitempty"`
 	Kinesis              []FixtureKinesisRoute            `json:"kinesis,omitempty"`
@@ -86,12 +87,13 @@ type FixtureDynamoDBRoute struct {
 }
 
 type FixtureInput struct {
-	Context               FixtureContext   `json:"context,omitempty"`
-	Request               *FixtureRequest  `json:"request,omitempty"`
-	AWSEvent              *FixtureAWSEvent `json:"aws_event,omitempty"`
-	LoggingEvent          json.RawMessage  `json:"logging_event,omitempty"`
-	LoggingProfileCatalog bool             `json:"logging_profile_catalog,omitempty"`
-	MCP                   *FixtureMCPInput `json:"mcp,omitempty"`
+	Context               FixtureContext     `json:"context,omitempty"`
+	Request               *FixtureRequest    `json:"request,omitempty"`
+	AWSEvent              *FixtureAWSEvent   `json:"aws_event,omitempty"`
+	LoggingEvent          json.RawMessage    `json:"logging_event,omitempty"`
+	LoggingProfileCatalog bool               `json:"logging_profile_catalog,omitempty"`
+	MCP                   *FixtureMCPInput   `json:"mcp,omitempty"`
+	OAuth                 *FixtureOAuthInput `json:"oauth,omitempty"`
 }
 
 type FixtureAWSEvent struct {
@@ -131,6 +133,56 @@ type FixtureExpect struct {
 	MicroVMControllerRoute     *FixtureMicroVMControllerRoute     `json:"microvm_controller_route,omitempty"`
 	MicroVMExecutionRole       *FixtureMicroVMExecutionRole       `json:"microvm_execution_role,omitempty"`
 	MCP                        *FixtureMCPExpect                  `json:"mcp,omitempty"`
+	OAuth                      *FixtureOAuthExpect                `json:"oauth,omitempty"`
+}
+
+type FixtureOAuthSetup struct {
+	ClockUnix            int64                 `json:"clock_unix,omitempty"`
+	Resource             string                `json:"resource,omitempty"`
+	AuthorizationServers []string              `json:"authorization_servers,omitempty"`
+	ScopesSupported      []string              `json:"scopes_supported,omitempty"`
+	RequiredAudience     string                `json:"required_audience,omitempty"`
+	RequiredScopes       []string              `json:"required_scopes,omitempty"`
+	BearerTokens         []FixtureOAuthToken   `json:"bearer_tokens,omitempty"`
+	IDSequence           []string              `json:"id_sequence,omitempty"`
+	DCRPolicy            FixtureOAuthDCRPolicy `json:"dcr_policy,omitempty"`
+}
+
+type FixtureOAuthToken struct {
+	Token       string   `json:"token"`
+	Subject     string   `json:"subject,omitempty"`
+	Audience    string   `json:"audience,omitempty"`
+	Scope       string   `json:"scope,omitempty"`
+	Scopes      []string `json:"scopes,omitempty"`
+	ExpiresUnix int64    `json:"expires_unix,omitempty"`
+}
+
+type FixtureOAuthDCRPolicy struct {
+	AllowedRedirectURIs []string `json:"allowed_redirect_uris,omitempty"`
+	RequirePublicClient bool     `json:"require_public_client,omitempty"`
+	RequireRefreshToken bool     `json:"require_refresh_token,omitempty"`
+}
+
+type FixtureOAuthInput struct {
+	Steps []FixtureOAuthStep `json:"steps"`
+}
+
+type FixtureOAuthStep struct {
+	Name    string         `json:"name"`
+	Request FixtureRequest `json:"request"`
+}
+
+type FixtureOAuthExpect struct {
+	Steps []FixtureOAuthExpectedStep `json:"steps"`
+}
+
+type FixtureOAuthExpectedStep struct {
+	Status   int                 `json:"status"`
+	Headers  map[string][]string `json:"headers"`
+	Cookies  []string            `json:"cookies"`
+	Body     *FixtureBody        `json:"body,omitempty"`
+	BodyJSON json.RawMessage     `json:"body_json,omitempty"`
+	IsBase64 bool                `json:"is_base64"`
 }
 
 type FixtureMCPSetup struct {
