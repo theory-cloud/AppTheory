@@ -83,6 +83,7 @@ groups:
     items:
       - { id: ref-contract,           title: Contract Fixtures,       url: /reference/contract-fixtures/, icon: list-checks, tag: ga }
       - { id: ref-events,             title: Event Shape Dispatch,    url: /reference/event-shapes/,      icon: file-text }
+      - { id: ref-llm-faq,           title: LLM FAQ,                 url: /llm-faq/,                 icon: bot }
 
 # =============================================================
 # Linear ordering for prev / next pager
@@ -128,6 +129,7 @@ order:
   - development-guidelines
   - ref-contract
   - ref-events
+  - ref-llm-faq
 
 # =============================================================
 # URL → page-id map for fast lookups in layouts
@@ -176,3 +178,4 @@ url_to_id:
   /development-guidelines/:                     development-guidelines
   /reference/contract-fixtures/:                ref-contract
   /reference/event-shapes/:                     ref-events
+  /llm-faq/:                                     ref-llm-faq
