@@ -60,7 +60,7 @@ These pages are versioned with the docs contract, but they are not part of the i
 - [CDK Guides](./cdk/README.md) and related files under `docs/cdk/**`
 - [Feature Guides](./features/README.md) and related files under `docs/features/**`
 - [Integration Guides](./integrations/README.md) and related files under `docs/integrations/**`
-- `docs/llm-faq/**` is reserved as an optional ingestible surface if it is added later
+- `docs/llm-faq/**` is the reserved ingestible FAQ surface for coding agents
 
 ## Functional guides now covered by the canonical ingest surface
 
