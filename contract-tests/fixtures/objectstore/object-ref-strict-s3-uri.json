@@ -1,0 +1,93 @@
+{
+  "id": "objectstore.object_ref.strict_s3_uri",
+  "tier": "objectstore",
+  "name": "ObjectRef accepts only strict s3 bucket/key references",
+  "setup": {
+    "objectstore": {
+      "backend": "fake"
+    }
+  },
+  "input": {
+    "objectstore": {
+      "steps": [
+        {
+          "name": "parse-valid",
+          "operation": "parse_ref",
+          "ref": "s3://bucket-a/prefix/object.json"
+        },
+        {
+          "name": "reject-query",
+          "operation": "parse_ref",
+          "ref": "s3://bucket-a/prefix/object.json?versionId=1"
+        },
+        {
+          "name": "reject-fragment",
+          "operation": "parse_ref",
+          "ref": "s3://bucket-a/prefix/object.json#fragment"
+        },
+        {
+          "name": "reject-empty-key",
+          "operation": "parse_ref",
+          "ref": "s3://bucket-a/"
+        },
+        {
+          "name": "reject-bucket-space",
+          "operation": "parse_ref",
+          "ref": "s3://bucket a/object.json"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "output_json": {
+      "steps": [
+        {
+          "name": "parse-valid",
+          "operation": "parse_ref",
+          "ok": true,
+          "ref": {
+            "bucket": "bucket-a",
+            "key": "prefix/object.json"
+          }
+        },
+        {
+          "name": "reject-query",
+          "operation": "parse_ref",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_ref",
+            "message": "objectstore: invalid object ref"
+          }
+        },
+        {
+          "name": "reject-fragment",
+          "operation": "parse_ref",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_ref",
+            "message": "objectstore: invalid object ref"
+          }
+        },
+        {
+          "name": "reject-empty-key",
+          "operation": "parse_ref",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_ref",
+            "message": "objectstore: invalid object ref"
+          }
+        },
+        {
+          "name": "reject-bucket-space",
+          "operation": "parse_ref",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_ref",
+            "message": "objectstore: invalid object ref"
+          }
+        }
+      ],
+      "calls": []
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "id": "objectstore.validation.fail_closed",
+  "tier": "objectstore",
+  "name": "Object store requests fail closed before client calls when invalid",
+  "setup": {
+    "objectstore": {
+      "backend": "fake"
+    }
+  },
+  "input": {
+    "objectstore": {
+      "steps": [
+        {
+          "name": "put-version-forbidden",
+          "operation": "put",
+          "ref": {
+            "bucket": "bucket-a",
+            "key": "objects/alpha.txt",
+            "version_id": "v1"
+          },
+          "payload": {
+            "encoding": "utf8",
+            "value": "payload"
+          }
+        },
+        {
+          "name": "get-zero-limit",
+          "operation": "get",
+          "ref": "s3://bucket-a/objects/alpha.txt",
+          "max_bytes": 0
+        },
+        {
+          "name": "delete-invalid-ref",
+          "operation": "delete",
+          "ref": {
+            "bucket": "bucket-a",
+            "key": ""
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "output_json": {
+      "steps": [
+        {
+          "name": "put-version-forbidden",
+          "operation": "put",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_ref",
+            "message": "objectstore: invalid object ref"
+          }
+        },
+        {
+          "name": "get-zero-limit",
+          "operation": "get",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_get_limit",
+            "message": "objectstore: max bytes must be positive"
+          }
+        },
+        {
+          "name": "delete-invalid-ref",
+          "operation": "delete",
+          "ok": false,
+          "error": {
+            "code": "objectstore.invalid_ref",
+            "message": "objectstore: invalid object ref"
+          }
+        }
+      ],
+      "calls": []
+    }
+  }
+}

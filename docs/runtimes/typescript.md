@@ -5,7 +5,7 @@ description: The TypeScript implementation of the AppTheory contract — bundled
 
 # TypeScript Runtime
 
-The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes all [199 contract fixtures](../reference/contract-fixtures.md), including the SP09 MCP fixture tier for JSON-RPC, registries, sessions, Streamable HTTP, resumable SSE, and task stores. <!-- apptheory-fixture-count: 199 -->
+The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes all [203 contract fixtures](../reference/contract-fixtures.md), including the SP09 MCP fixture tier for JSON-RPC, registries, sessions, Streamable HTTP, resumable SSE, task stores, and the SP13 objectstore tier. <!-- apptheory-fixture-count: 203 -->
 
 ## Install
 
@@ -129,7 +129,7 @@ See [CDK Getting Started](../cdk/getting-started.md).
 
 ## What's verified
 
-The TypeScript runtime passes all 199 contract fixtures on every commit. <!-- apptheory-fixture-count: 199 --> The runner loads and executes the full 199-fixture tree, including the SP09 MCP tier; the `ts/dist/` build output is checked in and gated by `make rubric`.
+The TypeScript runtime passes all 203 contract fixtures on every commit. <!-- apptheory-fixture-count: 203 --> The runner loads and executes the full 203-fixture tree, including the SP09 MCP tier and SP13 objectstore tier; the `ts/dist/` build output is checked in and gated by `make rubric`.
 
 ## Next reads
 

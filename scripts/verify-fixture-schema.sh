@@ -182,6 +182,7 @@ FIXTURE_DOMAIN_TIERS = {
     "microvm-operations": "m16",
     "mcp": "mcp",
     "oauth": "oauth",
+    "objectstore": "objectstore",
     "errors": "p0",
     "routing": "p0",
     "binding": "p0",

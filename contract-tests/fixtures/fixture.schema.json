@@ -9,7 +9,7 @@
   "properties": {
     "id": {
       "type": "string",
-      "pattern": "^(p0|p1|p2|m1|m2|m3|m12|m14|m15|m16|mcp|oauth)(\\.|_)[A-Za-z0-9_.-]+$"
+      "pattern": "^(p0|p1|p2|m1|m2|m3|m12|m14|m15|m16|mcp|oauth|objectstore)(\\.|_)[A-Za-z0-9_.-]+$"
     },
     "tier": { "$ref": "#/$defs/tier" },
     "name": { "type": "string", "minLength": 1 },
@@ -20,7 +20,7 @@
   "$defs": {
     "tier": {
       "type": "string",
-      "enum": ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15", "m16", "mcp", "oauth"]
+      "enum": ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15", "m16", "mcp", "oauth", "objectstore"]
     },
     "stringArray": {
       "type": "array",
@@ -90,7 +90,65 @@
         "microvm_controller_route": { "type": "object", "additionalProperties": true },
         "microvm_execution_role": { "type": "object", "additionalProperties": true },
         "mcp": { "$ref": "#/$defs/mcpSetup" },
-        "oauth": { "$ref": "#/$defs/oauthSetup" }
+        "oauth": { "$ref": "#/$defs/oauthSetup" },
+        "objectstore": { "$ref": "#/$defs/objectstoreSetup" }
+      }
+    },
+    "objectstoreSetup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "backend": { "type": "string", "enum": ["fake"] }
+      }
+    },
+    "objectstoreRef": {
+      "type": "object",
+      "required": ["bucket", "key"],
+      "additionalProperties": false,
+      "properties": {
+        "bucket": { "type": "string" },
+        "key": { "type": "string" },
+        "version_id": { "type": "string" }
+      }
+    },
+    "objectstoreRefInput": {
+      "anyOf": [
+        { "type": "string", "minLength": 1 },
+        { "$ref": "#/$defs/objectstoreRef" }
+      ]
+    },
+    "objectstoreBody": {
+      "type": "object",
+      "required": ["encoding", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "encoding": { "type": "string", "enum": ["utf8", "base64"] },
+        "value": { "type": "string" }
+      }
+    },
+    "objectstoreInput": {
+      "type": "object",
+      "required": ["steps"],
+      "additionalProperties": false,
+      "properties": {
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/objectstoreStep" } }
+      }
+    },
+    "objectstoreStep": {
+      "type": "object",
+      "required": ["name", "operation"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "operation": { "type": "string", "enum": ["parse_ref", "put", "get", "delete", "list", "presign", "multipart"] },
+        "ref": { "$ref": "#/$defs/objectstoreRefInput" },
+        "payload": { "$ref": "#/$defs/objectstoreBody" },
+        "content_type": { "type": "string" },
+        "metadata": { "$ref": "#/$defs/stringMap" },
+        "max_bytes": { "type": "integer" },
+        "bucket": { "type": "string" },
+        "key": { "type": "string" },
+        "prefix": { "type": "string" }
       }
     },
     "mcpSetup": {
@@ -338,7 +396,8 @@
         "logging_event": { "type": "object", "additionalProperties": true },
         "logging_profile_catalog": { "type": "boolean" },
         "mcp": { "$ref": "#/$defs/mcpInput" },
-        "oauth": { "$ref": "#/$defs/oauthInput" }
+        "oauth": { "$ref": "#/$defs/oauthInput" },
+        "objectstore": { "$ref": "#/$defs/objectstoreInput" }
       }
     },
     "mcpInput": {

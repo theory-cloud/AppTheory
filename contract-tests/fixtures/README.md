@@ -19,6 +19,7 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/openapi/` — P0 descriptive OpenAPI generation with byte-pinned canonical JSON output
 - `contract-tests/fixtures/mcp/` — SP09 Go MCP protocol, registry, session, Streamable HTTP, resumable SSE, and task-store contracts
 - `contract-tests/fixtures/oauth/` — SP12 OAuth protected-resource metadata, bearer validation, dynamic client registration, and PKCE contracts
+- `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 
 Each fixture is a single JSON object.
 
@@ -33,7 +34,7 @@ while provider/runtime payload objects remain open so behavior-specific contract
 ## Common shape
 
 - `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*`, `m14.*`, `m15.*`, `m16.*`, `mcp.*`, or `oauth.*` prefixes).
-- `tier` (string): `p0` / `p1` / `p2` / `m1` / `m2` / `m3` / `m12` / `m14` / `m15` / `m16` / `mcp` / `oauth`.
+- `tier` (string): `p0` / `p1` / `p2` / `m1` / `m2` / `m3` / `m12` / `m14` / `m15` / `m16` / `mcp` / `oauth` / `objectstore`.
 - `name` (string): short human-friendly name.
 - `setup.routes` (array): route table for the fixture runner.
   - `method` (string): HTTP method (e.g. `GET`).
@@ -96,6 +97,21 @@ HTTP request shape (`method`, `path`, `headers`, `body`, `is_base64`) and option
 steps live in `expect.mcp.steps` and compare status, canonical headers, cookies, body JSON, or parsed `sse_frames`.
 The fixtures intentionally exercise HTTP framing (POST/GET/DELETE), JSON-RPC envelopes, session headers, and replay
 semantics through the runtime handler instead of calling private Go helpers directly.
+
+
+## SP13 objectstore fixtures
+
+Objectstore fixtures pin AppTheory's deliberately narrow object-store contract. They run only against deterministic local fakes and never call AWS, live S3 buckets, credentials, presigning, listing, or multipart APIs. The supported path is exactly Put, bounded Get with a required positive byte cap, and Delete.
+
+`setup.objectstore.backend` is `fake`. `input.objectstore.steps` drives ordered operations:
+
+- `parse_ref`: strict `s3://bucket/key` parsing with no query, fragment, whitespace, or missing key fallback.
+- `put`: writes bytes to a concrete object reference and returns a deterministic versioned reference from the fake. Put refuses a caller-supplied version.
+- `get`: reads one object with `max_bytes`; zero/negative limits fail closed and oversized objects return `objectstore.object_too_large`.
+- `delete`: removes one object reference.
+- `list`, `presign`, and `multipart`: forbidden operations that must return `objectstore.unsupported_operation`; they are not alternate supported capabilities.
+
+Expected objectstore results live in `expect.output_json` so every runtime compares the same canonical step outputs and fake call log.
 
 ## SP12 OAuth fixtures
 

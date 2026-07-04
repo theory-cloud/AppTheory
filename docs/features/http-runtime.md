@@ -5,7 +5,7 @@ description: Tiered middleware, routing, normalization, and the AppTheory error 
 
 # HTTP Runtime (P0–P2)
 
-The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [199-fixture corpus](../reference/contract-fixtures.md) also includes the SP09 MCP fixture tier and SP12 OAuth fixture tier executed by Go, TypeScript, and Python. <!-- apptheory-fixture-count: 199 -->
+The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [203-fixture corpus](../reference/contract-fixtures.md) also includes the SP09 MCP fixture tier, SP12 OAuth fixture tier, and SP13 objectstore tier executed by Go, TypeScript, and Python. <!-- apptheory-fixture-count: 203 -->
 
 The runtime is **tiered.** You opt into a tier when you create the app:
 
@@ -161,4 +161,4 @@ You almost never need these directly — use `HandleLambda` / `handleLambda` / `
 - [Logging Profiles](logging-profiles.md) — profile-backed structured JSON log output
 - [Sanitization](sanitization.md) — safe logging helpers
 - [Event Workloads](event-workloads.md) — the non-HTTP side of the runtime
-- [Contract Fixtures](../reference/contract-fixtures.md) — the 199-fixture covenant, including MCP and OAuth fixtures across Go/TS/Python <!-- apptheory-fixture-count: 199 -->
+- [Contract Fixtures](../reference/contract-fixtures.md) — the 203-fixture covenant, including MCP, OAuth, and objectstore fixtures across Go/TS/Python <!-- apptheory-fixture-count: 203 -->
