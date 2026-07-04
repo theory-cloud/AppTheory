@@ -165,6 +165,24 @@ npx cdk destroy -c lang=ts AppTheoryHelloWorldTs
 
 Use `-c lang=go AppTheoryHelloWorldGo` or `-c lang=py AppTheoryHelloWorldPy` for the Go and Python variants.
 
+## Scaffold a new project
+
+Use `apptheory-init` when you want the same on-ramp shape in a fresh project instead of editing the examples in place.
+The generator emits one AppTheory app, one deterministic test, and one CDK stack for the selected language. Generated
+package files pin AppTheory and AppTheory CDK to GitHub Release assets; they do not depend on npm or PyPI publication.
+
+```bash
+go run ./cmd/apptheory-init --lang=ts my-app
+cd my-app
+npm install
+npm test
+npx cdk synth
+```
+
+Supported language values are `go`, `ts`, and `py`. After synth, follow the same `cdk bootstrap`, `cdk deploy`, `curl`,
+and `cdk destroy` sequence shown above. A future theory-cli integration can wrap this command; the generator itself is
+repo-local and intentionally does not mutate cloud resources.
+
 ## Verification
 
 Run the fast local check first:

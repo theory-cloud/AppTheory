@@ -1,0 +1,26 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+
+	apptheory "github.com/theory-cloud/apptheory/runtime"
+	"github.com/theory-cloud/apptheory/testkit"
+)
+
+func TestHelloRoute(t *testing.T) {
+	t.Setenv("APPTHEORY_TIER", "p0")
+	env := testkit.New()
+	resp := env.Invoke(context.Background(), buildApp(), apptheory.Request{Method: "GET", Path: "/hello/AppTheory"})
+	if resp.Status != 200 {
+		t.Fatalf("expected status 200, got %d", resp.Status)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(resp.Body, &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body["message"] != "hello AppTheory" || body["runtime"] != "go" {
+		t.Fatalf("unexpected response body: %#v", body)
+	}
+}
