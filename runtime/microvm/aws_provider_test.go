@@ -19,13 +19,16 @@ func TestAWSLambdaMicroVMProviderMapsOfficialSDKOperations(t *testing.T) {
 	api := newRecordingLambdaMicroVMAPI(now)
 	provider := &AWSLambdaMicroVMProvider{api: api, clock: providerClock{now: now}}
 
-	run, err := provider.Run(context.Background(), validProviderRunInput())
+	runInput := validProviderRunInput()
+	runInput.ExecutionRoleArn = "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole"
+	run, err := provider.Run(context.Background(), runInput)
 	require.NoError(t, err)
 	require.Equal(t, "provider-1", run.ProviderMicroVMID)
 	require.Equal(t, StateRunning, run.State)
 	require.Equal(t, "running", run.ProviderState)
 	require.Equal(t, "image-ref", aws.ToString(api.runInput.ImageIdentifier))
 	require.Equal(t, "req-run", aws.ToString(api.runInput.ClientToken))
+	require.Equal(t, "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole", aws.ToString(api.runInput.ExecutionRoleArn))
 	require.Equal(t, []string{"egress-ref", "network-ref"}, api.runInput.EgressNetworkConnectors)
 	require.Equal(t, []string{"ingress-ref"}, api.runInput.IngressNetworkConnectors)
 	require.NotNil(t, api.runInput.RunHookPayload)

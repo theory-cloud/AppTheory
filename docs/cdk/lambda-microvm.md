@@ -148,9 +148,14 @@ The construct sets these controller environment variables:
 | `APPTHEORY_MICROVM_INGRESS_NETWORK_CONNECTOR_REFS` | Permitted ingress connector references. |
 | `APPTHEORY_MICROVM_EGRESS_NETWORK_CONNECTOR_REFS` | Permitted egress connector references. |
 | `APPTHEORY_MICROVM_SHELL_INGRESS_NETWORK_CONNECTOR_REF` | Required shell-ingress connector reference. |
-| `APPTHEORY_MICROVM_EXECUTION_ROLE_ARN` | Present only when an execution role is supplied. |
+| `APPTHEORY_MICROVM_EXECUTION_ROLE_ARN` | Present only when an execution role is supplied; the real runtime controller reads it and passes it to provider `RunMicrovm` as the MicroVM execution role. |
 
 Reserved environment variables cannot be overridden through `controller.environment`.
+
+When `executionRole` is supplied, controller handlers should stay on the AppTheory MicroVM golden path: construct the
+real controller through `NewRealController` / `createRealMicroVMController` / `create_real_microvm_controller` and use the
+official provider adapter. Those controllers consume `APPTHEORY_MICROVM_EXECUTION_ROLE_ARN` automatically. Do not accept
+caller-provided role ARNs over the HTTP route and do not fork the AWS SDK provider only to set `ExecutionRoleArn`.
 
 ## Session table shape
 
