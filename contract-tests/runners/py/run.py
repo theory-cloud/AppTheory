@@ -16,7 +16,9 @@ from typing import Any
 
 _APPTHEORY_RUNTIME: Any | None = None
 CLOUDWATCH_LOGS_SUBSCRIPTION_HANDLER = "kinesis_require_cloudwatch_logs_subscription"
-CLOUDWATCH_LOGS_SUBSCRIPTION_MISSING_HELPER = "apptheory: cloudwatch logs subscription decoder helper missing"
+CLOUDWATCH_LOGS_SUBSCRIPTION_MISSING_HELPER = (
+    "apptheory: cloudwatch logs subscription decoder helper missing"
+)
 
 
 @dataclass
@@ -71,11 +73,15 @@ def selected_fixture_id(fixture_id: str, fixture_filter: str) -> str:
     fixture_id = str(fixture_id or "").strip()
     fixture_filter = str(fixture_filter or "").strip()
     if fixture_id and fixture_filter and fixture_id != fixture_filter:
-        raise RuntimeError(f"fixture id mismatch: --id {fixture_id!r} != --filter {fixture_filter!r}")
+        raise RuntimeError(
+            f"fixture id mismatch: --id {fixture_id!r} != --filter {fixture_filter!r}"
+        )
     return fixture_id or fixture_filter
 
 
-def filter_fixtures_by_id(fixtures: list[dict[str, Any]], fixture_id: str) -> list[dict[str, Any]]:
+def filter_fixtures_by_id(
+    fixtures: list[dict[str, Any]], fixture_id: str
+) -> list[dict[str, Any]]:
     matches = [fixture for fixture in fixtures if fixture.get("id") == fixture_id]
     if len(matches) != 1:
         raise RuntimeError(f"fixture id {fixture_id!r} matched {len(matches)} fixtures")
@@ -139,7 +145,9 @@ def parse_cookies(cookie_headers: list[str]) -> dict[str, str]:
     return out
 
 
-def canonicalize_request(req: dict[str, Any], ctx: dict[str, Any] | None) -> CanonicalRequest:
+def canonicalize_request(
+    req: dict[str, Any], ctx: dict[str, Any] | None
+) -> CanonicalRequest:
     method = str(req.get("method", "")).strip().upper()
     path = str(req.get("path", "")).strip() or "/"
     if not path.startswith("/"):
@@ -178,7 +186,9 @@ def split_path(path: str) -> list[str]:
     return trimmed.split("/")
 
 
-def match_path(pattern_segments: list[str], path_segments: list[str]) -> tuple[bool, dict[str, str]]:
+def match_path(
+    pattern_segments: list[str], path_segments: list[str]
+) -> tuple[bool, dict[str, str]]:
     if len(pattern_segments) != len(path_segments):
         return False, {}
     params: dict[str, str] = {}
@@ -259,7 +269,9 @@ def built_in_handler(name: str):
     if name == "echo_path_params":
 
         def handler(req: CanonicalRequest) -> CanonicalResponse:
-            body = json.dumps({"params": req.path_params}, separators=(",", ":")).encode("utf-8")
+            body = json.dumps(
+                {"params": req.path_params}, separators=(",", ":")
+            ).encode("utf-8")
             return CanonicalResponse(
                 status=200,
                 headers={"content-type": ["application/json; charset=utf-8"]},
@@ -320,7 +332,9 @@ def built_in_handler(name: str):
     if name == "echo_middleware_trace":
 
         def handler(req: CanonicalRequest) -> CanonicalResponse:
-            body = json.dumps({"trace": req.middleware_trace}, separators=(",", ":")).encode("utf-8")
+            body = json.dumps(
+                {"trace": req.middleware_trace}, separators=(",", ":")
+            ).encode("utf-8")
             return CanonicalResponse(
                 status=200,
                 headers={"content-type": ["application/json; charset=utf-8"]},
@@ -418,7 +432,9 @@ def first_header_value(headers: dict[str, list[str]], key: str) -> str:
     return values[0] if values else ""
 
 
-def extract_tenant_id(headers: dict[str, list[str]], query: dict[str, list[str]]) -> str:
+def extract_tenant_id(
+    headers: dict[str, list[str]], query: dict[str, list[str]]
+) -> str:
     tenant = first_header_value(headers, "x-tenant-id")
     if tenant:
         return tenant
@@ -427,7 +443,10 @@ def extract_tenant_id(headers: dict[str, list[str]], query: dict[str, list[str]]
 
 
 def is_cors_preflight(method: str, headers: dict[str, list[str]]) -> bool:
-    return method.strip().upper() == "OPTIONS" and first_header_value(headers, "access-control-request-method") != ""
+    return (
+        method.strip().upper() == "OPTIONS"
+        and first_header_value(headers, "access-control-request-method") != ""
+    )
 
 
 def finalize_response(
@@ -453,7 +472,9 @@ def finalize_response(
 
 
 class FixtureApp:
-    def __init__(self, routes: list[dict[str, Any]], tier: str, limits: dict[str, Any]) -> None:
+    def __init__(
+        self, routes: list[dict[str, Any]], tier: str, limits: dict[str, Any]
+    ) -> None:
         self.compiled = [
             {
                 "method": str(r.get("method", "")).strip().upper(),
@@ -476,7 +497,9 @@ class FixtureApp:
         self.spans: list[dict[str, Any]] = []
         self.emf_logs: list[str] = []
 
-    def record_p2(self, req: CanonicalRequest, resp: CanonicalResponse, error_code: str) -> None:
+    def record_p2(
+        self, req: CanonicalRequest, resp: CanonicalResponse, error_code: str
+    ) -> None:
         if not self.enable_p2:
             return
 
@@ -549,7 +572,9 @@ class FixtureApp:
         error_code = ""
 
         if self.enable_p1:
-            request_id = first_header_value(req.headers, "x-request-id") or "req_test_123"
+            request_id = (
+                first_header_value(req.headers, "x-request-id") or "req_test_123"
+            )
             req.request_id = request_id
 
             origin = first_header_value(req.headers, "origin")
@@ -579,7 +604,9 @@ class FixtureApp:
                 error_code = "app.too_large"
                 return self.finish(
                     req,
-                    app_error_response("app.too_large", "request too large", request_id=request_id),
+                    app_error_response(
+                        "app.too_large", "request too large", request_id=request_id
+                    ),
                     request_id,
                     origin,
                     error_code,
@@ -658,7 +685,9 @@ class FixtureApp:
                 error_code = "app.unauthorized"
                 return self.finish(
                     req,
-                    app_error_response("app.unauthorized", "unauthorized", request_id=request_id),
+                    app_error_response(
+                        "app.unauthorized", "unauthorized", request_id=request_id
+                    ),
                     request_id,
                     origin,
                     error_code,
@@ -672,7 +701,9 @@ class FixtureApp:
             error_code = "app.internal"
             return self.finish(
                 req,
-                app_error_response("app.internal", "internal error", request_id=request_id),
+                app_error_response(
+                    "app.internal", "internal error", request_id=request_id
+                ),
                 request_id,
                 origin,
                 error_code,
@@ -701,24 +732,36 @@ class FixtureApp:
             error_code = "app.internal"
             return self.finish(
                 req,
-                app_error_response("app.internal", "internal error", request_id=request_id),
+                app_error_response(
+                    "app.internal", "internal error", request_id=request_id
+                ),
                 request_id,
                 origin,
                 error_code,
             )
 
-        if self.enable_p1 and self.max_response_bytes > 0 and len(resp.body) > self.max_response_bytes:
+        if (
+            self.enable_p1
+            and self.max_response_bytes > 0
+            and len(resp.body) > self.max_response_bytes
+        ):
             error_code = "app.too_large"
-            resp = app_error_response("app.too_large", "response too large", request_id=request_id)
+            resp = app_error_response(
+                "app.too_large", "response too large", request_id=request_id
+            )
 
         return self.finish(req, resp, request_id, origin, error_code)
 
 
-def new_fixture_app(routes: list[dict[str, Any]], tier: str, limits: dict[str, Any]) -> FixtureApp:
+def new_fixture_app(
+    routes: list[dict[str, Any]], tier: str, limits: dict[str, Any]
+) -> FixtureApp:
     return FixtureApp(routes, tier, limits)
 
 
-def compare_headers(expected: dict[str, Any] | None, actual: dict[str, Any] | None) -> bool:
+def compare_headers(
+    expected: dict[str, Any] | None, actual: dict[str, Any] | None
+) -> bool:
     return canonicalize_headers(expected) == canonicalize_headers(actual)
 
 
@@ -750,20 +793,38 @@ def compare_logging_profile_contract(
     }
     if "logging_profile_catalog" in expect_obj:
         actual["logging_profile_catalog"] = runtime.logging_profile_catalog()
-        if actual["logging_profile_catalog"] == expect_obj.get("logging_profile_catalog"):
+        if actual["logging_profile_catalog"] == expect_obj.get(
+            "logging_profile_catalog"
+        ):
             return True, "", actual, expect_obj, _DummyEffectsApp()
-        return False, "logging_profile_catalog mismatch", actual, expect_obj, _DummyEffectsApp()
+        return (
+            False,
+            "logging_profile_catalog mismatch",
+            actual,
+            expect_obj,
+            _DummyEffectsApp(),
+        )
     if "profile_validation_errors" in expect_obj:
         actual["profile_validation_errors"] = decode_logging_profile_validation_errors(
             runtime,
             setup.get("logging_profile"),
         )
-        if actual["profile_validation_errors"] == (expect_obj.get("profile_validation_errors") or []):
+        if actual["profile_validation_errors"] == (
+            expect_obj.get("profile_validation_errors") or []
+        ):
             return True, "", actual, expect_obj, _DummyEffectsApp()
-        return False, "profile_validation_errors mismatch", actual, expect_obj, _DummyEffectsApp()
+        return (
+            False,
+            "profile_validation_errors mismatch",
+            actual,
+            expect_obj,
+            _DummyEffectsApp(),
+        )
     if "profile_logs" in expect_obj:
         try:
-            config = runtime.decode_logging_profile_json(json.dumps(setup.get("logging_profile") or {}))
+            config = runtime.decode_logging_profile_json(
+                json.dumps(setup.get("logging_profile") or {})
+            )
             actual["profile_logs"] = [
                 runtime.encode_logging_profile_event(
                     config,
@@ -772,7 +833,13 @@ def compare_logging_profile_contract(
                 )
             ]
         except Exception as exc:  # noqa: BLE001
-            return False, f"profile_logs encode failed: {exc}", actual, expect_obj, _DummyEffectsApp()
+            return (
+                False,
+                f"profile_logs encode failed: {exc}",
+                actual,
+                expect_obj,
+                _DummyEffectsApp(),
+            )
         if actual["profile_logs"] == (expect_obj.get("profile_logs") or []):
             return True, "", actual, expect_obj, _DummyEffectsApp()
         return False, "profile_logs mismatch", actual, expect_obj, _DummyEffectsApp()
@@ -792,7 +859,14 @@ def decode_logging_profile_validation_errors(runtime: Any, profile: Any) -> list
 
 MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm"
 MICROVM_CONTRACT_VERSION = "m15.microvm/v1"
-MICROVM_REQUIRED_LIFECYCLE_HOOKS = ["prepare_image", "start", "readiness", "stop", "teardown", "failure"]
+MICROVM_REQUIRED_LIFECYCLE_HOOKS = [
+    "prepare_image",
+    "start",
+    "readiness",
+    "stop",
+    "teardown",
+    "failure",
+]
 MICROVM_REQUIRED_LIFECYCLE_STATES = [
     "requested",
     "image_preparing",
@@ -808,7 +882,12 @@ MICROVM_REQUIRED_LIFECYCLE_STATES = [
     "failed",
 ]
 MICROVM_REQUIRED_CONTROLLER_COMMANDS = ["create", "start", "stop", "status", "session"]
-MICROVM_REQUIRED_ENVELOPE_FIELDS = ["command", "request_id", "tenant_id", "auth_context"]
+MICROVM_REQUIRED_ENVELOPE_FIELDS = [
+    "command",
+    "request_id",
+    "tenant_id",
+    "auth_context",
+]
 MICROVM_REQUIRED_SESSION_FIELDS = [
     "tenant_id",
     "namespace",
@@ -829,7 +908,9 @@ MICROVM_REQUIRED_SESSION_FIELDS = [
 def compare_microvm_contract_fixture(
     fixture: dict[str, Any],
 ) -> tuple[bool, str, dict[str, Any], dict[str, Any], _DummyEffectsApp]:
-    actual = validate_microvm_contract_fixture((fixture.get("setup") or {}).get("microvm_contract"))
+    actual = validate_microvm_contract_fixture(
+        (fixture.get("setup") or {}).get("microvm_contract")
+    )
     expected = (fixture.get("expect") or {}).get("microvm_contract_validation")
     if not isinstance(expected, dict):
         return (
@@ -841,7 +922,13 @@ def compare_microvm_contract_fixture(
         )
     if actual == expected:
         return True, "", actual, expected, _DummyEffectsApp()
-    return False, "microvm_contract_validation mismatch", actual, expected, _DummyEffectsApp()
+    return (
+        False,
+        "microvm_contract_validation mismatch",
+        actual,
+        expected,
+        _DummyEffectsApp(),
+    )
 
 
 def validate_microvm_contract_fixture(contract: Any) -> dict[str, Any]:
@@ -853,7 +940,10 @@ def validate_microvm_contract_fixture(contract: Any) -> dict[str, Any]:
 
     kind = str(contract.get("kind", "")).strip()
     version = str(contract.get("version", "")).strip()
-    if str(contract.get("contract", "")).strip() != MICROVM_CONTRACT_NAME or version != MICROVM_CONTRACT_VERSION:
+    if (
+        str(contract.get("contract", "")).strip() != MICROVM_CONTRACT_NAME
+        or version != MICROVM_CONTRACT_VERSION
+    ):
         return invalid_microvm_contract(
             "m15.microvm.invalid_contract",
             "apptheory: microvm contract must be named and versioned",
@@ -866,12 +956,16 @@ def validate_microvm_contract_fixture(contract: Any) -> dict[str, Any]:
 
     runtime = _load_apptheory_runtime()
     escape_hatches = contract.get("escape_hatches") or {}
-    escape_hatch_error = validate_microvm_escape_hatches(runtime, kind, version, escape_hatches)
+    escape_hatch_error = validate_microvm_escape_hatches(
+        runtime, kind, version, escape_hatches
+    )
     if escape_hatch_error:
         return escape_hatch_error
 
     controller = contract.get("controller") or {}
-    if kind == "controller_session" and not microvm_controller_auth_defaults_deny(controller.get("auth") or {}):
+    if kind == "controller_session" and not microvm_controller_auth_defaults_deny(
+        controller.get("auth") or {}
+    ):
         return {
             "valid": False,
             "kind": kind,
@@ -888,9 +982,13 @@ def validate_microvm_contract_fixture(contract: Any) -> dict[str, Any]:
         err = validate_microvm_controller(runtime, controller)
         if err:
             return invalid_microvm_contract("m15.microvm.controller_incomplete", err)
-        err = validate_microvm_session_registry(runtime, contract.get("session_registry") or {})
+        err = validate_microvm_session_registry(
+            runtime, contract.get("session_registry") or {}
+        )
         if err:
-            return invalid_microvm_contract("m15.microvm.session_registry_incomplete", err)
+            return invalid_microvm_contract(
+                "m15.microvm.session_registry_incomplete", err
+            )
 
     return {"valid": True, "kind": kind, "version": version}
 
@@ -900,15 +998,22 @@ def invalid_microvm_contract(error_code: str, error_message: str) -> dict[str, A
 
 
 def microvm_controller_auth_defaults_deny(auth: dict[str, Any]) -> bool:
-    return auth.get("required") is True and str(auth.get("default", "")).strip().lower() == "deny"
+    return (
+        auth.get("required") is True
+        and str(auth.get("default", "")).strip().lower() == "deny"
+    )
 
 
 def validate_microvm_lifecycle(lifecycle: dict[str, Any]) -> str:
     runtime = _load_apptheory_runtime()
     try:
         runtime.validate_microvm_lifecycle_contract(lifecycle)
-        handlers = {hook: (lambda _event: None) for hook in MICROVM_REQUIRED_LIFECYCLE_HOOKS}
-        adapter = runtime.create_microvm_lifecycle_adapter(contract=lifecycle, handlers=handlers)
+        handlers = {
+            hook: (lambda _event: None) for hook in MICROVM_REQUIRED_LIFECYCLE_HOOKS
+        }
+        adapter = runtime.create_microvm_lifecycle_adapter(
+            contract=lifecycle, handlers=handlers
+        )
         state = "requested"
         for hook in ["prepare_image", "start", "readiness", "stop", "teardown"]:
             result = adapter.handle(
@@ -978,44 +1083,74 @@ def exercise_microvm_controller(runtime: Any) -> None:
         controller_id="controller-fixture",
         id_generator=lambda: "session-fixture",
     )
-    create = controller.handle(runtime_controller_request(runtime.COMMAND_CREATE, "m15-create", ""))
+    create = controller.handle(
+        runtime_controller_request(runtime.COMMAND_CREATE, "m15-create", "")
+    )
     if create.error:
         raise create.error
     require_create_response(create)
 
-    start = controller.handle(runtime_controller_request(runtime.COMMAND_START, "m15-start", create.session_id))
+    start = controller.handle(
+        runtime_controller_request(
+            runtime.COMMAND_START, "m15-start", create.session_id
+        )
+    )
     if start.error:
         raise start.error
     require_start_stop_response("start", start, create.session_id, "started")
 
-    status = controller.handle(runtime_controller_request(runtime.COMMAND_STATUS, "m15-status", create.session_id))
+    status = controller.handle(
+        runtime_controller_request(
+            runtime.COMMAND_STATUS, "m15-status", create.session_id
+        )
+    )
     if status.error:
         raise status.error
     require_status_response(status, create.session_id)
 
-    session = controller.handle(runtime_controller_request(runtime.COMMAND_SESSION, "m15-session", create.session_id))
+    session = controller.handle(
+        runtime_controller_request(
+            runtime.COMMAND_SESSION, "m15-session", create.session_id
+        )
+    )
     if session.error:
         raise session.error
     require_session_response(session, create.session_id)
 
-    stop = controller.handle(runtime_controller_request(runtime.COMMAND_STOP, "m15-stop", create.session_id))
+    stop = controller.handle(
+        runtime_controller_request(runtime.COMMAND_STOP, "m15-stop", create.session_id)
+    )
     if stop.error:
         raise stop.error
     require_start_stop_response("stop", stop, create.session_id, "stopped")
 
 
 def require_create_response(response: Any) -> None:
-    if not response.session_id or response.state != "requested" or not response.registry_version:
+    if (
+        not response.session_id
+        or response.state != "requested"
+        or not response.registry_version
+    ):
         raise RuntimeError("apptheory: microvm controller create response incomplete")
 
 
-def require_start_stop_response(name: str, response: Any, session_id: str, desired_state: str) -> None:
-    if response.session_id != session_id or not response.state or response.desired_state != desired_state:
+def require_start_stop_response(
+    name: str, response: Any, session_id: str, desired_state: str
+) -> None:
+    if (
+        response.session_id != session_id
+        or not response.state
+        or response.desired_state != desired_state
+    ):
         raise RuntimeError(f"apptheory: microvm controller {name} response incomplete")
 
 
 def require_status_response(response: Any, session_id: str) -> None:
-    if response.session_id != session_id or not response.lifecycle_state or not response.last_transition:
+    if (
+        response.session_id != session_id
+        or not response.lifecycle_state
+        or not response.last_transition
+    ):
         raise RuntimeError("apptheory: microvm controller status response incomplete")
 
 
@@ -1029,7 +1164,9 @@ def require_session_response(response: Any, session_id: str) -> None:
         raise RuntimeError("apptheory: microvm controller session response incomplete")
 
 
-def runtime_controller_request(command: str, request_id: str, session_id: str) -> dict[str, Any]:
+def runtime_controller_request(
+    command: str, request_id: str, session_id: str
+) -> dict[str, Any]:
     request: dict[str, Any] = {
         "command": command,
         "request_id": request_id,
@@ -1084,14 +1221,20 @@ def exercise_microvm_session_registry(runtime: Any) -> None:
     )
     registry_record = runtime.microvm_session_record_to_registry_record(record)
     if (
-        registry_record.pk != runtime.microvm_session_registry_partition_key(record.tenant_id, record.namespace)
-        or registry_record.sk != runtime.microvm_session_registry_sort_key(record.session_id)
+        registry_record.pk
+        != runtime.microvm_session_registry_partition_key(
+            record.tenant_id, record.namespace
+        )
+        or registry_record.sk
+        != runtime.microvm_session_registry_sort_key(record.session_id)
         or registry_record.ttl != int(record.expires_at)
         or registry_record.endpoint != record.endpoint
         or registry_record.microvm_id != record.microvm_id
         or registry_record.last_action != "start"
     ):
-        raise RuntimeError("apptheory: microvm session registry canonical record incomplete")
+        raise RuntimeError(
+            "apptheory: microvm session registry canonical record incomplete"
+        )
     round_trip = runtime.microvm_session_from_registry_record(registry_record)
     if (
         round_trip.endpoint != record.endpoint
@@ -1118,8 +1261,13 @@ def exercise_microvm_session_registry(runtime: Any) -> None:
             now=100.0,
         )
     )
-    if created.last_action != "create" or created.expires_at - created.created_at != 1800:
-        raise RuntimeError("apptheory: microvm registry client create record incomplete")
+    if (
+        created.last_action != "create"
+        or created.expires_at - created.created_at != 1800
+    ):
+        raise RuntimeError(
+            "apptheory: microvm registry client create record incomplete"
+        )
     status = client.status(
         runtime.MicroVMSessionQueryInput(
             request_id="m15-registry-status",
@@ -1149,7 +1297,9 @@ def compare_microvm_real_contract_fixture(
     if "microvm_execution_role" in (fixture.get("expect") or {}):
         return compare_microvm_execution_role_fixture(fixture)
 
-    actual = validate_microvm_real_contract_fixture((fixture.get("setup") or {}).get("microvm_contract"))
+    actual = validate_microvm_real_contract_fixture(
+        (fixture.get("setup") or {}).get("microvm_contract")
+    )
     expected = (fixture.get("expect") or {}).get("microvm_contract_validation")
     if not isinstance(expected, dict):
         return (
@@ -1161,7 +1311,13 @@ def compare_microvm_real_contract_fixture(
         )
     if actual == expected:
         return True, "", actual, expected, _DummyEffectsApp()
-    return False, "microvm_contract_validation mismatch", actual, expected, _DummyEffectsApp()
+    return (
+        False,
+        "microvm_contract_validation mismatch",
+        actual,
+        expected,
+        _DummyEffectsApp(),
+    )
 
 
 def validate_microvm_real_contract_fixture(contract: Any) -> dict[str, Any]:
@@ -1173,7 +1329,10 @@ def validate_microvm_real_contract_fixture(contract: Any) -> dict[str, Any]:
 
     kind = str(contract.get("kind", "")).strip()
     version = str(contract.get("version", "")).strip()
-    if str(contract.get("contract", "")).strip() != MICROVM_CONTRACT_NAME or version != "m16.microvm/v1":
+    if (
+        str(contract.get("contract", "")).strip() != MICROVM_CONTRACT_NAME
+        or version != "m16.microvm/v1"
+    ):
         return invalid_microvm_contract(
             "m15.microvm.invalid_contract",
             "apptheory: microvm contract must be named and versioned",
@@ -1185,21 +1344,29 @@ def validate_microvm_real_contract_fixture(contract: Any) -> dict[str, Any]:
         )
 
     runtime = _load_apptheory_microvm_runtime()
-    escape_hatch_error = validate_microvm_escape_hatches(runtime, kind, version, contract.get("escape_hatches") or {})
+    escape_hatch_error = validate_microvm_escape_hatches(
+        runtime, kind, version, contract.get("escape_hatches") or {}
+    )
     if escape_hatch_error:
         return escape_hatch_error
 
     try:
         if kind == "lifecycle":
-            runtime.validate_microvm_real_lifecycle_contract(contract.get("lifecycle") or {})
+            runtime.validate_microvm_real_lifecycle_contract(
+                contract.get("lifecycle") or {}
+            )
         else:
-            runtime.validate_microvm_operation_contract(contract.get("operation_contract") or {})
+            runtime.validate_microvm_operation_contract(
+                contract.get("operation_contract") or {}
+            )
     except Exception as exc:  # noqa: BLE001
         return {
             "valid": False,
             "kind": kind,
             "version": version,
-            "error_code": str(getattr(exc, "code", "m16.microvm.operation_contract_incomplete")),
+            "error_code": str(
+                getattr(exc, "code", "m16.microvm.operation_contract_incomplete")
+            ),
             "error_message": str(getattr(exc, "message", str(exc))),
         }
 
@@ -1209,7 +1376,9 @@ def validate_microvm_real_contract_fixture(contract: Any) -> dict[str, Any]:
 def compare_microvm_real_lifecycle_adapter_fixture(
     fixture: dict[str, Any],
 ) -> tuple[bool, str, dict[str, Any], dict[str, Any], _DummyEffectsApp]:
-    actual = validate_microvm_real_lifecycle_adapter_fixture((fixture.get("setup") or {}).get("microvm_contract"))
+    actual = validate_microvm_real_lifecycle_adapter_fixture(
+        (fixture.get("setup") or {}).get("microvm_contract")
+    )
     expected = (fixture.get("expect") or {}).get("microvm_lifecycle_adapter")
     if not isinstance(expected, dict):
         return (
@@ -1221,7 +1390,13 @@ def compare_microvm_real_lifecycle_adapter_fixture(
         )
     if actual == expected:
         return True, "", actual, expected, _DummyEffectsApp()
-    return False, "microvm_lifecycle_adapter mismatch", actual, expected, _DummyEffectsApp()
+    return (
+        False,
+        "microvm_lifecycle_adapter mismatch",
+        actual,
+        expected,
+        _DummyEffectsApp(),
+    )
 
 
 def validate_microvm_real_lifecycle_adapter_fixture(contract: Any) -> dict[str, Any]:
@@ -1233,7 +1408,10 @@ def validate_microvm_real_lifecycle_adapter_fixture(contract: Any) -> dict[str, 
 
     kind = str(contract.get("kind", "")).strip()
     version = str(contract.get("version", "")).strip()
-    if str(contract.get("contract", "")).strip() != MICROVM_CONTRACT_NAME or version != "m16.microvm/v1":
+    if (
+        str(contract.get("contract", "")).strip() != MICROVM_CONTRACT_NAME
+        or version != "m16.microvm/v1"
+    ):
         return invalid_microvm_lifecycle_adapter(
             "m15.microvm.invalid_contract",
             "apptheory: microvm contract must be named and versioned",
@@ -1245,7 +1423,9 @@ def validate_microvm_real_lifecycle_adapter_fixture(contract: Any) -> dict[str, 
         )
 
     runtime = _load_apptheory_runtime()
-    escape_hatch_error = validate_microvm_escape_hatches(runtime, kind, version, contract.get("escape_hatches") or {})
+    escape_hatch_error = validate_microvm_escape_hatches(
+        runtime, kind, version, contract.get("escape_hatches") or {}
+    )
     if escape_hatch_error:
         return invalid_microvm_lifecycle_adapter(
             str(escape_hatch_error.get("error_code", "")),
@@ -1256,7 +1436,9 @@ def validate_microvm_real_lifecycle_adapter_fixture(contract: Any) -> dict[str, 
     try:
         runtime.validate_microvm_real_lifecycle_contract(lifecycle)
     except Exception as exc:  # noqa: BLE001
-        return microvm_lifecycle_adapter_from_error(exc, "m16.microvm.lifecycle_incomplete")
+        return microvm_lifecycle_adapter_from_error(
+            exc, "m16.microvm.lifecycle_incomplete"
+        )
 
     handler_states: list[str] = []
 
@@ -1265,9 +1447,13 @@ def validate_microvm_real_lifecycle_adapter_fixture(contract: Any) -> dict[str, 
 
     handlers = {hook: record_state for hook in microvm_real_lifecycle_fixture_hooks()}
     try:
-        adapter = runtime.create_microvm_lifecycle_adapter(contract=lifecycle, handlers=handlers)
+        adapter = runtime.create_microvm_lifecycle_adapter(
+            contract=lifecycle, handlers=handlers
+        )
     except Exception as exc:  # noqa: BLE001
-        return microvm_lifecycle_adapter_from_error(exc, "m16.microvm.lifecycle_incomplete")
+        return microvm_lifecycle_adapter_from_error(
+            exc, "m16.microvm.lifecycle_incomplete"
+        )
 
     state = "requested"
     for hook in ["validate", "run", "ready", "suspend", "resume", "terminate"]:
@@ -1282,7 +1468,9 @@ def validate_microvm_real_lifecycle_adapter_fixture(contract: Any) -> dict[str, 
             }
         )
         if result.error:
-            return invalid_microvm_lifecycle_adapter(result.error.code, result.error.message)
+            return invalid_microvm_lifecycle_adapter(
+                result.error.code, result.error.message
+            )
         state = str(result.state or "")
 
     failure = adapter.handle(
@@ -1296,7 +1484,9 @@ def validate_microvm_real_lifecycle_adapter_fixture(contract: Any) -> dict[str, 
         }
     )
     if failure.error:
-        return invalid_microvm_lifecycle_adapter(failure.error.code, failure.error.message)
+        return invalid_microvm_lifecycle_adapter(
+            failure.error.code, failure.error.message
+        )
 
     return {
         "valid": True,
@@ -1311,11 +1501,15 @@ def microvm_real_lifecycle_fixture_hooks() -> list[str]:
     return ["validate", "run", "ready", "suspend", "resume", "terminate", "failure"]
 
 
-def invalid_microvm_lifecycle_adapter(error_code: str, error_message: str) -> dict[str, Any]:
+def invalid_microvm_lifecycle_adapter(
+    error_code: str, error_message: str
+) -> dict[str, Any]:
     return {"valid": False, "error_code": error_code, "error_message": error_message}
 
 
-def microvm_lifecycle_adapter_from_error(exc: Exception, default_code: str) -> dict[str, Any]:
+def microvm_lifecycle_adapter_from_error(
+    exc: Exception, default_code: str
+) -> dict[str, Any]:
     return invalid_microvm_lifecycle_adapter(
         str(getattr(exc, "code", default_code)),
         str(getattr(exc, "message", str(exc))),
@@ -1326,7 +1520,9 @@ def compare_microvm_controller_route_fixture(
     fixture: dict[str, Any],
 ) -> tuple[bool, str, Any, dict[str, Any], _DummyEffectsApp]:
     runtime = _load_apptheory_runtime()
-    setup = normalize_microvm_controller_route_setup((fixture.get("setup") or {}).get("microvm_controller_route") or {})
+    setup = normalize_microvm_controller_route_setup(
+        (fixture.get("setup") or {}).get("microvm_controller_route") or {}
+    )
     expected = (fixture.get("expect") or {}).get("microvm_controller_route") or {}
     provider = runtime.create_fake_microvm_provider(now=1_700_000_000.0)
     registry = runtime.create_memory_microvm_session_registry()
@@ -1354,7 +1550,8 @@ def compare_microvm_controller_route_fixture(
     runtime.register_microvm_controller_routes(route_app, controller)
 
     req = canonicalize_request(
-        (fixture.get("input") or {}).get("request") or {}, (fixture.get("input") or {}).get("context") or {}
+        (fixture.get("input") or {}).get("request") or {},
+        (fixture.get("input") or {}).get("context") or {},
     )
     actual = route_app.serve(
         runtime.Request(
@@ -1374,7 +1571,9 @@ def compare_microvm_controller_route_fixture(
 
     if isinstance(expected.get("registry_token_metadata_count"), int):
         try:
-            record = registry.get((setup["tenant_id"], setup["namespace"], setup["session_id"]))
+            record = registry.get(
+                (setup["tenant_id"], setup["namespace"], setup["session_id"])
+            )
         except Exception as exc:  # noqa: BLE001
             return (
                 False,
@@ -1392,7 +1591,9 @@ def compare_microvm_controller_route_fixture(
                 expected,
                 _DummyEffectsApp(),
             )
-        record_text = stable_json(asdict(record) if hasattr(record, "__dataclass_fields__") else str(record))
+        record_text = stable_json(
+            asdict(record) if hasattr(record, "__dataclass_fields__") else str(record)
+        )
         for forbidden in expected.get("forbidden_body_substrings") or []:
             if forbidden and str(forbidden) in record_text:
                 return (
@@ -1410,15 +1611,25 @@ def compare_microvm_execution_role_fixture(
     fixture: dict[str, Any],
 ) -> tuple[bool, str, dict[str, Any], dict[str, Any], _DummyEffectsApp]:
     runtime = _load_apptheory_runtime()
-    setup = normalize_microvm_execution_role_setup((fixture.get("setup") or {}).get("microvm_execution_role") or {})
+    setup = normalize_microvm_execution_role_setup(
+        (fixture.get("setup") or {}).get("microvm_execution_role") or {}
+    )
     expected = (fixture.get("expect") or {}).get("microvm_execution_role") or {}
     actual = run_microvm_execution_role_fixture(runtime, setup)
     if actual == expected:
         return True, "", actual, expected, _DummyEffectsApp()
-    return False, "microvm_execution_role mismatch", actual, expected, _DummyEffectsApp()
+    return (
+        False,
+        "microvm_execution_role mismatch",
+        actual,
+        expected,
+        _DummyEffectsApp(),
+    )
 
 
-def run_microvm_execution_role_fixture(runtime: Any, setup: dict[str, Any]) -> dict[str, Any]:
+def run_microvm_execution_role_fixture(
+    runtime: Any, setup: dict[str, Any]
+) -> dict[str, Any]:
     env_key = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN"
     previous = os.environ.get(env_key)
     if setup["execution_role_arn"]:
@@ -1435,7 +1646,9 @@ def run_microvm_execution_role_fixture(runtime: Any, setup: dict[str, Any]) -> d
             id_generator=lambda: setup["session_id"],
             clock=lambda: 1_700_000_000.0,
         )
-        response = controller.handle(microvm_controller_route_run_request(runtime, setup))
+        response = controller.handle(
+            microvm_controller_route_run_request(runtime, setup)
+        )
         if getattr(response, "error", None):
             return {
                 "valid": False,
@@ -1470,7 +1683,9 @@ class _ExecutionRoleRecordingProvider:
         if isinstance(input_, dict):
             self.execution_role_arn = str(input_.get("execution_role_arn") or "")
         else:
-            self.execution_role_arn = str(getattr(input_, "execution_role_arn", "") or "")
+            self.execution_role_arn = str(
+                getattr(input_, "execution_role_arn", "") or ""
+            )
         return self._base_provider.run(input_)
 
     def __getattr__(self, name: str) -> Any:
@@ -1480,7 +1695,9 @@ class _ExecutionRoleRecordingProvider:
 def normalize_microvm_execution_role_setup(setup: dict[str, Any]) -> dict[str, Any]:
     tenant_id = str(setup.get("tenant_id") or "tenant-1").strip() or "tenant-1"
     namespace = str(setup.get("namespace") or "namespace-1").strip() or "namespace-1"
-    session_id = str(setup.get("session_id") or "fixture-session").strip() or "fixture-session"
+    session_id = (
+        str(setup.get("session_id") or "fixture-session").strip() or "fixture-session"
+    )
     return {
         "tenant_id": tenant_id,
         "namespace": namespace,
@@ -1492,7 +1709,9 @@ def normalize_microvm_execution_role_setup(setup: dict[str, Any]) -> dict[str, A
 def normalize_microvm_controller_route_setup(setup: dict[str, Any]) -> dict[str, Any]:
     tenant_id = str(setup.get("tenant_id") or "tenant-1").strip() or "tenant-1"
     namespace = str(setup.get("namespace") or "namespace-1").strip() or "namespace-1"
-    session_id = str(setup.get("session_id") or "fixture-session").strip() or "fixture-session"
+    session_id = (
+        str(setup.get("session_id") or "fixture-session").strip() or "fixture-session"
+    )
     return {
         "authenticated": setup.get("authenticated") is True,
         "seed_session": setup.get("seed_session") is True,
@@ -1502,7 +1721,9 @@ def normalize_microvm_controller_route_setup(setup: dict[str, Any]) -> dict[str,
     }
 
 
-def microvm_controller_route_run_request(runtime: Any, setup: dict[str, Any]) -> dict[str, Any]:
+def microvm_controller_route_run_request(
+    runtime: Any, setup: dict[str, Any]
+) -> dict[str, Any]:
     return {
         "command": runtime.COMMAND_RUN,
         "request_id": "req-m16-route-seed",
@@ -1524,25 +1745,48 @@ def compare_microvm_controller_route_expected(
     expected: dict[str, Any], actual: Any
 ) -> tuple[bool, str, dict[str, Any]]:
     if expected.get("status") != actual.status:
-        return False, f"status: expected {expected.get('status')}, got {actual.status}", {}
+        return (
+            False,
+            f"status: expected {expected.get('status')}, got {actual.status}",
+            {},
+        )
     text = actual.body.decode("utf-8")
     for forbidden in expected.get("forbidden_body_substrings") or []:
         if forbidden and str(forbidden) in text:
-            return False, f"microvm_controller_route body contains forbidden substring {forbidden!r}", {}
+            return (
+                False,
+                f"microvm_controller_route body contains forbidden substring {forbidden!r}",
+                {},
+            )
     try:
         body = json.loads(text) if text.strip() else {}
     except Exception:  # noqa: BLE001
         return False, "microvm_controller_route response json mismatch", {}
-    for expected_field in ["command", "tenant_id", "namespace", "session_id", "state", "token_type"]:
-        if expected.get(expected_field) and body.get(expected_field) != expected.get(expected_field):
+    for expected_field in [
+        "command",
+        "tenant_id",
+        "namespace",
+        "session_id",
+        "state",
+        "token_type",
+    ]:
+        if expected.get(expected_field) and body.get(expected_field) != expected.get(
+            expected_field
+        ):
             return (
                 False,
                 f"{expected_field}: expected {expected.get(expected_field)!r}, got {body.get(expected_field)!r}",
                 body,
             )
     if expected.get("scope") and body.get("scope", []) != expected.get("scope"):
-        return False, f"scope: expected {expected.get('scope')!r}, got {body.get('scope', [])!r}", body
-    if expected.get("error_code") and microvm_controller_route_error_code(body) != expected.get("error_code"):
+        return (
+            False,
+            f"scope: expected {expected.get('scope')!r}, got {body.get('scope', [])!r}",
+            body,
+        )
+    if expected.get("error_code") and microvm_controller_route_error_code(
+        body
+    ) != expected.get("error_code"):
         return (
             False,
             f"error_code: expected {expected.get('error_code')!r}, got {microvm_controller_route_error_code(body)!r}",
@@ -1582,7 +1826,9 @@ def expects_setup_error(fixture: dict[str, Any]) -> bool:
     )
 
 
-def _route_handler_for_registration(runtime: Any, route: dict[str, Any], effects: Any | None = None) -> Any | None:
+def _route_handler_for_registration(
+    runtime: Any, route: dict[str, Any], effects: Any | None = None
+) -> Any | None:
     name = str(route.get("handler") or "").strip()
     if not name:
         return None
@@ -1598,7 +1844,13 @@ def compare_setup_error(
 ) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     expected = (fixture.get("expect", {}) or {}).get("error") or {}
     if actual_error is None:
-        return False, "expected setup error, got none", None, expected, _DummyEffectsApp()
+        return (
+            False,
+            "expected setup error, got none",
+            None,
+            expected,
+            _DummyEffectsApp(),
+        )
 
     actual = {
         "code": str(getattr(actual_error, "code", "") or "").strip(),
@@ -1629,17 +1881,655 @@ def compare_setup_error(
     return True, "", {}, expected, _DummyEffectsApp()
 
 
+class _MCPFixedIdGenerator:
+    def __init__(self, id: str) -> None:
+        self.id = str(id)
+
+    def new_id(self) -> str:
+        return self.id
+
+
+class _MCPSequenceIdGenerator:
+    def __init__(self, ids: list[str], fallback: str) -> None:
+        self.ids = [str(v) for v in ids]
+        self.fallback = str(fallback)
+        self.next = 0
+
+    def new_id(self) -> str:
+        if self.next < len(self.ids):
+            value = self.ids[self.next].strip()
+            self.next += 1
+            if value:
+                return value
+        else:
+            self.next += 1
+        return f"{self.fallback}-{self.next}"
+
+
+def _mcp_iso_from_unix_ms(ms: Any, fallback: str = "1970-01-01T00:00:00Z") -> str:
+    try:
+        value = int(ms or 0)
+    except Exception:  # noqa: BLE001
+        value = 0
+    if value <= 0:
+        return fallback
+    seconds, millis = divmod(value, 1000)
+    return (
+        dt.datetime.fromtimestamp(seconds, tz=dt.UTC)
+        .replace(microsecond=millis * 1000)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+        .replace(".000Z", "Z")
+    )
+
+
+def _mcp_time_from_unix_ms(ms: Any, fallback: dt.datetime) -> dt.datetime:
+    try:
+        value = int(ms or 0)
+    except Exception:  # noqa: BLE001
+        value = 0
+    if value <= 0:
+        return fallback
+    seconds, millis = divmod(value, 1000)
+    return dt.datetime.fromtimestamp(seconds, tz=dt.UTC).replace(
+        microsecond=millis * 1000
+    )
+
+
+class _FixtureMCPTaskStore:
+    def __init__(self, runtime: Any, config: dict[str, Any]) -> None:
+        self.runtime = runtime
+        self.sessions: dict[str, dict[str, Any]] = {}
+        self.create_time = _mcp_iso_from_unix_ms(
+            config.get("clock_unix_ms"), "2026-03-03T12:00:00Z"
+        )
+        self.update_time = _mcp_iso_from_unix_ms(
+            config.get("update_clock_unix_ms"), "2026-03-03T12:00:01Z"
+        )
+
+    def _clone(self, value: Any) -> Any:
+        return json.loads(json.dumps(_mcp_public_json(value), separators=(",", ":")))
+
+    def _record(self, session_id: str, task_id: str) -> dict[str, Any] | None:
+        return self.sessions.get(str(session_id or "").strip(), {}).get(
+            str(task_id or "").strip()
+        )
+
+    def create(self, task: Any) -> Any:
+        record = self._clone(task)
+        record["sessionId"] = str(
+            record.get("sessionId") or record.get("session_id") or ""
+        ).strip()
+        task_obj = record.setdefault("task", {})
+        task_obj["taskId"] = str(
+            task_obj.get("taskId") or task_obj.get("task_id") or ""
+        ).strip()
+        if not record["sessionId"]:
+            raise RuntimeError("missing session id")
+        if not task_obj["taskId"]:
+            raise RuntimeError("missing task id")
+        task_obj["createdAt"] = self.create_time
+        task_obj["lastUpdatedAt"] = self.create_time
+        session = self.sessions.setdefault(record["sessionId"], {})
+        if task_obj["taskId"] in session:
+            raise RuntimeError("task already exists")
+        session[task_obj["taskId"]] = self._clone(record)
+        return self.runtime.McpTaskRecord(
+            session_id=record["sessionId"],
+            method=record.get("method", ""),
+            tool_name=record.get("toolName", ""),
+            task=self.runtime.McpTask(
+                task_id=task_obj["taskId"],
+                status=task_obj.get("status", "working"),
+                created_at=task_obj.get("createdAt", ""),
+                last_updated_at=task_obj.get("lastUpdatedAt", ""),
+                ttl=int(task_obj.get("ttl") or 0),
+                poll_interval=task_obj.get("pollInterval"),
+            ),
+            result=record.get("result"),
+            error=record.get("error"),
+        )
+
+    def get(self, lookup: Any) -> Any:
+        record = self._record(
+            getattr(lookup, "session_id", "") or getattr(lookup, "sessionId", ""),
+            getattr(lookup, "task_id", "") or getattr(lookup, "taskId", ""),
+        )
+        if record is None:
+            raise self.runtime.McpTaskNotFoundError()
+        return self.create_record_from_json(record)
+
+    def update(self, task: Any) -> Any:
+        record = self._clone(task)
+        session_id = str(
+            record.get("sessionId") or record.get("session_id") or ""
+        ).strip()
+        task_obj = record.setdefault("task", {})
+        task_id = str(task_obj.get("taskId") or task_obj.get("task_id") or "").strip()
+        existing = self._record(session_id, task_id)
+        if existing is None:
+            raise self.runtime.McpTaskNotFoundError()
+        if str(existing.get("task", {}).get("status") or "") in {
+            "completed",
+            "failed",
+            "canceled",
+        }:
+            raise self.runtime.McpTaskTerminalError()
+        task_obj["createdAt"] = existing.get("task", {}).get("createdAt", "")
+        task_obj["lastUpdatedAt"] = self.update_time
+        normalized = {
+            "sessionId": session_id,
+            "method": record.get("method", ""),
+            "toolName": record.get("toolName") or record.get("tool_name") or "",
+            "task": task_obj,
+        }
+        if "result" in record:
+            normalized["result"] = record["result"]
+        if record.get("error") is not None:
+            normalized["error"] = record["error"]
+        self.sessions[session_id][task_id] = self._clone(normalized)
+        return self.create_record_from_json(normalized)
+
+    def list(self, request: Any) -> Any:
+        session_id = str(
+            getattr(request, "session_id", "")
+            or getattr(request, "sessionId", "")
+            or (request.get("session_id") if isinstance(request, dict) else "")
+            or (request.get("sessionId") if isinstance(request, dict) else "")
+            or ""
+        ).strip()
+        session = self.sessions.get(session_id)
+        if not session:
+            return self.runtime.McpTaskListResult(tasks=[])
+        limit = int(
+            getattr(request, "limit", 0)
+            or (request.get("limit") if isinstance(request, dict) else 0)
+            or 0
+        )
+        records = sorted(
+            session.values(),
+            key=lambda r: (
+                str(r.get("task", {}).get("createdAt") or ""),
+                str(r.get("task", {}).get("taskId") or ""),
+            ),
+        )
+        if limit <= 0 or limit > len(records):
+            limit = len(records)
+        return self.runtime.McpTaskListResult(
+            tasks=[
+                self.create_task_from_json(record.get("task", {}))
+                for record in records[:limit]
+            ]
+        )
+
+    def cancel(self, lookup: Any) -> Any:
+        session_id = str(
+            getattr(lookup, "session_id", "")
+            or getattr(lookup, "sessionId", "")
+            or (lookup.get("session_id") if isinstance(lookup, dict) else "")
+            or (lookup.get("sessionId") if isinstance(lookup, dict) else "")
+            or ""
+        ).strip()
+        task_id = str(
+            getattr(lookup, "task_id", "")
+            or getattr(lookup, "taskId", "")
+            or (lookup.get("task_id") if isinstance(lookup, dict) else "")
+            or (lookup.get("taskId") if isinstance(lookup, dict) else "")
+            or ""
+        ).strip()
+        record = self._record(session_id, task_id)
+        if record is None:
+            raise self.runtime.McpTaskNotFoundError()
+        if str(record.get("task", {}).get("status") or "") in {
+            "completed",
+            "failed",
+            "canceled",
+        }:
+            raise self.runtime.McpTaskTerminalError()
+        record["task"]["status"] = "canceled"
+        record["task"]["statusMessage"] = "task canceled"
+        record["task"]["lastUpdatedAt"] = self.update_time
+        record["error"] = {"code": -32000, "message": "task canceled"}
+        return self.create_record_from_json(record)
+
+    def delete_session(self, session_id: str) -> None:
+        self.sessions.pop(str(session_id or "").strip(), None)
+
+    def create_task_from_json(self, task: dict[str, Any]) -> Any:
+        return self.runtime.McpTask(
+            task_id=str(task.get("taskId") or ""),
+            status=str(task.get("status") or "working"),
+            status_message=str(task.get("statusMessage") or ""),
+            created_at=str(task.get("createdAt") or ""),
+            last_updated_at=str(task.get("lastUpdatedAt") or ""),
+            ttl=int(task.get("ttl") or 0),
+            poll_interval=task.get("pollInterval"),
+        )
+
+    def create_record_from_json(self, record: dict[str, Any]) -> Any:
+        return self.runtime.McpTaskRecord(
+            session_id=str(record.get("sessionId") or ""),
+            method=str(record.get("method") or ""),
+            tool_name=str(record.get("toolName") or ""),
+            task=self.create_task_from_json(record.get("task") or {}),
+            result=record.get("result"),
+            error=record.get("error"),
+        )
+
+
+def _mcp_public_json(value: Any) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    if isinstance(value, list):
+        return [_mcp_public_json(v) for v in value]
+    if isinstance(value, dict):
+        return {
+            _mcp_json_key(k): _mcp_public_json(v)
+            for k, v in value.items()
+            if v is not None and v != ""
+        }
+    if hasattr(value, "__dataclass_fields__"):
+        out: dict[str, Any] = {}
+        mapping = {
+            "session_id": "sessionId",
+            "tool_name": "toolName",
+            "task_id": "taskId",
+            "status_message": "statusMessage",
+            "created_at": "createdAt",
+            "last_updated_at": "lastUpdatedAt",
+            "poll_interval": "pollInterval",
+            "next_cursor": "nextCursor",
+            "is_error": "isError",
+            "structured_content": "structuredContent",
+        }
+        for name in getattr(value, "__dataclass_fields__", {}):
+            raw = getattr(value, name)
+            if raw is None or raw == "":
+                continue
+            out[mapping.get(name, name)] = _mcp_public_json(raw)
+        return out
+    if hasattr(value, "__dict__"):
+        return _mcp_public_json(vars(value))
+    return value
+
+
+def _mcp_json_key(key: Any) -> str:
+    mapping = {
+        "session_id": "sessionId",
+        "tool_name": "toolName",
+        "task_id": "taskId",
+        "status_message": "statusMessage",
+        "created_at": "createdAt",
+        "last_updated_at": "lastUpdatedAt",
+        "poll_interval": "pollInterval",
+        "next_cursor": "nextCursor",
+        "is_error": "isError",
+        "structured_content": "structuredContent",
+    }
+    return mapping.get(str(key), str(key))
+
+
+def _fixture_mcp_message_arg(args: Any) -> str:
+    payload = args if isinstance(args, dict) else {}
+    message = str(payload.get("message") or "").strip()
+    if not message:
+        raise RuntimeError("missing message")
+    return message
+
+
+def _fixture_mcp_tool_handler(name: str):
+    resolved = str(name or "").strip()
+    if resolved == "echo_text":
+        return lambda args, _context: {
+            "content": [{"type": "text", "text": _fixture_mcp_message_arg(args)}]
+        }
+    if resolved == "fail_error":
+
+        def fail(_args: Any, _context: Any) -> Any:
+            raise RuntimeError("fixture tool failed")
+
+        return fail
+    if resolved == "task_echo":
+
+        def task_echo(args: Any, _context: Any) -> dict[str, Any]:
+            message = _fixture_mcp_message_arg(args)
+            return {
+                "content": [{"type": "text", "text": message}],
+                "structuredContent": {"message": message},
+            }
+
+        return task_echo
+    raise RuntimeError(f"unknown mcp tool handler {name!r}")
+
+
+def _fixture_mcp_streaming_tool_handler(name: str):
+    resolved = str(name or "").strip()
+    if resolved == "stream_progress":
+
+        def stream_progress(args: Any, emit: Any, _context: Any) -> dict[str, Any]:
+            message = _fixture_mcp_message_arg(args)
+            emit({"data": {"seq": 1, "total": 2, "message": "half"}})
+            emit({"data": {"seq": 2, "total": 2, "message": "done"}})
+            return {"content": [{"type": "text", "text": message}]}
+
+        return stream_progress
+    raise RuntimeError(f"unknown mcp streaming tool handler {name!r}")
+
+
+def _register_fixture_mcp_tool(server: Any, tool: dict[str, Any]) -> None:
+    definition: dict[str, Any] = {
+        "name": str(tool.get("name") or ""),
+        "inputSchema": tool.get("input_schema") or {},
+    }
+    if tool.get("title"):
+        definition["title"] = str(tool.get("title"))
+    if tool.get("description"):
+        definition["description"] = str(tool.get("description"))
+    if "output_schema" in tool:
+        definition["outputSchema"] = tool.get("output_schema")
+    if tool.get("task_support"):
+        definition["execution"] = {"taskSupport": str(tool.get("task_support"))}
+    if tool.get("streaming"):
+        server.registry().register_streaming_tool(
+            definition,
+            _fixture_mcp_streaming_tool_handler(str(tool.get("handler") or "")),
+        )
+        return
+    server.registry().register_tool(
+        definition, _fixture_mcp_tool_handler(str(tool.get("handler") or ""))
+    )
+
+
+def _register_fixture_mcp_resource(server: Any, resource: dict[str, Any]) -> None:
+    contents = []
+    for content in resource.get("contents") or []:
+        item = {"uri": str(content.get("uri") or "")}
+        if content.get("mime_type"):
+            item["mimeType"] = str(content.get("mime_type"))
+        if content.get("text"):
+            item["text"] = str(content.get("text"))
+        if content.get("blob"):
+            item["blob"] = str(content.get("blob"))
+        contents.append(item)
+    definition = {
+        "uri": str(resource.get("uri") or ""),
+        "name": str(resource.get("name") or ""),
+    }
+    if resource.get("title"):
+        definition["title"] = str(resource.get("title"))
+    if resource.get("description"):
+        definition["description"] = str(resource.get("description"))
+    if resource.get("mime_type"):
+        definition["mimeType"] = str(resource.get("mime_type"))
+    if resource.get("size"):
+        definition["size"] = int(resource.get("size") or 0)
+    server.resources().register_resource(
+        definition, lambda _ctx, values=contents: [dict(v) for v in values]
+    )
+
+
+def _register_fixture_mcp_resource_template(
+    server: Any, template: dict[str, Any]
+) -> None:
+    definition = {
+        "uriTemplate": str(template.get("uri_template") or ""),
+        "name": str(template.get("name") or ""),
+    }
+    if template.get("title"):
+        definition["title"] = str(template.get("title"))
+    if template.get("description"):
+        definition["description"] = str(template.get("description"))
+    if template.get("mime_type"):
+        definition["mimeType"] = str(template.get("mime_type"))
+    server.resources().register_resource_template(definition)
+
+
+def _fixture_mcp_prompt_handler(name: str):
+    if str(name or "").strip() == "render_greeting":
+
+        def render(args: Any) -> dict[str, Any]:
+            payload = args if isinstance(args, dict) else {}
+            name_arg = str(payload.get("name") or "").strip() or "friend"
+            return {
+                "description": "Rendered greeting",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": {"type": "text", "text": f"Hello, {name_arg}."},
+                    }
+                ],
+            }
+
+        return render
+    raise RuntimeError(f"unknown mcp prompt handler {name!r}")
+
+
+def _register_fixture_mcp_prompt(server: Any, prompt: dict[str, Any]) -> None:
+    definition = {"name": str(prompt.get("name") or "")}
+    if prompt.get("title"):
+        definition["title"] = str(prompt.get("title"))
+    if prompt.get("description"):
+        definition["description"] = str(prompt.get("description"))
+    definition["arguments"] = []
+    for arg in prompt.get("arguments") or []:
+        out = {"name": str(arg.get("name") or "")}
+        if arg.get("title"):
+            out["title"] = str(arg.get("title"))
+        if arg.get("description"):
+            out["description"] = str(arg.get("description"))
+        if arg.get("required"):
+            out["required"] = True
+        definition["arguments"].append(out)
+    server.prompts().register_prompt(
+        definition, _fixture_mcp_prompt_handler(str(prompt.get("handler") or ""))
+    )
+
+
+def _new_fixture_mcp_server(runtime: Any, setup: dict[str, Any]) -> Any:
+    server_config = setup.get("server") or {}
+    id_generator = _MCPSequenceIdGenerator(setup.get("id_sequence") or [], "mcp-id")
+    stream_id_generator = _MCPSequenceIdGenerator(
+        setup.get("stream_id_sequence") or [], "mcp-stream"
+    )
+    session_seed = []
+    for seed in (setup.get("session_store") or {}).get("seed") or []:
+        session_seed.append(
+            runtime.McpSession(
+                id=str(seed.get("id") or ""),
+                created_at=_mcp_iso_from_unix_ms(seed.get("created_unix_ms")),
+                expires_at=_mcp_iso_from_unix_ms(seed.get("expires_unix_ms"), ""),
+                data=dict(seed.get("data") or {}),
+            )
+        )
+    fixed_clock = runtime.ManualClock(dt.datetime.fromtimestamp(1700000000, tz=dt.UTC))
+    options: dict[str, Any] = {
+        "id_generator": id_generator,
+        "clock": fixed_clock,
+        "session_store": runtime.MemoryMcpSessionStore(
+            clock=fixed_clock, seed=session_seed
+        ),
+        "stream_store": runtime.MemoryMcpStreamStore(id_generator=stream_id_generator),
+    }
+    task_runtime = setup.get("task_runtime") or {}
+    if task_runtime.get("enabled"):
+        task_clock = runtime.ManualClock(
+            _mcp_time_from_unix_ms(
+                task_runtime.get("clock_unix_ms"),
+                dt.datetime(2026, 3, 3, 12, 0, tzinfo=dt.UTC),
+            )
+        )
+        options["clock"] = task_clock
+        options["task_runtime"] = runtime.McpTaskRuntimeOptions(
+            store=_FixtureMCPTaskStore(runtime, task_runtime),
+            default_ttl_ms=int(task_runtime.get("default_ttl_ms") or 0),
+            max_ttl_ms=int(task_runtime.get("max_ttl_ms") or 0),
+            poll_interval_ms=int(task_runtime.get("poll_interval_ms") or 0),
+            list_limit=int(task_runtime.get("list_limit") or 0),
+            model_immediate_response=str(
+                task_runtime.get("model_immediate_response") or ""
+            ),
+        )
+    server = runtime.create_mcp_server(
+        str(server_config.get("name") or "").strip() or "AppTheoryContractMCP",
+        str(server_config.get("version") or "").strip() or "sp09",
+        options,
+    )
+    for tool in setup.get("tools") or []:
+        _register_fixture_mcp_tool(server, tool)
+    for resource in setup.get("resources") or []:
+        _register_fixture_mcp_resource(server, resource)
+    for template in setup.get("resource_templates") or []:
+        _register_fixture_mcp_resource_template(server, template)
+    for prompt in setup.get("prompts") or []:
+        _register_fixture_mcp_prompt(server, prompt)
+    return server
+
+
+def _mcp_request_from_step(runtime: Any, step: dict[str, Any]) -> Any:
+    req = step.get("request") or {}
+    return runtime.Request(
+        method=str(req.get("method") or ""),
+        path=str(req.get("path") or "/"),
+        headers=canonicalize_headers(req.get("headers") or {}),
+        query=req.get("query") or {},
+        body=decode_fixture_body(req.get("body")),
+        is_base64=bool(req.get("is_base64")),
+    )
+
+
+def _mcp_collect_response(resp: Any) -> dict[str, Any]:
+    chunks: list[bytes] = []
+    if getattr(resp, "body", b""):
+        chunks.append(bytes(resp.body))
+    if getattr(resp, "body_stream", None) is not None:
+        for chunk in resp.body_stream:
+            chunks.append(bytes(chunk or b""))
+    body = b"".join(chunks)
+    return {
+        "status": int(getattr(resp, "status", 0) or 0),
+        "headers": canonicalize_headers(getattr(resp, "headers", {}) or {}),
+        "cookies": list(getattr(resp, "cookies", []) or []),
+        "body": body,
+        "is_base64": bool(getattr(resp, "is_base64", False)),
+        "sse_frames": _parse_mcp_sse_frames(body),
+    }
+
+
+def _parse_mcp_sse_frames(body: bytes) -> list[dict[str, str]]:
+    text = body.decode("utf-8")
+    if "data: " not in text and "id: " not in text:
+        return []
+    frames: list[dict[str, str]] = []
+    for raw_chunk in text.split("\n\n"):
+        chunk = raw_chunk.strip("\n")
+        if not chunk.strip():
+            continue
+        frame: dict[str, str] = {"id": "", "data": ""}
+        data_lines: list[str] = []
+        for line in chunk.split("\n"):
+            if line.startswith(":"):
+                continue
+            if line.startswith("id: "):
+                frame["id"] = line[4:].strip()
+            elif line.startswith("event: "):
+                frame["event"] = line[7:].strip()
+            elif line.startswith("data: "):
+                data_lines.append(line[6:])
+        frame["data"] = "\n".join(data_lines)
+        frames.append(frame)
+    return frames
+
+
+def _compare_mcp_step(
+    expected: dict[str, Any], actual: dict[str, Any]
+) -> tuple[bool, str]:
+    if int(expected.get("status") or 0) != actual["status"]:
+        return (
+            False,
+            f"status: expected {expected.get('status')}, got {actual['status']}",
+        )
+    if bool(expected.get("is_base64")) != bool(actual.get("is_base64")):
+        return False, "is_base64 mismatch"
+    if (expected.get("cookies") or []) != (actual.get("cookies") or []):
+        return False, "cookies mismatch"
+    if not compare_headers(expected.get("headers"), actual.get("headers")):
+        return False, "headers mismatch"
+    if isinstance(expected.get("sse_frames"), list) and expected.get("sse_frames"):
+        if expected.get("sse_frames") != actual.get("sse_frames"):
+            return False, "sse_frames mismatch"
+        return True, ""
+    if "body_json" in expected:
+        try:
+            actual_json = json.loads(actual.get("body", b"").decode("utf-8"))
+        except Exception:  # noqa: BLE001
+            return False, "body_json mismatch"
+        if expected.get("body_json") != actual_json:
+            return False, "body_json mismatch"
+        return True, ""
+    expected_body = (
+        decode_fixture_body(expected.get("body"))
+        if expected.get("body") is not None
+        else b""
+    )
+    if expected_body != actual.get("body", b""):
+        return False, "body mismatch"
+    return True, ""
+
+
+def run_fixture_mcp(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, Any, Any, _DummyEffectsApp]:
+    runtime = _load_apptheory_runtime()
+    server = _new_fixture_mcp_server(
+        runtime, (fixture.get("setup") or {}).get("mcp") or {}
+    )
+    app = runtime.create_app(id_generator=_MCPFixedIdGenerator("req_mcp_123"))
+    handler = server.handler()
+    app.post("/mcp", handler)
+    app.get("/mcp", handler)
+    app.delete("/mcp", handler)
+    steps = ((fixture.get("input") or {}).get("mcp") or {}).get("steps") or []
+    expected_steps = ((fixture.get("expect") or {}).get("mcp") or {}).get("steps") or []
+    if len(steps) != len(expected_steps):
+        return (
+            False,
+            "mcp steps length mismatch",
+            {"steps": len(steps)},
+            {"steps": len(expected_steps)},
+            _DummyEffectsApp(),
+        )
+    for idx, step in enumerate(steps):
+        req = _mcp_request_from_step(runtime, step)
+        actual = _mcp_collect_response(app.serve(req))
+        ok, reason = _compare_mcp_step(expected_steps[idx], actual)
+        if not ok:
+            return (
+                False,
+                f"step {step.get('name')}: {reason}",
+                actual,
+                expected_steps[idx],
+                _DummyEffectsApp(),
+            )
+    return True, "", {}, {}, _DummyEffectsApp()
+
+
 def _empty_response() -> CanonicalResponse:
-    return CanonicalResponse(status=0, headers={}, cookies=[], body=b"", is_base64=False)
+    return CanonicalResponse(
+        status=0, headers={}, cookies=[], body=b"", is_base64=False
+    )
 
 
-def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+def run_fixture(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     if is_openapi_contract_fixture(fixture):
         return compare_openapi_contract(fixture)
 
     tier = str(fixture.get("tier", "")).strip().lower()
     if tier == "mcp":
-        return True, "SP09 MCP fixtures are Go-runtime enforced; Python MCP runtime parity is SP11", {}, {}, _DummyEffectsApp()
+        return run_fixture_mcp(fixture)
     if tier == "p0":
         return run_fixture_p0(fixture)
     if tier == "p1":
@@ -1668,13 +2558,21 @@ def run_fixture(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, 
 
     setup = fixture.get("setup", {})
     input_ = fixture.get("input", {})
-    app = new_fixture_app(setup.get("routes", []), fixture.get("tier", ""), setup.get("limits", {}) or {})
+    app = new_fixture_app(
+        setup.get("routes", []), fixture.get("tier", ""), setup.get("limits", {}) or {}
+    )
     req = canonicalize_request(input_.get("request", {}), input_.get("context", {}))
     actual = app.handle(req)
     expected = fixture.get("expect", {}).get("response", {})
 
     if expected.get("status") != actual.status:
-        return False, f"status: expected {expected.get('status')}, got {actual.status}", actual, expected, app
+        return (
+            False,
+            f"status: expected {expected.get('status')}, got {actual.status}",
+            actual,
+            expected,
+            app,
+        )
 
     if bool(expected.get("is_base64")) != actual.is_base64:
         return False, "is_base64 mismatch", actual, expected, app
@@ -1766,16 +2664,34 @@ def compare_openapi_contract(
             )
         expected_message = str(expected_error.get("message", "")).strip()
         actual_message = str(actual_error).strip() if actual_error is not None else ""
-        if actual_error is not None and (not expected_message or actual_message == expected_message):
+        if actual_error is not None and (
+            not expected_message or actual_message == expected_message
+        ):
             return True, "", actual_message, expected_message, _DummyEffectsApp()
-        reason = "openapi error message mismatch" if actual_error is not None else "expected openapi error, got nil"
+        reason = (
+            "openapi error message mismatch"
+            if actual_error is not None
+            else "expected openapi error, got nil"
+        )
         return False, reason, actual_message, expected_message, _DummyEffectsApp()
     if actual_error is not None:
-        return False, "unexpected openapi error", str(actual_error).strip(), expect.get("output_json"), _DummyEffectsApp()
+        return (
+            False,
+            "unexpected openapi error",
+            str(actual_error).strip(),
+            expect.get("output_json"),
+            _DummyEffectsApp(),
+        )
     expected = expect.get("output_json")
     if actual == expected:
         return True, "", actual, expected, _DummyEffectsApp()
-    return False, "openapi canonical json mismatch", actual, expected, _DummyEffectsApp()
+    return (
+        False,
+        "openapi canonical json mismatch",
+        actual,
+        expected,
+        _DummyEffectsApp(),
+    )
 
 
 def _load_apptheory_runtime():
@@ -1865,11 +2781,18 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
 
         def handler(ctx):
             content_types = (ctx.request.headers or {}).get("content-type") or []
-            if not any(str(value).strip().lower().startswith("application/json") for value in content_types):
-                raise runtime.AppTheoryError("app.bad_request", "invalid json", status_code=400)
+            if not any(
+                str(value).strip().lower().startswith("application/json")
+                for value in content_types
+            ):
+                raise runtime.AppTheoryError(
+                    "app.bad_request", "invalid json", status_code=400
+                )
             body = bytes(ctx.request.body or b"")
             if not body:
-                raise runtime.AppTheoryError("EMPTY_BODY", "Request body is empty", status_code=400)
+                raise runtime.AppTheoryError(
+                    "EMPTY_BODY", "Request body is empty", status_code=400
+                )
             try:
                 payload = json.loads(body.decode("utf-8"))
             except Exception as exc:  # noqa: BLE001
@@ -1941,12 +2864,20 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         @dataclass
         class ValidateProfileRequest:
             name: str = runtime.body("name", validate=[runtime.required()])
-            age: int = runtime.body("age", value_type="int", validate=[runtime.min_value(18)])
-            score: int = runtime.body("score", value_type="int", validate=[runtime.max_value(10)])
+            age: int = runtime.body(
+                "age", value_type="int", validate=[runtime.min_value(18)]
+            )
+            score: int = runtime.body(
+                "score", value_type="int", validate=[runtime.max_value(10)]
+            )
             nickname: str = runtime.body("nickname", validate=[runtime.min_length(2)])
             bio: str = runtime.body("bio", validate=[runtime.max_length(5)])
-            email: str = runtime.body("email", validate=[runtime.pattern(r"^[^@]+@[^@]+\.[^@]+$")])
-            role: str = runtime.body("role", validate=[runtime.one_of(["admin", "member"])])
+            email: str = runtime.body(
+                "email", validate=[runtime.pattern(r"^[^@]+@[^@]+\.[^@]+$")]
+            )
+            role: str = runtime.body(
+                "role", validate=[runtime.one_of(["admin", "member"])]
+            )
 
         return runtime.bind_handler(
             runtime.BindConfig(model=ValidateProfileRequest, body=True),
@@ -1966,10 +2897,14 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         @dataclass
         class ValidateProfileQueryRequest:
             Name: str = runtime.body("name", validate=[runtime.required()])
-            Age: int = runtime.query("age", value_type="int", validate=[runtime.min_value(18)])
+            Age: int = runtime.query(
+                "age", value_type="int", validate=[runtime.min_value(18)]
+            )
 
         return runtime.bind_handler(
-            runtime.BindConfig(model=ValidateProfileQueryRequest, body=True, query=True),
+            runtime.BindConfig(
+                model=ValidateProfileQueryRequest, body=True, query=True
+            ),
             lambda _ctx, req: {"name": req.Name, "age": req.Age},
         )
 
@@ -1980,18 +2915,36 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
             return runtime.json(
                 200,
                 {
-                    "field_name": getattr(appsync, "field_name", "") if appsync is not None else "",
-                    "parent_type_name": getattr(appsync, "parent_type_name", "") if appsync is not None else "",
-                    "arguments": getattr(appsync, "arguments", {}) if appsync is not None else {},
-                    "identity": getattr(appsync, "identity", {}) if appsync is not None else {},
-                    "source": getattr(appsync, "source", {}) if appsync is not None else {},
-                    "variables": getattr(appsync, "variables", {}) if appsync is not None else {},
-                    "stash": getattr(appsync, "stash", {}) if appsync is not None else {},
-                    "prev": getattr(appsync, "prev", None) if appsync is not None else None,
-                    "request_headers": getattr(appsync, "request_headers", {}) if appsync is not None else {},
-                    "raw_event_field": ((getattr(appsync, "raw_event", {}) or {}).get("info") or {}).get(
-                        "fieldName", ""
-                    )
+                    "field_name": getattr(appsync, "field_name", "")
+                    if appsync is not None
+                    else "",
+                    "parent_type_name": getattr(appsync, "parent_type_name", "")
+                    if appsync is not None
+                    else "",
+                    "arguments": getattr(appsync, "arguments", {})
+                    if appsync is not None
+                    else {},
+                    "identity": getattr(appsync, "identity", {})
+                    if appsync is not None
+                    else {},
+                    "source": getattr(appsync, "source", {})
+                    if appsync is not None
+                    else {},
+                    "variables": getattr(appsync, "variables", {})
+                    if appsync is not None
+                    else {},
+                    "stash": getattr(appsync, "stash", {})
+                    if appsync is not None
+                    else {},
+                    "prev": getattr(appsync, "prev", None)
+                    if appsync is not None
+                    else None,
+                    "request_headers": getattr(appsync, "request_headers", {})
+                    if appsync is not None
+                    else {},
+                    "raw_event_field": (
+                        (getattr(appsync, "raw_event", {}) or {}).get("info") or {}
+                    ).get("fieldName", "")
                     if appsync is not None
                     else "",
                     "ctx_trigger_type": ctx.get("apptheory.trigger_type"),
@@ -2018,7 +2971,9 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         return handler
 
     if name == "binary_body":
-        return lambda _ctx: runtime.binary(200, bytes([0, 1, 2]), content_type="application/octet-stream")
+        return lambda _ctx: runtime.binary(
+            200, bytes([0, 1, 2]), content_type="application/octet-stream"
+        )
 
     if name == "unauthorized":
 
@@ -2096,7 +3051,9 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
                         "custom": runtime.normalize_stage("  Foo_Bar  "),
                     },
                     "base": runtime.base_name("Pay Theory", "prod", "Tenant_1"),
-                    "resource": runtime.resource_name("Pay Theory", "WS Api", "prod", "Tenant_1"),
+                    "resource": runtime.resource_name(
+                        "Pay Theory", "WS Api", "prod", "Tenant_1"
+                    ),
                 },
             )
 
@@ -2108,9 +3065,15 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
             return runtime.json(
                 200,
                 {
-                    "from_taskToken": runtime.stepfunctions_task_token({"taskToken": " tok-a "}),
-                    "from_TaskToken": runtime.stepfunctions_task_token({"TaskToken": " tok-b "}),
-                    "from_task_token": runtime.stepfunctions_task_token({"task_token": " tok-c "}),
+                    "from_taskToken": runtime.stepfunctions_task_token(
+                        {"taskToken": " tok-a "}
+                    ),
+                    "from_TaskToken": runtime.stepfunctions_task_token(
+                        {"TaskToken": " tok-b "}
+                    ),
+                    "from_task_token": runtime.stepfunctions_task_token(
+                        {"task_token": " tok-c "}
+                    ),
                     "from_precedence": runtime.stepfunctions_task_token(
                         {
                             "TaskToken": " tok-b ",
@@ -2320,7 +3283,10 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
         def handler(_ctx):
             return runtime.Response(
                 status=200,
-                headers={"content-type": ["text/plain; charset=utf-8"], "x-multi": ["a", "b"]},
+                headers={
+                    "content-type": ["text/plain; charset=utf-8"],
+                    "x-multi": ["a", "b"],
+                },
                 cookies=[],
                 body=b"ok",
                 is_base64=False,
@@ -2482,7 +3448,9 @@ def _built_in_kinesis_handler(runtime: Any, name: str, fixture: dict[str, Any]):
     if name == "kinesis_fail_on_data":
 
         def handler(_ctx, record):
-            data_b64 = str(((record or {}).get("kinesis") or {}).get("data") or "").strip()
+            data_b64 = str(
+                ((record or {}).get("kinesis") or {}).get("data") or ""
+            ).strip()
             decoded = base64.b64decode(data_b64) if data_b64 else b""
             if decoded.decode("utf-8", errors="ignore").strip() == "fail":
                 raise RuntimeError("fail")
@@ -2550,10 +3518,14 @@ def _built_in_dynamodb_stream_handler(runtime: Any, name: str):
         return handler
 
     if name == "ddb_require_normalized_summary":
-        return lambda _ctx, record: _require_dynamodb_safe_summary(runtime, record, False)
+        return lambda _ctx, record: _require_dynamodb_safe_summary(
+            runtime, record, False
+        )
 
     if name == "ddb_require_normalized_summary_fail_on_remove":
-        return lambda _ctx, record: _require_dynamodb_safe_summary(runtime, record, True)
+        return lambda _ctx, record: _require_dynamodb_safe_summary(
+            runtime, record, True
+        )
 
     if name == "ddb_observed_fail_on_remove":
 
@@ -2567,17 +3539,29 @@ def _built_in_dynamodb_stream_handler(runtime: Any, name: str):
     return None
 
 
-def _require_dynamodb_safe_summary(runtime: Any, record: Any, fail_on_remove: bool) -> None:
+def _require_dynamodb_safe_summary(
+    runtime: Any, record: Any, fail_on_remove: bool
+) -> None:
     summary = runtime.normalize_dynamodb_stream_record(record)
-    for key in ("table_name", "event_id", "event_name", "sequence_number", "stream_view_type"):
+    for key in (
+        "table_name",
+        "event_id",
+        "event_name",
+        "sequence_number",
+        "stream_view_type",
+    ):
         if not str(summary.get(key) or "").strip():
             raise RuntimeError(f"missing normalized dynamodb {key}")
     serialized_summary = json.dumps(summary, sort_keys=True)
     if not str(summary.get("safe_log") or "").strip() or any(
-        sentinel in serialized_summary for sentinel in ("release#rel_123", "do-not-log", "previous-secret")
+        sentinel in serialized_summary
+        for sentinel in ("release#rel_123", "do-not-log", "previous-secret")
     ):
         raise RuntimeError("unsafe dynamodb stream summary")
-    if fail_on_remove and str((record or {}).get("eventName") or "").strip() == "REMOVE":
+    if (
+        fail_on_remove
+        and str((record or {}).get("eventName") or "").strip() == "REMOVE"
+    ):
         raise RuntimeError("fail")
 
 
@@ -2589,11 +3573,17 @@ def _built_in_eventbridge_handler(runtime: Any, name: str):
     if name == "eventbridge_echo_event_middleware":
         return lambda ctx, _event: {"mw": ctx.get("mw"), "trace": ctx.get("trace")}
     if name == "eventbridge_workload_envelope":
-        return lambda ctx, event: runtime.normalize_eventbridge_workload_envelope(ctx, event)
+        return lambda ctx, event: runtime.normalize_eventbridge_workload_envelope(
+            ctx, event
+        )
     if name == "eventbridge_scheduled_summary":
-        return lambda ctx, event: runtime.normalize_eventbridge_scheduled_workload(ctx, event)
+        return lambda ctx, event: runtime.normalize_eventbridge_scheduled_workload(
+            ctx, event
+        )
     if name == "eventbridge_observed_success":
-        return lambda ctx, event: runtime.normalize_eventbridge_workload_envelope(ctx, event)
+        return lambda ctx, event: runtime.normalize_eventbridge_workload_envelope(
+            ctx, event
+        )
     if name == "eventbridge_observed_panic":
 
         def handler(_ctx, _event):
@@ -2601,7 +3591,9 @@ def _built_in_eventbridge_handler(runtime: Any, name: str):
 
         return handler
     if name == "eventbridge_require_workload_envelope":
-        return lambda ctx, event: runtime.require_eventbridge_workload_envelope(ctx, event)
+        return lambda ctx, event: runtime.require_eventbridge_workload_envelope(
+            ctx, event
+        )
     return None
 
 
@@ -2777,7 +3769,9 @@ def _built_in_websocket_handler(runtime: Any, name: str):
     return None
 
 
-def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _DummyEffectsApp]:
+def run_fixture_m1(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, Any, Any, _DummyEffectsApp]:
     runtime = _load_apptheory_runtime()
     ids = runtime.ManualIdGenerator()
     ids.push("req_test_123")
@@ -2791,7 +3785,9 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
             metric=lambda record: effects.metrics.append(
                 {"name": record.name, "value": record.value, "tags": record.tags}
             ),
-            span=lambda record: effects.spans.append({"name": record.name, "attributes": record.attributes}),
+            span=lambda record: effects.spans.append(
+                {"name": record.name, "attributes": record.attributes}
+            ),
         ),
     )
 
@@ -2809,7 +3805,9 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
         app.sqs(str(route.get("queue") or ""), handler)
 
     for route in setup.get("kinesis", []) or []:
-        handler = _built_in_kinesis_handler(runtime, str(route.get("handler") or ""), fixture)
+        handler = _built_in_kinesis_handler(
+            runtime, str(route.get("handler") or ""), fixture
+        )
         if handler is None:
             raise RuntimeError(f"unknown kinesis handler {route.get('handler')!r}")
         app.kinesis(str(route.get("stream") or ""), handler)
@@ -2821,13 +3819,17 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
         app.sns(str(route.get("topic") or ""), handler)
 
     for route in setup.get("dynamodb", []) or []:
-        handler = _built_in_dynamodb_stream_handler(runtime, str(route.get("handler") or ""))
+        handler = _built_in_dynamodb_stream_handler(
+            runtime, str(route.get("handler") or "")
+        )
         if handler is None:
             raise RuntimeError(f"unknown dynamodb handler {route.get('handler')!r}")
         app.dynamodb(str(route.get("table") or ""), handler)
 
     for route in setup.get("eventbridge", []) or []:
-        handler = _built_in_eventbridge_handler(runtime, str(route.get("handler") or ""))
+        handler = _built_in_eventbridge_handler(
+            runtime, str(route.get("handler") or "")
+        )
         if handler is None:
             raise RuntimeError(f"unknown eventbridge handler {route.get('handler')!r}")
         selector = runtime.EventBridgeSelector(
@@ -2846,7 +3848,9 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
     actual_output = None
     actual_error: Exception | None = None
     try:
-        actual_output = app.handle_lambda(event, ctx=_fixture_lambda_context(input_.get("context") or {}))
+        actual_output = app.handle_lambda(
+            event, ctx=_fixture_lambda_context(input_.get("context") or {})
+        )
     except Exception as exc:  # noqa: BLE001
         actual_error = exc
     expect_obj = fixture.get("expect", {}) or {}
@@ -2862,14 +3866,34 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
         expected_error = expect_obj.get("error") or {}
         expected_msg = str((expected_error or {}).get("message") or "").strip()
         if actual_error is None:
-            return False, "expected error, got none", actual_output, expected_error, _DummyEffectsApp()
+            return (
+                False,
+                "expected error, got none",
+                actual_output,
+                expected_error,
+                _DummyEffectsApp(),
+            )
         actual_msg = str(actual_error).strip()
         if expected_msg and actual_msg != expected_msg:
-            return False, "error mismatch", {"message": actual_msg}, expected_error, _DummyEffectsApp()
-        return _compare_m1_side_effects_if_expected(fixture, effects, {"message": actual_msg}, expected_error)
+            return (
+                False,
+                "error mismatch",
+                {"message": actual_msg},
+                expected_error,
+                _DummyEffectsApp(),
+            )
+        return _compare_m1_side_effects_if_expected(
+            fixture, effects, {"message": actual_msg}, expected_error
+        )
 
     if "output_json" not in expect_obj:
-        return False, "missing expect.output_json or expect.error", actual_output, None, _DummyEffectsApp()
+        return (
+            False,
+            "missing expect.output_json or expect.error",
+            actual_output,
+            None,
+            _DummyEffectsApp(),
+        )
     if actual_error is not None:
         return (
             False,
@@ -2881,9 +3905,17 @@ def run_fixture_m1(fixture: dict[str, Any]) -> tuple[bool, str, Any, Any, _Dummy
 
     expected_output = expect_obj.get("output_json")
     if stable_json(expected_output) != stable_json(actual_output):
-        return False, "output_json mismatch", actual_output, expected_output, _DummyEffectsApp()
+        return (
+            False,
+            "output_json mismatch",
+            actual_output,
+            expected_output,
+            _DummyEffectsApp(),
+        )
 
-    return _compare_m1_side_effects_if_expected(fixture, effects, actual_output, expected_output)
+    return _compare_m1_side_effects_if_expected(
+        fixture, effects, actual_output, expected_output
+    )
 
 
 def _compare_m1_side_effects_if_expected(
@@ -2893,7 +3925,11 @@ def _compare_m1_side_effects_if_expected(
     expected: Any,
 ) -> tuple[bool, str, Any, Any, _DummyEffectsApp]:
     expect_obj = fixture.get("expect", {}) or {}
-    if "logs" not in expect_obj and "metrics" not in expect_obj and "spans" not in expect_obj:
+    if (
+        "logs" not in expect_obj
+        and "metrics" not in expect_obj
+        and "spans" not in expect_obj
+    ):
         return True, "", actual, expected, effects
     if (expect_obj.get("logs") or []) != effects.logs:
         return False, "logs mismatch", actual, expected, effects
@@ -2907,7 +3943,8 @@ def _compare_m1_side_effects_if_expected(
 def uses_cloudwatch_logs_subscription_handler(fixture: dict[str, Any]) -> bool:
     setup = fixture.get("setup", {}) or {}
     return any(
-        str((route or {}).get("handler") or "").strip() == CLOUDWATCH_LOGS_SUBSCRIPTION_HANDLER
+        str((route or {}).get("handler") or "").strip()
+        == CLOUDWATCH_LOGS_SUBSCRIPTION_HANDLER
         for route in setup.get("kinesis", []) or []
     )
 
@@ -2916,7 +3953,9 @@ def build_cloudwatch_logs_subscription_expectations(
     fixture: dict[str, Any],
 ) -> dict[str, dict[str, Any]] | None:
     uses_handler = uses_cloudwatch_logs_subscription_handler(fixture)
-    expectation_root = (fixture.get("expect", {}) or {}).get("cloudwatch_logs_subscription")
+    expectation_root = (fixture.get("expect", {}) or {}).get(
+        "cloudwatch_logs_subscription"
+    )
     if not expectation_root:
         if uses_handler:
             raise RuntimeError("fixture missing expect.cloudwatch_logs_subscription")
@@ -2928,19 +3967,29 @@ def build_cloudwatch_logs_subscription_expectations(
 
     expected_records = expectation_root.get("records") or []
     if not isinstance(expected_records, list) or not expected_records:
-        raise RuntimeError("fixture missing expect.cloudwatch_logs_subscription.records")
+        raise RuntimeError(
+            "fixture missing expect.cloudwatch_logs_subscription.records"
+        )
 
-    input_records = (((fixture.get("input", {}) or {}).get("aws_event") or {}).get("event") or {}).get("Records")
+    input_records = (
+        ((fixture.get("input", {}) or {}).get("aws_event") or {}).get("event") or {}
+    ).get("Records")
     if not isinstance(input_records, list) or not input_records:
-        raise RuntimeError("cloudwatch logs subscription fixture missing kinesis input records")
+        raise RuntimeError(
+            "cloudwatch logs subscription fixture missing kinesis input records"
+        )
 
     by_record_id: dict[str, dict[str, Any]] = {}
     for index, expected in enumerate(expected_records):
         record_id = str((expected or {}).get("record_id") or "").strip()
         if not record_id:
-            raise RuntimeError(f"expect.cloudwatch_logs_subscription.records[{index}] missing record_id")
+            raise RuntimeError(
+                f"expect.cloudwatch_logs_subscription.records[{index}] missing record_id"
+            )
         if record_id in by_record_id:
-            raise RuntimeError(f"duplicate cloudwatch logs subscription expectation for record_id {record_id!r}")
+            raise RuntimeError(
+                f"duplicate cloudwatch logs subscription expectation for record_id {record_id!r}"
+            )
         normalized = dict(expected or {})
         normalized["record_id"] = record_id
         validate_cloudwatch_logs_subscription_expectation_record(normalized)
@@ -2957,16 +4006,22 @@ def build_cloudwatch_logs_subscription_expectations(
             raise RuntimeError(f"duplicate kinesis input record_id {record_id!r}")
         seen_input_record_ids.add(record_id)
         if record_id not in by_record_id:
-            raise RuntimeError(f"missing cloudwatch logs subscription expectation for kinesis record_id {record_id!r}")
+            raise RuntimeError(
+                f"missing cloudwatch logs subscription expectation for kinesis record_id {record_id!r}"
+            )
 
     for record_id in by_record_id:
         if record_id not in seen_input_record_ids:
-            raise RuntimeError(f"extra cloudwatch logs subscription expectation for record_id {record_id!r}")
+            raise RuntimeError(
+                f"extra cloudwatch logs subscription expectation for record_id {record_id!r}"
+            )
 
     return by_record_id
 
 
-def validate_cloudwatch_logs_subscription_expectation_record(expected: dict[str, Any]) -> None:
+def validate_cloudwatch_logs_subscription_expectation_record(
+    expected: dict[str, Any],
+) -> None:
     record_id = str((expected or {}).get("record_id") or "").strip()
     if expected.get("decode_error") is True:
         has_decoded_fields = (
@@ -2994,9 +4049,13 @@ def validate_cloudwatch_logs_subscription_expectation_record(expected: dict[str,
         missing.append("log_group")
     if not str(expected.get("log_stream") or "").strip():
         missing.append("log_stream")
-    if not isinstance(expected.get("subscription_filters"), list) or not expected.get("subscription_filters"):
+    if not isinstance(expected.get("subscription_filters"), list) or not expected.get(
+        "subscription_filters"
+    ):
         missing.append("subscription_filters")
-    if not isinstance(expected.get("log_events"), list) or not expected.get("log_events"):
+    if not isinstance(expected.get("log_events"), list) or not expected.get(
+        "log_events"
+    ):
         missing.append("log_events")
     safe_summary = expected.get("safe_summary")
     if not isinstance(safe_summary, dict) or not safe_summary:
@@ -3014,7 +4073,9 @@ def validate_cloudwatch_logs_subscription_expectation_record(expected: dict[str,
             )
     for index, event in enumerate(expected.get("log_events") or []):
         if not str((event or {}).get("id") or "").strip():
-            raise RuntimeError(f"cloudwatch logs subscription record_id {record_id!r} log_events[{index}] missing id")
+            raise RuntimeError(
+                f"cloudwatch logs subscription record_id {record_id!r} log_events[{index}] missing id"
+            )
         if not str((event or {}).get("message") or "").strip():
             raise RuntimeError(
                 f"cloudwatch logs subscription record_id {record_id!r} log_events[{index}] missing message"
@@ -3051,11 +4112,15 @@ def make_cloudwatch_logs_subscription_kinesis_handler(
 
     def handler(_ctx: Any, record: dict[str, Any]) -> None:
         if expectations is None:
-            raise RuntimeError("fixture missing validated cloudwatch logs subscription expectations")
+            raise RuntimeError(
+                "fixture missing validated cloudwatch logs subscription expectations"
+            )
         record_id = str((record or {}).get("eventID") or "").strip()
         expected = expectations.get(record_id)
         if expected is None:
-            raise RuntimeError(f"missing cloudwatch logs subscription expectation for kinesis record_id {record_id!r}")
+            raise RuntimeError(
+                f"missing cloudwatch logs subscription expectation for kinesis record_id {record_id!r}"
+            )
 
         actual = decoder(record)
         if expected.get("decode_error") is True:
@@ -3063,7 +4128,9 @@ def make_cloudwatch_logs_subscription_kinesis_handler(
                 f"cloudwatch logs subscription record_id {record_id!r} expected decode_error=true, got decoded record"
             )
 
-        ok, reason = compare_cloudwatch_logs_subscription_decoded_record(expected, actual)
+        ok, reason = compare_cloudwatch_logs_subscription_decoded_record(
+            expected, actual
+        )
         if not ok:
             raise RuntimeError(reason)
 
@@ -3082,20 +4149,35 @@ def compare_cloudwatch_logs_subscription_decoded_record(
             f"cloudwatch logs subscription record_id mismatch: expected {record_id!r}, got {actual_record_id!r}",
         )
     for key in ("message_type", "owner", "log_group", "log_stream"):
-        if str((actual or {}).get(key) or "").strip() != str((expected or {}).get(key) or "").strip():
-            return False, f"cloudwatch logs subscription record_id {record_id!r} {key} mismatch"
+        if (
+            str((actual or {}).get(key) or "").strip()
+            != str((expected or {}).get(key) or "").strip()
+        ):
+            return (
+                False,
+                f"cloudwatch logs subscription record_id {record_id!r} {key} mismatch",
+            )
     expected_filters = (expected or {}).get("subscription_filters") or []
     actual_filters = (actual or {}).get("subscription_filters") or []
     if expected_filters != actual_filters:
-        return False, f"cloudwatch logs subscription record_id {record_id!r} subscription_filters mismatch"
+        return (
+            False,
+            f"cloudwatch logs subscription record_id {record_id!r} subscription_filters mismatch",
+        )
     expected_events = (expected or {}).get("log_events") or []
     actual_events = (actual or {}).get("log_events") or []
     if expected_events != actual_events:
-        return False, f"cloudwatch logs subscription record_id {record_id!r} log_events mismatch"
+        return (
+            False,
+            f"cloudwatch logs subscription record_id {record_id!r} log_events mismatch",
+        )
     expected_summary = (expected or {}).get("safe_summary") or {}
     actual_summary = (actual or {}).get("safe_summary") or {}
     if expected_summary != actual_summary:
-        return False, f"cloudwatch logs subscription record_id {record_id!r} safe_summary mismatch"
+        return (
+            False,
+            f"cloudwatch logs subscription record_id {record_id!r} safe_summary mismatch",
+        )
     if cloudwatch_logs_safe_summary_contains_forbidden(
         actual_summary,
         (expected or {}).get("forbidden_safe_log_substrings") or [],
@@ -3107,11 +4189,16 @@ def compare_cloudwatch_logs_subscription_decoded_record(
     return True, ""
 
 
-def cloudwatch_logs_safe_summary_contains_forbidden(safe_summary: Any, forbidden_substrings: Any) -> bool:
+def cloudwatch_logs_safe_summary_contains_forbidden(
+    safe_summary: Any, forbidden_substrings: Any
+) -> bool:
     if not isinstance(safe_summary, dict) or not isinstance(forbidden_substrings, list):
         return False
     serialized = json.dumps(safe_summary, sort_keys=True, separators=(",", ":"))
-    return any(str(substring or "") and str(substring) in serialized for substring in forbidden_substrings)
+    return any(
+        str(substring or "") and str(substring) in serialized
+        for substring in forbidden_substrings
+    )
 
 
 def _m1_log_record(record: Any) -> dict[str, Any]:
@@ -3191,7 +4278,9 @@ def canonical_response_from_apigw_proxy(resp: dict[str, Any]) -> CanonicalRespon
     )
 
 
-def compare_websocket_calls(expected: list[dict[str, Any]] | None, fake: FakeWebSocketManagementClient | None) -> str:
+def compare_websocket_calls(
+    expected: list[dict[str, Any]] | None, fake: FakeWebSocketManagementClient | None
+) -> str:
     exp_calls = expected or []
     if not exp_calls:
         if fake is None or not fake.calls:
@@ -3224,7 +4313,9 @@ def compare_websocket_calls(expected: list[dict[str, Any]] | None, fake: FakeWeb
     return ""
 
 
-def run_fixture_m2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+def run_fixture_m2(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     runtime = _load_apptheory_runtime()
 
     fake: FakeWebSocketManagementClient | None = None
@@ -3234,7 +4325,10 @@ def run_fixture_m2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
         if fake is None:
             fake = FakeWebSocketManagementClient(endpoint)
             for route in (fixture.get("setup", {}) or {}).get("websockets", []) or []:
-                if str(route.get("handler") or "").strip() == "ws_default_send_json_fail":
+                if (
+                    str(route.get("handler") or "").strip()
+                    == "ws_default_send_json_fail"
+                ):
                     fake.post_error = RuntimeError("testkit: post failed")
                     break
         return fake
@@ -3263,18 +4357,24 @@ def run_fixture_m2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
 
     actual = canonical_response_from_apigw_proxy(out)
     expected = fixture.get("expect", {}).get("response", {})
-    ok, reason, actual, expected, dummy = run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
+    ok, reason, actual, expected, dummy = run_fixture_compare(
+        fixture, actual, expected, _DummyEffectsApp()
+    )
     if not ok:
         return ok, reason, actual, expected, dummy
 
-    ws_reason = compare_websocket_calls((fixture.get("expect", {}) or {}).get("ws_calls"), fake)
+    ws_reason = compare_websocket_calls(
+        (fixture.get("expect", {}) or {}).get("ws_calls"), fake
+    )
     if ws_reason:
         return False, ws_reason, actual, expected, dummy
 
     return True, "", actual, expected, dummy
 
 
-def run_fixture_m3(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+def run_fixture_m3(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     runtime = _load_apptheory_runtime()
     app = runtime.create_app(tier="p0")
 
@@ -3306,7 +4406,9 @@ def run_fixture_m3(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
     return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
 
 
-def run_fixture_m12(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+def run_fixture_m12(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     runtime = _load_apptheory_runtime()
     ids = runtime.ManualIdGenerator()
     ids.push("req_test_123")
@@ -3354,7 +4456,11 @@ def run_fixture_m12(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespon
         is_base64=bool(input_.get("is_base64")),
     )
 
-    runtime_ctx = {"remaining_ms": int((fixture.get("input", {}).get("context", {}) or {}).get("remaining_ms") or 0)}
+    runtime_ctx = {
+        "remaining_ms": int(
+            (fixture.get("input", {}).get("context", {}) or {}).get("remaining_ms") or 0
+        )
+    }
     resp = app.serve(req, runtime_ctx)
     actual = CanonicalResponse(
         status=resp.status,
@@ -3369,7 +4475,9 @@ def run_fixture_m12(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespon
     return run_fixture_compare(fixture, actual, expected, effects)
 
 
-def run_fixture_m14(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+def run_fixture_m14(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     runtime = _load_apptheory_runtime()
     ids = runtime.ManualIdGenerator()
     ids.push("req_test_123")
@@ -3425,7 +4533,11 @@ def run_fixture_m14(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespon
         is_base64=bool(input_.get("is_base64")),
     )
 
-    runtime_ctx = {"remaining_ms": int((fixture.get("input", {}).get("context", {}) or {}).get("remaining_ms") or 0)}
+    runtime_ctx = {
+        "remaining_ms": int(
+            (fixture.get("input", {}).get("context", {}) or {}).get("remaining_ms") or 0
+        )
+    }
     resp = app.serve(req, runtime_ctx)
 
     chunks: list[bytes] = []
@@ -3462,10 +4574,14 @@ def run_fixture_m14(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespon
     return run_fixture_compare(fixture, actual, expected, _DummyEffectsApp())
 
 
-def run_fixture_p0(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+def run_fixture_p0(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     runtime = _load_apptheory_runtime()
     setup = fixture.get("setup", {}) or {}
-    app = runtime.create_app(tier="p0", http_error_format=str(setup.get("http_error_format") or ""))
+    app = runtime.create_app(
+        tier="p0", http_error_format=str(setup.get("http_error_format") or "")
+    )
 
     actual_error: Exception | None = None
     try:
@@ -3553,7 +4669,9 @@ def canonical_response_from_apigw_v2(resp: dict[str, Any]) -> CanonicalResponse:
     )
 
 
-def canonical_response_from_lambda_function_url(resp: dict[str, Any]) -> CanonicalResponse:
+def canonical_response_from_lambda_function_url(
+    resp: dict[str, Any],
+) -> CanonicalResponse:
     status = int(resp.get("statusCode") or 0)
     is_base64 = bool(resp.get("isBase64Encoded"))
     body_str = str(resp.get("body") or "")
@@ -3574,7 +4692,9 @@ def canonical_response_from_lambda_function_url(resp: dict[str, Any]) -> Canonic
     )
 
 
-def run_fixture_p1(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+def run_fixture_p1(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     runtime = _load_apptheory_runtime()
     ids = runtime.ManualIdGenerator()
     ids.push("req_test_123")
@@ -3594,7 +4714,11 @@ def run_fixture_p1(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
             raw = cors_setup.get("allow_headers")
             allow_headers = [str(v) for v in raw] if isinstance(raw, list) else []
 
-        if allowed_origins is not None or allow_headers is not None or bool(cors_setup.get("allow_credentials")):
+        if (
+            allowed_origins is not None
+            or allow_headers is not None
+            or bool(cors_setup.get("allow_credentials"))
+        ):
             cors = runtime.CORSConfig(
                 allowed_origins=allowed_origins,
                 allow_credentials=bool(cors_setup.get("allow_credentials")),
@@ -3635,7 +4759,11 @@ def run_fixture_p1(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
         is_base64=bool(input_.get("is_base64")),
     )
 
-    runtime_ctx = {"remaining_ms": int((fixture.get("input", {}).get("context", {}) or {}).get("remaining_ms") or 0)}
+    runtime_ctx = {
+        "remaining_ms": int(
+            (fixture.get("input", {}).get("context", {}) or {}).get("remaining_ms") or 0
+        )
+    }
     resp = app.serve(req, runtime_ctx)
     actual = CanonicalResponse(
         status=resp.status,
@@ -3683,7 +4811,9 @@ def _built_in_apptheory_handler_p2(runtime: Any, name: str, effects: Any, clock:
     return _built_in_apptheory_handler(runtime, name, effects)
 
 
-def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
+def run_fixture_p2(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     runtime = _load_apptheory_runtime()
     ids = runtime.ManualIdGenerator()
     ids.push("req_test_123")
@@ -3691,7 +4821,9 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
 
     effects = _DummyEffectsApp()
     emf_sink = (
-        runtime.create_emf_metric_sink(clock=clock.now, writer=_EMFListWriter(effects.emf_logs))
+        runtime.create_emf_metric_sink(
+            clock=clock.now, writer=_EMFListWriter(effects.emf_logs)
+        )
         if "emf_logs" in (fixture.get("expect", {}) or {})
         else None
     )
@@ -3711,7 +4843,11 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
             raw = cors_setup.get("allow_headers")
             allow_headers = [str(v) for v in raw] if isinstance(raw, list) else []
 
-        if allowed_origins is not None or allow_headers is not None or bool(cors_setup.get("allow_credentials")):
+        if (
+            allowed_origins is not None
+            or allow_headers is not None
+            or bool(cors_setup.get("allow_credentials"))
+        ):
             cors = runtime.CORSConfig(
                 allowed_origins=allowed_origins,
                 allow_credentials=bool(cors_setup.get("allow_credentials")),
@@ -3733,11 +4869,18 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
             log=lambda r: effects.logs.append(_p2_log_record(r, include_duration=True)),
             metric=lambda r: (
                 effects.metrics.append(
-                    {"name": r.name, "value": r.value, "duration_ms": r.duration_ms, "tags": r.tags}
+                    {
+                        "name": r.name,
+                        "value": r.value,
+                        "duration_ms": r.duration_ms,
+                        "tags": r.tags,
+                    }
                 ),
                 emf_sink.record_metric(r) if emf_sink is not None else None,
             ),
-            span=lambda r: effects.spans.append({"name": r.name, "attributes": r.attributes}),
+            span=lambda r: effects.spans.append(
+                {"name": r.name, "attributes": r.attributes}
+            ),
         ),
     )
 
@@ -3764,7 +4907,11 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
         is_base64=bool(input_.get("is_base64")),
     )
 
-    runtime_ctx = {"remaining_ms": int((fixture.get("input", {}).get("context", {}) or {}).get("remaining_ms") or 0)}
+    runtime_ctx = {
+        "remaining_ms": int(
+            (fixture.get("input", {}).get("context", {}) or {}).get("remaining_ms") or 0
+        )
+    }
     resp = app.serve(req, runtime_ctx)
     actual = CanonicalResponse(
         status=resp.status,
@@ -3778,7 +4925,9 @@ def run_fixture_p2(fixture: dict[str, Any]) -> tuple[bool, str, CanonicalRespons
     return run_fixture_compare(fixture, actual, expected, effects)
 
 
-def run_fixture_p2_output(fixture: dict[str, Any]) -> tuple[bool, str, dict[str, Any], dict[str, Any], FixtureApp]:
+def run_fixture_p2_output(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, dict[str, Any], dict[str, Any], FixtureApp]:
     runtime = _load_apptheory_runtime()
     ids = runtime.ManualIdGenerator()
     ids.push("req_test_123")
@@ -3800,7 +4949,11 @@ def run_fixture_p2_output(fixture: dict[str, Any]) -> tuple[bool, str, dict[str,
             raw = cors_setup.get("allow_headers")
             allow_headers = [str(v) for v in raw] if isinstance(raw, list) else []
 
-        if allowed_origins is not None or allow_headers is not None or bool(cors_setup.get("allow_credentials")):
+        if (
+            allowed_origins is not None
+            or allow_headers is not None
+            or bool(cors_setup.get("allow_credentials"))
+        ):
             cors = runtime.CORSConfig(
                 allowed_origins=allowed_origins,
                 allow_credentials=bool(cors_setup.get("allow_credentials")),
@@ -3818,8 +4971,12 @@ def run_fixture_p2_output(fixture: dict[str, Any]) -> tuple[bool, str, dict[str,
         policy_hook=lambda ctx: _fixture_policy_hook(runtime, ctx),
         observability=runtime.ObservabilityHooks(
             log=lambda r: effects.logs.append(_p2_log_record(r)),
-            metric=lambda r: effects.metrics.append({"name": r.name, "value": r.value, "tags": r.tags}),
-            span=lambda r: effects.spans.append({"name": r.name, "attributes": r.attributes}),
+            metric=lambda r: effects.metrics.append(
+                {"name": r.name, "value": r.value, "tags": r.tags}
+            ),
+            span=lambda r: effects.spans.append(
+                {"name": r.name, "attributes": r.attributes}
+            ),
         ),
     )
 
@@ -3847,7 +5004,9 @@ def run_fixture_p2_output(fixture: dict[str, Any]) -> tuple[bool, str, dict[str,
     try:
         actual_output = app.handle_lambda(
             (aws_event or {}).get("event") or {},
-            ctx=_fixture_lambda_context((fixture.get("input", {}) or {}).get("context") or {}),
+            ctx=_fixture_lambda_context(
+                (fixture.get("input", {}) or {}).get("context") or {}
+            ),
         )
     except Exception as exc:  # noqa: BLE001
         actual_error = exc
@@ -3865,16 +5024,40 @@ def run_fixture_p2_output(fixture: dict[str, Any]) -> tuple[bool, str, dict[str,
         expected_error = expect_obj.get("error") or {}
         expected_msg = str((expected_error or {}).get("message") or "").strip()
         if actual_error is None:
-            return False, "expected error, got none", actual_output, expected_error, effects
+            return (
+                False,
+                "expected error, got none",
+                actual_output,
+                expected_error,
+                effects,
+            )
         actual_msg = str(actual_error).strip()
         if expected_msg and actual_msg != expected_msg:
-            return False, "error mismatch", {"message": actual_msg}, expected_error, effects
+            return (
+                False,
+                "error mismatch",
+                {"message": actual_msg},
+                expected_error,
+                effects,
+            )
         return True, "", {"message": actual_msg}, expected_error, effects
 
     if "output_json" not in expect_obj:
-        return False, "missing expect.output_json or expect.error", actual_output, None, effects
+        return (
+            False,
+            "missing expect.output_json or expect.error",
+            actual_output,
+            None,
+            effects,
+        )
     if actual_error is not None:
-        return False, "unexpected error", {"message": str(actual_error).strip()}, expect_obj.get("output_json"), effects
+        return (
+            False,
+            "unexpected error",
+            {"message": str(actual_error).strip()},
+            expect_obj.get("output_json"),
+            effects,
+        )
 
     expected_output = expect_obj.get("output_json")
     if stable_json(expected_output) != stable_json(actual_output):
@@ -3885,17 +5068,25 @@ def run_fixture_p2_output(fixture: dict[str, Any]) -> tuple[bool, str, dict[str,
 
 def _fixture_policy_hook(runtime, ctx):
     headers = getattr(getattr(ctx, "request", None), "headers", {}) or {}
-    if str((headers.get("x-force-rate-limit-content-type-lowercase") or [""])[0]).strip():
+    if str(
+        (headers.get("x-force-rate-limit-content-type-lowercase") or [""])[0]
+    ).strip():
         return runtime.PolicyDecision(
             code="app.rate_limited",
             message="rate limited",
-            headers={"retry-after": ["1"], "content-type": ["text/plain; charset=utf-8"]},
+            headers={
+                "retry-after": ["1"],
+                "content-type": ["text/plain; charset=utf-8"],
+            },
         )
     if str((headers.get("x-force-rate-limit-content-type") or [""])[0]).strip():
         return runtime.PolicyDecision(
             code="app.rate_limited",
             message="rate limited",
-            headers={"retry-after": ["1"], "Content-Type": ["text/plain; charset=utf-8"]},
+            headers={
+                "retry-after": ["1"],
+                "Content-Type": ["text/plain; charset=utf-8"],
+            },
         )
     if str((headers.get("x-force-rate-limit-multi-window") or [""])[0]).strip():
         return runtime.PolicyDecision(
@@ -3962,7 +5153,13 @@ def run_fixture_compare(
     app: FixtureApp,
 ) -> tuple[bool, str, CanonicalResponse, dict[str, Any], FixtureApp]:
     if expected.get("status") != actual.status:
-        return False, f"status: expected {expected.get('status')}, got {actual.status}", actual, expected, app
+        return (
+            False,
+            f"status: expected {expected.get('status')}, got {actual.status}",
+            actual,
+            expected,
+            app,
+        )
 
     if bool(expected.get("is_base64")) != actual.is_base64:
         return False, "is_base64 mismatch", actual, expected, app
@@ -4001,7 +5198,9 @@ def run_fixture_compare(
             return False, "chunks mismatch", actual, expected, app
 
         expected_body = (
-            decode_fixture_body(expected.get("body")) if expected.get("body") is not None else b"".join(expected_chunks)
+            decode_fixture_body(expected.get("body"))
+            if expected.get("body") is not None
+            else b"".join(expected_chunks)
         )
         if expected_body != actual.body:
             return False, "body mismatch", actual, expected, app
@@ -4042,7 +5241,9 @@ def run_fixture_compare(
     return compare_emf_logs_if_expected(fixture, actual, expected, app)
 
 
-def debug_actual_for_expected(actual: CanonicalResponse, expected: dict[str, Any]) -> dict[str, Any]:
+def debug_actual_for_expected(
+    actual: CanonicalResponse, expected: dict[str, Any]
+) -> dict[str, Any]:
     debug: dict[str, Any] = {
         "status": actual.status,
         "headers": canonicalize_headers(actual.headers),
@@ -4091,7 +5292,9 @@ def main() -> int:
                 print(f"  expected.error: {stable_json(expected)}", file=sys.stderr)
                 print(f"  got.error: {stable_json(actual)}", file=sys.stderr)
             else:
-                print(f"  expected.output_json: {stable_json(expected)}", file=sys.stderr)
+                print(
+                    f"  expected.output_json: {stable_json(expected)}", file=sys.stderr
+                )
                 if "error" in reason:
                     print(f"  got.error: {stable_json(actual)}", file=sys.stderr)
                 else:
@@ -4120,22 +5323,62 @@ def main() -> int:
                     file=sys.stderr,
                 )
             if "profile_logs" in expect_obj:
-                print(f"  expected.profile_logs: {stable_json(expect_obj.get('profile_logs'))}", file=sys.stderr)
-                print(f"  got.profile_logs: {stable_json(actual.get('profile_logs'))}", file=sys.stderr)
+                print(
+                    f"  expected.profile_logs: {stable_json(expect_obj.get('profile_logs'))}",
+                    file=sys.stderr,
+                )
+                print(
+                    f"  got.profile_logs: {stable_json(actual.get('profile_logs'))}",
+                    file=sys.stderr,
+                )
         elif "microvm_contract_validation" in expect_obj:
-            print(f"  expected.microvm_contract_validation: {stable_json(expected)}", file=sys.stderr)
-            print(f"  got.microvm_contract_validation: {stable_json(actual)}", file=sys.stderr)
+            print(
+                f"  expected.microvm_contract_validation: {stable_json(expected)}",
+                file=sys.stderr,
+            )
+            print(
+                f"  got.microvm_contract_validation: {stable_json(actual)}",
+                file=sys.stderr,
+            )
         elif "microvm_execution_role" in expect_obj:
-            print(f"  expected.microvm_execution_role: {stable_json(expected)}", file=sys.stderr)
-            print(f"  got.microvm_execution_role: {stable_json(actual)}", file=sys.stderr)
+            print(
+                f"  expected.microvm_execution_role: {stable_json(expected)}",
+                file=sys.stderr,
+            )
+            print(
+                f"  got.microvm_execution_role: {stable_json(actual)}", file=sys.stderr
+            )
+        elif "mcp" in expect_obj:
+            print(f"  expected.mcp.step: {stable_json(expected)}", file=sys.stderr)
+            debug_actual = dict(actual or {}) if isinstance(actual, dict) else actual
+            if isinstance(debug_actual, dict) and isinstance(
+                debug_actual.get("body"), (bytes, bytearray)
+            ):
+                debug_actual["body"] = {
+                    "encoding": "base64",
+                    "value": base64.b64encode(debug_actual["body"]).decode("ascii"),
+                }
+            print(f"  got.mcp.step: {stable_json(debug_actual)}", file=sys.stderr)
         else:
             print(f"  expected: {stable_json(expected)}", file=sys.stderr)
-            print(f"  got: {stable_json(debug_actual_for_expected(actual, expected))}", file=sys.stderr)
-            print(f"  expected.logs: {stable_json(fixture.get('expect', {}).get('logs') or [])}", file=sys.stderr)
+            print(
+                f"  got: {stable_json(debug_actual_for_expected(actual, expected))}",
+                file=sys.stderr,
+            )
+            print(
+                f"  expected.logs: {stable_json(fixture.get('expect', {}).get('logs') or [])}",
+                file=sys.stderr,
+            )
             print(f"  got.logs: {stable_json(app.logs)}", file=sys.stderr)
-            print(f"  expected.metrics: {stable_json(fixture.get('expect', {}).get('metrics') or [])}", file=sys.stderr)
+            print(
+                f"  expected.metrics: {stable_json(fixture.get('expect', {}).get('metrics') or [])}",
+                file=sys.stderr,
+            )
             print(f"  got.metrics: {stable_json(app.metrics)}", file=sys.stderr)
-            print(f"  expected.spans: {stable_json(fixture.get('expect', {}).get('spans') or [])}", file=sys.stderr)
+            print(
+                f"  expected.spans: {stable_json(fixture.get('expect', {}).get('spans') or [])}",
+                file=sys.stderr,
+            )
             print(f"  got.spans: {stable_json(app.spans)}", file=sys.stderr)
         failed.append(fixture)
 
@@ -4145,11 +5388,7 @@ def main() -> int:
             print(f"- {fixture['id']}", file=sys.stderr)
         return 1
 
-    skipped_mcp = sum(1 for fixture in fixtures if str(fixture.get("tier", "")).strip().lower() == "mcp")
-    if skipped_mcp:
-        print(f"contract-tests(py): PASS ({len(fixtures)} fixtures, skipped={skipped_mcp} mcp future-runtime fixtures)")
-    else:
-        print(f"contract-tests(py): PASS ({len(fixtures)} fixtures)")
+    print(f"contract-tests(py): PASS ({len(fixtures)} fixtures)")
     return 0
 
 
