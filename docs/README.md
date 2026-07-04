@@ -56,6 +56,7 @@ These pages are versioned with the docs contract, but they are not part of the i
 ## Sanctioned optional ingestible surfaces
 
 - [Migration Procedures](./migration/from-lift.md) and related files under `docs/migration/**`
+  `docs/migration-guide.md` is the canonical migration overview; `docs/migration/**` contains procedures and must not add a second `README.md` or `index.md` entrypoint.
 - [AppSync Lambda Resolver Recipe](./migration/appsync-lambda-resolvers.md)
 - [CDK Guides](./cdk/README.md) and related files under `docs/cdk/**`
 - [Feature Guides](./features/README.md) and related files under `docs/features/**`

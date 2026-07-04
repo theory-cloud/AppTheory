@@ -60,8 +60,9 @@ exclude:
   - "_decisions.yaml"
   - "_patterns.yaml"
   - "_contract.yaml"
+  - "development/planning/"    # planning corpus stays in repo, never published
   - "development/"             # out_of_scope per docs/_contract.yaml
-  - "planning/"                # out_of_scope per docs/_contract.yaml
+  - "planning/"                # planning corpus stays in repo, never published
   - "internal/"                # out_of_scope per docs/_contract.yaml
   - "archive/"                 # out_of_scope per docs/_contract.yaml
   - "PAY_THEORY_DOCUMENTATION_GUIDE.md"
