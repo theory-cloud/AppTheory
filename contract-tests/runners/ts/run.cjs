@@ -1395,6 +1395,9 @@ async function compareMicroVMRealContractFixture(fixture) {
   if (fixture.expect?.microvm_controller_route) {
     return await compareMicroVMControllerRouteFixture(fixture);
   }
+  if (fixture.expect?.microvm_execution_role) {
+    return await compareMicroVMExecutionRoleFixture(fixture);
+  }
 
   const runtime = await loadAppTheoryRuntime();
   const actual = validateMicroVMRealContractFixture(
@@ -1760,6 +1763,95 @@ async function compareMicroVMControllerRouteFixture(fixture) {
   }
 
   return { ok: true };
+}
+
+async function compareMicroVMExecutionRoleFixture(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const setup = normalizeMicroVMExecutionRoleSetup(
+    fixture.setup?.microvm_execution_role ?? {},
+  );
+  const expected = fixture.expect?.microvm_execution_role ?? {};
+  const actual = await runMicroVMExecutionRoleFixture(runtime, setup);
+  if (deepEqual(actual, expected)) return { ok: true };
+  return {
+    ok: false,
+    reason: "microvm_execution_role mismatch",
+    actual_microvm_execution_role: actual,
+    expected_microvm_execution_role: expected,
+  };
+}
+
+async function runMicroVMExecutionRoleFixture(runtime, setup) {
+  const envKey = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN";
+  const previous = process.env[envKey];
+  if (setup.execution_role_arn) {
+    process.env[envKey] = setup.execution_role_arn;
+  } else {
+    delete process.env[envKey];
+  }
+  try {
+    const now = new Date("2023-11-14T22:13:20.000Z");
+    const baseProvider = runtime.createFakeMicroVMProvider(now);
+    let providerExecutionRoleArn = "";
+    const provider = {
+      run: async (input) => {
+        providerExecutionRoleArn = String(input?.execution_role_arn ?? "");
+        return await baseProvider.run(input);
+      },
+      get: (input) => baseProvider.get(input),
+      list: (input) => baseProvider.list(input),
+      suspend: (input) => baseProvider.suspend(input),
+      resume: (input) => baseProvider.resume(input),
+      terminate: (input) => baseProvider.terminate(input),
+      createAuthToken: (input) => baseProvider.createAuthToken(input),
+      createShellToken: (input) => baseProvider.createShellToken(input),
+    };
+    const registry = runtime.createMemoryMicroVMSessionRegistry();
+    const controller = runtime.createRealMicroVMController(provider, registry, {
+      ids: { newID: () => setup.session_id },
+      clock: { now: () => new Date(now.valueOf()) },
+    });
+    const response = await controller.handle(
+      microVMControllerRouteRunRequest(runtime, setup),
+    );
+    if (response?.error) {
+      return {
+        valid: false,
+        error_code: String(response.error.code ?? ""),
+        error_message: String(response.error.message ?? ""),
+      };
+    }
+    return {
+      valid: true,
+      session_id: String(response.session_id ?? ""),
+      state: String(response.state ?? ""),
+      provider_execution_role_arn: providerExecutionRoleArn,
+    };
+  } catch (err) {
+    return {
+      valid: false,
+      error_code: String(err?.code ?? ""),
+      error_message: String(err?.message ?? String(err)),
+    };
+  } finally {
+    if (previous === undefined) {
+      delete process.env[envKey];
+    } else {
+      process.env[envKey] = previous;
+    }
+  }
+}
+
+function normalizeMicroVMExecutionRoleSetup(setup) {
+  return {
+    tenant_id: String(setup.tenant_id ?? "tenant-1").trim() || "tenant-1",
+    namespace:
+      String(setup.namespace ?? "namespace-1").trim() || "namespace-1",
+    session_id:
+      String(setup.session_id ?? "fixture-session").trim() ||
+      "fixture-session",
+    execution_role_arn: String(setup.execution_role_arn ?? "").trim(),
+  };
 }
 
 function normalizeMicroVMControllerRouteSetup(setup) {
@@ -5438,6 +5530,13 @@ async function main() {
         );
         console.error(
           `  got.microvm_contract_validation: ${stableStringify(result.actual_microvm_contract_validation)}`,
+        );
+      } else if ("expected_microvm_execution_role" in result) {
+        console.error(
+          `  expected.microvm_execution_role: ${stableStringify(result.expected_microvm_execution_role)}`,
+        );
+        console.error(
+          `  got.microvm_execution_role: ${stableStringify(result.actual_microvm_execution_role)}`,
         );
       } else {
         console.error(`  expected: ${stableStringify(result.expected)}`);

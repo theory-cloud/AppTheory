@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import types
 import unittest
@@ -1206,6 +1207,21 @@ class MicroVMLifecycleTests(unittest.TestCase):
                 {**token_dict, "allowed_port_scope": [{"all_ports": True, "port": 443}]},
             )
 
+    def test_execution_role_arn_validation_fails_closed(self) -> None:
+        _, run_dict, _, _, _ = self._provider_dict_inputs()
+        role_arn = "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole"
+        app.validate_microvm_provider_run_input({**run_dict, "execution_role_arn": f" {role_arn} "})
+        for unsafe in ["raw_sdk_client", "not-an-arn", "arn:aws:iam::123456789012:user/NotRole", f"{role_arn} bad"]:
+            with self.assertRaises(app.MicroVMSafeError):
+                app.validate_microvm_provider_run_input({**run_dict, "execution_role_arn": unsafe})
+
+        with self.assertRaises(app.MicroVMSafeError):
+            app.create_real_microvm_controller(
+                app.create_fake_microvm_provider(now=1.0),
+                app.create_memory_microvm_session_registry(),
+                execution_role_arn="not-an-arn",
+            )
+
     def test_fake_provider_error_paths_remain_sanitized(self) -> None:
         binding_dict, run_dict, session_dict, list_dict, token_dict = self._provider_dict_inputs()
         fake = app.create_fake_microvm_provider(now=1.0)
@@ -1319,6 +1335,32 @@ class MicroVMLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(app.STATE_TERMINATED, terminated.state)
 
+    def test_real_controller_carries_execution_role_from_environment(self) -> None:
+        role_arn = "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole"
+        base_provider = app.create_fake_microvm_provider(now=1.0)
+
+        class RecordingProvider:
+            execution_role_arn = ""
+
+            def run(self, input_: object) -> object:
+                self.execution_role_arn = str(getattr(input_, "execution_role_arn", "") or "")
+                return base_provider.run(input_)
+
+            def __getattr__(self, name: str) -> object:
+                return getattr(base_provider, name)
+
+        provider = RecordingProvider()
+        with patch.dict(os.environ, {app.MICROVM_ENV_EXECUTION_ROLE_ARN: role_arn}):
+            controller = app.create_real_microvm_controller(
+                provider,
+                app.create_memory_microvm_session_registry(),
+                id_generator=lambda: "session-role",
+                clock=lambda: 10.0,
+            )
+            run = controller.handle(self._controller_request())
+        self.assertIsNone(run.error)
+        self.assertEqual(role_arn, provider.execution_role_arn)
+
     def test_real_controller_route_adapter_enforces_auth_and_tenant_binding(self) -> None:
         provider = app.create_fake_microvm_provider(now=1.0)
         registry = app.create_memory_microvm_session_registry()
@@ -1401,7 +1443,8 @@ class MicroVMLifecycleTests(unittest.TestCase):
         clients: list[_OfficialMicroVMClientStub] = []
         with patch.dict(sys.modules, _fake_lambda_microvm_sdk_modules(self, clients, required_operations)):
             official = app.create_aws_lambda_microvm_provider(region_name="us-west-2", clock=lambda: -5.0)
-            official_run = official.run(run_dict)
+            role_arn = "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole"
+            official_run = official.run({**run_dict, "execution_role_arn": role_arn})
             official_binding = {**binding_dict, "provider_microvm_id": official_run.provider_microvm_id}
             official_session = {**session_dict, "binding": official_binding}
             self.assertEqual("session-1", official.get(official_session).session_id)
@@ -1420,6 +1463,7 @@ class MicroVMLifecycleTests(unittest.TestCase):
             self.assertEqual(
                 {"imageIdentifier": "image-ref", "imageVersion": "1", "maxResults": 5}, clients[0].calls[2][1]
             )
+            self.assertEqual(role_arn, clients[0].calls[0][1]["executionRoleArn"])
             self.assertEqual(
                 [{"allPorts": {}}, {"range": {"startPort": 8080, "endPort": 8081}}],
                 clients[0].calls[-2][1]["allowedPorts"],

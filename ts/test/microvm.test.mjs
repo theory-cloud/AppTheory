@@ -31,6 +31,7 @@ import {
   AWSLambdaMicroVMProvider,
   MICROVM_AWS_LAMBDA_PROVIDER_ID,
   MICROVM_DEFAULT_SESSION_PROVIDER_ID,
+  MICROVM_ENV_EXECUTION_ROLE_ARN,
   MICROVM_SESSION_REGISTRY_TABLE_ENV,
   createReconstructingMicroVMSessionRegistry,
   createAWSLambdaMicroVMClient,
@@ -1335,6 +1336,46 @@ test("microvm real controller uses canonical commands and stores only token meta
   assert.equal(terminated.state, MicroVMRealState.Terminated);
 });
 
+test("microvm real controller carries execution role from environment", async () => {
+  const roleArn = "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole";
+  const previous = process.env[MICROVM_ENV_EXECUTION_ROLE_ARN];
+  process.env[MICROVM_ENV_EXECUTION_ROLE_ARN] = roleArn;
+  try {
+    const baseProvider = createFakeMicroVMProvider(new Date(0));
+    let recordedExecutionRoleArn = "";
+    const provider = {
+      run: async (input) => {
+        recordedExecutionRoleArn = String(input.execution_role_arn ?? "");
+        return await baseProvider.run(input);
+      },
+      get: (input) => baseProvider.get(input),
+      list: (input) => baseProvider.list(input),
+      suspend: (input) => baseProvider.suspend(input),
+      resume: (input) => baseProvider.resume(input),
+      terminate: (input) => baseProvider.terminate(input),
+      createAuthToken: (input) => baseProvider.createAuthToken(input),
+      createShellToken: (input) => baseProvider.createShellToken(input),
+    };
+    const controller = createRealMicroVMController(
+      provider,
+      createMemoryMicroVMSessionRegistry(),
+      {
+        ids: { newID: () => "session-role" },
+        clock: { now: () => new Date(1000) },
+      },
+    );
+    const run = await controller.handle(controllerRequest());
+    assert.equal(run.error, undefined);
+    assert.equal(recordedExecutionRoleArn, roleArn);
+  } finally {
+    if (previous === undefined) {
+      delete process.env[MICROVM_ENV_EXECUTION_ROLE_ARN];
+    } else {
+      process.env[MICROVM_ENV_EXECUTION_ROLE_ARN] = previous;
+    }
+  }
+});
+
 test("microvm controller route adapter enforces auth and tenant binding", async () => {
   const provider = createFakeMicroVMProvider(new Date(0));
   const registry = createMemoryMicroVMSessionRegistry();
@@ -1466,7 +1507,13 @@ test("microvm AWS provider uses official command classes and sanitizes tokens", 
     },
   };
 
-  const run = await provider.run(providerRunInput({ session_id: "session-1" }));
+  const run = await provider.run(
+    providerRunInput({
+      session_id: "session-1",
+      execution_role_arn:
+        "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole",
+    }),
+  );
   const binding = {
     tenant_id: "tenant-1",
     namespace: "namespace-1",
@@ -1508,6 +1555,10 @@ test("microvm AWS provider uses official command classes and sanitizes tokens", 
     ],
   );
   assert.equal(sent[0].input.imageIdentifier, "image-ref");
+  assert.equal(
+    sent[0].input.executionRoleArn,
+    "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole",
+  );
   assert.deepEqual(sent.at(-2).input.allowedPorts, [{ port: 443 }]);
 });
 
