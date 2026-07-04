@@ -9309,7 +9309,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/app.ts",
-          "line": 46
+          "line": 65
         },
         "parameters": [
           {
@@ -9335,7 +9335,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/app.ts",
-        "line": 39
+        "line": 57
       },
       "name": "AppTheoryApp",
       "properties": [
@@ -9343,7 +9343,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 40
+            "line": 58
           },
           "name": "api",
           "type": {
@@ -9354,7 +9354,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 41
+            "line": 59
           },
           "name": "fn",
           "type": {
@@ -9365,7 +9365,19 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 42
+            "line": 63
+          },
+          "name": "alias",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.Alias"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 60
           },
           "name": "databaseTable",
           "optional": true,
@@ -9377,7 +9389,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 44
+            "line": 62
           },
           "name": "domain",
           "optional": true,
@@ -9389,7 +9401,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 43
+            "line": 61
           },
           "name": "rateLimitTable",
           "optional": true,
@@ -9407,7 +9419,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/app.ts",
-        "line": 13
+        "line": 20
       },
       "name": "AppTheoryAppProps",
       "properties": [
@@ -9416,7 +9428,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 14
+            "line": 21
           },
           "name": "appName",
           "type": {
@@ -9428,7 +9440,46 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 34
+            "line": 37
+          },
+          "name": "alias",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryFunctionAliasOptions"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 35
+          },
+          "name": "allowAllOutbound",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 36
+          },
+          "name": "allowPublicSubnet",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 49
           },
           "name": "certificateArn",
           "optional": true,
@@ -9441,7 +9492,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 16
+            "line": 23
           },
           "name": "code",
           "optional": true,
@@ -9454,7 +9505,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 15
+            "line": 22
           },
           "name": "codeAssetPath",
           "optional": true,
@@ -9467,7 +9518,29 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 26
+            "line": 51
+          },
+          "name": "cors",
+          "optional": true,
+          "type": {
+            "union": {
+              "types": [
+                {
+                  "primitive": "boolean"
+                },
+                {
+                  "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiCorsOptions"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 41
           },
           "name": "databasePartitionKey",
           "optional": true,
@@ -9480,7 +9553,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 27
+            "line": 42
           },
           "name": "databaseSortKey",
           "optional": true,
@@ -9493,7 +9566,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 28
+            "line": 43
           },
           "name": "databaseTable",
           "optional": true,
@@ -9506,7 +9579,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 25
+            "line": 40
           },
           "name": "databaseTableName",
           "optional": true,
@@ -9519,7 +9592,20 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 33
+            "line": 50
+          },
+          "name": "domain",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiDomainOptions"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 48
           },
           "name": "domainName",
           "optional": true,
@@ -9532,7 +9618,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 24
+            "line": 39
           },
           "name": "enableDatabase",
           "optional": true,
@@ -9545,7 +9631,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 30
+            "line": 45
           },
           "name": "enableRateLimiting",
           "optional": true,
@@ -9558,7 +9644,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 20
+            "line": 27
           },
           "name": "environment",
           "optional": true,
@@ -9576,7 +9662,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 18
+            "line": 25
           },
           "name": "handler",
           "optional": true,
@@ -9589,7 +9675,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 35
+            "line": 53
           },
           "name": "hostedZone",
           "optional": true,
@@ -9602,7 +9688,33 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 21
+            "line": 31
+          },
+          "name": "logGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.interfaces.aws_logs.ILogGroupRef"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 30
+          },
+          "name": "logRetention",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.RetentionDays"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 28
           },
           "name": "memorySize",
           "optional": true,
@@ -9615,7 +9727,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 31
+            "line": 46
           },
           "name": "rateLimitTableName",
           "optional": true,
@@ -9628,7 +9740,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 17
+            "line": 24
           },
           "name": "runtime",
           "optional": true,
@@ -9641,7 +9753,25 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 36
+            "line": 34
+          },
+          "name": "securityGroups",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_ec2.ISecurityGroup"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 54
           },
           "name": "stage",
           "optional": true,
@@ -9654,12 +9784,60 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/app.ts",
-            "line": 22
+            "line": 29
           },
           "name": "timeoutSeconds",
           "optional": true,
           "type": {
             "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 32
+          },
+          "name": "vpc",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_ec2.IVpc"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 33
+          },
+          "name": "vpcSubnets",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_ec2.SubnetSelection"
+          }
+        },
+        {
+          "abstract": true,
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/app.ts",
+            "line": 52
+          },
+          "name": "waf",
+          "optional": true,
+          "type": {
+            "union": {
+              "types": [
+                {
+                  "primitive": "boolean"
+                },
+                {
+                  "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiWafOptions"
+                }
+              ]
+            }
           }
         }
       ],
@@ -12667,7 +12845,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/function.ts",
-          "line": 10
+          "line": 122
         },
         "parameters": [
           {
@@ -12693,7 +12871,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/function.ts",
-        "line": 7
+        "line": 116
       },
       "name": "AppTheoryFunction",
       "properties": [
@@ -12701,11 +12879,47 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/function.ts",
-            "line": 8
+            "line": 117
           },
           "name": "fn",
           "type": {
             "fqn": "aws-cdk-lib.aws_lambda.Function"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 119
+          },
+          "name": "alias",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.Alias"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 120
+          },
+          "name": "deploymentGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_codedeploy.LambdaDeploymentGroup"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 118
+          },
+          "name": "logGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.interfaces.aws_logs.ILogGroupRef"
           }
         }
       ],
@@ -12838,6 +13052,232 @@
       ],
       "symbolId": "lib/function-alarms:AppTheoryFunctionAlarmsProps"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryFunctionAliasOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "Alias and provisioned-concurrency options for an AppTheory function."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryFunctionAliasOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/function.ts",
+        "line": 78
+      },
+      "name": "AppTheoryFunctionAliasOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Optional CodeDeploy traffic shifting for this alias."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 101
+          },
+          "name": "deployment",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryFunctionDeploymentOptions"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Alias description."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 89
+          },
+          "name": "description",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"live\"",
+            "summary": "Lambda alias name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 83
+          },
+          "name": "name",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Provisioned concurrency configured on the alias."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 95
+          },
+          "name": "provisionedConcurrentExecutions",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/function:AppTheoryFunctionAliasOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryFunctionDeploymentOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "summary": "CodeDeploy deployment preferences for an AppTheory Lambda alias."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryFunctionDeploymentOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/function.ts",
+        "line": 31
+      },
+      "name": "AppTheoryFunctionDeploymentOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[]",
+            "summary": "CloudWatch alarms that stop and roll back deployments."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 54
+          },
+          "name": "alarms",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "fqn": "aws-cdk-lib.aws_cloudwatch.IAlarm"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "CodeDeploy defaults",
+            "summary": "CodeDeploy auto-rollback configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 72
+          },
+          "name": "autoRollback",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_codedeploy.AutoRollbackConfig"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "Duration.minutes(5) for canary, Duration.minutes(1) for linear",
+            "summary": "Time between traffic shifts."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 48
+          },
+          "name": "interval",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "10",
+            "summary": "Percentage shifted at each canary or linear increment."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 42
+          },
+          "name": "percentage",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Lambda post-traffic hook."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 66
+          },
+          "name": "postHook",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Lambda pre-traffic hook."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 60
+          },
+          "name": "preHook",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_lambda.IFunction"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "AppTheoryLambdaTrafficShiftType.CANARY",
+            "summary": "Traffic shifting mode."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 36
+          },
+          "name": "trafficShiftType",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryLambdaTrafficShiftType"
+          }
+        }
+      ],
+      "symbolId": "lib/function:AppTheoryFunctionDeploymentOptions"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryFunctionProps": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "datatype": true,
@@ -12848,9 +13288,29 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/function.ts",
-        "line": 5
+        "line": 104
       },
       "name": "AppTheoryFunctionProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "When set, the alias points at the function's current version and can also\ncarry provisioned concurrency and CodeDeploy traffic shifting.",
+            "summary": "Optional AppTheory-managed Lambda alias."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/function.ts",
+            "line": 113
+          },
+          "name": "alias",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryFunctionAliasOptions"
+          }
+        }
+      ],
       "symbolId": "lib/function:AppTheoryFunctionProps"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryHostedZone": {
@@ -13168,7 +13628,7 @@
       "initializer": {
         "locationInModule": {
           "filename": "lib/http-api.ts",
-          "line": 14
+          "line": 208
         },
         "parameters": [
           {
@@ -13194,7 +13654,7 @@
       "kind": "class",
       "locationInModule": {
         "filename": "lib/http-api.ts",
-        "line": 11
+        "line": 200
       },
       "name": "AppTheoryHttpApi",
       "properties": [
@@ -13202,15 +13662,393 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 12
+            "line": 201
           },
           "name": "api",
           "type": {
             "fqn": "aws-cdk-lib.aws_apigatewayv2.HttpApi"
           }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 202
+          },
+          "name": "stage",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.IStage"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 203
+          },
+          "name": "accessLogGroup",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.ILogGroup"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 204
+          },
+          "name": "domain",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryApiDomain"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 206
+          },
+          "name": "wafAssociation",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_wafv2.CfnWebACLAssociation"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 205
+          },
+          "name": "webAcl",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_wafv2.CfnWebACL"
+          }
         }
       ],
       "symbolId": "lib/http-api:AppTheoryHttpApi"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryHttpApiCorsOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiCorsOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/http-api.ts",
+        "line": 13
+      },
+      "name": "AppTheoryHttpApiCorsOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Whether browsers may send credentials."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 42
+          },
+          "name": "allowCredentials",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[\"content-type\", \"authorization\", \"x-request-id\", \"x-tenant-id\"]",
+            "summary": "Allowed headers."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 30
+          },
+          "name": "allowHeaders",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[\"GET\", \"POST\", \"PUT\", \"DELETE\", \"PATCH\", \"HEAD\", \"OPTIONS\"]",
+            "summary": "Allowed HTTP methods."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 24
+          },
+          "name": "allowMethods",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[\"*\"]",
+            "summary": "Allowed origins."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 18
+          },
+          "name": "allowOrigins",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "[\"x-request-id\"]",
+            "summary": "Exposed response headers."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 36
+          },
+          "name": "exposeHeaders",
+          "optional": true,
+          "type": {
+            "collection": {
+              "elementtype": {
+                "primitive": "string"
+              },
+              "kind": "array"
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "Duration.minutes(10)",
+            "summary": "Browser preflight cache duration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 48
+          },
+          "name": "maxAge",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        }
+      ],
+      "symbolId": "lib/http-api:AppTheoryHttpApiCorsOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryHttpApiDomainOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiDomainOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/http-api.ts",
+        "line": 51
+      },
+      "name": "AppTheoryHttpApiDomainOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "summary": "Custom domain name, for example `api.example.com`."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 55
+          },
+          "name": "domainName",
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "API mapping key under the custom domain."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 79
+          },
+          "name": "apiMappingKey",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Provide either certificate or certificateArn.",
+            "summary": "ACM certificate for the domain."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 61
+          },
+          "name": "certificate",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_certificatemanager.ICertificate"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "remarks": "Provide either certificate or certificateArn.",
+            "summary": "ACM certificate ARN."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 67
+          },
+          "name": "certificateArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true when hostedZone is provided",
+            "summary": "Whether to create a CNAME when hostedZone is provided."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 91
+          },
+          "name": "createCname",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Route53 hosted zone for optional CNAME record creation."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 73
+          },
+          "name": "hostedZone",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_route53.IHostedZone"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Mutual TLS configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 103
+          },
+          "name": "mutualTlsAuthentication",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.MTLSConfig"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "Duration.seconds(300)",
+            "summary": "CNAME record TTL."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 97
+          },
+          "name": "recordTtl",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "API Gateway default",
+            "summary": "TLS security policy."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 109
+          },
+          "name": "securityPolicy",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.SecurityPolicy"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "this.stage",
+            "remarks": "Defaults to this construct's stage.",
+            "summary": "Stage to map."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 85
+          },
+          "name": "stage",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_apigatewayv2.IStage"
+          }
+        }
+      ],
+      "symbolId": "lib/http-api:AppTheoryHttpApiDomainOptions"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryHttpApiProps": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -13219,7 +14057,7 @@
       "kind": "interface",
       "locationInModule": {
         "filename": "lib/http-api.ts",
-        "line": 6
+        "line": 172
       },
       "name": "AppTheoryHttpApiProps",
       "properties": [
@@ -13228,7 +14066,7 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 7
+            "line": 173
           },
           "name": "handler",
           "type": {
@@ -13240,16 +14078,295 @@
           "immutable": true,
           "locationInModule": {
             "filename": "lib/http-api.ts",
-            "line": 8
+            "line": 174
           },
           "name": "apiName",
           "optional": true,
           "type": {
             "primitive": "string"
           }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "Set to true for AppTheory defaults.",
+            "summary": "CORS configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 179
+          },
+          "name": "cors",
+          "optional": true,
+          "type": {
+            "union": {
+              "types": [
+                {
+                  "primitive": "boolean"
+                },
+                {
+                  "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiCorsOptions"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Custom domain configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 185
+          },
+          "name": "domain",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiDomainOptions"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Stage configuration."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 191
+          },
+          "name": "stage",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiStageOptions"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "Set to true for an AppTheory-managed WebACL.",
+            "summary": "Regional WAF attachment."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 197
+          },
+          "name": "waf",
+          "optional": true,
+          "type": {
+            "union": {
+              "types": [
+                {
+                  "primitive": "boolean"
+                },
+                {
+                  "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiWafOptions"
+                }
+              ]
+            }
+          }
         }
       ],
       "symbolId": "lib/http-api:AppTheoryHttpApiProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryHttpApiStageOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiStageOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/http-api.ts",
+        "line": 112
+      },
+      "name": "AppTheoryHttpApiStageOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "false",
+            "summary": "Enable CloudWatch access logging or provide a log group."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 123
+          },
+          "name": "accessLogging",
+          "optional": true,
+          "type": {
+            "union": {
+              "types": [
+                {
+                  "primitive": "boolean"
+                },
+                {
+                  "fqn": "aws-cdk-lib.aws_logs.ILogGroup"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "logs.RetentionDays.ONE_MONTH",
+            "summary": "Retention period for an auto-created access log group."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 129
+          },
+          "name": "accessLogRetention",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_logs.RetentionDays"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"$default\"",
+            "summary": "Stage name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 117
+          },
+          "name": "stageName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Throttling burst limit."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 141
+          },
+          "name": "throttlingBurstLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Throttling rate limit."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 135
+          },
+          "name": "throttlingRateLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        }
+      ],
+      "symbolId": "lib/http-api:AppTheoryHttpApiStageOptions"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryHttpApiWafOptions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryHttpApiWafOptions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/http-api.ts",
+        "line": 144
+      },
+      "name": "AppTheoryHttpApiWafOptions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "derived from apiName",
+            "summary": "CloudWatch metric name for the WebACL."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 163
+          },
+          "name": "metricName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "derived from apiName",
+            "summary": "WebACL name when AppTheory creates one."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 157
+          },
+          "name": "name",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Optional request rate limit rule threshold per five-minute window."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 169
+          },
+          "name": "rateLimit",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "remarks": "When omitted, AppTheory creates a regional WebACL with AWS managed baseline rules.",
+            "summary": "Existing regional WAFv2 WebACL ARN to associate with the HTTP API stage."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/http-api.ts",
+            "line": 151
+          },
+          "name": "webAclArn",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/http-api:AppTheoryHttpApiWafOptions"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpoint": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -15465,6 +16582,40 @@
         }
       ],
       "symbolId": "lib/lambda-role:AppTheoryLambdaRoleProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryLambdaTrafficShiftType": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "docs": {
+        "summary": "Traffic shifting mode for AppTheory-managed Lambda aliases."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryLambdaTrafficShiftType",
+      "kind": "enum",
+      "locationInModule": {
+        "filename": "lib/function.ts",
+        "line": 11
+      },
+      "members": [
+        {
+          "docs": {
+            "summary": "Shift all traffic to the new version at once."
+          },
+          "name": "ALL_AT_ONCE"
+        },
+        {
+          "docs": {
+            "summary": "Shift one canary increment, wait, then shift the remaining traffic."
+          },
+          "name": "CANARY"
+        },
+        {
+          "docs": {
+            "summary": "Shift traffic in equal linear increments."
+          },
+          "name": "LINEAR"
+        }
+      ],
+      "name": "AppTheoryLambdaTrafficShiftType",
+      "symbolId": "lib/function:AppTheoryLambdaTrafficShiftType"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResource": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -19004,6 +20155,285 @@
       ],
       "symbolId": "lib/microvm-image:AppTheoryMicrovmRuntimeHooks"
     },
+    "@theory-cloud/apptheory-cdk.AppTheoryObservability": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "base": "constructs.Construct",
+      "docs": {
+        "summary": "Dashboard and alarms for AppTheory's first-party runtime metrics."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryObservability",
+      "initializer": {
+        "locationInModule": {
+          "filename": "lib/observability.ts",
+          "line": 118
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "type": {
+              "fqn": "constructs.Construct"
+            }
+          },
+          {
+            "name": "id",
+            "type": {
+              "primitive": "string"
+            }
+          },
+          {
+            "name": "props",
+            "optional": true,
+            "type": {
+              "fqn": "@theory-cloud/apptheory-cdk.AppTheoryObservabilityProps"
+            }
+          }
+        ]
+      },
+      "kind": "class",
+      "locationInModule": {
+        "filename": "lib/observability.ts",
+        "line": 110
+      },
+      "name": "AppTheoryObservability",
+      "properties": [
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 112
+          },
+          "name": "requestCount",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudwatch.IMetric"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 113
+          },
+          "name": "requestDuration",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudwatch.IMetric"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 116
+          },
+          "name": "requestDurationAlarm",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudwatch.Alarm"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 114
+          },
+          "name": "requestErrors",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudwatch.IMetric"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 115
+          },
+          "name": "requestErrorsAlarm",
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudwatch.Alarm"
+          }
+        },
+        {
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 111
+          },
+          "name": "dashboard",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.aws_cloudwatch.Dashboard"
+          }
+        }
+      ],
+      "symbolId": "lib/observability:AppTheoryObservability"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryObservabilityProps": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryObservabilityProps",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/observability.ts",
+        "line": 50
+      },
+      "name": "AppTheoryObservabilityProps",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "{ service: serviceName }",
+            "remarks": "Dashboard search widgets always use the full AppTheory EMF schema.",
+            "summary": "Optional precise dimensions for alarm metrics."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 68
+          },
+          "name": "alarmDimensions",
+          "optional": true,
+          "type": {
+            "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRequestMetricDimensions"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "true",
+            "summary": "Whether to create the dashboard."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 104
+          },
+          "name": "createDashboard",
+          "optional": true,
+          "type": {
+            "primitive": "boolean"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Dashboard name."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 74
+          },
+          "name": "dashboardName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "1",
+            "summary": "Alarm evaluation periods."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 98
+          },
+          "name": "evaluationPeriods",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"AppTheory\"",
+            "summary": "CloudWatch metric namespace emitted by AppTheory EMF sinks."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 55
+          },
+          "name": "metricNamespace",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "Duration.minutes(5)",
+            "summary": "Metric period."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 80
+          },
+          "name": "period",
+          "optional": true,
+          "type": {
+            "fqn": "aws-cdk-lib.Duration"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "1000",
+            "summary": "Request duration alarm threshold in milliseconds."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 92
+          },
+          "name": "requestDurationThresholdMs",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "1",
+            "summary": "Request error alarm threshold over the period."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 86
+          },
+          "name": "requestErrorThreshold",
+          "optional": true,
+          "type": {
+            "primitive": "number"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"apptheory\"",
+            "summary": "Service dimension emitted by the runtime."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 61
+          },
+          "name": "serviceName",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/observability:AppTheoryObservabilityProps"
+    },
     "@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontend": {
       "assembly": "@theory-cloud/apptheory-cdk",
       "base": "constructs.Construct",
@@ -20989,6 +22419,126 @@
         }
       ],
       "symbolId": "lib/remote-mcp-server:AppTheoryRemoteMcpServerProps"
+    },
+    "@theory-cloud/apptheory-cdk.AppTheoryRequestMetricDimensions": {
+      "assembly": "@theory-cloud/apptheory-cdk",
+      "datatype": true,
+      "docs": {
+        "remarks": "The runtime emits metrics in namespace `AppTheory` with metric names\n`RequestCount`, `RequestDuration`, and `RequestErrors`. EMF dimensions are:\n`service`, `method`, `path`, `status`, `tenant_id`, and `error_code`.",
+        "summary": "Dimensions for AppTheory EMF request metrics."
+      },
+      "fqn": "@theory-cloud/apptheory-cdk.AppTheoryRequestMetricDimensions",
+      "kind": "interface",
+      "locationInModule": {
+        "filename": "lib/observability.ts",
+        "line": 12
+      },
+      "name": "AppTheoryRequestMetricDimensions",
+      "properties": [
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Error code dimension."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 47
+          },
+          "name": "errorCode",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "HTTP method dimension."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 23
+          },
+          "name": "method",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "HTTP route/path dimension."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 29
+          },
+          "name": "path",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "\"apptheory\"",
+            "summary": "AppTheory service dimension."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 17
+          },
+          "name": "service",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "HTTP status dimension."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 35
+          },
+          "name": "status",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        },
+        {
+          "abstract": true,
+          "docs": {
+            "default": "undefined",
+            "summary": "Tenant id dimension."
+          },
+          "immutable": true,
+          "locationInModule": {
+            "filename": "lib/observability.ts",
+            "line": 41
+          },
+          "name": "tenantId",
+          "optional": true,
+          "type": {
+            "primitive": "string"
+          }
+        }
+      ],
+      "symbolId": "lib/observability:AppTheoryRequestMetricDimensions"
     },
     "@theory-cloud/apptheory-cdk.AppTheoryRestApi": {
       "assembly": "@theory-cloud/apptheory-cdk",
@@ -24585,5 +26135,5 @@
     }
   },
   "version": "1.15.2",
-  "fingerprint": "I8/SNO+jqx87HL/QwzuExWVgJOVrsUtLu+L9jt9kbQA="
+  "fingerprint": "uA4dZn2BiAh7H1E7nGtgO13oCqPg9ZRMw1AJXAvj5RQ="
 }
