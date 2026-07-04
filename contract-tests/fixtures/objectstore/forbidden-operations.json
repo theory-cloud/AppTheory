@@ -1,0 +1,66 @@
+{
+  "id": "objectstore.forbidden_operations.errors",
+  "tier": "objectstore",
+  "name": "List, presign, and multipart are forbidden object-store operations",
+  "setup": {
+    "objectstore": {
+      "backend": "fake"
+    }
+  },
+  "input": {
+    "objectstore": {
+      "steps": [
+        {
+          "name": "list-forbidden",
+          "operation": "list",
+          "bucket": "bucket-a",
+          "prefix": "objects/"
+        },
+        {
+          "name": "presign-forbidden",
+          "operation": "presign",
+          "ref": "s3://bucket-a/objects/alpha.txt"
+        },
+        {
+          "name": "multipart-forbidden",
+          "operation": "multipart",
+          "ref": "s3://bucket-a/objects/alpha.txt"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "output_json": {
+      "steps": [
+        {
+          "name": "list-forbidden",
+          "operation": "list",
+          "ok": false,
+          "error": {
+            "code": "objectstore.unsupported_operation",
+            "message": "objectstore: unsupported operation: list"
+          }
+        },
+        {
+          "name": "presign-forbidden",
+          "operation": "presign",
+          "ok": false,
+          "error": {
+            "code": "objectstore.unsupported_operation",
+            "message": "objectstore: unsupported operation: presign"
+          }
+        },
+        {
+          "name": "multipart-forbidden",
+          "operation": "multipart",
+          "ok": false,
+          "error": {
+            "code": "objectstore.unsupported_operation",
+            "message": "objectstore: unsupported operation: multipart"
+          }
+        }
+      ],
+      "calls": []
+    }
+  }
+}

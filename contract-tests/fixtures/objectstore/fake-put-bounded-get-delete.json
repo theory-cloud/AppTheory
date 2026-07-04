@@ -1,0 +1,162 @@
+{
+  "id": "objectstore.fake.put_bounded_get_delete",
+  "tier": "objectstore",
+  "name": "Fake object store put, bounded get, and delete semantics",
+  "setup": {
+    "objectstore": {
+      "backend": "fake"
+    }
+  },
+  "input": {
+    "objectstore": {
+      "steps": [
+        {
+          "name": "put-alpha",
+          "operation": "put",
+          "ref": "s3://apptheory-contract/objects/alpha.txt",
+          "payload": {
+            "encoding": "utf8",
+            "value": "hello objectstore"
+          },
+          "content_type": "text/plain; charset=utf-8",
+          "metadata": {
+            "sha256": "32e8d2f6e0b82230a39ff8d5e0af94a9d9a9c3e59da46ac637c3b9bb5a876c57"
+          }
+        },
+        {
+          "name": "get-too-small",
+          "operation": "get",
+          "ref": "s3://apptheory-contract/objects/alpha.txt",
+          "max_bytes": 5
+        },
+        {
+          "name": "get-versioned",
+          "operation": "get",
+          "ref": {
+            "bucket": "apptheory-contract",
+            "key": "objects/alpha.txt",
+            "version_id": "v00000000000000000001"
+          },
+          "max_bytes": 64
+        },
+        {
+          "name": "delete-alpha",
+          "operation": "delete",
+          "ref": "s3://apptheory-contract/objects/alpha.txt"
+        },
+        {
+          "name": "get-after-delete",
+          "operation": "get",
+          "ref": "s3://apptheory-contract/objects/alpha.txt",
+          "max_bytes": 64
+        }
+      ]
+    }
+  },
+  "expect": {
+    "output_json": {
+      "steps": [
+        {
+          "name": "put-alpha",
+          "operation": "put",
+          "ok": true,
+          "ref": {
+            "bucket": "apptheory-contract",
+            "key": "objects/alpha.txt",
+            "version_id": "v00000000000000000001"
+          }
+        },
+        {
+          "name": "get-too-small",
+          "operation": "get",
+          "ok": false,
+          "error": {
+            "code": "objectstore.object_too_large",
+            "message": "objectstore: object exceeds max bytes"
+          }
+        },
+        {
+          "name": "get-versioned",
+          "operation": "get",
+          "ok": true,
+          "ref": {
+            "bucket": "apptheory-contract",
+            "key": "objects/alpha.txt",
+            "version_id": "v00000000000000000001"
+          },
+          "payload": {
+            "encoding": "utf8",
+            "value": "hello objectstore"
+          },
+          "content_type": "text/plain; charset=utf-8",
+          "metadata": {
+            "sha256": "32e8d2f6e0b82230a39ff8d5e0af94a9d9a9c3e59da46ac637c3b9bb5a876c57"
+          }
+        },
+        {
+          "name": "delete-alpha",
+          "operation": "delete",
+          "ok": true
+        },
+        {
+          "name": "get-after-delete",
+          "operation": "get",
+          "ok": false,
+          "error": {
+            "code": "objectstore.not_found",
+            "message": "objectstore: object not found"
+          }
+        }
+      ],
+      "calls": [
+        {
+          "operation": "Put",
+          "ref": {
+            "bucket": "apptheory-contract",
+            "key": "objects/alpha.txt"
+          },
+          "payload": {
+            "encoding": "utf8",
+            "value": "hello objectstore"
+          },
+          "content_type": "text/plain; charset=utf-8",
+          "metadata": {
+            "sha256": "32e8d2f6e0b82230a39ff8d5e0af94a9d9a9c3e59da46ac637c3b9bb5a876c57"
+          }
+        },
+        {
+          "operation": "Get",
+          "ref": {
+            "bucket": "apptheory-contract",
+            "key": "objects/alpha.txt"
+          },
+          "max_bytes": 5
+        },
+        {
+          "operation": "Get",
+          "ref": {
+            "bucket": "apptheory-contract",
+            "key": "objects/alpha.txt",
+            "version_id": "v00000000000000000001"
+          },
+          "max_bytes": 64
+        },
+        {
+          "operation": "Delete",
+          "ref": {
+            "bucket": "apptheory-contract",
+            "key": "objects/alpha.txt"
+          }
+        },
+        {
+          "operation": "Get",
+          "ref": {
+            "bucket": "apptheory-contract",
+            "key": "objects/alpha.txt"
+          },
+          "max_bytes": 64
+        }
+      ]
+    }
+  }
+}
