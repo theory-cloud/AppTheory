@@ -1,6 +1,6 @@
 ---
 title: Contract Fixtures
-description: The 203 contract fixtures: Go, TypeScript, and Python execute all MCP, OAuth, and objectstore fixtures. # apptheory-fixture-count: 203
+description: "The 203 contract fixtures: Go, TypeScript, and Python execute all MCP, OAuth, and objectstore fixtures." # apptheory-fixture-count: 203
 ---
 
 # Contract Fixtures
