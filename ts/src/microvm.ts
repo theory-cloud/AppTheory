@@ -24,6 +24,8 @@ import type { Headers, Query, Response } from "./types.js";
 
 export const MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm";
 export const MICROVM_CONTRACT_VERSION = "m15.microvm/v1";
+export const MICROVM_ENV_EXECUTION_ROLE_ARN =
+  "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN";
 
 export const MICROVM_ERROR_INVALID_CONTRACT = "m15.microvm.invalid_contract";
 export const MICROVM_ERROR_RAW_SDK_ESCAPE_HATCH =
@@ -570,6 +572,7 @@ export interface MicroVMProviderRunInput {
   session_spec?: MicroVMSessionSpec;
   idle_policy?: MicroVMProviderIdlePolicy;
   maximum_duration_seconds?: number;
+  execution_role_arn?: string;
 }
 
 export interface MicroVMProviderSessionBinding {
@@ -2682,6 +2685,7 @@ export interface MicroVMControllerOptions {
   ids?: MicroVMIDGenerator;
   ttl_ms?: number;
   provider_id?: string;
+  execution_role_arn?: string;
 }
 
 export interface MicroVMClientCall {
@@ -4044,6 +4048,7 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
   private readonly registry: MicroVMSessionRegistry;
   private readonly controllerID: string;
   private readonly providerID: string;
+  private readonly executionRoleArn: string;
   private readonly clock: MicroVMClock;
   private readonly ids: MicroVMIDGenerator;
   private readonly ttlMs: number;
@@ -4075,6 +4080,20 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
     this.providerID =
       String(options.provider_id ?? "").trim() ||
       MICROVM_AWS_LAMBDA_PROVIDER_ID;
+    this.executionRoleArn = normalizeMicroVMExecutionRoleArn(
+      options.execution_role_arn ?? environmentMicroVMExecutionRoleArn(),
+    );
+    const executionRoleErr = validateMicroVMExecutionRoleArn(
+      this.executionRoleArn,
+      "",
+    );
+    if (executionRoleErr) {
+      throw safeError(
+        MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+        "apptheory: microvm execution role arn is invalid",
+        "",
+      );
+    }
     this.clock = options.clock ?? { now: () => new Date() };
     this.ids = options.ids ?? { newID: () => randomMicroVMSessionID() };
     const ttlMs = Math.trunc(Number(options.ttl_ms) || 0);
@@ -4176,6 +4195,9 @@ export class MicroVMRealController implements MicroVMControllerRouteTarget {
         session_spec: cloneMicroVMSessionSpec(requestWithSession.session_spec),
         maximum_duration_seconds: requestWithSession.maximum_duration_seconds,
       };
+      if (this.executionRoleArn) {
+        input.execution_role_arn = this.executionRoleArn;
+      }
       if (requestWithSession.idle_policy) {
         input.idle_policy = requestWithSession.idle_policy;
       }
@@ -5673,6 +5695,9 @@ export class AWSLambdaMicroVMProvider implements MicroVMProvider {
       };
       const egress = providerEgressConnectorRefs(normalized);
       if (egress.length > 0) commandInput.egressNetworkConnectors = egress;
+      if (normalized.execution_role_arn) {
+        commandInput.executionRoleArn = normalized.execution_role_arn;
+      }
       if ((normalized.ingress_network_connector_refs ?? []).length > 0) {
         commandInput.ingressNetworkConnectors = [
           ...(normalized.ingress_network_connector_refs ?? []),
@@ -6688,6 +6713,11 @@ function validateMicroVMProviderRunInputInternal(
     ...(normalized.ingress_network_connector_refs ?? []),
     ...(normalized.egress_network_connector_refs ?? []),
   ]);
+  const executionRoleErr = validateMicroVMExecutionRoleArn(
+    normalized.execution_role_arn ?? "",
+    normalized.request_id,
+  );
+  if (executionRoleErr) throw executionRoleErr;
   const policy = normalized.idle_policy;
   if (
     policy &&
@@ -6994,6 +7024,35 @@ function validateSafeMicroVMConnectorRefs(
   }
 }
 
+function validateMicroVMExecutionRoleArn(
+  value: string,
+  requestID: string,
+): MicroVMSafeError | null {
+  const arn = normalizeMicroVMExecutionRoleArn(value);
+  if (!arn) return null;
+  const safeErr = validateSafeMicroVMFieldValue(arn, requestID);
+  if (safeErr) return safeErr;
+  if (/\s/.test(arn) || !arn.startsWith("arn:") || !arn.includes(":role/")) {
+    return safeError(
+      MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+      "apptheory: microvm provider execution role arn is invalid",
+      requestID,
+    );
+  }
+  return null;
+}
+
+function normalizeMicroVMExecutionRoleArn(value: string): string {
+  return String(value ?? "").trim();
+}
+
+function environmentMicroVMExecutionRoleArn(): string {
+  if (typeof process === "undefined") return "";
+  return normalizeMicroVMExecutionRoleArn(
+    process.env?.[MICROVM_ENV_EXECUTION_ROLE_ARN] ?? "",
+  );
+}
+
 function normalizeMicroVMProviderRunInput(
   input: MicroVMProviderRunInput,
 ): MicroVMProviderRunInput {
@@ -7034,6 +7093,10 @@ function normalizeMicroVMProviderRunInput(
       Number(input.maximum_duration_seconds) || 0,
     );
   }
+  const executionRoleArn = normalizeMicroVMExecutionRoleArn(
+    input.execution_role_arn ?? "",
+  );
+  if (executionRoleArn) out.execution_role_arn = executionRoleArn;
   return out;
 }
 

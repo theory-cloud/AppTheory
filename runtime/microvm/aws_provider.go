@@ -108,6 +108,7 @@ func (p *AWSLambdaMicroVMProvider) Run(ctx context.Context, input ProviderRunInp
 		ImageIdentifier:          aws.String(input.ImageRef),
 		ClientToken:              aws.String(input.RequestID),
 		EgressNetworkConnectors:  providerEgressConnectors(input),
+		ExecutionRoleArn:         optionalString(input.ExecutionRoleArn),
 		ImageVersion:             optionalString(input.ImageVersion),
 		IngressNetworkConnectors: input.IngressNetworkConnectorRefs,
 		IdlePolicy:               awsIdlePolicy(input.IdlePolicy),

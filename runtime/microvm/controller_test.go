@@ -467,6 +467,24 @@ func TestRealControllerCommandsAndTokenSafety(t *testing.T) {
 	require.Equal(t, StateTerminated, terminated.State)
 }
 
+func TestRealControllerCarriesExecutionRoleFromEnvironment(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	t.Setenv(EnvExecutionRoleArn, "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole")
+	provider := newRealControllerProvider(now)
+	controller, err := NewRealController(
+		provider,
+		NewMemorySessionRegistry(),
+		WithControllerClock(fixedControllerClock{now: now}),
+		WithControllerIDGenerator(fixedControllerIDs{id: "session-role"}),
+	)
+	require.NoError(t, err)
+
+	run, err := controller.Handle(context.Background(), validRealControllerRequest(CommandRun, "req-role", ""))
+	require.NoError(t, err)
+	require.Nil(t, run.Error)
+	require.Equal(t, "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole", provider.lastRunExecutionRoleArn)
+}
+
 func TestRealControllerRoutesEnforceAuthAndBindings(t *testing.T) {
 	now := time.Unix(2000, 0).UTC()
 	registry := NewMemorySessionRegistry()
@@ -958,10 +976,11 @@ func (p invalidTokenProvider) CreateAuthToken(context.Context, ProviderTokenInpu
 }
 
 type realControllerProvider struct {
-	now      time.Time
-	next     int64
-	tokens   int64
-	sessions map[SessionKey]ProviderSession
+	now                     time.Time
+	next                    int64
+	tokens                  int64
+	lastRunExecutionRoleArn string
+	sessions                map[SessionKey]ProviderSession
 }
 
 func newRealControllerProvider(now time.Time) *realControllerProvider {
@@ -972,6 +991,7 @@ func (p *realControllerProvider) Run(_ context.Context, input ProviderRunInput) 
 	if err := ValidateProviderRunInput(input); err != nil {
 		return ProviderSession{}, err
 	}
+	p.lastRunExecutionRoleArn = input.ExecutionRoleArn
 	p.next++
 	session := ProviderSession{
 		TenantID:          input.TenantID,

@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm"
 MICROVM_CONTRACT_VERSION = "m15.microvm/v1"
+MICROVM_ENV_EXECUTION_ROLE_ARN = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN"
 
 MICROVM_ERROR_INVALID_CONTRACT = "m15.microvm.invalid_contract"
 MICROVM_ERROR_RAW_SDK_ESCAPE_HATCH = "m15.microvm.raw_sdk_escape_hatch"
@@ -1508,6 +1509,26 @@ def _validate_safe_field_value(value: str, request_id: str) -> MicroVMSafeError 
     return None
 
 
+def _validate_execution_role_arn(value: str, request_id: str) -> MicroVMSafeError | None:
+    arn = _normalize_execution_role_arn(value)
+    if not arn:
+        return None
+    safe_err = _validate_safe_field_value(arn, request_id)
+    if safe_err:
+        return safe_err
+    if any(ch.isspace() for ch in arn) or not arn.startswith("arn:") or ":role/" not in arn:
+        return _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm provider execution role arn is invalid",
+            request_id,
+        )
+    return None
+
+
+def _normalize_execution_role_arn(value: str | None) -> str:
+    return str(value or "").strip()
+
+
 def _forbidden_field_value(value: str) -> bool:
     normalized = str(value or "").strip().lower()
     return bool(normalized) and (
@@ -1708,6 +1729,7 @@ class MicroVMProviderRunInput:
     session_spec: MicroVMSessionSpec = field(default_factory=MicroVMSessionSpec)
     idle_policy: MicroVMProviderIdlePolicy | None = None
     maximum_duration_seconds: int = 0
+    execution_role_arn: str = ""
 
 
 @dataclass(slots=True)
@@ -3015,6 +3037,7 @@ class MicroVMRealController:
         clock: Callable[[], float] | None = None,
         id_generator: Callable[[], str] | None = None,
         ttl_seconds: int = 3600,
+        execution_role_arn: str | None = None,
     ) -> None:
         if provider is None:
             raise _safe_error(
@@ -3032,6 +3055,16 @@ class MicroVMRealController:
         self._registry = registry
         self._controller_id = str(controller_id or "").strip() or "apptheory-microvm-controller"
         self._provider_id = str(provider_id or "").strip() or MICROVM_AWS_LAMBDA_PROVIDER_ID
+        raw_execution_role_arn = (
+            os.environ.get(MICROVM_ENV_EXECUTION_ROLE_ARN, "") if execution_role_arn is None else execution_role_arn
+        )
+        self._execution_role_arn = _normalize_execution_role_arn(raw_execution_role_arn)
+        if _validate_execution_role_arn(self._execution_role_arn, ""):
+            raise _safe_error(
+                MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+                "apptheory: microvm execution role arn is invalid",
+                "",
+            )
         self._clock = clock or time.time
         self._ids = id_generator or _random_microvm_session_id
         self._ttl_seconds = int(ttl_seconds or 0) if int(ttl_seconds or 0) > 0 else 3600
@@ -3092,6 +3125,7 @@ class MicroVMRealController:
                     session_spec=_clone_session_spec(request.session_spec),
                     idle_policy=request.idle_policy,
                     maximum_duration_seconds=request.maximum_duration_seconds,
+                    execution_role_arn=self._execution_role_arn,
                 )
             )
             validate_microvm_provider_session(session)
@@ -4105,6 +4139,8 @@ class AWSLambdaMicroVMProvider:
             egress = _provider_egress_connectors(normalized)
             if egress:
                 payload["egressNetworkConnectors"] = egress
+            if normalized.execution_role_arn:
+                payload["executionRoleArn"] = normalized.execution_role_arn
             if normalized.ingress_network_connector_refs:
                 payload["ingressNetworkConnectors"] = list(normalized.ingress_network_connector_refs)
             if normalized.image_version:
@@ -4897,6 +4933,8 @@ def _validate_provider_run_input(input_: MicroVMProviderRunInput | dict[str, Any
             *normalized.egress_network_connector_refs,
         ],
     )
+    if err := _validate_execution_role_arn(normalized.execution_role_arn, normalized.request_id):
+        raise err
     if normalized.idle_policy is not None and (
         normalized.idle_policy.max_idle_duration_seconds <= 0 or normalized.idle_policy.suspended_duration_seconds <= 0
     ):
@@ -5125,6 +5163,7 @@ def _normalize_provider_run_input(value: MicroVMProviderRunInput | dict[str, Any
             session_spec=_clone_session_spec(value.session_spec),
             idle_policy=_normalize_provider_idle_policy(value.idle_policy),
             maximum_duration_seconds=int(value.maximum_duration_seconds or 0),
+            execution_role_arn=_normalize_execution_role_arn(value.execution_role_arn),
         )
     raw = value if isinstance(value, dict) else {}
     return MicroVMProviderRunInput(
@@ -5141,6 +5180,7 @@ def _normalize_provider_run_input(value: MicroVMProviderRunInput | dict[str, Any
         session_spec=_clone_session_spec(raw.get("session_spec") or {}),
         idle_policy=_normalize_provider_idle_policy(raw.get("idle_policy")),
         maximum_duration_seconds=int(raw.get("maximum_duration_seconds", 0) or 0),
+        execution_role_arn=_normalize_execution_role_arn(raw.get("execution_role_arn")),
     )
 
 
