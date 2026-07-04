@@ -3,12 +3,15 @@ import type { AppSyncResolverEvent } from "./aws-types.js";
 import { type Clock } from "./clock.js";
 import { type IdGenerator } from "./ids.js";
 import type { Headers, Query, Response, SourceProvenance } from "./types.js";
+/** Client shape used by WebSocketContext to manage API Gateway WebSocket connections. */
 export interface WebSocketManagementClientLike {
     postToConnection: (connectionId: string, data: Uint8Array) => void | Promise<void>;
     getConnection: (connectionId: string) => unknown | Promise<unknown>;
     deleteConnection: (connectionId: string) => void | Promise<void>;
 }
+/** Creates a WebSocket management client for an endpoint and Lambda context. */
 export type WebSocketClientFactory = (endpoint: string, ctx: unknown | null) => WebSocketManagementClientLike | Promise<WebSocketManagementClientLike>;
+/** AppSync resolver metadata exposed to AppTheory route handlers. */
 export declare class AppSyncContext {
     readonly fieldName: string;
     readonly parentTypeName: string;
@@ -33,6 +36,7 @@ export declare class AppSyncContext {
         rawEvent: AppSyncResolverEvent;
     });
 }
+/** Request-scoped context passed to HTTP, AppSync, and WebSocket handlers. */
 export declare class Context {
     readonly ctx: unknown | null;
     readonly request: {
@@ -73,20 +77,34 @@ export declare class Context {
         webSocket?: WebSocketContext | null;
         appSync?: AppSyncContext | null;
     });
+    /** Returns the request clock time using the configured clock. */
     now(): Date;
+    /** Returns a deterministic or production ID from the configured generator. */
     newId(): string;
+    /** Returns a route parameter by name, or an empty string when absent. */
     param(name: string): string;
+    /** Stores request-scoped middleware state by key. */
     set(key: string, value: unknown): void;
+    /** Returns request-scoped middleware state by key. */
     get(key: string): unknown;
+    /** Returns normalized source-provenance metadata for the request. */
     sourceProvenance(): SourceProvenance;
+    /** Returns the canonical source IP when the provider supplied one. */
     sourceIP(): string;
+    /** Returns the extracted trace ID for correlation, if present. */
     traceContextId(): string;
+    /** Decodes the request body as JSON after validating the content type. */
     jsonValue<T = unknown>(): T;
+    /** Returns WebSocket trigger metadata for WebSocket routes. */
     asWebSocket(): WebSocketContext | null;
+    /** Returns AppSync resolver metadata for AppSync routes. */
     asAppSync(): AppSyncContext | null;
 }
+/** AppTheory HTTP route handler. */
 export type Handler = (ctx: Context) => Response | Promise<Response>;
+/** Middleware that wraps an AppTheory HTTP handler. */
 export type Middleware = (ctx: Context, next: Handler) => Response | Promise<Response>;
+/** Context passed to non-HTTP event workload handlers. */
 export declare class EventContext {
     readonly ctx: unknown | null;
     requestId: string;
@@ -101,13 +119,20 @@ export declare class EventContext {
         requestId?: string;
         remainingMs?: number;
     });
+    /** Returns the event clock time using the configured clock. */
     now(): Date;
+    /** Returns a deterministic or production ID from the configured generator. */
     newId(): string;
+    /** Stores event-scoped middleware state by key. */
     set(key: string, value: unknown): void;
+    /** Returns event-scoped middleware state by key. */
     get(key: string): unknown;
 }
+/** Event workload handler for AppTheory event dispatch. */
 export type EventHandler = (ctx: EventContext, event: unknown) => unknown | Promise<unknown>;
+/** Middleware that wraps an AppTheory event workload handler. */
 export type EventMiddleware = (ctx: EventContext, event: unknown, next: () => unknown | Promise<unknown>) => unknown | Promise<unknown>;
+/** WebSocket trigger metadata and connection-management helpers. */
 export declare class WebSocketContext {
     readonly ctx: unknown | null;
     requestId: string;
@@ -139,10 +164,14 @@ export declare class WebSocketContext {
         body?: Uint8Array | Buffer | string | null;
         clientFactory?: WebSocketClientFactory | null;
     });
+    /** Returns the WebSocket request clock time using the configured clock. */
     now(): Date;
+    /** Returns a deterministic or production ID from the configured generator. */
     newId(): string;
     private _managementClient;
+    /** Sends bytes to the active WebSocket connection. */
     sendMessage(data: Uint8Array): Promise<void>;
+    /** Serializes a value as JSON and sends it to the connection. */
     sendJSONMessage(value: unknown): Promise<void>;
 }
 //# sourceMappingURL=context.d.ts.map
