@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -15,8 +16,10 @@ import (
 )
 
 const (
-	microVMContractVersionM16 = "m16.microvm/v1"
-	microVMKindOperation      = "operation"
+	microVMContractVersionM16      = "m16.microvm/v1"
+	microVMKindOperation           = "operation"
+	defaultMicroVMFixtureSessionID = "fixture-session"
+	envMicroVMFixtureExecutionRole = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN"
 )
 
 type microVMContractFixtureM16 struct {
@@ -34,6 +37,9 @@ func runFixtureM16(f Fixture) error {
 	}
 	if f.Expect.MicroVMControllerRoute != nil {
 		return compareMicroVMControllerRouteFixtureM16(f)
+	}
+	if f.Expect.MicroVMExecutionRole != nil {
+		return compareMicroVMExecutionRoleFixtureM16(f)
 	}
 
 	actual := validateMicroVMContractFixtureM16(f.Setup.MicroVMContract)
@@ -312,6 +318,125 @@ func newMicroVMRouteFixtureRuntime(setup FixtureMicroVMRouteSetup) (microVMRoute
 	return microVMRouteFixtureRuntime{app: app, registry: registry}, nil
 }
 
+func compareMicroVMExecutionRoleFixtureM16(f Fixture) error {
+	expected := f.Expect.MicroVMExecutionRole
+	if expected == nil {
+		return fmt.Errorf("fixture missing expect.microvm_execution_role")
+	}
+	setup := normalizeMicroVMExecutionRoleSetup(f.Setup.MicroVMExecutionRole)
+	actual := runMicroVMExecutionRoleFixtureM16(setup)
+	if !reflect.DeepEqual(*expected, actual) {
+		return fmt.Errorf("microvm_execution_role mismatch: expected %+v, got %+v", *expected, actual)
+	}
+	return nil
+}
+
+func runMicroVMExecutionRoleFixtureM16(setup FixtureMicroVMExecutionRoleSetup) FixtureMicroVMExecutionRole {
+	previous, hadPrevious := os.LookupEnv(envMicroVMFixtureExecutionRole)
+	if err := setMicroVMFixtureEnv(envMicroVMFixtureExecutionRole, setup.ExecutionRoleArn); err != nil {
+		return microVMExecutionRoleFromError(err)
+	}
+	defer restoreMicroVMFixtureEnv(envMicroVMFixtureExecutionRole, previous, hadPrevious)
+
+	now := time.Unix(1700000000, 0).UTC()
+	provider := &microVMExecutionRoleFixtureProvider{
+		microVMRouteFixtureProvider: newMicroVMRouteFixtureProvider(now),
+	}
+	registry := runtimemicrovm.NewMemorySessionRegistry()
+	controller, err := runtimemicrovm.NewRealController(
+		provider,
+		registry,
+		runtimemicrovm.WithControllerClock(microVMRouteFixtureClock{now: now}),
+		runtimemicrovm.WithControllerIDGenerator(microVMRouteFixtureIDs{id: setup.SessionID}),
+	)
+	if err != nil {
+		return microVMExecutionRoleFromError(err)
+	}
+	response, err := controller.Handle(context.Background(), microVMRouteFixtureRunRequest(FixtureMicroVMRouteSetup{
+		TenantID:  setup.TenantID,
+		Namespace: setup.Namespace,
+		SessionID: setup.SessionID,
+	}))
+	if err != nil {
+		return microVMExecutionRoleFromError(err)
+	}
+	if response.Error != nil {
+		return FixtureMicroVMExecutionRole{
+			Valid:        false,
+			ErrorCode:    response.Error.Code,
+			ErrorMessage: response.Error.Message,
+		}
+	}
+	return FixtureMicroVMExecutionRole{
+		Valid:                    true,
+		SessionID:                response.SessionID,
+		State:                    string(response.State),
+		ProviderExecutionRoleArn: provider.lastRunExecutionRoleArn,
+	}
+}
+
+func normalizeMicroVMExecutionRoleSetup(setup FixtureMicroVMExecutionRoleSetup) FixtureMicroVMExecutionRoleSetup {
+	setup.TenantID = strings.TrimSpace(setup.TenantID)
+	if setup.TenantID == "" {
+		setup.TenantID = "tenant-1"
+	}
+	setup.Namespace = strings.TrimSpace(setup.Namespace)
+	if setup.Namespace == "" {
+		setup.Namespace = "namespace-1"
+	}
+	setup.SessionID = strings.TrimSpace(setup.SessionID)
+	if setup.SessionID == "" {
+		setup.SessionID = defaultMicroVMFixtureSessionID
+	}
+	setup.ExecutionRoleArn = strings.TrimSpace(setup.ExecutionRoleArn)
+	return setup
+}
+
+func microVMExecutionRoleFromError(err error) FixtureMicroVMExecutionRole {
+	var safe runtimemicrovm.SafeError
+	if errors.As(err, &safe) {
+		return FixtureMicroVMExecutionRole{Valid: false, ErrorCode: safe.Code, ErrorMessage: safe.Message}
+	}
+	return FixtureMicroVMExecutionRole{Valid: false, ErrorMessage: err.Error()}
+}
+
+type microVMExecutionRoleFixtureProvider struct {
+	*microVMRouteFixtureProvider
+	lastRunExecutionRoleArn string
+}
+
+func (p *microVMExecutionRoleFixtureProvider) Run(ctx context.Context, input runtimemicrovm.ProviderRunInput) (runtimemicrovm.ProviderSession, error) {
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return runtimemicrovm.ProviderSession{}, err
+	}
+	fields := map[string]any{}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return runtimemicrovm.ProviderSession{}, err
+	}
+	p.lastRunExecutionRoleArn = stringValue(fields["execution_role_arn"])
+	return p.microVMRouteFixtureProvider.Run(ctx, input)
+}
+
+func setMicroVMFixtureEnv(key string, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return os.Unsetenv(key)
+	}
+	return os.Setenv(key, value)
+}
+
+func restoreMicroVMFixtureEnv(key string, previous string, hadPrevious bool) {
+	if hadPrevious {
+		if err := os.Setenv(key, previous); err != nil {
+			panic(err)
+		}
+		return
+	}
+	if err := os.Unsetenv(key); err != nil {
+		panic(err)
+	}
+}
+
 func compareMicroVMRouteResponse(expected FixtureMicroVMControllerRoute, actual apptheory.Response) (map[string]any, error) {
 	if expected.Status != actual.Status {
 		return nil, fmt.Errorf("microvm_controller_route status: expected %d, got %d", expected.Status, actual.Status)
@@ -404,7 +529,7 @@ func normalizeMicroVMRouteSetup(setup FixtureMicroVMRouteSetup) FixtureMicroVMRo
 	}
 	setup.SessionID = strings.TrimSpace(setup.SessionID)
 	if setup.SessionID == "" {
-		setup.SessionID = "fixture-session"
+		setup.SessionID = defaultMicroVMFixtureSessionID
 	}
 	return setup
 }
@@ -467,7 +592,7 @@ type microVMRouteFixtureIDs struct{ id string }
 
 func (g microVMRouteFixtureIDs) NewID() string {
 	if strings.TrimSpace(g.id) == "" {
-		return "fixture-session"
+		return defaultMicroVMFixtureSessionID
 	}
 	return strings.TrimSpace(g.id)
 }

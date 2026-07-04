@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import sys
 import threading
 import time
@@ -1129,6 +1130,8 @@ def compare_microvm_real_contract_fixture(
         return compare_microvm_real_lifecycle_adapter_fixture(fixture)
     if "microvm_controller_route" in (fixture.get("expect") or {}):
         return compare_microvm_controller_route_fixture(fixture)
+    if "microvm_execution_role" in (fixture.get("expect") or {}):
+        return compare_microvm_execution_role_fixture(fixture)
 
     actual = validate_microvm_real_contract_fixture((fixture.get("setup") or {}).get("microvm_contract"))
     expected = (fixture.get("expect") or {}).get("microvm_contract_validation")
@@ -1385,6 +1388,89 @@ def compare_microvm_controller_route_fixture(
                 )
 
     return True, "", actual, expected, _DummyEffectsApp()
+
+
+def compare_microvm_execution_role_fixture(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, dict[str, Any], dict[str, Any], _DummyEffectsApp]:
+    runtime = _load_apptheory_runtime()
+    setup = normalize_microvm_execution_role_setup((fixture.get("setup") or {}).get("microvm_execution_role") or {})
+    expected = (fixture.get("expect") or {}).get("microvm_execution_role") or {}
+    actual = run_microvm_execution_role_fixture(runtime, setup)
+    if actual == expected:
+        return True, "", actual, expected, _DummyEffectsApp()
+    return False, "microvm_execution_role mismatch", actual, expected, _DummyEffectsApp()
+
+
+def run_microvm_execution_role_fixture(runtime: Any, setup: dict[str, Any]) -> dict[str, Any]:
+    env_key = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN"
+    previous = os.environ.get(env_key)
+    if setup["execution_role_arn"]:
+        os.environ[env_key] = setup["execution_role_arn"]
+    else:
+        os.environ.pop(env_key, None)
+    try:
+        base_provider = runtime.create_fake_microvm_provider(now=1_700_000_000.0)
+        provider = _ExecutionRoleRecordingProvider(base_provider)
+        registry = runtime.create_memory_microvm_session_registry()
+        controller = runtime.create_real_microvm_controller(
+            provider,
+            registry,
+            id_generator=lambda: setup["session_id"],
+            clock=lambda: 1_700_000_000.0,
+        )
+        response = controller.handle(microvm_controller_route_run_request(runtime, setup))
+        if getattr(response, "error", None):
+            return {
+                "valid": False,
+                "error_code": str(response.error.code or ""),
+                "error_message": str(response.error.message or ""),
+            }
+        return {
+            "valid": True,
+            "session_id": str(response.session_id or ""),
+            "state": str(response.state or ""),
+            "provider_execution_role_arn": provider.execution_role_arn,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "valid": False,
+            "error_code": str(getattr(exc, "code", "")),
+            "error_message": str(getattr(exc, "message", str(exc))),
+        }
+    finally:
+        if previous is None:
+            os.environ.pop(env_key, None)
+        else:
+            os.environ[env_key] = previous
+
+
+class _ExecutionRoleRecordingProvider:
+    def __init__(self, base_provider: Any) -> None:
+        self._base_provider = base_provider
+        self.execution_role_arn = ""
+
+    def run(self, input_: Any) -> Any:
+        if isinstance(input_, dict):
+            self.execution_role_arn = str(input_.get("execution_role_arn") or "")
+        else:
+            self.execution_role_arn = str(getattr(input_, "execution_role_arn", "") or "")
+        return self._base_provider.run(input_)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._base_provider, name)
+
+
+def normalize_microvm_execution_role_setup(setup: dict[str, Any]) -> dict[str, Any]:
+    tenant_id = str(setup.get("tenant_id") or "tenant-1").strip() or "tenant-1"
+    namespace = str(setup.get("namespace") or "namespace-1").strip() or "namespace-1"
+    session_id = str(setup.get("session_id") or "fixture-session").strip() or "fixture-session"
+    return {
+        "tenant_id": tenant_id,
+        "namespace": namespace,
+        "session_id": session_id,
+        "execution_role_arn": str(setup.get("execution_role_arn") or "").strip(),
+    }
 
 
 def normalize_microvm_controller_route_setup(setup: dict[str, Any]) -> dict[str, Any]:
@@ -3591,6 +3677,9 @@ def main() -> int:
         elif "microvm_contract_validation" in expect_obj:
             print(f"  expected.microvm_contract_validation: {stable_json(expected)}", file=sys.stderr)
             print(f"  got.microvm_contract_validation: {stable_json(actual)}", file=sys.stderr)
+        elif "microvm_execution_role" in expect_obj:
+            print(f"  expected.microvm_execution_role: {stable_json(expected)}", file=sys.stderr)
+            print(f"  got.microvm_execution_role: {stable_json(actual)}", file=sys.stderr)
         else:
             print(f"  expected: {stable_json(expected)}", file=sys.stderr)
             print(f"  got: {stable_json(debug_actual_for_expected(actual, expected))}", file=sys.stderr)

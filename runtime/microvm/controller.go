@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"os"
 	"strings"
 	"time"
 )
@@ -13,6 +14,11 @@ const (
 	ErrorCodeInvalidControllerRequest = "m15.microvm.invalid_controller_request"
 	// ErrorCodeControllerCommandFailed reports a sanitized client command failure.
 	ErrorCodeControllerCommandFailed = "m15.microvm.controller_command_failed"
+)
+
+const (
+	// EnvExecutionRoleArn names the optional IAM role ARN passed to AWS Lambda MicroVMs during execution.
+	EnvExecutionRoleArn = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN"
 )
 
 // Command names a constrained MicroVM controller command.
@@ -121,14 +127,15 @@ type Client interface {
 
 // Controller handles constrained MicroVM control-plane commands.
 type Controller struct {
-	client       Client
-	provider     Provider
-	registry     SessionRegistry
-	controllerID string
-	providerID   string
-	clock        Clock
-	ids          IDGenerator
-	ttl          time.Duration
+	client           Client
+	provider         Provider
+	registry         SessionRegistry
+	controllerID     string
+	providerID       string
+	executionRoleArn string
+	clock            Clock
+	ids              IDGenerator
+	ttl              time.Duration
 }
 
 // ControllerOption configures a Controller.
@@ -185,6 +192,13 @@ func WithControllerProviderID(providerID string) ControllerOption {
 	}
 }
 
+// WithControllerExecutionRoleArn sets the optional IAM role ARN passed to provider RunMicrovm requests.
+func WithControllerExecutionRoleArn(executionRoleArn string) ControllerOption {
+	return func(controller *Controller) {
+		controller.executionRoleArn = strings.TrimSpace(executionRoleArn)
+	}
+}
+
 // NewController creates a fail-closed MicroVM controller.
 func NewController(client Client, opts ...ControllerOption) (*Controller, error) {
 	if client == nil {
@@ -215,18 +229,22 @@ func NewRealController(provider Provider, registry SessionRegistry, opts ...Cont
 		return nil, safeError(ErrorCodeSessionRegistryIncomplete, "apptheory: microvm controller requires a session registry", "")
 	}
 	controller := &Controller{
-		provider:     provider,
-		registry:     registry,
-		controllerID: "apptheory-microvm-controller",
-		providerID:   AWSLambdaMicroVMProviderID,
-		clock:        realClock{},
-		ids:          randomIDGenerator{},
-		ttl:          defaultSessionRegistryTTL,
+		provider:         provider,
+		registry:         registry,
+		controllerID:     "apptheory-microvm-controller",
+		providerID:       AWSLambdaMicroVMProviderID,
+		executionRoleArn: strings.TrimSpace(os.Getenv(EnvExecutionRoleArn)),
+		clock:            realClock{},
+		ids:              randomIDGenerator{},
+		ttl:              defaultSessionRegistryTTL,
 	}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(controller)
 		}
+	}
+	if err := validateExecutionRoleArn(controller.executionRoleArn, ""); err != nil {
+		return nil, safeError(ErrorCodeInvalidControllerRequest, "apptheory: microvm execution role arn is invalid", "")
 	}
 	return controller, nil
 }
@@ -409,6 +427,7 @@ func (c *Controller) handleRealRun(ctx context.Context, request ControllerReques
 		SessionSpec:                 cloneSessionSpec(request.SessionSpec),
 		IdlePolicy:                  request.IdlePolicy,
 		MaximumDurationSeconds:      request.MaximumDurationSeconds,
+		ExecutionRoleArn:            c.executionRoleArn,
 	})
 	if err != nil {
 		safe := asSafeError(err, request.RequestID)
