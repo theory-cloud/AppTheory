@@ -9,6 +9,8 @@ from apptheory.util import normalize_path
 
 @dataclass(slots=True)
 class Match:
+    """Resolved route match including the handler, path params, and auth flag."""
+
     handler: Any
     params: dict[str, str]
     auth_required: bool
@@ -28,13 +30,17 @@ class _Route:
 
 
 class Router:
+    """Fail-closed HTTP route matcher used by the AppTheory runtime."""
+
     def __init__(self) -> None:
         self._routes: list[_Route] = []
 
     def add(self, method: str, pattern: str, handler: Any, *, auth_required: bool = False) -> None:
+        """Register a route using the fail-closed route-registration path."""
         self.add_strict(method, pattern, handler, auth_required=auth_required)
 
     def add_strict(self, method: str, pattern: str, handler: Any, *, auth_required: bool = False) -> None:
+        """Register a route through the deprecated strict compatibility path."""
         if handler is None:
             raise _route_registration_error("route handler is nil")
 
@@ -59,6 +65,7 @@ class Router:
         )
 
     def match(self, method: str, path: str) -> tuple[Match | None, list[str]]:
+        """Match an HTTP method and path against registered routes."""
         method_value = str(method or "").strip().upper()
         path_segments = _split_path(normalize_path(path))
 
@@ -80,6 +87,7 @@ class Router:
 
     @staticmethod
     def format_allow_header(methods: list[str]) -> str:
+        """Format unique HTTP methods for an Allow response header."""
         unique = {str(m or "").strip().upper() for m in methods if str(m or "").strip()}
         return ", ".join(sorted(unique))
 

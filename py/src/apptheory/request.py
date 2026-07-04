@@ -12,6 +12,8 @@ from apptheory.util import canonicalize_headers, clone_query, normalize_path, pa
 
 @dataclass(slots=True)
 class Request:
+    """Normalized AppTheory request consumed by the runtime."""
+
     method: str
     path: str
     query: dict[str, list[str]] = field(default_factory=dict)
@@ -24,6 +26,7 @@ class Request:
 
 
 def normalize_request(req: Request) -> Request:
+    """Normalize a request without enforcing a byte limit."""
     return normalize_request_with_max_bytes(req, 0)
 
 
@@ -57,6 +60,7 @@ def _validated_base64_decoded_length(body: bytes) -> int:
 
 
 def normalize_request_with_max_bytes(req: Request, max_request_bytes: int = 0) -> Request:
+    """Normalize a request and fail closed when the decoded body exceeds the limit."""
     method = str(req.method or "").strip().upper()
     path = normalize_path(req.path)
     query = clone_query(req.query)
