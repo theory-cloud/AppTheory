@@ -364,3 +364,215 @@ def _cloudwatch_logs_subscription_log_event_timestamp(value: Any) -> int:
     if isinstance(value, float) and math.isfinite(value):
         return int(value)
     return 0
+
+
+@dataclass(slots=True)
+class McpTestSSEFrame:
+    id: str = ""
+    data: str = ""
+    event: str = ""
+
+
+@dataclass(slots=True)
+class McpTestResult:
+    response: Response
+    body: bytes
+    body_json: Any | None
+    sse_frames: list[McpTestSSEFrame]
+
+
+class _FixedIdGenerator:
+    def __init__(self, id: str) -> None:
+        self.id = str(id)
+
+    def new_id(self) -> str:
+        return self.id
+
+
+class McpTestHarness:
+    app: App
+    server: Any
+    path: str
+
+    def __init__(self, server: Any, *, path: str = "/mcp", app_id_generator: IdGenerator | None = None) -> None:
+        from apptheory.mcp import MCP_HEADER_LAST_EVENT_ID, MCP_HEADER_PROTOCOL_VERSION, MCP_HEADER_SESSION_ID
+
+        self._mcp_session_header = MCP_HEADER_SESSION_ID
+        self._mcp_protocol_header = MCP_HEADER_PROTOCOL_VERSION
+        self._mcp_last_event_header = MCP_HEADER_LAST_EVENT_ID
+        self.server = server
+        self.path = _normalize_mcp_test_path(path)
+        self.app = create_app(id_generator=app_id_generator or _FixedIdGenerator("req_mcp_test"))
+        handler = server.handler()
+        self.app.post(self.path, handler)
+        self.app.get(self.path, handler)
+        self.app.delete(self.path, handler)
+
+    def invoke(
+        self,
+        *,
+        method: str = "POST",
+        path: str = "",
+        headers: dict[str, Any] | None = None,
+        body: bytes | str | None = None,
+        body_json: Any | None = None,
+        session_id: str = "",
+        protocol_version: str = "",
+        last_event_id: str = "",
+    ) -> McpTestResult:
+        request = self.request(
+            method=method,
+            path=path,
+            headers=headers,
+            body=body,
+            body_json=body_json,
+            session_id=session_id,
+            protocol_version=protocol_version,
+            last_event_id=last_event_id,
+        )
+        response = self.app.serve(request)
+        response_body = _mcp_response_body_bytes(response)
+        parsed: Any | None = None
+        if _mcp_has_json_response(response) and response_body:
+            parsed = jsonlib.loads(response_body.decode("utf-8"))
+        return McpTestResult(
+            response=response,
+            body=response_body,
+            body_json=parsed,
+            sse_frames=parse_mcp_test_sse_frames(response_body),
+        )
+
+    def initialize(self, *, id: str | int = "init", protocol_version: str = "") -> McpTestResult:
+        from apptheory.mcp import MCP_PROTOCOL_VERSION
+
+        return self.invoke(
+            body_json={
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "initialize",
+                "params": {"protocolVersion": protocol_version or MCP_PROTOCOL_VERSION},
+            }
+        )
+
+    def call(self, session_id: str, method: str, params: Any | None = None, id: str | int = "call") -> McpTestResult:
+        return self.invoke(
+            session_id=session_id,
+            body_json={"jsonrpc": "2.0", "id": id, "method": method, "params": params or {}},
+        )
+
+    def request(
+        self,
+        *,
+        method: str = "POST",
+        path: str = "",
+        headers: dict[str, Any] | None = None,
+        body: bytes | str | None = None,
+        body_json: Any | None = None,
+        session_id: str = "",
+        protocol_version: str = "",
+        last_event_id: str = "",
+    ) -> Request:
+        from apptheory.mcp import MCP_PROTOCOL_VERSION
+
+        normalized_method = str(method or "POST").strip().upper()
+        out_headers = _canonical_mcp_test_headers(headers or {})
+        if normalized_method == "POST":
+            _set_mcp_default_header(out_headers, "content-type", "application/json")
+            _set_mcp_default_header(out_headers, "accept", "application/json, text/event-stream")
+        if normalized_method == "GET":
+            _set_mcp_default_header(out_headers, "accept", "text/event-stream")
+        if session_id:
+            out_headers[self._mcp_session_header] = [str(session_id)]
+        out_headers[self._mcp_protocol_header] = [str(protocol_version or MCP_PROTOCOL_VERSION)]
+        if last_event_id:
+            out_headers[self._mcp_last_event_header] = [str(last_event_id)]
+        if body_json is not None:
+            raw_body = jsonlib.dumps(body_json, separators=(",", ":")).encode("utf-8")
+        elif body is not None:
+            raw_body = body if isinstance(body, bytes) else str(body).encode("utf-8")
+        else:
+            raw_body = b""
+        return Request(
+            method=normalized_method,
+            path=_normalize_mcp_test_path(path or self.path),
+            headers=out_headers,
+            body=raw_body,
+            is_base64=False,
+        )
+
+
+def create_mcp_test_harness(
+    server: Any, *, path: str = "/mcp", app_id_generator: IdGenerator | None = None
+) -> McpTestHarness:
+    return McpTestHarness(server, path=path, app_id_generator=app_id_generator)
+
+
+def fixed_mcp_id_generator(id: str) -> IdGenerator:
+    return _FixedIdGenerator(id)
+
+
+def sequence_mcp_id_generator(ids: list[str], fallback_prefix: str = "mcp-id") -> ManualIdGenerator:
+    generator = ManualIdGenerator(prefix=fallback_prefix)
+    generator.push(*ids)
+    return generator
+
+
+def parse_mcp_test_sse_frames(body: bytes | bytearray | str) -> list[McpTestSSEFrame]:
+    text_body = body.decode("utf-8") if isinstance(body, bytes | bytearray) else str(body or "")
+    if "data: " not in text_body and "id: " not in text_body:
+        return []
+    frames: list[McpTestSSEFrame] = []
+    for raw_chunk in text_body.split("\n\n"):
+        chunk = raw_chunk.strip("\n")
+        if not chunk.strip():
+            continue
+        frame = McpTestSSEFrame()
+        data_lines: list[str] = []
+        for line in chunk.split("\n"):
+            if line.startswith(":"):
+                continue
+            if line.startswith("id: "):
+                frame.id = line[4:].strip()
+            elif line.startswith("event: "):
+                frame.event = line[7:].strip()
+            elif line.startswith("data: "):
+                data_lines.append(line[6:])
+        frame.data = "\n".join(data_lines)
+        frames.append(frame)
+    return frames
+
+
+def _normalize_mcp_test_path(path: str) -> str:
+    value = str(path or "/mcp").strip() or "/mcp"
+    return value if value.startswith("/") else f"/{value}"
+
+
+def _canonical_mcp_test_headers(headers: dict[str, Any]) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for key, values in (headers or {}).items():
+        normalized = str(key or "").strip().lower()
+        if not normalized:
+            continue
+        out[normalized] = [str(v) for v in values] if isinstance(values, list) else [str(values)]
+    return out
+
+
+def _set_mcp_default_header(headers: dict[str, list[str]], key: str, value: str) -> None:
+    normalized = key.lower()
+    if not headers.get(normalized):
+        headers[normalized] = [value]
+
+
+def _mcp_response_body_bytes(response: Response) -> bytes:
+    parts: list[bytes] = []
+    if response.body:
+        parts.append(bytes(response.body))
+    if response.body_stream is not None:
+        parts.extend(bytes(chunk or b"") for chunk in response.body_stream)
+    return b"".join(parts)
+
+
+def _mcp_has_json_response(response: Response) -> bool:
+    return any(
+        str(value).lower().startswith("application/json") for value in (response.headers or {}).get("content-type", [])
+    )

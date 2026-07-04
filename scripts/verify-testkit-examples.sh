@@ -19,5 +19,6 @@ node --check examples/mcp/tools-only-ts/server.mjs
 node --check examples/mcp/tools-only-ts/server.test.mjs
 node examples/mcp/tools-only-ts/server.test.mjs
 python3 examples/testkit/py.py
+python3 examples/mcp/tools-only-py/server_test.py
 
 echo "examples: PASS"
