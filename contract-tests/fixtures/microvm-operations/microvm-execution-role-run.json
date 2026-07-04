@@ -1,0 +1,22 @@
+{
+  "id": "m16.microvm.execution_role.run",
+  "tier": "m16",
+  "name": "M16 MicroVM controller carries deployment execution role to provider run",
+  "setup": {
+    "microvm_execution_role": {
+      "tenant_id": "tenant-1",
+      "namespace": "namespace-1",
+      "session_id": "fixture-session",
+      "execution_role_arn": "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole"
+    }
+  },
+  "input": {},
+  "expect": {
+    "microvm_execution_role": {
+      "valid": true,
+      "session_id": "fixture-session",
+      "state": "running",
+      "provider_execution_role_arn": "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole"
+    }
+  }
+}

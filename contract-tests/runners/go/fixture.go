@@ -20,23 +20,24 @@ type Fixture struct {
 }
 
 type FixtureSetup struct {
-	Limits          FixtureLimits             `json:"limits,omitempty"`
-	HTTPErrorFormat string                    `json:"http_error_format,omitempty"`
-	Routes          []FixtureRoute            `json:"routes,omitempty"`
-	Middlewares     []string                  `json:"middlewares,omitempty"`
-	CORS            FixtureCORSConfig         `json:"cors,omitempty"`
-	Environment     map[string]string         `json:"environment,omitempty"`
-	LoggingProfile  json.RawMessage           `json:"logging_profile,omitempty"`
-	OpenAPI         json.RawMessage           `json:"openapi,omitempty"`
-	MCP             FixtureMCPSetup           `json:"mcp,omitempty"`
-	WebSockets      []FixtureWebSocketRoute   `json:"websockets,omitempty"`
-	SQS             []FixtureSQSRoute         `json:"sqs,omitempty"`
-	Kinesis         []FixtureKinesisRoute     `json:"kinesis,omitempty"`
-	SNS             []FixtureSNSRoute         `json:"sns,omitempty"`
-	EventBridge     []FixtureEventBridgeRoute `json:"eventbridge,omitempty"`
-	DynamoDB        []FixtureDynamoDBRoute    `json:"dynamodb,omitempty"`
-	MicroVMContract json.RawMessage           `json:"microvm_contract,omitempty"`
-	MicroVMRoute    FixtureMicroVMRouteSetup  `json:"microvm_controller_route,omitempty"`
+	Limits               FixtureLimits                    `json:"limits,omitempty"`
+	HTTPErrorFormat      string                           `json:"http_error_format,omitempty"`
+	Routes               []FixtureRoute                   `json:"routes,omitempty"`
+	Middlewares          []string                         `json:"middlewares,omitempty"`
+	CORS                 FixtureCORSConfig                `json:"cors,omitempty"`
+	Environment          map[string]string                `json:"environment,omitempty"`
+	LoggingProfile       json.RawMessage                  `json:"logging_profile,omitempty"`
+	OpenAPI              json.RawMessage                  `json:"openapi,omitempty"`
+	MCP                  FixtureMCPSetup                  `json:"mcp,omitempty"`
+	WebSockets           []FixtureWebSocketRoute          `json:"websockets,omitempty"`
+	SQS                  []FixtureSQSRoute                `json:"sqs,omitempty"`
+	Kinesis              []FixtureKinesisRoute            `json:"kinesis,omitempty"`
+	SNS                  []FixtureSNSRoute                `json:"sns,omitempty"`
+	EventBridge          []FixtureEventBridgeRoute        `json:"eventbridge,omitempty"`
+	DynamoDB             []FixtureDynamoDBRoute           `json:"dynamodb,omitempty"`
+	MicroVMContract      json.RawMessage                  `json:"microvm_contract,omitempty"`
+	MicroVMRoute         FixtureMicroVMRouteSetup         `json:"microvm_controller_route,omitempty"`
+	MicroVMExecutionRole FixtureMicroVMExecutionRoleSetup `json:"microvm_execution_role,omitempty"`
 }
 
 type FixtureCORSConfig struct {
@@ -128,6 +129,7 @@ type FixtureExpect struct {
 	MicroVMContractValidation  *FixtureMicroVMContractValidation  `json:"microvm_contract_validation,omitempty"`
 	MicroVMLifecycleAdapter    *FixtureMicroVMLifecycleAdapter    `json:"microvm_lifecycle_adapter,omitempty"`
 	MicroVMControllerRoute     *FixtureMicroVMControllerRoute     `json:"microvm_controller_route,omitempty"`
+	MicroVMExecutionRole       *FixtureMicroVMExecutionRole       `json:"microvm_execution_role,omitempty"`
 	MCP                        *FixtureMCPExpect                  `json:"mcp,omitempty"`
 }
 
@@ -277,6 +279,13 @@ type FixtureMicroVMRouteSetup struct {
 	SessionID     string `json:"session_id,omitempty"`
 }
 
+type FixtureMicroVMExecutionRoleSetup struct {
+	TenantID         string `json:"tenant_id,omitempty"`
+	Namespace        string `json:"namespace,omitempty"`
+	SessionID        string `json:"session_id,omitempty"`
+	ExecutionRoleArn string `json:"execution_role_arn,omitempty"`
+}
+
 type FixtureMicroVMControllerRoute struct {
 	Status                     int      `json:"status"`
 	Command                    string   `json:"command,omitempty"`
@@ -289,6 +298,15 @@ type FixtureMicroVMControllerRoute struct {
 	ErrorCode                  string   `json:"error_code,omitempty"`
 	ForbiddenBodySubstrings    []string `json:"forbidden_body_substrings,omitempty"`
 	RegistryTokenMetadataCount *int     `json:"registry_token_metadata_count,omitempty"`
+}
+
+type FixtureMicroVMExecutionRole struct {
+	Valid                    bool   `json:"valid"`
+	SessionID                string `json:"session_id,omitempty"`
+	State                    string `json:"state,omitempty"`
+	ProviderExecutionRoleArn string `json:"provider_execution_role_arn,omitempty"`
+	ErrorCode                string `json:"error_code,omitempty"`
+	ErrorMessage             string `json:"error_message,omitempty"`
 }
 
 type FixtureError struct {

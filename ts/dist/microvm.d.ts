@@ -2,6 +2,7 @@ import { type Model } from "@theory-cloud/tabletheory-ts";
 import type { App } from "./app.js";
 export declare const MICROVM_CONTRACT_NAME = "apptheory.lambda_microvm";
 export declare const MICROVM_CONTRACT_VERSION = "m15.microvm/v1";
+export declare const MICROVM_ENV_EXECUTION_ROLE_ARN = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN";
 export declare const MICROVM_ERROR_INVALID_CONTRACT = "m15.microvm.invalid_contract";
 export declare const MICROVM_ERROR_RAW_SDK_ESCAPE_HATCH = "m15.microvm.raw_sdk_escape_hatch";
 export declare const MICROVM_ERROR_LIFECYCLE_BYPASS = "m15.microvm.lifecycle_bypass";
@@ -204,6 +205,7 @@ export interface MicroVMProviderRunInput {
     session_spec?: MicroVMSessionSpec;
     idle_policy?: MicroVMProviderIdlePolicy;
     maximum_duration_seconds?: number;
+    execution_role_arn?: string;
 }
 export interface MicroVMProviderSessionBinding {
     tenant_id: string;
@@ -602,6 +604,7 @@ export interface MicroVMControllerOptions {
     ids?: MicroVMIDGenerator;
     ttl_ms?: number;
     provider_id?: string;
+    execution_role_arn?: string;
 }
 export interface MicroVMClientCall {
     command: MicroVMCommandName | string;
@@ -693,6 +696,7 @@ export declare class MicroVMRealController implements MicroVMControllerRouteTarg
     private readonly registry;
     private readonly controllerID;
     private readonly providerID;
+    private readonly executionRoleArn;
     private readonly clock;
     private readonly ids;
     private readonly ttlMs;
