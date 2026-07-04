@@ -93,8 +93,8 @@ func scaffold(opts initOptions) error {
 	if !appNamePattern.MatchString(appName) {
 		return fmt.Errorf("apptheory-init target directory name %q must start with a letter and contain only letters, digits, dot, underscore, or dash", appName)
 	}
-	if err := ensureTargetReady(target); err != nil {
-		return err
+	if readyErr := ensureTargetReady(target); readyErr != nil {
+		return readyErr
 	}
 	templateRoot, err := resolveTemplateRoot(opts.templateDir)
 	if err != nil {
@@ -123,7 +123,9 @@ func scaffold(opts initOptions) error {
 	if err := copyTemplateTree(langRoot, target, ctx); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "created %s AppTheory project at %s pinned to %s\n", opts.lang, target, ctx.tag)
+	if _, err := fmt.Fprintf(os.Stdout, "created %s AppTheory project at %s pinned to %s\n", opts.lang, target, ctx.tag); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -138,7 +140,7 @@ func ensureTargetReady(target string) error {
 	if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return os.MkdirAll(target, 0o755)
+	return os.MkdirAll(target, 0o750)
 }
 
 func resolveTemplateRoot(explicit string) (string, error) {
@@ -212,7 +214,7 @@ func inferVersion(templateRoot string) (string, error) {
 		}
 	}
 	for _, candidate := range candidates {
-		b, err := os.ReadFile(candidate)
+		b, err := os.ReadFile(candidate) //nolint:gosec // VERSION candidates come from repo-root discovery for this local scaffolder.
 		if err == nil {
 			version := cleanVersion(string(b))
 			if version != "" {
@@ -256,7 +258,7 @@ func copyTemplateTree(srcRoot string, destRoot string, ctx renderContext) error 
 	sort.Strings(dirs)
 	sort.Strings(files)
 	for _, dir := range dirs {
-		if err := os.MkdirAll(filepath.Join(destRoot, renderPath(dir, ctx)), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(destRoot, renderPath(dir, ctx)), 0o750); err != nil {
 			return err
 		}
 	}
@@ -264,10 +266,10 @@ func copyTemplateTree(srcRoot string, destRoot string, ctx renderContext) error 
 		in := filepath.Join(srcRoot, file)
 		outRel := renderPath(strings.TrimSuffix(file, ".tmpl"), ctx)
 		out := filepath.Join(destRoot, outRel)
-		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(out), 0o750); err != nil {
 			return err
 		}
-		b, err := os.ReadFile(in)
+		b, err := os.ReadFile(in) //nolint:gosec // template paths are bounded by the resolved templates/apptheory-init tree.
 		if err != nil {
 			return err
 		}
