@@ -1,0 +1,7 @@
+from app import build_app
+
+_app = build_app()
+
+
+def handler(event, context):
+    return _app.handle_lambda(event, context)

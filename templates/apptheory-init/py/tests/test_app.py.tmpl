@@ -1,0 +1,21 @@
+import json as jsonlib
+import unittest
+
+from apptheory import Request, create_test_env
+
+from app import build_app
+
+
+class HelloWorldTest(unittest.TestCase):
+    def test_hello_route(self):
+        env = create_test_env()
+        app = build_app({"APPTHEORY_TIER": "p0"})
+        resp = env.invoke(app, Request(method="GET", path="/hello/AppTheory"))
+        self.assertEqual(resp.status, 200)
+        body = jsonlib.loads(resp.body.decode())
+        self.assertEqual(body["message"], "hello AppTheory")
+        self.assertEqual(body["runtime"], "py")
+
+
+if __name__ == "__main__":
+    unittest.main()

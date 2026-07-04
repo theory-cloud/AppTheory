@@ -1,0 +1,19 @@
+{
+  "name": "__APP_PACKAGE__-cdk",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "synth": "cdk synth",
+    "deploy": "cdk deploy __APP_CLASS__Stack",
+    "destroy": "cdk destroy __APP_CLASS__Stack"
+  },
+  "devDependencies": {
+    "@theory-cloud/apptheory-cdk": "https://github.com/theory-cloud/AppTheory/releases/download/__APPTHEORY_TAG__/theory-cloud-apptheory-cdk-__APPTHEORY_VERSION__.tgz",
+    "aws-cdk": "2.1113.0",
+    "aws-cdk-lib": "2.257.0",
+    "constructs": "10.6.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
