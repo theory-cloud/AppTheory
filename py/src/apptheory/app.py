@@ -85,27 +85,35 @@ WebSocketHandler = Callable[[Context], Response | Awaitable[Response]]
 
 @dataclass(slots=True)
 class EventBridgeSelector:
+    """Selector used to match EventBridge events by rule, source, or detail type."""
+
     rule_name: str = ""
     source: str = ""
     detail_type: str = ""
 
 
 def event_bridge_rule(rule_name: str) -> EventBridgeSelector:
+    """Create an EventBridge selector for a specific rule name."""
     return EventBridgeSelector(rule_name=str(rule_name or "").strip())
 
 
 def event_bridge_pattern(source: str, detail_type: str) -> EventBridgeSelector:
+    """Create an EventBridge selector for source and detail-type matching."""
     return EventBridgeSelector(source=str(source or "").strip(), detail_type=str(detail_type or "").strip())
 
 
 @dataclass(slots=True)
 class Limits:
+    """Request and response byte guardrails for the runtime."""
+
     max_request_bytes: int = 0
     max_response_bytes: int = 0
 
 
 @dataclass(slots=True)
 class CORSConfig:
+    """CORS policy applied by P1 and P2 HTTP response finalization."""
+
     allowed_origins: list[str] | None = None
     allow_credentials: bool = False
     allow_headers: list[str] | None = None
@@ -113,6 +121,8 @@ class CORSConfig:
 
 @dataclass(slots=True)
 class LogRecord:
+    """Portable P2 request log record emitted by observability hooks."""
+
     level: str
     event: str
     request_id: str
@@ -134,6 +144,8 @@ class LogRecord:
 
 @dataclass(slots=True)
 class MetricRecord:
+    """Portable P2 metric record emitted by observability hooks."""
+
     name: str
     value: int
     tags: dict[str, str]
@@ -142,12 +154,16 @@ class MetricRecord:
 
 @dataclass(slots=True)
 class SpanRecord:
+    """Portable P2 span-shaped record emitted by observability hooks."""
+
     name: str
     attributes: dict[str, str]
 
 
 @dataclass(slots=True)
 class ObservabilityHooks:
+    """Callbacks that receive AppTheory P2 log, metric, and span records."""
+
     log: Callable[[LogRecord], None] | None = None
     metric: Callable[[MetricRecord], None] | None = None
     span: Callable[[SpanRecord], None] | None = None
@@ -155,6 +171,8 @@ class ObservabilityHooks:
 
 @dataclass(slots=True)
 class PolicyDecision:
+    """Decision returned by a P2 policy hook to fail a request closed."""
+
     code: str
     message: str
     headers: dict[str, Any]
@@ -179,6 +197,8 @@ class _EventObservation:
 
 @dataclass(slots=True)
 class App:
+    """Contract-first application container for routes, middleware, and Lambda event dispatch."""
+
     _router: Router
     _clock: Clock
     _id_generator: IdGenerator
@@ -237,6 +257,7 @@ class App:
         self._event_middlewares = []
 
     def handle(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
+        """Register a handler for an HTTP method and route pattern."""
         self._router.add(method, pattern, handler, auth_required=auth_required)
         return self
 
@@ -251,24 +272,31 @@ class App:
         return self
 
     def get(self, pattern: str, handler: Handler) -> App:
+        """Register a GET route handler."""
         return self.handle("GET", pattern, handler)
 
     def post(self, pattern: str, handler: Handler) -> App:
+        """Register a POST route handler."""
         return self.handle("POST", pattern, handler)
 
     def put(self, pattern: str, handler: Handler) -> App:
+        """Register a PUT route handler."""
         return self.handle("PUT", pattern, handler)
 
     def patch(self, pattern: str, handler: Handler) -> App:
+        """Register a PATCH route handler."""
         return self.handle("PATCH", pattern, handler)
 
     def options(self, pattern: str, handler: Handler) -> App:
+        """Register an OPTIONS route handler."""
         return self.handle("OPTIONS", pattern, handler)
 
     def delete(self, pattern: str, handler: Handler) -> App:
+        """Register a DELETE route handler."""
         return self.handle("DELETE", pattern, handler)
 
     def sqs(self, queue_name: str, handler: SQSHandler) -> App:
+        """Register an SQS queue handler by queue name."""
         name = str(queue_name or "").strip()
         if not name:
             return self
@@ -276,6 +304,7 @@ class App:
         return self
 
     def kinesis(self, stream_name: str, handler: KinesisHandler) -> App:
+        """Register a Kinesis stream handler by stream name."""
         name = str(stream_name or "").strip()
         if not name:
             return self
@@ -283,6 +312,7 @@ class App:
         return self
 
     def sns(self, topic_name: str, handler: SNSHandler) -> App:
+        """Register an SNS topic handler by topic name."""
         name = str(topic_name or "").strip()
         if not name:
             return self
@@ -290,6 +320,7 @@ class App:
         return self
 
     def event_bridge(self, selector: EventBridgeSelector, handler: EventBridgeHandler) -> App:
+        """Register an EventBridge handler for a selector."""
         if selector is None:
             return self
         sel = EventBridgeSelector(
@@ -303,6 +334,7 @@ class App:
         return self
 
     def dynamodb(self, table_name: str, handler: DynamoDBStreamHandler) -> App:
+        """Register a DynamoDB Streams handler by table name."""
         name = str(table_name or "").strip()
         if not name:
             return self
@@ -310,6 +342,7 @@ class App:
         return self
 
     def websocket(self, route_key: str, handler: WebSocketHandler) -> App:
+        """Register a WebSocket route handler by route key."""
         key = str(route_key or "").strip()
         if not key:
             return self
@@ -317,12 +350,14 @@ class App:
         return self
 
     def use(self, middleware: Middleware) -> App:
+        """Append HTTP middleware around route handlers."""
         if middleware is None:
             return self
         self._middlewares.append(middleware)
         return self
 
     def use_events(self, middleware: EventMiddleware) -> App:
+        """Append event middleware around event workload handlers."""
         if middleware is None:
             return self
         self._event_middlewares.append(middleware)
@@ -362,6 +397,7 @@ class App:
         return wrapped
 
     def get_http_error_format(self) -> str:
+        """Return the configured HTTP error-envelope format."""
         return self._http_error_format
 
     def _http_error_response(
@@ -427,6 +463,7 @@ class App:
         )
 
     def serve(self, request: Request, ctx: Any | None = None) -> Response:
+        """Serve a normalized AppTheory request and return a normalized response."""
         return self._serve(request, ctx)
 
     def _serve(
@@ -919,6 +956,7 @@ class App:
             )
 
     def serve_apigw_v2(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve an API Gateway HTTP API v2 event."""
         try:
             request = request_from_apigw_v2(event)
         except Exception as exc:  # noqa: BLE001
@@ -928,6 +966,7 @@ class App:
         return apigw_v2_response_from_response(resp)
 
     def serve_lambda_function_url(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve a Lambda Function URL event."""
         try:
             request = request_from_lambda_function_url(event)
         except Exception as exc:  # noqa: BLE001
@@ -937,6 +976,7 @@ class App:
         return lambda_function_url_response_from_response(resp)
 
     def serve_apigw_proxy(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve an API Gateway REST proxy event."""
         try:
             request = request_from_apigw_proxy(event)
         except Exception as exc:  # noqa: BLE001
@@ -946,6 +986,7 @@ class App:
         return apigw_proxy_response_from_response(resp)
 
     def serve_alb(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve an ALB target group event."""
         try:
             request = request_from_alb_target_group(event)
         except Exception as exc:  # noqa: BLE001
@@ -955,6 +996,7 @@ class App:
         return alb_target_group_response_from_response(resp)
 
     def serve_appsync(self, event: AppSyncResolverEvent, ctx: Any | None = None) -> Any:
+        """Serve an AppSync direct Lambda resolver event."""
         fallback_request_id = _appsync_request_id_from_ctx(ctx)
         request_metadata = _appsync_request_from_event(event)
         try:
@@ -983,6 +1025,7 @@ class App:
             )
 
     def serve_websocket(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve an API Gateway WebSocket event."""
         try:
             request = _request_from_websocket_event(event)
         except Exception as exc:  # noqa: BLE001
@@ -1081,6 +1124,7 @@ class App:
         return None
 
     def serve_sqs(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve an SQS event with partial-batch failure output."""
         records = event.get("Records") or []
         if not isinstance(records, list):
             records = []
@@ -1133,6 +1177,7 @@ class App:
         return None
 
     def serve_eventbridge(self, event: dict[str, Any], ctx: Any | None = None) -> Any:
+        """Serve an EventBridge event through registered selectors."""
         handler = self._eventbridge_handler_for_event(event)
         if handler is None:
             return None
@@ -1161,6 +1206,7 @@ class App:
         return None
 
     def serve_dynamodb_stream(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve a DynamoDB Streams event with partial-batch failure output."""
         records = event.get("Records") or []
         if not isinstance(records, list):
             records = []
@@ -1205,6 +1251,7 @@ class App:
         return None
 
     def serve_kinesis(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve a Kinesis event with partial-batch failure output."""
         records = event.get("Records") or []
         if not isinstance(records, list):
             records = []
@@ -1250,6 +1297,7 @@ class App:
         return None
 
     def serve_sns(self, event: dict[str, Any], ctx: Any | None = None) -> Any:
+        """Serve an SNS event through the registered topic handler."""
         records = event.get("Records") or []
         if not isinstance(records, list):
             records = []
@@ -1269,6 +1317,7 @@ class App:
         return outputs
 
     def handle_lambda(self, event: Any, ctx: Any | None = None) -> Any:
+        """Detect and dispatch a supported Lambda event shape through one entrypoint."""
         if not isinstance(event, dict):
             raise RuntimeError("apptheory: unknown event type")
 
@@ -1323,6 +1372,7 @@ def create_app(
     policy_hook: PolicyHook | None = None,
     websocket_client_factory: WebSocketClientFactory | None = None,
 ) -> App:
+    """Create an AppTheory application with the provided runtime options."""
     return App(
         clock=clock,
         id_generator=id_generator,

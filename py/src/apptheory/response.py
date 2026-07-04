@@ -9,6 +9,8 @@ from apptheory.util import canonicalize_headers, to_bytes
 
 @dataclass(slots=True)
 class Response:
+    """Normalized AppTheory response returned by handlers."""
+
     status: int
     headers: dict[str, Any]
     cookies: list[str]
@@ -18,6 +20,7 @@ class Response:
 
 
 def text(status: int, body: str) -> Response:
+    """Create a UTF-8 text response."""
     return normalize_response(
         Response(
             status=status,
@@ -30,6 +33,7 @@ def text(status: int, body: str) -> Response:
 
 
 def json(status: int, value: Any) -> Response:
+    """Create a deterministic JSON response."""
     body = jsonlib.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return normalize_response(
         Response(
@@ -43,6 +47,7 @@ def json(status: int, value: Any) -> Response:
 
 
 def binary(status: int, body: Any, content_type: str | None = None) -> Response:
+    """Create a binary response with optional content type."""
     headers: dict[str, Any] = {}
     if content_type:
         headers["content-type"] = [str(content_type)]
@@ -58,6 +63,7 @@ def binary(status: int, body: Any, content_type: str | None = None) -> Response:
 
 
 def html(status: int, body: Any) -> Response:
+    """Create a UTF-8 HTML response."""
     return normalize_response(
         Response(
             status=status,
@@ -70,6 +76,7 @@ def html(status: int, body: Any) -> Response:
 
 
 def html_stream(status: int, chunks: Any) -> Response:
+    """Create a streaming HTML response."""
     return normalize_response(
         Response(
             status=status,
@@ -83,6 +90,7 @@ def html_stream(status: int, chunks: Any) -> Response:
 
 
 def safe_json_for_html(value: Any) -> str:
+    """Serialize JSON for embedding inside HTML script contexts."""
     raw = jsonlib.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return (
         raw.replace("&", "\\u0026")
@@ -94,6 +102,7 @@ def safe_json_for_html(value: Any) -> str:
 
 
 def normalize_response(resp: Response) -> Response:
+    """Canonicalize headers, cookies, body bytes, and stream chunks."""
     status = int(resp.status or 200)
     headers = canonicalize_headers(resp.headers)
     set_cookies = headers.pop("set-cookie", [])
