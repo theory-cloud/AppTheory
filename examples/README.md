@@ -4,6 +4,7 @@ Deployable examples and templates (CDK, etc).
 
 ## Index
 
+- `examples/cdk/hello-world` — minimal deployable AppTheory HTTP API in Go, TypeScript, and Python.
 - `examples/cdk/multilang` — CDK demo deploying the same app in Go/Node/Python.
 - `examples/cdk/kinesis-cloudwatch-logs` — CDK demo for CloudWatch Logs → Kinesis → AppTheory Lambda.
 - `examples/cdk/microvm-controller` — synth-only CDK demo for Lambda MicroVM image, VPC egress connector, protected controller, and TableTheory-shaped session registry.

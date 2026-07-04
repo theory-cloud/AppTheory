@@ -15,13 +15,16 @@ fi
 export SOURCE_DATE_EPOCH="${epoch}"
 
 examples=(
-  "examples/cdk/import-pipeline|AppTheoryImportPipelineDemo"
-  "examples/cdk/kinesis-cloudwatch-logs|AppTheoryKinesisCloudWatchLogsDemo"
-  "examples/cdk/multilang|AppTheoryMultilangDemo"
-  "examples/cdk/microvm-controller|AppTheoryMicrovmControllerDemo"
-  "examples/cdk/ssr-site|AppTheorySsrSiteDemo"
-  "examples/cdk/ssr-only-provided-assets-site|AppTheorySsrOnlyProvidedAssetsSiteDemo"
-  "examples/cdk/lesser-parity|LesserParityExample"
+  "examples/cdk/hello-world|AppTheoryHelloWorldGo|-c lang=go"
+  "examples/cdk/hello-world|AppTheoryHelloWorldTs|-c lang=ts"
+  "examples/cdk/hello-world|AppTheoryHelloWorldPy|-c lang=py"
+  "examples/cdk/import-pipeline|AppTheoryImportPipelineDemo|"
+  "examples/cdk/kinesis-cloudwatch-logs|AppTheoryKinesisCloudWatchLogsDemo|"
+  "examples/cdk/multilang|AppTheoryMultilangDemo|"
+  "examples/cdk/microvm-controller|AppTheoryMicrovmControllerDemo|"
+  "examples/cdk/ssr-site|AppTheorySsrSiteDemo|"
+  "examples/cdk/ssr-only-provided-assets-site|AppTheorySsrOnlyProvidedAssetsSiteDemo|"
+  "examples/cdk/lesser-parity|LesserParityExample|"
 )
 
 if ! command -v node >/dev/null 2>&1; then
@@ -34,8 +37,7 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 
 for entry in "${examples[@]}"; do
-  example_dir="${entry%%|*}"
-  stack_name="${entry##*|}"
+  IFS="|" read -r example_dir stack_name synth_args <<< "${entry}"
   snapshot_dir="${example_dir}/snapshots"
   snapshot_file="${snapshot_dir}/${stack_name}.template.sha256"
 
@@ -62,7 +64,8 @@ for entry in "${examples[@]}"; do
     rm -f "${tmp_log}"
   }
 
-  if ! (cd "${example_dir}" && npx cdk synth --quiet --no-notices --no-version-reporting -o "${tmp_out}" >/dev/null 2>"${tmp_log}"); then
+  # shellcheck disable=SC2086 # synth_args is a fixed script-owned argument string per example entry.
+  if ! (cd "${example_dir}" && npx cdk synth ${synth_args} --quiet --no-notices --no-version-reporting -o "${tmp_out}" >/dev/null 2>"${tmp_log}"); then
     echo "cdk-synth: FAIL (synth failed for ${example_dir})" >&2
     cat "${tmp_log}" >&2
     cleanup
