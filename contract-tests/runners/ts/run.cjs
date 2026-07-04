@@ -1916,6 +1916,398 @@ function routeHandlerForRegistration(runtime, route, effects) {
   return handler;
 }
 
+
+function sequenceIdGenerator(ids, fallback) {
+  let next = 0;
+  return {
+    newId() {
+      if (next < (ids ?? []).length) {
+        const value = String(ids[next] ?? "").trim();
+        next += 1;
+        if (value) return value;
+      } else {
+        next += 1;
+      }
+      return `${fallback}-${next}`;
+    },
+  };
+}
+
+function isoFromUnixMS(ms, fallback = "1970-01-01T00:00:00Z") {
+  const n = Number(ms ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return new Date(n).toISOString().replace(/\.000Z$/, "Z");
+}
+
+function fixtureMCPMessageArg(args) {
+  const payload = args && typeof args === "object" ? args : {};
+  const message = String(payload.message ?? "").trim();
+  if (!message) throw new Error("missing message");
+  return message;
+}
+
+function fixtureMCPToolHandler(name) {
+  switch (String(name ?? "").trim()) {
+    case "echo_text":
+      return (args) => ({ content: [{ type: "text", text: fixtureMCPMessageArg(args) }] });
+    case "fail_error":
+      return () => {
+        throw new Error("fixture tool failed");
+      };
+    case "task_echo":
+      return (args) => {
+        const message = fixtureMCPMessageArg(args);
+        return {
+          content: [{ type: "text", text: message }],
+          structuredContent: { message },
+        };
+      };
+    default:
+      throw new Error(`unknown mcp tool handler ${JSON.stringify(name)}`);
+  }
+}
+
+function fixtureMCPStreamingToolHandler(name) {
+  switch (String(name ?? "").trim()) {
+    case "stream_progress":
+      return async (args, emit) => {
+        const message = fixtureMCPMessageArg(args);
+        await emit({ data: { seq: 1, total: 2, message: "half" } });
+        await emit({ data: { seq: 2, total: 2, message: "done" } });
+        return { content: [{ type: "text", text: message }] };
+      };
+    default:
+      throw new Error(`unknown mcp streaming tool handler ${JSON.stringify(name)}`);
+  }
+}
+
+function registerFixtureMCPTool(runtime, server, tool) {
+  const def = {
+    name: String(tool.name ?? ""),
+    ...(tool.title ? { title: String(tool.title) } : {}),
+    ...(tool.description ? { description: String(tool.description) } : {}),
+    inputSchema: tool.input_schema ?? {},
+    ...(tool.output_schema !== undefined ? { outputSchema: tool.output_schema } : {}),
+    ...(tool.task_support ? { execution: { taskSupport: String(tool.task_support) } } : {}),
+  };
+  if (tool.streaming) {
+    server.registry().registerStreamingTool(def, fixtureMCPStreamingToolHandler(tool.handler));
+    return;
+  }
+  server.registry().registerTool(def, fixtureMCPToolHandler(tool.handler));
+}
+
+function registerFixtureMCPResource(server, resource) {
+  const contents = (resource.contents ?? []).map((content) => ({
+    uri: String(content.uri ?? ""),
+    ...(content.mime_type ? { mimeType: String(content.mime_type) } : {}),
+    ...(content.text ? { text: String(content.text) } : {}),
+    ...(content.blob ? { blob: String(content.blob) } : {}),
+  }));
+  server.resources().registerResource(
+    {
+      uri: String(resource.uri ?? ""),
+      name: String(resource.name ?? ""),
+      ...(resource.title ? { title: String(resource.title) } : {}),
+      ...(resource.description ? { description: String(resource.description) } : {}),
+      ...(resource.mime_type ? { mimeType: String(resource.mime_type) } : {}),
+      ...(resource.size ? { size: Number(resource.size) } : {}),
+    },
+    () => contents.map((content) => ({ ...content })),
+  );
+}
+
+function registerFixtureMCPResourceTemplate(server, template) {
+  server.resources().registerResourceTemplate({
+    uriTemplate: String(template.uri_template ?? ""),
+    name: String(template.name ?? ""),
+    ...(template.title ? { title: String(template.title) } : {}),
+    ...(template.description ? { description: String(template.description) } : {}),
+    ...(template.mime_type ? { mimeType: String(template.mime_type) } : {}),
+  });
+}
+
+function fixtureMCPPromptHandler(name) {
+  switch (String(name ?? "").trim()) {
+    case "render_greeting":
+      return (args) => {
+        const payload = args && typeof args === "object" ? args : {};
+        const nameArg = String(payload.name ?? "").trim() || "friend";
+        return {
+          description: "Rendered greeting",
+          messages: [
+            {
+              role: "user",
+              content: { type: "text", text: `Hello, ${nameArg}.` },
+            },
+          ],
+        };
+      };
+    default:
+      throw new Error(`unknown mcp prompt handler ${JSON.stringify(name)}`);
+  }
+}
+
+function registerFixtureMCPPrompt(server, prompt) {
+  server.prompts().registerPrompt(
+    {
+      name: String(prompt.name ?? ""),
+      ...(prompt.title ? { title: String(prompt.title) } : {}),
+      ...(prompt.description ? { description: String(prompt.description) } : {}),
+      arguments: (prompt.arguments ?? []).map((arg) => ({
+        name: String(arg.name ?? ""),
+        ...(arg.title ? { title: String(arg.title) } : {}),
+        ...(arg.description ? { description: String(arg.description) } : {}),
+        ...(arg.required ? { required: true } : {}),
+      })),
+    },
+    fixtureMCPPromptHandler(prompt.handler),
+  );
+}
+
+class FixtureMCPTaskStore {
+  constructor(runtime, config) {
+    this.runtime = runtime;
+    this.config = config ?? {};
+    this.sessions = new Map();
+    this.createTime = isoFromUnixMS(this.config.clock_unix_ms, "2026-03-03T12:00:00Z");
+    this.updateTime = isoFromUnixMS(this.config.update_clock_unix_ms, "2026-03-03T12:00:01Z");
+  }
+
+  _record(sessionId, taskId) {
+    return this.sessions.get(String(sessionId ?? "").trim())?.get(String(taskId ?? "").trim()) ?? null;
+  }
+
+  _clone(record) {
+    return JSON.parse(JSON.stringify(record));
+  }
+
+  async create(task) {
+    const record = this._clone(task);
+    record.sessionId = String(record.sessionId ?? "").trim();
+    record.task.taskId = String(record.task.taskId ?? "").trim();
+    if (!record.sessionId) throw new Error("missing session id");
+    if (!record.task.taskId) throw new Error("missing task id");
+    record.task.createdAt = this.createTime;
+    record.task.lastUpdatedAt = this.createTime;
+    let session = this.sessions.get(record.sessionId);
+    if (!session) {
+      session = new Map();
+      this.sessions.set(record.sessionId, session);
+    }
+    if (session.has(record.task.taskId)) throw new Error("task already exists");
+    session.set(record.task.taskId, this._clone(record));
+    return this._clone(record);
+  }
+
+  async get(lookup) {
+    const record = this._record(lookup.sessionId, lookup.taskId);
+    if (!record) throw new this.runtime.McpTaskNotFoundError();
+    return this._clone(record);
+  }
+
+  async update(task) {
+    const existing = this._record(task.sessionId, task.task.taskId);
+    if (!existing) throw new this.runtime.McpTaskNotFoundError();
+    if (["completed", "failed", "canceled"].includes(String(existing.task.status))) {
+      throw new this.runtime.McpTaskTerminalError();
+    }
+    const record = this._clone(task);
+    record.task.createdAt = existing.task.createdAt;
+    record.task.lastUpdatedAt = this.updateTime;
+    this.sessions.get(record.sessionId).set(record.task.taskId, record);
+    return this._clone(record);
+  }
+
+  async list(request) {
+    const session = this.sessions.get(String(request.sessionId ?? "").trim());
+    if (!session) return { tasks: [] };
+    const limit = Number(request.limit ?? 0) > 0 ? Number(request.limit) : session.size;
+    const tasks = [...session.values()]
+      .sort((a, b) => {
+        const time = String(a.task.createdAt).localeCompare(String(b.task.createdAt));
+        if (time !== 0) return time;
+        return String(a.task.taskId).localeCompare(String(b.task.taskId));
+      })
+      .slice(0, limit)
+      .map((record) => this._clone(record.task));
+    return { tasks };
+  }
+
+  async cancel(lookup) {
+    const record = this._record(lookup.sessionId, lookup.taskId);
+    if (!record) throw new this.runtime.McpTaskNotFoundError();
+    if (["completed", "failed", "canceled"].includes(String(record.task.status))) {
+      throw new this.runtime.McpTaskTerminalError();
+    }
+    record.task.status = "canceled";
+    record.task.statusMessage = "task canceled";
+    record.task.lastUpdatedAt = this.updateTime;
+    record.error = { code: -32000, message: "task canceled" };
+    return this._clone(record);
+  }
+
+  async deleteSession(sessionId) {
+    this.sessions.delete(String(sessionId ?? "").trim());
+  }
+}
+
+async function newFixtureMCPServer(runtime, setup) {
+  const mcpSetup = setup ?? {};
+  const serverConfig = mcpSetup.server ?? {};
+  const idGenerator = sequenceIdGenerator(mcpSetup.id_sequence ?? [], "mcp-id");
+  const streamIdGenerator = sequenceIdGenerator(mcpSetup.stream_id_sequence ?? [], "mcp-stream");
+  const sessionSeed = (mcpSetup.session_store?.seed ?? []).map((seed) => ({
+    id: String(seed.id ?? ""),
+    createdAt: isoFromUnixMS(seed.created_unix_ms),
+    expiresAt: isoFromUnixMS(seed.expires_unix_ms, ""),
+    data: seed.data ?? {},
+  }));
+  const options = {
+    idGenerator,
+    sessionStore: new runtime.MemoryMcpSessionStore({
+      now: () => new Date("2023-11-14T22:13:20Z"),
+      seed: sessionSeed,
+    }),
+    streamStore: new runtime.MemoryMcpStreamStore({ idGenerator: streamIdGenerator }),
+  };
+  if (mcpSetup.task_runtime?.enabled) {
+    options.taskRuntime = {
+      store: new FixtureMCPTaskStore(runtime, mcpSetup.task_runtime),
+      defaultTtlMs: Number(mcpSetup.task_runtime.default_ttl_ms ?? 0),
+      maxTtlMs: Number(mcpSetup.task_runtime.max_ttl_ms ?? 0),
+      pollIntervalMs: Number(mcpSetup.task_runtime.poll_interval_ms ?? 0),
+      listLimit: Number(mcpSetup.task_runtime.list_limit ?? 0),
+      modelImmediateResponse: String(mcpSetup.task_runtime.model_immediate_response ?? ""),
+    };
+  }
+  const server = runtime.createMcpServer(
+    String(serverConfig.name ?? "").trim() || "AppTheoryContractMCP",
+    String(serverConfig.version ?? "").trim() || "sp09",
+    options,
+  );
+  for (const tool of mcpSetup.tools ?? []) registerFixtureMCPTool(runtime, server, tool);
+  for (const resource of mcpSetup.resources ?? []) registerFixtureMCPResource(server, resource);
+  for (const template of mcpSetup.resource_templates ?? []) registerFixtureMCPResourceTemplate(server, template);
+  for (const prompt of mcpSetup.prompts ?? []) registerFixtureMCPPrompt(server, prompt);
+  return server;
+}
+
+function parseMCPSSEFrames(body) {
+  const text = Buffer.from(body ?? []).toString("utf8");
+  if (!text.includes("data: ") && !text.includes("id: ")) return [];
+  const frames = [];
+  for (const rawChunk of text.split("\n\n")) {
+    const chunk = rawChunk.replace(/^\n+|\n+$/g, "");
+    if (!chunk.trim()) continue;
+    const frame = { id: "", data: "" };
+    const dataLines = [];
+    for (const line of chunk.split("\n")) {
+      if (line.startsWith(":")) continue;
+      if (line.startsWith("id: ")) {
+        frame.id = line.slice(4).trim();
+      } else if (line.startsWith("event: ")) {
+        frame.event = line.slice(7).trim();
+      } else if (line.startsWith("data: ")) {
+        dataLines.push(line.slice(6));
+      } else if (line.trim() === "") {
+        // ignore
+      } else {
+        throw new Error(`invalid SSE line ${JSON.stringify(line)}`);
+      }
+    }
+    frame.data = dataLines.join("\n");
+    frames.push(frame);
+  }
+  return frames;
+}
+
+async function responseBodyBytes(response) {
+  const buffers = [];
+  if (response.body) buffers.push(Buffer.from(response.body));
+  if (response.bodyStream) {
+    for await (const chunk of response.bodyStream) buffers.push(Buffer.from(chunk ?? []));
+  }
+  return Buffer.concat(buffers);
+}
+
+async function invokeMCPFixtureStep(app, step) {
+  const req = canonicalizeRequest(step.request ?? {}, {});
+  const response = await app.serve(req);
+  const body = await responseBodyBytes(response);
+  return {
+    status: Number(response.status ?? 0),
+    headers: canonicalizeHeaders(response.headers ?? {}),
+    cookies: Array.isArray(response.cookies) ? response.cookies.map(String) : [],
+    body,
+    sse_frames: parseMCPSSEFrames(body),
+    is_base64: Boolean(response.isBase64),
+  };
+}
+
+function compareMCPStep(expected, actual) {
+  if (Number(expected.status ?? 0) !== actual.status) {
+    return { ok: false, reason: `status: expected ${expected.status}, got ${actual.status}`, actual, expected };
+  }
+  if (Boolean(expected.is_base64) !== actual.is_base64) {
+    return { ok: false, reason: `is_base64: expected ${expected.is_base64}, got ${actual.is_base64}`, actual, expected };
+  }
+  if (!deepEqual(expected.cookies ?? [], actual.cookies ?? [])) {
+    return { ok: false, reason: "cookies mismatch", actual, expected };
+  }
+  if (!compareHeaders(expected.headers ?? {}, actual.headers ?? {})) {
+    return { ok: false, reason: "headers mismatch", actual, expected };
+  }
+  if (Array.isArray(expected.sse_frames) && expected.sse_frames.length > 0) {
+    if (!deepEqual(expected.sse_frames, actual.sse_frames)) {
+      return { ok: false, reason: "sse_frames mismatch", actual, expected };
+    }
+    return { ok: true };
+  }
+  if (Object.prototype.hasOwnProperty.call(expected, "body_json")) {
+    let actualJson;
+    try {
+      actualJson = JSON.parse(actual.body.toString("utf8"));
+    } catch {
+      return { ok: false, reason: "body_json mismatch", actual, expected };
+    }
+    if (!deepEqual(expected.body_json, actualJson)) {
+      return { ok: false, reason: "body_json mismatch", actual, expected };
+    }
+    return { ok: true };
+  }
+  const expectedBody = expected.body ? decodeFixtureBody(expected.body) : Buffer.alloc(0);
+  if (!expectedBody.equals(actual.body)) {
+    return { ok: false, reason: "body mismatch", actual, expected };
+  }
+  return { ok: true };
+}
+
+async function runFixtureMCP(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const server = await newFixtureMCPServer(runtime, fixture.setup?.mcp ?? {});
+  const ids = { newId: () => "req_mcp_123" };
+  const app = runtime.createApp({ ids });
+  const handler = server.handler();
+  app.post("/mcp", handler);
+  app.get("/mcp", handler);
+  app.delete("/mcp", handler);
+
+  const steps = fixture.input?.mcp?.steps ?? [];
+  const expectedSteps = fixture.expect?.mcp?.steps ?? [];
+  if (steps.length !== expectedSteps.length) {
+    return { ok: false, reason: "mcp steps length mismatch", actual: steps.length, expected: expectedSteps.length };
+  }
+  for (let i = 0; i < steps.length; i += 1) {
+    const actual = await invokeMCPFixtureStep(app, steps[i]);
+    const result = compareMCPStep(expectedSteps[i], actual);
+    if (!result.ok) {
+      return { ...result, reason: `step ${steps[i].name}: ${result.reason}` };
+    }
+  }
+  return { ok: true };
+}
+
 async function runFixture(fixture) {
   if (isOpenAPIContractFixture(fixture)) {
     return await compareOpenAPIContract(fixture);
@@ -1926,11 +2318,7 @@ async function runFixture(fixture) {
     .toLowerCase();
 
   if (tier === "mcp") {
-    return {
-      ok: true,
-      skipped: true,
-      reason: "SP09 MCP fixtures are Go-runtime enforced; TS MCP runtime parity is SP10",
-    };
+    return await runFixtureMCP(fixture);
   }
 
   if (tier === "p0") {
@@ -4995,7 +5383,7 @@ async function main() {
   const args = parseArgs(process.argv);
 
   const fixtureID = selectedFixtureID(args.id, args.filter);
-  const { fixtures, failures } = await runAllFixtures({
+  const { fixtures, failures, skipped } = await runAllFixtures({
     fixturesRoot: args.fixtures,
     fixtureID,
   });
@@ -5088,10 +5476,10 @@ async function main() {
     process.exit(1);
   }
 
-  const skippedCount = fixtures.filter((fixture) => String(fixture.tier ?? "").trim().toLowerCase() === "mcp").length;
+  const skippedCount = skipped.length;
   if (skippedCount > 0) {
     console.log(
-      `contract-tests(ts): PASS (${fixtures.length} fixtures, skipped=${skippedCount} mcp future-runtime fixtures)`,
+      `contract-tests(ts): PASS (${fixtures.length} fixtures, skipped=${skippedCount})`,
     );
   } else {
     console.log(`contract-tests(ts): PASS (${fixtures.length} fixtures)`);

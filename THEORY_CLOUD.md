@@ -26,9 +26,8 @@ by the framework.
 
 - **One path to runtime behavior.** [AppTheory](https://github.com/theory-cloud/AppTheory) provides a single
   application model for AWS Lambda: routing, middleware, error handling, and event normalization. The same handler
-  code in Go, TypeScript, or Python produces the same HTTP response, verified by the shared non-MCP contract fixture
-  corpus. Go also executes the 11 SP09 MCP fixtures; TypeScript and Python load them and explicitly skip those
-  future-runtime fixtures pending SP10/SP11. <!-- apptheory-fixture-count: 194 -->
+  code in Go, TypeScript, or Python produces the same HTTP response, verified by the contract fixture corpus. Go and TypeScript execute the SP09 MCP fixtures; Python loads them and
+  explicitly skips those future-runtime fixtures pending SP11. <!-- apptheory-fixture-count: 194 -->
 
 - **One path to client delivery.** [FaceTheory](https://github.com/theory-cloud/FaceTheory) provides a single model
   for SSR, SSG, and ISR on AWS Lambda + CloudFront, with adapter support for React, Vue, and Svelte.
@@ -72,8 +71,7 @@ but through contract-enforced behavioral parity.
 
 Each framework maintains a set of shared test fixtures — language-neutral descriptions of expected behavior. For
 shared runtime surfaces, the Go, TypeScript, and Python runtimes are independently tested against the same fixtures.
-Implementation-leg fixtures must be labeled honestly: AppTheory's SP09 `mcp/` fixtures run in Go today, while
-TypeScript and Python load them and report the 11 MCP future-runtime skips until SP10/SP11 add those runtime legs. If
+Implementation-leg fixtures must be labeled honestly: AppTheory's SP09 `mcp/` fixtures run in Go and TypeScript today, while Python loads them and reports the MCP future-runtime skips until SP11 adds that runtime leg. If
 a timestamp format, error envelope structure, or middleware ordering differs between languages in the shared corpus,
 the contract tests fail.
 

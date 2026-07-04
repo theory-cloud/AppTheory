@@ -567,7 +567,9 @@ func (s *fixtureMCPTaskStore) Get(_ context.Context, lookup mcp.TaskLookup) (*mc
 	if record == nil {
 		return nil, mcp.ErrTaskNotFound
 	}
-	return cloneMCPTaskRecord(record), nil
+	out := cloneMCPTaskRecord(record)
+	stabilizeActiveFixtureTaskDeadline(out)
+	return out, nil
 }
 
 func (s *fixtureMCPTaskStore) Update(_ context.Context, task mcp.TaskRecord) (*mcp.TaskRecord, error) {
@@ -644,6 +646,26 @@ func (s *fixtureMCPTaskStore) recordLocked(lookup mcp.TaskLookup) *mcp.TaskRecor
 		return nil
 	}
 	return sess[strings.TrimSpace(lookup.TaskID)]
+}
+
+func stabilizeActiveFixtureTaskDeadline(record *mcp.TaskRecord) {
+	if record == nil || mcpTaskTerminal(record.Task.Status) || record.Task.TTL == nil || *record.Task.TTL <= 0 || record.Task.CreatedAt.IsZero() {
+		return
+	}
+	ttl := time.Duration(*record.Task.TTL) * time.Millisecond
+	deadline := record.Task.CreatedAt.UTC().Add(ttl)
+	if time.Now().UTC().Before(deadline) {
+		return
+	}
+	// Fixture timestamps are fixed because the expected JSON asserts exact dates.
+	// Keep those visible timestamps in the stored task, but hand active polling a
+	// non-expired clone so task/result remains deterministic after wall-clock time
+	// advances beyond the fixture's modeled TTL window.
+	createdAt := time.Now().UTC().Add(-ttl / 2)
+	record.Task.CreatedAt = createdAt
+	if record.Task.LastUpdatedAt.Before(createdAt) {
+		record.Task.LastUpdatedAt = createdAt
+	}
 }
 
 func mcpTaskTerminal(status mcp.TaskStatus) bool {
