@@ -6,6 +6,7 @@ export * from "./response.js";
 export * from "./http-error-format.js";
 export * from "./validate.js";
 export * from "./openapi.js";
+export * from "./objectstore.js";
 export * from "./bind-handler.js";
 export * from "./sse.js";
 export * from "./naming.js";
