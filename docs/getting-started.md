@@ -5,7 +5,7 @@ title: Getting Started
 # Getting Started with AppTheory
 
 This guide gets a local AppTheory workspace running, shows the smallest deterministic app path in each runtime, and
-points you at the canonical API and deployment docs.
+then carries one canonical CDK path through bootstrap, deploy, curl verification, and teardown.
 
 ## Prerequisites
 
@@ -13,6 +13,8 @@ points you at the canonical API and deployment docs.
 - Node.js `>=24` (`ts/package.json` and `cdk/package.json`)
 - Python `>=3.14` (`py/pyproject.toml`)
 - `make` and `git`
+- AWS credentials plus permission to run `cdk bootstrap`, `cdk deploy`, and `cdk destroy` when you are ready to create
+  cloud resources
 
 ## Install from repo
 
@@ -109,6 +111,60 @@ Equivalent deterministic test environments exist in all three runtimes:
 - TypeScript: `createTestEnv()`
 - Python: `create_test_env()`
 
+## Deploy the hello-world service
+
+The deployable on-ramp is [`examples/cdk/hello-world`](../examples/cdk/hello-world/README.md). It uses one
+`AppTheoryHttpApi` and one Lambda function per language variant, with deterministic testkit tests for Go, TypeScript,
+and Python.
+
+Install the example dependencies from a clean clone:
+
+```bash
+cd examples/cdk/hello-world
+npm ci
+```
+
+Synthesize first. Synth proves the CDK graph can render locally, but it is not the finish line:
+
+```bash
+npx cdk synth -c lang=ts AppTheoryHelloWorldTs
+```
+
+Bootstrap the target account/region once before the first deploy:
+
+```bash
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+AWS_REGION=${AWS_REGION:-us-east-1}
+npx cdk bootstrap "aws://${AWS_ACCOUNT_ID}/${AWS_REGION}"
+```
+
+Deploy exactly one variant:
+
+```bash
+npx cdk deploy -c lang=ts AppTheoryHelloWorldTs
+```
+
+CDK prints the `ApiUrl` output. Verify the deployed service with `curl`:
+
+```bash
+API_URL="https://replace-with-the-ApiUrl-output"
+curl "${API_URL}/hello/AppTheory"
+```
+
+Expected response shape:
+
+```json
+{"message":"hello AppTheory","runtime":"ts","request_id":"...","tenant_id":""}
+```
+
+Destroy the stack when you are done:
+
+```bash
+npx cdk destroy -c lang=ts AppTheoryHelloWorldTs
+```
+
+Use `-c lang=go AppTheoryHelloWorldGo` or `-c lang=py AppTheoryHelloWorldPy` for the Go and Python variants.
+
 ## Verification
 
 Run the fast local check first:
@@ -195,6 +251,8 @@ values return unknown/invalid provenance instead of falling back to forwarding h
 - [Core Patterns](./core-patterns.md)
 - [Testing Guide](./testing-guide.md)
 - [CDK Guides](./cdk/README.md)
+- [CDK Getting Started](./cdk/getting-started.md)
+- [Hello-world CDK example](../examples/cdk/hello-world/README.md)
 - [Lift Migration Guide](./migration/from-lift.md)
 - [AppSync Lambda Resolver Recipe](./migration/appsync-lambda-resolvers.md)
 - [CDK AppSync Lambda Resolvers](./cdk/appsync-lambda-resolvers.md)
