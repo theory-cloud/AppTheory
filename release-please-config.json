@@ -57,6 +57,11 @@
         },
         {
           "type": "json",
+          "path": "examples/cdk/hello-world/package-lock.json",
+          "jsonpath": "$.packages['../../../cdk'].version"
+        },
+        {
+          "type": "json",
           "path": "examples/cdk/import-pipeline/package-lock.json",
           "jsonpath": "$.packages['../../../cdk'].version"
         },
