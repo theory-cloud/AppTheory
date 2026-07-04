@@ -105,6 +105,7 @@ These checks do not run `cdk bootstrap`, `cdk deploy`, or `cdk destroy`; they pr
 
 - [Hello-world CDK example](../../examples/cdk/hello-world/README.md)
 - [CDK API Reference](./api-reference.md)
+- [Dependency Automation](../dependency-automation.md)
 - [FaceTheory-First SSR Site](./ssr-site.md)
 - [AppSync Lambda Resolvers](./appsync-lambda-resolvers.md)
 - [REST API Router + Streaming](./rest-api-router-streaming.md)

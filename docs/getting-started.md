@@ -270,6 +270,7 @@ values return unknown/invalid provenance instead of falling back to forwarding h
 - [Testing Guide](./testing-guide.md)
 - [CDK Guides](./cdk/README.md)
 - [CDK Getting Started](./cdk/getting-started.md)
+- [Dependency Automation](./dependency-automation.md)
 - [Hello-world CDK example](../examples/cdk/hello-world/README.md)
 - [Lift Migration Guide](./migration/from-lift.md)
 - [AppSync Lambda Resolver Recipe](./migration/appsync-lambda-resolvers.md)
