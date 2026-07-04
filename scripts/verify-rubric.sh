@@ -12,6 +12,7 @@ bash ./scripts/verify-fixture-count.sh
 bash ./scripts/verify-fixture-schema.sh
 bash ./scripts/verify-cdk-readme-inventory.sh
 bash ./scripts/verify-cdk-go-drift.sh
+bash ./scripts/verify-api-docs.sh
 bash ./gov-infra/verifiers/gov-verify-rubric.sh
 
 echo "rubric: PASS"
