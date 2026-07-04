@@ -35,7 +35,7 @@
 
 ---
 
-AppTheory is a **contract-first serverless runtime for AWS Lambda** designed to keep request handling, middleware, and event normalization consistent across languages and reliable in generative coding workflows (humans + AI assistants). It ships peer implementations in Go, TypeScript, and Python — not a Go library with bindings, but three independent runtimes verified against the contract fixture corpus on every commit. Go and TypeScript execute the SP09 MCP fixtures; Python loads them and explicitly skips those MCP future-runtime fixtures pending SP11.
+AppTheory is a **contract-first serverless runtime for AWS Lambda** designed to keep request handling, middleware, and event normalization consistent across languages and reliable in generative coding workflows (humans + AI assistants). It ships peer implementations in Go, TypeScript, and Python — not a Go library with bindings, but three independent runtimes verified against the contract fixture corpus on every commit. Go, TypeScript, and Python execute the SP09 MCP and SP12 OAuth fixtures as first-class contract tiers.
 
 ```
             FaceTheory (client delivery)
@@ -76,7 +76,7 @@ python -m pip install "./apptheory-${VERSION}-py3-none-any.whl"
 
 | | |
 |---|---|
-| **Contract test fixtures** | 195 total — Go and TypeScript execute all; Python passes the shared non-MCP corpus and explicitly skips MCP future-runtime fixture tier | <!-- apptheory-fixture-count: 195 -->
+| **Contract test fixtures** | 199 total — Go, TypeScript, and Python execute all shared fixtures including MCP and OAuth | <!-- apptheory-fixture-count: 199 -->
 | **Runtimes** | Go · TypeScript · Python (peers, not ports) |
 | **Tiers** | P0 (core) · P1 (+request-id, auth, CORS, guardrails) · P2 (+duration-aware observability hooks, inbound trace recording, EMF metric sink path, rate limiting) — default P2 |
 | **Event sources** | Lambda Function URL · API Gateway v2 · ALB · AppSync · SQS · EventBridge · DynamoDB Streams · Kinesis · WebSockets |
@@ -89,7 +89,7 @@ python -m pip install "./apptheory-${VERSION}-py3-none-any.whl"
 Use AppTheory when you want AWS-Lambda-backed services that are:
 
 - **Serverless-first** — one unified `HandleLambda` entrypoint dispatches Lambda Function URL, API Gateway v2, ALB, AppSync, SQS, EventBridge, DynamoDB Streams, Kinesis, and WebSockets. The same handler shape covers every event source.
-- **Cross-language consistent** — one routing model, one middleware order, one error envelope — across three runtimes — with drift prevention on the shared non-MCP corpus. Go and TypeScript execute all [195 contract fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/); Python passes the shared non-MCP corpus and explicitly skips the MCP future-runtime fixture tier pending SP11. <!-- apptheory-fixture-count: 195 -->
+- **Cross-language consistent** — one routing model, one middleware order, one error envelope — across three runtimes — with drift prevention on the full shared corpus. Go, TypeScript, and Python execute all [199 contract fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/), including MCP and OAuth. <!-- apptheory-fixture-count: 199 -->
 - **Generative-coding friendly** — explicit tiers, canonical patterns, and strict verification so AI-generated code stays correct and maintainable.
 
 ✅ Treat routing, middleware, and event normalization as a contract
@@ -128,7 +128,7 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 
 **Contract reference and feature pages:**
 
-- [Contract Fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/) — the 195-fixture covenant: Go and TypeScript execute all; Python skips MCP future-runtime fixture tier pending SP11 <!-- apptheory-fixture-count: 195 -->
+- [Contract Fixtures](https://apptheory.theorycloud.ai/reference/contract-fixtures/) — the 199-fixture covenant across Go, TypeScript, and Python, including MCP and OAuth <!-- apptheory-fixture-count: 199 -->
 - [Event Shape Dispatch](https://apptheory.theorycloud.ai/reference/event-shapes/) — which Lambda event shapes route to which handler
 - [HTTP Runtime](https://apptheory.theorycloud.ai/features/http-runtime/) — P0/P1/P2 tier surface
 - [Jobs Ledger](https://apptheory.theorycloud.ai/features/jobs-ledger/)
@@ -157,7 +157,7 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 | `py/` | Python runtime (3.14+) |
 | `cdk/` | CDK constructs (jsii) — `AppTheoryHttpApi`, `AppTheoryMcpServer`, `AppTheoryQueue`, ... |
 | `cdk-go/` | Generated Go bindings for the jsii CDK package |
-| `contract-tests/` | Contract fixtures (195 total) + runners for Go, TS, Python; Go and TS execute the MCP tier while Python explicitly skips it pending SP11 | <!-- apptheory-fixture-count: 195 -->
+| `contract-tests/` | Contract fixtures (199 total) + runners for Go, TS, Python; all three runtimes execute MCP and OAuth tiers | <!-- apptheory-fixture-count: 199 -->
 | `api-snapshots/` | Public API surface lockfiles for each runtime — the release gate |
 | `examples/` | CDK + handler examples: `multilang`, `import-pipeline`, `ssr-site`, MCP, ... |
 | `.github/workflows/` | CI: rubric, release-please (stable + prerelease), Pages publish, subtree publish |

@@ -18,6 +18,7 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/microvm-operations/` — M16 real Lambda MicroVM operation, route, provider-state, tenant, and token-safety contracts
 - `contract-tests/fixtures/openapi/` — P0 descriptive OpenAPI generation with byte-pinned canonical JSON output
 - `contract-tests/fixtures/mcp/` — SP09 Go MCP protocol, registry, session, Streamable HTTP, resumable SSE, and task-store contracts
+- `contract-tests/fixtures/oauth/` — SP12 OAuth protected-resource metadata, bearer validation, dynamic client registration, and PKCE contracts
 
 Each fixture is a single JSON object.
 
@@ -31,8 +32,8 @@ while provider/runtime payload objects remain open so behavior-specific contract
 
 ## Common shape
 
-- `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*`, `m14.*`, `m15.*`, `m16.*`, or `mcp.*` prefixes).
-- `tier` (string): `p0` / `p1` / `p2` / `m1` / `m2` / `m3` / `m12` / `m14` / `m15` / `m16` / `mcp`.
+- `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*`, `m14.*`, `m15.*`, `m16.*`, `mcp.*`, or `oauth.*` prefixes).
+- `tier` (string): `p0` / `p1` / `p2` / `m1` / `m2` / `m3` / `m12` / `m14` / `m15` / `m16` / `mcp` / `oauth`.
 - `name` (string): short human-friendly name.
 - `setup.routes` (array): route table for the fixture runner.
   - `method` (string): HTTP method (e.g. `GET`).
@@ -95,6 +96,20 @@ HTTP request shape (`method`, `path`, `headers`, `body`, `is_base64`) and option
 steps live in `expect.mcp.steps` and compare status, canonical headers, cookies, body JSON, or parsed `sse_frames`.
 The fixtures intentionally exercise HTTP framing (POST/GET/DELETE), JSON-RPC envelopes, session headers, and replay
 semantics through the runtime handler instead of calling private Go helpers directly.
+
+## SP12 OAuth fixtures
+
+OAuth fixtures pin the local, deterministic security surface used by MCP protected resources. They do not contact live
+OAuth providers, create real clients, or require secrets. `setup.oauth` declares the protected resource, authorization
+server issuers, supported/required scopes, fixed bearer-token records, a fixed clock, deterministic ID sequence, and the
+DCR policy. `input.oauth.steps` drives HTTP-shaped requests through runner-owned OAuth routes backed by each runtime's
+OAuth primitives; `expect.oauth.steps` compares canonical HTTP responses and non-secret-bearing AppTheory error
+envelopes.
+
+The protected-resource and bearer fixtures pin RFC 9728 metadata at
+`/.well-known/oauth-protected-resource/<resource-path>`, the `WWW-Authenticate` discovery challenge, expiry/audience/scope
+failures, and the accepted-token context shape. The DCR/PKCE fixtures pin RFC 7591 public-client registration constraints,
+S256 code challenge verification, authorization-code exchange, and canonical failure envelopes.
 
 
 ## HTTP source provenance fixtures

@@ -9,9 +9,8 @@ description: >-
   The contract-first serverless runtime for the Theory Cloud stack. One
   application model across Go, TypeScript, and Python for HTTP, AppSync,
   WebSockets, and event-driven workloads on AWS Lambda — with behavioral parity
-  enforced by the contract fixture corpus. Go and TypeScript provide the MCP
-  Streamable HTTP runtime used by Remote MCP-style servers; Python skips that
-  future-runtime fixture tier pending SP11.
+  enforced by the contract fixture corpus. Go, TypeScript, and Python provide the MCP
+  Streamable HTTP runtime and OAuth protected-resource fixture parity used by Remote MCP-style servers.
 
 # Canonical public docs domain. GitHub still serves the Pages artifact for the
 # project repository, but the custom domain is mounted at the domain root, so
@@ -164,7 +163,7 @@ tabletheory:
       cta: See event workloads
   stats:
     - label: Contract fixtures
-      value: "195" # apptheory-fixture-count
+      value: "199" # apptheory-fixture-count
       sub: Go+TS all; Py 183 + 11 MCP skips
     - label: Runtimes
       value: "3"
