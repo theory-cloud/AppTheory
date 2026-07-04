@@ -1,5 +1,6 @@
 export * from "./function";
 export * from "./function-alarms";
+export * from "./observability";
 export * from "./hosted-zone";
 export * from "./certificate";
 export * from "./api-domain";

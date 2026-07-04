@@ -89,6 +89,25 @@
         ]
       },
       "Type": "AWS::IAM::Policy"
+    },
+    "FnLogGroup27CC2AC8": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Join": [
+            "",
+            [
+              "/aws/lambda/",
+              {
+                "Ref": "FnFunction06372625"
+              }
+            ]
+          ]
+        },
+        "RetentionInDays": 30
+      },
+      "Type": "AWS::Logs::LogGroup",
+      "UpdateReplacePolicy": "Retain"
     }
   },
   "Rules": {

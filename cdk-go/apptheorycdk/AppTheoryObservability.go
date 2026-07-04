@@ -4,21 +4,22 @@ import (
 	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
 	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/jsii"
 
-	"github.com/aws/aws-cdk-go/awscdk/v2/awscodedeploy"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
-	"github.com/aws/aws-cdk-go/awscdk/v2/interfaces/interfacesawslogs"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awscloudwatch"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
 
-type AppTheoryFunction interface {
+// Dashboard and alarms for AppTheory's first-party runtime metrics.
+type AppTheoryObservability interface {
 	constructs.Construct
-	Alias() awslambda.Alias
-	DeploymentGroup() awscodedeploy.LambdaDeploymentGroup
-	Fn() awslambda.Function
-	LogGroup() interfacesawslogs.ILogGroupRef
+	Dashboard() awscloudwatch.Dashboard
 	// The tree node.
 	Node() constructs.Node
+	RequestCount() awscloudwatch.IMetric
+	RequestDuration() awscloudwatch.IMetric
+	RequestDurationAlarm() awscloudwatch.Alarm
+	RequestErrors() awscloudwatch.IMetric
+	RequestErrorsAlarm() awscloudwatch.Alarm
 	// Returns a string representation of this construct.
 	ToString() *string
 	// Applies one or more mixins to this construct.
@@ -32,52 +33,22 @@ type AppTheoryFunction interface {
 	With(mixins ...constructs.IMixin) constructs.IConstruct
 }
 
-// The jsii proxy struct for AppTheoryFunction
-type jsiiProxy_AppTheoryFunction struct {
+// The jsii proxy struct for AppTheoryObservability
+type jsiiProxy_AppTheoryObservability struct {
 	internal.Type__constructsConstruct
 }
 
-func (j *jsiiProxy_AppTheoryFunction) Alias() awslambda.Alias {
-	var returns awslambda.Alias
+func (j *jsiiProxy_AppTheoryObservability) Dashboard() awscloudwatch.Dashboard {
+	var returns awscloudwatch.Dashboard
 	_jsii_.Get(
 		j,
-		"alias",
+		"dashboard",
 		&returns,
 	)
 	return returns
 }
 
-func (j *jsiiProxy_AppTheoryFunction) DeploymentGroup() awscodedeploy.LambdaDeploymentGroup {
-	var returns awscodedeploy.LambdaDeploymentGroup
-	_jsii_.Get(
-		j,
-		"deploymentGroup",
-		&returns,
-	)
-	return returns
-}
-
-func (j *jsiiProxy_AppTheoryFunction) Fn() awslambda.Function {
-	var returns awslambda.Function
-	_jsii_.Get(
-		j,
-		"fn",
-		&returns,
-	)
-	return returns
-}
-
-func (j *jsiiProxy_AppTheoryFunction) LogGroup() interfacesawslogs.ILogGroupRef {
-	var returns interfacesawslogs.ILogGroupRef
-	_jsii_.Get(
-		j,
-		"logGroup",
-		&returns,
-	)
-	return returns
-}
-
-func (j *jsiiProxy_AppTheoryFunction) Node() constructs.Node {
+func (j *jsiiProxy_AppTheoryObservability) Node() constructs.Node {
 	var returns constructs.Node
 	_jsii_.Get(
 		j,
@@ -87,16 +58,66 @@ func (j *jsiiProxy_AppTheoryFunction) Node() constructs.Node {
 	return returns
 }
 
-func NewAppTheoryFunction(scope constructs.Construct, id *string, props *AppTheoryFunctionProps) AppTheoryFunction {
+func (j *jsiiProxy_AppTheoryObservability) RequestCount() awscloudwatch.IMetric {
+	var returns awscloudwatch.IMetric
+	_jsii_.Get(
+		j,
+		"requestCount",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryObservability) RequestDuration() awscloudwatch.IMetric {
+	var returns awscloudwatch.IMetric
+	_jsii_.Get(
+		j,
+		"requestDuration",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryObservability) RequestDurationAlarm() awscloudwatch.Alarm {
+	var returns awscloudwatch.Alarm
+	_jsii_.Get(
+		j,
+		"requestDurationAlarm",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryObservability) RequestErrors() awscloudwatch.IMetric {
+	var returns awscloudwatch.IMetric
+	_jsii_.Get(
+		j,
+		"requestErrors",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryObservability) RequestErrorsAlarm() awscloudwatch.Alarm {
+	var returns awscloudwatch.Alarm
+	_jsii_.Get(
+		j,
+		"requestErrorsAlarm",
+		&returns,
+	)
+	return returns
+}
+
+func NewAppTheoryObservability(scope constructs.Construct, id *string, props *AppTheoryObservabilityProps) AppTheoryObservability {
 	_init_.Initialize()
 
-	if err := validateNewAppTheoryFunctionParameters(scope, id, props); err != nil {
+	if err := validateNewAppTheoryObservabilityParameters(scope, id, props); err != nil {
 		panic(err)
 	}
-	j := jsiiProxy_AppTheoryFunction{}
+	j := jsiiProxy_AppTheoryObservability{}
 
 	_jsii_.Create(
-		"@theory-cloud/apptheory-cdk.AppTheoryFunction",
+		"@theory-cloud/apptheory-cdk.AppTheoryObservability",
 		[]interface{}{scope, id, props},
 		&j,
 	)
@@ -104,11 +125,11 @@ func NewAppTheoryFunction(scope constructs.Construct, id *string, props *AppTheo
 	return &j
 }
 
-func NewAppTheoryFunction_Override(a AppTheoryFunction, scope constructs.Construct, id *string, props *AppTheoryFunctionProps) {
+func NewAppTheoryObservability_Override(a AppTheoryObservability, scope constructs.Construct, id *string, props *AppTheoryObservabilityProps) {
 	_init_.Initialize()
 
 	_jsii_.Create(
-		"@theory-cloud/apptheory-cdk.AppTheoryFunction",
+		"@theory-cloud/apptheory-cdk.AppTheoryObservability",
 		[]interface{}{scope, id, props},
 		a,
 	)
@@ -131,16 +152,16 @@ func NewAppTheoryFunction_Override(a AppTheoryFunction, scope constructs.Constru
 // this type-testing method instead.
 //
 // Returns: true if `x` is an object created from a class which extends `Construct`.
-func AppTheoryFunction_IsConstruct(x interface{}) *bool {
+func AppTheoryObservability_IsConstruct(x interface{}) *bool {
 	_init_.Initialize()
 
-	if err := validateAppTheoryFunction_IsConstructParameters(x); err != nil {
+	if err := validateAppTheoryObservability_IsConstructParameters(x); err != nil {
 		panic(err)
 	}
 	var returns *bool
 
 	_jsii_.StaticInvoke(
-		"@theory-cloud/apptheory-cdk.AppTheoryFunction",
+		"@theory-cloud/apptheory-cdk.AppTheoryObservability",
 		"isConstruct",
 		[]interface{}{x},
 		&returns,
@@ -149,7 +170,7 @@ func AppTheoryFunction_IsConstruct(x interface{}) *bool {
 	return returns
 }
 
-func (a *jsiiProxy_AppTheoryFunction) ToString() *string {
+func (a *jsiiProxy_AppTheoryObservability) ToString() *string {
 	var returns *string
 
 	_jsii_.Invoke(
@@ -162,7 +183,7 @@ func (a *jsiiProxy_AppTheoryFunction) ToString() *string {
 	return returns
 }
 
-func (a *jsiiProxy_AppTheoryFunction) With(mixins ...constructs.IMixin) constructs.IConstruct {
+func (a *jsiiProxy_AppTheoryObservability) With(mixins ...constructs.IMixin) constructs.IConstruct {
 	args := []interface{}{}
 	for _, a := range mixins {
 		args = append(args, a)

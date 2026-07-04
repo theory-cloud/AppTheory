@@ -1,11 +1,13 @@
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import type * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as logs from "aws-cdk-lib/aws-logs";
 import type * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
 import { AppTheoryApiDomain } from "./api-domain";
-import { AppTheoryFunction } from "./function";
-import { AppTheoryHttpApi } from "./http-api";
+import { AppTheoryFunction, type AppTheoryFunctionAliasOptions } from "./function";
+import { AppTheoryHttpApi, type AppTheoryHttpApiCorsOptions, type AppTheoryHttpApiDomainOptions, type AppTheoryHttpApiWafOptions } from "./http-api";
 export interface AppTheoryAppProps {
     readonly appName: string;
     readonly codeAssetPath?: string;
@@ -15,6 +17,14 @@ export interface AppTheoryAppProps {
     readonly environment?: Record<string, string>;
     readonly memorySize?: number;
     readonly timeoutSeconds?: number;
+    readonly logRetention?: logs.RetentionDays;
+    readonly logGroup?: logs.ILogGroupRef;
+    readonly vpc?: ec2.IVpc;
+    readonly vpcSubnets?: ec2.SubnetSelection;
+    readonly securityGroups?: ec2.ISecurityGroup[];
+    readonly allowAllOutbound?: boolean;
+    readonly allowPublicSubnet?: boolean;
+    readonly alias?: AppTheoryFunctionAliasOptions;
     readonly enableDatabase?: boolean;
     readonly databaseTableName?: string;
     readonly databasePartitionKey?: string;
@@ -24,6 +34,9 @@ export interface AppTheoryAppProps {
     readonly rateLimitTableName?: string;
     readonly domainName?: string;
     readonly certificateArn?: string;
+    readonly domain?: AppTheoryHttpApiDomainOptions;
+    readonly cors?: boolean | AppTheoryHttpApiCorsOptions;
+    readonly waf?: boolean | AppTheoryHttpApiWafOptions;
     readonly hostedZone?: route53.IHostedZone;
     readonly stage?: apigwv2.IStage;
 }
@@ -33,5 +46,6 @@ export declare class AppTheoryApp extends Construct {
     readonly databaseTable?: dynamodb.ITable;
     readonly rateLimitTable?: dynamodb.ITable;
     readonly domain?: AppTheoryApiDomain;
+    readonly alias?: lambda.Alias;
     constructor(scope: Construct, id: string, props: AppTheoryAppProps);
 }

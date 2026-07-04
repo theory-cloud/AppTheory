@@ -5,6 +5,7 @@ const test = require("node:test");
 
 const cdk = require("aws-cdk-lib");
 const assertions = require("aws-cdk-lib/assertions");
+const acm = require("aws-cdk-lib/aws-certificatemanager");
 const codebuild = require("aws-cdk-lib/aws-codebuild");
 const cloudfront = require("aws-cdk-lib/aws-cloudfront");
 const dynamodb = require("aws-cdk-lib/aws-dynamodb");
@@ -198,6 +199,52 @@ test("AppTheoryFunction synthesizes expected template", () => {
   }
 });
 
+test("AppTheoryFunction exposes log retention, VPC, alias, provisioned concurrency, and canary deploys", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const vpc = ec2.Vpc.fromVpcAttributes(stack, "Vpc", {
+    vpcId: "vpc-123456",
+    availabilityZones: ["us-east-1a"],
+    privateSubnetIds: ["subnet-private"],
+    privateSubnetRouteTableIds: ["rtb-private"],
+  });
+  const securityGroup = ec2.SecurityGroup.fromSecurityGroupId(stack, "SecurityGroup", "sg-123456");
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    logRetention: logs.RetentionDays.ONE_WEEK,
+    vpc,
+    vpcSubnets: { subnets: vpc.privateSubnets },
+    securityGroups: [securityGroup],
+    alias: {
+      name: "live",
+      provisionedConcurrentExecutions: 2,
+      deployment: {
+        trafficShiftType: apptheory.AppTheoryLambdaTrafficShiftType.CANARY,
+        percentage: 15,
+        interval: cdk.Duration.minutes(3),
+      },
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const fn = resources.find((resource) => resource.Type === "AWS::Lambda::Function");
+  const alias = resources.find((resource) => resource.Type === "AWS::Lambda::Alias");
+  const deploymentConfig = resources.find((resource) => resource.Type === "AWS::CodeDeploy::DeploymentConfig");
+  const deploymentGroup = resources.find((resource) => resource.Type === "AWS::CodeDeploy::DeploymentGroup");
+  const logGroup = resources.find((resource) => resource.Type === "AWS::Logs::LogGroup");
+
+  assert.ok(fn.Properties?.VpcConfig, "Function should expose first-class VPC placement");
+  assert.deepEqual(alias.Properties?.ProvisionedConcurrencyConfig, { ProvisionedConcurrentExecutions: 2 });
+  assert.equal(deploymentConfig.Properties?.TrafficRoutingConfig?.Type, "TimeBasedCanary");
+  assert.equal(deploymentConfig.Properties?.TrafficRoutingConfig?.TimeBasedCanary?.CanaryPercentage, 15);
+  assert.ok(deploymentGroup, "Should synthesize CodeDeploy deployment group");
+  assert.equal(logGroup.Properties?.RetentionInDays, 7);
+});
+
 test("AppTheoryHttpApi synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -216,6 +263,61 @@ test("AppTheoryHttpApi synthesizes expected template", () => {
   } else {
     expectSnapshot("http-api", template);
   }
+});
+
+test("AppTheoryHttpApi exposes custom domain, CORS, access logs, and regional WAF", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+  const cert = acm.Certificate.fromCertificateArn(
+    stack,
+    "Cert",
+    "arn:aws:acm:us-east-1:123456789012:certificate/example",
+  );
+
+  new apptheory.AppTheoryHttpApi(stack, "HttpApi", {
+    handler: fn,
+    apiName: "apptheory-prod",
+    cors: true,
+    stage: {
+      stageName: "prod",
+      accessLogging: true,
+      throttlingRateLimit: 100,
+      throttlingBurstLimit: 200,
+    },
+    domain: {
+      domainName: "api.example.com",
+      certificate: cert,
+    },
+    waf: {
+      name: "apptheory-prod-waf",
+      metricName: "apptheoryProdWaf",
+      rateLimit: 1000,
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const api = resources.find((resource) => resource.Type === "AWS::ApiGatewayV2::Api");
+  const domainName = resources.find((resource) => resource.Type === "AWS::ApiGatewayV2::DomainName");
+  const apiMapping = resources.find((resource) => resource.Type === "AWS::ApiGatewayV2::ApiMapping");
+  const webAcl = resources.find((resource) => resource.Type === "AWS::WAFv2::WebACL");
+  const webAclAssociation = resources.find((resource) => resource.Type === "AWS::WAFv2::WebACLAssociation");
+  const accessLogGroup = resources.find(
+    (resource) => resource.Type === "AWS::Logs::LogGroup" && resource.Properties?.RetentionInDays === 30,
+  );
+
+  assert.deepEqual(api.Properties?.CorsConfiguration?.AllowOrigins, ["*"]);
+  assert.ok(domainName, "Should synthesize a custom domain");
+  assert.ok(apiMapping, "Should synthesize a domain mapping");
+  assert.equal(webAcl.Properties?.Scope, "REGIONAL");
+  assert.ok(webAclAssociation, "Should associate regional WAF with the HTTP API stage");
+  assert.ok(accessLogGroup, "Should synthesize finite-retention access logs");
 });
 
 test("AppTheoryHttpIngestionEndpoint synthesizes expected template", () => {
@@ -2048,6 +2150,85 @@ test("AppTheoryApp synthesizes expected template", () => {
   } else {
     expectSnapshot("app", template);
   }
+});
+
+test("AppTheoryApp exposes production deployment surface without raw CDK escape hatches", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const vpc = ec2.Vpc.fromVpcAttributes(stack, "Vpc", {
+    vpcId: "vpc-123456",
+    availabilityZones: ["us-east-1a"],
+    privateSubnetIds: ["subnet-private"],
+    privateSubnetRouteTableIds: ["rtb-private"],
+  });
+
+  new apptheory.AppTheoryApp(stack, "App", {
+    appName: "apptheory-prod",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    logRetention: logs.RetentionDays.ONE_WEEK,
+    vpc,
+    vpcSubnets: { subnets: vpc.privateSubnets },
+    cors: { allowOrigins: ["https://app.example.com"], allowCredentials: true },
+    waf: { webAclArn: "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/example/id" },
+    alias: {
+      name: "live",
+      provisionedConcurrentExecutions: 1,
+      deployment: {
+        trafficShiftType: apptheory.AppTheoryLambdaTrafficShiftType.LINEAR,
+        percentage: 10,
+        interval: cdk.Duration.minutes(1),
+      },
+    },
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const fn = resources.find((resource) => resource.Type === "AWS::Lambda::Function");
+  const alias = resources.find((resource) => resource.Type === "AWS::Lambda::Alias");
+  const deploymentConfig = resources.find((resource) => resource.Type === "AWS::CodeDeploy::DeploymentConfig");
+  const webAclAssociation = resources.find((resource) => resource.Type === "AWS::WAFv2::WebACLAssociation");
+  const api = resources.find((resource) => resource.Type === "AWS::ApiGatewayV2::Api");
+
+  assert.ok(fn.Properties?.VpcConfig, "App function should expose VPC placement");
+  assert.equal(alias.Properties?.Name, "live");
+  assert.deepEqual(alias.Properties?.ProvisionedConcurrencyConfig, { ProvisionedConcurrentExecutions: 1 });
+  assert.equal(deploymentConfig.Properties?.TrafficRoutingConfig?.Type, "TimeBasedLinear");
+  assert.ok(webAclAssociation, "App HTTP API should attach regional WAF");
+  assert.deepEqual(api.Properties?.CorsConfiguration?.AllowOrigins, ["https://app.example.com"]);
+});
+
+test("AppTheoryObservability synthesizes dashboard and alarms for AppTheory runtime metrics", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryObservability(stack, "Observability", {
+    dashboardName: "apptheory-prod",
+    serviceName: "orders",
+    alarmDimensions: {
+      service: "orders",
+      method: "GET",
+      path: "/orders",
+      status: "500",
+      tenantId: "tenant-1",
+      errorCode: "app.internal",
+    },
+    requestErrorThreshold: 2,
+    requestDurationThresholdMs: 750,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const dashboard = resources.find((resource) => resource.Type === "AWS::CloudWatch::Dashboard");
+  const alarms = resources.filter((resource) => resource.Type === "AWS::CloudWatch::Alarm");
+  const alarmMetrics = alarms.map((alarm) => alarm.Properties?.MetricName).sort();
+  const dashboardBody = renderedString(dashboard.Properties?.DashboardBody);
+
+  assert.deepEqual(alarmMetrics, ["RequestDuration", "RequestErrors"]);
+  assert.ok(dashboardBody.includes("RequestCount"));
+  assert.ok(dashboardBody.includes("RequestDuration"));
+  assert.ok(dashboardBody.includes("RequestErrors"));
 });
 
 test("AppTheorySsrSite synthesizes expected template", () => {

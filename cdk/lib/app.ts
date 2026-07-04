@@ -2,13 +2,20 @@ import { CfnOutput, Duration, Stack } from "aws-cdk-lib";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import type * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as logs from "aws-cdk-lib/aws-logs";
 import type * as route53 from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
 
 import { AppTheoryApiDomain } from "./api-domain";
-import { AppTheoryFunction } from "./function";
-import { AppTheoryHttpApi } from "./http-api";
+import { AppTheoryFunction, type AppTheoryFunctionAliasOptions } from "./function";
+import {
+  AppTheoryHttpApi,
+  type AppTheoryHttpApiCorsOptions,
+  type AppTheoryHttpApiDomainOptions,
+  type AppTheoryHttpApiWafOptions,
+} from "./http-api";
 
 export interface AppTheoryAppProps {
   readonly appName: string;
@@ -20,6 +27,14 @@ export interface AppTheoryAppProps {
   readonly environment?: Record<string, string>;
   readonly memorySize?: number;
   readonly timeoutSeconds?: number;
+  readonly logRetention?: logs.RetentionDays;
+  readonly logGroup?: logs.ILogGroupRef;
+  readonly vpc?: ec2.IVpc;
+  readonly vpcSubnets?: ec2.SubnetSelection;
+  readonly securityGroups?: ec2.ISecurityGroup[];
+  readonly allowAllOutbound?: boolean;
+  readonly allowPublicSubnet?: boolean;
+  readonly alias?: AppTheoryFunctionAliasOptions;
 
   readonly enableDatabase?: boolean;
   readonly databaseTableName?: string;
@@ -32,6 +47,9 @@ export interface AppTheoryAppProps {
 
   readonly domainName?: string;
   readonly certificateArn?: string;
+  readonly domain?: AppTheoryHttpApiDomainOptions;
+  readonly cors?: boolean | AppTheoryHttpApiCorsOptions;
+  readonly waf?: boolean | AppTheoryHttpApiWafOptions;
   readonly hostedZone?: route53.IHostedZone;
   readonly stage?: apigwv2.IStage;
 }
@@ -42,6 +60,7 @@ export class AppTheoryApp extends Construct {
   public readonly databaseTable?: dynamodb.ITable;
   public readonly rateLimitTable?: dynamodb.ITable;
   public readonly domain?: AppTheoryApiDomain;
+  public readonly alias?: lambda.Alias;
 
   constructor(scope: Construct, id: string, props: AppTheoryAppProps) {
     super(scope, id);
@@ -113,7 +132,16 @@ export class AppTheoryApp extends Construct {
       environment: env,
       memorySize: props.memorySize,
       timeout: Duration.seconds(props.timeoutSeconds ?? 30),
+      logRetention: props.logRetention,
+      logGroup: props.logGroup,
+      vpc: props.vpc,
+      vpcSubnets: props.vpcSubnets,
+      securityGroups: props.securityGroups,
+      allowAllOutbound: props.allowAllOutbound,
+      allowPublicSubnet: props.allowPublicSubnet,
+      alias: props.alias,
     });
+    (this as { alias?: lambda.Alias }).alias = this.fn.alias;
 
     if (this.databaseTable) {
       this.databaseTable.grantReadWriteData(this.fn.fn);
@@ -123,25 +151,13 @@ export class AppTheoryApp extends Construct {
     }
 
     this.api = new AppTheoryHttpApi(this, "API", {
-      handler: this.fn.fn,
+      handler: this.fn.alias ?? this.fn.fn,
       apiName: `${appName}-api`,
+      cors: props.cors,
+      domain: normalizeDomainOptions(this, props),
+      waf: props.waf,
     });
-
-    if (props.domainName || props.certificateArn) {
-      if (!props.domainName || !props.certificateArn) {
-        throw new Error("AppTheoryApp requires both props.domainName and props.certificateArn for custom domain");
-      }
-
-      const cert = acm.Certificate.fromCertificateArn(this, "Certificate", props.certificateArn);
-
-      this.domain = new AppTheoryApiDomain(this, "Domain", {
-        domainName: props.domainName,
-        certificate: cert,
-        httpApi: this.api.api,
-        stage: props.stage ?? this.api.api.defaultStage,
-        hostedZone: props.hostedZone,
-      });
-    }
+    (this as { domain?: AppTheoryApiDomain }).domain = this.api.domain;
 
     const stack = Stack.of(this);
 
@@ -162,4 +178,25 @@ export class AppTheoryApp extends Construct {
       });
     }
   }
+}
+
+function normalizeDomainOptions(scope: Construct, props: AppTheoryAppProps): AppTheoryHttpApiDomainOptions | undefined {
+  if (props.domain && (props.domainName || props.certificateArn || props.hostedZone || props.stage)) {
+    throw new Error("AppTheoryApp custom domain must use either props.domain or legacy domainName/certificateArn props");
+  }
+  if (props.domain) {
+    return props.domain;
+  }
+  if (!props.domainName && !props.certificateArn) {
+    return undefined;
+  }
+  if (!props.domainName || !props.certificateArn) {
+    throw new Error("AppTheoryApp requires both props.domainName and props.certificateArn for custom domain");
+  }
+  return {
+    domainName: props.domainName,
+    certificate: acm.Certificate.fromCertificateArn(scope, "Certificate", props.certificateArn),
+    hostedZone: props.hostedZone,
+    stage: props.stage,
+  };
 }
