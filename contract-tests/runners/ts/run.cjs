@@ -2350,7 +2350,7 @@ function compareMCPStep(expected, actual) {
   if (!compareHeaders(expected.headers ?? {}, actual.headers ?? {})) {
     return { ok: false, reason: "headers mismatch", actual, expected };
   }
-  if (Array.isArray(expected.sse_frames) && expected.sse_frames.length > 0) {
+  if (Array.isArray(expected.sse_frames)) {
     if (!deepEqual(expected.sse_frames, actual.sse_frames)) {
       return { ok: false, reason: "sse_frames mismatch", actual, expected };
     }

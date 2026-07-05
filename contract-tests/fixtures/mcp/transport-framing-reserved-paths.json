@@ -180,10 +180,7 @@
           },
           "cookies": [],
           "is_base64": false,
-          "body": {
-            "encoding": "utf8",
-            "value": ": keepalive\n\n"
-          }
+          "sse_frames": []
         },
         {
           "status": 400,

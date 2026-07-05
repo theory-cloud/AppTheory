@@ -428,9 +428,9 @@ func compareMCPExpectedStep(expected FixtureMCPExpectedStep, actual fixtureMCPAc
 	if !equalHeaders(canonicalizeHeaders(expected.Headers), actual.Headers) {
 		return fmt.Errorf("headers mismatch: expected %s, got %s", string(marshalIndentOrPlaceholder(canonicalizeHeaders(expected.Headers))), string(marshalIndentOrPlaceholder(actual.Headers)))
 	}
-	if len(expected.SSEFrames) > 0 {
-		if !reflectMCPFramesEqual(expected.SSEFrames, actual.SSEFrames) {
-			return fmt.Errorf("sse_frames mismatch: expected %s, got %s", string(marshalIndentOrPlaceholder(expected.SSEFrames)), string(marshalIndentOrPlaceholder(actual.SSEFrames)))
+	if expected.SSEFrames != nil {
+		if !reflectMCPFramesEqual(*expected.SSEFrames, actual.SSEFrames) {
+			return fmt.Errorf("sse_frames mismatch: expected %s, got %s", string(marshalIndentOrPlaceholder(*expected.SSEFrames)), string(marshalIndentOrPlaceholder(actual.SSEFrames)))
 		}
 		return nil
 	}
