@@ -458,7 +458,7 @@ func TestBindRequest_DeclarativeValidationReturnsCanonicalFieldErrors(t *testing
 
 	_, err := BindRequest(&Context{
 		Request: Request{
-			Body: []byte(`{"name":"","age":17}`),
+			Body: []byte(`{"age":17}`),
 		},
 	}, BindConfig[requestModel]{
 		Body: true,
@@ -486,6 +486,63 @@ func TestBindRequest_DeclarativeValidationReturnsCanonicalFieldErrors(t *testing
 	}
 	if errorsValue[1] != (ValidationFieldError{Field: "age", Rule: ValidationRuleMin, Message: "age must be >= 18"}) {
 		t.Fatalf("unexpected min field error: %#v", errorsValue[1])
+	}
+}
+
+func TestBindRequest_RequiredValidationUsesPresence(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Count  int            `json:"count" validate:"required"`
+		Active bool           `json:"active" validate:"required"`
+		Name   string         `json:"name" validate:"required"`
+		Tags   []string       `json:"tags" validate:"required"`
+		Meta   map[string]any `json:"meta" validate:"required"`
+	}
+
+	req, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"count":0,"active":false,"name":"","tags":[],"meta":{}}`),
+		},
+	}, BindConfig[requestModel]{
+		Body: true,
+	})
+	if err != nil {
+		t.Fatalf("expected present zero values to satisfy required, got %v", err)
+	}
+	if req.Count != 0 || req.Active || req.Name != "" || len(req.Tags) != 0 || len(req.Meta) != 0 {
+		t.Fatalf("unexpected bound request: %#v", req)
+	}
+
+	_, err = BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"count":null,"active":false,"name":"","tags":[]}`),
+		},
+	}, BindConfig[requestModel]{
+		Body: true,
+	})
+	if err == nil {
+		t.Fatal("expected null and missing required fields to fail")
+	}
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	errorsValue, ok := appErr.Details["errors"].([]ValidationFieldError)
+	if !ok {
+		t.Fatalf("expected validation field errors, got %#v", appErr.Details["errors"])
+	}
+	want := []ValidationFieldError{
+		{Field: "count", Rule: ValidationRuleRequired, Message: "count is required"},
+		{Field: "meta", Rule: ValidationRuleRequired, Message: "meta is required"},
+	}
+	if len(errorsValue) != len(want) {
+		t.Fatalf("expected %d field errors, got %#v", len(want), errorsValue)
+	}
+	for i := range want {
+		if errorsValue[i] != want[i] {
+			t.Fatalf("error %d: expected %#v, got %#v", i, want[i], errorsValue[i])
+		}
 	}
 }
 

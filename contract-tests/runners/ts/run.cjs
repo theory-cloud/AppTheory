@@ -5538,6 +5538,26 @@ function builtInAppTheoryHandler(runtime, name, effects) {
         },
         (_ctx, req) => ({ name: req.Name, age: req.Age }),
       );
+    case "validate_required_presence":
+      return runtime.bindHandler(
+        {
+          body: true,
+          validation: {
+            count: [runtime.required()],
+            active: [runtime.required()],
+            name: [runtime.required()],
+            tags: [runtime.required()],
+            meta: [runtime.required()],
+          },
+        },
+        (_ctx, req) => ({
+          active: req.active,
+          count: req.count,
+          meta: req.meta,
+          name: req.name,
+          tags: req.tags,
+        }),
+      );
     case "echo_appsync_context":
       return (ctx) => {
         const appsync = ctx.asAppSync();

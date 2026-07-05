@@ -2539,7 +2539,9 @@ def _oauth_path_from_url(raw: str, fallback: str = "/") -> str:
 def _oauth_setup_policy(runtime: Any, setup: dict[str, Any]) -> Any:
     policy = setup.get("dcr_policy") or {}
     return runtime.DynamicClientRegistrationPolicy(
-        allowed_redirect_uris=[str(v) for v in policy.get("allowed_redirect_uris") or []],
+        allowed_redirect_uris=[
+            str(v) for v in policy.get("allowed_redirect_uris") or []
+        ],
         require_public_client=policy.get("require_public_client") is True,
         require_refresh_token=policy.get("require_refresh_token") is True,
     )
@@ -2550,7 +2552,9 @@ def _oauth_token_records(runtime: Any, setup: dict[str, Any]) -> list[Any]:
     for record in setup.get("bearer_tokens") or []:
         expires_at = None
         if int(record.get("expires_unix") or 0):
-            expires_at = dt.datetime.fromtimestamp(int(record.get("expires_unix") or 0), tz=dt.UTC)
+            expires_at = dt.datetime.fromtimestamp(
+                int(record.get("expires_unix") or 0), tz=dt.UTC
+            )
         records.append(
             runtime.BearerTokenRecord(
                 token=str(record.get("token") or ""),
@@ -2577,10 +2581,15 @@ def _new_oauth_fixture_app(runtime: Any, setup: dict[str, Any]) -> Any:
     clock_unix = int(setup.get("clock_unix") or 0)
     fixed_now = dt.datetime.fromtimestamp(clock_unix, tz=dt.UTC)
     app = runtime.create_app(tier="p0")
-    metadata = runtime.new_protected_resource_metadata(resource, setup.get("authorization_servers") or [])
+    metadata = runtime.new_protected_resource_metadata(
+        resource, setup.get("authorization_servers") or []
+    )
     metadata.scopes_supported = [str(v) for v in setup.get("scopes_supported") or []]
     metadata.bearer_methods_supported = ["header"]
-    app.get(_oauth_path_from_url(metadata_url), runtime.protected_resource_metadata_handler(metadata))
+    app.get(
+        _oauth_path_from_url(metadata_url),
+        runtime.protected_resource_metadata_handler(metadata),
+    )
 
     validator = runtime.new_memory_bearer_token_validator(
         _oauth_token_records(runtime, setup),
@@ -2598,7 +2607,9 @@ def _new_oauth_fixture_app(runtime: Any, setup: dict[str, Any]) -> Any:
     )
 
     def protected_next(ctx):
-        claims = runtime.bearer_token_claims_from_context(ctx) or runtime.BearerTokenClaims()
+        claims = (
+            runtime.bearer_token_claims_from_context(ctx) or runtime.BearerTokenClaims()
+        )
         return runtime.json(
             200,
             {
@@ -2608,7 +2619,10 @@ def _new_oauth_fixture_app(runtime: Any, setup: dict[str, Any]) -> Any:
             },
         )
 
-    app.get(_oauth_path_from_url(resource, "/mcp"), lambda ctx: bearer_middleware(ctx, protected_next))
+    app.get(
+        _oauth_path_from_url(resource, "/mcp"),
+        lambda ctx: bearer_middleware(ctx, protected_next),
+    )
 
     policy = _oauth_setup_policy(runtime, setup)
 
@@ -2620,7 +2634,9 @@ def _new_oauth_fixture_app(runtime: Any, setup: dict[str, Any]) -> Any:
             return _oauth_error_response(runtime, 400, "app.bad_request", "bad request")
         client_id = state["ids"].next("client")
         state["clients"][client_id] = payload
-        return runtime.json(201, {"client_id": client_id, "client_id_issued_at": clock_unix})
+        return runtime.json(
+            201, {"client_id": client_id, "client_id_issued_at": clock_unix}
+        )
 
     def authorize(ctx):
         q = ctx.request.query or {}
@@ -2649,14 +2665,20 @@ def _new_oauth_fixture_app(runtime: Any, setup: dict[str, Any]) -> Any:
         }
         return runtime.Response(
             status=302,
-            headers={"location": [_redirect_with_code(redirect_uri, code, _first_query(q, "state"))]},
+            headers={
+                "location": [
+                    _redirect_with_code(redirect_uri, code, _first_query(q, "state"))
+                ]
+            },
             cookies=[],
             body=b"",
             is_base64=False,
         )
 
     def token(ctx):
-        form = parse_qs(bytes(ctx.request.body or b"").decode("utf-8"), keep_blank_values=True)
+        form = parse_qs(
+            bytes(ctx.request.body or b"").decode("utf-8"), keep_blank_values=True
+        )
         code = _first_query(form, "code")
         rec = state["codes"].get(code)
         if (
@@ -2669,7 +2691,9 @@ def _new_oauth_fixture_app(runtime: Any, setup: dict[str, Any]) -> Any:
             return _oauth_error_response(runtime, 400, "app.bad_request", "bad request")
         del state["codes"][code]
         try:
-            verified = runtime.pkce_verify_s256(_first_query(form, "code_verifier"), rec["code_challenge"])
+            verified = runtime.pkce_verify_s256(
+                _first_query(form, "code_verifier"), rec["code_challenge"]
+            )
         except Exception:  # noqa: BLE001
             verified = False
         if not verified:
@@ -2714,9 +2738,13 @@ def run_fixture_oauth(
     fixture: dict[str, Any],
 ) -> tuple[bool, str, Any, Any, _DummyEffectsApp]:
     runtime = _load_apptheory_runtime()
-    app = _new_oauth_fixture_app(runtime, (fixture.get("setup") or {}).get("oauth") or {})
+    app = _new_oauth_fixture_app(
+        runtime, (fixture.get("setup") or {}).get("oauth") or {}
+    )
     steps = ((fixture.get("input") or {}).get("oauth") or {}).get("steps") or []
-    expected_steps = ((fixture.get("expect") or {}).get("oauth") or {}).get("steps") or []
+    expected_steps = ((fixture.get("expect") or {}).get("oauth") or {}).get(
+        "steps"
+    ) or []
     if len(steps) != len(expected_steps):
         return (
             False,
@@ -2740,9 +2768,14 @@ def run_fixture_oauth(
     return True, "", {}, {}, _DummyEffectsApp()
 
 
-def _compare_oauth_step(expected: dict[str, Any], actual: dict[str, Any]) -> tuple[bool, str]:
+def _compare_oauth_step(
+    expected: dict[str, Any], actual: dict[str, Any]
+) -> tuple[bool, str]:
     if int(expected.get("status") or 0) != actual["status"]:
-        return False, f"status: expected {expected.get('status')}, got {actual['status']}"
+        return (
+            False,
+            f"status: expected {expected.get('status')}, got {actual['status']}",
+        )
     if bool(expected.get("is_base64")) != bool(actual.get("is_base64")):
         return False, "is_base64 mismatch"
     if (expected.get("cookies") or []) != (actual.get("cookies") or []):
@@ -2757,7 +2790,11 @@ def _compare_oauth_step(expected: dict[str, Any], actual: dict[str, Any]) -> tup
         if expected.get("body_json") != actual_json:
             return False, "body_json mismatch"
         return True, ""
-    expected_body = decode_fixture_body(expected.get("body")) if expected.get("body") is not None else b""
+    expected_body = (
+        decode_fixture_body(expected.get("body"))
+        if expected.get("body") is not None
+        else b""
+    )
     if expected_body != actual.get("body", b""):
         return False, "body mismatch"
     return True, ""
@@ -3371,6 +3408,27 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
                 model=ValidateProfileQueryRequest, body=True, query=True
             ),
             lambda _ctx, req: {"name": req.Name, "age": req.Age},
+        )
+
+    if name == "validate_required_presence":
+
+        @dataclass
+        class ValidateRequiredPresenceRequest:
+            count: Any = runtime.body("count", validate=[runtime.required()])
+            active: Any = runtime.body("active", validate=[runtime.required()])
+            name: Any = runtime.body("name", validate=[runtime.required()])
+            tags: list[Any] = runtime.body("tags", validate=[runtime.required()], array=True)
+            meta: Any = runtime.body("meta", validate=[runtime.required()])
+
+        return runtime.bind_handler(
+            runtime.BindConfig(model=ValidateRequiredPresenceRequest, body=True),
+            lambda _ctx, req: {
+                "active": req.active,
+                "count": req.count,
+                "meta": req.meta,
+                "name": req.name,
+                "tags": req.tags,
+            },
         )
 
     if name == "echo_appsync_context":
