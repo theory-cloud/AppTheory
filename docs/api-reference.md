@@ -316,18 +316,20 @@ idempotency, and leases.
 Guide: [Jobs Ledger](./features/jobs-ledger.md)
 Reference stack: `examples/cdk/import-pipeline/`
 
-### Object store helper (Go)
+### Object store helper
 
-AppTheory includes a narrow Go object-store helper for framework-owned byte payload storage. It is not a general storage
-SDK.
+AppTheory includes a narrow bounded object-store helper for framework-owned byte payload storage. It is not a general
+storage SDK and does not expose list, presign, multipart, or raw-client escape hatches.
 
 - Go: `pkg/objectstore`
-- Testkit: `testkit/objectstore`
-- Object refs: strict `s3://bucket/key` parsing into `ObjectRef{Bucket, Key, VersionID}` with no default bucket/key and
-  no query or fragment support.
+- TypeScript: `ObjectStore`, `ObjectRef`, `createS3ObjectStore`, and `FakeObjectStore`
+- Python: `ObjectStore`, `ObjectRef`, `create_s3_object_store`, and `FakeObjectStore`
+- Testkit/fakes: `testkit/objectstore` in Go plus package-local fake stores in TypeScript and Python
+- Object refs: strict `s3://bucket/key` parsing into bucket/key/version fields with no default bucket/key and no query
+  or fragment support.
 - Store contract: `Put`, bounded `Get` with required `MaxBytes`, and `Delete` only.
-- S3 implementation: `NewS3Store(ctx, S3StoreConfig{...})` uses AWS SDK v2 config loading while keeping the S3 client
-  seam private/test-only.
+- S3 implementations: each runtime keeps the cloud client seam inside the framework surface and exposes only bounded
+  `put`/`get`/`delete` operations.
 - Encryption: bucket-default, S3-managed, and KMS modes fail closed on contradictory or missing KMS configuration.
 
 Guide: [Object Store Helper](./features/object-store.md)
@@ -374,7 +376,8 @@ Known configuration keys surfaced by canonical docs:
 
 ### MCP and OAuth
 
-AppTheory includes Go runtime support for MCP and OAuth-adjacent remote-MCP flows:
+AppTheory includes fixture-backed MCP and OAuth support across the runtime family, with the Go package paths listed
+here for operators who need implementation-level details:
 
 - `runtime/mcp`: Streamable HTTP `POST/GET/DELETE /mcp`, protocol negotiation, origin validation, sessions, resumable
   SSE, and the MCP request surface (`initialize`, `ping`, `tools/*`, `resources/*`, `prompts/*`, plus accepted
@@ -385,6 +388,8 @@ AppTheory includes Go runtime support for MCP and OAuth-adjacent remote-MCP flow
 - `runtime/oauth`: protected-resource metadata, challenges, DCR, PKCE, and token-store helpers
 - `testkit/oauth`: Claude-like end-to-end OAuth flow helpers for remote MCP tests (`NewClaudePublicClient`,
   `AuthorizeOptions`, `Authorize`)
+- TypeScript and Python expose matching MCP registries, server/test harnesses, in-memory/Dynamo stores, bearer-token
+  validation, protected-resource metadata, DCR, and PKCE helpers through their package API snapshots.
 
 Remote MCP auth hardening note:
 

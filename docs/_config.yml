@@ -153,9 +153,9 @@ tabletheory:
     - id: mcp
       name: MCP servers
       domain: streamable-http
-      desc: Go Streamable HTTP transport, sessions, resumable SSE, and OAuth-protected remote MCP — packaged as Lambda-native constructs Claude and Claude Code consume directly.
+      desc: Streamable HTTP transport, sessions, resumable SSE, and OAuth-protected remote MCP — packaged as Lambda-native AppTheory constructs.
       url: /integrations/mcp/
-      cta: See the Go MCP runtime
+      cta: See the MCP runtime
     - id: core
       name: Event workloads
       domain: lambda-events
@@ -165,7 +165,7 @@ tabletheory:
   stats:
     - label: Contract fixtures
       value: "203" # apptheory-fixture-count
-      sub: Go+TS all; Py 183 + 11 MCP skips
+      sub: Go, TypeScript, and Python execute all shared fixtures
     - label: Runtimes
       value: "3"
       sub: Go · TypeScript · Python

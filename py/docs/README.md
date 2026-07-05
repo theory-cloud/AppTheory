@@ -38,6 +38,21 @@
 Portable behavior is defined by the fixture-backed contract:
 `docs/development/planning/apptheory/supporting/apptheory-runtime-contract-v0.md`.
 
+## Python semantic API map
+
+The generated snapshot coverage index below proves export-name coverage only; it is not a substitute for
+operator-facing API guidance. Keep these human-authored groups current when the Python surface grows:
+
+- Runtime app model: `App`, `create_app`, `Context`, `Request`, `Response`, `create_test_env`, middleware hooks, and
+  response helpers.
+- AWS adapters and test builders: `build_apigw_v2_request`, `build_lambda_function_url_request`,
+  `build_appsync_event`, `build_sqs_event`, `build_kinesis_event`, and the corresponding `serve_*` entrypoints.
+- MCP/OAuth surfaces: `McpServer`, registries, in-memory/Dynamo stores, bearer-token middleware, metadata handlers,
+  DCR, PKCE, and protected-resource helpers.
+- Storage and data helpers: `ObjectStore`, `ObjectRef`, `create_s3_object_store`, `DynamoJobLedger`, and rate-limit
+  primitives.
+- MicroVM and generated contract helpers: `MicroVMController`, provider/session validators, and `generate_openapi`.
+
 <!-- apptheory-api-docs:py:start -->
 ## Python snapshot coverage index
 
