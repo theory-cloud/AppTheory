@@ -2457,8 +2457,9 @@ def _compare_mcp_step(
         return False, "cookies mismatch"
     if not compare_headers(expected.get("headers"), actual.get("headers")):
         return False, "headers mismatch"
-    if isinstance(expected.get("sse_frames"), list) and expected.get("sse_frames"):
-        if expected.get("sse_frames") != actual.get("sse_frames"):
+    expected_sse_frames = expected.get("sse_frames")
+    if isinstance(expected_sse_frames, list):
+        if expected_sse_frames != actual.get("sse_frames"):
             return False, "sse_frames mismatch"
         return True, ""
     if "body_json" in expected:
