@@ -3361,6 +3361,89 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
             },
         )
 
+    if name == "bind_duration_edges":
+
+        @dataclass
+        class BindDurationEdgesRequest:
+            Half: dt.timedelta = runtime.query("half", value_type="duration")
+            Micro: dt.timedelta = runtime.query("micro", value_type="duration")
+            Boundary: dt.timedelta = runtime.query("boundary", value_type="duration")
+            Combined: dt.timedelta = runtime.query("combined", value_type="duration")
+            Negative: dt.timedelta = runtime.query("negative", value_type="duration")
+
+        return runtime.bind_handler(
+            runtime.BindConfig(model=BindDurationEdgesRequest, query=True),
+            lambda _ctx, req: {
+                "half": runtime.format_duration(req.Half),
+                "micro": runtime.format_duration(req.Micro),
+                "boundary": runtime.format_duration(req.Boundary),
+                "combined": runtime.format_duration(req.Combined),
+                "negative": runtime.format_duration(req.Negative),
+            },
+        )
+
+    if name == "bind_numeric_edges":
+
+        @dataclass
+        class BindNumericEdgesRequest:
+            Count: int = runtime.query("count", value_type="int")
+            Ratio: float = runtime.query("ratio", value_type="float")
+
+        return runtime.bind_handler(
+            runtime.BindConfig(model=BindNumericEdgesRequest, query=True),
+            lambda _ctx, req: {"count": req.Count, "ratio": req.Ratio},
+        )
+
+    if name == "bind_strict_query_only":
+
+        @dataclass
+        class BindStrictQueryOnlyRequest:
+            Count: int = runtime.query("count", value_type="int")
+
+        return runtime.bind_handler(
+            runtime.BindConfig(
+                model=BindStrictQueryOnlyRequest,
+                body=True,
+                query=True,
+                strict_json=True,
+            ),
+            lambda _ctx, req: {"count": req.Count},
+        )
+
+    if name == "bind_strict_nested":
+
+        @dataclass
+        class BindStrictNestedRequest:
+            Profile: str = runtime.body("profile")
+            Nested: dict[str, Any] = runtime.body("nested")
+
+        return runtime.bind_handler(
+            runtime.BindConfig(model=BindStrictNestedRequest, body=True, strict_json=True),
+            lambda _ctx, req: {"profile_name": req.Profile},
+        )
+
+    if name == "bind_body_name":
+
+        @dataclass
+        class BindBodyNameRequest:
+            Name: str = runtime.body("name")
+
+        return runtime.bind_handler(
+            runtime.BindConfig(model=BindBodyNameRequest, body=True),
+            lambda _ctx, req: {"name": req.Name},
+        )
+
+    if name == "bind_strict_name":
+
+        @dataclass
+        class BindStrictNameRequest:
+            Name: str = runtime.body("name")
+
+        return runtime.bind_handler(
+            runtime.BindConfig(model=BindStrictNameRequest, body=True, strict_json=True),
+            lambda _ctx, req: {"name": req.Name},
+        )
+
     if name == "validate_profile":
 
         @dataclass
@@ -3408,6 +3491,67 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
                 model=ValidateProfileQueryRequest, body=True, query=True
             ),
             lambda _ctx, req: {"name": req.Name, "age": req.Age},
+        )
+
+    if name == "validate_wire_names":
+
+        @dataclass
+        class ValidateWireNamesRequest:
+            AccountID: str = runtime.path(
+                "account_id", validate=[runtime.pattern("^acct_")]
+            )
+            PageSize: int = runtime.query(
+                "page-size", value_type="int", validate=[runtime.min_value(10)]
+            )
+            Role: str = runtime.header(
+                "x-role", validate=[runtime.one_of(["admin", "member"])]
+            )
+            Name: str = runtime.body("name", validate=[runtime.required()])
+
+        return runtime.bind_handler(
+            runtime.BindConfig(
+                model=ValidateWireNamesRequest,
+                body=True,
+                query=True,
+                path=True,
+                headers=True,
+            ),
+            lambda _ctx, req: {
+                "account_id": req.AccountID,
+                "page_size": req.PageSize,
+                "role": req.Role,
+                "name": req.Name,
+            },
+        )
+
+    if name == "validate_invalid_rules":
+
+        @dataclass
+        class ValidateInvalidRulesRequest:
+            email: str = runtime.body(
+                "email", validate=[runtime.ValidationRule("pattern", "[")]
+            )
+            age: int = runtime.body(
+                "age",
+                value_type="int",
+                validate=[runtime.ValidationRule("min", "abc")],
+            )
+            name: str = runtime.body(
+                "name",
+                validate=[runtime.ValidationRule("required", "unexpected")],
+            )
+            role: str = runtime.body(
+                "role", validate=[runtime.ValidationRule("typo", "1")]
+            )
+
+        return runtime.bind_handler(
+            runtime.BindConfig(model=ValidateInvalidRulesRequest, body=True),
+            lambda _ctx, req: {
+                "email": req.email,
+                "age": req.age,
+                "name": req.name,
+                "role": req.role,
+            },
         )
 
     if name == "validate_required_presence":

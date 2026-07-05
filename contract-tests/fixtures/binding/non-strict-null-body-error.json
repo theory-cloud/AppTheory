@@ -1,0 +1,50 @@
+{
+  "id": "p0.binding.non_strict_null_body_error",
+  "tier": "p0",
+  "name": "Non-strict body binding still rejects a null top-level body",
+  "setup": {
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/body-name",
+        "handler": "bind_body_name"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/body-name",
+      "query": {},
+      "headers": {
+        "content-type": [
+          "application/json"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": "null"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.bad_request",
+          "message": "invalid json",
+          "status_code": 400
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

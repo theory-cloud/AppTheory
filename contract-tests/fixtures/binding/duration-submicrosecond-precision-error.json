@@ -1,0 +1,67 @@
+{
+  "id": "p0.binding.duration_submicrosecond_precision_error",
+  "tier": "p0",
+  "name": "Duration binding rejects non-portable sub-microsecond precision",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/duration",
+        "handler": "bind_duration_edges"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/duration",
+      "query": {
+        "half": [
+          "1ns"
+        ],
+        "micro": [
+          "1500us"
+        ],
+        "boundary": [
+          "999999us"
+        ],
+        "combined": [
+          "1s500ms"
+        ],
+        "negative": [
+          "-1s500ms"
+        ]
+      },
+      "headers": {},
+      "body": {
+        "encoding": "utf8",
+        "value": "{}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.bad_request",
+          "message": "invalid query binding for Half",
+          "status_code": 400,
+          "details": {
+            "source": "query",
+            "name": "half",
+            "field": "Half"
+          }
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

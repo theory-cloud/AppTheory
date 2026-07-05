@@ -135,9 +135,7 @@ func parseValidationTag(tag string) []validationRuleSpec {
 		name, value, _ := strings.Cut(part, "=")
 		name = strings.TrimSpace(name)
 		value = strings.TrimSpace(value)
-		switch name {
-		case ValidationRuleRequired, ValidationRuleMin, ValidationRuleMax,
-			ValidationRuleMinLength, ValidationRuleMaxLength, ValidationRulePattern, ValidationRuleEnum:
+		if name != "" {
 			rules = append(rules, validationRuleSpec{rule: name, value: value})
 		}
 	}
@@ -151,6 +149,10 @@ func validateFieldRule(
 	presenceTracked bool,
 	rule validationRuleSpec,
 ) (ValidationFieldError, bool) {
+	if fieldErr, ok := validateRuleConfig(fieldName, rule); ok {
+		return fieldErr, true
+	}
+
 	v := prepareValidationValue(value)
 	switch rule.rule {
 	case ValidationRuleRequired:
@@ -169,6 +171,35 @@ func validateFieldRule(
 		return validateEnumRule(fieldName, v, rule)
 	}
 	return ValidationFieldError{}, false
+}
+
+func validateRuleConfig(fieldName string, rule validationRuleSpec) (ValidationFieldError, bool) {
+	invalid := false
+	switch rule.rule {
+	case ValidationRuleRequired:
+		invalid = strings.TrimSpace(rule.value) != ""
+	case ValidationRuleMin, ValidationRuleMax:
+		_, ok := parseValidationFloat(rule.value)
+		invalid = !ok
+	case ValidationRuleMinLength, ValidationRuleMaxLength:
+		_, ok := parseValidationInt(rule.value)
+		invalid = !ok
+	case ValidationRulePattern:
+		_, err := regexp.Compile(rule.value)
+		invalid = err != nil
+	case ValidationRuleEnum:
+		invalid = len(splitValidationEnum(rule.value)) == 0
+	default:
+		invalid = true
+	}
+	if !invalid {
+		return ValidationFieldError{}, false
+	}
+	return validationFieldError(
+		fieldName,
+		rule.rule,
+		fmt.Sprintf("%s has invalid validation rule %s", fieldName, rule.rule),
+	), true
 }
 
 func validateRequiredRule(

@@ -10,13 +10,16 @@ from apptheory import (
     AppError,
     AppTheoryError,
     BindConfig,
+    ValidationRule,
     bind_handler,
     bind_request,
     body,
     format_duration,
     header,
     min_value,
+    one_of,
     path,
+    pattern,
     query,
     required,
 )
@@ -105,6 +108,103 @@ class BindHandlerTests(unittest.TestCase):
                 "errors": [
                     {"field": "name", "rule": "required", "message": "name is required"},
                     {"field": "age", "rule": "min", "message": "age must be >= 18"},
+                ]
+            },
+        )
+
+    def test_validation_errors_use_wire_names_for_bound_fields(self) -> None:
+        @dataclass
+        class WireRequest:
+            AccountID: str = path("account_id", validate=[pattern("^acct_")])
+            PageSize: int = query("page-size", value_type="int", validate=[min_value(10)])
+            Role: str = header("x-role", validate=[one_of(["admin", "member"])])
+            Name: str = body("name", validate=[required()])
+
+        ctx = Context(
+            request=Request(
+                method="POST",
+                path="/validate-wire/tenant_123",
+                query={"page-size": ["3"]},
+                headers={"content-type": ["application/json"], "x-role": ["guest"]},
+                body=b'{"name":"Alice"}',
+                is_base64=False,
+            ),
+            params={"account_id": "tenant_123"},
+        )
+
+        with self.assertRaises(AppTheoryError) as raised:
+            bind_request(ctx, BindConfig(model=WireRequest, body=True, query=True, path=True, headers=True))
+
+        self.assertEqual(raised.exception.code, "app.validation_failed")
+        self.assertEqual(
+            raised.exception.details,
+            {
+                "errors": [
+                    {
+                        "field": "account_id",
+                        "rule": "pattern",
+                        "message": "account_id must match pattern",
+                    },
+                    {
+                        "field": "page-size",
+                        "rule": "min",
+                        "message": "page-size must be >= 10",
+                    },
+                    {
+                        "field": "x-role",
+                        "rule": "enum",
+                        "message": "x-role must be one of admin, member",
+                    },
+                ]
+            },
+        )
+
+    def test_invalid_validation_rule_config_fails_closed(self) -> None:
+        @dataclass
+        class InvalidRulesRequest:
+            email: str = body("email", validate=[ValidationRule("pattern", "[")])
+            age: int = body("age", value_type="int", validate=[ValidationRule("min", "abc")])
+            name: str = body("name", validate=[ValidationRule("required", "unexpected")])
+            role: str = body("role", validate=[ValidationRule("typo", "1")])
+
+        ctx = Context(
+            request=Request(
+                method="POST",
+                path="/validate-invalid-rules",
+                query={},
+                headers={"content-type": ["application/json"]},
+                body=b'{"email":"alice@example.com","age":30,"name":"Alice","role":"admin"}',
+                is_base64=False,
+            )
+        )
+
+        with self.assertRaises(AppTheoryError) as raised:
+            bind_request(ctx, BindConfig(model=InvalidRulesRequest, body=True))
+
+        self.assertEqual(
+            raised.exception.details,
+            {
+                "errors": [
+                    {
+                        "field": "email",
+                        "rule": "pattern",
+                        "message": "email has invalid validation rule pattern",
+                    },
+                    {
+                        "field": "age",
+                        "rule": "min",
+                        "message": "age has invalid validation rule min",
+                    },
+                    {
+                        "field": "name",
+                        "rule": "required",
+                        "message": "name has invalid validation rule required",
+                    },
+                    {
+                        "field": "role",
+                        "rule": "typo",
+                        "message": "role has invalid validation rule typo",
+                    },
                 ]
             },
         )
@@ -204,6 +304,89 @@ class BindHandlerTests(unittest.TestCase):
         with self.assertRaises(AppTheoryError) as empty:
             bind_request(empty_ctx, config)
         self.assertEqual(empty.exception.message, "request body is empty")
+
+    def test_strict_json_rejects_unknown_with_zero_body_fields(self) -> None:
+        @dataclass
+        class QueryOnlyRequest:
+            Count: int = query("count", value_type="int")
+
+        ctx = Context(
+            request=Request(
+                method="POST",
+                path="/strict-query-only",
+                query={"count": ["7"]},
+                headers={"content-type": ["application/json"]},
+                body=b'{"extra":true}',
+                is_base64=False,
+            )
+        )
+
+        with self.assertRaises(AppTheoryError) as raised:
+            bind_request(
+                ctx,
+                BindConfig(model=QueryOnlyRequest, body=True, query=True, strict_json=True),
+            )
+
+        self.assertEqual(raised.exception.details, {"source": "body", "name": "extra"})
+
+    def test_duration_binding_uses_portable_canonicalization(self) -> None:
+        @dataclass
+        class DurationRequest:
+            Half: timedelta = query("half", value_type="duration")
+            Micro: timedelta = query("micro", value_type="duration")
+            Boundary: timedelta = query("boundary", value_type="duration")
+            Combined: timedelta = query("combined", value_type="duration")
+            Negative: timedelta = query("negative", value_type="duration")
+
+        ctx = Context(
+            request=Request(
+                method="GET",
+                path="/duration",
+                query={
+                    "half": ["500ms"],
+                    "micro": ["1500us"],
+                    "boundary": ["999999us"],
+                    "combined": ["1s500ms"],
+                    "negative": ["-1s500ms"],
+                },
+                headers={},
+                body=b"",
+                is_base64=False,
+            )
+        )
+
+        req = bind_request(ctx, BindConfig(model=DurationRequest, query=True))
+        self.assertEqual(format_duration(req.Half), "500ms")
+        self.assertEqual(format_duration(req.Micro), "1.5ms")
+        self.assertEqual(format_duration(req.Boundary), "999.999ms")
+        self.assertEqual(format_duration(req.Combined), "1.5s")
+        self.assertEqual(format_duration(req.Negative), "-1.5s")
+
+        for raw in ("1s-500ms", "1ns"):
+            with self.subTest(raw=raw):
+                with self.assertRaises(AppTheoryError):
+                    bind_request(
+                        Context(request=Request(method="GET", path="/duration", query={"half": [raw]})),
+                        BindConfig(model=DurationRequest, query=True),
+                    )
+
+    def test_numeric_binding_rejects_unsafe_and_partial_values(self) -> None:
+        @dataclass
+        class NumericRequest:
+            Count: int = query("count", value_type="int")
+            Ratio: float = query("ratio", value_type="float")
+
+        for query_values in (
+            {"count": ["9007199254740992"], "ratio": ["1.5"]},
+            {"count": ["7"], "ratio": ["1.5oops"]},
+            {"count": ["7"], "ratio": ["nan"]},
+        ):
+            with self.subTest(query=query_values):
+                with self.assertRaises(AppTheoryError):
+                    bind_request(
+                        Context(request=Request(method="GET", path="/numeric", query=query_values)),
+                        BindConfig(model=NumericRequest, query=True),
+                    )
 
     def test_plain_annotated_models_and_validation_hooks(self) -> None:
         class PlainRequest:

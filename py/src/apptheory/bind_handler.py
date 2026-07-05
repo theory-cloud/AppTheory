@@ -4,6 +4,7 @@ import asyncio
 import datetime as dt
 import inspect
 import json as jsonlib
+import math
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, fields, is_dataclass
@@ -16,6 +17,7 @@ from apptheory.response import Response, json
 from apptheory.validate import ValidationRule, ValidationSchema, validate_or_raise
 
 _UNSET = object()
+_MAX_PORTABLE_INTEGER = 2**53 - 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,7 +266,10 @@ def _convert_one(value: Any, annotation: Any, value_type: str) -> Any:
         raw = str(value)
         if re.fullmatch(r"[+-]?\d+", raw) is None:
             raise ValueError("invalid integer")
-        return int(raw)
+        out = int(raw)
+        if abs(out) > _MAX_PORTABLE_INTEGER:
+            raise ValueError("integer outside portable safe range")
+        return out
     if target in {"bool", "boolean"}:
         raw = str(value).strip().lower()
         if raw in {"1", "t", "true"}:
@@ -273,7 +278,13 @@ def _convert_one(value: Any, annotation: Any, value_type: str) -> Any:
             return False
         raise ValueError("invalid boolean")
     if target in {"float", "number"}:
-        return float(str(value))
+        raw = str(value)
+        if re.fullmatch(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", raw) is None:
+            raise ValueError("invalid float")
+        out = float(raw)
+        if not math.isfinite(out):
+            raise ValueError("invalid float")
+        return out
     if target in {"duration", "timedelta"} or annotation is dt.timedelta:
         return _parse_duration(str(value))
     return value
@@ -294,40 +305,87 @@ def _type_name(annotation: Any) -> str:
 
 
 def _parse_duration(raw: str) -> dt.timedelta:
-    units = {"h": 3600, "m": 60, "s": 1, "ms": 0.001, "us": 0.000001, "µs": 0.000001, "ns": 0.000000001}
-    pattern = re.compile(r"([+-]?\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)")
-    consumed = ""
-    seconds = 0.0
-    for match in pattern.finditer(raw.strip()):
-        consumed += match.group(0)
-        seconds += float(match.group(1)) * units[match.group(2)]
-    if not raw.strip() or consumed != raw.strip():
+    text = raw.strip()
+    if not text:
         raise ValueError("invalid duration")
-    return dt.timedelta(seconds=seconds)
+    sign = 1
+    if text[0] in {"-", "+"}:
+        sign = -1 if text[0] == "-" else 1
+        text = text[1:]
+    if not text:
+        raise ValueError("invalid duration")
+
+    pattern = re.compile(r"(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|ms|s|m|h)")
+    pos = 0
+    total_ns = 0
+    while pos < len(text):
+        match = pattern.match(text, pos)
+        if match is None:
+            raise ValueError("invalid duration")
+        total_ns += _decimal_duration_to_ns(match.group(1), match.group(2))
+        pos = match.end()
+    total_ns *= sign
+    if total_ns % 1000 != 0:
+        raise ValueError("duration precision below one microsecond is not portable")
+    return dt.timedelta(microseconds=total_ns // 1000)
+
+
+def _decimal_duration_to_ns(amount: str, unit: str) -> int:
+    units = {
+        "h": 3_600_000_000_000,
+        "m": 60_000_000_000,
+        "s": 1_000_000_000,
+        "ms": 1_000_000,
+        "us": 1_000,
+        "µs": 1_000,
+        "ns": 1,
+    }
+    whole_raw, _, fraction_raw = amount.partition(".")
+    total = int(whole_raw or "0") * units[unit]
+    if fraction_raw:
+        total += int(fraction_raw) * units[unit] // (10 ** len(fraction_raw))
+    return total
 
 
 def format_duration(value: dt.timedelta) -> str:
-    total_ns = int(value.total_seconds() * 1_000_000_000)
+    total_ns = (value.days * 86_400 + value.seconds) * 1_000_000_000 + value.microseconds * 1_000
     sign = "-" if total_ns < 0 else ""
     remaining = abs(total_ns)
     hour = 3_600_000_000_000
     minute = 60_000_000_000
     second = 1_000_000_000
+    millisecond = 1_000_000
+    microsecond = 1_000
+    if remaining == 0:
+        return "0s"
     parts: list[str] = []
-    hours, remaining = divmod(remaining, hour)
-    if hours:
-        parts.append(f"{hours}h")
-    minutes, remaining = divmod(remaining, minute)
-    if minutes:
-        parts.append(f"{minutes}m")
-    seconds, remaining = divmod(remaining, second)
-    if seconds or parts:
-        parts.append(f"{seconds}s")
-    elif remaining == 0:
-        parts.append("0s")
-    if remaining:
-        parts.append(f"{remaining}ns")
-    return sign + "".join(parts)
+    if remaining >= second:
+        hours, remaining = divmod(remaining, hour)
+        if hours:
+            parts.append(f"{hours}h")
+            minutes, remaining = divmod(remaining, minute)
+            parts.append(f"{minutes}m")
+        else:
+            minutes, remaining = divmod(remaining, minute)
+            if minutes:
+                parts.append(f"{minutes}m")
+        seconds, fraction = divmod(remaining, second)
+        parts.append(_format_decimal_unit(seconds, fraction, 9, "s"))
+        return sign + "".join(parts)
+    if remaining >= millisecond:
+        whole, fraction = divmod(remaining, millisecond)
+        return sign + _format_decimal_unit(whole, fraction, 6, "ms")
+    if remaining >= microsecond:
+        whole, fraction = divmod(remaining, microsecond)
+        return sign + _format_decimal_unit(whole, fraction, 3, "µs")
+    return f"{sign}{remaining}ns"
+
+
+def _format_decimal_unit(whole: int, fraction: int, width: int, unit: str) -> str:
+    if fraction == 0:
+        return f"{whole}{unit}"
+    fraction_text = str(fraction).rjust(width, "0").rstrip("0")
+    return f"{whole}.{fraction_text}{unit}"
 
 
 def _binding_error(source: str, name: str, field_name: str, cause: Exception | None) -> AppTheoryError:
@@ -341,7 +399,14 @@ def _binding_error(source: str, name: str, field_name: str, cause: Exception | N
 def _merge_validation(
     config_validation: ValidationSchema | None, bind_fields: dict[str, tuple[BindField, Any]]
 ) -> ValidationSchema | None:
-    merged: ValidationSchema = {key: list(value) for key, value in (config_validation or {}).items()}
+    merged: ValidationSchema = {}
+    for key, rules in (config_validation or {}).items():
+        bind = bind_fields.get(key, (None, None))[0]
+        field_name = bind.name if bind is not None else key
+        merged[key] = [
+            ValidationRule(rule.rule, rule.value, field=rule.field or field_name, message=rule.message)
+            for rule in rules
+        ]
     for attr, (bind, _annotation) in bind_fields.items():
         if not bind.validate:
             continue
