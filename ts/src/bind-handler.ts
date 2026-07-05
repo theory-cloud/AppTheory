@@ -34,6 +34,11 @@ export interface BindConfig<Req> {
   validate?: (ctx: Context, req: Req) => void | Promise<void>;
 }
 
+interface SourceValueResult {
+  present: boolean;
+  values: unknown[];
+}
+
 export type TypedHandler<Req, Resp> = (
   ctx: Context,
   req: Req,
@@ -82,12 +87,15 @@ export async function bindRequest<Req>(
     const spec = fields[key];
     if (!spec) continue;
     const name = spec.name ?? key;
-    const values = sourceValues(ctx, bodyValue, spec.source, name);
-    if (values.length === 0) continue;
+    const source = sourceValues(ctx, bodyValue, spec.source, name);
+    if (!source.present) continue;
     try {
       req[key] = spec.array
-        ? values.map((value) => parseValue(value, spec.type ?? "string"))
-        : parseValue(values[0] ?? "", spec.type ?? "string");
+        ? source.values.map((value) => parseValue(value, spec.type ?? "string"))
+        : parseValue(
+            source.values.length > 0 ? source.values[0] : "",
+            spec.type ?? "string",
+          );
     } catch (err) {
       throw bindingError(spec.source, name, spec.field ?? key, err);
     }
@@ -134,52 +142,64 @@ function sourceValues(
   bodyValue: Record<string, unknown> | null,
   source: BindSource,
   name: string,
-): string[] {
+): SourceValueResult {
   switch (source) {
     case "body": {
       if (
         !bodyValue ||
         !Object.prototype.hasOwnProperty.call(bodyValue, name)
       ) {
-        return [];
+        return { present: false, values: [] };
       }
       const value = bodyValue[name];
-      if (Array.isArray(value)) return value.map((item) => String(item));
-      return [String(value ?? "")];
+      if (Array.isArray(value)) return { present: true, values: value };
+      return { present: true, values: [value] };
     }
-    case "query":
-      return (ctx.request.query?.[name] ?? []).map((value) => String(value));
+    case "query": {
+      const values = ctx.request.query?.[name];
+      return values && values.length > 0
+        ? { present: true, values: values.map((value) => String(value)) }
+        : { present: false, values: [] };
+    }
     case "path": {
       const value = ctx.params?.[name];
-      return value === undefined ? [] : [String(value)];
+      return value === undefined
+        ? { present: false, values: [] }
+        : { present: true, values: [String(value)] };
     }
-    case "header":
-      return (ctx.request.headers?.[name.toLowerCase()] ?? []).map((value) =>
-        String(value),
-      );
+    case "header": {
+      const values = ctx.request.headers?.[name.toLowerCase()];
+      return values && values.length > 0
+        ? { present: true, values: values.map((value) => String(value)) }
+        : { present: false, values: [] };
+    }
   }
 }
 
-function parseValue(raw: string, type: BindFieldType): unknown {
+function parseValue(raw: unknown, type: BindFieldType): unknown {
   switch (type) {
     case "string":
-      return raw;
-    case "int":
-      if (!/^[+-]?\d+$/.test(raw)) throw new Error("invalid integer");
-      return Number.parseInt(raw, 10);
+      return raw === null ? null : String(raw);
+    case "int": {
+      const rawText = String(raw ?? "");
+      if (!/^[+-]?\d+$/.test(rawText)) throw new Error("invalid integer");
+      return Number.parseInt(rawText, 10);
+    }
     case "bool": {
-      const normalized = raw.trim().toLowerCase();
+      const normalized = String(raw ?? "")
+        .trim()
+        .toLowerCase();
       if (["1", "t", "true"].includes(normalized)) return true;
       if (["0", "f", "false"].includes(normalized)) return false;
       throw new Error("invalid boolean");
     }
     case "float": {
-      const value = Number.parseFloat(raw);
+      const value = Number.parseFloat(String(raw ?? ""));
       if (!Number.isFinite(value)) throw new Error("invalid float");
       return value;
     }
     case "duration":
-      return parseDuration(raw);
+      return parseDuration(String(raw ?? ""));
   }
 }
 

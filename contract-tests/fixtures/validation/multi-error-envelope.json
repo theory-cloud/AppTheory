@@ -15,7 +15,7 @@
       "headers": { "content-type": ["application/json"] },
       "body": {
         "encoding": "utf8",
-        "value": "{\"name\":\"\",\"age\":17,\"score\":11,\"nickname\":\"A\",\"bio\":\"toolong\",\"email\":\"not-email\",\"role\":\"owner\"}"
+        "value": "{\"name\":null,\"age\":17,\"score\":11,\"nickname\":\"A\",\"bio\":\"toolong\",\"email\":\"not-email\",\"role\":\"owner\"}"
       },
       "is_base64": false
     }

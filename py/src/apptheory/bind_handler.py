@@ -28,6 +28,12 @@ class BindField:
     validate: list[ValidationRule] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _SourceValues:
+    present: bool
+    values: list[Any]
+
+
 @dataclass(slots=True)
 class BindConfig[ReqT]:
     model: type[ReqT]
@@ -111,11 +117,11 @@ def bind_request[ReqT](ctx: Context, config: BindConfig[ReqT]) -> ReqT:
 
     values: dict[str, Any] = {}
     for attr, (bind, annotation) in bind_fields.items():
-        raw_values = _source_values(ctx, body_value, bind.source, bind.name)
-        if not raw_values:
+        source = _source_values(ctx, body_value, bind.source, bind.name)
+        if not source.present:
             continue
         try:
-            values[attr] = _convert_values(raw_values, annotation, bind)
+            values[attr] = _convert_values(source.values, annotation, bind)
         except Exception as exc:
             raise _binding_error(bind.source, bind.name, bind.field_name or attr, exc) from exc
 
@@ -209,20 +215,22 @@ def _model_fields(model: type[Any], *, body_enabled: bool) -> dict[str, tuple[Bi
     return out
 
 
-def _source_values(ctx: Context, body_value: dict[str, Any] | None, source: str, name: str) -> list[Any]:
+def _source_values(ctx: Context, body_value: dict[str, Any] | None, source: str, name: str) -> _SourceValues:
     if source == "body":
         if body_value is None or name not in body_value:
-            return []
+            return _SourceValues(False, [])
         value = body_value.get(name)
-        return list(value) if isinstance(value, list) else [value]
+        return _SourceValues(True, list(value) if isinstance(value, list) else [value])
     if source == "query":
-        return list((ctx.request.query or {}).get(name) or [])
+        values = list((ctx.request.query or {}).get(name) or [])
+        return _SourceValues(bool(values), values)
     if source == "path":
         value = (ctx.params or {}).get(name)
-        return [] if value is None else [value]
+        return _SourceValues(False, []) if value is None else _SourceValues(True, [value])
     if source == "header":
-        return list((ctx.request.headers or {}).get(name.lower()) or [])
-    return []
+        values = list((ctx.request.headers or {}).get(name.lower()) or [])
+        return _SourceValues(bool(values), values)
+    return _SourceValues(False, [])
 
 
 def _construct_model[ReqT](model: type[ReqT], values: dict[str, Any]) -> ReqT:
@@ -249,6 +257,8 @@ def _inner_type(annotation: Any) -> tuple[Any, bool]:
 def _convert_one(value: Any, annotation: Any, value_type: str) -> Any:
     target = value_type or _type_name(annotation)
     if target in {"str", "string"}:
+        if value is None:
+            return None
         return str(value)
     if target in {"int", "integer"}:
         raw = str(value)

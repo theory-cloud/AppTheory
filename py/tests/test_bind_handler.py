@@ -4,6 +4,7 @@ import json
 import unittest
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 from apptheory import (
     AppError,
@@ -87,7 +88,7 @@ class BindHandlerTests(unittest.TestCase):
                 path="/validate",
                 query={},
                 headers={"content-type": ["application/json"]},
-                body=b'{"name":"","age":17}',
+                body=b'{"age":17}',
                 is_base64=False,
             )
         )
@@ -104,6 +105,54 @@ class BindHandlerTests(unittest.TestCase):
                 "errors": [
                     {"field": "name", "rule": "required", "message": "name is required"},
                     {"field": "age", "rule": "min", "message": "age must be >= 18"},
+                ]
+            },
+        )
+
+    def test_required_validation_uses_presence(self) -> None:
+        @dataclass
+        class PresenceRequest:
+            count: Any = body("count", validate=[required()])
+            active: Any = body("active", validate=[required()])
+            name: Any = body("name", validate=[required()])
+            tags: list[Any] = body("tags", validate=[required()], array=True)  # noqa: RUF009
+            meta: Any = body("meta", validate=[required()])
+
+        present_ctx = Context(
+            request=Request(
+                method="POST",
+                path="/validate",
+                query={},
+                headers={"content-type": ["application/json"]},
+                body=b'{"count":0,"active":false,"name":"","tags":[],"meta":{}}',
+                is_base64=False,
+            )
+        )
+        req = bind_request(present_ctx, BindConfig(model=PresenceRequest, body=True))
+        self.assertEqual(req.count, 0)
+        self.assertIs(req.active, False)
+        self.assertEqual(req.name, "")
+        self.assertEqual(req.tags, [])
+        self.assertEqual(req.meta, {})
+
+        missing_ctx = Context(
+            request=Request(
+                method="POST",
+                path="/validate",
+                query={},
+                headers={"content-type": ["application/json"]},
+                body=b'{"count":null,"active":false,"name":"","tags":[]}',
+                is_base64=False,
+            )
+        )
+        with self.assertRaises(AppTheoryError) as raised:
+            bind_request(missing_ctx, BindConfig(model=PresenceRequest, body=True))
+        self.assertEqual(
+            raised.exception.details,
+            {
+                "errors": [
+                    {"field": "count", "rule": "required", "message": "count is required"},
+                    {"field": "meta", "rule": "required", "message": "meta is required"},
                 ]
             },
         )

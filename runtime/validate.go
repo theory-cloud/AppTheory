@@ -25,25 +25,66 @@ type ValidationFieldError struct {
 	Message string `json:"message"`
 }
 
+type validationPresenceState struct {
+	present bool
+	nonNull bool
+}
+
+type validationPresence struct {
+	fields map[string]validationPresenceState
+}
+
 type validationRuleSpec struct {
 	rule  string
 	value string
 }
 
+func newValidationPresence() *validationPresence {
+	return &validationPresence{fields: map[string]validationPresenceState{}}
+}
+
+func (p *validationPresence) track(field string) {
+	if p == nil || strings.TrimSpace(field) == "" {
+		return
+	}
+	if _, ok := p.fields[field]; !ok {
+		p.fields[field] = validationPresenceState{}
+	}
+}
+
+func (p *validationPresence) mark(field string, nonNull bool) {
+	if p == nil || strings.TrimSpace(field) == "" {
+		return
+	}
+	p.fields[field] = validationPresenceState{present: true, nonNull: nonNull}
+}
+
+func (p *validationPresence) lookup(field string) (validationPresenceState, bool) {
+	if p == nil {
+		return validationPresenceState{}, false
+	}
+	state, ok := p.fields[field]
+	return state, ok
+}
+
 func validateBoundRequest(value any) error {
+	return validateBoundRequestWithPresence(value, nil)
+}
+
+func validateBoundRequestWithPresence(value any, presence *validationPresence) error {
 	root := prepareBindTarget(reflect.ValueOf(value))
 	if !root.IsValid() || root.Kind() != reflect.Struct {
 		return nil
 	}
 
-	fieldErrors := validateStructValue(root)
+	fieldErrors := validateStructValue(root, presence)
 	if len(fieldErrors) == 0 {
 		return nil
 	}
 	return newValidationFailedError(fieldErrors)
 }
 
-func validateStructValue(target reflect.Value) []ValidationFieldError {
+func validateStructValue(target reflect.Value, presence *validationPresence) []ValidationFieldError {
 	targetType := target.Type()
 	var out []ValidationFieldError
 	for i := 0; i < target.NumField(); i++ {
@@ -57,7 +98,7 @@ func validateStructValue(target reflect.Value) []ValidationFieldError {
 		if fieldType.Anonymous {
 			embedded := prepareFieldValue(fieldValue)
 			if embedded.IsValid() && embedded.Kind() == reflect.Struct {
-				out = append(out, validateStructValue(embedded)...)
+				out = append(out, validateStructValue(embedded, presence)...)
 				continue
 			}
 		}
@@ -68,8 +109,9 @@ func validateStructValue(target reflect.Value) []ValidationFieldError {
 		}
 
 		fieldName := validationFieldName(fieldType)
+		presenceState, presenceTracked := presence.lookup(fieldName)
 		for _, rule := range rules {
-			fieldErr, ok := validateFieldRule(fieldName, fieldValue, rule)
+			fieldErr, ok := validateFieldRule(fieldName, fieldValue, presenceState, presenceTracked, rule)
 			if !ok {
 				continue
 			}
@@ -102,11 +144,17 @@ func parseValidationTag(tag string) []validationRuleSpec {
 	return rules
 }
 
-func validateFieldRule(fieldName string, value reflect.Value, rule validationRuleSpec) (ValidationFieldError, bool) {
+func validateFieldRule(
+	fieldName string,
+	value reflect.Value,
+	presenceState validationPresenceState,
+	presenceTracked bool,
+	rule validationRuleSpec,
+) (ValidationFieldError, bool) {
 	v := prepareValidationValue(value)
 	switch rule.rule {
 	case ValidationRuleRequired:
-		return validateRequiredRule(fieldName, v, rule)
+		return validateRequiredRule(fieldName, v, presenceState, presenceTracked, rule)
 	case ValidationRuleMin:
 		return validateNumericRule(fieldName, v, rule, func(actual, limit float64) bool { return actual < limit }, ">=")
 	case ValidationRuleMax:
@@ -123,7 +171,19 @@ func validateFieldRule(fieldName string, value reflect.Value, rule validationRul
 	return ValidationFieldError{}, false
 }
 
-func validateRequiredRule(fieldName string, value reflect.Value, rule validationRuleSpec) (ValidationFieldError, bool) {
+func validateRequiredRule(
+	fieldName string,
+	value reflect.Value,
+	presenceState validationPresenceState,
+	presenceTracked bool,
+	rule validationRuleSpec,
+) (ValidationFieldError, bool) {
+	if presenceTracked && presenceState.present && presenceState.nonNull {
+		return ValidationFieldError{}, false
+	}
+	if presenceTracked {
+		return validationFieldError(fieldName, rule.rule, fmt.Sprintf("%s is required", fieldName)), true
+	}
 	if !isValidationZero(value) {
 		return ValidationFieldError{}, false
 	}

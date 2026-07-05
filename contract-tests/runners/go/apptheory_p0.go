@@ -282,6 +282,14 @@ type validateProfileQueryRequest struct {
 	Age  int    `query:"age" validate:"min=18"`
 }
 
+type validateRequiredPresenceRequest struct {
+	Count  int            `json:"count" validate:"required"`
+	Active bool           `json:"active" validate:"required"`
+	Name   string         `json:"name" validate:"required"`
+	Tags   []string       `json:"tags" validate:"required"`
+	Meta   map[string]any `json:"meta" validate:"required"`
+}
+
 func registerAppTheoryFixtureRoutes(app *apptheory.App, routes []FixtureRoute) error {
 	for _, r := range routes {
 		name := strings.TrimSpace(r.Handler)
@@ -442,6 +450,18 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		apptheory.BindConfig[validateProfileQueryRequest]{Body: true, Query: true},
 		func(_ *apptheory.Context, req validateProfileQueryRequest) (map[string]any, error) {
 			return map[string]any{"name": req.Name, "age": req.Age}, nil
+		},
+	),
+	"validate_required_presence": apptheory.BindHandler(
+		apptheory.BindConfig[validateRequiredPresenceRequest]{Body: true},
+		func(_ *apptheory.Context, req validateRequiredPresenceRequest) (map[string]any, error) {
+			return map[string]any{
+				"active": req.Active,
+				"count":  req.Count,
+				"meta":   req.Meta,
+				"name":   req.Name,
+				"tags":   req.Tags,
+			}, nil
 		},
 	),
 	"echo_appsync_context": func(ctx *apptheory.Context) (*apptheory.Response, error) {

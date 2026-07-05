@@ -1,11 +1,11 @@
 ---
 title: Contract Fixtures
-description: "The 203 contract fixtures: Go, TypeScript, and Python execute all MCP, OAuth, and objectstore fixtures." # apptheory-fixture-count: 203
+description: "The 205 contract fixtures: Go, TypeScript, and Python execute all MCP, OAuth, and objectstore fixtures." # apptheory-fixture-count: 205
 ---
 
 # Contract Fixtures
 
-AppTheory ships **203 contract test fixtures** in `contract-tests/fixtures/`. <!-- apptheory-fixture-count: 203 --> Go, TypeScript, and Python execute the full fixture corpus on every commit, including the `tier: mcp` SP09 runtime contracts, the `tier: oauth` SP12 protected-resource, bearer, DCR, and PKCE contracts, and the `tier: objectstore` SP13 bounded object-store contract.
+AppTheory ships **205 contract test fixtures** in `contract-tests/fixtures/`. <!-- apptheory-fixture-count: 205 --> Go, TypeScript, and Python execute the full fixture corpus on every commit, including the `tier: mcp` SP09 runtime contracts, the `tier: oauth` SP12 protected-resource, bearer, DCR, and PKCE contracts, and the `tier: objectstore` SP13 bounded object-store contract.
 
 This page explains what the fixtures are, what they cover, and how to evolve them safely.
 
@@ -51,7 +51,7 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 
 ## Categories
 
-The 203 fixtures span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory). Go, TypeScript, and Python execute all 203 fixtures, including MCP, OAuth, and objectstore. <!-- apptheory-fixture-count: 203 -->
+The 205 fixtures span these behavior areas (counts approximate; see `contract-tests/fixtures/` for the canonical inventory). Go, TypeScript, and Python execute all 205 fixtures, including MCP, OAuth, and objectstore. <!-- apptheory-fixture-count: 205 -->
 
 | Category | Covers |
 | --- | --- |
@@ -85,7 +85,7 @@ The 203 fixtures span these behavior areas (counts approximate; see `contract-te
 ./scripts/verify-contract-tests.sh
 ```
 
-This validates the fixture schema for all 203 files and runs the Go, TypeScript, and Python runners against the same fixture tree. `make rubric` runs this gate as part of the full repo check, alongside lint, build, API snapshots, and example synthesis.
+This validates the fixture schema for all 205 files and runs the Go, TypeScript, and Python runners against the same fixture tree. `make rubric` runs this gate as part of the full repo check, alongside lint, build, API snapshots, and example synthesis.
 
 For single-runtime debugging from the repository root:
 

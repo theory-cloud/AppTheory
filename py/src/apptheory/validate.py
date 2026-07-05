@@ -150,13 +150,7 @@ def _value_for_key(value: Any, key: str) -> Any:
 
 
 def _is_empty(value: Any) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, str):
-        return not value.strip()
-    if isinstance(value, (list, tuple, set, dict)):
-        return len(value) == 0
-    return False
+    return value is None
 
 
 def _numeric(value: Any) -> float | None:

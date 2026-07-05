@@ -67,20 +67,21 @@ func BindHandlerContext[Req, Resp any](config BindConfig[Req], handler func(cont
 // BindRequest populates Req from the configured request sources.
 func BindRequest[Req any](ctx *Context, config BindConfig[Req]) (Req, error) {
 	var req Req
+	presence := newValidationPresence()
 
 	if config.Body {
-		if err := bindBody(&req, ctx, config.StrictJSON); err != nil {
+		if err := bindBody(&req, ctx, config.StrictJSON, presence); err != nil {
 			return req, err
 		}
 	}
 
 	if config.Path || config.Query || config.Headers {
-		if err := bindTaggedRequestFields(&req, ctx, config); err != nil {
+		if err := bindTaggedRequestFields(&req, ctx, config, presence); err != nil {
 			return req, err
 		}
 	}
 
-	if err := validateBoundRequest(req); err != nil {
+	if err := validateBoundRequestWithPresence(req, presence); err != nil {
 		return req, err
 	}
 
@@ -93,18 +94,19 @@ func BindRequest[Req any](ctx *Context, config BindConfig[Req]) (Req, error) {
 	return req, nil
 }
 
-func bindBody(target any, ctx *Context, strict bool) error {
+func bindBody(target any, ctx *Context, strict bool, presence *validationPresence) error {
 	if ctx == nil || len(ctx.Request.Body) == 0 {
 		return bindBadRequest(bindErrorMessageEmptyBody, nil)
 	}
 
 	if strict {
-		return bindStrictBody(target, ctx.Request.Body)
+		return bindStrictBody(target, ctx.Request.Body, presence)
 	}
 
 	if err := json.Unmarshal(ctx.Request.Body, target); err != nil {
 		return bindBadRequest(errorMessageInvalidJSON, err)
 	}
+	recordBodyPresence(target, ctx.Request.Body, presence)
 	return nil
 }
 
@@ -157,13 +159,17 @@ func decodeOrderedRawJSONObject(decoder *json.Decoder) (orderedRawJSONObject, er
 	return payload, nil
 }
 
-func bindStrictBody(target any, body []byte) error {
+func bindStrictBody(target any, body []byte, presence *validationPresence) error {
 	root := prepareBindTarget(reflect.ValueOf(target))
 	if !root.IsValid() || root.Kind() != reflect.Struct {
 		return decodeStrictBodyDirect(target, body)
 	}
 
 	fields := strictBodyFields(root)
+	presenceFields := bodyPresenceFields(root)
+	for _, fieldName := range presenceFields {
+		presence.track(fieldName)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	payload, err := decodeOrderedRawJSONObject(decoder)
 	if err != nil {
@@ -177,6 +183,9 @@ func bindStrictBody(target any, body []byte) error {
 		field, ok := fields[key]
 		if !ok {
 			return bindSourceError(bindSourceBody, key, "", fmt.Errorf("json: unknown field %q", key))
+		}
+		if fieldName, exists := presenceFields[key]; exists {
+			presence.mark(fieldName, !jsonRawMessageIsNull(payload.values[key]))
 		}
 		if err := json.Unmarshal(payload.values[key], field.Addr().Interface()); err != nil {
 			return bindBadRequest(errorMessageInvalidJSON, err)
@@ -208,6 +217,12 @@ func rejectTrailingJSONValue(decoder *json.Decoder) error {
 func strictBodyFields(root reflect.Value) map[string]reflect.Value {
 	fields := make(map[string]reflect.Value)
 	collectStrictBodyFields(root, fields)
+	return fields
+}
+
+func bodyPresenceFields(root reflect.Value) map[string]string {
+	fields := make(map[string]string)
+	collectBodyPresenceFields(root, fields)
 	return fields
 }
 
@@ -244,6 +259,68 @@ func collectStrictBodyFields(target reflect.Value, fields map[string]reflect.Val
 	}
 }
 
+func collectBodyPresenceFields(target reflect.Value, fields map[string]string) {
+	targetType := target.Type()
+	for i := 0; i < target.NumField(); i++ {
+		fieldType := targetType.Field(i)
+		fieldValue := target.Field(i)
+
+		if fieldType.PkgPath != "" && !fieldType.Anonymous {
+			continue
+		}
+		if hasNonBodyBindTag(fieldType) {
+			continue
+		}
+
+		name, skip := jsonBodyFieldName(fieldType)
+		if skip {
+			continue
+		}
+
+		if fieldType.Anonymous && strings.TrimSpace(fieldType.Tag.Get("json")) == "" {
+			embedded := prepareFieldValue(fieldValue)
+			if embedded.IsValid() && embedded.Kind() == reflect.Struct {
+				collectBodyPresenceFields(embedded, fields)
+				continue
+			}
+		}
+
+		fields[name] = validationFieldName(fieldType)
+	}
+}
+
+func recordBodyPresence(target any, body []byte, presence *validationPresence) {
+	if presence == nil {
+		return
+	}
+
+	root := prepareBindTarget(reflect.ValueOf(target))
+	if !root.IsValid() || root.Kind() != reflect.Struct {
+		return
+	}
+
+	fields := bodyPresenceFields(root)
+	for _, fieldName := range fields {
+		presence.track(fieldName)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	payload, err := decodeOrderedRawJSONObject(decoder)
+	if err != nil {
+		return
+	}
+
+	for key, raw := range payload.values {
+		if fieldName, ok := fields[key]; ok {
+			presence.mark(fieldName, !jsonRawMessageIsNull(raw))
+		}
+	}
+}
+
+func jsonRawMessageIsNull(raw json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+}
+
 func hasNonBodyBindTag(field reflect.StructField) bool {
 	return bindTagValue(field, "path") != "" ||
 		bindTagValue(field, "query") != "" ||
@@ -265,7 +342,12 @@ func jsonBodyFieldName(field reflect.StructField) (string, bool) {
 	return field.Name, false
 }
 
-func bindTaggedRequestFields[Req any](target *Req, ctx *Context, config BindConfig[Req]) error {
+func bindTaggedRequestFields[Req any](
+	target *Req,
+	ctx *Context,
+	config BindConfig[Req],
+	presence *validationPresence,
+) error {
 	if target == nil {
 		return bindBadRequest(bindErrorMessageStructRequired, nil)
 	}
@@ -275,7 +357,7 @@ func bindTaggedRequestFields[Req any](target *Req, ctx *Context, config BindConf
 		return bindBadRequest(bindErrorMessageStructRequired, nil)
 	}
 
-	return bindStructFields(root, ctx, config.bindSources())
+	return bindStructFields(root, ctx, config.bindSources(), config.bindSourceNames(), presence)
 }
 
 func prepareBindTarget(v reflect.Value) reflect.Value {
@@ -302,7 +384,13 @@ func prepareBindTarget(v reflect.Value) reflect.Value {
 
 type bindSourceResolver func(reflect.StructField, *Context) ([]string, bindTag, bool)
 
-func bindStructFields(target reflect.Value, ctx *Context, sources []bindSourceResolver) error {
+func bindStructFields(
+	target reflect.Value,
+	ctx *Context,
+	sources []bindSourceResolver,
+	sourceNames []string,
+	presence *validationPresence,
+) error {
 	targetType := target.Type()
 	for i := 0; i < target.NumField(); i++ {
 		fieldType := targetType.Field(i)
@@ -315,7 +403,7 @@ func bindStructFields(target reflect.Value, ctx *Context, sources []bindSourceRe
 		if fieldType.Anonymous {
 			embedded := prepareFieldValue(fieldValue)
 			if embedded.IsValid() && embedded.Kind() == reflect.Struct {
-				if err := bindStructFields(embedded, ctx, sources); err != nil {
+				if err := bindStructFields(embedded, ctx, sources, sourceNames, presence); err != nil {
 					return err
 				}
 				continue
@@ -326,7 +414,12 @@ func bindStructFields(target reflect.Value, ctx *Context, sources []bindSourceRe
 			continue
 		}
 
+		if hasEnabledBindSource(fieldType, sourceNames) {
+			presence.track(validationFieldName(fieldType))
+		}
+
 		if values, tag, ok := resolveBindValues(fieldType, ctx, sources); ok {
+			presence.mark(validationFieldName(fieldType), true)
 			if err := setBoundField(fieldValue, values); err != nil {
 				return bindSourceError(tag.source, tag.name, fieldType.Name, err)
 			}
@@ -334,6 +427,15 @@ func bindStructFields(target reflect.Value, ctx *Context, sources []bindSourceRe
 	}
 
 	return nil
+}
+
+func hasEnabledBindSource(field reflect.StructField, sourceNames []string) bool {
+	for _, name := range sourceNames {
+		if bindTagValue(field, name) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 type bindTag struct {
@@ -567,4 +669,18 @@ func (c BindConfig[Req]) bindSources() []bindSourceResolver {
 	}
 
 	return sources
+}
+
+func (c BindConfig[Req]) bindSourceNames() []string {
+	names := make([]string, 0, 3)
+	if c.Path {
+		names = append(names, bindSourcePath)
+	}
+	if c.Query {
+		names = append(names, bindSourceQuery)
+	}
+	if c.Headers {
+		names = append(names, bindSourceHeader)
+	}
+	return names
 }
