@@ -95,3 +95,21 @@ npm packages. It is not the single path for AppTheory because AppTheory intentio
 registry packages. Do not replace the GitHub Release pins with registry coordinates to make Dependabot work; use
 Renovate for the release-pinned framework assets and Dependabot only for the dependencies that already come from a
 registry.
+
+## Maintainer override notes
+
+AppTheory only carries package-manager `overrides` while a current audit, compatibility, or deterministic-build gate
+requires them. In SP17, the TypeScript runtime package removed stale transitive overrides after the regenerated lockfile
+passed `npm audit` with zero vulnerabilities. The removal rationale was:
+
+- `@typescript-eslint/typescript-estree` → `minimatch`: upstream now resolves to `minimatch@10.2.5`, so the local
+  pin was no longer carrying a security fix.
+- `@eslint/eslintrc` / `eslint` → `ajv`: ESLint selects its compatible `ajv@6.14.0`; AppTheory does not override
+  lint-tool internals without an active advisory.
+- `@eslint/eslintrc` / `eslint` / `eslint-plugin-import` → `minimatch`: the lint stack remains audit-clean on its
+  upstream-selected `minimatch` versions, and none of these packages are runtime dependencies.
+- `fast-xml-parser` / `fast-xml-builder`: the regenerated TypeScript lockfile no longer contains those packages, so
+  keeping orphan overrides would hide dependency graph drift instead of fixing it.
+- `flatted` / `js-yaml`: upstream-selected lint-tool transitive versions remain audit-clean; local pins were redundant.
+- `yaml`: the TableTheory release asset now resolves `yaml@2.9.0`; AppTheory should not override TableTheory's
+  transitive dependency unless a current advisory or contract gate requires it.
