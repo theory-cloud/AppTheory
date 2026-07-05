@@ -17,9 +17,13 @@ fi
 
 bash ./scripts/update-cdk-generated.sh
 
-if ! git diff --quiet -- cdk-go/; then
+drift_status="$(git status --porcelain=v1 --untracked-files=all -- cdk-go/)"
+if [[ -n "${drift_status}" ]]; then
   echo "cdk-go-drift: FAIL (cdk-go bindings are stale; run ./scripts/update-cdk-generated.sh and commit the diff)" >&2
-  git diff --stat -- cdk-go/ >&2 || true
+  printf '%s\n' "${drift_status}" >&2
+  if ! git diff --quiet -- cdk-go/; then
+    git diff --stat -- cdk-go/ >&2 || true
+  fi
   exit 1
 fi
 
