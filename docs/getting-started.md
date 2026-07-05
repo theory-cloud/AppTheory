@@ -16,6 +16,11 @@ then carries one canonical CDK path through bootstrap, deploy, curl verification
 - AWS credentials plus permission to run `cdk bootstrap`, `cdk deploy`, and `cdk destroy` when you are ready to create
   cloud resources
 
+These floors are compatibility claims, not aspirations. `scripts/verify-runtime-floor-claims.sh` fails closed unless the
+package manifests, lockfiles, pinned TableTheory GitHub Release artifacts, and `.github/workflows/ci.yml` agree. A future
+Python 3.12 or Node.js 20 support claim must first have compatible dependency artifacts and CI rows for both the lower
+floor and the current top line.
+
 ## Install from repo
 
 ```bash

@@ -559,6 +559,11 @@ require_contains(
     "CI release/security gates must verify rubric enforcement separately from the full rubric",
 )
 require_contains(
+    ".github/workflows/ci.yml",
+    "bash scripts/verify-runtime-floor-claims.sh",
+    "CI release/security gates must fail closed on unsupported Python/Node floor claims",
+)
+require_contains(
     "scripts/verify-release-gates.sh",
     "bash ./scripts/verify-release-train-promotion.sh --self-test",
     "full release gates must include release train provenance self-tests",
@@ -567,6 +572,11 @@ require_contains(
     "scripts/verify-release-gates.sh",
     "bash ./scripts/verify-release-cycle.sh",
     "full release gates must include deterministic full-cycle release regression",
+)
+require_contains(
+    "scripts/verify-release-gates.sh",
+    "bash ./scripts/verify-runtime-floor-claims.sh",
+    "full release gates must fail closed on unsupported Python/Node floor claims",
 )
 require_contains(
     "scripts/verify-release-cycle.sh",
