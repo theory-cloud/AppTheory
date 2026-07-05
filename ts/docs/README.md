@@ -56,7 +56,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
   DCR, PKCE, and protected-resource helpers.
 - Storage and data helpers: `ObjectStore`, `ObjectRef`, `createS3ObjectStore`, `DynamoJobLedger`, and rate-limit
   primitives.
-- MicroVM and generated contract helpers: `MicroVMController`, provider/session validators, and `generate_openapi`.
+- MicroVM and generated contract helpers: `MicroVMController`, provider/session validators, and `generateOpenAPI`.
 
 <!-- apptheory-api-docs:ts:start -->
 ## TypeScript snapshot coverage index

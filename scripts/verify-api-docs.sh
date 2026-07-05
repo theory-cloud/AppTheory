@@ -169,7 +169,7 @@ HUMAN_DOC_ANCHORS: dict[str, list[str]] = {
         'McpServer',
         'ObjectStore',
         'MicroVMController',
-        'generate_openapi',
+        'generateOpenAPI',
     ],
     'py': [
         'Python semantic API map',
@@ -263,7 +263,7 @@ App, Context, createApp
     rich_text = '''
 ## TypeScript semantic API map
 Use App and createApp with Context, createTestEnv, buildAPIGatewayV2Request,
-McpServer, ObjectStore, MicroVMController, and generate_openapi.
+McpServer, ObjectStore, MicroVMController, and generateOpenAPI.
 '''
     check_human_depth('ts', 'self-test.md', rich_text)
     print('api-docs: self-test PASS')
