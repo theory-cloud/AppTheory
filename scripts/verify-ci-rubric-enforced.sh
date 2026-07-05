@@ -17,6 +17,33 @@ require_contains() {
   grep -Fq -- "${needle}" "${path}" || fail "${description}; missing ${needle} in ${path}"
 }
 
+require_line() {
+  local path="$1"
+  local needle="$2"
+  local description="$3"
+
+  grep -Fxq -- "${needle}" "${path}" || fail "${description}; missing exact line ${needle} in ${path}"
+}
+
+require_line_order() {
+  local path="$1"
+  local first="$2"
+  local second="$3"
+  local description="$4"
+  local first_line
+  local second_line
+
+  first_line="$(grep -Fxn -- "${first}" "${path}" | head -n1 | cut -d: -f1 || true)"
+  second_line="$(grep -Fxn -- "${second}" "${path}" | head -n1 | cut -d: -f1 || true)"
+
+  [[ -n "${first_line}" ]] || fail "${description}; missing exact line ${first} in ${path}"
+  [[ -n "${second_line}" ]] || fail "${description}; missing exact line ${second} in ${path}"
+
+  if (( first_line >= second_line )); then
+    fail "${description}; ${first} must appear before ${second} in ${path}"
+  fi
+}
+
 require_not_contains() {
   local path="$1"
   local needle="$2"
@@ -25,6 +52,20 @@ require_not_contains() {
   if grep -Fq -- "${needle}" "${path}"; then
     fail "${description}; unexpected ${needle} in ${path}"
   fi
+}
+
+require_job_contains() {
+  local path="$1"
+  local job="$2"
+  local needle="$3"
+  local description="$4"
+
+  awk -v job="  ${job}:" -v needle="${needle}" '
+    $0 == job { in_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
+    in_job && index($0, needle) { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "${path}" || fail "${description}; missing ${needle} in ${job} job"
 }
 
 require_job_without_if() {
@@ -43,6 +84,7 @@ require_job_without_if() {
 }
 
 ci=".github/workflows/ci.yml"
+release_please_draft_guard="if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')"
 
 require_contains "${ci}" "  release-security-gates:" \
   "CI must define non-skipped release/security gates independent of the full rubric"
@@ -62,6 +104,14 @@ require_contains "${ci}" "bash scripts/verify-release-cycle.sh" \
   "release/security gates must verify deterministic release-cycle fixtures"
 require_contains "${ci}" "bash scripts/verify-runtime-floor-claims.sh" \
   "release/security gates must fail closed on unsupported Python/Node floor claims"
+require_line "${ci}" "  cdk-go-drift:" \
+  "CI must define the dedicated cdk-go generated binding drift job"
+require_contains "${ci}" "name: CDK Go binding drift" \
+  "CI must keep the cdk-go drift check name stable for branch protection visibility"
+require_job_contains "${ci}" "cdk-go-drift" "${release_please_draft_guard}" \
+  "cdk-go drift must use the standard draft release-please guard and otherwise run"
+require_job_contains "${ci}" "cdk-go-drift" "run: scripts/verify-cdk-go-drift.sh" \
+  "cdk-go drift job must execute the generated binding drift verifier"
 require_contains "${ci}" "  rubric:" "CI must define the full rubric job"
 require_contains "${ci}" "run: make rubric" "CI rubric job must run make rubric"
 require_contains "${ci}" "run_full_rubric:" \
@@ -85,6 +135,14 @@ require_not_contains "scripts/sync-release-pr-generated.sh" "Rubric (full gate s
   "generated release PR required checks must exclude the full rubric"
 require_not_contains "scripts/sync-release-pr-generated.sh" "Verify deterministic builds" \
   "generated release PR required checks must exclude skipped deterministic builds"
+
+require_line "scripts/verify-rubric.sh" "bash ./scripts/verify-cdk-go-drift.sh" \
+  "full rubric must verify cdk-go generated binding drift"
+require_line_order \
+  "scripts/verify-rubric.sh" \
+  "bash ./scripts/verify-cdk-go-drift.sh" \
+  "bash ./gov-infra/verifiers/gov-verify-rubric.sh" \
+  "full rubric must fail stale generated bindings before the GovTheory verifier"
 
 for release_path in \
   ".github/workflows/prerelease.yml" \
