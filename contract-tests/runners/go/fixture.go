@@ -292,13 +292,13 @@ type FixtureMCPExpect struct {
 }
 
 type FixtureMCPExpectedStep struct {
-	Status    int                  `json:"status"`
-	Headers   map[string][]string  `json:"headers"`
-	Cookies   []string             `json:"cookies"`
-	Body      *FixtureBody         `json:"body,omitempty"`
-	BodyJSON  json.RawMessage      `json:"body_json,omitempty"`
-	SSEFrames []FixtureMCPSSEFrame `json:"sse_frames,omitempty"`
-	IsBase64  bool                 `json:"is_base64"`
+	Status    int                   `json:"status"`
+	Headers   map[string][]string   `json:"headers"`
+	Cookies   []string              `json:"cookies"`
+	Body      *FixtureBody          `json:"body,omitempty"`
+	BodyJSON  json.RawMessage       `json:"body_json,omitempty"`
+	SSEFrames *[]FixtureMCPSSEFrame `json:"sse_frames,omitempty"`
+	IsBase64  bool                  `json:"is_base64"`
 }
 
 type FixtureMCPSSEFrame struct {
