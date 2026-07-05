@@ -60,6 +60,8 @@ require_contains "${ci}" "bash scripts/verify-release-workflows.sh" \
   "release/security gates must verify release workflow invariants"
 require_contains "${ci}" "bash scripts/verify-release-cycle.sh" \
   "release/security gates must verify deterministic release-cycle fixtures"
+require_contains "${ci}" "bash scripts/verify-runtime-floor-claims.sh" \
+  "release/security gates must fail closed on unsupported Python/Node floor claims"
 require_contains "${ci}" "  rubric:" "CI must define the full rubric job"
 require_contains "${ci}" "run: make rubric" "CI rubric job must run make rubric"
 require_contains "${ci}" "run_full_rubric:" \

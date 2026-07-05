@@ -89,6 +89,8 @@ jobs:
           bash scripts/verify-ci-rubric-enforced.sh
           bash scripts/verify-release-workflows.sh
           bash scripts/verify-release-cycle.sh
+      - name: Verify runtime floor claims
+        run: bash scripts/verify-runtime-floor-claims.sh
 
   prerelease-readiness:
     name: Prerelease readiness (staging → premain)
