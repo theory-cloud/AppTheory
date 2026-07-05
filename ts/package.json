@@ -26,27 +26,6 @@
     "@aws-sdk/client-s3": "^3.1015.0",
     "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v1.10.1/theory-cloud-tabletheory-ts-1.10.1.tgz#sha512-8S5HvnI3AHdMi5aEkoXZNHacO5GN7zfWpYlgfwo6ZMEjQTo/qx1iXWMI6W9vT1E0Ij7Q8RS53lb7VOy7BFHeqg=="
   },
-  "overrides": {
-    "@typescript-eslint/typescript-estree": {
-      "minimatch": "9.0.7"
-    },
-    "@eslint/eslintrc": {
-      "ajv": "6.14.0",
-      "minimatch": "3.1.4"
-    },
-    "eslint": {
-      "ajv": "6.14.0",
-      "minimatch": "3.1.4"
-    },
-    "eslint-plugin-import": {
-      "minimatch": "3.1.4"
-    },
-    "fast-xml-parser": "5.7.0",
-    "flatted": "3.4.2",
-    "js-yaml": "4.2.0",
-    "yaml": "2.8.3",
-    "fast-xml-builder": "1.1.7"
-  },
   "files": [
     "dist",
     "LICENSE",
