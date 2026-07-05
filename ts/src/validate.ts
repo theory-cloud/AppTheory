@@ -26,7 +26,7 @@ export interface ValidationRuleSpec {
 
 export interface ValidationFieldError {
   field: string;
-  rule: ValidationRuleName;
+  rule: string;
   message: string;
 }
 
@@ -131,6 +131,9 @@ function validateRule(
   value: unknown,
   rule: ValidationRuleSpec,
 ): ValidationFieldError | null {
+  const configError = validateRuleConfig(field, rule);
+  if (configError) return configError;
+
   switch (rule.rule) {
     case VALIDATION_RULE_REQUIRED:
       if (isEmptyValue(value)) {
@@ -203,12 +206,7 @@ function validateRule(
       return null;
     }
     case VALIDATION_RULE_ENUM: {
-      const allowed = Array.isArray(rule.value)
-        ? rule.value.map((item) => String(item))
-        : String(rule.value ?? "")
-            .split("|")
-            .map((item) => item.trim())
-            .filter(Boolean);
+      const allowed = enumValues(rule.value);
       const actual = String(value ?? "");
       if (!allowed.includes(actual)) {
         return fieldError(
@@ -222,9 +220,54 @@ function validateRule(
   }
 }
 
+function validateRuleConfig(
+  field: string,
+  rule: ValidationRuleSpec,
+): ValidationFieldError | null {
+  const ruleName =
+    typeof (rule as { rule?: unknown }).rule === "string" ? rule.rule : "";
+  let invalid = false;
+  switch (ruleName) {
+    case VALIDATION_RULE_REQUIRED:
+      invalid =
+        rule.value !== undefined &&
+        rule.value !== null &&
+        String(rule.value).trim() !== "";
+      break;
+    case VALIDATION_RULE_MIN:
+    case VALIDATION_RULE_MAX:
+      invalid = !isFiniteRuleNumber(rule.value);
+      break;
+    case VALIDATION_RULE_MIN_LENGTH:
+    case VALIDATION_RULE_MAX_LENGTH:
+      invalid = !isIntegerRuleNumber(rule.value);
+      break;
+    case VALIDATION_RULE_PATTERN:
+      try {
+        new RegExp(String(rule.value ?? ""));
+      } catch {
+        invalid = true;
+      }
+      break;
+    case VALIDATION_RULE_ENUM:
+      invalid = enumValues(rule.value).length === 0;
+      break;
+    default:
+      invalid = true;
+      break;
+  }
+  if (!invalid) return null;
+  const displayRule = ruleName || "invalid";
+  return fieldError(
+    field,
+    displayRule,
+    `${field} has invalid validation rule ${displayRule}`,
+  );
+}
+
 function fieldError(
   field: string,
-  rule: ValidationRuleName,
+  rule: string,
   message: string,
 ): ValidationFieldError {
   return { field, rule, message };
@@ -243,4 +286,25 @@ function numericValue(value: unknown): number | null {
 function lengthValue(value: unknown): number | null {
   if (typeof value === "string" || Array.isArray(value)) return value.length;
   return null;
+}
+
+function isFiniteRuleNumber(value: unknown): boolean {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return false;
+  }
+  return Number.isFinite(Number(value));
+}
+
+function isIntegerRuleNumber(value: unknown): boolean {
+  if (!isFiniteRuleNumber(value)) return false;
+  return Number.isInteger(Number(value));
+}
+
+function enumValues(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item))
+    : String(value ?? "")
+        .split("|")
+        .map((item) => item.trim())
+        .filter(Boolean);
 }

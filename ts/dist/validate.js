@@ -72,6 +72,9 @@ export function validateOrThrow(value, schema) {
     }
 }
 function validateRule(field, value, rule) {
+    const configError = validateRuleConfig(field, rule);
+    if (configError)
+        return configError;
     switch (rule.rule) {
         case VALIDATION_RULE_REQUIRED:
             if (isEmptyValue(value)) {
@@ -121,12 +124,7 @@ function validateRule(field, value, rule) {
             return null;
         }
         case VALIDATION_RULE_ENUM: {
-            const allowed = Array.isArray(rule.value)
-                ? rule.value.map((item) => String(item))
-                : String(rule.value ?? "")
-                    .split("|")
-                    .map((item) => item.trim())
-                    .filter(Boolean);
+            const allowed = enumValues(rule.value);
             const actual = String(value ?? "");
             if (!allowed.includes(actual)) {
                 return fieldError(field, rule.rule, rule.message ?? `${field} must be one of ${allowed.join(", ")}`);
@@ -134,6 +132,44 @@ function validateRule(field, value, rule) {
             return null;
         }
     }
+}
+function validateRuleConfig(field, rule) {
+    const ruleName = typeof rule.rule === "string" ? rule.rule : "";
+    let invalid = false;
+    switch (ruleName) {
+        case VALIDATION_RULE_REQUIRED:
+            invalid =
+                rule.value !== undefined &&
+                    rule.value !== null &&
+                    String(rule.value).trim() !== "";
+            break;
+        case VALIDATION_RULE_MIN:
+        case VALIDATION_RULE_MAX:
+            invalid = !isFiniteRuleNumber(rule.value);
+            break;
+        case VALIDATION_RULE_MIN_LENGTH:
+        case VALIDATION_RULE_MAX_LENGTH:
+            invalid = !isIntegerRuleNumber(rule.value);
+            break;
+        case VALIDATION_RULE_PATTERN:
+            try {
+                new RegExp(String(rule.value ?? ""));
+            }
+            catch {
+                invalid = true;
+            }
+            break;
+        case VALIDATION_RULE_ENUM:
+            invalid = enumValues(rule.value).length === 0;
+            break;
+        default:
+            invalid = true;
+            break;
+    }
+    if (!invalid)
+        return null;
+    const displayRule = ruleName || "invalid";
+    return fieldError(field, displayRule, `${field} has invalid validation rule ${displayRule}`);
 }
 function fieldError(field, rule, message) {
     return { field, rule, message };
@@ -152,5 +188,24 @@ function lengthValue(value) {
     if (typeof value === "string" || Array.isArray(value))
         return value.length;
     return null;
+}
+function isFiniteRuleNumber(value) {
+    if (value === null || value === undefined || String(value).trim() === "") {
+        return false;
+    }
+    return Number.isFinite(Number(value));
+}
+function isIntegerRuleNumber(value) {
+    if (!isFiniteRuleNumber(value))
+        return false;
+    return Number.isInteger(Number(value));
+}
+function enumValues(value) {
+    return Array.isArray(value)
+        ? value.map((item) => String(item))
+        : String(value ?? "")
+            .split("|")
+            .map((item) => item.trim())
+            .filter(Boolean);
 }
 //# sourceMappingURL=validate.js.map

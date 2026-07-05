@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any
 
 from apptheory.errors import AppTheoryError
@@ -96,47 +97,87 @@ def validation_error(errors: list[ValidationFieldError]) -> AppTheoryError:
 
 
 def _validate_rule(field: str, value: Any, rule: ValidationRule) -> ValidationFieldError | None:
+    config_error = _validate_rule_config(field, rule)
+    if config_error is not None:
+        return config_error
+
     if rule.rule == VALIDATION_RULE_REQUIRED:
         if _is_empty(value):
             return _field_error(field, rule, rule.message or f"{field} is required")
         return None
-    if rule.rule == VALIDATION_RULE_MIN:
-        actual = _numeric(value)
-        limit = _numeric(rule.value)
-        if actual is not None and limit is not None and actual < limit:
-            return _field_error(field, rule, rule.message or f"{field} must be >= {rule.value}")
-        return None
-    if rule.rule == VALIDATION_RULE_MAX:
-        actual = _numeric(value)
-        limit = _numeric(rule.value)
-        if actual is not None and limit is not None and actual > limit:
-            return _field_error(field, rule, rule.message or f"{field} must be <= {rule.value}")
-        return None
-    if rule.rule == VALIDATION_RULE_MIN_LENGTH:
-        actual = _length(value)
-        limit = _numeric(rule.value)
-        if actual is not None and limit is not None and actual < limit:
-            return _field_error(field, rule, rule.message or f"{field} length must be >= {rule.value}")
-        return None
-    if rule.rule == VALIDATION_RULE_MAX_LENGTH:
-        actual = _length(value)
-        limit = _numeric(rule.value)
-        if actual is not None and limit is not None and actual > limit:
-            return _field_error(field, rule, rule.message or f"{field} length must be <= {rule.value}")
-        return None
+    if rule.rule in {VALIDATION_RULE_MIN, VALIDATION_RULE_MAX}:
+        return _validate_numeric_rule(field, value, rule)
+    if rule.rule in {VALIDATION_RULE_MIN_LENGTH, VALIDATION_RULE_MAX_LENGTH}:
+        return _validate_length_rule(field, value, rule)
     if rule.rule == VALIDATION_RULE_PATTERN:
-        if isinstance(value, str) and re.search(str(rule.value or ""), value) is None:
-            return _field_error(field, rule, rule.message or f"{field} must match pattern")
-        return None
+        return _validate_pattern_rule(field, value, rule)
     if rule.rule == VALIDATION_RULE_ENUM:
-        allowed = (
-            [str(item) for item in rule.value] if isinstance(rule.value, list) else str(rule.value or "").split("|")
-        )
-        allowed = [item.strip() for item in allowed if item.strip()]
-        if str(value or "") not in allowed:
-            return _field_error(field, rule, rule.message or f"{field} must be one of {', '.join(allowed)}")
-        return None
+        return _validate_enum_rule(field, value, rule)
     return None
+
+
+def _validate_numeric_rule(field: str, value: Any, rule: ValidationRule) -> ValidationFieldError | None:
+    actual = _numeric(value)
+    limit = _rule_number(rule.value)
+    if actual is None or limit is None:
+        return None
+    if rule.rule == VALIDATION_RULE_MIN and actual < limit:
+        return _field_error(field, rule, rule.message or f"{field} must be >= {rule.value}")
+    if rule.rule == VALIDATION_RULE_MAX and actual > limit:
+        return _field_error(field, rule, rule.message or f"{field} must be <= {rule.value}")
+    return None
+
+
+def _validate_length_rule(field: str, value: Any, rule: ValidationRule) -> ValidationFieldError | None:
+    actual = _length(value)
+    limit = _rule_number(rule.value)
+    if actual is None or limit is None:
+        return None
+    if rule.rule == VALIDATION_RULE_MIN_LENGTH and actual < limit:
+        return _field_error(field, rule, rule.message or f"{field} length must be >= {rule.value}")
+    if rule.rule == VALIDATION_RULE_MAX_LENGTH and actual > limit:
+        return _field_error(field, rule, rule.message or f"{field} length must be <= {rule.value}")
+    return None
+
+
+def _validate_pattern_rule(field: str, value: Any, rule: ValidationRule) -> ValidationFieldError | None:
+    if isinstance(value, str) and re.search(str(rule.value or ""), value) is None:
+        return _field_error(field, rule, rule.message or f"{field} must match pattern")
+    return None
+
+
+def _validate_enum_rule(field: str, value: Any, rule: ValidationRule) -> ValidationFieldError | None:
+    allowed = _enum_values(rule.value)
+    if str(value or "") not in allowed:
+        return _field_error(field, rule, rule.message or f"{field} must be one of {', '.join(allowed)}")
+    return None
+
+
+def _validate_rule_config(field: str, rule: ValidationRule) -> ValidationFieldError | None:
+    invalid = False
+    if rule.rule == VALIDATION_RULE_REQUIRED:
+        invalid = rule.value is not None and str(rule.value).strip() != ""
+    elif rule.rule in {VALIDATION_RULE_MIN, VALIDATION_RULE_MAX}:
+        invalid = _rule_number(rule.value) is None
+    elif rule.rule in {VALIDATION_RULE_MIN_LENGTH, VALIDATION_RULE_MAX_LENGTH}:
+        number = _rule_number(rule.value)
+        invalid = number is None or int(number) != number
+    elif rule.rule == VALIDATION_RULE_PATTERN:
+        try:
+            re.compile(str(rule.value or ""))
+        except re.error:
+            invalid = True
+    elif rule.rule == VALIDATION_RULE_ENUM:
+        invalid = not _enum_values(rule.value)
+    else:
+        invalid = True
+    if not invalid:
+        return None
+    return _field_error(
+        field,
+        rule,
+        rule.message or f"{field} has invalid validation rule {rule.rule}",
+    )
 
 
 def _field_error(field: str, rule: ValidationRule, message: str) -> ValidationFieldError:
@@ -159,6 +200,21 @@ def _numeric(value: Any) -> float | None:
     if isinstance(value, int | float):
         return float(value)
     return None
+
+
+def _rule_number(value: Any) -> float | None:
+    if value is None or isinstance(value, bool) or str(value).strip() == "":
+        return None
+    try:
+        out = float(str(value))
+    except ValueError:
+        return None
+    return out if isfinite(out) else None
+
+
+def _enum_values(value: Any) -> list[str]:
+    allowed = [str(item) for item in value] if isinstance(value, list) else str(value or "").split("|")
+    return [item.strip() for item in allowed if item.strip()]
 
 
 def _length(value: Any) -> int | None:

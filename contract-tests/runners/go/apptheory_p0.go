@@ -267,6 +267,32 @@ type bindAllSourcesRequest struct {
 	TTL       time.Duration `query:"ttl"`
 }
 
+type bindDurationEdgesRequest struct {
+	Half     time.Duration `query:"half"`
+	Micro    time.Duration `query:"micro"`
+	Boundary time.Duration `query:"boundary"`
+	Combined time.Duration `query:"combined"`
+	Negative time.Duration `query:"negative"`
+}
+
+type bindNumericEdgesRequest struct {
+	Count int     `query:"count"`
+	Ratio float64 `query:"ratio"`
+}
+
+type bindStrictQueryOnlyRequest struct {
+	Count int `query:"count"`
+}
+
+type bindStrictNestedRequest struct {
+	Profile string         `json:"profile"`
+	Nested  map[string]any `json:"nested"`
+}
+
+type bindBodyNameRequest struct {
+	Name string `json:"name"`
+}
+
 type validateProfileRequest struct {
 	Name     string `json:"name" validate:"required"`
 	Age      int    `json:"age" validate:"min=18"`
@@ -280,6 +306,20 @@ type validateProfileRequest struct {
 type validateProfileQueryRequest struct {
 	Name string `json:"name" validate:"required"`
 	Age  int    `query:"age" validate:"min=18"`
+}
+
+type validateWireNamesRequest struct {
+	AccountID string `path:"account_id" validate:"pattern=^acct_"`
+	PageSize  int    `query:"page-size" validate:"min=10"`
+	Role      string `header:"x-role" validate:"enum=admin|member"`
+	Name      string `json:"name" validate:"required"`
+}
+
+type validateInvalidRulesRequest struct {
+	Email string `json:"email" validate:"pattern=["`
+	Age   int    `json:"age" validate:"min=abc"`
+	Name  string `json:"name" validate:"required=unexpected"`
+	Role  string `json:"role" validate:"typo=1"`
 }
 
 type validateRequiredPresenceRequest struct {
@@ -432,6 +472,58 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 			}, nil
 		},
 	),
+	"bind_duration_edges": apptheory.BindHandler(
+		apptheory.BindConfig[bindDurationEdgesRequest]{Query: true},
+		func(_ *apptheory.Context, req bindDurationEdgesRequest) (map[string]any, error) {
+			return map[string]any{
+				"half":     req.Half.String(),
+				"micro":    req.Micro.String(),
+				"boundary": req.Boundary.String(),
+				"combined": req.Combined.String(),
+				"negative": req.Negative.String(),
+			}, nil
+		},
+	),
+	"bind_numeric_edges": apptheory.BindHandler(
+		apptheory.BindConfig[bindNumericEdgesRequest]{Query: true},
+		func(_ *apptheory.Context, req bindNumericEdgesRequest) (map[string]any, error) {
+			return map[string]any{"count": req.Count, "ratio": req.Ratio}, nil
+		},
+	),
+	"bind_strict_query_only": apptheory.BindHandler(
+		apptheory.BindConfig[bindStrictQueryOnlyRequest]{
+			Body:       true,
+			Query:      true,
+			StrictJSON: true,
+		},
+		func(_ *apptheory.Context, req bindStrictQueryOnlyRequest) (map[string]any, error) {
+			return map[string]any{"count": req.Count}, nil
+		},
+	),
+	"bind_strict_nested": apptheory.BindHandler(
+		apptheory.BindConfig[bindStrictNestedRequest]{
+			Body:       true,
+			StrictJSON: true,
+		},
+		func(_ *apptheory.Context, req bindStrictNestedRequest) (map[string]any, error) {
+			return map[string]any{"profile_name": req.Profile}, nil
+		},
+	),
+	"bind_body_name": apptheory.BindHandler(
+		apptheory.BindConfig[bindBodyNameRequest]{Body: true},
+		func(_ *apptheory.Context, req bindBodyNameRequest) (map[string]any, error) {
+			return map[string]any{"name": req.Name}, nil
+		},
+	),
+	"bind_strict_name": apptheory.BindHandler(
+		apptheory.BindConfig[bindBodyNameRequest]{
+			Body:       true,
+			StrictJSON: true,
+		},
+		func(_ *apptheory.Context, req bindBodyNameRequest) (map[string]any, error) {
+			return map[string]any{"name": req.Name}, nil
+		},
+	),
 	"validate_profile": apptheory.BindHandler(
 		apptheory.BindConfig[validateProfileRequest]{Body: true},
 		func(_ *apptheory.Context, req validateProfileRequest) (map[string]any, error) {
@@ -450,6 +542,28 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		apptheory.BindConfig[validateProfileQueryRequest]{Body: true, Query: true},
 		func(_ *apptheory.Context, req validateProfileQueryRequest) (map[string]any, error) {
 			return map[string]any{"name": req.Name, "age": req.Age}, nil
+		},
+	),
+	"validate_wire_names": apptheory.BindHandler(
+		apptheory.BindConfig[validateWireNamesRequest]{Body: true, Query: true, Path: true, Headers: true},
+		func(_ *apptheory.Context, req validateWireNamesRequest) (map[string]any, error) {
+			return map[string]any{
+				"account_id": req.AccountID,
+				"name":       req.Name,
+				"page_size":  req.PageSize,
+				"role":       req.Role,
+			}, nil
+		},
+	),
+	"validate_invalid_rules": apptheory.BindHandler(
+		apptheory.BindConfig[validateInvalidRulesRequest]{Body: true},
+		func(_ *apptheory.Context, req validateInvalidRulesRequest) (map[string]any, error) {
+			return map[string]any{
+				"age":   req.Age,
+				"email": req.Email,
+				"name":  req.Name,
+				"role":  req.Role,
+			}, nil
 		},
 	),
 	"validate_required_presence": apptheory.BindHandler(

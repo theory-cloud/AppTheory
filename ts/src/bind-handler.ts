@@ -39,6 +39,8 @@ interface SourceValueResult {
   values: unknown[];
 }
 
+const MAX_PORTABLE_INTEGER = Number.MAX_SAFE_INTEGER;
+
 export type TypedHandler<Req, Resp> = (
   ctx: Context,
   req: Req,
@@ -71,7 +73,7 @@ export async function bindRequest<Req>(
         .filter((key) => fields[key]?.source === "body")
         .map((key) => fields[key]?.name ?? key),
     );
-    if (config.strictJson && bodyFieldNames.size > 0) {
+    if (config.strictJson) {
       for (const key of Object.keys(bodyValue)) {
         if (!bodyFieldNames.has(key)) {
           throw bindingError("body", key, "", undefined);
@@ -183,7 +185,14 @@ function parseValue(raw: unknown, type: BindFieldType): unknown {
     case "int": {
       const rawText = String(raw ?? "");
       if (!/^[+-]?\d+$/.test(rawText)) throw new Error("invalid integer");
-      return Number.parseInt(rawText, 10);
+      const value = Number.parseInt(rawText, 10);
+      if (
+        !Number.isSafeInteger(value) ||
+        Math.abs(value) > MAX_PORTABLE_INTEGER
+      ) {
+        throw new Error("integer outside portable safe range");
+      }
+      return value;
     }
     case "bool": {
       const normalized = String(raw ?? "")
@@ -194,7 +203,11 @@ function parseValue(raw: unknown, type: BindFieldType): unknown {
       throw new Error("invalid boolean");
     }
     case "float": {
-      const value = Number.parseFloat(String(raw ?? ""));
+      const rawText = String(raw ?? "");
+      if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(rawText)) {
+        throw new Error("invalid float");
+      }
+      const value = Number(rawText);
       if (!Number.isFinite(value)) throw new Error("invalid float");
       return value;
     }
@@ -205,69 +218,125 @@ function parseValue(raw: unknown, type: BindFieldType): unknown {
 
 function parseDuration(raw: string): string {
   const trimmed = raw.trim();
-  const pattern = /([+-]?\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/g;
-  let match: RegExpExecArray | null;
-  let consumed = "";
-  let totalNs = 0;
-  while ((match = pattern.exec(trimmed)) !== null) {
-    consumed += match[0];
-    const amount = Number(match[1]);
-    const unit = match[2];
-    if (!Number.isFinite(amount) || !unit) throw new Error("invalid duration");
-    totalNs += amount * durationUnitNs(unit);
+  if (!trimmed) throw new Error("invalid duration");
+  let sign = 1n;
+  let body = trimmed;
+  if (body[0] === "-" || body[0] === "+") {
+    sign = body[0] === "-" ? -1n : 1n;
+    body = body.slice(1);
   }
-  if (!trimmed || consumed !== trimmed) throw new Error("invalid duration");
-  return formatDuration(totalNs);
+  if (!body) throw new Error("invalid duration");
+
+  const pattern = /(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|ms|s|m|h)/gy;
+  let totalNs = 0n;
+  while (pattern.lastIndex < body.length) {
+    const match = pattern.exec(body);
+    if (!match) throw new Error("invalid duration");
+    totalNs += decimalDurationToNs(match[1] ?? "", match[2] ?? "");
+  }
+  totalNs *= sign;
+  if (totalNs % 1000n !== 0n) {
+    throw new Error("duration precision below one microsecond is not portable");
+  }
+  return formatDurationNs(totalNs);
 }
 
-function durationUnitNs(unit: string): number {
+function durationUnitNs(unit: string): bigint {
   switch (unit) {
     case "h":
-      return 3_600_000_000_000;
+      return 3_600_000_000_000n;
     case "m":
-      return 60_000_000_000;
+      return 60_000_000_000n;
     case "s":
-      return 1_000_000_000;
+      return 1_000_000_000n;
     case "ms":
-      return 1_000_000;
+      return 1_000_000n;
     case "us":
     case "µs":
-      return 1_000;
+      return 1_000n;
     case "ns":
-      return 1;
+      return 1n;
     default:
       throw new Error("invalid duration");
   }
 }
 
-function formatDuration(totalNs: number): string {
-  const sign = totalNs < 0 ? "-" : "";
-  let remaining = Math.abs(Math.trunc(totalNs));
-  const hour = 3_600_000_000_000;
-  const minute = 60_000_000_000;
-  const second = 1_000_000_000;
+function decimalDurationToNs(amount: string, unit: string): bigint {
+  const unitNs = durationUnitNs(unit);
+  const pieces = amount.split(".");
+  const wholeRaw = pieces[0] ?? "";
+  const fractionRaw = pieces[1] ?? "";
+  const whole = wholeRaw === "" ? 0n : BigInt(wholeRaw);
+  let out = whole * unitNs;
+  if (fractionRaw !== "") {
+    const fraction = BigInt(fractionRaw);
+    const scale = 10n ** BigInt(fractionRaw.length);
+    out += (fraction * unitNs) / scale;
+  }
+  return out;
+}
+
+function formatDurationNs(totalNs: bigint): string {
+  const sign = totalNs < 0n ? "-" : "";
+  let remaining = totalNs < 0n ? -totalNs : totalNs;
+  const hour = 3_600_000_000_000n;
+  const minute = 60_000_000_000n;
+  const second = 1_000_000_000n;
+  const millisecond = 1_000_000n;
+  const microsecond = 1_000n;
+  if (remaining === 0n) return "0s";
+
   const parts: string[] = [];
-  const hours = Math.trunc(remaining / hour);
-  if (hours > 0) {
-    parts.push(`${hours}h`);
-    remaining %= hour;
+  if (remaining >= second) {
+    const hours = remaining / hour;
+    if (hours > 0n) {
+      parts.push(`${hours}h`);
+      remaining %= hour;
+      const minutes = remaining / minute;
+      parts.push(`${minutes}m`);
+      remaining %= minute;
+    } else {
+      const minutes = remaining / minute;
+      if (minutes > 0n) {
+        parts.push(`${minutes}m`);
+        remaining %= minute;
+      }
+    }
+    const seconds = remaining / second;
+    const fraction = remaining % second;
+    parts.push(formatDecimalUnit(seconds, fraction, 9, "s"));
+    return `${sign}${parts.join("")}`;
   }
-  const minutes = Math.trunc(remaining / minute);
-  if (minutes > 0) {
-    parts.push(`${minutes}m`);
-    remaining %= minute;
+
+  if (remaining >= millisecond) {
+    return `${sign}${formatDecimalUnit(
+      remaining / millisecond,
+      remaining % millisecond,
+      6,
+      "ms",
+    )}`;
   }
-  const seconds = Math.trunc(remaining / second);
-  remaining %= second;
-  if (seconds > 0 || parts.length > 0) {
-    parts.push(`${seconds}s`);
-  } else if (remaining === 0) {
-    parts.push("0s");
+  if (remaining >= microsecond) {
+    return `${sign}${formatDecimalUnit(
+      remaining / microsecond,
+      remaining % microsecond,
+      3,
+      "µs",
+    )}`;
   }
-  if (remaining > 0) {
-    parts.push(`${remaining}ns`);
-  }
-  return `${sign}${parts.join("")}`;
+  return `${sign}${remaining}ns`;
+}
+
+function formatDecimalUnit(
+  whole: bigint,
+  fraction: bigint,
+  fractionWidth: number,
+  unit: string,
+): string {
+  if (fraction === 0n) return `${whole}${unit}`;
+  let text = fraction.toString().padStart(fractionWidth, "0");
+  text = text.replace(/0+$/, "");
+  return `${whole}.${text}${unit}`;
 }
 
 function bindingError(
@@ -312,18 +381,38 @@ function mergeValidation<Req>(
   validation: ValidationSchema<Req> | undefined,
   fields: BindFieldSpecs<Req>,
 ): ValidationSchema<Req> | undefined {
-  const merged: Record<string, readonly ValidationRuleSpec[]> = {
-    ...((validation as Record<string, readonly ValidationRuleSpec[]>) ?? {}),
-  };
+  const merged: Record<string, ValidationRuleSpec[]> = {};
+  for (const [key, rules] of Object.entries(
+    (validation as Record<string, readonly ValidationRuleSpec[]>) ?? {},
+  )) {
+    const spec = (fields as Record<string, BindFieldSpec>)[key];
+    const wireName = spec?.name ?? key;
+    merged[key] = [...(rules ?? [])].map((rule) =>
+      withCanonicalValidationField(rule, wireName),
+    );
+  }
   for (const [key, spec] of Object.entries(
     fields as Record<string, BindFieldSpec>,
   )) {
     if (!spec.validate) continue;
-    merged[key] = [...(merged[key] ?? []), ...spec.validate];
+    const wireName = spec.name ?? key;
+    merged[key] = [
+      ...(merged[key] ?? []),
+      ...spec.validate.map((rule) =>
+        withCanonicalValidationField(rule, wireName),
+      ),
+    ];
   }
   return Object.keys(merged).length > 0
     ? (merged as ValidationSchema<Req>)
     : undefined;
+}
+
+function withCanonicalValidationField(
+  rule: ValidationRuleSpec,
+  field: string,
+): ValidationRuleSpec {
+  return rule.field === undefined ? { ...rule, field } : { ...rule };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

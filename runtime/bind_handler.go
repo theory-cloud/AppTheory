@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -24,6 +25,8 @@ const (
 	bindSourcePath                 = "path"
 	bindSourceHeader               = "header"
 )
+
+const maxPortableInteger int64 = 1<<53 - 1
 
 // BindConfig controls how typed request binding populates a request model.
 type BindConfig[Req any] struct {
@@ -103,6 +106,9 @@ func bindBody(target any, ctx *Context, strict bool, presence *validationPresenc
 		return bindStrictBody(target, ctx.Request.Body, presence)
 	}
 
+	if err := validateBodyJSONObject(ctx.Request.Body); err != nil {
+		return err
+	}
 	if err := json.Unmarshal(ctx.Request.Body, target); err != nil {
 		return bindBadRequest(errorMessageInvalidJSON, err)
 	}
@@ -192,6 +198,14 @@ func bindStrictBody(target any, body []byte, presence *validationPresence) error
 		}
 	}
 	return nil
+}
+
+func validateBodyJSONObject(body []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if _, err := decodeOrderedRawJSONObject(decoder); err != nil {
+		return bindBodyDecodeError(err)
+	}
+	return rejectTrailingJSONValue(decoder)
 }
 
 func decodeStrictBodyDirect(target any, body []byte) error {
@@ -515,36 +529,64 @@ func parseBoundValue(field reflect.Value, raw string) error {
 		return nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		if field.Type() == reflect.TypeOf(time.Duration(0)) {
-			v, err := time.ParseDuration(raw)
-			if err != nil {
-				return err
-			}
-			field.SetInt(int64(v))
-			return nil
+			return setBoundDuration(field, raw)
 		}
-		v, err := strconv.ParseInt(raw, 10, field.Type().Bits())
-		if err != nil {
-			return err
-		}
-		field.SetInt(v)
-		return nil
+		return setBoundSignedInteger(field, raw)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		v, err := strconv.ParseUint(raw, 10, field.Type().Bits())
-		if err != nil {
-			return err
-		}
-		field.SetUint(v)
-		return nil
+		return setBoundUnsignedInteger(field, raw)
 	case reflect.Float32, reflect.Float64:
-		v, err := strconv.ParseFloat(raw, field.Type().Bits())
-		if err != nil {
-			return err
-		}
-		field.SetFloat(v)
-		return nil
+		return setBoundFloat(field, raw)
 	default:
 		return fmt.Errorf("unsupported field type %s", field.Type())
 	}
+}
+
+func setBoundDuration(field reflect.Value, raw string) error {
+	v, err := time.ParseDuration(raw)
+	if err != nil {
+		return err
+	}
+	if v%time.Microsecond != 0 {
+		return fmt.Errorf("duration precision below one microsecond is not portable")
+	}
+	field.SetInt(int64(v))
+	return nil
+}
+
+func setBoundSignedInteger(field reflect.Value, raw string) error {
+	v, err := strconv.ParseInt(raw, 10, field.Type().Bits())
+	if err != nil {
+		return err
+	}
+	if v < -maxPortableInteger || v > maxPortableInteger {
+		return fmt.Errorf("integer outside portable safe range")
+	}
+	field.SetInt(v)
+	return nil
+}
+
+func setBoundUnsignedInteger(field reflect.Value, raw string) error {
+	v, err := strconv.ParseUint(raw, 10, field.Type().Bits())
+	if err != nil {
+		return err
+	}
+	if v > uint64(maxPortableInteger) {
+		return fmt.Errorf("integer outside portable safe range")
+	}
+	field.SetUint(v)
+	return nil
+}
+
+func setBoundFloat(field reflect.Value, raw string) error {
+	v, err := strconv.ParseFloat(raw, field.Type().Bits())
+	if err != nil {
+		return err
+	}
+	if math.IsInf(v, 0) || math.IsNaN(v) {
+		return fmt.Errorf("invalid finite float")
+	}
+	field.SetFloat(v)
+	return nil
 }
 
 func bindBodyDecodeError(cause error) *AppTheoryError {

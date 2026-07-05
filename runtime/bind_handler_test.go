@@ -259,6 +259,35 @@ func TestBindRequest_StrictJSONBindsBodyAndRequestSources(t *testing.T) {
 	}
 }
 
+func TestBindRequest_StrictJSONRejectsUnknownWithNoBodyFields(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Count int `query:"count"`
+	}
+
+	_, err := BindRequest(&Context{
+		Request: Request{
+			Body:  []byte(`{"extra":true}`),
+			Query: map[string][]string{"count": {"7"}},
+		},
+	}, BindConfig[requestModel]{
+		Body:       true,
+		Query:      true,
+		StrictJSON: true,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Message != "invalid body binding: extra" || appErr.Details["name"] != "extra" {
+		t.Fatalf("unexpected strict zero-body-field error: %#v", appErr)
+	}
+}
+
 func TestBindRequest_StrictJSONSupportsEmbeddedBodyFields(t *testing.T) {
 	t.Parallel()
 
@@ -386,6 +415,32 @@ func TestBindRequest_StrictJSONRejectsTrailingValues(t *testing.T) {
 	}
 }
 
+func TestBindRequest_NonStrictBodyRejectsNullTopLevel(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Name string `json:"name"`
+	}
+
+	_, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`null`),
+		},
+	}, BindConfig[requestModel]{
+		Body: true,
+	})
+	if err == nil {
+		t.Fatal("expected null top-level body to fail")
+	}
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 || appErr.Message != errorMessageInvalidJSON {
+		t.Fatalf("unexpected null body error: %#v", appErr)
+	}
+}
+
 func TestBindRequest_InvalidQueryBindingReturnsBadRequest(t *testing.T) {
 	t.Parallel()
 
@@ -412,6 +467,72 @@ func TestBindRequest_InvalidQueryBindingReturnsBadRequest(t *testing.T) {
 	}
 	if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 {
 		t.Fatalf("unexpected error payload: %#v", appErr)
+	}
+}
+
+func TestBindRequest_NumericBindingRejectsUnsafeAndPartialValues(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Count int     `query:"count"`
+		Ratio float64 `query:"ratio"`
+	}
+
+	for name, query := range map[string]map[string][]string{
+		"unsafe int":       {"count": {"9007199254740992"}, "ratio": {"1.5"}},
+		"trailing float":   {"count": {"7"}, "ratio": {"1.5oops"}},
+		"non-finite float": {"count": {"7"}, "ratio": {"NaN"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := BindRequest(&Context{
+				Request: Request{Query: query},
+			}, BindConfig[requestModel]{
+				Query: true,
+			})
+			if err == nil {
+				t.Fatal("expected binding error")
+			}
+			appErr, ok := err.(*AppTheoryError)
+			if !ok {
+				t.Fatalf("expected AppTheoryError, got %T", err)
+			}
+			if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 {
+				t.Fatalf("unexpected numeric binding error: %#v", appErr)
+			}
+		})
+	}
+}
+
+func TestBindRequest_DurationBindingRejectsNonPortableEdges(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		TTL time.Duration `query:"ttl"`
+	}
+
+	for name, raw := range map[string]string{
+		"internal sign":         "1s-500ms",
+		"sub-microsecond value": "1ns",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := BindRequest(&Context{
+				Request: Request{Query: map[string][]string{"ttl": {raw}}},
+			}, BindConfig[requestModel]{
+				Query: true,
+			})
+			if err == nil {
+				t.Fatal("expected duration binding error")
+			}
+			appErr, ok := err.(*AppTheoryError)
+			if !ok {
+				t.Fatalf("expected AppTheoryError, got %T", err)
+			}
+			if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 {
+				t.Fatalf("unexpected duration binding error: %#v", appErr)
+			}
+		})
 	}
 }
 
@@ -708,19 +829,17 @@ func TestValidateBoundRequest_RuleVocabularyAggregates(t *testing.T) {
 	}
 }
 
-func TestValidateBoundRequest_PassesRulesAndIgnoresMalformedRules(t *testing.T) {
+func TestValidateBoundRequest_PassesValidRuleVocabulary(t *testing.T) {
 	t.Parallel()
 
 	value := 3
 	type requestModel struct {
-		Name   string  `json:"name" validate:"required,min_length=2,max_length=5,unknown=1"`
+		Name   string  `json:"name" validate:"required,min_length=2,max_length=5"`
 		Count  uint    `query:"count" validate:"min=2,max=4"`
 		Ratio  float64 `path:"ratio" validate:"min=1.5"`
 		State  string  `header:"x-state" validate:"enum=open|closed"`
 		Labels []int   `json:"labels" validate:"min_length=1,max_length=2"`
 		Value  *int    `json:"value" validate:"required"`
-		Loose  string  `json:"loose" validate:"min=bad,max=bad,min_length=bad,max_length=bad,pattern=["`
-		Empty  string  `json:"empty" validate:"enum="`
 	}
 
 	err := validateBoundRequest(requestModel{
@@ -739,5 +858,50 @@ func TestValidateBoundRequest_PassesRulesAndIgnoresMalformedRules(t *testing.T) 
 	}
 	if err := validateBoundRequest(nil); err != nil {
 		t.Fatalf("expected nil validation to no-op, got %v", err)
+	}
+}
+
+func TestValidateBoundRequest_InvalidRuleConfigFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Email string `json:"email" validate:"pattern=["`
+		Age   int    `json:"age" validate:"min=abc"`
+		Name  string `json:"name" validate:"required=unexpected"`
+		Role  string `json:"role" validate:"typo=1"`
+		Empty string `json:"empty" validate:"enum="`
+	}
+
+	err := validateBoundRequest(requestModel{
+		Email: "alice@example.com",
+		Age:   30,
+		Name:  "Alice",
+		Role:  "admin",
+	})
+	if err == nil {
+		t.Fatal("expected invalid config to fail closed")
+	}
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	got, ok := appErr.Details["errors"].([]ValidationFieldError)
+	if !ok {
+		t.Fatalf("expected validation field errors, got %#v", appErr.Details["errors"])
+	}
+	want := []ValidationFieldError{
+		{Field: "email", Rule: ValidationRulePattern, Message: "email has invalid validation rule pattern"},
+		{Field: "age", Rule: ValidationRuleMin, Message: "age has invalid validation rule min"},
+		{Field: "name", Rule: ValidationRuleRequired, Message: "name has invalid validation rule required"},
+		{Field: "role", Rule: "typo", Message: "role has invalid validation rule typo"},
+		{Field: "empty", Rule: ValidationRuleEnum, Message: "empty has invalid validation rule enum"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d errors, got %#v", len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("error %d: expected %#v, got %#v", i, want[i], got[i])
+		}
 	}
 }

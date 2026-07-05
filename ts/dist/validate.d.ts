@@ -15,7 +15,7 @@ export interface ValidationRuleSpec {
 }
 export interface ValidationFieldError {
     field: string;
-    rule: ValidationRuleName;
+    rule: string;
     message: string;
 }
 export type ValidationSchema<Req> = Partial<Record<Extract<keyof Req, string>, readonly ValidationRuleSpec[]>>;

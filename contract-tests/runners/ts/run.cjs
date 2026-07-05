@@ -5497,6 +5497,107 @@ function builtInAppTheoryHandler(runtime, name, effects) {
           ttl: req.TTL,
         }),
       );
+    case "bind_duration_edges":
+      return runtime.bindHandler(
+        {
+          query: true,
+          fields: {
+            Half: { source: "query", name: "half", type: "duration", field: "Half" },
+            Micro: {
+              source: "query",
+              name: "micro",
+              type: "duration",
+              field: "Micro",
+            },
+            Boundary: {
+              source: "query",
+              name: "boundary",
+              type: "duration",
+              field: "Boundary",
+            },
+            Combined: {
+              source: "query",
+              name: "combined",
+              type: "duration",
+              field: "Combined",
+            },
+            Negative: {
+              source: "query",
+              name: "negative",
+              type: "duration",
+              field: "Negative",
+            },
+          },
+        },
+        (_ctx, req) => ({
+          half: req.Half,
+          micro: req.Micro,
+          boundary: req.Boundary,
+          combined: req.Combined,
+          negative: req.Negative,
+        }),
+      );
+    case "bind_numeric_edges":
+      return runtime.bindHandler(
+        {
+          query: true,
+          fields: {
+            Count: { source: "query", name: "count", type: "int", field: "Count" },
+            Ratio: {
+              source: "query",
+              name: "ratio",
+              type: "float",
+              field: "Ratio",
+            },
+          },
+        },
+        (_ctx, req) => ({ count: req.Count, ratio: req.Ratio }),
+      );
+    case "bind_strict_query_only":
+      return runtime.bindHandler(
+        {
+          body: true,
+          query: true,
+          strictJson: true,
+          fields: {
+            Count: { source: "query", name: "count", type: "int", field: "Count" },
+          },
+        },
+        (_ctx, req) => ({ count: req.Count }),
+      );
+    case "bind_strict_nested":
+      return runtime.bindHandler(
+        {
+          body: true,
+          strictJson: true,
+          fields: {
+            Profile: { source: "body", name: "profile", field: "Profile" },
+            Nested: { source: "body", name: "nested", field: "Nested" },
+          },
+        },
+        (_ctx, req) => ({ profile_name: req.Profile }),
+      );
+    case "bind_body_name":
+      return runtime.bindHandler(
+        {
+          body: true,
+          fields: {
+            Name: { source: "body", name: "name", field: "Name" },
+          },
+        },
+        (_ctx, req) => ({ name: req.Name }),
+      );
+    case "bind_strict_name":
+      return runtime.bindHandler(
+        {
+          body: true,
+          strictJson: true,
+          fields: {
+            Name: { source: "body", name: "name", field: "Name" },
+          },
+        },
+        (_ctx, req) => ({ name: req.Name }),
+      );
     case "validate_profile":
       return runtime.bindHandler(
         {
@@ -5537,6 +5638,61 @@ function builtInAppTheoryHandler(runtime, name, effects) {
           },
         },
         (_ctx, req) => ({ name: req.Name, age: req.Age }),
+      );
+    case "validate_wire_names":
+      return runtime.bindHandler(
+        {
+          body: true,
+          query: true,
+          path: true,
+          headers: true,
+          fields: {
+            AccountID: {
+              source: "path",
+              name: "account_id",
+              field: "AccountID",
+            },
+            PageSize: {
+              source: "query",
+              name: "page-size",
+              type: "int",
+              field: "PageSize",
+            },
+            Role: { source: "header", name: "x-role", field: "Role" },
+            Name: { source: "body", name: "name", field: "Name" },
+          },
+          validation: {
+            AccountID: [runtime.pattern("^acct_")],
+            PageSize: [runtime.min(10)],
+            Role: [runtime.oneOf(["admin", "member"])],
+            Name: [runtime.required()],
+          },
+        },
+        (_ctx, req) => ({
+          account_id: req.AccountID,
+          page_size: req.PageSize,
+          role: req.Role,
+          name: req.Name,
+        }),
+      );
+    case "validate_invalid_rules":
+      return runtime.bindHandler(
+        {
+          body: true,
+          fields: {
+            email: { source: "body", name: "email" },
+            age: { source: "body", name: "age", type: "int" },
+            name: { source: "body", name: "name" },
+            role: { source: "body", name: "role" },
+          },
+          validation: {
+            email: [{ rule: "pattern", value: "[" }],
+            age: [{ rule: "min", value: "abc" }],
+            name: [{ rule: "required", value: "unexpected" }],
+            role: [{ rule: "typo", value: "1" }],
+          },
+        },
+        (_ctx, req) => req,
       );
     case "validate_required_presence":
       return runtime.bindHandler(
