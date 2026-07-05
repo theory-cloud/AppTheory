@@ -30,10 +30,12 @@ Python 3.14+ is required.
 
 | Module | Purpose |
 | --- | --- |
-| `apptheory` | Core Python runtime exports: `create_app`, `Context`, request/response helpers, event builders, testkit helpers, jobs-ledger primitives, logging profiles, and sanitization helpers. Rate-limiter classes are not root exports. |
+| `apptheory` | Core Python runtime exports: `create_app`, `Context`, request/response helpers, event builders, testkit helpers, MCP/OAuth helpers, jobs-ledger primitives, logging profiles, object-store helpers, and sanitization helpers. Rate-limiter classes are not root exports. |
+| `apptheory.mcp` | Streamable HTTP MCP server, registries, session/stream/task stores, SSE parsing, and deterministic test harness helpers. |
+| `apptheory.oauth` | Protected-resource metadata, bearer-token validation, DCR, PKCE, and Remote MCP OAuth helper surfaces. |
 | `apptheory.limited` | DynamoDB-backed rate limiter exports (`DynamoRateLimiter`, `FixedWindowStrategy`, `SlidingWindowStrategy`, `MultiWindowStrategy`). |
 
-There are no Python MCP or OAuth runtime modules. See `api-snapshots/py.txt` for the exact exported surface — that file is the release gate.
+See `api-snapshots/py.txt` for the exact exported surface — that file is the release gate.
 
 ## Minimal app
 
@@ -111,5 +113,5 @@ The Python runtime passes the full contract corpus on every commit. <!-- apptheo
 
 - [API Reference](../api-reference.md)
 - [HTTP Runtime tiers](../features/http-runtime.md)
-- [MCP Method Surface](../integrations/mcp.md) — Go runtime MCP surface
+- [MCP Method Surface](../integrations/mcp.md) — transport and JSON-RPC method contract
 - [Contract Fixtures](../reference/contract-fixtures.md)

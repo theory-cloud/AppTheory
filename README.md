@@ -97,7 +97,7 @@ Use AppTheory when you want AWS-Lambda-backed services that are:
 
 ## MCP server runtime
 
-AppTheory's Go runtime includes a complete [Model Context Protocol](https://modelcontextprotocol.io) production stack: Streamable HTTP transport, session management, OAuth protected resources, resumable SSE streaming, and CDK deployment constructs. The Go MCP runtime is a **first-class part of the contract**, not an experimental add-on — `theory-mcp-server` itself runs on it. The TypeScript MCP runtime now executes those MCP fixtures; Python MCP runtime parity remains intentionally staged for SP11 and represented by explicit Python skips of the MCP tier.
+AppTheory includes a complete [Model Context Protocol](https://modelcontextprotocol.io) runtime surface: Streamable HTTP transport, session management, OAuth protected resources, resumable SSE streaming, and CDK deployment constructs. MCP is a **first-class part of the contract**, not an experimental add-on — Go, TypeScript, and Python execute the shared MCP fixtures alongside OAuth and objectstore fixtures.
 
 - [MCP integration guide](https://apptheory.theorycloud.ai/integrations/mcp/) — transport, JSON-RPC surface, registries, sessions, streaming
 - [Remote MCP deployment](https://apptheory.theorycloud.ai/integrations/remote-mcp/) — OAuth, protected resource metadata, Autheory integration

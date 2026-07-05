@@ -61,6 +61,21 @@
 
 AppTheory CDK provides jsii constructs that deploy AppTheory apps with consistent defaults (and keep infra patterns consistent across Go/TypeScript/Python services).
 
+## CDK semantic construct map
+
+The generated jsii coverage index below proves construct-name coverage only; it is not a substitute for
+operator-facing deployment guidance. Keep these human-authored groups current when the CDK surface grows:
+
+- HTTP and routing: `AppTheoryHttpApi`, `AppTheoryRestApi`, `AppTheoryRestApiRouter`, domains, CORS, logging, and WAF
+  guardrails.
+- MCP deployment: `AppTheoryMcpServer`, `AppTheoryRemoteMcpServer`, and `AppTheoryMcpProtectedResource`.
+- Event and ingestion surfaces: `AppTheoryQueue`, `AppTheoryEventBridgeBus`, `AppTheoryKinesisStream`,
+  `AppTheoryCloudWatchLogsDestination`, `AppTheoryS3Ingest`, and `AppTheoryHttpIngestionEndpoint`.
+- Job and data foundations: `AppTheoryJobsTable`, `AppTheoryEventBusTable`, `AppTheoryDynamoTable`, and
+  `AppTheoryLambdaRole`.
+- MicroVM and frontend delivery: `AppTheoryMicrovmController`, `AppTheoryMicrovmImage`,
+  `AppTheoryMicrovmNetworkConnector`, path-routed frontends, media CDN, and `AppTheorySsrSite`.
+
 <!-- apptheory-api-docs:cdk:start -->
 ## CDK jsii coverage index
 

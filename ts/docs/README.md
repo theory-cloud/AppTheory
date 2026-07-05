@@ -44,6 +44,20 @@ AppTheory TypeScript provides:
 Contract note: portable behavior is defined by the fixture-backed contract:
 `docs/development/planning/apptheory/supporting/apptheory-runtime-contract-v0.md`.
 
+## TypeScript semantic API map
+
+The generated snapshot coverage index below proves export-name coverage only; it is not a substitute for
+operator-facing API guidance. Keep these human-authored groups current when the TypeScript surface grows:
+
+- Runtime app model: `App`, `createApp`, `Context`, `Request`, `Response`, middleware hooks, and response helpers.
+- AWS adapters and test builders: `buildAPIGatewayV2Request`, `buildLambdaFunctionURLRequest`, `buildAppSyncEvent`,
+  `buildSQSEvent`, `buildKinesisEvent`, and the corresponding `serve*` entrypoints.
+- MCP/OAuth surfaces: `McpServer`, registries, in-memory/Dynamo stores, bearer-token middleware, metadata handlers,
+  DCR, PKCE, and protected-resource helpers.
+- Storage and data helpers: `ObjectStore`, `ObjectRef`, `createS3ObjectStore`, `DynamoJobLedger`, and rate-limit
+  primitives.
+- MicroVM and generated contract helpers: `MicroVMController`, provider/session validators, and `generate_openapi`.
+
 <!-- apptheory-api-docs:ts:start -->
 ## TypeScript snapshot coverage index
 
