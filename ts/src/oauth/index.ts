@@ -191,9 +191,7 @@ export function resourceMetadataURLFromMcpEndpoint(
 }
 
 export function canonicalResourceURL(raw: string): string {
-  return String(raw ?? "")
-    .trim()
-    .replace(/\/+$/u, "");
+  return trimTrailingSlash(String(raw ?? "").trim());
 }
 
 export function canonicalizeIssuerURL(raw: string): string | null {
@@ -478,15 +476,31 @@ function isAbsoluteURL(raw: string): boolean {
 }
 
 function trimTrailingSlash(pathname: string): string {
-  const out = String(pathname ?? "").replace(/\/+$/u, "");
-  return out || "";
+  const value = String(pathname ?? "");
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(0, end);
 }
 
 function joinURLPath(base: string, suffix: string): string {
-  const left = String(base ?? "").replace(/\/+$/u, "");
-  const right = String(suffix ?? "").replace(/^\/+|\/+$/gu, "");
+  const left = trimTrailingSlash(String(base ?? ""));
+  const right = trimLeadingAndTrailingSlashes(String(suffix ?? ""));
   if (!left && !right) return "/";
   if (!left) return `/${right}`;
   if (!right) return left || "/";
   return `${left}/${right}`;
+}
+
+function trimLeadingAndTrailingSlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === 47) {
+    start += 1;
+  }
+  while (end > start && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(start, end);
 }

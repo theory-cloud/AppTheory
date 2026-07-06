@@ -227,12 +227,10 @@ function parseDuration(raw: string): string {
   }
   if (!body) throw new Error("invalid duration");
 
-  const pattern = /(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|ms|s|m|h)/gy;
+  const segments = parseDurationSegments(body);
   let totalNs = 0n;
-  while (pattern.lastIndex < body.length) {
-    const match = pattern.exec(body);
-    if (!match) throw new Error("invalid duration");
-    totalNs += decimalDurationToNs(match[1] ?? "", match[2] ?? "");
+  for (const segment of segments) {
+    totalNs += decimalDurationToNs(segment.amount, segment.unit);
   }
   totalNs *= sign;
   if (totalNs % 1000n !== 0n) {
@@ -259,6 +257,58 @@ function durationUnitNs(unit: string): bigint {
     default:
       throw new Error("invalid duration");
   }
+}
+
+interface DurationSegment {
+  readonly amount: string;
+  readonly unit: string;
+}
+
+function parseDurationSegments(body: string): DurationSegment[] {
+  const segments: DurationSegment[] = [];
+  let index = 0;
+  while (index < body.length) {
+    const amountStart = index;
+    let sawWholeDigit = false;
+    while (index < body.length && isAsciiDigit(body.charCodeAt(index))) {
+      sawWholeDigit = true;
+      index += 1;
+    }
+
+    if (index < body.length && body[index] === ".") {
+      index += 1;
+      const fractionStart = index;
+      while (index < body.length && isAsciiDigit(body.charCodeAt(index))) {
+        index += 1;
+      }
+      if (!sawWholeDigit && index === fractionStart) {
+        throw new Error("invalid duration");
+      }
+    } else if (!sawWholeDigit) {
+      throw new Error("invalid duration");
+    }
+
+    const amount = body.slice(amountStart, index);
+    const unit = readDurationUnit(body, index);
+    if (!unit) {
+      throw new Error("invalid duration");
+    }
+    index += unit.length;
+    segments.push({ amount, unit });
+  }
+  if (segments.length === 0) {
+    throw new Error("invalid duration");
+  }
+  return segments;
+}
+
+function readDurationUnit(body: string, index: number): string {
+  for (const unit of ["ns", "us", "µs", "ms", "s", "m", "h"]) {
+    if (body.startsWith(unit, index)) {
+      return unit;
+    }
+  }
+  return "";
 }
 
 function decimalDurationToNs(amount: string, unit: string): bigint {
@@ -335,8 +385,20 @@ function formatDecimalUnit(
 ): string {
   if (fraction === 0n) return `${whole}${unit}`;
   let text = fraction.toString().padStart(fractionWidth, "0");
-  text = text.replace(/0+$/, "");
+  text = trimTrailingZeros(text);
   return `${whole}.${text}${unit}`;
+}
+
+function trimTrailingZeros(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 48) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
+function isAsciiDigit(code: number): boolean {
+  return code >= 48 && code <= 57;
 }
 
 function bindingError(
