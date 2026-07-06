@@ -695,9 +695,10 @@ gov_cmd_unit() {
   require_cmd_or_blocked node || return $?
   require_cmd_or_blocked python3 || return $?
 
-  # QUA-1 is the unit-test gate. Contract fixtures run exactly once in CON-3,
-  # so the rubric's Go unit pass excludes the fixture runner package whose
-  # TestAllFixturesPass executes the full corpus.
+  # QUA-1 is the unit-test gate. The direct, uninstrumented contract suite runs
+  # once in CON-3; TS/Python coverage may rerun fixtures under instrumentation
+  # for coverage evidence. Keep Go runner meta-tests in QUA-1 without rerunning
+  # the full corpus by skipping only TestAllFixturesPass.
   local -a go_unit_pkgs=()
   mapfile -t go_unit_pkgs < <(./scripts/list-go-packages.sh | grep -Ev '^\./contract-tests/runners/go$')
   if [[ "${#go_unit_pkgs[@]}" -eq 0 ]]; then
@@ -705,6 +706,7 @@ gov_cmd_unit() {
     return 1
   fi
   go test "${go_unit_pkgs[@]}"
+  go test ./contract-tests/runners/go -skip '^TestAllFixturesPass$'
 
   ensure_ts_runtime_deps_installed || return $?
   scripts/verify-ts-tests.sh
@@ -1251,7 +1253,9 @@ ensure_py_coverage_pinned() {
 
 check_ts_coverage() {
   # Enforces TypeScript runtime coverage >= COV_THRESHOLD for the shipped JS under ts/dist/.
-  # Primary driver: contract fixtures (same semantics as CON-3), but measured against ts/dist/**.
+  # Instrumented coverage deliberately reruns the fixture corpus after CON-3 so
+  # the coverage denominator measures shipped ts/dist/** behavior. This is not
+  # a second direct/uninstrumented contract pass.
   require_cmd_or_blocked node || return $?
   ensure_ts_runtime_deps_installed || return $?
 
@@ -1301,7 +1305,9 @@ check_ts_coverage() {
 
 check_py_coverage() {
   # Enforces Python runtime coverage >= COV_THRESHOLD for the shipped package under py/src/apptheory/.
-  # Primary driver: contract fixtures (same semantics as CON-3), but measured against py/src/apptheory/**.
+  # Instrumented coverage deliberately reruns the fixture corpus after CON-3 so
+  # the coverage denominator measures shipped py/src/apptheory/** behavior. This
+  # is not a second direct/uninstrumented contract pass.
   require_cmd_or_blocked python3 || return $?
   ensure_py_coverage_pinned || return $?
   ensure_py_runtime_deps_installed_into "${GOV_TOOLS_PY_COV_BIN}/python" || return $?
