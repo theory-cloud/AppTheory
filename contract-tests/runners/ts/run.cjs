@@ -67,39 +67,8 @@ function diagnosticReason(reason) {
   return "reason: fixture assertion failed";
 }
 
-function diagnosticSummary(value, depth = 0) {
-  if (depth >= 4) return { type: typeof value };
-  if (value === null) return { type: "null" };
-  if (value === undefined) return { type: "undefined" };
-  if (Buffer.isBuffer(value)) return { type: "bytes", length: value.length };
-  if (Array.isArray(value)) {
-    return {
-      type: "array",
-      length: value.length,
-      items: value.slice(0, 5).map((item) => diagnosticSummary(item, depth + 1)),
-    };
-  }
-  if (typeof value === "object") {
-    const keys = Object.keys(value).sort();
-    return {
-      type: "object",
-      key_count: keys.length,
-      keys: keys.slice(0, 50),
-    };
-  }
-  if (typeof value === "string") return { type: "string", length: value.length };
-  if (typeof value === "number" || typeof value === "bigint") return { type: "number" };
-  if (typeof value === "boolean") return { type: "boolean" };
-  return { type: typeof value };
-}
-
-function diagnosticStringify(value) {
-  return stableStringify(diagnosticSummary(value));
-}
-
-function diagnosticThrownError(err) {
-  if (err instanceof Error) return err.name || "Error";
-  return typeof err;
+function redactedDiagnostic() {
+  return "<redacted; contract diagnostic value omitted>";
 }
 
 function deepEqual(a, b) {
@@ -6131,81 +6100,81 @@ async function main() {
     if ("expected_error" in result || "expected_output_json" in result) {
       if ("expected_error" in result) {
         console.error(
-          `  expected.error: ${diagnosticStringify(result.expected_error)}`,
+          `  expected.error: ${redactedDiagnostic()}`,
         );
-        console.error(`  got.error: ${diagnosticStringify(result.actual_error)}`);
+        console.error(`  got.error: ${redactedDiagnostic()}`);
       }
       if ("expected_output_json" in result) {
         console.error(
-          `  expected.output_json: ${diagnosticStringify(result.expected_output_json)}`,
+          `  expected.output_json: ${redactedDiagnostic()}`,
         );
         console.error(
-          `  got.output_json: ${diagnosticStringify(result.actual_output_json)}`,
+          `  got.output_json: ${redactedDiagnostic()}`,
         );
       }
       if ("actual_error" in result && !("expected_error" in result)) {
-        console.error(`  got.error: ${diagnosticStringify(result.actual_error)}`);
+        console.error(`  got.error: ${redactedDiagnostic()}`);
       }
     } else {
       if ("expected_logging_profile_catalog" in result) {
         console.error(
-          `  expected.logging_profile_catalog: ${diagnosticStringify(result.expected_logging_profile_catalog)}`,
+          `  expected.logging_profile_catalog: ${redactedDiagnostic()}`,
         );
         console.error(
-          `  got.logging_profile_catalog: ${diagnosticStringify(result.actual_logging_profile_catalog)}`,
+          `  got.logging_profile_catalog: ${redactedDiagnostic()}`,
         );
       } else if ("expected_profile_validation_errors" in result) {
         console.error(
-          `  expected.profile_validation_errors: ${diagnosticStringify(result.expected_profile_validation_errors)}`,
+          `  expected.profile_validation_errors: ${redactedDiagnostic()}`,
         );
         console.error(
-          `  got.profile_validation_errors: ${diagnosticStringify(result.actual_profile_validation_errors)}`,
+          `  got.profile_validation_errors: ${redactedDiagnostic()}`,
         );
       } else if ("expected_profile_logs" in result) {
         console.error(
-          `  expected.profile_logs: ${diagnosticStringify(result.expected_profile_logs)}`,
+          `  expected.profile_logs: ${redactedDiagnostic()}`,
         );
         console.error(
-          `  got.profile_logs: ${diagnosticStringify(result.actual_profile_logs)}`,
+          `  got.profile_logs: ${redactedDiagnostic()}`,
         );
       } else if ("expected_microvm_contract_validation" in result) {
         console.error(
-          `  expected.microvm_contract_validation: ${diagnosticStringify(result.expected_microvm_contract_validation)}`,
+          `  expected.microvm_contract_validation: ${redactedDiagnostic()}`,
         );
         console.error(
-          `  got.microvm_contract_validation: ${diagnosticStringify(result.actual_microvm_contract_validation)}`,
+          `  got.microvm_contract_validation: ${redactedDiagnostic()}`,
         );
       } else if ("expected_microvm_execution_role" in result) {
         console.error(
-          `  expected.microvm_execution_role: ${diagnosticStringify(result.expected_microvm_execution_role)}`,
+          `  expected.microvm_execution_role: ${redactedDiagnostic()}`,
         );
         console.error(
-          `  got.microvm_execution_role: ${diagnosticStringify(result.actual_microvm_execution_role)}`,
+          `  got.microvm_execution_role: ${redactedDiagnostic()}`,
         );
       } else {
-        console.error(`  expected: ${diagnosticStringify(result.expected)}`);
+        console.error(`  expected: ${redactedDiagnostic()}`);
         console.error(
-          `  got: ${diagnosticStringify(debugActualForExpected(result.actual, result.expected))}`,
+          `  got: ${redactedDiagnostic()}`,
         );
       }
     }
     if ("expected_logs" in result) {
       console.error(
-        `  expected.logs: ${diagnosticStringify(result.expected_logs)}`,
+        `  expected.logs: ${redactedDiagnostic()}`,
       );
-      console.error(`  got.logs: ${diagnosticStringify(result.actual_logs)}`);
+      console.error(`  got.logs: ${redactedDiagnostic()}`);
     }
     if ("expected_metrics" in result) {
       console.error(
-        `  expected.metrics: ${diagnosticStringify(result.expected_metrics)}`,
+        `  expected.metrics: ${redactedDiagnostic()}`,
       );
-      console.error(`  got.metrics: ${diagnosticStringify(result.actual_metrics)}`);
+      console.error(`  got.metrics: ${redactedDiagnostic()}`);
     }
     if ("expected_spans" in result) {
       console.error(
-        `  expected.spans: ${diagnosticStringify(result.expected_spans)}`,
+        `  expected.spans: ${redactedDiagnostic()}`,
       );
-      console.error(`  got.spans: ${diagnosticStringify(result.actual_spans)}`);
+      console.error(`  got.spans: ${redactedDiagnostic()}`);
     }
   }
 
@@ -6258,8 +6227,8 @@ module.exports = {
 };
 
 if (require.main === module) {
-  main().catch((err) => {
-    console.error(`contract runner failed: ${diagnosticThrownError(err)}`);
+  main().catch(() => {
+    console.error("contract runner failed");
     process.exit(2);
   });
 }

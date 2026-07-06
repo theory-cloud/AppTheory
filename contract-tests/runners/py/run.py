@@ -76,37 +76,8 @@ def diagnostic_reason(reason: str) -> str:
     return "reason: fixture assertion failed"
 
 
-def diagnostic_summary(value: Any, depth: int = 0) -> Any:
-    if depth >= 4:
-        return {"type": type(value).__name__}
-    if value is None:
-        return {"type": "null"}
-    if isinstance(value, bool):
-        return {"type": "bool"}
-    if isinstance(value, (int, float)):
-        return {"type": "number"}
-    if isinstance(value, str):
-        return {"type": "string", "length": len(value)}
-    if isinstance(value, bytes | bytearray):
-        return {"type": "bytes", "length": len(value)}
-    if isinstance(value, list):
-        return {
-            "type": "array",
-            "length": len(value),
-            "items": [diagnostic_summary(item, depth + 1) for item in value[:5]],
-        }
-    if isinstance(value, dict):
-        keys = sorted(str(key) for key in value.keys())
-        return {
-            "type": "object",
-            "key_count": len(keys),
-            "keys": keys[:50],
-        }
-    return {"type": type(value).__name__}
-
-
-def diagnostic_json(value: Any) -> str:
-    return stable_json(diagnostic_summary(value))
+def redacted_diagnostic() -> str:
+    return "<redacted; contract diagnostic value omitted>"
 
 
 def list_fixture_files(fixtures_root: Path) -> list[Path]:
@@ -6005,16 +5976,16 @@ def main() -> int:
         expect_obj = fixture.get("expect", {}) or {}
         if "output_json" in expect_obj or "error" in expect_obj:
             if "error" in expect_obj:
-                print(f"  expected.error: {diagnostic_json(expected)}", file=sys.stderr)
-                print(f"  got.error: {diagnostic_json(actual)}", file=sys.stderr)
+                print(f"  expected.error: {redacted_diagnostic()}", file=sys.stderr)
+                print(f"  got.error: {redacted_diagnostic()}", file=sys.stderr)
             else:
                 print(
-                    f"  expected.output_json: {diagnostic_json(expected)}", file=sys.stderr
+                    f"  expected.output_json: {redacted_diagnostic()}", file=sys.stderr
                 )
                 if "error" in reason:
-                    print(f"  got.error: {diagnostic_json(actual)}", file=sys.stderr)
+                    print(f"  got.error: {redacted_diagnostic()}", file=sys.stderr)
                 else:
-                    print(f"  got.output_json: {diagnostic_json(actual)}", file=sys.stderr)
+                    print(f"  got.output_json: {redacted_diagnostic()}", file=sys.stderr)
         elif (
             "logging_profile_catalog" in expect_obj
             or "profile_validation_errors" in expect_obj
@@ -6022,80 +5993,72 @@ def main() -> int:
         ):
             if "logging_profile_catalog" in expect_obj:
                 print(
-                    f"  expected.logging_profile_catalog: {diagnostic_json(expect_obj.get('logging_profile_catalog'))}",
+                    f"  expected.logging_profile_catalog: {redacted_diagnostic()}",
                     file=sys.stderr,
                 )
                 print(
-                    f"  got.logging_profile_catalog: {diagnostic_json(actual.get('logging_profile_catalog'))}",
+                    f"  got.logging_profile_catalog: {redacted_diagnostic()}",
                     file=sys.stderr,
                 )
             if "profile_validation_errors" in expect_obj:
                 print(
-                    f"  expected.profile_validation_errors: {diagnostic_json(expect_obj.get('profile_validation_errors'))}",
+                    f"  expected.profile_validation_errors: {redacted_diagnostic()}",
                     file=sys.stderr,
                 )
                 print(
-                    f"  got.profile_validation_errors: {diagnostic_json(actual.get('profile_validation_errors'))}",
+                    f"  got.profile_validation_errors: {redacted_diagnostic()}",
                     file=sys.stderr,
                 )
             if "profile_logs" in expect_obj:
                 print(
-                    f"  expected.profile_logs: {diagnostic_json(expect_obj.get('profile_logs'))}",
+                    f"  expected.profile_logs: {redacted_diagnostic()}",
                     file=sys.stderr,
                 )
                 print(
-                    f"  got.profile_logs: {diagnostic_json(actual.get('profile_logs'))}",
+                    f"  got.profile_logs: {redacted_diagnostic()}",
                     file=sys.stderr,
                 )
         elif "microvm_contract_validation" in expect_obj:
             print(
-                f"  expected.microvm_contract_validation: {diagnostic_json(expected)}",
+                f"  expected.microvm_contract_validation: {redacted_diagnostic()}",
                 file=sys.stderr,
             )
             print(
-                f"  got.microvm_contract_validation: {diagnostic_json(actual)}",
+                f"  got.microvm_contract_validation: {redacted_diagnostic()}",
                 file=sys.stderr,
             )
         elif "microvm_execution_role" in expect_obj:
             print(
-                f"  expected.microvm_execution_role: {diagnostic_json(expected)}",
+                f"  expected.microvm_execution_role: {redacted_diagnostic()}",
                 file=sys.stderr,
             )
             print(
-                f"  got.microvm_execution_role: {diagnostic_json(actual)}", file=sys.stderr
+                f"  got.microvm_execution_role: {redacted_diagnostic()}", file=sys.stderr
             )
         elif "mcp" in expect_obj:
-            print(f"  expected.mcp.step: {diagnostic_json(expected)}", file=sys.stderr)
-            debug_actual = dict(actual or {}) if isinstance(actual, dict) else actual
-            if isinstance(debug_actual, dict) and isinstance(
-                debug_actual.get("body"), (bytes, bytearray)
-            ):
-                debug_actual["body"] = {
-                    "encoding": "base64",
-                    "value": base64.b64encode(debug_actual["body"]).decode("ascii"),
-                }
-            print(f"  got.mcp.step: {diagnostic_json(debug_actual)}", file=sys.stderr)
+            print(f"  expected.mcp.step: {redacted_diagnostic()}", file=sys.stderr)
+            print(f"  got.mcp.step: {redacted_diagnostic()}", file=sys.stderr)
         else:
-            print(f"  expected: {diagnostic_json(expected)}", file=sys.stderr)
+            print(f"  expected: {redacted_diagnostic()}", file=sys.stderr)
             print(
-                f"  got: {diagnostic_json(debug_actual_for_expected(actual, expected))}",
+                f"  got: {redacted_diagnostic()}",
                 file=sys.stderr,
             )
             print(
-                f"  expected.logs: {diagnostic_json(fixture.get('expect', {}).get('logs') or [])}",
+                f"  expected.logs: {redacted_diagnostic()}",
                 file=sys.stderr,
             )
-            print(f"  got.logs: {diagnostic_json(app.logs)}", file=sys.stderr)
+            print(f"  got.logs: {redacted_diagnostic()}", file=sys.stderr)
             print(
-                f"  expected.metrics: {diagnostic_json(fixture.get('expect', {}).get('metrics') or [])}",
+                f"  expected.metrics: {redacted_diagnostic()}",
                 file=sys.stderr,
             )
-            print(f"  got.metrics: {diagnostic_json(app.metrics)}", file=sys.stderr)
+            print(f"  got.metrics: {redacted_diagnostic()}", file=sys.stderr)
             print(
-                f"  expected.spans: {diagnostic_json(fixture.get('expect', {}).get('spans') or [])}",
+                f"  expected.spans: {redacted_diagnostic()}",
                 file=sys.stderr,
             )
-            print(f"  got.spans: {diagnostic_json(app.spans)}", file=sys.stderr)
+            print(f"  got.spans: {redacted_diagnostic()}", file=sys.stderr)
         failed.append(fixture)
 
     if failed:
