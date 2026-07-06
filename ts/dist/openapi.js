@@ -9,7 +9,7 @@ export function generateOpenAPI(spec) {
     if (!version) {
         throw new Error("apptheory: openapi version is required");
     }
-    const paths = {};
+    const paths = newJsonObject();
     const routes = [...spec.routes].sort(compareRoutes);
     const seen = new Set();
     for (const route of routes) {
@@ -32,9 +32,9 @@ export function generateOpenAPI(spec) {
         seen.add(key);
         const operation = operationForRoute(route, operationId);
         const existing = paths[path];
-        const pathItem = isJsonObject(existing) ? existing : {};
-        pathItem[method] = operation;
-        paths[path] = pathItem;
+        const pathItem = isJsonObject(existing) ? existing : newJsonObject();
+        setJsonMember(pathItem, method, operation);
+        setJsonMember(paths, path, pathItem);
     }
     return {
         components: openAPIComponents(),
@@ -465,7 +465,7 @@ function expandExponentialNumber(value) {
     const [coefficient = "", exponentText = "0"] = unsigned.split(/[eE]/);
     const exponent = Number(exponentText);
     const [whole = "", fraction = ""] = coefficient.split(".");
-    const digits = `${whole}${fraction}`.replace(/^0+(?=\d)/, "") || "0";
+    const digits = trimLeadingZerosPreservingOne(`${whole}${fraction}`) || "0";
     const decimalIndex = whole.length + exponent;
     let expanded;
     if (decimalIndex <= 0) {
@@ -478,7 +478,10 @@ function expandExponentialNumber(value) {
         expanded = `${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
     }
     if (expanded.includes(".")) {
-        expanded = expanded.replace(/0+$/, "").replace(/\.$/, "");
+        expanded = trimTrailingZeros(expanded);
+        if (expanded.endsWith(".")) {
+            expanded = expanded.slice(0, -1);
+        }
     }
     if (expanded === "0") {
         return "0";
@@ -490,5 +493,35 @@ function isJsonObject(value) {
         value !== null &&
         typeof value === "object" &&
         !Array.isArray(value));
+}
+function newJsonObject() {
+    return Object.create(null);
+}
+function setJsonMember(target, key, value) {
+    Object.defineProperty(target, key, {
+        configurable: true,
+        enumerable: true,
+        value,
+        writable: true,
+    });
+}
+function trimLeadingZerosPreservingOne(value) {
+    let index = 0;
+    while (index < value.length - 1 &&
+        value.charCodeAt(index) === 48 &&
+        isAsciiDigit(value.charCodeAt(index + 1))) {
+        index += 1;
+    }
+    return value.slice(index);
+}
+function trimTrailingZeros(value) {
+    let end = value.length;
+    while (end > 0 && value.charCodeAt(end - 1) === 48) {
+        end -= 1;
+    }
+    return value.slice(0, end);
+}
+function isAsciiDigit(code) {
+    return code >= 48 && code <= 57;
 }
 //# sourceMappingURL=openapi.js.map

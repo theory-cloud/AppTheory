@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import type { Dirent } from "node:fs";
 import * as path from "node:path";
 
 import { AppTheoryFunction, AppTheoryHttpApi } from "@theory-cloud/apptheory-cdk";
@@ -70,22 +71,52 @@ function assetHashFor(paths: string[]): string {
   return hash.digest("hex");
 }
 
-function addPathToHash(hash: ReturnType<typeof createHash>, root: string, current: string): void {
-  if (shouldSkipAssetEntry(path.basename(current))) {
+function addPathToHash(hash: ReturnType<typeof createHash>, root: string, current: string, entry?: Dirent): void {
+  const name = entry?.name ?? path.basename(current);
+  if (shouldSkipAssetEntry(name)) {
     return;
   }
-  const stat = statSync(current);
   const rel = path.relative(path.dirname(root), current).replaceAll(path.sep, "/");
   hash.update(rel);
-  if (stat.isDirectory()) {
-    for (const entry of readdirSync(current).sort()) {
-      addPathToHash(hash, root, path.join(current, entry));
+  if (!entry) {
+    let children: Dirent[];
+    try {
+      children = readdirSync(current, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOTDIR") {
+        hash.update(readFileSync(current));
+        return;
+      }
+      throw error;
     }
+    addDirectoryEntriesToHash(hash, root, current, children);
     return;
   }
-  if (stat.isFile()) {
+  if (entry.isDirectory()) {
+    addDirectoryEntriesToHash(hash, root, current, readdirSync(current, { withFileTypes: true }));
+    return;
+  }
+  if (entry.isFile()) {
     hash.update(readFileSync(current));
   }
+}
+
+function addDirectoryEntriesToHash(
+  hash: ReturnType<typeof createHash>,
+  root: string,
+  current: string,
+  children: Dirent[],
+): void {
+  for (const child of children.sort(compareDirentNames)) {
+    addPathToHash(hash, root, path.join(current, child.name), child);
+  }
+}
+
+function compareDirentNames(left: Dirent, right: Dirent): number {
+  if (left.name === right.name) {
+    return 0;
+  }
+  return left.name < right.name ? -1 : 1;
 }
 
 export class HelloWorldStack extends Stack {

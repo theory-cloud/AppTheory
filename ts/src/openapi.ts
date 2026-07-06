@@ -92,7 +92,7 @@ export function generateOpenAPI(spec: OpenAPISpec): OpenAPIDocument {
     throw new Error("apptheory: openapi version is required");
   }
 
-  const paths: JsonObject = {};
+  const paths: JsonObject = newJsonObject();
   const routes = [...spec.routes].sort(compareRoutes);
   const seen = new Set<string>();
   for (const route of routes) {
@@ -118,9 +118,9 @@ export function generateOpenAPI(spec: OpenAPISpec): OpenAPIDocument {
 
     const operation = operationForRoute(route, operationId);
     const existing = paths[path];
-    const pathItem = isJsonObject(existing) ? existing : {};
-    pathItem[method] = operation;
-    paths[path] = pathItem;
+    const pathItem = isJsonObject(existing) ? existing : newJsonObject();
+    setJsonMember(pathItem, method, operation);
+    setJsonMember(paths, path, pathItem);
   }
 
   return {
@@ -631,7 +631,7 @@ function expandExponentialNumber(value: string): string {
   const [coefficient = "", exponentText = "0"] = unsigned.split(/[eE]/);
   const exponent = Number(exponentText);
   const [whole = "", fraction = ""] = coefficient.split(".");
-  const digits = `${whole}${fraction}`.replace(/^0+(?=\d)/, "") || "0";
+  const digits = trimLeadingZerosPreservingOne(`${whole}${fraction}`) || "0";
   const decimalIndex = whole.length + exponent;
   let expanded: string;
   if (decimalIndex <= 0) {
@@ -642,7 +642,10 @@ function expandExponentialNumber(value: string): string {
     expanded = `${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
   }
   if (expanded.includes(".")) {
-    expanded = expanded.replace(/0+$/, "").replace(/\.$/, "");
+    expanded = trimTrailingZeros(expanded);
+    if (expanded.endsWith(".")) {
+      expanded = expanded.slice(0, -1);
+    }
   }
   if (expanded === "0") {
     return "0";
@@ -657,4 +660,45 @@ function isJsonObject(value: JsonValue | undefined): value is JsonObject {
     typeof value === "object" &&
     !Array.isArray(value)
   );
+}
+
+function newJsonObject(): JsonObject {
+  return Object.create(null) as JsonObject;
+}
+
+function setJsonMember(
+  target: JsonObject,
+  key: string,
+  value: JsonValue,
+): void {
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+function trimLeadingZerosPreservingOne(value: string): string {
+  let index = 0;
+  while (
+    index < value.length - 1 &&
+    value.charCodeAt(index) === 48 &&
+    isAsciiDigit(value.charCodeAt(index + 1))
+  ) {
+    index += 1;
+  }
+  return value.slice(index);
+}
+
+function trimTrailingZeros(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 48) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
+function isAsciiDigit(code: number): boolean {
+  return code >= 48 && code <= 57;
 }
