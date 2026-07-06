@@ -30,10 +30,10 @@ func newAppTheoryFixtureAppP1(
 		apptheory.WithAuthHook(func(ctx *apptheory.Context) (string, error) {
 			authz := strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "authorization"))
 			if authz == "" {
-				return "", &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
+				return "", apptheory.NewAppTheoryError("app.unauthorized", "unauthorized")
 			}
 			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-forbidden")) != "" {
-				return "", &apptheory.AppError{Code: "app.forbidden", Message: "forbidden"}
+				return "", apptheory.NewAppTheoryError("app.forbidden", "forbidden")
 			}
 			return authorizedIdentity, nil
 		}),

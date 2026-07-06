@@ -9,6 +9,7 @@ import { hasJSONContentType } from "./internal/response.js";
 import { normalizeSourceProvenance } from "./internal/source-provenance.js";
 import type { Headers, Query, Response, SourceProvenance } from "./types.js";
 
+/** Client shape used by WebSocketContext to manage API Gateway WebSocket connections. */
 export interface WebSocketManagementClientLike {
   postToConnection: (
     connectionId: string,
@@ -18,11 +19,13 @@ export interface WebSocketManagementClientLike {
   deleteConnection: (connectionId: string) => void | Promise<void>;
 }
 
+/** Creates a WebSocket management client for an endpoint and Lambda context. */
 export type WebSocketClientFactory = (
   endpoint: string,
   ctx: unknown | null,
 ) => WebSocketManagementClientLike | Promise<WebSocketManagementClientLike>;
 
+/** AppSync resolver metadata exposed to AppTheory route handlers. */
 export class AppSyncContext {
   readonly fieldName: string;
   readonly parentTypeName: string;
@@ -114,6 +117,7 @@ export class AppSyncContext {
   }
 }
 
+/** Request-scoped context passed to HTTP, AppSync, and WebSocket handlers. */
 export class Context {
   readonly ctx: unknown | null;
   readonly request: {
@@ -125,10 +129,12 @@ export class Context {
     body: Uint8Array;
     isBase64: boolean;
     sourceProvenance: SourceProvenance;
+    traceId: string;
   };
   readonly params: Record<string, string>;
 
   requestId: string;
+  traceId: string;
   tenantId: string;
   authIdentity: string;
   remainingMs: number;
@@ -147,6 +153,7 @@ export class Context {
     ids?: IdGenerator;
     ctx?: unknown;
     requestId?: string;
+    traceId?: string;
     tenantId?: string;
     authIdentity?: string;
     remainingMs?: number;
@@ -160,6 +167,7 @@ export class Context {
     this._clock = options.clock ?? new RealClock();
     this._ids = options.ids ?? new RandomIdGenerator();
     this.requestId = options.requestId ?? "";
+    this.traceId = options.traceId ?? this.request.traceId ?? "";
     this.tenantId = options.tenantId ?? "";
     this.authIdentity = options.authIdentity ?? "";
     this.remainingMs = Number(options.remainingMs ?? 0);
@@ -171,68 +179,86 @@ export class Context {
     this._values = new Map();
   }
 
+  /** Returns the request clock time using the configured clock. */
   now(): Date {
     return this._clock.now();
   }
 
+  /** Returns a deterministic or production ID from the configured generator. */
   newId(): string {
     return this._ids.newId();
   }
 
+  /** Returns a route parameter by name, or an empty string when absent. */
   param(name: string): string {
     return this.params[String(name)] ?? "";
   }
 
+  /** Stores request-scoped middleware state by key. */
   set(key: string, value: unknown): void {
     const k = String(key ?? "").trim();
     if (!k) return;
     this._values.set(k, value);
   }
 
+  /** Returns request-scoped middleware state by key. */
   get(key: string): unknown {
     const k = String(key ?? "").trim();
     if (!k) return undefined;
     return this._values.get(k);
   }
 
+  /** Returns normalized source-provenance metadata for the request. */
   sourceProvenance(): SourceProvenance {
     return normalizeSourceProvenance(this.request.sourceProvenance);
   }
 
+  /** Returns the canonical source IP when the provider supplied one. */
   sourceIP(): string {
     return this.sourceProvenance().sourceIP;
   }
 
-  jsonValue(): unknown {
+  /** Returns the extracted trace ID for correlation, if present. */
+  traceContextId(): string {
+    return String(this.traceId ?? "").trim();
+  }
+
+  /** Decodes the request body as JSON after validating the content type. */
+  jsonValue<T = unknown>(): T {
     if (!hasJSONContentType(this.request.headers)) {
       throw new AppError("app.bad_request", "invalid json");
     }
     if (this.request.body.length === 0) {
-      return null;
+      return null as T;
     }
     try {
-      return JSON.parse(Buffer.from(this.request.body).toString("utf8"));
+      return JSON.parse(Buffer.from(this.request.body).toString("utf8")) as T;
     } catch {
       throw new AppError("app.bad_request", "invalid json");
     }
   }
 
+  /** Returns WebSocket trigger metadata for WebSocket routes. */
   asWebSocket(): WebSocketContext | null {
     return this._webSocket;
   }
 
+  /** Returns AppSync resolver metadata for AppSync routes. */
   asAppSync(): AppSyncContext | null {
     return this._appSync;
   }
 }
 
+/** AppTheory HTTP route handler. */
 export type Handler = (ctx: Context) => Response | Promise<Response>;
 
+/** Middleware that wraps an AppTheory HTTP handler. */
 export type Middleware = (
   ctx: Context,
   next: Handler,
 ) => Response | Promise<Response>;
 
+/** Context passed to non-HTTP event workload handlers. */
 export class EventContext {
   readonly ctx: unknown | null;
   requestId: string;
@@ -257,20 +283,24 @@ export class EventContext {
     this._values = new Map();
   }
 
+  /** Returns the event clock time using the configured clock. */
   now(): Date {
     return this._clock.now();
   }
 
+  /** Returns a deterministic or production ID from the configured generator. */
   newId(): string {
     return this._ids.newId();
   }
 
+  /** Stores event-scoped middleware state by key. */
   set(key: string, value: unknown): void {
     const k = String(key ?? "").trim();
     if (!k) return;
     this._values.set(k, value);
   }
 
+  /** Returns event-scoped middleware state by key. */
   get(key: string): unknown {
     const k = String(key ?? "").trim();
     if (!k) return undefined;
@@ -278,17 +308,20 @@ export class EventContext {
   }
 }
 
+/** Event workload handler for AppTheory event dispatch. */
 export type EventHandler = (
   ctx: EventContext,
   event: unknown,
 ) => unknown | Promise<unknown>;
 
+/** Middleware that wraps an AppTheory event workload handler. */
 export type EventMiddleware = (
   ctx: EventContext,
   event: unknown,
   next: () => unknown | Promise<unknown>,
 ) => unknown | Promise<unknown>;
 
+/** WebSocket trigger metadata and connection-management helpers. */
 export class WebSocketContext {
   readonly ctx: unknown | null;
   requestId: string;
@@ -345,10 +378,12 @@ export class WebSocketContext {
     this._clientError = null;
   }
 
+  /** Returns the WebSocket request clock time using the configured clock. */
   now(): Date {
     return this._clock.now();
   }
 
+  /** Returns a deterministic or production ID from the configured generator. */
   newId(): string {
     return this._ids.newId();
   }
@@ -378,6 +413,7 @@ export class WebSocketContext {
     return client;
   }
 
+  /** Sends bytes to the active WebSocket connection. */
   async sendMessage(data: Uint8Array): Promise<void> {
     const id = String(this.connectionId ?? "").trim();
     if (!id) throw new Error("apptheory: websocket connection id is empty");
@@ -390,6 +426,7 @@ export class WebSocketContext {
     await client.postToConnection(id, toBuffer(data));
   }
 
+  /** Serializes a value as JSON and sends it to the connection. */
   async sendJSONMessage(value: unknown): Promise<void> {
     await this.sendMessage(Buffer.from(JSON.stringify(value), "utf8"));
   }

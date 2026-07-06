@@ -1,0 +1,62 @@
+{
+  "id": "p0.binding.duration_canonical_edges",
+  "tier": "p0",
+  "name": "Duration binding serializes sub-second, signed, and precision-boundary values canonically",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/duration",
+        "handler": "bind_duration_edges"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/duration",
+      "query": {
+        "half": [
+          "500ms"
+        ],
+        "micro": [
+          "1500us"
+        ],
+        "boundary": [
+          "999999us"
+        ],
+        "combined": [
+          "1s500ms"
+        ],
+        "negative": [
+          "-1s500ms"
+        ]
+      },
+      "headers": {},
+      "body": {
+        "encoding": "utf8",
+        "value": "{}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "half": "500ms",
+        "micro": "1.5ms",
+        "boundary": "999.999ms",
+        "combined": "1.5s",
+        "negative": "-1.5s"
+      },
+      "is_base64": false
+    }
+  }
+}

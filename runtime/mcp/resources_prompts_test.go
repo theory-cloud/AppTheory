@@ -85,6 +85,52 @@ func TestResourcesListAndRead_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestResourceTemplatesList_RoundTrip(t *testing.T) {
+	s := NewServer("test", "1.0.0")
+	if err := s.Resources().RegisterResourceTemplate(ResourceTemplateDef{
+		URITemplate: "file:///{path}",
+		Name:        "project-file",
+		Title:       "Project file",
+		Description: "Read a project file by path",
+		MimeType:    "text/plain",
+	}); err != nil {
+		t.Fatalf("register resource template: %v", err)
+	}
+
+	caps := s.initializeCapabilities(protocolVersion)
+	if _, ok := caps["resources"].(map[string]any); !ok {
+		t.Fatalf("expected resources capability for template-only server: %+v", caps)
+	}
+
+	sessionID := initializeSession(t, s)
+	headers := sessionHeaders(sessionID)
+	headers["accept"] = []string{"application/json, text/event-stream"}
+
+	req := mustMarshal(t, Request{JSONRPC: "2.0", ID: 1, Method: methodResourcesTemplatesList})
+	resp, err := invokeHandlerWithMethod(context.Background(), s, "POST", req, headers)
+	if err != nil {
+		t.Fatalf("invoke resources/templates/list: %v", err)
+	}
+	rpcResp, err := parseJSONRPCResponse(resp)
+	if err != nil {
+		t.Fatalf("parse resources/templates/list: %v", err)
+	}
+	if rpcResp.Error != nil {
+		t.Fatalf("unexpected error: %+v", rpcResp.Error)
+	}
+
+	resultBytes := mustMarshal(t, rpcResp.Result)
+	var out struct {
+		ResourceTemplates []ResourceTemplateDef `json:"resourceTemplates"`
+	}
+	if err := json.Unmarshal(resultBytes, &out); err != nil {
+		t.Fatalf("unmarshal template result: %v", err)
+	}
+	if len(out.ResourceTemplates) != 1 || out.ResourceTemplates[0].URITemplate != "file:///{path}" {
+		t.Fatalf("unexpected resource templates: %+v", out.ResourceTemplates)
+	}
+}
+
 func TestResourceAndPromptRegistryValidation(t *testing.T) {
 	resources := NewResourceRegistry()
 	if err := resources.RegisterResource(ResourceDef{}, func(context.Context) ([]ResourceContent, error) { return nil, nil }); err == nil {
@@ -103,6 +149,18 @@ func TestResourceAndPromptRegistryValidation(t *testing.T) {
 	}
 	if err := resources.RegisterResource(ResourceDef{URI: "file://x", Name: "x"}, func(context.Context) ([]ResourceContent, error) { return nil, nil }); err == nil {
 		t.Fatalf("expected duplicate resource to fail")
+	}
+	if err := resources.RegisterResourceTemplate(ResourceTemplateDef{}); err == nil {
+		t.Fatalf("expected missing resource template uriTemplate to fail")
+	}
+	if err := resources.RegisterResourceTemplate(ResourceTemplateDef{URITemplate: "file:///{path}"}); err == nil {
+		t.Fatalf("expected missing resource template name to fail")
+	}
+	if err := resources.RegisterResourceTemplate(ResourceTemplateDef{URITemplate: "file:///{path}", Name: "project-file"}); err != nil {
+		t.Fatalf("register resource template: %v", err)
+	}
+	if err := resources.RegisterResourceTemplate(ResourceTemplateDef{URITemplate: "file:///{path}", Name: "project-file"}); err == nil {
+		t.Fatalf("expected duplicate resource template to fail")
 	}
 
 	prompts := NewPromptRegistry()
@@ -226,6 +284,7 @@ func TestCapabilityDisables_RejectResourceAndPromptMethods(t *testing.T) {
 	}{
 		{name: "resources list", method: methodResourcesList},
 		{name: "resources read", method: methodResourcesRead, params: map[string]any{"uri": "file://hello.txt"}},
+		{name: "resources templates list", method: methodResourcesTemplatesList},
 		{name: "resources subscribe", method: methodResourcesSubscribe, params: map[string]any{"uri": "file://hello.txt"}},
 		{name: "resources unsubscribe", method: methodResourcesUnsubscribe, params: map[string]any{"uri": "file://hello.txt"}},
 		{name: "prompts list", method: methodPromptsList},

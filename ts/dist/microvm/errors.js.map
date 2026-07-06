@@ -1,0 +1,1 @@
+{"version":3,"file":"errors.js","sourceRoot":"","sources":["../../src/microvm/errors.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,gBAAgB,EAAE,MAAM,YAAY,CAAC;AAE9C,MAAM,UAAU,SAAS,CACvB,IAAY,EACZ,OAAe,EACf,SAAiB;IAEjB,OAAO,IAAI,gBAAgB,CAAC,IAAI,EAAE,OAAO,EAAE,SAAS,CAAC,CAAC;AACxD,CAAC"}

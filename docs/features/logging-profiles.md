@@ -13,6 +13,9 @@ Use logging profiles when a service needs stable CloudWatch JSON output, determi
 cross-language parity for request, job, and error log fields. Do not add per-service middleware bypasses or raw SDK log
 emitters for those concerns; grow the profile contract and fixtures instead.
 
+Profiles sit on top of the shipped [P2 observability hook surface](./observability.md). They encode and validate log
+records; they do not replace the P2 hook path, run a full OpenTelemetry SDK, create dashboards, or deliver alerts.
+
 ## Built-in profiles
 
 The built-in catalog is fixture-backed and sorted canonically:
@@ -118,9 +121,11 @@ func buildApp() *apptheory.App {
 ```
 
 The emitted record contains profile-owned fields such as `ts`, `level`, `message`, `service`, `stage`, `partner`,
-`function`, and `aws_region`. Request fields such as `request_id`, `trace_id`, `correlation_id`, `route`, and `job_name`
-are populated when the runtime has that context. If any required `paytheory-alert-v1` field remains empty after static
-and context enrichment, the profile logger records an error instead of emitting a partial profile record.
+`function`, and `aws_region`. Request fields such as `request_id`, `trace_id`, `correlation_id`, `route`, status,
+duration, and `job_name` are populated when the runtime has that context. `trace_id` comes from AppTheory's inbound
+trace extraction (`traceparent` first, then `X-Amzn-Trace-Id`); AppTheory does not start spans or export traces for the
+profile logger. If any required `paytheory-alert-v1` field remains empty after static and context enrichment, the
+profile logger records an error instead of emitting a partial profile record.
 
 ## TypeScript and Python parity
 

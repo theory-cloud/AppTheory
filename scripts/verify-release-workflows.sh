@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify GitHub release workflows preserve the immutable release contract.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -558,6 +559,11 @@ require_contains(
     "CI release/security gates must verify rubric enforcement separately from the full rubric",
 )
 require_contains(
+    ".github/workflows/ci.yml",
+    "bash scripts/verify-runtime-floor-claims.sh",
+    "CI release/security gates must fail closed on unsupported Python/Node floor claims",
+)
+require_contains(
     "scripts/verify-release-gates.sh",
     "bash ./scripts/verify-release-train-promotion.sh --self-test",
     "full release gates must include release train provenance self-tests",
@@ -566,6 +572,11 @@ require_contains(
     "scripts/verify-release-gates.sh",
     "bash ./scripts/verify-release-cycle.sh",
     "full release gates must include deterministic full-cycle release regression",
+)
+require_contains(
+    "scripts/verify-release-gates.sh",
+    "bash ./scripts/verify-runtime-floor-claims.sh",
+    "full release gates must fail closed on unsupported Python/Node floor claims",
 )
 require_contains(
     "scripts/verify-release-cycle.sh",
@@ -661,6 +672,16 @@ require_contains(
     "release PR postcondition verifier self-test must cover annotated RC VERSION values",
 )
 require_contains(
+    "docs/release-process.md",
+    "watch the first generated",
+    "release process runbook must keep an evidence-bounded first-RC watch for release-please extra-files changes",
+)
+require_contains(
+    "docs/release-process.md",
+    "Generated release-artifact sync commits must be cryptographically signed",
+    "release process runbook must document generated artifact sync signing requirements",
+)
+require_contains(
     "scripts/sync-release-pr-generated.sh",
     "--raw-field run_full_rubric=false",
     "automated release PR CI dispatch must disable the full rubric",
@@ -679,6 +700,21 @@ require_contains(
     "scripts/sync-release-pr-generated.sh",
     'gh pr ready "${pr_number}" --undo',
     "release PR sync must force the release PR back to draft before generated artifact work",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY",
+    "release PR sync must require a configured signing key before creating generated artifact commits",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    'git commit -S -m "chore(release): sync generated release artifacts"',
+    "release PR sync must cryptographically sign generated artifact commits",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "git verify-commit HEAD",
+    "release PR sync must verify generated artifact commit signatures before pushing",
 )
 require_not_contains(
     "scripts/sync-release-pr-generated.sh",
@@ -701,6 +737,24 @@ for workflow in (".github/workflows/prerelease-pr.yml", ".github/workflows/relea
         "actions/setup-python",
         "Sync generated CDK artifacts on release PR",
         "release PR workflow must install Python before running the full release PR gate set",
+    )
+    require_step_contains(
+        workflow,
+        "Sync generated CDK artifacts on release PR",
+        "RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY }}",
+        "release PR artifact sync step must receive the configured signing key",
+    )
+    require_step_contains(
+        workflow,
+        "Sync generated CDK artifacts on release PR",
+        "RELEASE_ARTIFACT_SYNC_GPG_PASSPHRASE: ${{ secrets.RELEASE_ARTIFACT_SYNC_GPG_PASSPHRASE }}",
+        "release PR artifact sync step must receive the configured signing passphrase",
+    )
+    require_step_contains(
+        workflow,
+        "Sync generated CDK artifacts on release PR",
+        "RELEASE_ARTIFACT_SYNC_GPG_KEY_ID: ${{ secrets.RELEASE_ARTIFACT_SYNC_GPG_KEY_ID }}",
+        "release PR artifact sync step must receive the configured signing key id when set",
     )
     require_order(
         workflow,

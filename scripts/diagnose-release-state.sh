@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: diagnose release-please state for release-branch incidents without mutating git or GitHub.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

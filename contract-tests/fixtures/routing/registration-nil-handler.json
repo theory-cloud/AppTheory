@@ -1,0 +1,20 @@
+{
+  "id": "p0.routing.registration_nil_handler",
+  "tier": "p0",
+  "name": "Nil route handlers fail closed during registration",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/nil",
+        "handler": null
+      }
+    ]
+  },
+  "expect": {
+    "error": {
+      "code": "app.bad_request",
+      "message": "route handler is nil"
+    }
+  }
+}

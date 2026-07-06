@@ -1,0 +1,44 @@
+{
+  "id": "p0.binding.all_sources_typed_conversions",
+  "tier": "p0",
+  "name": "Typed handlers bind body, query, path, headers, and canonical conversions",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/typed/{tenant}", "handler": "bind_all_sources" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/typed/tenant_123",
+      "query": {
+        "limit": ["7"],
+        "enabled": ["true"],
+        "ratio": ["1.5"],
+        "tag": ["alpha", "beta"],
+        "ttl": ["2m"]
+      },
+      "headers": { "x-request-id": ["req_1"] },
+      "body": { "encoding": "utf8", "value": "{\"name\":\"bob\"}" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "enabled": true,
+        "limit": 7,
+        "name": "bob",
+        "ratio": 1.5,
+        "request_id": "req_1",
+        "tags": ["alpha", "beta"],
+        "tenant": "tenant_123",
+        "ttl": "2m0s"
+      },
+      "is_base64": false
+    }
+  }
+}

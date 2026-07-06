@@ -212,3 +212,4 @@ function longestZeroRun(words) {
     }
     return { start: bestStart, length: bestLength };
 }
+//# sourceMappingURL=source-provenance.js.map

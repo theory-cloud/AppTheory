@@ -1,0 +1,18 @@
+import { createApp, json } from "@theory-cloud/apptheory";
+
+export function buildApp(deps = { createApp, json }, env = process.env) {
+  const tier = env.APPTHEORY_TIER ?? "p2";
+  const app = deps.createApp({ tier });
+
+  const hello = (ctx, name) =>
+    deps.json(200, {
+      message: `hello ${name}`,
+      runtime: "ts",
+      request_id: ctx.requestId,
+      tenant_id: ctx.tenantId,
+    });
+
+  app.get("/", (ctx) => hello(ctx, "world"));
+  app.get("/hello/{name}", (ctx) => hello(ctx, ctx.param("name")));
+  return app;
+}

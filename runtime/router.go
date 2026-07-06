@@ -1,7 +1,6 @@
 package apptheory
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 )
@@ -89,21 +88,18 @@ func newRouter() *router {
 	return &router{}
 }
 
-func (r *router) add(method, pattern string, handler Handler, opts routeOptions) {
-	if err := r.addStrict(method, pattern, handler, opts); err != nil {
-		return
-	}
+func (r *router) add(method, pattern string, handler Handler, opts routeOptions) error {
+	return r.addStrict(method, pattern, handler, opts)
 }
 
 func (r *router) addStrict(method, pattern string, handler Handler, opts routeOptions) error {
 	if handler == nil {
-		return fmt.Errorf("apptheory: route handler is nil")
+		return routeRegistrationError("route handler is nil")
 	}
 	method = strings.ToUpper(strings.TrimSpace(method))
 	pattern = normalizePath(pattern)
 	segments, canonicalSegments, err := parseRouteSegments(splitPath(pattern))
 	if err != nil {
-		// Fail closed for invalid patterns.
 		return err
 	}
 
@@ -111,6 +107,12 @@ func (r *router) addStrict(method, pattern string, handler Handler, opts routeOp
 		pattern = "/"
 	} else {
 		pattern = "/" + strings.Join(canonicalSegments, "/")
+	}
+
+	for _, existing := range r.routes {
+		if existing.Method == method && existing.Pattern == pattern {
+			return routeRegistrationError("duplicate route")
+		}
 	}
 
 	staticCount := 0
@@ -188,6 +190,10 @@ func splitPath(path string) []string {
 	return strings.Split(path, "/")
 }
 
+func routeRegistrationError(message string) *AppTheoryError {
+	return NewAppTheoryError(errorCodeBadRequest, message).WithStatusCode(400)
+}
+
 func parseRouteSegments(rawSegments []string) ([]routeSegment, []string, error) {
 	if len(rawSegments) == 0 {
 		return nil, nil, nil
@@ -199,10 +205,10 @@ func parseRouteSegments(rawSegments []string) ([]routeSegment, []string, error) 
 	for i, raw := range rawSegments {
 		seg, canon, ok := parseRouteSegment(raw)
 		if !ok {
-			return nil, nil, fmt.Errorf("apptheory: invalid route segment: %q", raw)
+			return nil, nil, routeRegistrationError("invalid route pattern")
 		}
 		if seg.Kind == routeSegmentProxy && i != len(rawSegments)-1 {
-			return nil, nil, fmt.Errorf("apptheory: invalid route pattern: proxy segment must be last: %q", raw)
+			return nil, nil, routeRegistrationError("invalid route pattern")
 		}
 
 		segments = append(segments, seg)
@@ -237,6 +243,10 @@ func parseRouteSegment(raw string) (routeSegment, string, bool) {
 			return routeSegment{}, "", false
 		}
 		return routeSegment{Kind: routeSegmentParam, Value: name}, "{" + name + "}", true
+	}
+
+	if strings.Contains(segment, "{") || strings.Contains(segment, "}") {
+		return routeSegment{}, "", false
 	}
 
 	return routeSegment{Kind: routeSegmentStatic, Value: segment}, segment, true

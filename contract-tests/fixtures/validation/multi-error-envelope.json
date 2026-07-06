@@ -1,0 +1,49 @@
+{
+  "id": "p0.validation.multi_error_envelope",
+  "tier": "p0",
+  "name": "Declarative validation aggregates canonical 422 field errors",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/validate", "handler": "validate_profile" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/validate",
+      "query": {},
+      "headers": { "content-type": ["application/json"] },
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"name\":null,\"age\":17,\"score\":11,\"nickname\":\"A\",\"bio\":\"toolong\",\"email\":\"not-email\",\"role\":\"owner\"}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 422,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.validation_failed",
+          "message": "validation failed",
+          "status_code": 422,
+          "details": {
+            "errors": [
+              { "field": "name", "rule": "required", "message": "name is required" },
+              { "field": "age", "rule": "min", "message": "age must be >= 18" },
+              { "field": "score", "rule": "max", "message": "score must be <= 10" },
+              { "field": "nickname", "rule": "min_length", "message": "nickname length must be >= 2" },
+              { "field": "bio", "rule": "max_length", "message": "bio length must be <= 5" },
+              { "field": "email", "rule": "pattern", "message": "email must match pattern" },
+              { "field": "role", "rule": "enum", "message": "role must be one of admin, member" }
+            ]
+          }
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

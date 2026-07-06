@@ -17,3 +17,4 @@ export declare function splitPathAndQuery(path: string, query: Query | undefined
     rawQueryString: string;
 };
 export declare function firstHeaderValue(headers: Headers | undefined, key: string): string;
+//# sourceMappingURL=http.d.ts.map

@@ -42,8 +42,12 @@ func TestParseRouteSegments_RejectsProxyNotLast(t *testing.T) {
 
 func TestRouterMatch_MostSpecificRouteWins(t *testing.T) {
 	r := newRouter()
-	r.add("GET", "/users/{id}", func(*Context) (*Response, error) { return Text(200, "param"), nil }, routeOptions{})
-	r.add("GET", "/users/me", func(*Context) (*Response, error) { return Text(200, "static"), nil }, routeOptions{})
+	if err := r.add("GET", "/users/{id}", func(*Context) (*Response, error) { return Text(200, "param"), nil }, routeOptions{}); err != nil {
+		t.Fatalf("add param route: %v", err)
+	}
+	if err := r.add("GET", "/users/me", func(*Context) (*Response, error) { return Text(200, "static"), nil }, routeOptions{}); err != nil {
+		t.Fatalf("add static route: %v", err)
+	}
 
 	match, allowed := r.match("GET", "/users/me")
 	if match == nil {
@@ -59,7 +63,9 @@ func TestRouterMatch_MostSpecificRouteWins(t *testing.T) {
 
 func TestRouterMatch_ProxyParams(t *testing.T) {
 	r := newRouter()
-	r.add("GET", "/files/{path+}", func(*Context) (*Response, error) { return Text(200, "ok"), nil }, routeOptions{})
+	if err := r.add("GET", "/files/{path+}", func(*Context) (*Response, error) { return Text(200, "ok"), nil }, routeOptions{}); err != nil {
+		t.Fatalf("add proxy route: %v", err)
+	}
 
 	match, _ := r.match("GET", "/files/a/b/c")
 	if match == nil {

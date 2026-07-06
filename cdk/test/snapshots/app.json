@@ -284,6 +284,12 @@
         },
         "FunctionName": "apptheory-test",
         "Handler": "index.handler",
+        "LoggingConfig": {
+          "LogGroup": {
+            "Ref": "AppFunctionLogGroupE8C68164"
+          }
+        },
+        "MemorySize": 256,
         "Role": {
           "Fn::GetAtt": [
             "AppFunctionServiceRole265AF9F5",
@@ -297,6 +303,15 @@
         }
       },
       "Type": "AWS::Lambda::Function"
+    },
+    "AppFunctionLogGroupE8C68164": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "LogGroupName": "/aws/lambda/apptheory-test",
+        "RetentionInDays": 30
+      },
+      "Type": "AWS::Logs::LogGroup",
+      "UpdateReplacePolicy": "Retain"
     },
     "AppFunctionServiceRole265AF9F5": {
       "Properties": {

@@ -1207,6 +1207,21 @@ class MicroVMLifecycleTests(unittest.TestCase):
                 {**token_dict, "allowed_port_scope": [{"all_ports": True, "port": 443}]},
             )
 
+    def test_execution_role_arn_validation_fails_closed(self) -> None:
+        _, run_dict, _, _, _ = self._provider_dict_inputs()
+        role_arn = "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole"
+        app.validate_microvm_provider_run_input({**run_dict, "execution_role_arn": f" {role_arn} "})
+        for unsafe in ["raw_sdk_client", "not-an-arn", "arn:aws:iam::123456789012:user/NotRole", f"{role_arn} bad"]:
+            with self.assertRaises(app.MicroVMSafeError):
+                app.validate_microvm_provider_run_input({**run_dict, "execution_role_arn": unsafe})
+
+        with self.assertRaises(app.MicroVMSafeError):
+            app.create_real_microvm_controller(
+                app.create_fake_microvm_provider(now=1.0),
+                app.create_memory_microvm_session_registry(),
+                execution_role_arn="not-an-arn",
+            )
+
     def test_fake_provider_error_paths_remain_sanitized(self) -> None:
         binding_dict, run_dict, session_dict, list_dict, token_dict = self._provider_dict_inputs()
         fake = app.create_fake_microvm_provider(now=1.0)

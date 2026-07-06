@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: write SHA-256 checksum sidecars for release artifacts in dist/.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

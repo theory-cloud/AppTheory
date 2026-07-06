@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify checked-in Go files are gofmt-formatted.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

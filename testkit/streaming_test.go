@@ -81,7 +81,7 @@ func TestInvokeStreaming_LateError(t *testing.T) {
 	app.Get("/err", func(_ *apptheory.Context) (*apptheory.Response, error) {
 		ch := make(chan apptheory.StreamChunk, 2)
 		ch <- apptheory.StreamChunk{Bytes: []byte("hello")}
-		ch <- apptheory.StreamChunk{Err: &apptheory.AppError{Code: "app.internal", Message: "boom"}}
+		ch <- apptheory.StreamChunk{Err: apptheory.NewAppTheoryError("app.internal", "boom")}
 		close(ch)
 		return &apptheory.Response{
 			Status:     200,

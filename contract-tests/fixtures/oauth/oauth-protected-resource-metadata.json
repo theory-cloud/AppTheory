@@ -1,0 +1,132 @@
+{
+  "id": "oauth.protected_resource.metadata",
+  "tier": "oauth",
+  "name": "OAuth protected resource metadata is path-scoped and deterministic",
+  "setup": {
+    "oauth": {
+      "clock_unix": 1700000000,
+      "resource": "https://mcp.example.com/mcp",
+      "authorization_servers": [
+        "https://auth.example.com"
+      ],
+      "scopes_supported": [
+        "mcp:read",
+        "mcp:write"
+      ],
+      "required_audience": "https://mcp.example.com/mcp",
+      "required_scopes": [
+        "mcp:read"
+      ],
+      "bearer_tokens": [
+        {
+          "token": "valid-token",
+          "subject": "user-1",
+          "audience": "https://mcp.example.com/mcp",
+          "scopes": [
+            "mcp:read",
+            "mcp:write"
+          ],
+          "expires_unix": 1700003600
+        },
+        {
+          "token": "expired-token",
+          "subject": "user-1",
+          "audience": "https://mcp.example.com/mcp",
+          "scopes": [
+            "mcp:read"
+          ],
+          "expires_unix": 1699999999
+        },
+        {
+          "token": "wrong-audience-token",
+          "subject": "user-1",
+          "audience": "https://other.example.com/mcp",
+          "scopes": [
+            "mcp:read"
+          ],
+          "expires_unix": 1700003600
+        },
+        {
+          "token": "missing-scope-token",
+          "subject": "user-1",
+          "audience": "https://mcp.example.com/mcp",
+          "scopes": [
+            "mcp:write"
+          ],
+          "expires_unix": 1700003600
+        }
+      ],
+      "id_sequence": [
+        "client_fixture_1",
+        "code_fixture_1",
+        "access_fixture_1",
+        "refresh_fixture_1",
+        "client_fixture_2",
+        "code_fixture_2",
+        "access_fixture_2",
+        "refresh_fixture_2"
+      ],
+      "dcr_policy": {
+        "allowed_redirect_uris": [
+          "https://claude.ai/api/mcp/auth_callback",
+          "https://claude.com/api/mcp/auth_callback"
+        ],
+        "require_public_client": true,
+        "require_refresh_token": true
+      }
+    }
+  },
+  "input": {
+    "oauth": {
+      "steps": [
+        {
+          "name": "metadata",
+          "request": {
+            "method": "GET",
+            "path": "/.well-known/oauth-protected-resource/mcp",
+            "query": {},
+            "headers": {
+              "accept": [
+                "application/json"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": ""
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "oauth": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json; charset=utf-8"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "resource": "https://mcp.example.com/mcp",
+            "authorization_servers": [
+              "https://auth.example.com"
+            ],
+            "scopes_supported": [
+              "mcp:read",
+              "mcp:write"
+            ],
+            "bearer_methods_supported": [
+              "header"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

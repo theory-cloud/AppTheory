@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: self-test the release train cycle and post-release branch invariants.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

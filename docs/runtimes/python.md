@@ -5,27 +5,39 @@ description: The Python implementation of the AppTheory contract — typed, asyn
 
 # Python Runtime
 
-The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. The [147 contract fixtures](../reference/contract-fixtures.md) arbitrate when Go, TS, and Python disagree.
+The Python runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes all [216 contract fixtures](../reference/contract-fixtures.md), including the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier. <!-- apptheory-fixture-count: 216 -->
 
 ## Install
 
-Distribution is **GitHub Releases only.** PyPI is not used; AppTheory does not publish to it. Consumers pin a release-asset wheel downloaded from the [releases page](https://github.com/theory-cloud/AppTheory/releases):
+Distribution is **GitHub Releases only.** PyPI is not used; AppTheory does not publish to it. Pin the release wheel and verify its checksum before installing it:
 
 ```bash
-# After downloading the .whl asset from the GitHub Release
-python -m pip install ./apptheory-X.Y.Z-py3-none-any.whl
+VERSION=1.14.0
+TAG="v${VERSION}"
+REPO="theory-cloud/AppTheory"
+
+gh release download "${TAG}" --repo "${REPO}" \
+  --pattern "apptheory-${VERSION}-py3-none-any.whl" \
+  --pattern "SHA256SUMS.txt" \
+  --clobber
+grep " apptheory-${VERSION}-py3-none-any.whl$" SHA256SUMS.txt | sha256sum -c -
+python -m pip install "./apptheory-${VERSION}-py3-none-any.whl"
 ```
 
-Python 3.14+ is required.
+Python 3.12+ is required. The floor is pinned by `py/pyproject.toml`, Ruff, Pyright, the pinned TableTheory GitHub
+Release wheel metadata, and CI. Do not document a different Python floor unless `scripts/verify-runtime-floor-claims.sh`
+passes with a CI matrix that includes both the floor and Python 3.14.
 
 ## Module layout
 
 | Module | Purpose |
 | --- | --- |
-| `apptheory` | Core Python runtime exports: `create_app`, `Context`, request/response helpers, event builders, testkit helpers, jobs-ledger primitives, logging profiles, and sanitization helpers. Rate-limiter classes are not root exports. |
+| `apptheory` | Core Python runtime exports: `create_app`, `Context`, request/response helpers, event builders, testkit helpers, MCP/OAuth helpers, jobs-ledger primitives, logging profiles, object-store helpers, and sanitization helpers. Rate-limiter classes are not root exports. |
+| `apptheory.mcp` | Streamable HTTP MCP server, registries, session/stream/task stores, SSE parsing, and deterministic test harness helpers. |
+| `apptheory.oauth` | Protected-resource metadata, bearer-token validation, DCR, PKCE, and Remote MCP OAuth helper surfaces. |
 | `apptheory.limited` | DynamoDB-backed rate limiter exports (`DynamoRateLimiter`, `FixedWindowStrategy`, `SlidingWindowStrategy`, `MultiWindowStrategy`). |
 
-There are no Python MCP or OAuth runtime modules. See `api-snapshots/py.txt` for the exact exported surface — that file is the release gate.
+See `api-snapshots/py.txt` for the exact exported surface — that file is the release gate.
 
 ## Minimal app
 
@@ -75,13 +87,24 @@ def test_ping():
     assert resp["statusCode"] == 200
 ```
 
-## Strict routes
+## Route registration
 
 ```python
-app.handle_strict("GET", "/users/{id}", handler)
+app.handle("GET", "/users/{id}", handler)
+app.get("/users/{id}", handler)
 ```
 
-Strict registration raises on invalid patterns at registration time.
+Normal fluent registration fails closed on invalid patterns, duplicates, and `None` handlers. `handle_strict` remains as
+a deprecated compatibility wrapper for callers that still need the old helper shape; it now raises `AppTheoryError`
+rather than `ValueError` for registration failures.
+
+
+## Object-store dependency posture
+
+The Python package intentionally keeps `boto3` optional and lazy for `create_s3_object_store`. Importing `apptheory` or
+using the fake object store does not require boto3; constructing the S3-backed store fails closed with a stable
+`ObjectStoreError` if boto3 or the required S3 methods are unavailable. This differs from TypeScript's hard S3 SDK
+dependency by design and does not widen the object-store contract.
 
 ## HTTP error format
 
@@ -95,11 +118,11 @@ Applies to HTTP error serialization only.
 
 ## What's verified
 
-The Python runtime passes all 147 contract fixtures on every commit, against the same fixture corpus as Go and TypeScript. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
+The Python runtime passes the full contract corpus on every commit. <!-- apptheory-fixture-count: 216 --> The runner loads and executes the full 216-fixture tree, including the SP09 MCP tier, SP12 OAuth tier, and SP13 objectstore tier. Tests live under `py/tests/` and are exercised by `./scripts/verify-python-tests.sh` and `make rubric`.
 
 ## Next reads
 
 - [API Reference](../api-reference.md)
 - [HTTP Runtime tiers](../features/http-runtime.md)
-- [MCP Method Surface](../integrations/mcp.md) — Go runtime MCP surface
+- [MCP Method Surface](../integrations/mcp.md) — transport and JSON-RPC method contract
 - [Contract Fixtures](../reference/contract-fixtures.md)

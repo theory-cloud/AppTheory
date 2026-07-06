@@ -47,37 +47,37 @@ class StructuredLogger(Protocol):
 
 
 class NoOpLogger:
-    def debug(self, _message: str, *fields: dict[str, Any]) -> None:
+    def debug(self, message: str, *fields: dict[str, Any]) -> None:
         return None
 
-    def info(self, _message: str, *fields: dict[str, Any]) -> None:
+    def info(self, message: str, *fields: dict[str, Any]) -> None:
         return None
 
-    def warn(self, _message: str, *fields: dict[str, Any]) -> None:
+    def warn(self, message: str, *fields: dict[str, Any]) -> None:
         return None
 
-    def error(self, _message: str, *fields: dict[str, Any]) -> None:
+    def error(self, message: str, *fields: dict[str, Any]) -> None:
         return None
 
-    def with_field(self, _key: str, _value: Any) -> StructuredLogger:
+    def with_field(self, key: str, value: Any) -> StructuredLogger:
         return self
 
-    def with_fields(self, _fields: dict[str, Any]) -> StructuredLogger:
+    def with_fields(self, fields: dict[str, Any]) -> StructuredLogger:
         return self
 
-    def with_request_id(self, _request_id: str) -> StructuredLogger:
+    def with_request_id(self, request_id: str) -> StructuredLogger:
         return self
 
-    def with_tenant_id(self, _tenant_id: str) -> StructuredLogger:
+    def with_tenant_id(self, tenant_id: str) -> StructuredLogger:
         return self
 
-    def with_user_id(self, _user_id: str) -> StructuredLogger:
+    def with_user_id(self, user_id: str) -> StructuredLogger:
         return self
 
-    def with_trace_id(self, _trace_id: str) -> StructuredLogger:
+    def with_trace_id(self, trace_id: str) -> StructuredLogger:
         return self
 
-    def with_span_id(self, _span_id: str) -> StructuredLogger:
+    def with_span_id(self, span_id: str) -> StructuredLogger:
         return self
 
     def flush(self) -> None:

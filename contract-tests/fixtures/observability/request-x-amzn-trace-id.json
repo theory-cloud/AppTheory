@@ -1,0 +1,97 @@
+{
+  "id": "p2.observability.x_amzn_trace_id",
+  "tier": "p2",
+  "name": "Trace propagation extracts the X-Amzn-Trace-Id root when traceparent is absent",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/xray-trace",
+        "handler": "echo_context"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/xray-trace",
+      "query": {},
+      "headers": {
+        "x-amzn-trace-id": [
+          "Root=1-67891233-abcdef012345678912345678;Parent=53995c3f42cd8ad8;Sampled=1"
+        ],
+        "x-tenant-id": [
+          "tenant_xray"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ],
+        "x-request-id": [
+          "req_test_123"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "request_id": "req_test_123",
+        "tenant_id": "tenant_xray",
+        "auth_identity": "",
+        "remaining_ms": 0
+      },
+      "is_base64": false
+    },
+    "logs": [
+      {
+        "level": "info",
+        "event": "request.completed",
+        "request_id": "req_test_123",
+        "trace_id": "1-67891233-abcdef012345678912345678",
+        "tenant_id": "tenant_xray",
+        "method": "GET",
+        "path": "/xray-trace",
+        "status": 200,
+        "error_code": "",
+        "duration_ms": 0
+      }
+    ],
+    "metrics": [
+      {
+        "name": "apptheory.request",
+        "value": 1,
+        "duration_ms": 0,
+        "tags": {
+          "method": "GET",
+          "path": "/xray-trace",
+          "status": "200",
+          "error_code": "",
+          "tenant_id": "tenant_xray"
+        }
+      }
+    ],
+    "spans": [
+      {
+        "name": "http GET /xray-trace",
+        "attributes": {
+          "http.method": "GET",
+          "http.route": "/xray-trace",
+          "http.status_code": "200",
+          "request.id": "req_test_123",
+          "trace.id": "1-67891233-abcdef012345678912345678",
+          "tenant.id": "tenant_xray",
+          "error.code": ""
+        }
+      }
+    ]
+  }
+}

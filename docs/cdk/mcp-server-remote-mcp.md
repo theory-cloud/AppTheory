@@ -196,6 +196,9 @@ Important fail-closed rules:
   with `401`.
 - The middleware no longer derives protected-resource metadata from `Host` / `X-Forwarded-Proto` request headers.
   Use `MCP_ENDPOINT` or pass `ResourceMetadataURL` explicitly.
+- Invalid-audience bearer tokens are intentionally treated as authorization failures: the fixture-pinned response is
+  `403 app.forbidden` without a `WWW-Authenticate` challenge, matching insufficient-scope denial. Missing or expired
+  bearer tokens remain `401` discovery/challenge cases.
 
 For migration notes covering Bearer validation, initial listener keepalive changes, and expired-session fail-closed
 behavior, see `docs/migration/v1-security.md`.

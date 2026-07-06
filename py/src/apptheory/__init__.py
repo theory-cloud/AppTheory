@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import datetime as dt
+from typing import TYPE_CHECKING, Any, Literal, NoReturn
+
 from apptheory.app import (
     App,
     CORSConfig,
@@ -26,10 +29,22 @@ from apptheory.aws_events import (
     stepfunctions_task_token,
 )
 from apptheory.aws_http import build_alb_target_group_request, build_apigw_v2_request, build_lambda_function_url_request
+from apptheory.bind_handler import (
+    BindConfig,
+    BindField,
+    bind_handler,
+    bind_request,
+    body,
+    format_duration,
+    header,
+    path,
+    query,
+)
 from apptheory.cache import cache_control_isr, cache_control_ssg, cache_control_ssr, etag, matches_if_none_match, vary
 from apptheory.clock import Clock, ManualClock, RealClock
 from apptheory.cloudfront import client_ip, origin_url, original_host, original_uri
 from apptheory.context import AppSyncContext, Context, EventContext, WebSocketContext
+from apptheory.emf import EMFMetricSink, create_emf_metric_sink, hooks_from_emf_metric_sink
 from apptheory.errors import (
     HTTP_ERROR_FORMAT_FLAT_LEGACY,
     HTTP_ERROR_FORMAT_NESTED,
@@ -64,8 +79,8 @@ from apptheory.kinesis_producer import (
     report_kinesis_put_records_failures,
 )
 
-try:
-    from apptheory.jobs import (  # type: ignore
+if TYPE_CHECKING:
+    from apptheory.jobs import (
         DEFAULT_JOBS_TABLE_NAME,
         DynamoJobLedger,
         EnvJobsTableName,
@@ -91,68 +106,104 @@ try:
     from apptheory.jobs import (
         wrap_error as wrap_job_ledger_error,
     )
-except ModuleNotFoundError as exc:  # pragma: no cover
-    if exc.name != "theorydb_py":
-        raise
+else:
+    try:
+        from apptheory.jobs import (  # type: ignore
+            DEFAULT_JOBS_TABLE_NAME,
+            DynamoJobLedger,
+            EnvJobsTableName,
+            JobLedgerError,
+            JobsConfig,
+            format_rfc3339_nano,
+            job_lock_sort_key,
+            job_meta_sort_key,
+            job_partition_key,
+            job_record_sort_key,
+            job_request_sort_key,
+            jobs_table_name,
+            sanitize_error_envelope,
+            sanitize_fields,
+            unix_seconds,
+        )
+        from apptheory.jobs import (
+            default_config as default_jobs_config,
+        )
+        from apptheory.jobs import (
+            new_error as new_job_ledger_error,
+        )
+        from apptheory.jobs import (
+            wrap_error as wrap_job_ledger_error,
+        )
+    except ModuleNotFoundError as exc:  # pragma: no cover
+        if exc.name != "tabletheory_py":
+            raise
 
-    DEFAULT_JOBS_TABLE_NAME = "apptheory-jobs"
-    EnvJobsTableName = "APPTHEORY_JOBS_TABLE_NAME"
-    missing_exc = exc
+        DEFAULT_JOBS_TABLE_NAME = "apptheory-jobs"
+        EnvJobsTableName = "APPTHEORY_JOBS_TABLE_NAME"
+        missing_exc = exc
 
-    def _raise_jobs_dependency_error() -> None:
-        raise ModuleNotFoundError(
-            "theorydb_py is required for apptheory.jobs; install `tabletheory-py` (see py/pyproject.toml)."
-        ) from missing_exc
+        ErrorType = Literal["internal_error", "invalid_input", "conflict", "not_found"]
 
-    class JobsConfig:  # type: ignore
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
+        def _raise_jobs_dependency_error() -> NoReturn:
+            raise ModuleNotFoundError(
+                "tabletheory_py is required for apptheory.jobs; install `tabletheory-py` (see py/pyproject.toml)."
+            ) from missing_exc
+
+        class JobsConfig:  # type: ignore
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                _raise_jobs_dependency_error()
+
+        class JobLedgerError(Exception):
+            type: ErrorType
+            message: str
+
+            def __init__(self, error_type: ErrorType = "internal_error", message: str = "") -> None:
+                self.type = error_type
+                self.message = str(message)
+                super().__init__(self.message)
+
+        class DynamoJobLedger:  # type: ignore
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                _raise_jobs_dependency_error()
+
+        def default_jobs_config() -> JobsConfig:
             _raise_jobs_dependency_error()
 
-    class JobLedgerError(Exception):
-        pass
-
-    class DynamoJobLedger:  # type: ignore
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
+        def new_job_ledger_error(error_type: ErrorType, message: str) -> JobLedgerError:
             _raise_jobs_dependency_error()
 
-    def default_jobs_config() -> JobsConfig:
-        _raise_jobs_dependency_error()
+        def wrap_job_ledger_error(cause: Exception, error_type: ErrorType, message: str) -> JobLedgerError:
+            _raise_jobs_dependency_error()
 
-    def new_job_ledger_error(*_args: object, **_kwargs: object) -> JobLedgerError:
-        _raise_jobs_dependency_error()
+        def jobs_table_name() -> str:
+            _raise_jobs_dependency_error()
 
-    def wrap_job_ledger_error(*_args: object, **_kwargs: object) -> JobLedgerError:
-        _raise_jobs_dependency_error()
+        def job_partition_key(job_id: str) -> str:
+            _raise_jobs_dependency_error()
 
-    def jobs_table_name() -> str:
-        _raise_jobs_dependency_error()
+        def job_meta_sort_key() -> str:
+            _raise_jobs_dependency_error()
 
-    def job_partition_key(_job_id: str) -> str:
-        _raise_jobs_dependency_error()
+        def job_record_sort_key(record_id: str) -> str:
+            _raise_jobs_dependency_error()
 
-    def job_meta_sort_key() -> str:
-        _raise_jobs_dependency_error()
+        def job_lock_sort_key() -> str:
+            _raise_jobs_dependency_error()
 
-    def job_record_sort_key(_record_id: str) -> str:
-        _raise_jobs_dependency_error()
+        def job_request_sort_key(idempotency_key: str) -> str:
+            _raise_jobs_dependency_error()
 
-    def job_lock_sort_key() -> str:
-        _raise_jobs_dependency_error()
+        def unix_seconds(value: dt.datetime) -> int:
+            _raise_jobs_dependency_error()
 
-    def job_request_sort_key(_idempotency_key: str) -> str:
-        _raise_jobs_dependency_error()
+        def format_rfc3339_nano(value: dt.datetime) -> str:
+            _raise_jobs_dependency_error()
 
-    def unix_seconds(_value: object) -> int:
-        _raise_jobs_dependency_error()
+        def sanitize_fields(fields: dict[str, Any] | None) -> dict[str, Any] | None:
+            _raise_jobs_dependency_error()
 
-    def format_rfc3339_nano(_value: object) -> str:
-        _raise_jobs_dependency_error()
-
-    def sanitize_fields(_fields: object) -> object:
-        _raise_jobs_dependency_error()
-
-    def sanitize_error_envelope(_envelope: object) -> object:
-        _raise_jobs_dependency_error()
+        def sanitize_error_envelope(envelope: dict[str, Any] | None) -> dict[str, Any] | None:
+            _raise_jobs_dependency_error()
 
 
 from apptheory.logger import NoOpLogger, StructuredLogger, get_logger, set_logger
@@ -187,6 +238,78 @@ from apptheory.logging_profile import (
     logging_profile_catalog,
     logging_profile_validation_errors,
     validate_logging_profile,
+)
+from apptheory.mcp import (
+    DEFAULT_STREAM_TABLE_NAME,
+    DEFAULT_TASK_TABLE_NAME,
+    MCP_CODE_INTERNAL_ERROR,
+    MCP_CODE_INVALID_PARAMS,
+    MCP_CODE_INVALID_REQUEST,
+    MCP_CODE_METHOD_NOT_FOUND,
+    MCP_CODE_PARSE_ERROR,
+    MCP_CODE_SERVER_ERROR,
+    MCP_HEADER_LAST_EVENT_ID,
+    MCP_HEADER_PROTOCOL_VERSION,
+    MCP_HEADER_SESSION_ID,
+    MCP_PROTOCOL_VERSION,
+    MCP_PROTOCOL_VERSION_LEGACY,
+    MCP_PROTOCOL_VERSION_PRIOR,
+    DynamoMcpStreamStore,
+    DynamoMcpTaskStore,
+    McpContentBlock,
+    McpEventNotFoundError,
+    McpJSONRecord,
+    McpJSONValue,
+    McpPromptArgument,
+    McpPromptDef,
+    McpPromptHandler,
+    McpPromptMessage,
+    McpPromptRegistry,
+    McpPromptResult,
+    McpRequestID,
+    McpResourceContent,
+    McpResourceContext,
+    McpResourceDef,
+    McpResourceHandler,
+    McpResourceRegistry,
+    McpResourceTemplateDef,
+    McpRPCError,
+    McpRPCRequest,
+    McpRPCResponse,
+    McpServer,
+    McpServerOptions,
+    McpSession,
+    McpSessionNotFoundError,
+    McpSessionStore,
+    McpSSEEvent,
+    McpStreamEvent,
+    McpStreamingToolHandler,
+    McpStreamNotFoundError,
+    McpStreamStore,
+    McpTask,
+    McpTaskInvalidCursorError,
+    McpTaskListRequest,
+    McpTaskListResult,
+    McpTaskLookup,
+    McpTaskNotFoundError,
+    McpTaskRecord,
+    McpTaskRuntimeOptions,
+    McpTaskStatus,
+    McpTaskStore,
+    McpTaskSupport,
+    McpTaskTerminalError,
+    McpToolContext,
+    McpToolDef,
+    McpToolExecution,
+    McpToolHandler,
+    McpToolRegistry,
+    McpToolResult,
+    MemoryMcpSessionStore,
+    MemoryMcpStreamStore,
+    MemoryMcpTaskStore,
+    create_mcp_server,
+    default_mcp_stream_model,
+    default_mcp_task_model,
 )
 from apptheory.microvm import (
     COMMAND_AUTH_TOKEN,
@@ -378,6 +501,88 @@ from apptheory.microvm import (
 )
 from apptheory.middleware import TimeoutConfig, timeout_middleware
 from apptheory.naming import base_name, normalize_stage, resource_name
+from apptheory.oauth import (
+    CONTEXT_KEY_BEARER_CLAIMS,
+    CONTEXT_KEY_BEARER_TOKEN,
+    ERR_BEARER_TOKEN_EXPIRED,
+    ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE,
+    ERR_BEARER_TOKEN_INVALID_AUDIENCE,
+    ERR_INVALID_AUTHORIZATION_HEADER,
+    ERR_INVALID_BEARER_TOKEN,
+    ERR_INVALID_URL,
+    ERR_MISSING_BEARER_TOKEN,
+    AuthorizationServerMetadata,
+    BearerTokenClaims,
+    BearerTokenClaimsValidator,
+    BearerTokenRecord,
+    BearerTokenValidationOptions,
+    BearerTokenValidator,
+    DynamicClientRegistrationPolicy,
+    DynamicClientRegistrationRequest,
+    DynamicClientRegistrationResponse,
+    OAuthBearerError,
+    ProtectedResourceMetadata,
+    RequireBearerTokenOptions,
+    authorization_server_metadata_handler,
+    bearer_token_claims_from_context,
+    bearer_token_from_headers,
+    canonical_resource_url,
+    canonicalize_issuer_url,
+    claude_dynamic_client_registration_policy,
+    new_authorization_server_metadata,
+    new_memory_bearer_token_validator,
+    new_pkce_code_verifier,
+    new_protected_resource_metadata,
+    pkce_challenge_s256,
+    pkce_verify_s256,
+    protected_resource_metadata_handler,
+    protected_resource_www_authenticate,
+    require_bearer_token_middleware,
+    resource_metadata_url_from_mcp_endpoint,
+    rfc9728_resource_metadata_url,
+    validate_dynamic_client_registration_request,
+    validate_pkce_code_verifier,
+)
+from apptheory.objectstore import (
+    OBJECTSTORE_ERROR_INVALID_ENCRYPTION_CONFIG,
+    OBJECTSTORE_ERROR_INVALID_GET_LIMIT,
+    OBJECTSTORE_ERROR_INVALID_REF,
+    OBJECTSTORE_ERROR_INVALID_STORE_CONFIG,
+    OBJECTSTORE_ERROR_NOT_FOUND,
+    OBJECTSTORE_ERROR_OBJECT_TOO_LARGE,
+    OBJECTSTORE_ERROR_UNSUPPORTED_OPERATION,
+    S3_ENCRYPTION_BUCKET_DEFAULT,
+    S3_ENCRYPTION_KMS,
+    S3_ENCRYPTION_S3_MANAGED,
+    FakeObjectStore,
+    ObjectRef,
+    ObjectStore,
+    ObjectStoreCall,
+    ObjectStoreDeleteInput,
+    ObjectStoreError,
+    ObjectStoreGetInput,
+    ObjectStoreGetOutput,
+    ObjectStoreOperation,
+    ObjectStorePutInput,
+    S3EncryptionConfig,
+    S3EncryptionMode,
+    S3ObjectStoreConfig,
+    create_fake_object_store,
+    create_s3_object_store,
+    parse_object_ref,
+    unsupported_object_store_operation,
+    validate_object_ref,
+)
+from apptheory.openapi import (
+    OpenAPIFieldSpec,
+    OpenAPIRequestSpec,
+    OpenAPIResponseSpec,
+    OpenAPIRouteSpec,
+    OpenAPISpec,
+    OpenAPIValidationRule,
+    generate_openapi,
+    generate_openapi_json,
+)
 from apptheory.request import Request
 from apptheory.response import Response, binary, html, html_stream, json, safe_json_for_html, text
 from apptheory.sanitization import (
@@ -396,6 +601,9 @@ from apptheory.sse import SSEEvent, sse, sse_event_stream
 from apptheory.testkit import (
     FakeWebSocketClientFactory,
     FakeWebSocketManagementClient,
+    McpTestHarness,
+    McpTestResult,
+    McpTestSSEFrame,
     StreamResult,
     TestEnv,
     WebSocketCall,
@@ -403,8 +611,33 @@ from apptheory.testkit import (
     build_websocket_event,
     cloudwatch_logs_subscription_data,
     create_fake_websocket_client_factory,
+    create_mcp_test_harness,
     create_test_env,
+    fixed_mcp_id_generator,
     kinesis_cloudwatch_logs_subscription_record,
+    parse_mcp_test_sse_frames,
+    sequence_mcp_id_generator,
+)
+from apptheory.validate import (
+    VALIDATION_RULE_ENUM,
+    VALIDATION_RULE_MAX,
+    VALIDATION_RULE_MAX_LENGTH,
+    VALIDATION_RULE_MIN,
+    VALIDATION_RULE_MIN_LENGTH,
+    VALIDATION_RULE_PATTERN,
+    VALIDATION_RULE_REQUIRED,
+    ValidationFieldError,
+    ValidationRule,
+    max_length,
+    max_value,
+    min_length,
+    min_value,
+    one_of,
+    pattern,
+    required,
+    validate_or_raise,
+    validate_value,
+    validation_error,
 )
 
 __all__ = [
@@ -422,7 +655,18 @@ __all__ = [
     "COMMAND_STOP",
     "COMMAND_SUSPEND",
     "COMMAND_TERMINATE",
+    "CONTEXT_KEY_BEARER_CLAIMS",
+    "CONTEXT_KEY_BEARER_TOKEN",
     "DEFAULT_JOBS_TABLE_NAME",
+    "DEFAULT_STREAM_TABLE_NAME",
+    "DEFAULT_TASK_TABLE_NAME",
+    "ERR_BEARER_TOKEN_EXPIRED",
+    "ERR_BEARER_TOKEN_INSUFFICIENT_SCOPE",
+    "ERR_BEARER_TOKEN_INVALID_AUDIENCE",
+    "ERR_INVALID_AUTHORIZATION_HEADER",
+    "ERR_INVALID_BEARER_TOKEN",
+    "ERR_INVALID_URL",
+    "ERR_MISSING_BEARER_TOKEN",
     "HOOK_FAILURE",
     "HOOK_PREPARE_IMAGE",
     "HOOK_READINESS",
@@ -442,6 +686,18 @@ __all__ = [
     "LOGGING_PROFILE_LOCAL_DEV",
     "LOGGING_PROFILE_PAYTHEORY_ALERT_V1",
     "LOGGING_PROFILE_SCHEMA_VERSION",
+    "MCP_CODE_INTERNAL_ERROR",
+    "MCP_CODE_INVALID_PARAMS",
+    "MCP_CODE_INVALID_REQUEST",
+    "MCP_CODE_METHOD_NOT_FOUND",
+    "MCP_CODE_PARSE_ERROR",
+    "MCP_CODE_SERVER_ERROR",
+    "MCP_HEADER_LAST_EVENT_ID",
+    "MCP_HEADER_PROTOCOL_VERSION",
+    "MCP_HEADER_SESSION_ID",
+    "MCP_PROTOCOL_VERSION",
+    "MCP_PROTOCOL_VERSION_LEGACY",
+    "MCP_PROTOCOL_VERSION_PRIOR",
     "MICROVM_AWS_LAMBDA_PROVIDER_ID",
     "MICROVM_CONTRACT_NAME",
     "MICROVM_CONTRACT_VERSION",
@@ -473,6 +729,13 @@ __all__ = [
     "MICROVM_SESSION_REGISTRY_MODEL_NAME",
     "MICROVM_SESSION_REGISTRY_TABLE_ENV",
     "MICROVM_SESSION_REGISTRY_TABLE_NAME",
+    "OBJECTSTORE_ERROR_INVALID_ENCRYPTION_CONFIG",
+    "OBJECTSTORE_ERROR_INVALID_GET_LIMIT",
+    "OBJECTSTORE_ERROR_INVALID_REF",
+    "OBJECTSTORE_ERROR_INVALID_STORE_CONFIG",
+    "OBJECTSTORE_ERROR_NOT_FOUND",
+    "OBJECTSTORE_ERROR_OBJECT_TOO_LARGE",
+    "OBJECTSTORE_ERROR_UNSUPPORTED_OPERATION",
     "OPERATION_AUTH_TOKEN",
     "OPERATION_GET",
     "OPERATION_LIST",
@@ -482,6 +745,9 @@ __all__ = [
     "OPERATION_SHELL_TOKEN",
     "OPERATION_SUSPEND",
     "OPERATION_TERMINATE",
+    "S3_ENCRYPTION_BUCKET_DEFAULT",
+    "S3_ENCRYPTION_KMS",
+    "S3_ENCRYPTION_S3_MANAGED",
     "STATE_FAILED",
     "STATE_IMAGE_PREPARED",
     "STATE_IMAGE_PREPARING",
@@ -501,6 +767,13 @@ __all__ = [
     "STATE_TERMINATING",
     "STATE_VALIDATED",
     "STATE_VALIDATING",
+    "VALIDATION_RULE_ENUM",
+    "VALIDATION_RULE_MAX",
+    "VALIDATION_RULE_MAX_LENGTH",
+    "VALIDATION_RULE_MIN",
+    "VALIDATION_RULE_MIN_LENGTH",
+    "VALIDATION_RULE_PATTERN",
+    "VALIDATION_RULE_REQUIRED",
     "AWSLambdaMicroVMClient",
     "AWSLambdaMicroVMProvider",
     "App",
@@ -510,14 +783,28 @@ __all__ = [
     "AppSyncResolverInfo",
     "AppSyncResolverRequest",
     "AppTheoryError",
+    "AuthorizationServerMetadata",
+    "BearerTokenClaims",
+    "BearerTokenClaimsValidator",
+    "BearerTokenRecord",
+    "BearerTokenValidationOptions",
+    "BearerTokenValidator",
+    "BindConfig",
+    "BindField",
     "CORSConfig",
     "Clock",
     "CloudWatchLogsSubscription",
     "CloudWatchLogsSubscriptionLogEvent",
     "CloudWatchLogsSubscriptionSummary",
     "Context",
+    "DynamicClientRegistrationPolicy",
+    "DynamicClientRegistrationRequest",
+    "DynamicClientRegistrationResponse",
     "DynamoDBStreamRecordSummary",
     "DynamoJobLedger",
+    "DynamoMcpStreamStore",
+    "DynamoMcpTaskStore",
+    "EMFMetricSink",
     "EnvJobsTableName",
     "EventBridgeScheduledWorkloadResultSummary",
     "EventBridgeScheduledWorkloadSummary",
@@ -526,6 +813,7 @@ __all__ = [
     "EventContext",
     "FakeMicroVMClient",
     "FakeMicroVMProvider",
+    "FakeObjectStore",
     "FakeWebSocketClientFactory",
     "FakeWebSocketManagementClient",
     "IDGenerator",
@@ -553,6 +841,60 @@ __all__ = [
     "LoggingProfileValidationError",
     "ManualClock",
     "ManualIdGenerator",
+    "McpContentBlock",
+    "McpEventNotFoundError",
+    "McpJSONRecord",
+    "McpJSONValue",
+    "McpPromptArgument",
+    "McpPromptDef",
+    "McpPromptHandler",
+    "McpPromptMessage",
+    "McpPromptRegistry",
+    "McpPromptResult",
+    "McpRPCError",
+    "McpRPCRequest",
+    "McpRPCResponse",
+    "McpRequestID",
+    "McpResourceContent",
+    "McpResourceContext",
+    "McpResourceDef",
+    "McpResourceHandler",
+    "McpResourceRegistry",
+    "McpResourceTemplateDef",
+    "McpSSEEvent",
+    "McpServer",
+    "McpServerOptions",
+    "McpSession",
+    "McpSessionNotFoundError",
+    "McpSessionStore",
+    "McpStreamEvent",
+    "McpStreamNotFoundError",
+    "McpStreamStore",
+    "McpStreamingToolHandler",
+    "McpTask",
+    "McpTaskInvalidCursorError",
+    "McpTaskListRequest",
+    "McpTaskListResult",
+    "McpTaskLookup",
+    "McpTaskNotFoundError",
+    "McpTaskRecord",
+    "McpTaskRuntimeOptions",
+    "McpTaskStatus",
+    "McpTaskStore",
+    "McpTaskSupport",
+    "McpTaskTerminalError",
+    "McpTestHarness",
+    "McpTestResult",
+    "McpTestSSEFrame",
+    "McpToolContext",
+    "McpToolDef",
+    "McpToolExecution",
+    "McpToolHandler",
+    "McpToolRegistry",
+    "McpToolResult",
+    "MemoryMcpSessionStore",
+    "MemoryMcpStreamStore",
+    "MemoryMcpTaskStore",
     "MemoryMicroVMSessionRegistry",
     "MicroVMAuthContext",
     "MicroVMClientCall",
@@ -601,15 +943,36 @@ __all__ = [
     "MicroVMSessionStatus",
     "MicroVMSessionTokenMetadata",
     "NoOpLogger",
+    "OAuthBearerError",
+    "ObjectRef",
+    "ObjectStore",
+    "ObjectStoreCall",
+    "ObjectStoreDeleteInput",
+    "ObjectStoreError",
+    "ObjectStoreGetInput",
+    "ObjectStoreGetOutput",
+    "ObjectStoreOperation",
+    "ObjectStorePutInput",
     "ObservabilityHooks",
+    "OpenAPIFieldSpec",
+    "OpenAPIRequestSpec",
+    "OpenAPIResponseSpec",
+    "OpenAPIRouteSpec",
+    "OpenAPISpec",
+    "OpenAPIValidationRule",
     "PolicyDecision",
     "ProfileLogger",
     "ProfileLoggerOptions",
+    "ProtectedResourceMetadata",
     "RealClock",
     "RealIdGenerator",
     "ReconstructingMicroVMSessionRegistry",
     "Request",
+    "RequireBearerTokenOptions",
     "Response",
+    "S3EncryptionConfig",
+    "S3EncryptionMode",
+    "S3ObjectStoreConfig",
     "SSEEvent",
     "SourceProvenance",
     "StreamResult",
@@ -617,10 +980,18 @@ __all__ = [
     "TableTheoryMicroVMSessionRegistry",
     "TestEnv",
     "TimeoutConfig",
+    "ValidationFieldError",
+    "ValidationRule",
     "WebSocketCall",
     "WebSocketContext",
+    "authorization_server_metadata_handler",
     "base_name",
+    "bearer_token_claims_from_context",
+    "bearer_token_from_headers",
     "binary",
+    "bind_handler",
+    "bind_request",
+    "body",
     "build_alb_target_group_request",
     "build_apigw_v2_request",
     "build_appsync_event",
@@ -636,27 +1007,37 @@ __all__ = [
     "cache_control_isr",
     "cache_control_ssg",
     "cache_control_ssr",
+    "canonical_resource_url",
+    "canonicalize_issuer_url",
+    "claude_dynamic_client_registration_policy",
     "client_ip",
     "cloudwatch_logs_subscription_data",
     "create_app",
     "create_aws_lambda_microvm_client",
     "create_aws_lambda_microvm_provider",
+    "create_emf_metric_sink",
     "create_fake_microvm_client",
     "create_fake_microvm_provider",
+    "create_fake_object_store",
     "create_fake_websocket_client_factory",
     "create_kinesis_json_record",
+    "create_mcp_server",
+    "create_mcp_test_harness",
     "create_memory_microvm_session_registry",
     "create_microvm_controller",
     "create_microvm_lifecycle_adapter",
     "create_microvm_registry_client",
     "create_real_microvm_controller",
     "create_reconstructing_microvm_session_registry",
+    "create_s3_object_store",
     "create_tabletheory_microvm_session_registry",
     "create_test_env",
     "decode_cloudwatch_logs_subscription",
     "decode_logging_profile_json",
     "default_jobs_config",
     "default_logging_profile",
+    "default_mcp_stream_model",
+    "default_mcp_task_model",
     "default_microvm_controller_contract",
     "default_microvm_lifecycle_contract",
     "default_microvm_operation_contract",
@@ -668,8 +1049,14 @@ __all__ = [
     "etag",
     "event_bridge_pattern",
     "event_bridge_rule",
+    "fixed_mcp_id_generator",
+    "format_duration",
     "format_rfc3339_nano",
+    "generate_openapi",
+    "generate_openapi_json",
     "get_logger",
+    "header",
+    "hooks_from_emf_metric_sink",
     "hooks_from_logger",
     "hooks_from_profile_logger",
     "html",
@@ -690,6 +1077,8 @@ __all__ = [
     "mask_first_last",
     "mask_first_last4",
     "matches_if_none_match",
+    "max_length",
+    "max_value",
     "microvm_session_from_registry_record",
     "microvm_session_key",
     "microvm_session_record_to_registry_record",
@@ -698,23 +1087,43 @@ __all__ = [
     "microvm_session_registry_sort_key",
     "microvm_session_registry_table_name",
     "microvm_session_token_metadata_from_provider_token",
+    "min_length",
+    "min_value",
+    "new_authorization_server_metadata",
     "new_job_ledger_error",
+    "new_memory_bearer_token_validator",
+    "new_pkce_code_verifier",
+    "new_protected_resource_metadata",
     "normalize_dynamodb_stream_record",
     "normalize_eventbridge_scheduled_workload",
     "normalize_eventbridge_workload_envelope",
     "normalize_stage",
+    "one_of",
     "origin_url",
     "original_host",
     "original_uri",
+    "parse_mcp_test_sse_frames",
+    "parse_object_ref",
+    "path",
+    "pattern",
     "payment_xml_patterns",
+    "pkce_challenge_s256",
+    "pkce_verify_s256",
+    "protected_resource_metadata_handler",
+    "protected_resource_www_authenticate",
+    "query",
     "rapid_connect_xml_patterns",
     "reconstruct_microvm_session_record",
     "register_controller_routes",
     "register_microvm_controller_routes",
     "report_kinesis_put_records_failures",
+    "require_bearer_token_middleware",
     "require_eventbridge_workload_envelope",
+    "required",
     "required_forbidden_microvm_operation_fields",
+    "resource_metadata_url_from_mcp_endpoint",
     "resource_name",
+    "rfc9728_resource_metadata_url",
     "safe_json_for_html",
     "sanitize_error_envelope",
     "sanitize_field_value",
@@ -723,6 +1132,7 @@ __all__ = [
     "sanitize_json_value",
     "sanitize_log_string",
     "sanitize_xml",
+    "sequence_mcp_id_generator",
     "set_logger",
     "sse",
     "sse_event_stream",
@@ -730,6 +1140,8 @@ __all__ = [
     "text",
     "timeout_middleware",
     "unix_seconds",
+    "unsupported_object_store_operation",
+    "validate_dynamic_client_registration_request",
     "validate_logging_profile",
     "validate_microvm_controller_contract",
     "validate_microvm_controller_request",
@@ -748,6 +1160,11 @@ __all__ = [
     "validate_microvm_session_registry_record",
     "validate_microvm_session_status",
     "validate_microvm_session_token_metadata",
+    "validate_object_ref",
+    "validate_or_raise",
+    "validate_pkce_code_verifier",
+    "validate_value",
+    "validation_error",
     "vary",
     "wrap_job_ledger_error",
 ]

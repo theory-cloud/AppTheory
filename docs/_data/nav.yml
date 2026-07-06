@@ -33,6 +33,7 @@ groups:
     items:
       - { id: feature-http,           title: HTTP Runtime (P0–P2),    url: /features/http-runtime/,      icon: layers,       tag: ga }
       - { id: feature-source,         title: Source Provenance,       url: /features/source-provenance/, icon: shield-check }
+      - { id: feature-observability,  title: Observability Hooks,     url: /features/observability/,     icon: activity }
       - { id: feature-logging,        title: Logging Profiles,        url: /features/logging-profiles/,  icon: activity }
       - { id: feature-sanitization,   title: Sanitization,            url: /features/sanitization/,      icon: shield }
 
@@ -74,6 +75,8 @@ groups:
     items:
       - { id: testing-guide,          title: Testing,                 url: /testing-guide/,              icon: check }
       - { id: troubleshooting,        title: Troubleshooting,         url: /troubleshooting/,            icon: life-buoy }
+      - { id: operations,             title: Operations,              url: /guides/operations/,         icon: activity,     tag: new }
+      - { id: dependency-automation, title: Dependency Automation,  url: /dependency-automation/,     icon: refresh-cw }
       - { id: release-process,        title: Release Process,         url: /release-process/,            icon: tag }
       - { id: development-guidelines, title: Development Guidelines,  url: /development-guidelines/,     icon: check-square }
 
@@ -81,6 +84,7 @@ groups:
     items:
       - { id: ref-contract,           title: Contract Fixtures,       url: /reference/contract-fixtures/, icon: list-checks, tag: ga }
       - { id: ref-events,             title: Event Shape Dispatch,    url: /reference/event-shapes/,      icon: file-text }
+      - { id: ref-llm-faq,           title: LLM FAQ,                 url: /llm-faq/,                 icon: bot }
 
 # =============================================================
 # Linear ordering for prev / next pager
@@ -121,10 +125,13 @@ order:
   - mig-appsync
   - testing-guide
   - troubleshooting
+  - operations
+  - dependency-automation
   - release-process
   - development-guidelines
   - ref-contract
   - ref-events
+  - ref-llm-faq
 
 # =============================================================
 # URL → page-id map for fast lookups in layouts
@@ -141,6 +148,7 @@ url_to_id:
   /runtimes/python/:                            runtime-py
   /features/http-runtime/:                      feature-http
   /features/source-provenance/:                 feature-source
+  /features/observability/:                     feature-observability
   /features/logging-profiles/:                  feature-logging
   /features/sanitization/:                      feature-sanitization
   /features/event-workloads/:                   feature-events
@@ -167,7 +175,10 @@ url_to_id:
   /migration/appsync-lambda-resolvers/:         mig-appsync
   /testing-guide/:                              testing-guide
   /troubleshooting/:                            troubleshooting
+  /guides/operations/:                         operations
+  /dependency-automation/:                     dependency-automation
   /release-process/:                            release-process
   /development-guidelines/:                     development-guidelines
   /reference/contract-fixtures/:                ref-contract
   /reference/event-shapes/:                     ref-events
+  /llm-faq/:                                     ref-llm-faq

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify the MicroVM consumer conformance harness and dry-run fixtures.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

@@ -2,25 +2,31 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass, field
+from typing import Any
 
 from apptheory.errors import AppError
 from apptheory.source_provenance import SourceProvenance, normalize_source_provenance, unknown_source_provenance
+from apptheory.trace_context import extract_trace_id_from_headers
 from apptheory.util import canonicalize_headers, clone_query, normalize_path, parse_cookies, to_bytes
 
 
 @dataclass(slots=True)
 class Request:
+    """Normalized AppTheory request consumed by the runtime."""
+
     method: str
     path: str
     query: dict[str, list[str]] = field(default_factory=dict)
-    headers: dict[str, object] = field(default_factory=dict)
+    headers: dict[str, Any] = field(default_factory=dict)
     cookies: dict[str, str] = field(default_factory=dict)
-    body: object = b""
+    body: Any = b""
     is_base64: bool = False
     source_provenance: SourceProvenance = field(default_factory=unknown_source_provenance)
+    trace_id: str = ""
 
 
 def normalize_request(req: Request) -> Request:
+    """Normalize a request without enforcing a byte limit."""
     return normalize_request_with_max_bytes(req, 0)
 
 
@@ -54,6 +60,7 @@ def _validated_base64_decoded_length(body: bytes) -> int:
 
 
 def normalize_request_with_max_bytes(req: Request, max_request_bytes: int = 0) -> Request:
+    """Normalize a request and fail closed when the decoded body exceeds the limit."""
     method = str(req.method or "").strip().upper()
     path = normalize_path(req.path)
     query = clone_query(req.query)
@@ -78,4 +85,5 @@ def normalize_request_with_max_bytes(req: Request, max_request_bytes: int = 0) -
         body=body,
         is_base64=is_base64,
         source_provenance=normalize_source_provenance(req.source_provenance),
+        trace_id=extract_trace_id_from_headers(headers),
     )

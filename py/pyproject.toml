@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "apptheory"
 version = "1.15.2"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 description = "AppTheory — multi-language serverless application framework (Python package)"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
-  "tabletheory-py @ https://github.com/theory-cloud/TableTheory/releases/download/v1.10.1/tabletheory_py-1.10.1-py3-none-any.whl#sha256=94c3999796309721f6b0bfc073b71ff8d44bcc685c646ab1225df1b13339685c",
+  "tabletheory-py @ https://github.com/theory-cloud/TableTheory/releases/download/v2.0.0/tabletheory_py-2.0.0-py3-none-any.whl#sha256=0a5859bdd33213715074b547cfd362698d6c1496c749a4ea6f31f84427dd03e4",
 ]
 
 [tool.setuptools]
@@ -20,9 +20,12 @@ package-dir = { "" = "src" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+apptheory = ["py.typed"]
+
 [tool.ruff]
 line-length = 120
-target-version = "py314"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [
@@ -55,3 +58,10 @@ max-complexity = 15
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.pyright]
+include = ["src/apptheory"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"

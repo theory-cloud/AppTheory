@@ -3,10 +3,12 @@ title: MCP Method Surface
 render_with_liquid: false
 ---
 
-# MCP (Model Context Protocol) Server (Go runtime)
+# MCP (Model Context Protocol) Method Surface
 
-This document describes AppTheory's MCP server implementation (`github.com/theory-cloud/apptheory/runtime/mcp`) for
-the Go runtime: transport behavior, JSON-RPC surface, registries, sessions, streaming, and test helpers.
+This document describes AppTheory's fixture-backed MCP server method surface: transport behavior, JSON-RPC methods,
+registries, sessions, streaming, and test helpers. Go implementation package paths such as
+`github.com/theory-cloud/apptheory/runtime/mcp` are listed where operators need source-level details; TypeScript and
+Python expose the matching runtime/test surfaces through their package API snapshots.
 
 If you're specifically integrating with Bedrock AgentCore, start with `docs/integrations/agentcore-mcp.md`.
 

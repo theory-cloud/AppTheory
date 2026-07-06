@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: regenerate checked-in jsii Go bindings for the CDK construct package.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -23,6 +24,10 @@ if [[ ! -d "cdk" ]]; then
   echo "update-cdk-generated: FAIL (missing cdk/)" >&2
   exit 1
 fi
+if [[ ! -f "cdk-go/go.mod" ]]; then
+  echo "update-cdk-generated: FAIL (missing cdk-go/go.mod)" >&2
+  exit 1
+fi
 if [[ ! -d "cdk-go/apptheorycdk" ]]; then
   echo "update-cdk-generated: FAIL (missing cdk-go/apptheorycdk/)" >&2
   exit 1
@@ -45,5 +50,6 @@ fi
 
 rsync -a --delete --exclude go.mod --exclude generated_sync_test.go "${tmp_dir}/apptheorycdk/" "cdk-go/apptheorycdk/"
 find cdk-go/apptheorycdk -type f -name '*.go' -print0 | xargs -0 gofmt -w
+(cd cdk-go && go mod tidy >/dev/null)
 
 echo "update-cdk-generated: PASS"

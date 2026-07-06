@@ -206,8 +206,29 @@ class TestApp(unittest.TestCase):
 
     def test_handle_strict_rejects_invalid_patterns(self) -> None:
         app: App = create_app(tier="p0")
-        with self.assertRaises(ValueError):
+        with self.assertRaises(AppTheoryError) as cm:
             app.handle_strict("GET", "/{proxy+}/x", _ok)
+        self.assertEqual(cm.exception.code, "app.bad_request")
+        self.assertEqual(cm.exception.status_code, 400)
+
+    def test_handle_fails_closed_on_invalid_registrations(self) -> None:
+        cases = [
+            ("invalid pattern", lambda: create_app(tier="p0").get("/x/{}", _ok), "invalid route pattern"),
+            (
+                "duplicate route",
+                lambda: create_app(tier="p0").get("/dup/{id}", _ok).handle("get", "/dup/:id", _ok),
+                "duplicate route",
+            ),
+            ("nil handler", lambda: create_app(tier="p0").get("/nil", None), "route handler is nil"),
+        ]
+
+        for name, fn, message in cases:
+            with self.subTest(name=name):
+                with self.assertRaises(AppTheoryError) as cm:
+                    fn()
+                self.assertEqual(cm.exception.code, "app.bad_request")
+                self.assertEqual(cm.exception.status_code, 400)
+                self.assertIn(message, cm.exception.message)
 
     def test_credentialed_cors_requires_allowlist(self) -> None:
         app: App = create_app(tier="p1", cors=CORSConfig(allow_credentials=True))

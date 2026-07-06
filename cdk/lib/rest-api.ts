@@ -1,13 +1,24 @@
 import * as apigw from "aws-cdk-lib/aws-apigateway";
 import type * as lambda from "aws-cdk-lib/aws-lambda";
+import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import { Construct } from "constructs";
 
+import { configureRestApiRegionalWaf } from "./private/rest-api-waf";
 import { markRestApiStageRouteAsStreaming } from "./private/rest-api-streaming";
 import { trimRepeatedChar } from "./private/string-utils";
+import type { AppTheoryRegionalWafOptions } from "./regional-waf";
 
 export interface AppTheoryRestApiProps {
   readonly handler: lambda.IFunction;
   readonly apiName?: string;
+  /**
+   * Regional WAF attachment for the REST API deployment stage. Set to true for
+   * an AppTheory-managed WebACL, or provide options to reuse an existing
+   * regional WebACL.
+   * @default undefined
+   */
+  readonly waf?: boolean | AppTheoryRegionalWafOptions;
+
   /**
    * Whether API Gateway console test invocations should be granted Lambda invoke permissions.
    *
@@ -37,6 +48,8 @@ export interface AppTheoryRestApiRouteOptions {
 
 export class AppTheoryRestApi extends Construct {
   public readonly api: apigw.RestApi;
+  public readonly webAcl?: wafv2.CfnWebACL;
+  public readonly wafAssociation?: wafv2.CfnWebACLAssociation;
   private readonly handler: lambda.IFunction;
   private readonly allowTestInvoke: boolean;
   private readonly scopePermissionToMethod: boolean;
@@ -58,6 +71,18 @@ export class AppTheoryRestApi extends Construct {
     });
     this.api.root.addMethod("ANY", defaultIntegration);
     this.api.root.addResource("{proxy+}").addMethod("ANY", defaultIntegration);
+
+    if (props.waf) {
+      const waf = configureRestApiRegionalWaf(
+        this,
+        this.api,
+        this.api.deploymentStage,
+        props.waf,
+        props.apiName ?? "AppTheoryRestApi",
+      );
+      (this as { webAcl?: wafv2.CfnWebACL }).webAcl = waf.webAcl;
+      (this as { wafAssociation?: wafv2.CfnWebACLAssociation }).wafAssociation = waf.wafAssociation;
+    }
   }
 
   addRoute(path: string, methods: string[] = ["ANY"], options: AppTheoryRestApiRouteOptions = {}): void {

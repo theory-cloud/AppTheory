@@ -388,4 +388,11 @@ type AppTheoryFunctionProps struct {
 	//
 	// Use `Runtime.FROM_IMAGE` when defining a function from a Docker image.
 	Runtime awslambda.Runtime `field:"required" json:"runtime" yaml:"runtime"`
+	// Optional AppTheory-managed Lambda alias.
+	//
+	// When set, the alias points at the function's current version and can also
+	// carry provisioned concurrency and CodeDeploy traffic shifting.
+	// Default: undefined.
+	//
+	Alias *AppTheoryFunctionAliasOptions `field:"optional" json:"alias" yaml:"alias"`
 }

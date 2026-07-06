@@ -6,3 +6,4 @@ export declare class RateLimiterError extends Error {
 }
 export declare function newError(type: ErrorType, message: string): RateLimiterError;
 export declare function wrapError(cause: unknown, type: ErrorType, message: string): RateLimiterError;
+//# sourceMappingURL=errors.d.ts.map

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -19,10 +20,13 @@ const (
 	bindErrorMessageInvalidBinding = "invalid request binding"
 	bindErrorMessageValidation     = "validation failed"
 	bindErrorMessageStructRequired = "request binding requires a struct target"
+	bindSourceBody                 = "body"
 	bindSourceQuery                = "query"
 	bindSourcePath                 = "path"
 	bindSourceHeader               = "header"
 )
+
+const maxPortableInteger int64 = 1<<53 - 1
 
 // BindConfig controls how typed request binding populates a request model.
 type BindConfig[Req any] struct {
@@ -66,17 +70,22 @@ func BindHandlerContext[Req, Resp any](config BindConfig[Req], handler func(cont
 // BindRequest populates Req from the configured request sources.
 func BindRequest[Req any](ctx *Context, config BindConfig[Req]) (Req, error) {
 	var req Req
+	presence := newValidationPresence()
 
 	if config.Body {
-		if err := bindBody(&req, ctx, config.StrictJSON); err != nil {
+		if err := bindBody(&req, ctx, config.StrictJSON, presence); err != nil {
 			return req, err
 		}
 	}
 
 	if config.Path || config.Query || config.Headers {
-		if err := bindTaggedRequestFields(&req, ctx, config); err != nil {
+		if err := bindTaggedRequestFields(&req, ctx, config, presence); err != nil {
 			return req, err
 		}
+	}
+
+	if err := validateBoundRequestWithPresence(req, presence); err != nil {
+		return req, err
 	}
 
 	if config.Validate != nil {
@@ -88,34 +97,271 @@ func BindRequest[Req any](ctx *Context, config BindConfig[Req]) (Req, error) {
 	return req, nil
 }
 
-func bindBody(target any, ctx *Context, strict bool) error {
+func bindBody(target any, ctx *Context, strict bool, presence *validationPresence) error {
 	if ctx == nil || len(ctx.Request.Body) == 0 {
 		return bindBadRequest(bindErrorMessageEmptyBody, nil)
 	}
 
 	if strict {
-		decoder := json.NewDecoder(bytes.NewReader(ctx.Request.Body))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(target); err != nil {
-			return bindBadRequest(errorMessageInvalidJSON, err)
-		}
-		var extra any
-		if err := decoder.Decode(&extra); err != io.EOF {
-			if err == nil {
-				err = fmt.Errorf("multiple json values")
-			}
-			return bindBadRequest(errorMessageInvalidJSON, err)
-		}
-		return nil
+		return bindStrictBody(target, ctx.Request.Body, presence)
 	}
 
+	if err := validateBodyJSONObject(ctx.Request.Body); err != nil {
+		return err
+	}
 	if err := json.Unmarshal(ctx.Request.Body, target); err != nil {
+		return bindBadRequest(errorMessageInvalidJSON, err)
+	}
+	recordBodyPresence(target, ctx.Request.Body, presence)
+	return nil
+}
+
+type orderedRawJSONObject struct {
+	keys   []string
+	values map[string]json.RawMessage
+}
+
+func decodeOrderedRawJSONObject(decoder *json.Decoder) (orderedRawJSONObject, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return orderedRawJSONObject{}, err
+	}
+	delim, isDelim := token.(json.Delim)
+	if !isDelim || delim != '{' {
+		return orderedRawJSONObject{}, fmt.Errorf("request body must be a JSON object")
+	}
+
+	payload := orderedRawJSONObject{
+		values: make(map[string]json.RawMessage),
+	}
+	for decoder.More() {
+		token, err = decoder.Token()
+		if err != nil {
+			return orderedRawJSONObject{}, err
+		}
+		key, isString := token.(string)
+		if !isString {
+			return orderedRawJSONObject{}, fmt.Errorf("request body object key must be a string")
+		}
+
+		var value json.RawMessage
+		if decodeErr := decoder.Decode(&value); decodeErr != nil {
+			return orderedRawJSONObject{}, decodeErr
+		}
+		if _, exists := payload.values[key]; !exists {
+			payload.keys = append(payload.keys, key)
+		}
+		payload.values[key] = value
+	}
+
+	token, err = decoder.Token()
+	if err != nil {
+		return orderedRawJSONObject{}, err
+	}
+	delim, isDelim = token.(json.Delim)
+	if !isDelim || delim != '}' {
+		return orderedRawJSONObject{}, fmt.Errorf("request body must be a JSON object")
+	}
+	return payload, nil
+}
+
+func bindStrictBody(target any, body []byte, presence *validationPresence) error {
+	root := prepareBindTarget(reflect.ValueOf(target))
+	if !root.IsValid() || root.Kind() != reflect.Struct {
+		return decodeStrictBodyDirect(target, body)
+	}
+
+	fields := strictBodyFields(root)
+	presenceFields := bodyPresenceFields(root)
+	for _, fieldName := range presenceFields {
+		presence.track(fieldName)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	payload, err := decodeOrderedRawJSONObject(decoder)
+	if err != nil {
+		return bindBodyDecodeError(err)
+	}
+	if err := rejectTrailingJSONValue(decoder); err != nil {
+		return err
+	}
+
+	for _, key := range payload.keys {
+		field, ok := fields[key]
+		if !ok {
+			return bindSourceError(bindSourceBody, key, "", fmt.Errorf("json: unknown field %q", key))
+		}
+		if fieldName, exists := presenceFields[key]; exists {
+			presence.mark(fieldName, !jsonRawMessageIsNull(payload.values[key]))
+		}
+		if err := json.Unmarshal(payload.values[key], field.Addr().Interface()); err != nil {
+			return bindBadRequest(errorMessageInvalidJSON, err)
+		}
+	}
+	return nil
+}
+
+func validateBodyJSONObject(body []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if _, err := decodeOrderedRawJSONObject(decoder); err != nil {
+		return bindBodyDecodeError(err)
+	}
+	return rejectTrailingJSONValue(decoder)
+}
+
+func decodeStrictBodyDirect(target any, body []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return bindBodyDecodeError(err)
+	}
+	return rejectTrailingJSONValue(decoder)
+}
+
+func rejectTrailingJSONValue(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			err = fmt.Errorf("multiple json values")
+		}
 		return bindBadRequest(errorMessageInvalidJSON, err)
 	}
 	return nil
 }
 
-func bindTaggedRequestFields[Req any](target *Req, ctx *Context, config BindConfig[Req]) error {
+func strictBodyFields(root reflect.Value) map[string]reflect.Value {
+	fields := make(map[string]reflect.Value)
+	collectStrictBodyFields(root, fields)
+	return fields
+}
+
+func bodyPresenceFields(root reflect.Value) map[string]string {
+	fields := make(map[string]string)
+	collectBodyPresenceFields(root, fields)
+	return fields
+}
+
+func collectStrictBodyFields(target reflect.Value, fields map[string]reflect.Value) {
+	targetType := target.Type()
+	for i := 0; i < target.NumField(); i++ {
+		fieldType := targetType.Field(i)
+		fieldValue := target.Field(i)
+
+		if fieldType.PkgPath != "" && !fieldType.Anonymous {
+			continue
+		}
+		if hasNonBodyBindTag(fieldType) {
+			continue
+		}
+
+		name, skip := jsonBodyFieldName(fieldType)
+		if skip {
+			continue
+		}
+
+		if fieldType.Anonymous && strings.TrimSpace(fieldType.Tag.Get("json")) == "" {
+			embedded := prepareFieldValue(fieldValue)
+			if embedded.IsValid() && embedded.Kind() == reflect.Struct {
+				collectStrictBodyFields(embedded, fields)
+				continue
+			}
+		}
+
+		if !fieldValue.CanSet() {
+			continue
+		}
+		fields[name] = fieldValue
+	}
+}
+
+func collectBodyPresenceFields(target reflect.Value, fields map[string]string) {
+	targetType := target.Type()
+	for i := 0; i < target.NumField(); i++ {
+		fieldType := targetType.Field(i)
+		fieldValue := target.Field(i)
+
+		if fieldType.PkgPath != "" && !fieldType.Anonymous {
+			continue
+		}
+		if hasNonBodyBindTag(fieldType) {
+			continue
+		}
+
+		name, skip := jsonBodyFieldName(fieldType)
+		if skip {
+			continue
+		}
+
+		if fieldType.Anonymous && strings.TrimSpace(fieldType.Tag.Get("json")) == "" {
+			embedded := prepareFieldValue(fieldValue)
+			if embedded.IsValid() && embedded.Kind() == reflect.Struct {
+				collectBodyPresenceFields(embedded, fields)
+				continue
+			}
+		}
+
+		fields[name] = validationFieldName(fieldType)
+	}
+}
+
+func recordBodyPresence(target any, body []byte, presence *validationPresence) {
+	if presence == nil {
+		return
+	}
+
+	root := prepareBindTarget(reflect.ValueOf(target))
+	if !root.IsValid() || root.Kind() != reflect.Struct {
+		return
+	}
+
+	fields := bodyPresenceFields(root)
+	for _, fieldName := range fields {
+		presence.track(fieldName)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	payload, err := decodeOrderedRawJSONObject(decoder)
+	if err != nil {
+		return
+	}
+
+	for key, raw := range payload.values {
+		if fieldName, ok := fields[key]; ok {
+			presence.mark(fieldName, !jsonRawMessageIsNull(raw))
+		}
+	}
+}
+
+func jsonRawMessageIsNull(raw json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+}
+
+func hasNonBodyBindTag(field reflect.StructField) bool {
+	return bindTagValue(field, "path") != "" ||
+		bindTagValue(field, "query") != "" ||
+		bindTagValue(field, "header") != ""
+}
+
+func jsonBodyFieldName(field reflect.StructField) (string, bool) {
+	value := strings.TrimSpace(field.Tag.Get("json"))
+	if value == "-" {
+		return "", true
+	}
+	if idx := strings.IndexByte(value, ','); idx >= 0 {
+		value = value[:idx]
+	}
+	value = strings.TrimSpace(value)
+	if value != "" {
+		return value, false
+	}
+	return field.Name, false
+}
+
+func bindTaggedRequestFields[Req any](
+	target *Req,
+	ctx *Context,
+	config BindConfig[Req],
+	presence *validationPresence,
+) error {
 	if target == nil {
 		return bindBadRequest(bindErrorMessageStructRequired, nil)
 	}
@@ -125,7 +371,7 @@ func bindTaggedRequestFields[Req any](target *Req, ctx *Context, config BindConf
 		return bindBadRequest(bindErrorMessageStructRequired, nil)
 	}
 
-	return bindStructFields(root, ctx, config.bindSources())
+	return bindStructFields(root, ctx, config.bindSources(), config.bindSourceNames(), presence)
 }
 
 func prepareBindTarget(v reflect.Value) reflect.Value {
@@ -152,7 +398,13 @@ func prepareBindTarget(v reflect.Value) reflect.Value {
 
 type bindSourceResolver func(reflect.StructField, *Context) ([]string, bindTag, bool)
 
-func bindStructFields(target reflect.Value, ctx *Context, sources []bindSourceResolver) error {
+func bindStructFields(
+	target reflect.Value,
+	ctx *Context,
+	sources []bindSourceResolver,
+	sourceNames []string,
+	presence *validationPresence,
+) error {
 	targetType := target.Type()
 	for i := 0; i < target.NumField(); i++ {
 		fieldType := targetType.Field(i)
@@ -165,7 +417,7 @@ func bindStructFields(target reflect.Value, ctx *Context, sources []bindSourceRe
 		if fieldType.Anonymous {
 			embedded := prepareFieldValue(fieldValue)
 			if embedded.IsValid() && embedded.Kind() == reflect.Struct {
-				if err := bindStructFields(embedded, ctx, sources); err != nil {
+				if err := bindStructFields(embedded, ctx, sources, sourceNames, presence); err != nil {
 					return err
 				}
 				continue
@@ -176,7 +428,12 @@ func bindStructFields(target reflect.Value, ctx *Context, sources []bindSourceRe
 			continue
 		}
 
+		if hasEnabledBindSource(fieldType, sourceNames) {
+			presence.track(validationFieldName(fieldType))
+		}
+
 		if values, tag, ok := resolveBindValues(fieldType, ctx, sources); ok {
+			presence.mark(validationFieldName(fieldType), true)
 			if err := setBoundField(fieldValue, values); err != nil {
 				return bindSourceError(tag.source, tag.name, fieldType.Name, err)
 			}
@@ -184,6 +441,15 @@ func bindStructFields(target reflect.Value, ctx *Context, sources []bindSourceRe
 	}
 
 	return nil
+}
+
+func hasEnabledBindSource(field reflect.StructField, sourceNames []string) bool {
+	for _, name := range sourceNames {
+		if bindTagValue(field, name) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 type bindTag struct {
@@ -263,36 +529,84 @@ func parseBoundValue(field reflect.Value, raw string) error {
 		return nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		if field.Type() == reflect.TypeOf(time.Duration(0)) {
-			v, err := time.ParseDuration(raw)
-			if err != nil {
-				return err
-			}
-			field.SetInt(int64(v))
-			return nil
+			return setBoundDuration(field, raw)
 		}
-		v, err := strconv.ParseInt(raw, 10, field.Type().Bits())
-		if err != nil {
-			return err
-		}
-		field.SetInt(v)
-		return nil
+		return setBoundSignedInteger(field, raw)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		v, err := strconv.ParseUint(raw, 10, field.Type().Bits())
-		if err != nil {
-			return err
-		}
-		field.SetUint(v)
-		return nil
+		return setBoundUnsignedInteger(field, raw)
 	case reflect.Float32, reflect.Float64:
-		v, err := strconv.ParseFloat(raw, field.Type().Bits())
-		if err != nil {
-			return err
-		}
-		field.SetFloat(v)
-		return nil
+		return setBoundFloat(field, raw)
 	default:
 		return fmt.Errorf("unsupported field type %s", field.Type())
 	}
+}
+
+func setBoundDuration(field reflect.Value, raw string) error {
+	v, err := time.ParseDuration(raw)
+	if err != nil {
+		return err
+	}
+	if v%time.Microsecond != 0 {
+		return fmt.Errorf("duration precision below one microsecond is not portable")
+	}
+	field.SetInt(int64(v))
+	return nil
+}
+
+func setBoundSignedInteger(field reflect.Value, raw string) error {
+	v, err := strconv.ParseInt(raw, 10, field.Type().Bits())
+	if err != nil {
+		return err
+	}
+	if v < -maxPortableInteger || v > maxPortableInteger {
+		return fmt.Errorf("integer outside portable safe range")
+	}
+	field.SetInt(v)
+	return nil
+}
+
+func setBoundUnsignedInteger(field reflect.Value, raw string) error {
+	v, err := strconv.ParseUint(raw, 10, field.Type().Bits())
+	if err != nil {
+		return err
+	}
+	if v > uint64(maxPortableInteger) {
+		return fmt.Errorf("integer outside portable safe range")
+	}
+	field.SetUint(v)
+	return nil
+}
+
+func setBoundFloat(field reflect.Value, raw string) error {
+	v, err := strconv.ParseFloat(raw, field.Type().Bits())
+	if err != nil {
+		return err
+	}
+	if math.IsInf(v, 0) || math.IsNaN(v) {
+		return fmt.Errorf("invalid finite float")
+	}
+	field.SetFloat(v)
+	return nil
+}
+
+func bindBodyDecodeError(cause error) *AppTheoryError {
+	if name, ok := unknownJSONFieldName(cause); ok {
+		return bindSourceError(bindSourceBody, name, "", cause)
+	}
+	return bindBadRequest(errorMessageInvalidJSON, cause)
+}
+
+func unknownJSONFieldName(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	message := err.Error()
+	const prefix = "json: unknown field "
+	if !strings.HasPrefix(message, prefix) {
+		return "", false
+	}
+	name := strings.Trim(strings.TrimSpace(strings.TrimPrefix(message, prefix)), "\"")
+	return name, name != ""
 }
 
 func bindBadRequest(message string, cause error) *AppTheoryError {
@@ -311,11 +625,14 @@ func bindSourceError(source, name, field string, cause error) *AppTheoryError {
 	if strings.TrimSpace(field) != "" {
 		message = fmt.Sprintf("invalid %s binding for %s", source, field)
 	}
-	return bindBadRequest(message, cause).WithDetails(map[string]any{
+	details := map[string]any{
 		"source": source,
 		"name":   name,
-		"field":  field,
-	})
+	}
+	if strings.TrimSpace(field) != "" {
+		details["field"] = field
+	}
+	return bindBadRequest(message, cause).WithDetails(details)
 }
 
 func normalizeValidationError(err error) error {
@@ -323,6 +640,9 @@ func normalizeValidationError(err error) error {
 		return nil
 	}
 	if appErr, ok := AsAppTheoryError(err); ok {
+		if appErr.Code == errorCodeValidationFailed && appErr.StatusCode == 0 {
+			return appErr.WithStatusCode(422)
+		}
 		return appErr
 	}
 	var appErr *AppError
@@ -330,7 +650,7 @@ func normalizeValidationError(err error) error {
 		return AppTheoryErrorFromAppError(appErr).WithStatusCode(statusForErrorCode(appErr.Code))
 	}
 	return NewAppTheoryError(errorCodeValidationFailed, bindErrorMessageValidation).
-		WithStatusCode(400).
+		WithStatusCode(422).
 		WithCause(err)
 }
 
@@ -391,4 +711,18 @@ func (c BindConfig[Req]) bindSources() []bindSourceResolver {
 	}
 
 	return sources
+}
+
+func (c BindConfig[Req]) bindSourceNames() []string {
+	names := make([]string, 0, 3)
+	if c.Path {
+		names = append(names, bindSourcePath)
+	}
+	if c.Query {
+		names = append(names, bindSourceQuery)
+	}
+	if c.Headers {
+		names = append(names, bindSourceHeader)
+	}
+	return names
 }

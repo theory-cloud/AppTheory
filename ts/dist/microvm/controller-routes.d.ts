@@ -1,0 +1,23 @@
+import type { App } from "../app.js";
+import type { Context } from "../context.js";
+import type { Headers, Query, Response } from "../types.js";
+import { MicroVMSafeError, type MicroVMCommandName, type MicroVMControllerRequest, type MicroVMControllerResponse, type MicroVMControllerRouteTarget, type MicroVMProviderIdlePolicy, type MicroVMProviderPortScope, type MicroVMSessionSpec } from "./model.js";
+export declare function registerMicroVMControllerRoutes(app: App, controller: MicroVMControllerRouteTarget): App;
+export declare function registerControllerRoutes(app: App, controller: MicroVMControllerRouteTarget): App;
+export declare function microVMControllerRouteHandler(controller: MicroVMControllerRouteTarget, command: MicroVMCommandName): (ctx: Context) => Promise<Response>;
+export declare function microVMControllerRequestFromHTTP(ctx: Context, command: MicroVMCommandName): MicroVMControllerRequest | MicroVMSafeError;
+export declare function microVMControllerRoutePayload(ctx: Context): Record<string, unknown> | MicroVMSafeError;
+export declare function microVMControllerHTTPResponse(response: MicroVMControllerResponse): Response;
+export declare function microVMControllerHTTPStatus(err?: MicroVMSafeError): number;
+export declare function serializableMicroVMControllerResponse(response: MicroVMControllerResponse): Record<string, unknown>;
+export declare function firstHeaderValueFromMap(headers: Headers, name: string): string;
+export declare function firstQueryValue(query: Query, name: string): string;
+export declare function stringFromPayload(payload: Record<string, unknown>, key: string): string;
+export declare function stringListFromPayload(payload: Record<string, unknown>, key: string): string[];
+export declare function intFromPayload(payload: Record<string, unknown>, key: string): number;
+export declare function positiveIntFromPayload(payload: Record<string, unknown>, key: string): number;
+export declare function positiveIntFromString(value: string): number;
+export declare function sessionSpecFromPayload(payload: Record<string, unknown>): MicroVMSessionSpec;
+export declare function idlePolicyFromPayload(payload: Record<string, unknown>): MicroVMProviderIdlePolicy | undefined;
+export declare function portScopesFromPayload(payload: Record<string, unknown>): MicroVMProviderPortScope[];
+//# sourceMappingURL=controller-routes.d.ts.map

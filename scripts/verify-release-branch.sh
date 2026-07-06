@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify release branch names and source/target combinations are allowed.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
