@@ -10,8 +10,8 @@ an `AppTheoryHttpApi` in front of it:
 All three handlers expose the same routes and response shape:
 
 ```text
-GET /              -> { "message": "hello world", "runtime": "<lang>" }
-GET /hello/{name}  -> { "message": "hello {name}", "runtime": "<lang>" }
+GET /              -> { "message": "hello world", "runtime": "<lang>", "request_id": "...", "tenant_id": "" }
+GET /hello/{name}  -> { "message": "hello {name}", "runtime": "<lang>", "request_id": "...", "tenant_id": "" }
 ```
 
 The checked-in tests use the AppTheory testkit only; they do not call AWS.
@@ -97,3 +97,10 @@ The repository gate keeps this example deterministic without creating cloud reso
 `verify-testkit-examples.sh` runs the Go, TypeScript, and Python handler tests through the AppTheory testkit.
 `verify-cdk-synth.sh` synthesizes the CDK templates and compares deterministic hashes. It does not run
 `cdk bootstrap`, `cdk deploy`, or `cdk destroy`.
+
+The TypeScript and Python synth snapshots intentionally include framework source in their Lambda asset hashes:
+`ts/dist/index.js` for TypeScript and `py/src/apptheory/**` for Python. When a runtime change deliberately changes
+either input, refresh the hello-world synth snapshot in the same change instead of treating the drift as incidental.
+
+The future `theory-cli` on-ramp should wrap this same scaffold/synth/deploy/curl/destroy sequence. This example remains
+repo-local CDK guidance and does not implement cross-repo CLI behavior.

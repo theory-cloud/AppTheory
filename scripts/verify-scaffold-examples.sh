@@ -17,6 +17,9 @@ mkdir -p .codex/tmp
 work_root="$(mktemp -d "${repo_root}/.codex/tmp/apptheory-init.XXXXXX")"
 cleanup() {
   rm -rf "${work_root}"
+  # The Python scaffold verifies against the real repo-local package. Editable
+  # installs can materialize only these generated build metadata paths in the
+  # source tree, so cleanup stays explicit and harmless.
   rm -rf "${repo_root}/py/build" "${repo_root}/py/src/apptheory.egg-info"
 }
 trap cleanup EXIT
