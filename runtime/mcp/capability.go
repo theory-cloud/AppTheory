@@ -72,7 +72,7 @@ func (s *Server) addToolsCapability(protocolVersion string, capabilities map[str
 }
 
 func (s *Server) addResourcesCapability(protocolVersion string, capabilities map[string]any) {
-	if s.capabilities.Resources && protocolSupportsCapability(protocolVersion, capabilitySurfaceResources) && s.resourceRegistry.Len() > 0 {
+	if s.capabilities.Resources && protocolSupportsCapability(protocolVersion, capabilitySurfaceResources) && (s.resourceRegistry.Len() > 0 || s.resourceRegistry.templateLen() > 0) {
 		capabilities["resources"] = map[string]any{}
 	}
 }
@@ -127,7 +127,7 @@ func (s *Server) methodCapabilityEnabled(method string) bool {
 	switch method {
 	case methodToolsList, methodToolsCall:
 		return s.capabilities.Tools
-	case methodResourcesList, methodResourcesRead, methodResourcesSubscribe, methodResourcesUnsubscribe:
+	case methodResourcesList, methodResourcesRead, methodResourcesTemplatesList, methodResourcesSubscribe, methodResourcesUnsubscribe:
 		return s.capabilities.Resources
 	case methodPromptsList, methodPromptsGet:
 		return s.capabilities.Prompts

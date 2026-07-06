@@ -66,3 +66,4 @@ export interface Config {
     identifierLimits: Record<string, Limit>;
     resourceLimits: Record<string, Limit>;
 }
+//# sourceMappingURL=types.d.ts.map

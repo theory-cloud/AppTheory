@@ -26,7 +26,7 @@ from apptheory.jobs import (  # noqa: E402
     sanitize_error_envelope,
     sanitize_fields,
 )
-from theorydb_py import ConditionFailedError, NotFoundError, UpdateAdd, UpdateSetIfNotExists  # noqa: E402
+from tabletheory_py import ConditionFailedError, NotFoundError, UpdateAdd, UpdateSetIfNotExists  # noqa: E402
 
 
 class FakeTable:

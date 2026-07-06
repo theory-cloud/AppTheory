@@ -1,0 +1,36 @@
+{
+  "id": "p0.validation.binding_errors_precede_validation",
+  "tier": "p0",
+  "name": "Binding errors return canonical 400 before declarative validation runs",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/validate-query", "handler": "validate_profile_query" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/validate-query",
+      "query": { "age": ["not-an-int"] },
+      "headers": { "content-type": ["application/json"] },
+      "body": { "encoding": "utf8", "value": "{\"name\":\"Alice\"}" },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.bad_request",
+          "message": "invalid query binding for Age",
+          "status_code": 400,
+          "details": { "source": "query", "name": "age", "field": "Age" }
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

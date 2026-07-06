@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: copy the generated AppTheory docs subtree into the TheoryCloud publishing checkout.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

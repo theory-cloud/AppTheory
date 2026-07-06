@@ -9,6 +9,7 @@ import {
 import { normalizeResponse } from "./internal/response.js";
 import type { Headers, Response } from "./types.js";
 
+/** Creates a UTF-8 text response. */
 export function text(status: number, body: string): Response {
   return normalizeResponse({
     status,
@@ -19,6 +20,7 @@ export function text(status: number, body: string): Response {
   });
 }
 
+/** Creates a JSON response. */
 export function json(status: number, value: unknown): Response {
   let serialized: string;
   try {
@@ -36,6 +38,7 @@ export function json(status: number, value: unknown): Response {
   });
 }
 
+/** Creates a binary response with an optional content type. */
 export function binary(
   status: number,
   body: Uint8Array,
@@ -54,6 +57,7 @@ export function binary(
   });
 }
 
+/** Creates a UTF-8 HTML response. */
 export function html(status: number, body: Uint8Array | string): Response {
   return normalizeResponse({
     status,
@@ -83,6 +87,7 @@ async function* normalizeHTMLChunks(
   }
 }
 
+/** Creates a streaming HTML response. */
 export function htmlStream(
   status: number,
   chunks: StreamableHTMLChunks,
@@ -123,6 +128,7 @@ function sortKeysDeep(value: unknown): unknown {
   return out;
 }
 
+/** Serializes JSON for embedding inside HTML script contexts. */
 export function safeJSONForHTML(value: unknown): string {
   let serialized: string;
   try {
@@ -139,14 +145,17 @@ export function safeJSONForHTML(value: unknown): string {
     .replace(/\u2029/g, "\\u2029");
 }
 
+/** Returns the canonical private no-store cache policy for SSR. */
 export function cacheControlSSR(): string {
   return "private, no-store";
 }
 
+/** Returns the canonical long-lived shared cache policy for SSG. */
 export function cacheControlSSG(): string {
   return "public, max-age=0, s-maxage=31536000";
 }
 
+/** Returns the canonical shared cache policy for ISR. */
 export function cacheControlISR(
   revalidateSeconds: number,
   staleWhileRevalidateSeconds: number = 0,
@@ -164,6 +173,7 @@ export function cacheControlISR(
   return parts.join(", ");
 }
 
+/** Returns a strong SHA-256 ETag for response bytes. */
 export function etag(body: Uint8Array | string): string {
   const bytes = toBuffer(body);
   const hash = createHash("sha256").update(bytes).digest("hex");
@@ -179,6 +189,7 @@ function splitCommaValues(value: unknown): string[] {
     .filter(Boolean);
 }
 
+/** Reports whether request validators match the supplied ETag. */
 export function matchesIfNoneMatch(headers: Headers, tag: string): boolean {
   const etagValue = String(tag ?? "").trim();
   if (!etagValue) return false;
@@ -194,6 +205,7 @@ export function matchesIfNoneMatch(headers: Headers, tag: string): boolean {
   return false;
 }
 
+/** Merges and canonicalizes Vary header tokens. */
 export function vary(
   existing: string[] | null | undefined,
   ...add: string[]
@@ -271,14 +283,17 @@ function originalURIFromCanonicalizedHeaders(h: Headers): string {
   ).trim();
 }
 
+/** Returns the original host from forwarding headers. */
 export function originalHost(headers: Headers): string {
   return originalHostFromCanonicalizedHeaders(canonicalizeHeaders(headers));
 }
 
+/** Returns the original URI from AppTheory or FaceTheory forwarding headers. */
 export function originalURI(headers: Headers): string {
   return originalURIFromCanonicalizedHeaders(canonicalizeHeaders(headers));
 }
 
+/** Returns the original scheme and host as a URL. */
 export function originURL(headers: Headers): string {
   const h = canonicalizeHeaders(headers);
   const forwarded = parseForwardedHeader(firstHeaderValue(h, "forwarded"));
@@ -317,6 +332,7 @@ function parseCloudFrontViewerAddress(value: unknown): string {
   return ipPart;
 }
 
+/** Returns the client IP from CloudFront or forwarding headers. */
 export function clientIP(headers: Headers): string {
   const h = canonicalizeHeaders(headers);
   const cf = firstHeaderValue(h, "cloudfront-viewer-address");

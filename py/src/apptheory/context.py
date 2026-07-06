@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import json as jsonlib
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ from apptheory.source_provenance import SourceProvenance, normalize_source_prove
 
 @dataclass(slots=True)
 class AppSyncContext:
+    """Metadata from an AppSync Lambda resolver event exposed to AppTheory handlers."""
+
     field_name: str
     parent_type_name: str
     arguments: dict[str, Any]
@@ -56,12 +59,15 @@ class AppSyncContext:
 
 @dataclass(slots=True)
 class Context:
+    """Request-scoped context passed to HTTP, AppSync, and WebSocket route handlers."""
+
     request: Request
     params: dict[str, str]
     clock: Clock
     id_generator: IdGenerator
     ctx: Any | None
     request_id: str
+    trace_id: str
     tenant_id: str
     auth_identity: str
     remaining_ms: int
@@ -79,6 +85,7 @@ class Context:
         id_generator: IdGenerator | None = None,
         ctx: Any | None = None,
         request_id: str = "",
+        trace_id: str = "",
         tenant_id: str = "",
         auth_identity: str = "",
         remaining_ms: int = 0,
@@ -92,6 +99,7 @@ class Context:
         self.id_generator = id_generator or RealIdGenerator()
         self.ctx = ctx
         self.request_id = str(request_id)
+        self.trace_id = str(trace_id or getattr(request, "trace_id", "") or "")
         self.tenant_id = str(tenant_id)
         self.auth_identity = str(auth_identity)
         self.remaining_ms = int(remaining_ms or 0)
@@ -100,42 +108,56 @@ class Context:
         self.appsync = appsync
         self._values = {}
 
-    def now(self):
+    def now(self) -> dt.datetime:
+        """Return the request clock time using the configured clock."""
         return self.clock.now()
 
     def new_id(self) -> str:
+        """Return a deterministic or production ID from the configured generator."""
         return self.id_generator.new_id()
 
     def param(self, name: str) -> str:
+        """Return a route parameter by name, or an empty string when absent."""
         return self.params.get(name, "")
 
     def set(self, key: str, value: Any) -> None:
+        """Store request-scoped middleware state by key."""
         name = str(key or "").strip()
         if not name:
             return
         self._values[name] = value
 
     def get(self, key: str, default: Any | None = None) -> Any:
+        """Return request-scoped middleware state by key."""
         name = str(key or "").strip()
         if not name:
             return default
         return self._values.get(name, default)
 
     def source_provenance(self) -> SourceProvenance:
+        """Return normalized source-provenance metadata for the request."""
         if self is None:
             return unknown_source_provenance()
         return normalize_source_provenance(self.request.source_provenance)
 
     def source_ip(self) -> str:
+        """Return the canonical source IP when the provider supplied one."""
         return self.source_provenance().source_ip
 
+    def trace_context_id(self) -> str:
+        """Return the extracted trace ID for correlation, if present."""
+        return str(self.trace_id or "").strip()
+
     def as_websocket(self) -> WebSocketContext | None:
+        """Return WebSocket trigger metadata for WebSocket routes."""
         return self.websocket
 
     def as_appsync(self) -> AppSyncContext | None:
+        """Return AppSync resolver metadata for AppSync routes."""
         return self.appsync
 
     def json_value(self) -> Any:
+        """Decode the request body as JSON after validating the content type."""
         if not _has_json_content_type(self.request.headers):
             raise AppError("app.bad_request", "invalid json")
         if not self.request.body:
@@ -148,6 +170,8 @@ class Context:
 
 @dataclass(slots=True)
 class EventContext:
+    """Context passed to non-HTTP event workload handlers."""
+
     clock: Clock
     id_generator: IdGenerator
     ctx: Any | None
@@ -171,19 +195,23 @@ class EventContext:
         self.remaining_ms = int(remaining_ms or 0)
         self._values = {}
 
-    def now(self):
+    def now(self) -> dt.datetime:
+        """Return the event clock time using the configured clock."""
         return self.clock.now()
 
     def new_id(self) -> str:
+        """Return a deterministic or production ID from the configured generator."""
         return self.id_generator.new_id()
 
     def set(self, key: str, value: Any) -> None:
+        """Store event-scoped middleware state by key."""
         name = str(key or "").strip()
         if not name:
             return
         self._values[name] = value
 
     def get(self, key: str, default: Any | None = None) -> Any:
+        """Return event-scoped middleware state by key."""
         name = str(key or "").strip()
         if not name:
             return default
@@ -191,18 +219,29 @@ class EventContext:
 
 
 class WebSocketManagementClient(Protocol):
-    def post_to_connection(self, connection_id: str, data: bytes) -> Any: ...
+    """Protocol implemented by WebSocket management API clients."""
 
-    def get_connection(self, connection_id: str) -> Any: ...
+    def post_to_connection(self, connection_id: str, data: bytes) -> Any:
+        """Send bytes to a WebSocket connection."""
+        ...
 
-    def delete_connection(self, connection_id: str) -> Any: ...
+    def get_connection(self, connection_id: str) -> Any:
+        """Return metadata for a WebSocket connection."""
+        ...
+
+    def delete_connection(self, connection_id: str) -> Any:
+        """Disconnect a WebSocket connection."""
+        ...
 
 
+# Factory that creates a management client for a WebSocket endpoint.
 WebSocketClientFactory = Callable[[str, Any | None], WebSocketManagementClient]
 
 
 @dataclass(slots=True)
 class WebSocketContext:
+    """WebSocket trigger metadata and connection-management helpers."""
+
     clock: Clock
     id_generator: IdGenerator
     ctx: Any | None
@@ -252,10 +291,12 @@ class WebSocketContext:
         self._client = None
         self._client_error = None
 
-    def now(self):
+    def now(self) -> dt.datetime:
+        """Return the WebSocket request clock time using the configured clock."""
         return self.clock.now()
 
     def new_id(self) -> str:
+        """Return a deterministic or production ID from the configured generator."""
         return self.id_generator.new_id()
 
     def _management_client(self) -> WebSocketManagementClient:
@@ -281,17 +322,19 @@ class WebSocketContext:
         return client
 
     def send_message(self, data: bytes) -> None:
+        """Send bytes to the active WebSocket connection."""
         if not self.connection_id:
             raise RuntimeError("apptheory: websocket connection id is empty")
         client = self._management_client()
         client.post_to_connection(self.connection_id, bytes(data or b""))
 
     def send_json_message(self, value: Any) -> None:
+        """Serialize a value as compact JSON and send it to the connection."""
         payload = jsonlib.dumps(value, separators=(",", ":"), ensure_ascii=False, sort_keys=True).encode("utf-8")
         self.send_message(payload)
 
 
-def _has_json_content_type(headers: dict[str, list[str]]) -> bool:
+def _has_json_content_type(headers: dict[str, Any]) -> bool:
     for value in headers.get("content-type", []):
         v = str(value).strip().lower()
         if v.startswith("application/json"):

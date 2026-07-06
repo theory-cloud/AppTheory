@@ -21,6 +21,9 @@ type actualResponseForCompare struct {
 }
 
 func runFixture(f Fixture) error {
+	if isOpenAPIContractFixture(f) {
+		return runFixtureOpenAPI(f)
+	}
 	switch strings.ToLower(strings.TrimSpace(f.Tier)) {
 	case "p0":
 		return runFixtureP0(f)
@@ -42,6 +45,12 @@ func runFixture(f Fixture) error {
 		return runFixtureM15(f)
 	case "m16":
 		return runFixtureM16(f)
+	case "mcp":
+		return runFixtureMCP(f)
+	case "oauth":
+		return runFixtureOAuth(f)
+	case "objectstore":
+		return runFixtureObjectStore(f)
 	default:
 		return runFixtureLegacy(f)
 	}
@@ -156,6 +165,11 @@ func jsonEqual(a, b any) bool {
 func printFailure(f Fixture, err error) {
 	fmt.Fprintf(os.Stderr, "FAIL %s — %s\n", f.ID, f.Name)
 	fmt.Fprintf(os.Stderr, "  %v\n", err)
+
+	if isOpenAPIContractFixture(f) {
+		printFailureOpenAPI(f)
+		return
+	}
 
 	if isLoggingProfileContractFixture(f) {
 		if len(f.Expect.LoggingProfileCatalog) > 0 {

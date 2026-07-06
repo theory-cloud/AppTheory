@@ -1,0 +1,74 @@
+{
+  "id": "p0.validation.invalid_rule_config_fails_closed",
+  "tier": "p0",
+  "name": "Invalid declarative validation rules fail closed with canonical 422 errors",
+  "setup": {
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/validate-invalid-rules",
+        "handler": "validate_invalid_rules"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/validate-invalid-rules",
+      "query": {},
+      "headers": {
+        "content-type": [
+          "application/json"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"email\":\"alice@example.com\",\"age\":30,\"name\":\"Alice\",\"role\":\"admin\"}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 422,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.validation_failed",
+          "message": "validation failed",
+          "status_code": 422,
+          "details": {
+            "errors": [
+              {
+                "field": "email",
+                "rule": "pattern",
+                "message": "email has invalid validation rule pattern"
+              },
+              {
+                "field": "age",
+                "rule": "min",
+                "message": "age has invalid validation rule min"
+              },
+              {
+                "field": "name",
+                "rule": "required",
+                "message": "name has invalid validation rule required"
+              },
+              {
+                "field": "role",
+                "rule": "typo",
+                "message": "role has invalid validation rule typo"
+              }
+            ]
+          }
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

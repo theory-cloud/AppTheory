@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
+# Purpose: run the shared contract fixture corpus against Go, TypeScript, and Python.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+./scripts/verify-fixture-schema.sh
 
 if ! command -v go >/dev/null 2>&1; then
   echo "contract-tests: BLOCKED (go not found)" >&2

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: audit CDK sources for construct and dependency policy violations.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

@@ -1,0 +1,43 @@
+const { execSync } = require("node:child_process");
+const path = require("node:path");
+
+const cdk = require("aws-cdk-lib");
+const lambda = require("aws-cdk-lib/aws-lambda");
+const { AppTheoryFunction, AppTheoryHttpApi } = require("@theory-cloud/apptheory-cdk");
+
+class __APP_CLASS__Stack extends cdk.Stack {
+  constructor(scope, id, props) {
+    super(scope, id, props);
+    const projectRoot = path.resolve(__dirname, "..");
+    const handler = new AppTheoryFunction(this, "Handler", {
+      runtime: lambda.Runtime.PROVIDED_AL2023,
+      handler: "bootstrap",
+      code: lambda.Code.fromAsset(projectRoot, {
+        bundling: {
+          image: cdk.DockerImage.fromRegistry("golang:1.26"),
+          command: [
+            "bash",
+            "-c",
+            "cd /asset-input && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o /asset-output/bootstrap .",
+          ],
+          local: {
+            tryBundle(outputDir) {
+              execSync(`go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o ${path.join(outputDir, "bootstrap")} .`, {
+                cwd: projectRoot,
+                stdio: "inherit",
+                env: { ...process.env, GOOS: "linux", GOARCH: "arm64", CGO_ENABLED: "0" },
+              });
+              return true;
+            },
+          },
+        },
+      }),
+      environment: { APPTHEORY_TIER: "p2" },
+    });
+    const api = new AppTheoryHttpApi(this, "Api", { handler: handler.fn, apiName: "__APP_PACKAGE__" });
+    new cdk.CfnOutput(this, "ApiUrl", { value: api.api.apiEndpoint });
+  }
+}
+
+const app = new cdk.App();
+new __APP_CLASS__Stack(app, "__APP_CLASS__Stack");

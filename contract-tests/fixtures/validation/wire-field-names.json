@@ -1,0 +1,76 @@
+{
+  "id": "p0.validation.wire_field_names",
+  "tier": "p0",
+  "name": "Validation errors use wire names for query, path, and header bound fields",
+  "setup": {
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/validate-wire/{account_id}",
+        "handler": "validate_wire_names"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/validate-wire/tenant_123",
+      "query": {
+        "page-size": [
+          "3"
+        ]
+      },
+      "headers": {
+        "content-type": [
+          "application/json"
+        ],
+        "x-role": [
+          "guest"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"name\":\"Alice\"}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 422,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.validation_failed",
+          "message": "validation failed",
+          "status_code": 422,
+          "details": {
+            "errors": [
+              {
+                "field": "account_id",
+                "rule": "pattern",
+                "message": "account_id must match pattern"
+              },
+              {
+                "field": "page-size",
+                "rule": "min",
+                "message": "page-size must be >= 10"
+              },
+              {
+                "field": "x-role",
+                "rule": "enum",
+                "message": "x-role must be one of admin, member"
+              }
+            ]
+          }
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

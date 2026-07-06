@@ -38,3 +38,4 @@ export declare class MultiWindowStrategy implements RateLimitStrategy {
     shouldAllow(counts: Record<string, number>, _limit: number): boolean;
     private _limitsForKey;
 }
+//# sourceMappingURL=strategies.d.ts.map

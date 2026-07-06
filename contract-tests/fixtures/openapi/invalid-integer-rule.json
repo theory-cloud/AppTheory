@@ -1,0 +1,42 @@
+{
+  "id": "p0.openapi.invalid_integer_rule_fails_closed",
+  "tier": "p0",
+  "name": "OpenAPI integer-valued validation rules fail closed on empty strings",
+  "setup": {
+    "openapi": {
+      "title": "Invalid Length API",
+      "version": "2026-07",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/widgets",
+          "operation_id": "createWidget",
+          "request": {
+            "fields": [
+              {
+                "field": "name",
+                "source": "body",
+                "name": "name",
+                "type": "string",
+                "validation": [
+                  {
+                    "rule": "min_length",
+                    "value": ""
+                  }
+                ]
+              }
+            ]
+          },
+          "response": {
+            "description": "created"
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "error": {
+      "message": "apptheory: openapi field name min_length must be an integer"
+    }
+  }
+}

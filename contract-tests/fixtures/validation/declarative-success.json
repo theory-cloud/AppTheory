@@ -1,0 +1,40 @@
+{
+  "id": "p0.validation.declarative_success",
+  "tier": "p0",
+  "name": "Declarative validation allows valid typed requests",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/validate", "handler": "validate_profile" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/validate",
+      "query": {},
+      "headers": { "content-type": ["application/json"] },
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"name\":\"Alice\",\"age\":30,\"score\":7,\"nickname\":\"Al\",\"bio\":\"hello\",\"email\":\"alice@example.com\",\"role\":\"admin\"}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "age": 30,
+        "bio": "hello",
+        "email": "alice@example.com",
+        "name": "Alice",
+        "nickname": "Al",
+        "role": "admin",
+        "score": 7
+      },
+      "is_base64": false
+    }
+  }
+}

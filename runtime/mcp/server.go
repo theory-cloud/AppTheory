@@ -37,6 +37,7 @@ const (
 	methodToolsCall                = "tools/call"
 	methodResourcesList            = "resources/list"
 	methodResourcesRead            = "resources/read"
+	methodResourcesTemplatesList   = "resources/templates/list"
 	methodResourcesSubscribe       = "resources/subscribe"
 	methodResourcesUnsubscribe     = "resources/unsubscribe"
 	methodLoggingSetLevel          = "logging/setLevel"
@@ -597,6 +598,13 @@ func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessio
 		return s.handleInitialize(req, selectedPV)
 	case methodPing:
 		return NewResultResponse(req.ID, map[string]any{})
+	default:
+		return s.dispatchRegistryMethod(ctx, req, sessionID)
+	}
+}
+
+func (s *Server) dispatchRegistryMethod(ctx context.Context, req *Request, sessionID string) *Response {
+	switch req.Method {
 	case methodToolsList:
 		return s.handleToolsList(req)
 	case methodToolsCall:
@@ -605,6 +613,8 @@ func (s *Server) dispatchNonTaskMethod(ctx context.Context, req *Request, sessio
 		return s.handleResourcesList(req)
 	case methodResourcesRead:
 		return s.handleResourcesRead(ctx, req)
+	case methodResourcesTemplatesList:
+		return s.handleResourcesTemplatesList(req)
 	case methodResourcesSubscribe:
 		return s.handleResourcesSubscribe(ctx, req, sessionID)
 	case methodResourcesUnsubscribe:
@@ -659,6 +669,7 @@ func methodAllowedForProtocol(pv string, method string) bool {
 		methodToolsCall,
 		methodResourcesList,
 		methodResourcesRead,
+		methodResourcesTemplatesList,
 		methodResourcesSubscribe,
 		methodResourcesUnsubscribe,
 		methodLoggingSetLevel,

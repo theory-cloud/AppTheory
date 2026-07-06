@@ -114,3 +114,4 @@ export declare function buildKinesisEvent(streamArn: string, records?: Array<Kin
 export declare function buildSNSEvent(topicArn: string, records?: Array<SNSEventRecordInput>): SNSEvent;
 export declare function stepFunctionsTaskToken(event: unknown): string;
 export declare function buildStepFunctionsTaskTokenEvent(taskToken: string, payload?: Record<string, unknown>): Record<string, unknown>;
+//# sourceMappingURL=testkit.d.ts.map

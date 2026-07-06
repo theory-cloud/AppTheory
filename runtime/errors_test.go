@@ -9,7 +9,7 @@ import (
 func TestStatusForErrorCode(t *testing.T) {
 	tests := map[string]int{
 		errorCodeBadRequest:       400,
-		errorCodeValidationFailed: 400,
+		errorCodeValidationFailed: 422,
 		errorCodeUnauthorized:     401,
 		errorCodeForbidden:        403,
 		errorCodeNotFound:         404,

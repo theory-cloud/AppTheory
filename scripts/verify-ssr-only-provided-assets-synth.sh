@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: synthesize and verify the SSR-only provided-assets CDK example.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

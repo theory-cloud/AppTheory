@@ -49,11 +49,15 @@ go test ./runtime/... ./pkg/... ./testkit/...
 
 # Contract tests (cross-language parity)
 make contract-tests
+
+# Run one fixture by exact fixture id across Go, TypeScript, and Python
+make contract-one ID=p0.routing.exact_match
 ```
 
 **Contract tests are required.** Any change that affects cross-language behavior must pass all three language runners.
 The contract test fixtures in `contract-tests/fixtures/` define the expected behavior — the Go, TypeScript, and Python
-runtimes are independently verified against these fixtures.
+runtimes are independently verified against these fixtures. Use `make contract-one ID=<fixture-id>` for focused
+iteration; the underlying runners also accept `--id <fixture-id>` or `--filter <fixture-id>` as exact-id aliases.
 
 ## Pull Requests
 

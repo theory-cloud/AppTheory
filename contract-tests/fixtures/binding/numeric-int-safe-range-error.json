@@ -1,0 +1,58 @@
+{
+  "id": "p0.binding.numeric_int_safe_range_error",
+  "tier": "p0",
+  "name": "Integer binding rejects values outside the portable JS safe-integer range",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/numeric",
+        "handler": "bind_numeric_edges"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/numeric",
+      "query": {
+        "count": [
+          "9007199254740992"
+        ],
+        "ratio": [
+          "1.5"
+        ]
+      },
+      "headers": {},
+      "body": {
+        "encoding": "utf8",
+        "value": "{}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.bad_request",
+          "message": "invalid query binding for Count",
+          "status_code": 400,
+          "details": {
+            "source": "query",
+            "name": "count",
+            "field": "Count"
+          }
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

@@ -1,0 +1,5 @@
+import { buildApp } from "./app.mjs";
+
+const app = buildApp();
+
+export const handler = async (event, context) => app.handleLambda(event, context);

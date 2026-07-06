@@ -14,3 +14,4 @@ export function newError(type, message) {
 export function wrapError(cause, type, message) {
     return new RateLimiterError(type, message, cause);
 }
+//# sourceMappingURL=errors.js.map

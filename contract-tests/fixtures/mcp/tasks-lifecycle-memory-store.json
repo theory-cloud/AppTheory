@@ -1,0 +1,388 @@
+{
+  "id": "mcp.tasks.lifecycle_memory_store",
+  "tier": "mcp",
+  "name": "MCP task lifecycle is pinned against deterministic store fakes",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      },
+      "id_sequence": [
+        "sess-task",
+        "task-1"
+      ],
+      "tools": [
+        {
+          "name": "task_echo",
+          "description": "Echo through a task",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ]
+          },
+          "handler": "task_echo",
+          "task_support": "optional"
+        }
+      ],
+      "task_runtime": {
+        "enabled": true,
+        "default_ttl_ms": 86400000,
+        "max_ttl_ms": 86400000,
+        "poll_interval_ms": 100,
+        "list_limit": 10,
+        "model_immediate_response": "poll tasks/result",
+        "clock_unix_ms": 1783036800000,
+        "update_clock_unix_ms": 1783036801000
+      }
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "initialize",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"init\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\"}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "task_create",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "mcp-session-id": [
+                "sess-task"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "content-type": [
+                "application/json"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"create\",\"method\":\"tools/call\",\"params\":{\"name\":\"task_echo\",\"arguments\":{\"message\":\"task result\"},\"task\":{}}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "task_result",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "mcp-session-id": [
+                "sess-task"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "content-type": [
+                "application/json"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"result\",\"method\":\"tasks/result\",\"params\":{\"taskId\":\"task-1\"}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "task_get",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "mcp-session-id": [
+                "sess-task"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "content-type": [
+                "application/json"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"get\",\"method\":\"tasks/get\",\"params\":{\"taskId\":\"task-1\"}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "tasks_list",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "mcp-session-id": [
+                "sess-task"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "content-type": [
+                "application/json"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"list\",\"method\":\"tasks/list\",\"params\":{}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "task_cancel_terminal",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "mcp-session-id": [
+                "sess-task"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "content-type": [
+                "application/json"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"cancel\",\"method\":\"tasks/cancel\",\"params\":{\"taskId\":\"task-1\"}}"
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ],
+            "mcp-session-id": [
+              "sess-task"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "init",
+            "result": {
+              "protocolVersion": "2025-11-25",
+              "capabilities": {
+                "tasks": {
+                  "cancel": {},
+                  "list": {},
+                  "requests": {
+                    "tools": {
+                      "call": {}
+                    }
+                  }
+                },
+                "tools": {}
+              },
+              "serverInfo": {
+                "name": "ContractMCP",
+                "version": "sp09"
+              }
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "create",
+            "result": {
+              "_meta": {
+                "io.modelcontextprotocol/model-immediate-response": "poll tasks/result",
+                "io.modelcontextprotocol/related-task": {
+                  "taskId": "task-1"
+                }
+              },
+              "task": {
+                "taskId": "task-1",
+                "status": "working",
+                "createdAt": "2026-07-03T00:00:00Z",
+                "lastUpdatedAt": "2026-07-03T00:00:00Z",
+                "ttl": 86400000,
+                "pollInterval": 100
+              }
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "result",
+            "result": {
+              "_meta": {
+                "io.modelcontextprotocol/related-task": {
+                  "taskId": "task-1"
+                }
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "task result"
+                }
+              ],
+              "structuredContent": {
+                "message": "task result"
+              }
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "get",
+            "result": {
+              "taskId": "task-1",
+              "status": "completed",
+              "createdAt": "2026-07-03T00:00:00Z",
+              "lastUpdatedAt": "2026-07-03T00:00:01Z",
+              "ttl": 86400000,
+              "pollInterval": 100
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "list",
+            "result": {
+              "tasks": [
+                {
+                  "taskId": "task-1",
+                  "status": "completed",
+                  "createdAt": "2026-07-03T00:00:00Z",
+                  "lastUpdatedAt": "2026-07-03T00:00:01Z",
+                  "ttl": 86400000,
+                  "pollInterval": 100
+                }
+              ]
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "cancel",
+            "error": {
+              "code": -32602,
+              "message": "task already terminal"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

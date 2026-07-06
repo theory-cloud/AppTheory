@@ -1,0 +1,44 @@
+{
+  "id": "p0.validation.required_missing_null",
+  "tier": "p0",
+  "name": "Required validation rejects missing and null values",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/validate-required-presence", "handler": "validate_required_presence" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/validate-required-presence",
+      "query": {},
+      "headers": { "content-type": ["application/json"] },
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"count\":null,\"active\":false,\"name\":\"\",\"tags\":[]}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 422,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.validation_failed",
+          "message": "validation failed",
+          "status_code": 422,
+          "details": {
+            "errors": [
+              { "field": "count", "rule": "required", "message": "count is required" },
+              { "field": "meta", "rule": "required", "message": "meta is required" }
+            ]
+          }
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

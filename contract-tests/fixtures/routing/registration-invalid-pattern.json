@@ -1,0 +1,20 @@
+{
+  "id": "p0.routing.registration_invalid_pattern",
+  "tier": "p0",
+  "name": "Invalid route patterns fail closed during registration",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/x/{}",
+        "handler": "static_pong"
+      }
+    ]
+  },
+  "expect": {
+    "error": {
+      "code": "app.bad_request",
+      "message": "invalid route pattern"
+    }
+  }
+}

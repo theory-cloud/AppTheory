@@ -1,0 +1,58 @@
+{
+  "id": "p0.binding.numeric_float_trailing_garbage_error",
+  "tier": "p0",
+  "name": "Float binding rejects tokens with trailing garbage",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/numeric",
+        "handler": "bind_numeric_edges"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/numeric",
+      "query": {
+        "count": [
+          "7"
+        ],
+        "ratio": [
+          "1.5oops"
+        ]
+      },
+      "headers": {},
+      "body": {
+        "encoding": "utf8",
+        "value": "{}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.bad_request",
+          "message": "invalid query binding for Ratio",
+          "status_code": 400,
+          "details": {
+            "source": "query",
+            "name": "ratio",
+            "field": "Ratio"
+          }
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

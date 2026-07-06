@@ -34,3 +34,4 @@ export declare class FakeWebSocketManagementClient {
     getConnection(connectionId: string): Promise<unknown>;
     deleteConnection(connectionId: string): Promise<void>;
 }
+//# sourceMappingURL=websocket-management.d.ts.map

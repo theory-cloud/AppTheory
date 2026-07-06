@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: render release notes for a tag from the checked-in release metadata.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

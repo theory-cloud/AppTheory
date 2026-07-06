@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: inspect release state for manifest, tag, and release-please consistency.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

@@ -5,15 +5,19 @@ import (
 	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/jsii"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigatewayv2"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
 
 type AppTheoryHttpApi interface {
 	constructs.Construct
+	AccessLogGroup() awslogs.ILogGroup
 	Api() awsapigatewayv2.HttpApi
+	Domain() AppTheoryApiDomain
 	// The tree node.
 	Node() constructs.Node
+	Stage() awsapigatewayv2.IStage
 	// Returns a string representation of this construct.
 	ToString() *string
 	// Applies one or more mixins to this construct.
@@ -32,6 +36,16 @@ type jsiiProxy_AppTheoryHttpApi struct {
 	internal.Type__constructsConstruct
 }
 
+func (j *jsiiProxy_AppTheoryHttpApi) AccessLogGroup() awslogs.ILogGroup {
+	var returns awslogs.ILogGroup
+	_jsii_.Get(
+		j,
+		"accessLogGroup",
+		&returns,
+	)
+	return returns
+}
+
 func (j *jsiiProxy_AppTheoryHttpApi) Api() awsapigatewayv2.HttpApi {
 	var returns awsapigatewayv2.HttpApi
 	_jsii_.Get(
@@ -42,11 +56,31 @@ func (j *jsiiProxy_AppTheoryHttpApi) Api() awsapigatewayv2.HttpApi {
 	return returns
 }
 
+func (j *jsiiProxy_AppTheoryHttpApi) Domain() AppTheoryApiDomain {
+	var returns AppTheoryApiDomain
+	_jsii_.Get(
+		j,
+		"domain",
+		&returns,
+	)
+	return returns
+}
+
 func (j *jsiiProxy_AppTheoryHttpApi) Node() constructs.Node {
 	var returns constructs.Node
 	_jsii_.Get(
 		j,
 		"node",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryHttpApi) Stage() awsapigatewayv2.IStage {
+	var returns awsapigatewayv2.IStage
+	_jsii_.Get(
+		j,
+		"stage",
 		&returns,
 	)
 	return returns

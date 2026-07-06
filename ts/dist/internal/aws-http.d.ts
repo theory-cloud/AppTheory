@@ -10,3 +10,4 @@ export declare function apigatewayV2ResponseFromResponse(resp: Response): APIGat
 export declare function lambdaFunctionURLResponseFromResponse(resp: Response): LambdaFunctionURLResponse;
 export declare function apigatewayProxyResponseFromResponse(resp: Response): APIGatewayProxyResponse;
 export declare function albTargetGroupResponseFromResponse(resp: Response): ALBTargetGroupResponse;
+//# sourceMappingURL=aws-http.d.ts.map

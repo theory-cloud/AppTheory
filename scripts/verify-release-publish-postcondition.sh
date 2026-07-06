@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify published release tags/assets satisfy immutable release postconditions.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

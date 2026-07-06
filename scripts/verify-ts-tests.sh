@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: run TypeScript runtime unit tests against a clean package install.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

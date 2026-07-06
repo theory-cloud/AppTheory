@@ -1,0 +1,25 @@
+{
+  "id": "p0.routing.registration_duplicate_route",
+  "tier": "p0",
+  "name": "Duplicate routes fail closed during registration",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/dup/{id}",
+        "handler": "static_pong"
+      },
+      {
+        "method": "get",
+        "path": "/dup/:id",
+        "handler": "static_pong"
+      }
+    ]
+  },
+  "expect": {
+    "error": {
+      "code": "app.bad_request",
+      "message": "duplicate route"
+    }
+  }
+}

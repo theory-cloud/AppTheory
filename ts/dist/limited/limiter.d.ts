@@ -24,3 +24,4 @@ export declare class DynamoRateLimiter implements AtomicRateLimiter, RateLimiter
     private _checkAndIncrementMultiWindow;
     private _handleMultiWindowIncrementError;
 }
+//# sourceMappingURL=limiter.d.ts.map

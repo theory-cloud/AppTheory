@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify TheoryCloud publish workflow dispatch configuration.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -108,6 +109,7 @@ for required_path in \
   '"docs/cdk/**"' \
   '"docs/features/**"' \
   '"docs/integrations/**"' \
+  '"docs/guides/**"' \
   '"docs/migration/**"' \
   '"docs/llm-faq/**"' \
   '"scripts/stage-theorycloud-apptheory-subtree.sh"' \

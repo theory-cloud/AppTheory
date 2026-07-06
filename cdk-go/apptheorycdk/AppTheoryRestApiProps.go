@@ -23,4 +23,12 @@ type AppTheoryRestApiProps struct {
 	// Default: true.
 	//
 	ScopePermissionToMethod *bool `field:"optional" json:"scopePermissionToMethod" yaml:"scopePermissionToMethod"`
+	// Regional WAF attachment for the REST API deployment stage.
+	//
+	// Set to true for
+	// an AppTheory-managed WebACL, or provide options to reuse an existing
+	// regional WebACL.
+	// Default: undefined.
+	//
+	Waf interface{} `field:"optional" json:"waf" yaml:"waf"`
 }
