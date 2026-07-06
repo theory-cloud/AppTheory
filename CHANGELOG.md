@@ -1,5 +1,47 @@
 # Changelog
 
+## [1.16.0-rc](https://github.com/theory-cloud/AppTheory/compare/v1.15.2...v1.16.0-rc) (2026-07-06)
+
+
+### Features
+
+* **cdk:** add production deployment controls ([25d809b](https://github.com/theory-cloud/AppTheory/commit/25d809bdf9d463957165e205e1f9e781666b080e))
+* **cdk:** split cdk go bindings module ([12eeb8c](https://github.com/theory-cloud/AppTheory/commit/12eeb8c3483ecc9e7a797e6c49a242f24e6943c2))
+* **cmd:** project scaffold generator ([18da1e1](https://github.com/theory-cloud/AppTheory/commit/18da1e1fe5be7156d512f6a451c96f39c831a002))
+* **py:** add MCP runtime ([cc8d074](https://github.com/theory-cloud/AppTheory/commit/cc8d0742b8ff8964d4b4995698beba52c9be4048))
+* **py:** bounded S3 object-store client ([8f1dc0f](https://github.com/theory-cloud/AppTheory/commit/8f1dc0f3a8a492ea0042f770d2482483e32c78ba))
+* **py:** OAuth protected resource and bearer validation ([9deb05a](https://github.com/theory-cloud/AppTheory/commit/9deb05add6f66aafb63e5bb4a5c1507b7219b50c))
+* **runtime:** lower Python and Node floors ([78296cb](https://github.com/theory-cloud/AppTheory/commit/78296cb5cbba6e6fbfac65298c557632b9423b3e))
+* **ts:** bounded S3 object-store client ([31fa988](https://github.com/theory-cloud/AppTheory/commit/31fa988e04594f0ed8ce0a3320d7f978d2c94623))
+* **ts:** OAuth protected resource and bearer validation ([a082692](https://github.com/theory-cloud/AppTheory/commit/a082692712257683759a9dbd925ec718f3e0a89a))
+
+
+### Bug Fixes
+
+* **cdk:** bind named function log groups ([fcc0f4d](https://github.com/theory-cloud/AppTheory/commit/fcc0f4da485348b5854e4d94e117f1cbaf42f5ce))
+* **cdk:** correct production WAF and alarms ([426ee57](https://github.com/theory-cloud/AppTheory/commit/426ee57b40a6bea190b43690f9b7e7bc98146d5b))
+* **ci:** fail closed on cdk-go drift guards ([9df2bb3](https://github.com/theory-cloud/AppTheory/commit/9df2bb30616fe9b2944564d6b6cfd20b06116f13))
+* **cmd:** satisfy scaffold generator lint gates ([f7dfa6a](https://github.com/theory-cloud/AppTheory/commit/f7dfa6af3890fb26cf0d65805a4197a92d2c078c))
+* **contract:** assert empty MCP SSE frames ([bf359e9](https://github.com/theory-cloud/AppTheory/commit/bf359e9883b021942710e78b778242eee9124e43))
+* **contract:** enforce empty MCP SSE frame assertions ([1a9fb49](https://github.com/theory-cloud/AppTheory/commit/1a9fb49fd1ca9d535212d7fe15cf3ad669be3cfa))
+* **contract:** reject unsupported fixture schema keywords ([b37abf5](https://github.com/theory-cloud/AppTheory/commit/b37abf5b69d29f40f0d200d5e476ce753857158c))
+* **docs:** harden api docs truth verifier ([eed369d](https://github.com/theory-cloud/AppTheory/commit/eed369da0d3fd357ef1b820969dccbaa9aaf4e27))
+* **examples:** exclude Python caches from hello-world assets ([492b596](https://github.com/theory-cloud/AppTheory/commit/492b5962ef9a9dec17a467bb2d80263ec1384765))
+* **examples:** stabilize hello-world synth snapshots ([18c3897](https://github.com/theory-cloud/AppTheory/commit/18c3897e6eee9f6a5b7197a4da14052f2c3c75d8))
+* **release:** cover hello-world example lockfile ([324216d](https://github.com/theory-cloud/AppTheory/commit/324216d8b835e484e144bf3bf7acdd11113f2b3c))
+* **release:** gate runtime floor claims ([876ca82](https://github.com/theory-cloud/AppTheory/commit/876ca827caa7b5b3979909287a965c7a4df480fd))
+* **release:** sign generated artifact sync commits ([9463c98](https://github.com/theory-cloud/AppTheory/commit/9463c9850e3499f50458f6270efc9c83a4dead21))
+* **rubric:** preserve contract runner meta-tests ([b885de7](https://github.com/theory-cloud/AppTheory/commit/b885de719901056e25ac88d575e44f9ffc82e391))
+* **runtime:** converge Go OAuth on the pinned fixtures ([e51d0dc](https://github.com/theory-cloud/AppTheory/commit/e51d0dc99b53c2070b36c31e054ab85eebc4dcb1))
+* **runtime:** converge Go objectstore on the pinned fixtures ([f230bfa](https://github.com/theory-cloud/AppTheory/commit/f230bfafdb20a7012e18edacbe067f27370edd42))
+* **runtime:** converge validation binding edges ([71921b6](https://github.com/theory-cloud/AppTheory/commit/71921b6e8742c8f5d14c0664560621234b0f596d))
+* **runtime:** pin required validation presence semantics ([b357feb](https://github.com/theory-cloud/AppTheory/commit/b357febfac1fde04f83ebad7d034701b72bbeca1))
+* **runtime:** refresh floor-proof generated outputs ([f214460](https://github.com/theory-cloud/AppTheory/commit/f2144601202fd03a9951fa8446f40d01de6669ba))
+* **security:** harden CodeQL findings ([80637e8](https://github.com/theory-cloud/AppTheory/commit/80637e84967ff56e1dc5d8032d80f455807f55f8))
+* **security:** redact runner diagnostics ([4a45bf0](https://github.com/theory-cloud/AppTheory/commit/4a45bf00d937cb2c7f5cc02401d9357921f840ab))
+* **ts:** fail closed on dist status drift ([64544cf](https://github.com/theory-cloud/AppTheory/commit/64544cf48bdd6a469486d2d70ddafc0432b8e543))
+* **ts:** refresh microvm source maps ([487657e](https://github.com/theory-cloud/AppTheory/commit/487657e10da42b627938a91cdef2505925fa1727))
+
 ## [1.15.2](https://github.com/theory-cloud/AppTheory/compare/v1.15.1...v1.15.2) (2026-07-04)
 
 
