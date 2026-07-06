@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import inspect
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from apptheory.aws_events import AppSyncResolverEvent
 from apptheory.aws_http import (
@@ -28,10 +29,12 @@ from apptheory.errors import (
     error_response,
     error_response_with_format,
     error_response_with_request_id_and_format,
+    error_response_with_request_id_trace_id_and_format,
     normalize_http_error_format,
     response_for_error,
     response_for_error_with_format,
     response_for_error_with_request_id_and_format,
+    response_for_error_with_request_id_trace_id_and_format,
     status_for_error_code,
 )
 from apptheory.event_workloads import normalize_dynamodb_stream_record, normalize_eventbridge_workload_envelope
@@ -39,6 +42,7 @@ from apptheory.ids import IdGenerator, RealIdGenerator
 from apptheory.request import Request, normalize_request, normalize_request_with_max_bytes
 from apptheory.response import Response, normalize_response
 from apptheory.router import Router
+from apptheory.trace_context import extract_trace_id_from_headers
 from apptheory.util import canonicalize_headers, clone_query
 
 T = TypeVar("T")
@@ -81,27 +85,35 @@ WebSocketHandler = Callable[[Context], Response | Awaitable[Response]]
 
 @dataclass(slots=True)
 class EventBridgeSelector:
+    """Selector used to match EventBridge events by rule, source, or detail type."""
+
     rule_name: str = ""
     source: str = ""
     detail_type: str = ""
 
 
 def event_bridge_rule(rule_name: str) -> EventBridgeSelector:
+    """Create an EventBridge selector for a specific rule name."""
     return EventBridgeSelector(rule_name=str(rule_name or "").strip())
 
 
 def event_bridge_pattern(source: str, detail_type: str) -> EventBridgeSelector:
+    """Create an EventBridge selector for source and detail-type matching."""
     return EventBridgeSelector(source=str(source or "").strip(), detail_type=str(detail_type or "").strip())
 
 
 @dataclass(slots=True)
 class Limits:
+    """Request and response byte guardrails for the runtime."""
+
     max_request_bytes: int = 0
     max_response_bytes: int = 0
 
 
 @dataclass(slots=True)
 class CORSConfig:
+    """CORS policy applied by P1 and P2 HTTP response finalization."""
+
     allowed_origins: list[str] | None = None
     allow_credentials: bool = False
     allow_headers: list[str] | None = None
@@ -109,6 +121,8 @@ class CORSConfig:
 
 @dataclass(slots=True)
 class LogRecord:
+    """Portable P2 request log record emitted by observability hooks."""
+
     level: str
     event: str
     request_id: str
@@ -117,6 +131,8 @@ class LogRecord:
     path: str
     status: int
     error_code: str
+    duration_ms: int = 0
+    trace_id: str = ""
     trigger: str = ""
     correlation_id: str = ""
     source: str = ""
@@ -128,19 +144,26 @@ class LogRecord:
 
 @dataclass(slots=True)
 class MetricRecord:
+    """Portable P2 metric record emitted by observability hooks."""
+
     name: str
     value: int
     tags: dict[str, str]
+    duration_ms: int = 0
 
 
 @dataclass(slots=True)
 class SpanRecord:
+    """Portable P2 span-shaped record emitted by observability hooks."""
+
     name: str
     attributes: dict[str, str]
 
 
 @dataclass(slots=True)
 class ObservabilityHooks:
+    """Callbacks that receive AppTheory P2 log, metric, and span records."""
+
     log: Callable[[LogRecord], None] | None = None
     metric: Callable[[MetricRecord], None] | None = None
     span: Callable[[SpanRecord], None] | None = None
@@ -148,6 +171,8 @@ class ObservabilityHooks:
 
 @dataclass(slots=True)
 class PolicyDecision:
+    """Decision returned by a P2 policy hook to fail a request closed."""
+
     code: str
     message: str
     headers: dict[str, Any]
@@ -172,6 +197,8 @@ class _EventObservation:
 
 @dataclass(slots=True)
 class App:
+    """Contract-first application container for routes, middleware, and Lambda event dispatch."""
+
     _router: Router
     _clock: Clock
     _id_generator: IdGenerator
@@ -230,32 +257,46 @@ class App:
         self._event_middlewares = []
 
     def handle(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
+        """Register a handler for an HTTP method and route pattern."""
         self._router.add(method, pattern, handler, auth_required=auth_required)
         return self
 
     def handle_strict(self, method: str, pattern: str, handler: Handler, *, auth_required: bool = False) -> App:
+        """Register a route and raise registration errors.
+
+        Deprecated: handle now fails closed on invalid registrations. Use handle
+        for normal application registration and catch errors during tests only
+        when required.
+        """
         self._router.add_strict(method, pattern, handler, auth_required=auth_required)
         return self
 
     def get(self, pattern: str, handler: Handler) -> App:
+        """Register a GET route handler."""
         return self.handle("GET", pattern, handler)
 
     def post(self, pattern: str, handler: Handler) -> App:
+        """Register a POST route handler."""
         return self.handle("POST", pattern, handler)
 
     def put(self, pattern: str, handler: Handler) -> App:
+        """Register a PUT route handler."""
         return self.handle("PUT", pattern, handler)
 
     def patch(self, pattern: str, handler: Handler) -> App:
+        """Register a PATCH route handler."""
         return self.handle("PATCH", pattern, handler)
 
     def options(self, pattern: str, handler: Handler) -> App:
+        """Register an OPTIONS route handler."""
         return self.handle("OPTIONS", pattern, handler)
 
     def delete(self, pattern: str, handler: Handler) -> App:
+        """Register a DELETE route handler."""
         return self.handle("DELETE", pattern, handler)
 
     def sqs(self, queue_name: str, handler: SQSHandler) -> App:
+        """Register an SQS queue handler by queue name."""
         name = str(queue_name or "").strip()
         if not name:
             return self
@@ -263,6 +304,7 @@ class App:
         return self
 
     def kinesis(self, stream_name: str, handler: KinesisHandler) -> App:
+        """Register a Kinesis stream handler by stream name."""
         name = str(stream_name or "").strip()
         if not name:
             return self
@@ -270,6 +312,7 @@ class App:
         return self
 
     def sns(self, topic_name: str, handler: SNSHandler) -> App:
+        """Register an SNS topic handler by topic name."""
         name = str(topic_name or "").strip()
         if not name:
             return self
@@ -277,6 +320,7 @@ class App:
         return self
 
     def event_bridge(self, selector: EventBridgeSelector, handler: EventBridgeHandler) -> App:
+        """Register an EventBridge handler for a selector."""
         if selector is None:
             return self
         sel = EventBridgeSelector(
@@ -290,6 +334,7 @@ class App:
         return self
 
     def dynamodb(self, table_name: str, handler: DynamoDBStreamHandler) -> App:
+        """Register a DynamoDB Streams handler by table name."""
         name = str(table_name or "").strip()
         if not name:
             return self
@@ -297,6 +342,7 @@ class App:
         return self
 
     def websocket(self, route_key: str, handler: WebSocketHandler) -> App:
+        """Register a WebSocket route handler by route key."""
         key = str(route_key or "").strip()
         if not key:
             return self
@@ -304,12 +350,14 @@ class App:
         return self
 
     def use(self, middleware: Middleware) -> App:
+        """Append HTTP middleware around route handlers."""
         if middleware is None:
             return self
         self._middlewares.append(middleware)
         return self
 
     def use_events(self, middleware: EventMiddleware) -> App:
+        """Append event middleware around event workload handlers."""
         if middleware is None:
             return self
         self._event_middlewares.append(middleware)
@@ -349,6 +397,7 @@ class App:
         return wrapped
 
     def get_http_error_format(self) -> str:
+        """Return the configured HTTP error-envelope format."""
         return self._http_error_format
 
     def _http_error_response(
@@ -376,13 +425,45 @@ class App:
             request_id=request_id,
         )
 
+    def _http_error_response_with_request_id_trace_id(
+        self,
+        code: str,
+        message: str,
+        *,
+        headers: dict[str, Any] | None = None,
+        request_id: str = "",
+        trace_id: str = "",
+    ) -> Response:
+        return error_response_with_request_id_trace_id_and_format(
+            self._http_error_format,
+            code,
+            message,
+            headers=headers,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
+
     def _response_for_http_error(self, exc: Exception) -> Response:
         return response_for_error_with_format(self._http_error_format, exc)
 
     def _response_for_http_error_with_request_id(self, exc: Exception, request_id: str) -> Response:
         return response_for_error_with_request_id_and_format(self._http_error_format, exc, request_id)
 
+    def _response_for_http_error_with_request_id_trace_id(
+        self,
+        exc: Exception,
+        request_id: str,
+        trace_id: str,
+    ) -> Response:
+        return response_for_error_with_request_id_trace_id_and_format(
+            self._http_error_format,
+            exc,
+            request_id,
+            trace_id,
+        )
+
     def serve(self, request: Request, ctx: Any | None = None) -> Response:
+        """Serve a normalized AppTheory request and return a normalized response."""
         return self._serve(request, ctx)
 
     def _serve(
@@ -394,18 +475,24 @@ class App:
         error_responder: Callable[[Exception, Request, str], Response] | None = None,
         fallback_request_id: str = "",
     ) -> Response:
-        def respond_to_error(exc: Exception, error_request: Request, request_id: str) -> Response:
+        def respond_to_error(
+            exc: Exception,
+            error_request: Request,
+            request_id: str,
+            trace_id: str = "",
+        ) -> Response:
             if error_responder is not None:
                 return error_responder(exc, error_request, request_id)
             if request_id:
-                return self._response_for_http_error_with_request_id(exc, request_id)
+                resolved_trace_id = str(trace_id or "").strip() or str(getattr(error_request, "trace_id", "") or "")
+                return self._response_for_http_error_with_request_id_trace_id(exc, request_id, resolved_trace_id)
             return self._response_for_http_error(exc)
 
         if self._tier == "p1":
             return self._serve_portable(
                 request,
                 ctx,
-                enable_p2=False,
+                tier=self._tier,
                 context_configurer=context_configurer,
                 appsync=appsync,
                 error_responder=error_responder,
@@ -415,7 +502,7 @@ class App:
             return self._serve_portable(
                 request,
                 ctx,
-                enable_p2=True,
+                tier=self._tier,
                 context_configurer=context_configurer,
                 appsync=appsync,
                 error_responder=error_responder,
@@ -455,6 +542,7 @@ class App:
             clock=self._clock,
             id_generator=self._id_generator,
             ctx=ctx,
+            trace_id=normalized.trace_id,
             appsync=appsync,
         )
         if context_configurer is not None:
@@ -483,10 +571,11 @@ class App:
         request_ctx: Context,
         request_id: str,
         *,
-        enable_p2: bool,
+        tier: str,
+        trace_id: str = "",
         error_responder: Callable[[Exception, Request, str], Response] | None = None,
     ) -> tuple[Response, str] | None:
-        if not enable_p2 or self._policy_hook is None:
+        if tier != "p2" or self._policy_hook is None:
             return None
 
         try:
@@ -495,7 +584,7 @@ class App:
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
             if error_responder is not None:
                 return error_responder(exc, request_ctx.request, request_id), error_code
-            return self._response_for_http_error_with_request_id(exc, request_id), error_code
+            return self._response_for_http_error_with_request_id_trace_id(exc, request_id, trace_id), error_code
 
         if decision is None or not str(getattr(decision, "code", "")).strip():
             return None
@@ -504,11 +593,12 @@ class App:
         message = str(getattr(decision, "message", "")).strip() or _default_policy_message(code)
         if error_responder is not None:
             return error_responder(AppError(code, message), request_ctx.request, request_id), code
-        resp = self._http_error_response_with_request_id(
+        resp = self._http_error_response_with_request_id_trace_id(
             code,
             message,
             headers=decision.headers,
             request_id=request_id,
+            trace_id=trace_id,
         )
         return resp, code
 
@@ -519,6 +609,7 @@ class App:
         auth_required: bool,
         request_id: str,
         trace: list[str],
+        trace_id: str = "",
         error_responder: Callable[[Exception, Request, str], Response] | None = None,
     ) -> tuple[Response, str] | None:
         if not auth_required:
@@ -531,10 +622,11 @@ class App:
                     error_responder(AppError("app.unauthorized", "unauthorized"), request_ctx.request, request_id),
                     "app.unauthorized",
                 )
-            resp = self._http_error_response_with_request_id(
+            resp = self._http_error_response_with_request_id_trace_id(
                 "app.unauthorized",
                 "unauthorized",
                 request_id=request_id,
+                trace_id=trace_id,
             )
             return resp, "app.unauthorized"
 
@@ -544,7 +636,7 @@ class App:
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
             if error_responder is not None:
                 return error_responder(exc, request_ctx.request, request_id), error_code
-            return self._response_for_http_error_with_request_id(exc, request_id), error_code
+            return self._response_for_http_error_with_request_id_trace_id(exc, request_id, trace_id), error_code
 
         if not str(identity or "").strip():
             if error_responder is not None:
@@ -552,10 +644,11 @@ class App:
                     error_responder(AppError("app.unauthorized", "unauthorized"), request_ctx.request, request_id),
                     "app.unauthorized",
                 )
-            resp = self._http_error_response_with_request_id(
+            resp = self._http_error_response_with_request_id_trace_id(
                 "app.unauthorized",
                 "unauthorized",
                 request_id=request_id,
+                trace_id=trace_id,
             )
             return resp, "app.unauthorized"
 
@@ -567,19 +660,27 @@ class App:
         request: Request,
         ctx: Any | None,
         *,
-        enable_p2: bool,
+        tier: str,
         context_configurer: Callable[[Context], None] | None = None,
         appsync: AppSyncContext | None = None,
         error_responder: Callable[[Exception, Request, str], Response] | None = None,
         fallback_request_id: str = "",
     ) -> Response:
-        def respond_to_error(exc: Exception, error_request: Request, request_id: str) -> Response:
+        def respond_to_error(
+            exc: Exception,
+            error_request: Request,
+            request_id: str,
+            trace_id: str = "",
+        ) -> Response:
             if error_responder is not None:
                 return error_responder(exc, error_request, request_id)
-            return self._response_for_http_error_with_request_id(exc, request_id)
+            resolved_trace_id = str(trace_id or "").strip() or str(getattr(error_request, "trace_id", "") or "")
+            return self._response_for_http_error_with_request_id_trace_id(exc, request_id, resolved_trace_id)
 
+        started_at = self._clock.now()
         pre_headers = canonicalize_headers(request.headers)
         pre_query = clone_query(request.query)
+        trace_id = extract_trace_id_from_headers(pre_headers)
 
         method = str(request.method or "").strip().upper()
         path = str(request.path or "").strip() or "/"
@@ -599,8 +700,17 @@ class App:
 
         def finish(resp: Response, error_code: str = "") -> Response:
             out = _finalize_p1_response(resp, request_id, origin, self._cors)
-            if enable_p2:
-                self._record_observability(method, path, request_id, tenant_id, out.status, error_code)
+            if tier == "p2":
+                self._record_observability(
+                    method,
+                    path,
+                    request_id,
+                    tenant_id,
+                    trace_id,
+                    out.status,
+                    error_code,
+                    _duration_ms(started_at, self._clock.now()),
+                )
             return out
 
         if _is_cors_preflight(request.method, pre_headers):
@@ -618,23 +728,30 @@ class App:
             normalized = normalize_request_with_max_bytes(request, self._limits.max_request_bytes)
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
-            return finish(respond_to_error(exc, request, request_id), error_code)
+            return finish(respond_to_error(exc, request, request_id, trace_id), error_code)
 
         method = normalized.method
         path = normalized.path
+        trace_id = normalized.trace_id
         tenant_id = _extract_tenant_id(normalized.headers, normalized.query)
 
         if self._limits.max_request_bytes > 0 and len(normalized.body) > self._limits.max_request_bytes:
             if error_responder is not None:
                 return finish(
-                    respond_to_error(AppError("app.too_large", "request too large"), normalized, request_id),
+                    respond_to_error(
+                        AppError("app.too_large", "request too large"),
+                        normalized,
+                        request_id,
+                        trace_id,
+                    ),
                     "app.too_large",
                 )
             return finish(
-                self._http_error_response_with_request_id(
+                self._http_error_response_with_request_id_trace_id(
                     "app.too_large",
                     "request too large",
                     request_id=request_id,
+                    trace_id=trace_id,
                 ),
                 "app.too_large",
             )
@@ -648,28 +765,31 @@ class App:
                             AppError("app.method_not_allowed", "method not allowed"),
                             normalized,
                             request_id,
+                            trace_id,
                         ),
                         "app.method_not_allowed",
                     )
                 return finish(
-                    respond_to_error(AppError("app.not_found", "not found"), normalized, request_id),
+                    respond_to_error(AppError("app.not_found", "not found"), normalized, request_id, trace_id),
                     "app.not_found",
                 )
             if allowed:
                 return finish(
-                    self._http_error_response_with_request_id(
+                    self._http_error_response_with_request_id_trace_id(
                         "app.method_not_allowed",
                         "method not allowed",
                         headers={"allow": [self._router.format_allow_header(allowed)]},
                         request_id=request_id,
+                        trace_id=trace_id,
                     ),
                     "app.method_not_allowed",
                 )
             return finish(
-                self._http_error_response_with_request_id(
+                self._http_error_response_with_request_id_trace_id(
                     "app.not_found",
                     "not found",
                     request_id=request_id,
+                    trace_id=trace_id,
                 ),
                 "app.not_found",
             )
@@ -681,6 +801,7 @@ class App:
             id_generator=self._id_generator,
             ctx=ctx,
             request_id=request_id,
+            trace_id=trace_id,
             tenant_id=tenant_id,
             auth_identity="",
             remaining_ms=remaining_ms,
@@ -693,7 +814,8 @@ class App:
         policy_outcome = self._policy_check(
             request_ctx,
             request_id,
-            enable_p2=enable_p2,
+            tier=tier,
+            trace_id=trace_id,
             error_responder=error_responder,
         )
         if policy_outcome is not None:
@@ -705,6 +827,7 @@ class App:
             auth_required=match.auth_required,
             request_id=request_id,
             trace=trace,
+            trace_id=trace_id,
             error_responder=error_responder,
         )
         if auth_outcome is not None:
@@ -718,11 +841,11 @@ class App:
             resp = _resolve(handler(request_ctx))
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
-            return finish(respond_to_error(exc, normalized, request_id), error_code)
+            return finish(respond_to_error(exc, normalized, request_id, trace_id), error_code)
 
         if resp is None:
             return finish(
-                respond_to_error(AppError("app.internal", "internal error"), normalized, request_id),
+                respond_to_error(AppError("app.internal", "internal error"), normalized, request_id, trace_id),
                 "app.internal",
             )
 
@@ -730,19 +853,25 @@ class App:
             resp = normalize_response(resp)
         except Exception as exc:  # noqa: BLE001
             error_code = exc.code if isinstance(exc, (AppError, AppTheoryError)) else "app.internal"
-            return finish(respond_to_error(exc, normalized, request_id), error_code)
+            return finish(respond_to_error(exc, normalized, request_id, trace_id), error_code)
 
         if self._limits.max_response_bytes > 0 and len(resp.body) > self._limits.max_response_bytes:
             if error_responder is not None:
                 return finish(
-                    respond_to_error(AppError("app.too_large", "response too large"), normalized, request_id),
+                    respond_to_error(
+                        AppError("app.too_large", "response too large"),
+                        normalized,
+                        request_id,
+                        trace_id,
+                    ),
                     "app.too_large",
                 )
             return finish(
-                self._http_error_response_with_request_id(
+                self._http_error_response_with_request_id_trace_id(
                     "app.too_large",
                     "response too large",
                     request_id=request_id,
+                    trace_id=trace_id,
                 ),
                 "app.too_large",
             )
@@ -762,9 +891,13 @@ class App:
         path: str,
         request_id: str,
         tenant_id: str,
+        trace_id: str,
         status: int,
         error_code: str,
+        duration_ms: int,
     ) -> None:
+        observed_duration_ms = max(0, int(duration_ms))
+
         level = "info"
         if status >= 500:
             level = "error"
@@ -782,6 +915,8 @@ class App:
                     path=path,
                     status=int(status),
                     error_code=error_code,
+                    duration_ms=observed_duration_ms,
+                    trace_id=str(trace_id or "").strip(),
                 )
             )
 
@@ -790,6 +925,7 @@ class App:
                 MetricRecord(
                     name="apptheory.request",
                     value=1,
+                    duration_ms=observed_duration_ms,
                     tags={
                         "method": method,
                         "path": path,
@@ -801,21 +937,26 @@ class App:
             )
 
         if self._observability.span is not None:
+            attrs = {
+                "http.method": method,
+                "http.route": path,
+                "http.status_code": str(int(status)),
+                "request.id": request_id,
+                "tenant.id": tenant_id,
+                "error.code": error_code,
+            }
+            resolved_trace_id = str(trace_id or "").strip()
+            if resolved_trace_id:
+                attrs["trace.id"] = resolved_trace_id
             self._observability.span(
                 SpanRecord(
                     name=f"http {method} {path}",
-                    attributes={
-                        "http.method": method,
-                        "http.route": path,
-                        "http.status_code": str(int(status)),
-                        "request.id": request_id,
-                        "tenant.id": tenant_id,
-                        "error.code": error_code,
-                    },
+                    attributes=attrs,
                 )
             )
 
     def serve_apigw_v2(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve an API Gateway HTTP API v2 event."""
         try:
             request = request_from_apigw_v2(event)
         except Exception as exc:  # noqa: BLE001
@@ -825,6 +966,7 @@ class App:
         return apigw_v2_response_from_response(resp)
 
     def serve_lambda_function_url(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve a Lambda Function URL event."""
         try:
             request = request_from_lambda_function_url(event)
         except Exception as exc:  # noqa: BLE001
@@ -834,6 +976,7 @@ class App:
         return lambda_function_url_response_from_response(resp)
 
     def serve_apigw_proxy(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve an API Gateway REST proxy event."""
         try:
             request = request_from_apigw_proxy(event)
         except Exception as exc:  # noqa: BLE001
@@ -843,6 +986,7 @@ class App:
         return apigw_proxy_response_from_response(resp)
 
     def serve_alb(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve an ALB target group event."""
         try:
             request = request_from_alb_target_group(event)
         except Exception as exc:  # noqa: BLE001
@@ -852,6 +996,7 @@ class App:
         return alb_target_group_response_from_response(resp)
 
     def serve_appsync(self, event: AppSyncResolverEvent, ctx: Any | None = None) -> Any:
+        """Serve an AppSync direct Lambda resolver event."""
         fallback_request_id = _appsync_request_id_from_ctx(ctx)
         request_metadata = _appsync_request_from_event(event)
         try:
@@ -880,6 +1025,7 @@ class App:
             )
 
     def serve_websocket(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve an API Gateway WebSocket event."""
         try:
             request = _request_from_websocket_event(event)
         except Exception as exc:  # noqa: BLE001
@@ -935,6 +1081,7 @@ class App:
             id_generator=self._id_generator,
             ctx=ctx,
             request_id=request_id,
+            trace_id=normalized.trace_id,
             tenant_id=tenant_id,
             auth_identity="",
             remaining_ms=remaining_ms,
@@ -977,6 +1124,7 @@ class App:
         return None
 
     def serve_sqs(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve an SQS event with partial-batch failure output."""
         records = event.get("Records") or []
         if not isinstance(records, list):
             records = []
@@ -1029,6 +1177,7 @@ class App:
         return None
 
     def serve_eventbridge(self, event: dict[str, Any], ctx: Any | None = None) -> Any:
+        """Serve an EventBridge event through registered selectors."""
         handler = self._eventbridge_handler_for_event(event)
         if handler is None:
             return None
@@ -1057,6 +1206,7 @@ class App:
         return None
 
     def serve_dynamodb_stream(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve a DynamoDB Streams event with partial-batch failure output."""
         records = event.get("Records") or []
         if not isinstance(records, list):
             records = []
@@ -1101,6 +1251,7 @@ class App:
         return None
 
     def serve_kinesis(self, event: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
+        """Serve a Kinesis event with partial-batch failure output."""
         records = event.get("Records") or []
         if not isinstance(records, list):
             records = []
@@ -1136,7 +1287,7 @@ class App:
         if not isinstance(records, list) or not records:
             return None
         first = records[0] if isinstance(records[0], dict) else {}
-        sns = first.get("Sns") if isinstance(first.get("Sns"), dict) else {}
+        sns: dict[str, Any] = cast(dict[str, Any], first.get("Sns")) if isinstance(first.get("Sns"), dict) else {}
         topic_name = _sns_topic_name_from_arn(str(sns.get("TopicArn") or ""))
         if not topic_name:
             return None
@@ -1146,6 +1297,7 @@ class App:
         return None
 
     def serve_sns(self, event: dict[str, Any], ctx: Any | None = None) -> Any:
+        """Serve an SNS event through the registered topic handler."""
         records = event.get("Records") or []
         if not isinstance(records, list):
             records = []
@@ -1165,6 +1317,7 @@ class App:
         return outputs
 
     def handle_lambda(self, event: Any, ctx: Any | None = None) -> Any:
+        """Detect and dispatch a supported Lambda event shape through one entrypoint."""
         if not isinstance(event, dict):
             raise RuntimeError("apptheory: unknown event type")
 
@@ -1184,7 +1337,7 @@ class App:
         if "detail-type" in event or "detailType" in event:
             return self.serve_eventbridge(event, ctx=ctx)
         if _is_appsync_event(event):
-            return self.serve_appsync(event, ctx=ctx)
+            return self.serve_appsync(cast(AppSyncResolverEvent, event), ctx=ctx)
 
         if "requestContext" in event:
             request_context = event.get("requestContext") or {}
@@ -1219,6 +1372,7 @@ def create_app(
     policy_hook: PolicyHook | None = None,
     websocket_client_factory: WebSocketClientFactory | None = None,
 ) -> App:
+    """Create an AppTheory application with the provided runtime options."""
     return App(
         clock=clock,
         id_generator=id_generator,
@@ -1758,13 +1912,19 @@ def _finalize_p1_response(resp: Response, request_id: str, origin: str, cors: CO
     )
 
 
+def _duration_ms(started_at: dt.datetime, finished_at: dt.datetime) -> int:
+    delta = finished_at - started_at
+    duration = int(delta.total_seconds() * 1000)
+    return duration if duration > 0 else 0
+
+
 def _remaining_ms(ctx: Any | None) -> int:
     if ctx is None:
         return 0
     get_remaining = getattr(ctx, "get_remaining_time_in_millis", None)
     if callable(get_remaining):
         try:
-            value = int(get_remaining())
+            value = int(cast(Callable[[], Any], get_remaining)())
         except Exception:  # noqa: BLE001
             return 0
         return value if value > 0 else 0
@@ -1791,12 +1951,16 @@ def _event_workload_failed_error() -> RuntimeError:
 
 
 def _kinesis_sequence_number(record: dict[str, Any]) -> str:
-    kinesis = record.get("kinesis") if isinstance(record.get("kinesis"), dict) else {}
+    kinesis: dict[str, Any] = (
+        cast(dict[str, Any], record.get("kinesis")) if isinstance(record.get("kinesis"), dict) else {}
+    )
     return str(kinesis.get("sequenceNumber") or "").strip()
 
 
 def _dynamodb_stream_sequence_number(record: dict[str, Any]) -> str:
-    change = record.get("dynamodb") if isinstance(record.get("dynamodb"), dict) else {}
+    change: dict[str, Any] = (
+        cast(dict[str, Any], record.get("dynamodb")) if isinstance(record.get("dynamodb"), dict) else {}
+    )
     return str(change.get("SequenceNumber") or "").strip()
 
 
@@ -1853,6 +2017,7 @@ def _record_event_observability(
                 path="",
                 status=0,
                 error_code=error_code,
+                duration_ms=0,
                 trigger=observation.trigger,
                 correlation_id=observation.correlation_id,
                 source=observation.source,
@@ -1869,6 +2034,7 @@ def _record_event_observability(
                 name="apptheory.event",
                 value=1,
                 tags=_event_metric_tags(observation, outcome, error_code),
+                duration_ms=0,
             )
         )
 

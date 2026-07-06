@@ -18,6 +18,12 @@ func runFixtureM2(f Fixture) error {
 	var fake *testkit.FakeStreamerClient
 	factory := func(_ context.Context, endpoint string) (streamer.Client, error) {
 		fake = testkit.NewFakeStreamerClient(endpoint)
+		for _, route := range f.Setup.WebSockets {
+			if strings.TrimSpace(route.Handler) == "ws_default_send_json_fail" {
+				fake.PostErr = errors.New("testkit: post failed")
+				break
+			}
+		}
 		return fake, nil
 	}
 
@@ -209,10 +215,42 @@ func builtInWebSocketHandler(name string) apptheory.WebSocketHandler {
 				"request_id":          ctx.RequestID,
 			}), nil
 		}
+	case "ws_default_send_json_fail":
+		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+			ws := ctx.AsWebSocket()
+			if ws == nil {
+				return nil, errors.New("missing websocket context")
+			}
+			if err := ws.SendJSONMessage(map[string]any{"ok": true}); err != nil {
+				return nil, err
+			}
+			return apptheory.MustJSON(200, map[string]any{"sent": true}), nil
+		}
+	case "ws_default_body_size":
+		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+			ws := ctx.AsWebSocket()
+			if ws == nil {
+				return nil, errors.New("missing websocket context")
+			}
+			return apptheory.MustJSON(200, map[string]any{
+				"handler":             "default",
+				"body_len":            len(ws.Body),
+				"route_key":           ws.RouteKey,
+				"event_type":          ws.EventType,
+				"connection_id":       ws.ConnectionID,
+				"management_endpoint": ws.ManagementEndpoint,
+				"request_id":          ctx.RequestID,
+			}), nil
+		}
+	case "ws_connect_deny":
+		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
+			_ = ctx
+			return nil, apptheory.NewAppTheoryError("app.unauthorized", "unauthorized")
+		}
 	case "ws_bad_request":
 		return func(ctx *apptheory.Context) (*apptheory.Response, error) {
 			_ = ctx
-			return nil, &apptheory.AppError{Code: "app.bad_request", Message: "bad request"}
+			return nil, apptheory.NewAppTheoryError("app.bad_request", "bad request")
 		}
 	default:
 		return nil

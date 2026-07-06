@@ -171,3 +171,4 @@ export class MultiWindowStrategy {
         return this.windows;
     }
 }
+//# sourceMappingURL=strategies.js.map

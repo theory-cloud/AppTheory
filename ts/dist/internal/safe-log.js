@@ -24,3 +24,4 @@ function isUnsafeLogValueChar(char) {
         codePoint <= 0x1f ||
         (codePoint >= 0x7f && codePoint <= 0x9f));
 }
+//# sourceMappingURL=safe-log.js.map

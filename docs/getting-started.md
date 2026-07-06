@@ -5,14 +5,21 @@ title: Getting Started
 # Getting Started with AppTheory
 
 This guide gets a local AppTheory workspace running, shows the smallest deterministic app path in each runtime, and
-points you at the canonical API and deployment docs.
+then carries one canonical CDK path through bootstrap, deploy, curl verification, and teardown.
 
 ## Prerequisites
 
 - Go `1.26.4` (`go.mod`)
-- Node.js `>=24` (`ts/package.json` and `cdk/package.json`)
-- Python `>=3.14` (`py/pyproject.toml`)
+- Node.js `>=20` (`ts/package.json` and `cdk/package.json`)
+- Python `>=3.12` (`py/pyproject.toml`)
 - `make` and `git`
+- AWS credentials plus permission to run `cdk bootstrap`, `cdk deploy`, and `cdk destroy` when you are ready to create
+  cloud resources
+
+These floors are compatibility claims, not aspirations. `scripts/verify-runtime-floor-claims.sh` fails closed unless the
+package manifests, lockfiles, pinned TableTheory GitHub Release artifacts, and `.github/workflows/ci.yml` agree.
+The CI floor matrix runs Python 3.12 and 3.14 plus Node.js 20 and 24 so the lower-floor claim remains
+evidence-bounded.
 
 ## Install from repo
 
@@ -26,11 +33,23 @@ go mod download
 (cd cdk && npm ci)
 ```
 
-AppTheory release artifacts are also published via GitHub Releases:
+AppTheory release artifacts are also published via GitHub Releases. Pin and verify the release you consume:
 
-- Go module: `go get github.com/theory-cloud/apptheory@vX.Y.Z`
-- TypeScript tarball: `npm i ./theory-cloud-apptheory-X.Y.Z.tgz`
-- Python wheel: `python -m pip install ./apptheory-X.Y.Z-py3-none-any.whl`
+```bash
+VERSION=1.14.0
+TAG="v${VERSION}"
+REPO="theory-cloud/AppTheory"
+
+go get "github.com/theory-cloud/apptheory@${TAG}"
+gh release download "${TAG}" --repo "${REPO}" \
+  --pattern "theory-cloud-apptheory-${VERSION}.tgz" \
+  --pattern "apptheory-${VERSION}-py3-none-any.whl" \
+  --pattern "SHA256SUMS.txt" \
+  --clobber
+grep -E " (theory-cloud-apptheory-${VERSION}\.tgz|apptheory-${VERSION}-py3-none-any\.whl)$" SHA256SUMS.txt | sha256sum -c -
+npm install "./theory-cloud-apptheory-${VERSION}.tgz"
+python -m pip install "./apptheory-${VERSION}-py3-none-any.whl"
+```
 
 ## First deterministic local invocation
 
@@ -96,6 +115,78 @@ Equivalent deterministic test environments exist in all three runtimes:
 - Go: `testkit.New()`
 - TypeScript: `createTestEnv()`
 - Python: `create_test_env()`
+
+## Deploy the hello-world service
+
+The deployable on-ramp is [`examples/cdk/hello-world`](../examples/cdk/hello-world/README.md). It uses one
+`AppTheoryHttpApi` and one Lambda function per language variant, with deterministic testkit tests for Go, TypeScript,
+and Python.
+
+Install the example dependencies from a clean clone:
+
+```bash
+cd examples/cdk/hello-world
+npm ci
+```
+
+Synthesize first. Synth proves the CDK graph can render locally, but it is not the finish line:
+
+```bash
+npx cdk synth -c lang=ts AppTheoryHelloWorldTs
+```
+
+Bootstrap the target account/region once before the first deploy:
+
+```bash
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+AWS_REGION=${AWS_REGION:-us-east-1}
+npx cdk bootstrap "aws://${AWS_ACCOUNT_ID}/${AWS_REGION}"
+```
+
+Deploy exactly one variant:
+
+```bash
+npx cdk deploy -c lang=ts AppTheoryHelloWorldTs
+```
+
+CDK prints the `ApiUrl` output. Verify the deployed service with `curl`:
+
+```bash
+API_URL="https://replace-with-the-ApiUrl-output"
+curl "${API_URL}/hello/AppTheory"
+```
+
+Expected response shape:
+
+```json
+{"message":"hello AppTheory","runtime":"ts","request_id":"...","tenant_id":""}
+```
+
+Destroy the stack when you are done:
+
+```bash
+npx cdk destroy -c lang=ts AppTheoryHelloWorldTs
+```
+
+Use `-c lang=go AppTheoryHelloWorldGo` or `-c lang=py AppTheoryHelloWorldPy` for the Go and Python variants.
+
+## Scaffold a new project
+
+Use `apptheory-init` when you want the same on-ramp shape in a fresh project instead of editing the examples in place.
+The generator emits one AppTheory app, one deterministic test, and one CDK stack for the selected language. Generated
+package files pin AppTheory and AppTheory CDK to GitHub Release assets; they do not depend on npm or PyPI publication.
+
+```bash
+go run ./cmd/apptheory-init --lang=ts my-app
+cd my-app
+npm install
+npm test
+npx cdk synth
+```
+
+Supported language values are `go`, `ts`, and `py`. After synth, follow the same `cdk bootstrap`, `cdk deploy`, `curl`,
+and `cdk destroy` sequence shown above. A future theory-cli integration can wrap this command; the generator itself is
+repo-local and intentionally does not mutate cloud resources.
 
 ## Verification
 
@@ -183,6 +274,9 @@ values return unknown/invalid provenance instead of falling back to forwarding h
 - [Core Patterns](./core-patterns.md)
 - [Testing Guide](./testing-guide.md)
 - [CDK Guides](./cdk/README.md)
+- [CDK Getting Started](./cdk/getting-started.md)
+- [Dependency Automation](./dependency-automation.md)
+- [Hello-world CDK example](../examples/cdk/hello-world/README.md)
 - [Lift Migration Guide](./migration/from-lift.md)
 - [AppSync Lambda Resolver Recipe](./migration/appsync-lambda-resolvers.md)
 - [CDK AppSync Lambda Resolvers](./cdk/appsync-lambda-resolvers.md)

@@ -80,17 +80,15 @@ patterns:
           - "Confusion during migration"
 
   strict_route_registration:
-    name: "Use strict route registration for fast feedback"
-    problem: "Invalid route patterns are fail-closed and may be silently ignored by default for backwards compatibility."
-    solution: "Use the strict variant during tests and CI to fail fast when a route pattern is invalid."
+    name: "Use normal fail-closed route registration"
+    problem: "Invalid route patterns, duplicate method/path pairs, and nil/undefined/None handlers must fail during setup instead of drifting into runtime 404s."
+    solution: "Use normal fluent registration and run startup tests that construct every route."
     correct_example: |
-      # CORRECT (Go): fail fast on invalid patterns
-      if _, err := app.GetStrict("/users/{id}", handleUser); err != nil {
-        panic(err)
-      }
+      # CORRECT (Go): normal registration fails closed during setup
+      app.Get("/users/{id}", handleUser)
     anti_patterns:
       - name: "Assuming all routes register successfully"
-        why: "Silent registration failures can lead to missing routes and unexpected 404s."
+        why: "Ignoring setup failures can block startup or leave tests blind to invalid route tables."
         incorrect_example: |
           # INCORRECT
           app.Get("/{proxy+}/x", handleUser)

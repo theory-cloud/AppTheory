@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: run release-please locally for the selected release branch.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

@@ -38,3 +38,52 @@ func TestGetStrict_RegistersRouteAndServes(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", resp.Status)
 	}
 }
+
+func TestHandle_FailsClosedOnInvalidRegistrations(t *testing.T) {
+	handler := func(*Context) (*Response, error) { return Text(200, "ok"), nil }
+
+	cases := []struct {
+		name string
+		fn   func()
+	}{
+		{
+			name: "invalid pattern",
+			fn: func() {
+				New(WithTier(TierP0)).Get("/x/{}", handler)
+			},
+		},
+		{
+			name: "duplicate route",
+			fn: func() {
+				app := New(WithTier(TierP0))
+				app.Get("/dup/{id}", handler)
+				app.Handle("get", "/dup/:id", handler)
+			},
+		},
+		{
+			name: "nil handler",
+			fn: func() {
+				New(WithTier(TierP0)).Get("/nil", nil)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatal("expected registration panic")
+				}
+				appErr, ok := r.(*AppTheoryError)
+				if !ok {
+					t.Fatalf("expected AppTheoryError panic, got %T", r)
+				}
+				if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 {
+					t.Fatalf("unexpected route registration error: %#v", appErr)
+				}
+			}()
+			tc.fn()
+		})
+	}
+}

@@ -147,5 +147,77 @@ class CloudWatchLogsSubscriptionScaffoldTests(unittest.TestCase):
             missing_helper_handler(None, {"eventID": "r1"})
 
 
+class McpComparatorTests(unittest.TestCase):
+    def test_explicit_empty_sse_frames_rejects_stray_sse_body(self) -> None:
+        body = b"id: stray\nevent: message\ndata: {\"jsonrpc\":\"2.0\"}\n\n"
+        expected = {
+            "status": 200,
+            "headers": {},
+            "cookies": [],
+            "is_base64": False,
+            "sse_frames": [],
+            # Keep the body equal so this proof fails unless sse_frames=[] is
+            # itself an explicit assertion.
+            "body": {"encoding": "utf8", "value": body.decode("utf-8")},
+        }
+        actual = {
+            "status": 200,
+            "headers": {},
+            "cookies": [],
+            "is_base64": False,
+            "sse_frames": runner._parse_mcp_sse_frames(body),
+            "body": body,
+        }
+
+        ok, reason = runner._compare_mcp_step(expected, actual)
+
+        self.assertFalse(ok)
+        self.assertEqual("sse_frames mismatch", reason)
+
+    def test_mcp_body_json_comparison_still_applies_without_sse_frames(self) -> None:
+        expected = {
+            "status": 200,
+            "headers": {},
+            "cookies": [],
+            "is_base64": False,
+            "body_json": {"jsonrpc": "2.0", "id": "ok"},
+        }
+        actual = {
+            "status": 200,
+            "headers": {},
+            "cookies": [],
+            "is_base64": False,
+            "sse_frames": [],
+            "body": b'{"jsonrpc":"2.0","id":"ok"}',
+        }
+
+        ok, reason = runner._compare_mcp_step(expected, actual)
+
+        self.assertTrue(ok, reason)
+
+    def test_non_empty_sse_frames_comparison_still_applies(self) -> None:
+        body = b"id: stream-1\nevent: message\ndata: {\"jsonrpc\":\"2.0\"}\n\n"
+        frames = runner._parse_mcp_sse_frames(body)
+        expected = {
+            "status": 200,
+            "headers": {},
+            "cookies": [],
+            "is_base64": False,
+            "sse_frames": frames,
+        }
+        actual = {
+            "status": 200,
+            "headers": {},
+            "cookies": [],
+            "is_base64": False,
+            "sse_frames": frames,
+            "body": body,
+        }
+
+        ok, reason = runner._compare_mcp_step(expected, actual)
+
+        self.assertTrue(ok, reason)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: fail when generated API snapshots differ from the committed snapshots.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

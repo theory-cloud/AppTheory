@@ -37,3 +37,4 @@ export interface CloudWatchLogsSubscriptionSummary {
  * fixture summaries without copying customer log material.
  */
 export declare function decodeCloudWatchLogsSubscription(record: KinesisEventRecord): CloudWatchLogsSubscription;
+//# sourceMappingURL=kinesis-cloudwatch-logs.d.ts.map

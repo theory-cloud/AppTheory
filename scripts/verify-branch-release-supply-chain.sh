@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify branch-level release supply-chain invariants and forbidden release actions.
 set -euo pipefail
 
 # Verifies required branch/release supply-chain artifacts exist and are wired for the expected flow:

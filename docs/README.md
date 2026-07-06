@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **API Reference** | [Go](./api-reference.md) &#124; [TypeScript](../ts/docs/README.md) &#124; [Python](../py/docs/README.md) &#124; [CDK](../cdk/docs/README.md) |
-| **Core Guides** | [Core Patterns](./core-patterns.md) &#124; [Testing](./testing-guide.md) &#124; [Troubleshooting](./troubleshooting.md) |
+| **Core Guides** | [Core Patterns](./core-patterns.md) &#124; [Testing](./testing-guide.md) &#124; [Troubleshooting](./troubleshooting.md) &#124; [Operations](./guides/operations.md) |
 | **MCP** | [Integration Guide](./integrations/mcp.md) &#124; [Remote MCP](./integrations/remote-mcp.md) &#124; [Examples](../examples/mcp/) |
 | **CDK** | [CDK Guide](./cdk/README.md) &#124; [CDK Examples](../examples/cdk/) |
 | **Migration** | [From Lift](./migration/from-lift.md) &#124; [Migration Guide](./migration-guide.md) |
@@ -42,7 +42,7 @@ sanctioned category roots. Avoid adding new root-level feature guides when a cat
 - [API Reference](./api-reference.md)
 - [Core Patterns](./core-patterns.md)
 - [Testing Guide](./testing-guide.md)
-- [Troubleshooting](./troubleshooting.md)
+- [Troubleshooting](./troubleshooting.md) &#124; [Operations](./guides/operations.md)
 - [Migration Guide](./migration-guide.md)
 
 ## Fixed contract-only docs
@@ -56,15 +56,18 @@ These pages are versioned with the docs contract, but they are not part of the i
 ## Sanctioned optional ingestible surfaces
 
 - [Migration Procedures](./migration/from-lift.md) and related files under `docs/migration/**`
+  `docs/migration-guide.md` is the canonical migration overview; `docs/migration/**` contains procedures and must not add a second `README.md` or `index.md` entrypoint.
 - [AppSync Lambda Resolver Recipe](./migration/appsync-lambda-resolvers.md)
 - [CDK Guides](./cdk/README.md) and related files under `docs/cdk/**`
 - [Feature Guides](./features/README.md) and related files under `docs/features/**`
 - [Integration Guides](./integrations/README.md) and related files under `docs/integrations/**`
-- `docs/llm-faq/**` is reserved as an optional ingestible surface if it is added later
+- [Operator Guides](./guides/operations.md) and related files under `docs/guides/**`
+- `docs/llm-faq/**` is the reserved ingestible FAQ surface for coding agents
 
 ## Functional guides now covered by the canonical ingest surface
 
 - [Sanitization](./features/sanitization.md)
+- [Observability Hooks](./features/observability.md)
 - [Logging Profiles](./features/logging-profiles.md)
 - [Jobs Ledger](./features/jobs-ledger.md)
 - [AWS Lambda MicroVM Golden Path](./features/lambda-microvm-contract-foundation.md)
@@ -72,6 +75,7 @@ These pages are versioned with the docs contract, but they are not part of the i
 - [Bedrock AgentCore MCP](./integrations/agentcore-mcp.md)
 - [Remote MCP](./integrations/remote-mcp.md)
 - [Remote MCP + Autheory](./integrations/remote-mcp-autheory.md)
+- [Operations Guide](./guides/operations.md)
 
 These capability guides are now part of the sanctioned optional ingestible surface declared in
 [Docs Contract](./_contract.yaml).

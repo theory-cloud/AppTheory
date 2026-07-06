@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: build and verify the Python runtime wheel and source distribution.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -84,6 +85,8 @@ def is_license(name: str) -> bool:
 matches = [n for n in names if is_license(n)]
 if not matches:
   raise SystemExit(f"python-build: FAIL (wheel missing LICENSE file: {wheel.name})")
+if "apptheory/py.typed" not in names:
+  raise SystemExit(f"python-build: FAIL (wheel missing apptheory/py.typed: {wheel.name})")
 PY
 
 if [[ ! -f "dist/apptheory-${expected_py_version}.tar.gz" ]]; then
@@ -171,6 +174,10 @@ PY
 
 tar -tzf "dist/apptheory-${expected_py_version}.tar.gz" | grep "^apptheory-${expected_py_version}/LICENSE$" >/dev/null || {
   echo "python-build: FAIL (sdist missing LICENSE for ${expected_version})"
+  exit 1
+}
+tar -tzf "dist/apptheory-${expected_py_version}.tar.gz" | grep "^apptheory-${expected_py_version}/src/apptheory/py.typed$" >/dev/null || {
+  echo "python-build: FAIL (sdist missing apptheory/py.typed for ${expected_version})"
   exit 1
 }
 

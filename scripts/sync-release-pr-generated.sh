@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: synchronize generated artifacts on release-please PR branches.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -617,6 +618,70 @@ path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 PY
 }
 
+configure_release_artifact_sync_signing() {
+  if ! command -v gpg >/dev/null 2>&1; then
+    echo "sync-release-pr-generated: FAIL (gpg not found; generated release-artifact sync commits must be signed)"
+    exit 1
+  fi
+
+  if [[ -z "${RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY:-}" ]]; then
+    echo "sync-release-pr-generated: FAIL (RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY is required to sign generated release-artifact sync commits)"
+    exit 1
+  fi
+
+  local gpg_home
+  gpg_home="$(mktemp -d)"
+  chmod 700 "${gpg_home}"
+  export GNUPGHOME="${gpg_home}"
+  trap 'rm -rf "${GNUPGHOME:-}"' EXIT
+
+  local key_file
+  key_file="$(mktemp)"
+  if grep -Fq "BEGIN PGP PRIVATE KEY BLOCK" <<<"${RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY}"; then
+    printf '%s\n' "${RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY}" >"${key_file}"
+  elif ! printf '%s' "${RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY}" | base64 --decode >"${key_file}" 2>/dev/null; then
+    rm -f "${key_file}"
+    echo "sync-release-pr-generated: FAIL (release-artifact signing key must be armored or base64-encoded GPG private key)"
+    exit 1
+  fi
+
+  if ! gpg --batch --import "${key_file}" >/dev/null 2>&1; then
+    rm -f "${key_file}"
+    echo "sync-release-pr-generated: FAIL (could not import release-artifact signing key)"
+    exit 1
+  fi
+  rm -f "${key_file}"
+
+  local key_id
+  key_id="${RELEASE_ARTIFACT_SYNC_GPG_KEY_ID:-}"
+  if [[ -z "${key_id}" ]]; then
+    key_id="$(
+      gpg --batch --list-secret-keys --with-colons --fingerprint \
+        | awk -F: '$1 == "fpr" { print $10; exit }'
+    )"
+  fi
+  if [[ -z "${key_id}" ]]; then
+    echo "sync-release-pr-generated: FAIL (could not determine release-artifact signing key id)"
+    exit 1
+  fi
+
+  if [[ -n "${RELEASE_ARTIFACT_SYNC_GPG_PASSPHRASE:-}" ]]; then
+    local gpg_wrapper
+    gpg_wrapper="${gpg_home}/gpg-wrapper"
+    cat >"${gpg_wrapper}" <<'EOF'
+#!/usr/bin/env bash
+exec gpg --batch --yes --pinentry-mode loopback --passphrase "${RELEASE_ARTIFACT_SYNC_GPG_PASSPHRASE}" "$@"
+EOF
+    chmod 700 "${gpg_wrapper}"
+    git config gpg.program "${gpg_wrapper}"
+  else
+    git config gpg.program gpg
+  fi
+
+  git config commit.gpgsign true
+  git config user.signingkey "${key_id}"
+}
+
 # The release PR must not be mergeable while generated artifacts are still being
 # rewritten. This is the release-lane invariant: release-please version files and
 # generated CDK/jsii artifacts land in the same release PR before it becomes
@@ -635,8 +700,10 @@ if ! git diff --quiet -- .release-please-manifest.premain.json cdk/.jsii cdk/lib
 
   git config user.name "github-actions[bot]"
   git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+  configure_release_artifact_sync_signing
   git add .release-please-manifest.premain.json cdk/.jsii cdk/lib cdk-go/apptheorycdk
-  git commit -m "chore(release): sync generated release artifacts"
+  git commit -S -m "chore(release): sync generated release artifacts"
+  git verify-commit HEAD
 fi
 
 go test ./cdk-go/apptheorycdk

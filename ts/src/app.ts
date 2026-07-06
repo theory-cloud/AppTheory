@@ -90,37 +90,44 @@ import {
   errorResponse,
   errorResponseWithFormat,
   errorResponseWithRequestId,
-  errorResponseWithRequestIdAndFormat,
+  errorResponseWithRequestIdTraceIdAndFormat,
   normalizeResponse,
   responseForError,
   responseForErrorWithFormat,
   responseForErrorWithRequestId,
-  responseForErrorWithRequestIdAndFormat,
+  responseForErrorWithRequestIdTraceIdAndFormat,
 } from "./internal/response.js";
 import { Router } from "./internal/router.js";
+import { extractTraceIdFromHeaders } from "./internal/trace-context.js";
 import { vary } from "./response.js";
 import type { BodyStream, Headers, Query, Request, Response } from "./types.js";
 import { WebSocketManagementClient } from "./websocket-management.js";
 
+/** Runtime tier selected for AppTheory request handling. */
 export type Tier = "p0" | "p1" | "p2";
 
+/** Request and response byte guardrails for the runtime. */
 export interface Limits {
   maxRequestBytes?: number;
   maxResponseBytes?: number;
 }
 
+/** CORS policy applied by P1 and P2 HTTP response finalization. */
 export interface CORSConfig {
   allowedOrigins?: string[];
   allowCredentials?: boolean;
   allowHeaders?: string[];
 }
 
+/** Per-route registration options. */
 export interface RouteOptions {
   authRequired?: boolean;
 }
 
+/** Hook that resolves the authenticated identity for protected routes. */
 export type AuthHook = (ctx: Context) => string | Promise<string>;
 
+/** Decision returned by a P2 policy hook to fail a request closed. */
 export interface PolicyDecision {
   code: string;
   message?: string;
@@ -139,6 +146,7 @@ function errorCodeFrom(err: unknown): string {
   return "app.internal";
 }
 
+/** P2 policy hook used for rate limiting or load shedding decisions. */
 export type PolicyHook = (
   ctx: Context,
 ) =>
@@ -147,6 +155,7 @@ export type PolicyHook = (
   | undefined
   | Promise<PolicyDecision | null | undefined>;
 
+/** Portable P2 request log record emitted by observability hooks. */
 export interface LogRecord {
   level: string;
   event: string;
@@ -156,6 +165,8 @@ export interface LogRecord {
   path: string;
   status: number;
   errorCode: string;
+  durationMs: number;
+  traceId?: string;
   trigger?: string;
   correlationId?: string;
   source?: string;
@@ -165,23 +176,28 @@ export interface LogRecord {
   eventName?: string;
 }
 
+/** Portable P2 metric record emitted by observability hooks. */
 export interface MetricRecord {
   name: string;
   value: number;
+  durationMs: number;
   tags: Record<string, string>;
 }
 
+/** Portable P2 span-shaped record emitted by observability hooks. */
 export interface SpanRecord {
   name: string;
   attributes: Record<string, string>;
 }
 
+/** Callbacks that receive AppTheory P2 log, metric, and span records. */
 export interface ObservabilityHooks {
   log?: (record: LogRecord) => void;
   metric?: (record: MetricRecord) => void;
   span?: (record: SpanRecord) => void;
 }
 
+/** Timeout middleware configuration for operations and tenants. */
 export interface TimeoutConfig {
   defaultTimeoutMs?: number;
   operationTimeoutsMs?: Record<string, number>;
@@ -195,22 +211,27 @@ export {
   HTTP_ERROR_FORMAT_NESTED,
 } from "./http-error-format.js";
 
+/** Handler for one SQS message in a batch. */
 export type SQSHandler = (
   ctx: EventContext,
   message: SQSMessage,
 ) => void | Promise<void>;
+/** Handler for one Kinesis record in a batch. */
 export type KinesisHandler = (
   ctx: EventContext,
   record: KinesisEventRecord,
 ) => void | Promise<void>;
+/** Handler for one SNS record. */
 export type SNSHandler = (
   ctx: EventContext,
   record: SNSEventRecord,
 ) => unknown | Promise<unknown>;
+/** Handler for one DynamoDB Streams record in a batch. */
 export type DynamoDBStreamHandler = (
   ctx: EventContext,
   record: DynamoDBStreamRecord,
 ) => void | Promise<void>;
+/** Handler for an EventBridge event. */
 export type EventBridgeHandler = (
   ctx: EventContext,
   event: EventBridgeEvent,
@@ -243,10 +264,12 @@ type RequestContextOptions = {
     err: unknown,
     request: Request,
     requestId: string,
+    traceId?: string,
   ) => Response;
   fallbackRequestId?: string;
 };
 
+/** Contract-first application container for routes, middleware, and Lambda event dispatch. */
 export class App {
   private readonly _router: Router<Handler>;
   private readonly _clock: Clock;
@@ -312,10 +335,12 @@ export class App {
     this._eventMiddlewares = [];
   }
 
+  /** Returns the configured HTTP error-envelope format. */
   getHTTPErrorFormat(): HTTPErrorFormat {
     return this._httpErrorFormat;
   }
 
+  /** Registers a handler for an HTTP method and route pattern. */
   handle(
     method: string,
     pattern: string,
@@ -326,6 +351,13 @@ export class App {
     return this;
   }
 
+  /**
+   * Registers a route and throws registration errors.
+   *
+   * @deprecated handle now fails closed on invalid registrations. Use handle
+   * for normal application registration and catch errors during tests only when
+   * required.
+   */
   handleStrict(
     method: string,
     pattern: string,
@@ -336,36 +368,44 @@ export class App {
     return this;
   }
 
+  /** Registers a GET route handler. */
   get(pattern: string, handler: Handler): this {
     return this.handle("GET", pattern, handler);
   }
 
+  /** Registers a POST route handler. */
   post(pattern: string, handler: Handler): this {
     return this.handle("POST", pattern, handler);
   }
 
+  /** Registers a PUT route handler. */
   put(pattern: string, handler: Handler): this {
     return this.handle("PUT", pattern, handler);
   }
 
+  /** Registers a PATCH route handler. */
   patch(pattern: string, handler: Handler): this {
     return this.handle("PATCH", pattern, handler);
   }
 
+  /** Registers an OPTIONS route handler. */
   options(pattern: string, handler: Handler): this {
     return this.handle("OPTIONS", pattern, handler);
   }
 
+  /** Registers a DELETE route handler. */
   delete(pattern: string, handler: Handler): this {
     return this.handle("DELETE", pattern, handler);
   }
 
+  /** Appends HTTP middleware around route handlers. */
   use(middleware: Middleware): this {
     if (typeof middleware !== "function") return this;
     this._middlewares.push(middleware);
     return this;
   }
 
+  /** Appends event middleware around event workload handlers. */
   useEvents(middleware: EventMiddleware): this {
     if (typeof middleware !== "function") return this;
     this._eventMiddlewares.push(middleware);
@@ -426,18 +466,20 @@ export class App {
     );
   }
 
-  private _httpErrorResponseWithRequestId(
+  private _httpErrorResponseWithRequestIdTraceId(
     code: string,
     message: string,
     headers: Headers = {},
     requestId: string = "",
+    traceId: string = "",
   ): Response {
-    return errorResponseWithRequestIdAndFormat(
+    return errorResponseWithRequestIdTraceIdAndFormat(
       this._httpErrorFormat,
       code,
       message,
       headers,
       requestId,
+      traceId,
     );
   }
 
@@ -445,17 +487,20 @@ export class App {
     return responseForErrorWithFormat(this._httpErrorFormat, err);
   }
 
-  private _responseForHTTPErrorWithRequestId(
+  private _responseForHTTPErrorWithRequestIdTraceId(
     err: unknown,
     requestId: string,
+    traceId: string,
   ): Response {
-    return responseForErrorWithRequestIdAndFormat(
+    return responseForErrorWithRequestIdTraceIdAndFormat(
       this._httpErrorFormat,
       err,
       requestId,
+      traceId,
     );
   }
 
+  /** Registers a WebSocket route handler by route key. */
   webSocket(routeKey: string, handler: Handler): this {
     const key = String(routeKey ?? "").trim();
     if (!key || typeof handler !== "function") return this;
@@ -463,6 +508,7 @@ export class App {
     return this;
   }
 
+  /** Registers an SQS queue handler by queue name. */
   sqs(queueName: string, handler: SQSHandler): this {
     const name = String(queueName ?? "").trim();
     if (!name || typeof handler !== "function") return this;
@@ -470,6 +516,7 @@ export class App {
     return this;
   }
 
+  /** Registers a Kinesis stream handler by stream name. */
   kinesis(streamName: string, handler: KinesisHandler): this {
     const name = String(streamName ?? "").trim();
     if (!name || typeof handler !== "function") return this;
@@ -477,6 +524,7 @@ export class App {
     return this;
   }
 
+  /** Registers an SNS topic handler by topic name. */
   sns(topicName: string, handler: SNSHandler): this {
     const name = String(topicName ?? "").trim();
     if (!name || typeof handler !== "function") return this;
@@ -484,6 +532,7 @@ export class App {
     return this;
   }
 
+  /** Registers an EventBridge handler for a selector. */
   eventBridge(
     selector: EventBridgeSelector,
     handler: EventBridgeHandler,
@@ -499,6 +548,7 @@ export class App {
     return this;
   }
 
+  /** Registers a DynamoDB Streams handler by table name. */
   dynamoDB(tableName: string, handler: DynamoDBStreamHandler): this {
     const name = String(tableName ?? "").trim();
     if (!name || typeof handler !== "function") return this;
@@ -506,6 +556,7 @@ export class App {
     return this;
   }
 
+  /** Serves a normalized AppTheory request and returns a normalized response. */
   async serve(request: Request, ctx?: unknown): Promise<Response> {
     return this._serve(request, ctx);
   }
@@ -519,12 +570,25 @@ export class App {
       err: unknown,
       errorRequest: Request,
       requestId: string,
+      traceId = "",
     ): Response => {
       if (typeof contextOptions?.errorResponder === "function") {
-        return contextOptions.errorResponder(err, errorRequest, requestId);
+        return contextOptions.errorResponder(
+          err,
+          errorRequest,
+          requestId,
+          traceId,
+        );
       }
       if (requestId) {
-        return this._responseForHTTPErrorWithRequestId(err, requestId);
+        const resolvedTraceId =
+          String(traceId ?? "").trim() ||
+          String(errorRequest?.traceId ?? "").trim();
+        return this._responseForHTTPErrorWithRequestIdTraceId(
+          err,
+          requestId,
+          resolvedTraceId,
+        );
       }
       return this._responseForHTTPError(err);
     };
@@ -578,6 +642,7 @@ export class App {
         clock: this._clock,
         ids: this._ids,
         ctx,
+        traceId: normalized.traceId,
         appSync: contextOptions?.appSync ?? null,
       });
       contextOptions?.configure?.(requestCtx);
@@ -602,8 +667,10 @@ export class App {
       }
     }
 
+    const startedAtMs = this._clock.now().valueOf();
     const preHeaders = canonicalizeHeaders(request.headers);
     const preQuery = cloneQuery(request.query);
+    let traceId = extractTraceIdFromHeaders(preHeaders);
     let method = normalizeMethod(request.method);
     let path = normalizePath(request.path);
 
@@ -621,18 +688,20 @@ export class App {
 
     const tenantId = extractTenantId(preHeaders, preQuery);
     const remainingMs = extractRemainingMs(ctx);
-    const enableP2 = this._tier === "p2";
+    const tier = this._tier;
 
     const finish = (resp: Response, errCode?: string): Response => {
       const out = finalizeP1Response(resp, requestId, origin, this._cors);
-      if (enableP2) {
+      if (tier === "p2") {
         recordObservability(this._observability, {
           method,
           path,
           requestId,
           tenantId,
+          traceId,
           status: out.status,
           errorCode: errCode ?? "",
+          durationMs: durationMs(startedAtMs, this._clock.now().valueOf()),
         });
       }
       return out;
@@ -658,11 +727,15 @@ export class App {
       normalized = normalizeRequest(request, this._limits.maxRequestBytes);
     } catch (err) {
       const code = errorCodeFrom(err);
-      return finish(respondToServeError(err, request, requestId), code);
+      return finish(
+        respondToServeError(err, request, requestId, traceId),
+        code,
+      );
     }
 
     method = normalized.method;
     path = normalized.path;
+    traceId = normalized.traceId;
 
     if (
       this._limits.maxRequestBytes > 0 &&
@@ -674,16 +747,18 @@ export class App {
             new AppError("app.too_large", "request too large"),
             normalized,
             requestId,
+            traceId,
           ),
           "app.too_large",
         );
       }
       return finish(
-        this._httpErrorResponseWithRequestId(
+        this._httpErrorResponseWithRequestIdTraceId(
           "app.too_large",
           "request too large",
           {},
           requestId,
+          traceId,
         ),
         "app.too_large",
       );
@@ -701,6 +776,7 @@ export class App {
               new AppError("app.method_not_allowed", "method not allowed"),
               normalized,
               requestId,
+              traceId,
             ),
             "app.method_not_allowed",
           );
@@ -710,27 +786,30 @@ export class App {
             new AppError("app.not_found", "not found"),
             normalized,
             requestId,
+            traceId,
           ),
           "app.not_found",
         );
       }
       if (allowed.length > 0) {
         return finish(
-          this._httpErrorResponseWithRequestId(
+          this._httpErrorResponseWithRequestIdTraceId(
             "app.method_not_allowed",
             "method not allowed",
             { allow: [formatAllowHeader(allowed)] },
             requestId,
+            traceId,
           ),
           "app.method_not_allowed",
         );
       }
       return finish(
-        this._httpErrorResponseWithRequestId(
+        this._httpErrorResponseWithRequestIdTraceId(
           "app.not_found",
           "not found",
           {},
           requestId,
+          traceId,
         ),
         "app.not_found",
       );
@@ -743,6 +822,7 @@ export class App {
       ids: this._ids,
       ctx,
       requestId,
+      traceId,
       tenantId,
       authIdentity: "",
       remainingMs,
@@ -751,13 +831,16 @@ export class App {
     });
     contextOptions?.configure?.(requestCtx);
 
-    if (enableP2 && typeof this._policyHook === "function") {
+    if (tier === "p2" && typeof this._policyHook === "function") {
       let decision: PolicyDecision | null | undefined;
       try {
         decision = await this._policyHook(requestCtx);
       } catch (err) {
         const code = errorCodeFrom(err);
-        return finish(respondToServeError(err, normalized, requestId), code);
+        return finish(
+          respondToServeError(err, normalized, requestId, traceId),
+          code,
+        );
       }
 
       const code = String(decision?.code ?? "").trim();
@@ -770,16 +853,18 @@ export class App {
               new AppError(code, message),
               normalized,
               requestId,
+              traceId,
             ),
             code,
           );
         }
         return finish(
-          this._httpErrorResponseWithRequestId(
+          this._httpErrorResponseWithRequestIdTraceId(
             code,
             message,
             decision?.headers ?? {},
             requestId,
+            traceId,
           ),
           code,
         );
@@ -799,7 +884,10 @@ export class App {
         requestCtx.authIdentity = String(identity);
       } catch (err) {
         const code = errorCodeFrom(err);
-        return finish(respondToServeError(err, normalized, requestId), code);
+        return finish(
+          respondToServeError(err, normalized, requestId, traceId),
+          code,
+        );
       }
     }
 
@@ -811,7 +899,10 @@ export class App {
       out = await handler(requestCtx);
     } catch (err) {
       const code = errorCodeFrom(err);
-      return finish(respondToServeError(err, normalized, requestId), code);
+      return finish(
+        respondToServeError(err, normalized, requestId, traceId),
+        code,
+      );
     }
 
     if (!out) {
@@ -820,6 +911,7 @@ export class App {
           new AppError("app.internal", "internal error"),
           normalized,
           requestId,
+          traceId,
         ),
         "app.internal",
       );
@@ -830,7 +922,10 @@ export class App {
       resp = normalizeResponse(out);
     } catch (err) {
       const code = errorCodeFrom(err);
-      return finish(respondToServeError(err, normalized, requestId), code);
+      return finish(
+        respondToServeError(err, normalized, requestId, traceId),
+        code,
+      );
     }
 
     if (
@@ -843,16 +938,18 @@ export class App {
             new AppError("app.too_large", "response too large"),
             normalized,
             requestId,
+            traceId,
           ),
           "app.too_large",
         );
       }
       return finish(
-        this._httpErrorResponseWithRequestId(
+        this._httpErrorResponseWithRequestIdTraceId(
           "app.too_large",
           "response too large",
           {},
           requestId,
+          traceId,
         ),
         "app.too_large",
       );
@@ -872,6 +969,7 @@ export class App {
     return finish(resp, "");
   }
 
+  /** Serves an API Gateway HTTP API v2 event. */
   async serveAPIGatewayV2(
     event: APIGatewayV2HTTPRequest,
     ctx?: unknown,
@@ -886,6 +984,7 @@ export class App {
     return apigatewayV2ResponseFromResponse(resp);
   }
 
+  /** Serves a Lambda Function URL event. */
   async serveLambdaFunctionURL(
     event: LambdaFunctionURLRequest,
     ctx?: unknown,
@@ -902,6 +1001,7 @@ export class App {
     return lambdaFunctionURLResponseFromResponse(resp);
   }
 
+  /** Serves an API Gateway REST proxy event. */
   async serveAPIGatewayProxy(
     event: APIGatewayProxyRequest,
     ctx?: unknown,
@@ -918,6 +1018,7 @@ export class App {
     return apigatewayProxyResponseFromResponse(resp);
   }
 
+  /** Serves an ALB target group event. */
   async serveALB(
     event: ALBTargetGroupRequest,
     ctx?: unknown,
@@ -934,6 +1035,7 @@ export class App {
     return albTargetGroupResponseFromResponse(resp);
   }
 
+  /** Serves an AppSync direct Lambda resolver event. */
   async serveAppSync(
     event: AppSyncResolverEvent,
     ctx?: unknown,
@@ -985,6 +1087,7 @@ export class App {
     return null;
   }
 
+  /** Serves an API Gateway WebSocket event. */
   async serveWebSocket(
     event: APIGatewayWebSocketProxyRequest,
     ctx?: unknown,
@@ -1126,6 +1229,7 @@ export class App {
     return null;
   }
 
+  /** Serves an SQS event with partial-batch failure output. */
   async serveSQSEvent(
     event: SQSEvent,
     ctx?: unknown,
@@ -1175,6 +1279,7 @@ export class App {
     return null;
   }
 
+  /** Serves a Kinesis event with partial-batch failure output. */
   async serveKinesisEvent(
     event: KinesisEvent,
     ctx?: unknown,
@@ -1225,6 +1330,7 @@ export class App {
     return null;
   }
 
+  /** Serves an SNS event through the registered topic handler. */
   async serveSNSEvent(event: SNSEvent, ctx?: unknown): Promise<unknown[]> {
     const records = Array.isArray(event?.Records) ? event.Records : [];
     const handler = this._snsHandlerForEvent(event);
@@ -1278,6 +1384,7 @@ export class App {
     return null;
   }
 
+  /** Serves an EventBridge event through registered selectors. */
   async serveEventBridge(
     event: EventBridgeEvent,
     ctx?: unknown,
@@ -1319,6 +1426,7 @@ export class App {
     return null;
   }
 
+  /** Serves a DynamoDB Streams event with partial-batch failure output. */
   async serveDynamoDBStream(
     event: DynamoDBStreamEvent,
     ctx?: unknown,
@@ -1360,6 +1468,7 @@ export class App {
     return { batchItemFailures: failures };
   }
 
+  /** Detects and dispatches a supported Lambda event shape through one entrypoint. */
   async handleLambda(event: unknown, ctx?: unknown): Promise<unknown> {
     if (!event || typeof event !== "object") {
       throw new Error("apptheory: event must be an object");
@@ -1443,6 +1552,7 @@ export class App {
   }
 }
 
+/** Creates an AppTheory application with the provided runtime options. */
 export function createApp(
   options: {
     clock?: Clock;
@@ -1460,11 +1570,13 @@ export function createApp(
   return new App(options);
 }
 
+/** Lambda Function URL streaming handler produced for AWS Lambda runtimes. */
 export type LambdaFunctionURLStreamingHandler = (
   event: LambdaFunctionURLRequest,
   ctx?: unknown,
 ) => Promise<unknown>;
 
+/** Creates a Lambda Function URL streaming handler for an AppTheory app. */
 export function createLambdaFunctionURLStreamingHandler(
   app: App,
 ): LambdaFunctionURLStreamingHandler {
@@ -1544,6 +1656,7 @@ function cloneContextWithTimeoutCarrier(
     ids: ctxInternal._ids,
     ctx: carrier,
     requestId: ctx.requestId,
+    traceId: ctx.traceId,
     tenantId: ctx.tenantId,
     authIdentity: ctx.authIdentity,
     remainingMs: ctx.remainingMs,
@@ -1625,6 +1738,7 @@ function timeoutForContext(
   return timeoutMs;
 }
 
+/** Creates middleware that fails requests closed when timeout policy expires. */
 export function timeoutMiddleware(config: TimeoutConfig = {}): Middleware {
   const cfg = normalizeTimeoutConfig(config);
 
@@ -1954,6 +2068,7 @@ function recordEventObservability(
       path: "",
       status: 0,
       errorCode,
+      durationMs: 0,
     };
     addNonEmptyLogField(record, "trigger", observation.trigger);
     addNonEmptyLogField(record, "correlationId", observation.correlationId);
@@ -1969,6 +2084,7 @@ function recordEventObservability(
     hooks.metric({
       name: "apptheory.event",
       value: 1,
+      durationMs: 0,
       tags: eventMetricTags(observation, outcome, errorCode),
     });
   }
@@ -2051,18 +2167,24 @@ function recordObservability(
     path,
     requestId,
     tenantId,
+    traceId,
     status,
     errorCode,
+    durationMs: requestDurationMs,
   }: {
     method: string;
     path: string;
     requestId: string;
     tenantId: string;
+    traceId: string;
     status: number;
     errorCode: string;
+    durationMs: number;
   },
 ): void {
   if (!hooks) return;
+
+  const observedDurationMs = Math.max(0, Math.trunc(requestDurationMs));
 
   let level = "info";
   if (status >= 500) {
@@ -2072,7 +2194,7 @@ function recordObservability(
   }
 
   if (typeof hooks.log === "function") {
-    hooks.log({
+    const logRecord: LogRecord = {
       level,
       event: "request.completed",
       requestId,
@@ -2081,13 +2203,20 @@ function recordObservability(
       path,
       status,
       errorCode,
-    });
+      durationMs: observedDurationMs,
+    };
+    const resolvedTraceId = String(traceId ?? "").trim();
+    if (resolvedTraceId) {
+      logRecord.traceId = resolvedTraceId;
+    }
+    hooks.log(logRecord);
   }
 
   if (typeof hooks.metric === "function") {
     hooks.metric({
       name: "apptheory.request",
       value: 1,
+      durationMs: observedDurationMs,
       tags: {
         method,
         path,
@@ -2099,18 +2228,28 @@ function recordObservability(
   }
 
   if (typeof hooks.span === "function") {
+    const attributes: Record<string, string> = {
+      "http.method": method,
+      "http.route": path,
+      "http.status_code": String(status),
+      "request.id": requestId,
+      "tenant.id": tenantId,
+      "error.code": errorCode,
+    };
+    const resolvedTraceId = String(traceId ?? "").trim();
+    if (resolvedTraceId) {
+      attributes["trace.id"] = resolvedTraceId;
+    }
     hooks.span({
       name: `http ${method} ${path}`,
-      attributes: {
-        "http.method": method,
-        "http.route": path,
-        "http.status_code": String(status),
-        "request.id": requestId,
-        "tenant.id": tenantId,
-        "error.code": errorCode,
-      },
+      attributes,
     });
   }
+}
+
+function durationMs(startedAtMs: number, finishedAtMs: number): number {
+  const delta = Math.trunc(finishedAtMs - startedAtMs);
+  return delta > 0 ? delta : 0;
 }
 
 function formatAllowHeader(methods: string[]): string {

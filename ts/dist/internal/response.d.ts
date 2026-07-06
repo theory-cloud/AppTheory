@@ -15,7 +15,10 @@ export declare function errorResponse(code: string, message: string, headers?: H
 export declare function errorResponseWithFormat(format: HTTPErrorFormat, code: string, message: string, headers?: Headers): NormalizedResponse;
 export declare function errorResponseWithRequestId(code: string, message: string, headers?: Headers, requestId?: string): NormalizedResponse;
 export declare function errorResponseWithRequestIdAndFormat(format: HTTPErrorFormat, code: string, message: string, headers?: Headers, requestId?: string): NormalizedResponse;
+export declare function errorResponseWithRequestIdTraceIdAndFormat(format: HTTPErrorFormat, code: string, message: string, headers?: Headers, requestId?: string, traceId?: string): NormalizedResponse;
 export declare function responseForError(err: unknown): NormalizedResponse;
 export declare function responseForErrorWithFormat(format: HTTPErrorFormat, err: unknown): NormalizedResponse;
 export declare function responseForErrorWithRequestId(err: unknown, requestId: string): NormalizedResponse;
 export declare function responseForErrorWithRequestIdAndFormat(format: HTTPErrorFormat, err: unknown, requestId: string): NormalizedResponse;
+export declare function responseForErrorWithRequestIdTraceIdAndFormat(format: HTTPErrorFormat, err: unknown, requestId: string, traceId: string): NormalizedResponse;
+//# sourceMappingURL=response.d.ts.map

@@ -11,8 +11,9 @@ import { serveLambdaFunctionURLStreaming, } from "./internal/aws-lambda-streamin
 import { dynamoDBTableNameFromStreamArn, eventBridgeRuleNameFromArn, kinesisStreamNameFromArn, snsTopicNameFromArn, sqsQueueNameFromArn, webSocketManagementEndpoint, } from "./internal/aws-names.js";
 import { canonicalizeHeaders, cloneQuery, firstHeaderValue, normalizeBodyStream, normalizeMethod, normalizePath, } from "./internal/http.js";
 import { normalizeRequest } from "./internal/request.js";
-import { errorResponse, errorResponseWithFormat, errorResponseWithRequestId, errorResponseWithRequestIdAndFormat, normalizeResponse, responseForError, responseForErrorWithFormat, responseForErrorWithRequestId, responseForErrorWithRequestIdAndFormat, } from "./internal/response.js";
+import { errorResponse, errorResponseWithFormat, errorResponseWithRequestId, errorResponseWithRequestIdTraceIdAndFormat, normalizeResponse, responseForError, responseForErrorWithFormat, responseForErrorWithRequestId, responseForErrorWithRequestIdTraceIdAndFormat, } from "./internal/response.js";
 import { Router } from "./internal/router.js";
+import { extractTraceIdFromHeaders } from "./internal/trace-context.js";
 import { vary } from "./response.js";
 import { WebSocketManagementClient } from "./websocket-management.js";
 function errorCodeFrom(err) {
@@ -27,6 +28,7 @@ function errorCodeFrom(err) {
     return "app.internal";
 }
 export { HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED, } from "./http-error-format.js";
+/** Contract-first application container for routes, middleware, and Lambda event dispatch. */
 export class App {
     _router;
     _clock;
@@ -77,41 +79,58 @@ export class App {
         this._middlewares = [];
         this._eventMiddlewares = [];
     }
+    /** Returns the configured HTTP error-envelope format. */
     getHTTPErrorFormat() {
         return this._httpErrorFormat;
     }
+    /** Registers a handler for an HTTP method and route pattern. */
     handle(method, pattern, handler, options = {}) {
         this._router.add(method, pattern, handler, options);
         return this;
     }
+    /**
+     * Registers a route and throws registration errors.
+     *
+     * @deprecated handle now fails closed on invalid registrations. Use handle
+     * for normal application registration and catch errors during tests only when
+     * required.
+     */
     handleStrict(method, pattern, handler, options = {}) {
         this._router.addStrict(method, pattern, handler, options);
         return this;
     }
+    /** Registers a GET route handler. */
     get(pattern, handler) {
         return this.handle("GET", pattern, handler);
     }
+    /** Registers a POST route handler. */
     post(pattern, handler) {
         return this.handle("POST", pattern, handler);
     }
+    /** Registers a PUT route handler. */
     put(pattern, handler) {
         return this.handle("PUT", pattern, handler);
     }
+    /** Registers a PATCH route handler. */
     patch(pattern, handler) {
         return this.handle("PATCH", pattern, handler);
     }
+    /** Registers an OPTIONS route handler. */
     options(pattern, handler) {
         return this.handle("OPTIONS", pattern, handler);
     }
+    /** Registers a DELETE route handler. */
     delete(pattern, handler) {
         return this.handle("DELETE", pattern, handler);
     }
+    /** Appends HTTP middleware around route handlers. */
     use(middleware) {
         if (typeof middleware !== "function")
             return this;
         this._middlewares.push(middleware);
         return this;
     }
+    /** Appends event middleware around event workload handlers. */
     useEvents(middleware) {
         if (typeof middleware !== "function")
             return this;
@@ -149,15 +168,16 @@ export class App {
     _httpErrorResponse(code, message, headers = {}) {
         return errorResponseWithFormat(this._httpErrorFormat, code, message, headers);
     }
-    _httpErrorResponseWithRequestId(code, message, headers = {}, requestId = "") {
-        return errorResponseWithRequestIdAndFormat(this._httpErrorFormat, code, message, headers, requestId);
+    _httpErrorResponseWithRequestIdTraceId(code, message, headers = {}, requestId = "", traceId = "") {
+        return errorResponseWithRequestIdTraceIdAndFormat(this._httpErrorFormat, code, message, headers, requestId, traceId);
     }
     _responseForHTTPError(err) {
         return responseForErrorWithFormat(this._httpErrorFormat, err);
     }
-    _responseForHTTPErrorWithRequestId(err, requestId) {
-        return responseForErrorWithRequestIdAndFormat(this._httpErrorFormat, err, requestId);
+    _responseForHTTPErrorWithRequestIdTraceId(err, requestId, traceId) {
+        return responseForErrorWithRequestIdTraceIdAndFormat(this._httpErrorFormat, err, requestId, traceId);
     }
+    /** Registers a WebSocket route handler by route key. */
     webSocket(routeKey, handler) {
         const key = String(routeKey ?? "").trim();
         if (!key || typeof handler !== "function")
@@ -165,6 +185,7 @@ export class App {
         this._webSocketRoutes.push({ routeKey: key, handler });
         return this;
     }
+    /** Registers an SQS queue handler by queue name. */
     sqs(queueName, handler) {
         const name = String(queueName ?? "").trim();
         if (!name || typeof handler !== "function")
@@ -172,6 +193,7 @@ export class App {
         this._sqsRoutes.push({ queueName: name, handler });
         return this;
     }
+    /** Registers a Kinesis stream handler by stream name. */
     kinesis(streamName, handler) {
         const name = String(streamName ?? "").trim();
         if (!name || typeof handler !== "function")
@@ -179,6 +201,7 @@ export class App {
         this._kinesisRoutes.push({ streamName: name, handler });
         return this;
     }
+    /** Registers an SNS topic handler by topic name. */
     sns(topicName, handler) {
         const name = String(topicName ?? "").trim();
         if (!name || typeof handler !== "function")
@@ -186,6 +209,7 @@ export class App {
         this._snsRoutes.push({ topicName: name, handler });
         return this;
     }
+    /** Registers an EventBridge handler for a selector. */
     eventBridge(selector, handler) {
         if (typeof handler !== "function")
             return this;
@@ -199,6 +223,7 @@ export class App {
         this._eventBridgeRoutes.push({ selector: sel, handler });
         return this;
     }
+    /** Registers a DynamoDB Streams handler by table name. */
     dynamoDB(tableName, handler) {
         const name = String(tableName ?? "").trim();
         if (!name || typeof handler !== "function")
@@ -206,16 +231,19 @@ export class App {
         this._dynamoDBRoutes.push({ tableName: name, handler });
         return this;
     }
+    /** Serves a normalized AppTheory request and returns a normalized response. */
     async serve(request, ctx) {
         return this._serve(request, ctx);
     }
     async _serve(request, ctx, contextOptions) {
-        const respondToServeError = (err, errorRequest, requestId) => {
+        const respondToServeError = (err, errorRequest, requestId, traceId = "") => {
             if (typeof contextOptions?.errorResponder === "function") {
-                return contextOptions.errorResponder(err, errorRequest, requestId);
+                return contextOptions.errorResponder(err, errorRequest, requestId, traceId);
             }
             if (requestId) {
-                return this._responseForHTTPErrorWithRequestId(err, requestId);
+                const resolvedTraceId = String(traceId ?? "").trim() ||
+                    String(errorRequest?.traceId ?? "").trim();
+                return this._responseForHTTPErrorWithRequestIdTraceId(err, requestId, resolvedTraceId);
             }
             return this._responseForHTTPError(err);
         };
@@ -248,6 +276,7 @@ export class App {
                 clock: this._clock,
                 ids: this._ids,
                 ctx,
+                traceId: normalized.traceId,
                 appSync: contextOptions?.appSync ?? null,
             });
             contextOptions?.configure?.(requestCtx);
@@ -263,8 +292,10 @@ export class App {
                 return respondToServeError(err, normalized, String(contextOptions?.fallbackRequestId ?? "").trim());
             }
         }
+        const startedAtMs = this._clock.now().valueOf();
         const preHeaders = canonicalizeHeaders(request.headers);
         const preQuery = cloneQuery(request.query);
+        let traceId = extractTraceIdFromHeaders(preHeaders);
         let method = normalizeMethod(request.method);
         let path = normalizePath(request.path);
         let requestId = firstHeaderValue(preHeaders, "x-request-id");
@@ -280,17 +311,19 @@ export class App {
             middlewareTrace.push("cors");
         const tenantId = extractTenantId(preHeaders, preQuery);
         const remainingMs = extractRemainingMs(ctx);
-        const enableP2 = this._tier === "p2";
+        const tier = this._tier;
         const finish = (resp, errCode) => {
             const out = finalizeP1Response(resp, requestId, origin, this._cors);
-            if (enableP2) {
+            if (tier === "p2") {
                 recordObservability(this._observability, {
                     method,
                     path,
                     requestId,
                     tenantId,
+                    traceId,
                     status: out.status,
                     errorCode: errCode ?? "",
+                    durationMs: durationMs(startedAtMs, this._clock.now().valueOf()),
                 });
             }
             return out;
@@ -312,29 +345,30 @@ export class App {
         }
         catch (err) {
             const code = errorCodeFrom(err);
-            return finish(respondToServeError(err, request, requestId), code);
+            return finish(respondToServeError(err, request, requestId, traceId), code);
         }
         method = normalized.method;
         path = normalized.path;
+        traceId = normalized.traceId;
         if (this._limits.maxRequestBytes > 0 &&
             Buffer.from(normalized.body).length > this._limits.maxRequestBytes) {
             if (typeof contextOptions?.errorResponder === "function") {
-                return finish(respondToServeError(new AppError("app.too_large", "request too large"), normalized, requestId), "app.too_large");
+                return finish(respondToServeError(new AppError("app.too_large", "request too large"), normalized, requestId, traceId), "app.too_large");
             }
-            return finish(this._httpErrorResponseWithRequestId("app.too_large", "request too large", {}, requestId), "app.too_large");
+            return finish(this._httpErrorResponseWithRequestIdTraceId("app.too_large", "request too large", {}, requestId, traceId), "app.too_large");
         }
         const { match, allowed } = this._router.match(normalized.method, normalized.path);
         if (!match) {
             if (typeof contextOptions?.errorResponder === "function") {
                 if (allowed.length > 0) {
-                    return finish(respondToServeError(new AppError("app.method_not_allowed", "method not allowed"), normalized, requestId), "app.method_not_allowed");
+                    return finish(respondToServeError(new AppError("app.method_not_allowed", "method not allowed"), normalized, requestId, traceId), "app.method_not_allowed");
                 }
-                return finish(respondToServeError(new AppError("app.not_found", "not found"), normalized, requestId), "app.not_found");
+                return finish(respondToServeError(new AppError("app.not_found", "not found"), normalized, requestId, traceId), "app.not_found");
             }
             if (allowed.length > 0) {
-                return finish(this._httpErrorResponseWithRequestId("app.method_not_allowed", "method not allowed", { allow: [formatAllowHeader(allowed)] }, requestId), "app.method_not_allowed");
+                return finish(this._httpErrorResponseWithRequestIdTraceId("app.method_not_allowed", "method not allowed", { allow: [formatAllowHeader(allowed)] }, requestId, traceId), "app.method_not_allowed");
             }
-            return finish(this._httpErrorResponseWithRequestId("app.not_found", "not found", {}, requestId), "app.not_found");
+            return finish(this._httpErrorResponseWithRequestIdTraceId("app.not_found", "not found", {}, requestId, traceId), "app.not_found");
         }
         const requestCtx = new Context({
             request: normalized,
@@ -343,6 +377,7 @@ export class App {
             ids: this._ids,
             ctx,
             requestId,
+            traceId,
             tenantId,
             authIdentity: "",
             remainingMs,
@@ -350,22 +385,22 @@ export class App {
             appSync: contextOptions?.appSync ?? null,
         });
         contextOptions?.configure?.(requestCtx);
-        if (enableP2 && typeof this._policyHook === "function") {
+        if (tier === "p2" && typeof this._policyHook === "function") {
             let decision;
             try {
                 decision = await this._policyHook(requestCtx);
             }
             catch (err) {
                 const code = errorCodeFrom(err);
-                return finish(respondToServeError(err, normalized, requestId), code);
+                return finish(respondToServeError(err, normalized, requestId, traceId), code);
             }
             const code = String(decision?.code ?? "").trim();
             if (code) {
                 const message = String(decision?.message ?? "").trim() || defaultPolicyMessage(code);
                 if (typeof contextOptions?.errorResponder === "function") {
-                    return finish(respondToServeError(new AppError(code, message), normalized, requestId), code);
+                    return finish(respondToServeError(new AppError(code, message), normalized, requestId, traceId), code);
                 }
-                return finish(this._httpErrorResponseWithRequestId(code, message, decision?.headers ?? {}, requestId), code);
+                return finish(this._httpErrorResponseWithRequestIdTraceId(code, message, decision?.headers ?? {}, requestId, traceId), code);
             }
         }
         if (match.route.authRequired) {
@@ -382,7 +417,7 @@ export class App {
             }
             catch (err) {
                 const code = errorCodeFrom(err);
-                return finish(respondToServeError(err, normalized, requestId), code);
+                return finish(respondToServeError(err, normalized, requestId, traceId), code);
             }
         }
         middlewareTrace.push("handler");
@@ -393,10 +428,10 @@ export class App {
         }
         catch (err) {
             const code = errorCodeFrom(err);
-            return finish(respondToServeError(err, normalized, requestId), code);
+            return finish(respondToServeError(err, normalized, requestId, traceId), code);
         }
         if (!out) {
-            return finish(respondToServeError(new AppError("app.internal", "internal error"), normalized, requestId), "app.internal");
+            return finish(respondToServeError(new AppError("app.internal", "internal error"), normalized, requestId, traceId), "app.internal");
         }
         let resp;
         try {
@@ -404,14 +439,14 @@ export class App {
         }
         catch (err) {
             const code = errorCodeFrom(err);
-            return finish(respondToServeError(err, normalized, requestId), code);
+            return finish(respondToServeError(err, normalized, requestId, traceId), code);
         }
         if (this._limits.maxResponseBytes > 0 &&
             resp.body.length > this._limits.maxResponseBytes) {
             if (typeof contextOptions?.errorResponder === "function") {
-                return finish(respondToServeError(new AppError("app.too_large", "response too large"), normalized, requestId), "app.too_large");
+                return finish(respondToServeError(new AppError("app.too_large", "response too large"), normalized, requestId, traceId), "app.too_large");
             }
-            return finish(this._httpErrorResponseWithRequestId("app.too_large", "response too large", {}, requestId), "app.too_large");
+            return finish(this._httpErrorResponseWithRequestIdTraceId("app.too_large", "response too large", {}, requestId, traceId), "app.too_large");
         }
         if (this._limits.maxResponseBytes > 0 && resp.bodyStream) {
             resp = {
@@ -421,6 +456,7 @@ export class App {
         }
         return finish(resp, "");
     }
+    /** Serves an API Gateway HTTP API v2 event. */
     async serveAPIGatewayV2(event, ctx) {
         let request;
         try {
@@ -432,6 +468,7 @@ export class App {
         const resp = await this.serve(request, ctx);
         return apigatewayV2ResponseFromResponse(resp);
     }
+    /** Serves a Lambda Function URL event. */
     async serveLambdaFunctionURL(event, ctx) {
         let request;
         try {
@@ -443,6 +480,7 @@ export class App {
         const resp = await this.serve(request, ctx);
         return lambdaFunctionURLResponseFromResponse(resp);
     }
+    /** Serves an API Gateway REST proxy event. */
     async serveAPIGatewayProxy(event, ctx) {
         let request;
         try {
@@ -454,6 +492,7 @@ export class App {
         const resp = await this.serve(request, ctx);
         return apigatewayProxyResponseFromResponse(resp);
     }
+    /** Serves an ALB target group event. */
     async serveALB(event, ctx) {
         let request;
         try {
@@ -465,6 +504,7 @@ export class App {
         const resp = await this.serve(request, ctx);
         return albTargetGroupResponseFromResponse(resp);
     }
+    /** Serves an AppSync direct Lambda resolver event. */
     async serveAppSync(event, ctx) {
         const fallbackRequestId = appSyncRequestIdFromContext(ctx);
         const requestMetadata = appSyncRequestFromEvent(event);
@@ -503,6 +543,7 @@ export class App {
         }
         return null;
     }
+    /** Serves an API Gateway WebSocket event. */
     async serveWebSocket(event, ctx) {
         const handler = this._applyMiddlewares(this._webSocketHandlerForEvent(event));
         let requestId = String(event?.requestContext?.requestId ?? "").trim();
@@ -606,6 +647,7 @@ export class App {
         }
         return null;
     }
+    /** Serves an SQS event with partial-batch failure output. */
     async serveSQSEvent(event, ctx) {
         const records = Array.isArray(event?.Records) ? event.Records : [];
         const handler = this._sqsHandlerForEvent(event);
@@ -649,6 +691,7 @@ export class App {
         }
         return null;
     }
+    /** Serves a Kinesis event with partial-batch failure output. */
     async serveKinesisEvent(event, ctx) {
         const records = Array.isArray(event?.Records) ? event.Records : [];
         const handler = this._kinesisHandlerForEvent(event);
@@ -693,6 +736,7 @@ export class App {
         }
         return null;
     }
+    /** Serves an SNS event through the registered topic handler. */
     async serveSNSEvent(event, ctx) {
         const records = Array.isArray(event?.Records) ? event.Records : [];
         const handler = this._snsHandlerForEvent(event);
@@ -737,6 +781,7 @@ export class App {
         }
         return null;
     }
+    /** Serves an EventBridge event through registered selectors. */
     async serveEventBridge(event, ctx) {
         const handler = this._eventBridgeHandlerForEvent(event);
         if (!handler) {
@@ -768,6 +813,7 @@ export class App {
         }
         return null;
     }
+    /** Serves a DynamoDB Streams event with partial-batch failure output. */
     async serveDynamoDBStream(event, ctx) {
         const records = Array.isArray(event?.Records) ? event.Records : [];
         const handler = this._dynamoDBHandlerForEvent(event);
@@ -798,6 +844,7 @@ export class App {
         failures = failures.filter((f) => f.itemIdentifier);
         return { batchItemFailures: failures };
     }
+    /** Detects and dispatches a supported Lambda event shape through one entrypoint. */
     async handleLambda(event, ctx) {
         if (!event || typeof event !== "object") {
             throw new Error("apptheory: event must be an object");
@@ -859,9 +906,11 @@ export class App {
         throw new Error("apptheory: unknown event type");
     }
 }
+/** Creates an AppTheory application with the provided runtime options. */
 export function createApp(options = {}) {
     return new App(options);
 }
+/** Creates a Lambda Function URL streaming handler for an AppTheory app. */
 export function createLambdaFunctionURLStreamingHandler(app) {
     const aws = globalThis.awslambda;
     if (aws && typeof aws === "object" && "streamifyResponse" in aws) {
@@ -906,6 +955,7 @@ function cloneContextWithTimeoutCarrier(ctx, carrier) {
         ids: ctxInternal._ids,
         ctx: carrier,
         requestId: ctx.requestId,
+        traceId: ctx.traceId,
         tenantId: ctx.tenantId,
         authIdentity: ctx.authIdentity,
         remainingMs: ctx.remainingMs,
@@ -970,6 +1020,7 @@ function timeoutForContext(ctx, config) {
     timeoutMs = Math.floor(timeoutMs);
     return timeoutMs;
 }
+/** Creates middleware that fails requests closed when timeout policy expires. */
 export function timeoutMiddleware(config = {}) {
     const cfg = normalizeTimeoutConfig(config);
     return async (ctx, next) => {
@@ -1225,6 +1276,7 @@ function recordEventObservability(hooks, observation, outcome, errorCode) {
             path: "",
             status: 0,
             errorCode,
+            durationMs: 0,
         };
         addNonEmptyLogField(record, "trigger", observation.trigger);
         addNonEmptyLogField(record, "correlationId", observation.correlationId);
@@ -1239,6 +1291,7 @@ function recordEventObservability(hooks, observation, outcome, errorCode) {
         hooks.metric({
             name: "apptheory.event",
             value: 1,
+            durationMs: 0,
             tags: eventMetricTags(observation, outcome, errorCode),
         });
     }
@@ -1299,9 +1352,10 @@ function eventSpanAttributes(observation, outcome, errorCode) {
     }
     return attrs;
 }
-function recordObservability(hooks, { method, path, requestId, tenantId, status, errorCode, }) {
+function recordObservability(hooks, { method, path, requestId, tenantId, traceId, status, errorCode, durationMs: requestDurationMs, }) {
     if (!hooks)
         return;
+    const observedDurationMs = Math.max(0, Math.trunc(requestDurationMs));
     let level = "info";
     if (status >= 500) {
         level = "error";
@@ -1310,7 +1364,7 @@ function recordObservability(hooks, { method, path, requestId, tenantId, status,
         level = "warn";
     }
     if (typeof hooks.log === "function") {
-        hooks.log({
+        const logRecord = {
             level,
             event: "request.completed",
             requestId,
@@ -1319,12 +1373,19 @@ function recordObservability(hooks, { method, path, requestId, tenantId, status,
             path,
             status,
             errorCode,
-        });
+            durationMs: observedDurationMs,
+        };
+        const resolvedTraceId = String(traceId ?? "").trim();
+        if (resolvedTraceId) {
+            logRecord.traceId = resolvedTraceId;
+        }
+        hooks.log(logRecord);
     }
     if (typeof hooks.metric === "function") {
         hooks.metric({
             name: "apptheory.request",
             value: 1,
+            durationMs: observedDurationMs,
             tags: {
                 method,
                 path,
@@ -1335,18 +1396,27 @@ function recordObservability(hooks, { method, path, requestId, tenantId, status,
         });
     }
     if (typeof hooks.span === "function") {
+        const attributes = {
+            "http.method": method,
+            "http.route": path,
+            "http.status_code": String(status),
+            "request.id": requestId,
+            "tenant.id": tenantId,
+            "error.code": errorCode,
+        };
+        const resolvedTraceId = String(traceId ?? "").trim();
+        if (resolvedTraceId) {
+            attributes["trace.id"] = resolvedTraceId;
+        }
         hooks.span({
             name: `http ${method} ${path}`,
-            attributes: {
-                "http.method": method,
-                "http.route": path,
-                "http.status_code": String(status),
-                "request.id": requestId,
-                "tenant.id": tenantId,
-                "error.code": errorCode,
-            },
+            attributes,
         });
     }
+}
+function durationMs(startedAtMs, finishedAtMs) {
+    const delta = Math.trunc(finishedAtMs - startedAtMs);
+    return delta > 0 ? delta : 0;
 }
 function formatAllowHeader(methods) {
     const unique = new Set();
@@ -1357,3 +1427,4 @@ function formatAllowHeader(methods) {
     }
     return [...unique].sort().join(", ");
 }
+//# sourceMappingURL=app.js.map

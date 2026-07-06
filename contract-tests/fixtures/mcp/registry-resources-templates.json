@@ -1,0 +1,312 @@
+{
+  "id": "mcp.registry.resources_templates",
+  "tier": "mcp",
+  "name": "MCP resources/list, resources/read, and resources/templates/list pin registry behavior",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      },
+      "id_sequence": [
+        "sess-resources"
+      ],
+      "resources": [
+        {
+          "uri": "file:///guide.txt",
+          "name": "guide",
+          "title": "Guide",
+          "description": "Fixture guide",
+          "mime_type": "text/plain",
+          "size": 14,
+          "contents": [
+            {
+              "uri": "file:///guide.txt",
+              "mime_type": "text/plain",
+              "text": "hello resource"
+            }
+          ]
+        }
+      ],
+      "resource_templates": [
+        {
+          "uri_template": "file:///{path}",
+          "name": "project-file",
+          "title": "Project file",
+          "description": "Read a project file by path",
+          "mime_type": "text/plain"
+        }
+      ]
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "initialize",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"init\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\"}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "resources_list",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-session-id": [
+                "sess-resources"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"list\",\"method\":\"resources/list\"}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "resources_read",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-session-id": [
+                "sess-resources"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"read\",\"method\":\"resources/read\",\"params\":{\"uri\":\"file:///guide.txt\"}}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "resources_templates_list",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-session-id": [
+                "sess-resources"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"templates\",\"method\":\"resources/templates/list\"}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "resources_read_missing",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ],
+              "mcp-session-id": [
+                "sess-resources"
+              ],
+              "mcp-protocol-version": [
+                "2025-11-25"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":\"missing\",\"method\":\"resources/read\",\"params\":{\"uri\":\"file:///missing.txt\"}}"
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ],
+            "mcp-session-id": [
+              "sess-resources"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "init",
+            "result": {
+              "protocolVersion": "2025-11-25",
+              "capabilities": {
+                "resources": {}
+              },
+              "serverInfo": {
+                "name": "ContractMCP",
+                "version": "sp09"
+              }
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "list",
+            "result": {
+              "resources": [
+                {
+                  "uri": "file:///guide.txt",
+                  "name": "guide",
+                  "title": "Guide",
+                  "description": "Fixture guide",
+                  "mimeType": "text/plain",
+                  "size": 14
+                }
+              ]
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "read",
+            "result": {
+              "contents": [
+                {
+                  "uri": "file:///guide.txt",
+                  "mimeType": "text/plain",
+                  "text": "hello resource"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "templates",
+            "result": {
+              "resourceTemplates": [
+                {
+                  "uriTemplate": "file:///{path}",
+                  "name": "project-file",
+                  "title": "Project file",
+                  "description": "Read a project file by path",
+                  "mimeType": "text/plain"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "x-request-id": [
+              "req_mcp_123"
+            ],
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": "missing",
+            "error": {
+              "code": -32602,
+              "message": "resource not found: file:///missing.txt"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

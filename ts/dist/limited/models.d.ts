@@ -30,3 +30,4 @@ export declare function getMinuteWindow(now: Date): RateLimitWindow;
 export declare function getHourWindow(now: Date): RateLimitWindow;
 export declare function getDayWindow(now: Date): RateLimitWindow;
 export declare function getFixedWindow(now: Date, durationMs: number): RateLimitWindow;
+//# sourceMappingURL=models.d.ts.map

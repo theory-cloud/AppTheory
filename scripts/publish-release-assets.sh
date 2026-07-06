@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: upload already-built release assets to an existing GitHub Release.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

@@ -1,6 +1,9 @@
 package apptheory
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 const (
 	logLevelInfo               = "info"
@@ -10,14 +13,16 @@ const (
 )
 
 type LogRecord struct {
-	Level     string
-	Event     string
-	RequestID string
-	TenantID  string
-	Method    string
-	Path      string
-	Status    int
-	ErrorCode string
+	Level      string
+	Event      string
+	RequestID  string
+	TraceID    string
+	TenantID   string
+	Method     string
+	Path       string
+	Status     int
+	ErrorCode  string
+	DurationMS int
 
 	Trigger       string
 	CorrelationID string
@@ -29,9 +34,10 @@ type LogRecord struct {
 }
 
 type MetricRecord struct {
-	Name  string
-	Value int
-	Tags  map[string]string
+	Name       string
+	Value      int
+	DurationMS int
+	Tags       map[string]string
 }
 
 type SpanRecord struct {
@@ -45,9 +51,12 @@ type ObservabilityHooks struct {
 	Span   func(SpanRecord)
 }
 
-func (a *App) recordObservability(method, path, requestID, tenantID string, status int, errorCode string) {
+func (a *App) recordObservability(method, path, requestID, traceID, tenantID string, status int, errorCode string, durationMS int) {
 	if a == nil {
 		return
+	}
+	if durationMS < 0 {
+		durationMS = 0
 	}
 
 	level := logLevelInfo
@@ -59,21 +68,24 @@ func (a *App) recordObservability(method, path, requestID, tenantID string, stat
 
 	if a.obs.Log != nil {
 		a.obs.Log(LogRecord{
-			Level:     level,
-			Event:     "request.completed",
-			RequestID: requestID,
-			TenantID:  tenantID,
-			Method:    method,
-			Path:      path,
-			Status:    status,
-			ErrorCode: errorCode,
+			Level:      level,
+			Event:      "request.completed",
+			RequestID:  requestID,
+			TraceID:    traceID,
+			TenantID:   tenantID,
+			Method:     method,
+			Path:       path,
+			Status:     status,
+			ErrorCode:  errorCode,
+			DurationMS: durationMS,
 		})
 	}
 
 	if a.obs.Metric != nil {
 		a.obs.Metric(MetricRecord{
-			Name:  "apptheory.request",
-			Value: 1,
+			Name:       "apptheory.request",
+			Value:      1,
+			DurationMS: durationMS,
 			Tags: map[string]string{
 				"method":     method,
 				"path":       path,
@@ -85,16 +97,20 @@ func (a *App) recordObservability(method, path, requestID, tenantID string, stat
 	}
 
 	if a.obs.Span != nil {
+		attrs := map[string]string{
+			"http.method":      method,
+			"http.route":       path,
+			"http.status_code": strconv.Itoa(status),
+			"request.id":       requestID,
+			"tenant.id":        tenantID,
+			"error.code":       errorCode,
+		}
+		if traceID = strings.TrimSpace(traceID); traceID != "" {
+			attrs["trace.id"] = traceID
+		}
 		a.obs.Span(SpanRecord{
-			Name: "http " + method + " " + path,
-			Attributes: map[string]string{
-				"http.method":      method,
-				"http.route":       path,
-				"http.status_code": strconv.Itoa(status),
-				"request.id":       requestID,
-				"tenant.id":        tenantID,
-				"error.code":       errorCode,
-			},
+			Name:       "http " + method + " " + path,
+			Attributes: attrs,
 		})
 	}
 }

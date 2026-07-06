@@ -40,3 +40,4 @@ export function setLogger(logger) {
     globalLogger = logger ?? new NoOpLogger();
 }
 export { paymentXMLPatterns, rapidConnectXMLPatterns, sanitizeFieldValue, sanitizeJSON, sanitizeJSONValue, sanitizeLogString, sanitizeXML, };
+//# sourceMappingURL=logger.js.map

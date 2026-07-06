@@ -266,3 +266,4 @@ export function albTargetGroupResponseFromResponse(resp) {
     const out = apigatewayProxyResponseFromResponse(resp);
     return { ...out, statusDescription: albStatusDescription(out.statusCode) };
 }
+//# sourceMappingURL=aws-http.js.map

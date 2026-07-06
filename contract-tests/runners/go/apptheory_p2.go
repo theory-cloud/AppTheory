@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/theory-cloud/apptheory/pkg/observability"
 	apptheory "github.com/theory-cloud/apptheory/runtime"
+	"github.com/theory-cloud/apptheory/testkit"
 )
 
 func runFixtureP2(f Fixture) error {
@@ -19,15 +22,18 @@ func runFixtureP2(f Fixture) error {
 	}
 
 	now := time.Unix(0, 0).UTC()
+	clock := testkit.NewManualClock(now)
 
 	var logs []FixtureLogRecord
 	var metrics []FixtureMetricRecord
 	var spans []FixtureSpanRecord
+	var emfBuffer bytes.Buffer
+	emfSink := newFixtureEMFMetricSink(f, &emfBuffer, clock)
 
 	app := apptheory.New(
 		apptheory.WithTier(apptheory.TierP2),
 		apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormat(f.Setup.HTTPErrorFormat)),
-		apptheory.WithClock(fixedClock{now: now}),
+		apptheory.WithClock(clock),
 		apptheory.WithIDGenerator(fixedIDGenerator{id: "req_test_123"}),
 		apptheory.WithLimits(apptheory.Limits{
 			MaxRequestBytes:  f.Setup.Limits.MaxRequestBytes,
@@ -41,29 +47,35 @@ func runFixtureP2(f Fixture) error {
 		apptheory.WithAuthHook(func(ctx *apptheory.Context) (string, error) {
 			authz := strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "authorization"))
 			if authz == "" {
-				return "", &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
+				return "", apptheory.NewAppTheoryError("app.unauthorized", "unauthorized")
 			}
 			return "authorized", nil
 		}),
 		apptheory.WithObservability(apptheory.ObservabilityHooks{
 			Log: func(r apptheory.LogRecord) {
 				logs = append(logs, FixtureLogRecord{
-					Level:     r.Level,
-					Event:     r.Event,
-					RequestID: r.RequestID,
-					TenantID:  r.TenantID,
-					Method:    r.Method,
-					Path:      r.Path,
-					Status:    r.Status,
-					ErrorCode: r.ErrorCode,
+					Level:      r.Level,
+					Event:      r.Event,
+					RequestID:  r.RequestID,
+					TraceID:    r.TraceID,
+					TenantID:   r.TenantID,
+					Method:     r.Method,
+					Path:       r.Path,
+					Status:     r.Status,
+					ErrorCode:  r.ErrorCode,
+					DurationMS: r.DurationMS,
 				})
 			},
 			Metric: func(r apptheory.MetricRecord) {
 				metrics = append(metrics, FixtureMetricRecord{
-					Name:  r.Name,
-					Value: r.Value,
-					Tags:  r.Tags,
+					Name:       r.Name,
+					Value:      r.Value,
+					DurationMS: r.DurationMS,
+					Tags:       r.Tags,
 				})
+				if emfSink != nil {
+					emfSink.RecordMetric(r)
+				}
 			},
 			Span: func(r apptheory.SpanRecord) {
 				spans = append(spans, FixtureSpanRecord{
@@ -72,36 +84,13 @@ func runFixtureP2(f Fixture) error {
 				})
 			},
 		}),
-		apptheory.WithPolicyHook(func(ctx *apptheory.Context) (*apptheory.PolicyDecision, error) {
-			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-rate-limit-content-type")) != "" {
-				return &apptheory.PolicyDecision{
-					Code:    "app.rate_limited",
-					Message: "rate limited",
-					Headers: map[string][]string{"retry-after": {"1"}, "Content-Type": {"text/plain; charset=utf-8"}},
-				}, nil
-			}
-			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-rate-limit")) != "" {
-				return &apptheory.PolicyDecision{
-					Code:    "app.rate_limited",
-					Message: "rate limited",
-					Headers: map[string][]string{"retry-after": {"1"}},
-				}, nil
-			}
-			if strings.TrimSpace(headerFirstValue(ctx.Request.Headers, "x-force-shed")) != "" {
-				return &apptheory.PolicyDecision{
-					Code:    "app.overloaded",
-					Message: "overloaded",
-					Headers: map[string][]string{"retry-after": {"1"}},
-				}, nil
-			}
-			return nil, nil
-		}),
+		apptheory.WithPolicyHook(fixtureP2PolicyDecision),
 	)
 
 	for _, r := range f.Setup.Routes {
-		handler := builtInAppTheoryHandler(r.Handler)
+		handler := builtInAppTheoryHandlerP2(r.Handler, clock)
 		if handler == nil {
-			return &apptheory.AppError{Code: "app.internal", Message: "internal error"}
+			return apptheory.NewAppTheoryError("app.internal", "internal error")
 		}
 		var opts []apptheory.RouteOption
 		if r.AuthRequired {
@@ -120,7 +109,7 @@ func runFixtureP2(f Fixture) error {
 	}
 
 	if f.Input.Request == nil {
-		return &apptheory.AppError{Code: "app.internal", Message: "internal error"}
+		return apptheory.NewAppTheoryError("app.internal", "internal error")
 	}
 
 	bodyBytes, err := decodeFixtureBody(f.Input.Request.Body)
@@ -145,7 +134,103 @@ func runFixtureP2(f Fixture) error {
 	}
 
 	actual := app.Serve(ctx, req)
-	return compareFixtureResponse(f, actual, logs, metrics, spans)
+	return compareFixtureResponse(f, actual, logs, metrics, spans, splitEMFLogLines(emfBuffer.Bytes()))
+}
+
+func fixtureP2PolicyDecision(ctx *apptheory.Context) (*apptheory.PolicyDecision, error) {
+	headers := ctx.Request.Headers
+	switch {
+	case strings.TrimSpace(headerFirstValue(headers, "x-force-rate-limit-content-type-lowercase")) != "":
+		return &apptheory.PolicyDecision{
+			Code:    "app.rate_limited",
+			Message: "rate limited",
+			Headers: map[string][]string{"retry-after": {"1"}, "content-type": {"text/plain; charset=utf-8"}},
+		}, nil
+	case strings.TrimSpace(headerFirstValue(headers, "x-force-rate-limit-content-type")) != "":
+		return &apptheory.PolicyDecision{
+			Code:    "app.rate_limited",
+			Message: "rate limited",
+			Headers: map[string][]string{"retry-after": {"1"}, "Content-Type": {"text/plain; charset=utf-8"}},
+		}, nil
+	case strings.TrimSpace(headerFirstValue(headers, "x-force-rate-limit-multi-window")) != "":
+		return &apptheory.PolicyDecision{
+			Code:    "app.rate_limited",
+			Message: "rate limited",
+			Headers: map[string][]string{
+				"retry-after":           {"30"},
+				"x-ratelimit-limit":     {"2"},
+				"x-ratelimit-remaining": {"0"},
+				"x-ratelimit-reset":     {"60"},
+				"x-ratelimit-window":    {"1m"},
+			},
+		}, nil
+	case strings.TrimSpace(headerFirstValue(headers, "x-force-rate-limit-store-failure")) != "":
+		return &apptheory.PolicyDecision{
+			Code:    "app.overloaded",
+			Message: "overloaded",
+			Headers: map[string][]string{"retry-after": {"1"}, "x-rate-limit-fail-closed": {"true"}},
+		}, nil
+	case strings.TrimSpace(headerFirstValue(headers, "x-force-rate-limit")) != "":
+		return &apptheory.PolicyDecision{
+			Code:    "app.rate_limited",
+			Message: "rate limited",
+			Headers: map[string][]string{"retry-after": {"1"}},
+		}, nil
+	case strings.TrimSpace(headerFirstValue(headers, "x-force-shed")) != "":
+		return &apptheory.PolicyDecision{
+			Code:    "app.overloaded",
+			Message: "overloaded",
+			Headers: map[string][]string{"retry-after": {"1"}},
+		}, nil
+	default:
+		return nil, nil
+	}
+}
+
+func newFixtureEMFMetricSink(
+	f Fixture,
+	buffer *bytes.Buffer,
+	clock *testkit.ManualClock,
+) *observability.EMFMetricSink {
+	if f.Expect.EMFLogs == nil {
+		return nil
+	}
+	return observability.NewEMFMetricSink(
+		observability.WithEMFWriter(buffer),
+		observability.WithEMFClock(clock.Now),
+	)
+}
+
+func builtInAppTheoryHandlerP2(name string, clock *testkit.ManualClock) apptheory.Handler {
+	switch strings.TrimSpace(name) {
+	case "advance_clock_25ms":
+		return func(_ *apptheory.Context) (*apptheory.Response, error) {
+			clock.Advance(25 * time.Millisecond)
+			return apptheory.Text(200, "advanced"), nil
+		}
+	case "advance_clock_13ms_internal":
+		return func(_ *apptheory.Context) (*apptheory.Response, error) {
+			clock.Advance(13 * time.Millisecond)
+			return nil, apptheory.NewAppTheoryError("app.internal", "internal error")
+		}
+	default:
+		return builtInAppTheoryHandler(name)
+	}
+}
+
+func splitEMFLogLines(raw []byte) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	var lines []string
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 func isLoggingProfileContractFixture(f Fixture) bool {

@@ -1,0 +1,55 @@
+{
+  "id": "p0.errors.binding_failure",
+  "tier": "p0",
+  "name": "Binding failures use the canonical AppTheory error envelope",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/bind",
+        "handler": "bind_query_count"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/bind",
+      "query": {
+        "count": [
+          "not-an-int"
+        ]
+      },
+      "headers": {},
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.bad_request",
+          "message": "invalid query binding for Count",
+          "status_code": 400,
+          "details": {
+            "source": "query",
+            "name": "count",
+            "field": "Count"
+          }
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

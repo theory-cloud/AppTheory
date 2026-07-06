@@ -1,0 +1,52 @@
+{
+  "id": "m12.sse.heartbeat_keepalive",
+  "tier": "m12",
+  "name": "SSE: heartbeat comments use keep-alive framing and headers",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/sse-heartbeat",
+        "handler": "sse_heartbeat_keepalive"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/sse-heartbeat",
+      "query": {},
+      "headers": {},
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": [
+          "text/event-stream"
+        ],
+        "cache-control": [
+          "no-cache"
+        ],
+        "connection": [
+          "keep-alive"
+        ],
+        "x-request-id": [
+          "req_test_123"
+        ]
+      },
+      "cookies": [],
+      "body": {
+        "encoding": "utf8",
+        "value": ": keep-alive\n\nid: 1\nevent: message\ndata: {\"ok\":true}\n\n"
+      },
+      "is_base64": false
+    }
+  }
+}

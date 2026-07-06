@@ -1,0 +1,48 @@
+{
+  "id": "p0.errors.json_empty_body_flat_legacy",
+  "tier": "p0",
+  "name": "Empty typed JSON bodies preserve Lift code under flat legacy error format",
+  "setup": {
+    "http_error_format": "flat_legacy",
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/json",
+        "handler": "json_required_echo"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/json",
+      "query": {},
+      "headers": {
+        "content-type": [
+          "application/json"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "code": "EMPTY_BODY",
+        "message": "Request body is empty"
+      },
+      "is_base64": false
+    }
+  }
+}

@@ -68,6 +68,22 @@ class TestErrors(unittest.TestCase):
         self.assertEqual(body["error"]["request_id"], "err_req")
         self.assertEqual(body["error"]["status_code"], 418)
 
+    def test_legacy_json_codes_are_canonical_unless_flat_legacy(self) -> None:
+        nested = response_for_error(AppTheoryError("EMPTY_BODY", "Request body is empty").with_status_code(400))
+        nested_body = json.loads(nested.body.decode())
+        self.assertEqual(nested.status, 400)
+        self.assertEqual(nested_body["error"]["code"], "app.bad_request")
+        self.assertEqual(nested_body["error"]["message"], "request body is empty")
+
+        flat = response_for_error_with_format(
+            "flat_legacy",
+            AppTheoryError("INVALID_JSON", "Invalid JSON in request body").with_status_code(400),
+        )
+        flat_body = json.loads(flat.body.decode())
+        self.assertEqual(flat.status, 400)
+        self.assertEqual(flat_body["code"], "INVALID_JSON")
+        self.assertEqual(flat_body["message"], "Invalid JSON in request body")
+
     def test_response_for_error_variants(self) -> None:
         app_resp = response_for_error_with_request_id(AppError("app.forbidden", "no"), "req_1")
         self.assertEqual(app_resp.status, 403)

@@ -1,11 +1,12 @@
 {
   "name": "@theory-cloud/apptheory",
-  "version": "1.15.2-rc",
+  "version": "1.15.2",
   "description": "AppTheory — multi-language serverless application framework (TypeScript package)",
   "type": "module",
   "license": "Apache-2.0",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "test": "npm run check && node ./scripts/verify-openapi.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint --max-warnings=0 --report-unused-disable-directives \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
@@ -22,28 +23,8 @@
   "dependencies": {
     "@aws-sdk/client-apigatewaymanagementapi": "^3.1015.0",
     "@aws-sdk/client-lambda-microvms": "^3.1075.0",
-    "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v1.10.1/theory-cloud-tabletheory-ts-1.10.1.tgz"
-  },
-  "overrides": {
-    "@typescript-eslint/typescript-estree": {
-      "minimatch": "9.0.7"
-    },
-    "@eslint/eslintrc": {
-      "ajv": "6.14.0",
-      "minimatch": "3.1.4"
-    },
-    "eslint": {
-      "ajv": "6.14.0",
-      "minimatch": "3.1.4"
-    },
-    "eslint-plugin-import": {
-      "minimatch": "3.1.4"
-    },
-    "fast-xml-parser": "5.7.0",
-    "flatted": "3.4.2",
-    "js-yaml": "4.2.0",
-    "yaml": "2.8.3",
-    "fast-xml-builder": "1.1.7"
+    "@aws-sdk/client-s3": "^3.1015.0",
+    "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v2.0.0/theory-cloud-tabletheory-ts-2.0.0.tgz#sha512-hCuOtlR4cqLeFJHQSlL2JFtd59cIkkNDG/qrWbon4/dKZP0eZ96BK0j8jUBV41y10L+KLNYdp8iSEi1NzoM/Dw=="
   },
   "files": [
     "dist",
@@ -53,7 +34,7 @@
   ],
   "devDependencies": {
     "@eslint/js": "9.39.2",
-    "@types/node": "^25.5.0",
+    "@types/node": "^20.19.43",
     "@typescript-eslint/eslint-plugin": "^8.57.2",
     "@typescript-eslint/parser": "^8.57.2",
     "eslint": "9.39.2",
@@ -66,6 +47,6 @@
     "typescript": "5.9.3"
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=20"
   }
 }

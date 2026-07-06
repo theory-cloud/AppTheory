@@ -1,0 +1,93 @@
+{
+  "id": "p2.observability.duration_success",
+  "tier": "p2",
+  "name": "Request duration is pinned in P2 observability records and EMF success metrics",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/duration",
+        "handler": "advance_clock_25ms"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/duration",
+      "query": {},
+      "headers": {
+        "x-tenant-id": [
+          "tenant_dur"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": [
+          "text/plain; charset=utf-8"
+        ],
+        "x-request-id": [
+          "req_test_123"
+        ]
+      },
+      "cookies": [],
+      "body": {
+        "encoding": "utf8",
+        "value": "advanced"
+      },
+      "is_base64": false
+    },
+    "logs": [
+      {
+        "level": "info",
+        "event": "request.completed",
+        "request_id": "req_test_123",
+        "tenant_id": "tenant_dur",
+        "method": "GET",
+        "path": "/duration",
+        "status": 200,
+        "error_code": "",
+        "duration_ms": 25
+      }
+    ],
+    "metrics": [
+      {
+        "name": "apptheory.request",
+        "value": 1,
+        "duration_ms": 25,
+        "tags": {
+          "method": "GET",
+          "path": "/duration",
+          "status": "200",
+          "error_code": "",
+          "tenant_id": "tenant_dur"
+        }
+      }
+    ],
+    "spans": [
+      {
+        "name": "http GET /duration",
+        "attributes": {
+          "http.method": "GET",
+          "http.route": "/duration",
+          "http.status_code": "200",
+          "request.id": "req_test_123",
+          "tenant.id": "tenant_dur",
+          "error.code": ""
+        }
+      }
+    ],
+    "emf_logs": [
+      "{\"_aws\":{\"Timestamp\":25,\"CloudWatchMetrics\":[{\"Namespace\":\"AppTheory\",\"Dimensions\":[[\"service\",\"method\",\"path\",\"status\",\"tenant_id\",\"error_code\"]],\"Metrics\":[{\"Name\":\"RequestCount\",\"Unit\":\"Count\"},{\"Name\":\"RequestDuration\",\"Unit\":\"Milliseconds\"},{\"Name\":\"RequestErrors\",\"Unit\":\"Count\"}]}]},\"service\":\"apptheory\",\"method\":\"GET\",\"path\":\"/duration\",\"status\":\"200\",\"tenant_id\":\"tenant_dur\",\"error_code\":\"\",\"RequestCount\":1,\"RequestDuration\":25,\"RequestErrors\":0}"
+    ]
+  }
+}

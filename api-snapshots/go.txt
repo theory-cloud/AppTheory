@@ -775,6 +775,15 @@ const LoggingProfilePayTheoryAlertV1 = "paytheory-alert-v1"
 
 const LoggingProfileSchemaVersion = "apptheory.logging/v1"
 
+type EMFMetricSink struct {
+	namespace string
+	service   string
+	writer    io.Writer
+	clock     func() time.Time
+}
+
+type EMFMetricSinkOption func(*EMFMetricSink)
+
 type ErrorNotifier interface {
 	Notify(context.Context, LogEntry) error
 }
@@ -982,13 +991,19 @@ func EncodeLoggingProfileEvent(LoggingProfileConfig, map[string]string, LoggingP
 
 func EncodeLoggingProfileEventWithSanitizer(LoggingProfileConfig, map[string]string, LoggingProfileEvent, SanitizerFunc) (map[string]any, error)
 
+func HooksFromEMFMetricSink(*EMFMetricSink) apptheory.ObservabilityHooks
+
 func HooksFromLogger(StructuredLogger) apptheory.ObservabilityHooks
+
+func HooksFromLoggerAndEMFMetricSink(StructuredLogger, *EMFMetricSink) apptheory.ObservabilityHooks
 
 func HooksFromProfileLogger(LoggingProfileConfig, ...ProfileLoggerOption) (apptheory.ObservabilityHooks, *ProfileLogger, error)
 
 func LoggingProfileCatalog() map[string]any
 
 func LoggingProfileValidationErrors(LoggingProfileConfig) []string
+
+func NewEMFMetricSink(...EMFMetricSinkOption) *EMFMetricSink
 
 func NewNoOpLogger() StructuredLogger
 
@@ -998,6 +1013,14 @@ func NewTestLogger() *TestLogger
 
 func ValidateLoggingProfile(LoggingProfileConfig) error
 
+func WithEMFClock(func() time.Time) EMFMetricSinkOption
+
+func WithEMFNamespace(string) EMFMetricSinkOption
+
+func WithEMFService(string) EMFMetricSinkOption
+
+func WithEMFWriter(io.Writer) EMFMetricSinkOption
+
 func WithProfileClock(func() time.Time) ProfileLoggerOption
 
 func WithProfileEnvironment(map[string]string) ProfileLoggerOption
@@ -1005,6 +1028,10 @@ func WithProfileEnvironment(map[string]string) ProfileLoggerOption
 func WithProfileSanitizer(SanitizerFunc) ProfileLoggerOption
 
 func WithProfileWriter(io.Writer) ProfileLoggerOption
+
+func (*EMFMetricSink) EncodeMetric(apptheory.MetricRecord) ([]byte, error)
+
+func (*EMFMetricSink) RecordMetric(apptheory.MetricRecord)
 
 func (*LoggingProfileValidationError) Error() string
 
@@ -1536,6 +1563,20 @@ const TierP1 Tier = "p1"
 
 const TierP2 Tier = "p2"
 
+const ValidationRuleEnum = "enum"
+
+const ValidationRuleMax = "max"
+
+const ValidationRuleMaxLength = "max_length"
+
+const ValidationRuleMin = "min"
+
+const ValidationRuleMinLength = "min_length"
+
+const ValidationRulePattern = "pattern"
+
+const ValidationRuleRequired = "required"
+
 type App struct {
 	router           *router
 	clock            Clock
@@ -1680,6 +1721,7 @@ type Context struct {
 	ids     IDGenerator
 
 	RequestID       string
+	TraceID         string
 	TenantID        string
 	AuthIdentity    string
 	AuthPrincipal   *AuthPrincipal
@@ -1833,14 +1875,16 @@ type Limits struct {
 }
 
 type LogRecord struct {
-	Level     string
-	Event     string
-	RequestID string
-	TenantID  string
-	Method    string
-	Path      string
-	Status    int
-	ErrorCode string
+	Level      string
+	Event      string
+	RequestID  string
+	TraceID    string
+	TenantID   string
+	Method     string
+	Path       string
+	Status     int
+	ErrorCode  string
+	DurationMS int
 
 	Trigger       string
 	CorrelationID string
@@ -1852,9 +1896,10 @@ type LogRecord struct {
 }
 
 type MetricRecord struct {
-	Name  string
-	Value int
-	Tags  map[string]string
+	Name       string
+	Value      int
+	DurationMS int
+	Tags       map[string]string
 }
 
 type Middleware func(Handler) Handler
@@ -1863,6 +1908,47 @@ type ObservabilityHooks struct {
 	Log    func(LogRecord)
 	Metric func(MetricRecord)
 	Span   func(SpanRecord)
+}
+
+type OpenAPIFieldSpec struct {
+	Field      string                  `json:"field"`
+	Source     string                  `json:"source"`
+	Name       string                  `json:"name"`
+	Type       string                  `json:"type"`
+	Array      bool                    `json:"array,omitempty"`
+	Required   bool                    `json:"required,omitempty"`
+	Validation []OpenAPIValidationRule `json:"validation,omitempty"`
+}
+
+type OpenAPIRequestSpec struct {
+	Fields []OpenAPIFieldSpec `json:"fields,omitempty"`
+}
+
+type OpenAPIResponseSpec struct {
+	Description string             `json:"description,omitempty"`
+	Fields      []OpenAPIFieldSpec `json:"fields,omitempty"`
+}
+
+type OpenAPIRouteSpec struct {
+	Method        string              `json:"method"`
+	Path          string              `json:"path"`
+	OperationID   string              `json:"operation_id"`
+	Summary       string              `json:"summary,omitempty"`
+	Tags          []string            `json:"tags,omitempty"`
+	SuccessStatus *int                `json:"success_status,omitempty"`
+	Request       OpenAPIRequestSpec  `json:"request,omitempty"`
+	Response      OpenAPIResponseSpec `json:"response"`
+}
+
+type OpenAPISpec struct {
+	Title   string             `json:"title"`
+	Version string             `json:"version"`
+	Routes  []OpenAPIRouteSpec `json:"routes"`
+}
+
+type OpenAPIValidationRule struct {
+	Rule  string `json:"rule"`
+	Value any    `json:"value,omitempty"`
 }
 
 type Option func(*App)
@@ -1908,6 +1994,8 @@ type Request struct {
 	IsBase64 bool
 
 	SourceProvenance SourceProvenance
+
+	TraceID string
 }
 
 type Response struct {
@@ -1958,6 +2046,12 @@ type TimeoutConfig struct {
 	OperationTimeouts map[string]time.Duration
 	TenantTimeouts    map[string]time.Duration
 	TimeoutMessage    string
+}
+
+type ValidationFieldError struct {
+	Field   string `json:"field"`
+	Rule    string `json:"rule"`
+	Message string `json:"message"`
 }
 
 type WebSocketClientFactory func(context.Context, string) (streamer.Client, error)
@@ -2018,6 +2112,10 @@ func ETag([]byte) string
 func EventBridgePattern(string, string) EventBridgeSelector
 
 func EventBridgeRule(string) EventBridgeSelector
+
+func GenerateOpenAPI(OpenAPISpec) (map[string]any, error)
+
+func GenerateOpenAPIJSON(OpenAPISpec) ([]byte, error)
 
 func HTML(int, any) *Response
 
@@ -2246,6 +2344,8 @@ func (*Context) Set(string, any)
 func (*Context) SourceIP() string
 
 func (*Context) SourceProvenance() SourceProvenance
+
+func (*Context) TraceContextID() string
 
 func (*EventContext) Context() context.Context
 
@@ -2543,9 +2643,11 @@ type ResourceDef struct {
 type ResourceHandler func(context.Context) ([]ResourceContent, error)
 
 type ResourceRegistry struct {
-	mu        sync.RWMutex
-	resources []registeredResource
-	index     map[string]int
+	mu            sync.RWMutex
+	resources     []registeredResource
+	index         map[string]int
+	templates     []ResourceTemplateDef
+	templateIndex map[string]int
 }
 
 type ResourceSubscription struct {
@@ -2554,6 +2656,14 @@ type ResourceSubscription struct {
 }
 
 type ResourceSubscriptionHook func(context.Context, ResourceSubscription) error
+
+type ResourceTemplateDef struct {
+	URITemplate string `json:"uriTemplate"`
+	Name        string `json:"name"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
 
 type Response struct {
 	JSONRPC string    `json:"jsonrpc"`
@@ -2898,9 +3008,13 @@ func (*ResourceRegistry) Len() int
 
 func (*ResourceRegistry) List() []ResourceDef
 
+func (*ResourceRegistry) ListTemplates() []ResourceTemplateDef
+
 func (*ResourceRegistry) Read(context.Context, string) ([]ResourceContent, error)
 
 func (*ResourceRegistry) RegisterResource(ResourceDef, ResourceHandler) error
+
+func (*ResourceRegistry) RegisterResourceTemplate(ResourceTemplateDef) error
 
 func (*Server) Handler() apptheory.Handler
 
@@ -3834,13 +3948,23 @@ func (realClock) Now() time.Time
 
 ## github.com/theory-cloud/apptheory/runtime/oauth
 
+const ContextKeyBearerClaims = "oauth.bearer_claims"
+
 const ContextKeyBearerToken = "oauth.bearer_token"
 
 var ErrAuthorizationCodeExpired = errors.New("authorization code expired")
 
 var ErrAuthorizationCodeNotFound = errors.New("authorization code not found")
 
+var ErrBearerTokenExpired = errors.New("bearer token expired")
+
+var ErrBearerTokenInsufficientScope = errors.New("bearer token insufficient scope")
+
+var ErrBearerTokenInvalidAudience = errors.New("bearer token invalid audience")
+
 var ErrInvalidAuthorizationHeader = errors.New("invalid authorization header")
+
+var ErrInvalidBearerToken = errors.New("invalid bearer token")
 
 var ErrInvalidURL = errors.New("invalid url")
 
@@ -3878,6 +4002,30 @@ type AuthorizationServerMetadata struct {
 	ScopesSupported                   []string `json:"scopes_supported,omitempty"`
 	SubjectTypesSupported             []string `json:"subject_types_supported,omitempty"`
 	IDTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported,omitempty"`
+}
+
+type BearerTokenClaims struct {
+	Subject   string
+	Audience  string
+	Scopes    []string
+	ExpiresAt time.Time
+}
+
+type BearerTokenClaimsValidator func(context.Context, string) (*BearerTokenClaims, error)
+
+type BearerTokenRecord struct {
+	Token     string
+	Subject   string
+	Audience  string
+	Scope     string
+	Scopes    []string
+	ExpiresAt time.Time
+}
+
+type BearerTokenValidationOptions struct {
+	RequiredAudience string
+	RequiredScopes   []string
+	Now              func() time.Time
 }
 
 type BearerTokenValidator func(context.Context, string) error
@@ -3942,9 +4090,13 @@ type RequireBearerTokenOptions struct {
 	ResourceMetadataURL string
 
 	Validator BearerTokenValidator
+
+	ClaimsValidator BearerTokenClaimsValidator
 }
 
 func AuthorizationServerMetadataHandler(*AuthorizationServerMetadata) apptheory.Handler
+
+func BearerTokenClaimsFromContext(*apptheory.Context) (BearerTokenClaims, bool)
 
 func BearerTokenFromHeaders(map[string][]string) (string, error)
 
@@ -3957,6 +4109,8 @@ func ClaudeDynamicClientRegistrationPolicy() DynamicClientRegistrationPolicy
 func NewAuthorizationServerMetadata(string) (*AuthorizationServerMetadata, error)
 
 func NewMemoryAuthorizationCodeStore() *MemoryAuthorizationCodeStore
+
+func NewMemoryBearerTokenValidator([]BearerTokenRecord, BearerTokenValidationOptions) BearerTokenClaimsValidator
 
 func NewMemoryRefreshTokenStore() *MemoryRefreshTokenStore
 

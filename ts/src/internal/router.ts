@@ -1,5 +1,8 @@
+import { AppTheoryError } from "../errors.js";
+
 import { normalizeMethod, normalizePath, splitPath } from "./http.js";
 
+/** Per-route registration options consumed by the internal router. */
 export interface RouteOptions {
   authRequired?: boolean;
 }
@@ -35,15 +38,18 @@ interface Route<THandler> {
   order: number;
 }
 
+/** Resolved route match including handler, params, and auth flag. */
 export interface Match<THandler> {
   handler: THandler;
   params: Record<string, string>;
   authRequired: boolean;
 }
 
+/** Fail-closed HTTP route matcher used by the AppTheory runtime. */
 export class Router<THandler> {
   private readonly _routes: Array<Route<THandler>> = [];
 
+  /** Registers a route through the deprecated strict compatibility path. */
   addStrict(
     method: string,
     pattern: string,
@@ -51,22 +57,29 @@ export class Router<THandler> {
     options: RouteOptions = {},
   ): void {
     if (handler === null || handler === undefined) {
-      throw new Error("apptheory: route handler is nil");
+      throw routeRegistrationError("route handler is nil");
     }
 
     const normalizedMethod = normalizeMethod(method);
     const normalizedPattern = normalizePath(pattern);
     const parsed = parseRouteSegments(splitPath(normalizedPattern));
     if (!parsed.ok) {
-      throw new Error(
-        `apptheory: invalid route pattern: ${JSON.stringify(String(pattern))}: ${parsed.error}`,
-      );
+      throw routeRegistrationError("invalid route pattern");
     }
 
     const normalizedPatternValue =
       parsed.canonicalSegments.length > 0
         ? `/${parsed.canonicalSegments.join("/")}`
         : "/";
+
+    for (const route of this._routes) {
+      if (
+        route.method === normalizedMethod &&
+        route.pattern === normalizedPatternValue
+      ) {
+        throw routeRegistrationError("duplicate route");
+      }
+    }
 
     this._routes.push({
       method: normalizedMethod,
@@ -81,19 +94,17 @@ export class Router<THandler> {
     });
   }
 
+  /** Registers a route using the fail-closed route-registration path. */
   add(
     method: string,
     pattern: string,
     handler: THandler,
     options: RouteOptions = {},
   ): void {
-    try {
-      this.addStrict(method, pattern, handler, options);
-    } catch {
-      return;
-    }
+    this.addStrict(method, pattern, handler, options);
   }
 
+  /** Matches an HTTP method and path against registered routes. */
   match(
     method: string,
     path: string,
@@ -123,6 +134,10 @@ export class Router<THandler> {
     }
     return { match: best, allowed };
   }
+}
+
+function routeRegistrationError(message: string): AppTheoryError {
+  return new AppTheoryError("app.bad_request", message, { statusCode: 400 });
 }
 
 function parseRouteSegments(
@@ -160,6 +175,10 @@ function parseRouteSegments(
       canonicalSegments.push(`{${inner}}`);
       paramCount += 1;
       continue;
+    }
+
+    if (raw.includes("{") || raw.includes("}")) {
+      return { ok: false, error: "invalid segment" };
     }
 
     segments.push({ kind: "static", value: raw });

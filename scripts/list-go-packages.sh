@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: list tracked Go packages that belong to the AppTheory root module.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

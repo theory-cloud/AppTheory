@@ -23,9 +23,13 @@ No branch may skip a leg of that cycle. `premain` only receives `staging`, `main
 
 Release automation is driven by Conventional Commits. `feat:` and `fix:` entries ship; `docs:`, `test:`, `chore:`, and `refactor:` do not trigger a release by themselves. Version state must remain aligned across `VERSION`, TypeScript and CDK package manifests and lockfiles, Python metadata, and both Release Please manifests.
 
+Upgrade policy is maintained separately from the generated changelog. When a minor line changes runtime behavior, deployment defaults, dependency floors, generated-artifact expectations, or deprecation posture, update `UPGRADING.md` in the same change or release-prep PR. The changelog lists commits; `UPGRADING.md` lists consumer action and per-line compatibility notes.
+
 The full rubric runs only for PRs targeting `staging` and optional manual `workflow_dispatch` CI runs. Manual CI dispatch defaults to running the rubric; generated release-PR artifact sync dispatches CI with the full rubric disabled and waits only for release hygiene/build checks. The standalone `Verify deterministic builds` CI job also runs only for PRs targeting `staging`; generated release PR sync must not require or wait for that skipped context. `premain` and `main` run release hygiene, branch version sync, release-branch provenance, package build, and publish postcondition checks; they must not run the full rubric or deterministic-build job on release publish paths.
 
 Skipped full-rubric and deterministic-build contexts are not release/security proof. The `Release/security gates` CI job is unconditional and branch-protection-compatible; it verifies release supply-chain wiring, Release Please provenance self-tests, CI rubric enforcement, workflow invariants, and deterministic release-cycle fixtures even when the full rubric is intentionally skipped.
+
+Generated release PR artifact sync commits on both `release-please--branches--premain` and `release-please--branches--main` must be cryptographically signed before push. The sync workflow receives `RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY`, optional `RELEASE_ARTIFACT_SYNC_GPG_KEY_ID`, and optional `RELEASE_ARTIFACT_SYNC_GPG_PASSPHRASE`; if generated files changed and signing is unavailable, the workflow fails closed. Historical released bot commits remain immutable and must not be rewritten.
 
 ## Full cycle checklist
 
@@ -49,6 +53,11 @@ Skipped full-rubric and deterministic-build contexts are not release/security pr
 - CI must run the release train promotion gate and branch version sync checks.
 - The prerelease Release Please workflow must create or update the release-candidate PR. A Release Please no-op is a failed RC gate; annotated `VERSION` markers such as `# x-release-please-version` are ignored only after the leading RC semver is validated.
 - The release-candidate PR remains draft-locked while generated CDK artifacts are synchronized and required checks run.
+- When the release includes a change to `release-please-config*.json` `extra-files` entries, watch the first generated
+  `release-please--branches--premain` RC PR deliberately. Do not claim proof from static config alone: verify the
+  generated PR actually rewrites every configured JSONPath/TOML/generic file, including example
+  `packages['../../../cdk'].version` lockfile entries, and that `scripts/verify-version-alignment.sh` passes on the
+  generated head. Record the RC PR URL and check output in the promotion notes.
 - Merge the release-candidate PR only after generated artifacts are in sync and all required checks are green.
 - The prerelease publisher creates immutable assets for the `vX.Y.Z-rc.N` GitHub Release.
 
@@ -58,6 +67,12 @@ Skipped full-rubric and deterministic-build contexts are not release/security pr
 - CI must verify the promotion is `premain` → `main` and that release manifests are synchronized.
 - The stable Release Please workflow must create or update the stable release PR. A Release Please no-op is a failed stable gate.
 - The stable release PR must reset `.release-please-manifest.premain.json` to the stable version and include generated CDK artifact sync before it becomes ready.
+- Generated release-artifact sync commits must be cryptographically signed. The shared sync script fails closed when it
+  needs to create a `chore(release): sync generated release artifacts` commit and the release-artifact signing key is
+  not configured (`RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY`, optional `RELEASE_ARTIFACT_SYNC_GPG_KEY_ID`, and optional
+  `RELEASE_ARTIFACT_SYNC_GPG_PASSPHRASE`). Historical released bot commits are immutable evidence and must not be
+  rewritten; recover forward by configuring signing or by landing an explicitly approved signed-provenance alternative
+  in the release process.
 - Merge the stable release PR only after required checks pass.
 - The stable publisher creates immutable assets for the `vX.Y.Z` GitHub Release.
   `main` owns stable releases only; RC-shaped stable PR titles, versions, or tags are rejected.
@@ -94,14 +109,16 @@ When the release lane is blocked, recover by preserving evidence and re-entering
    ```bash
    bash scripts/diagnose-release-state.sh --live
    bash scripts/verify-release-state.sh --live
-  bash scripts/verify-release-workflows.sh
-  bash scripts/verify-ci-rubric-enforced.sh
+   bash scripts/verify-release-workflows.sh
+   bash scripts/verify-ci-rubric-enforced.sh
    ```
 
 2. Classify the blocker.
    - Draft GitHub Release with missing or partial assets: rerun the same publisher workflow; the publisher replaces draft assets safely and verifies branch provenance before publication.
    - Published GitHub Release already exists: rerun the publisher only to verify immutable assets match the source build; do not upload or edit assets.
    - Stale Release Please PR: regenerate or sync Release Please state from the current branch baseline; do not merge the stale PR.
+   - Unsigned generated artifact sync attempt: configure the release-artifact sync signing key and rerun the generated
+     release PR workflow; do not rewrite existing released commits or bypass signing.
    - Promotion drift: recreate the promotion PR from the valid branch heads in the cycle.
    - Back-merge drift: merge `main` back into `staging` before accepting further staging work.
 

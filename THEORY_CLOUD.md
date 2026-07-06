@@ -26,7 +26,7 @@ by the framework.
 
 - **One path to runtime behavior.** [AppTheory](https://github.com/theory-cloud/AppTheory) provides a single
   application model for AWS Lambda: routing, middleware, error handling, and event normalization. The same handler
-  code in Go, TypeScript, or Python produces the same HTTP response, verified by 89 shared contract test fixtures.
+  code in Go, TypeScript, or Python produces the same HTTP response, verified by the contract fixture corpus. Go, TypeScript, and Python execute the SP09 MCP, SP12 OAuth, and SP13 objectstore fixtures as first-class contract tiers. <!-- apptheory-fixture-count: 216 -->
 
 - **One path to client delivery.** [FaceTheory](https://github.com/theory-cloud/FaceTheory) provides a single model
   for SSR, SSG, and ISR on AWS Lambda + CloudFront, with adapter support for React, Vue, and Svelte.
@@ -68,9 +68,11 @@ and MCP server implementation.
 Theory Cloud supports Go, TypeScript, and Python not through separate implementations that happen to share a name,
 but through contract-enforced behavioral parity.
 
-Each framework maintains a set of shared test fixtures — language-neutral descriptions of expected behavior. The Go,
-TypeScript, and Python runtimes are independently tested against these same fixtures. If a timestamp format, error
-envelope structure, or middleware ordering differs between languages, the contract tests fail.
+Each framework maintains a set of shared test fixtures — language-neutral descriptions of expected behavior. For
+shared runtime surfaces, the Go, TypeScript, and Python runtimes are independently tested against the same fixtures.
+Implementation-leg fixtures must be labeled honestly; shared AppTheory fixture tiers such as SP09 `mcp/` and SP12 `oauth/` are parity proof only when Go, TypeScript, and Python all execute them. If
+a timestamp format, error envelope structure, or middleware ordering differs between languages in the shared corpus,
+the contract tests fail.
 
 TableTheory additionally defines a [DMS (Data Model Specification)](https://github.com/theory-cloud/TableTheory)
 that serves as the language-neutral source of truth for data models. All three SDKs validate against the same DMS

@@ -1,0 +1,52 @@
+{
+  "id": "m2.websocket.connect_auth_deny",
+  "tier": "m2",
+  "name": "WebSocket: $connect auth denial returns the AppTheory unauthorized envelope",
+  "setup": {
+    "websockets": [
+      {
+        "route_key": "$connect",
+        "handler": "ws_connect_deny"
+      }
+    ]
+  },
+  "input": {
+    "aws_event": {
+      "source": "apigw_websocket",
+      "event": {
+        "path": "/",
+        "httpMethod": "GET",
+        "headers": {},
+        "queryStringParameters": {},
+        "requestContext": {
+          "stage": "dev",
+          "requestId": "ws-req-auth-deny",
+          "connectionId": "conn-auth-deny",
+          "domainName": "example.execute-api.us-east-1.amazonaws.com",
+          "eventType": "CONNECT",
+          "routeKey": "$connect"
+        },
+        "body": "",
+        "isBase64Encoded": false
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.unauthorized",
+          "message": "unauthorized"
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

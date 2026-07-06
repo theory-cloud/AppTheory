@@ -17,3 +17,4 @@ export declare function appSyncRequestIdFromContext(ctx: unknown): string;
 export declare function appSyncRequestIdFromResponse(response: Response, fallbackRequestId: string): string;
 export declare function appSyncErrorPayload(err: unknown, request: Request, requestId: string): Record<string, unknown>;
 export declare function appSyncErrorResponse(err: unknown, request: Request, requestId: string): Response;
+//# sourceMappingURL=aws-appsync.d.ts.map
