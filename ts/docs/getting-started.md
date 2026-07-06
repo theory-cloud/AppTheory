@@ -1,6 +1,6 @@
 # Getting Started (TypeScript)
 
-This guide walks you through installing and running a minimal AppTheory app in TypeScript (Node.js 24).
+This guide walks you through installing and running a minimal AppTheory app in TypeScript (Node.js 20+).
 
 ## Install
 

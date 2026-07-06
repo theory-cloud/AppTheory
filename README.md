@@ -22,8 +22,8 @@
 
 <p align="center">
   <img alt="Go"         src="https://img.shields.io/badge/Go-1.26-2EA7FF?style=flat-square&logo=go&logoColor=white">
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-Node%2024-7A5CFF?style=flat-square&logo=typescript&logoColor=white">
-  <img alt="Python"     src="https://img.shields.io/badge/Python-3.14-C9A96B?style=flat-square&logo=python&logoColor=white">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-Node%2020%2B-7A5CFF?style=flat-square&logo=typescript&logoColor=white">
+  <img alt="Python"     src="https://img.shields.io/badge/Python-3.12%2B-C9A96B?style=flat-square&logo=python&logoColor=white">
 </p>
 
 <p align="center">
@@ -153,8 +153,8 @@ The full documentation site lives at **[apptheory.theorycloud.ai](https://appthe
 |---|---|
 | `docs/` | Public documentation site (Jekyll) — also the canonical doc tree |
 | `runtime/` | Go runtime — fixture-backed contract implementation (default P2) |
-| `ts/` | TypeScript runtime (ESM, Node.js 24) |
-| `py/` | Python runtime (3.14+) |
+| `ts/` | TypeScript runtime (ESM, Node.js 20+) |
+| `py/` | Python runtime (3.12+) |
 | `cdk/` | CDK constructs (jsii) — `AppTheoryHttpApi`, `AppTheoryMcpServer`, `AppTheoryQueue`, ... |
 | `cdk-go/` | Generated Go bindings for the jsii CDK package |
 | `contract-tests/` | Contract fixtures (216 total) + runners for Go, TS, Python; all three runtimes execute MCP, OAuth, and objectstore tiers | <!-- apptheory-fixture-count: 216 -->

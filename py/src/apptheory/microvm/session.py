@@ -201,7 +201,7 @@ def microvm_session_registry_sort_key(session_id: str) -> str:
 
 def microvm_session_registry_model_definition(*, table_name: str | None = None) -> Any:
     try:
-        from theorydb_py import ModelDefinition  # type: ignore[import-not-found]
+        from tabletheory_py import ModelDefinition  # type: ignore[import-not-found]
 
         return ModelDefinition.from_dataclass(
             MicroVMSessionRegistryRecord,

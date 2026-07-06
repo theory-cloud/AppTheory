@@ -20,7 +20,7 @@ from apptheory.limited.strategies import (  # noqa: E402
     WindowConfig,
 )
 from apptheory.limited.types import Limit, LimitDecision, RateLimitKey  # noqa: E402
-from theorydb_py import ConditionFailedError, NotFoundError, TransactUpdate, UpdateAdd, UpdateSetIfNotExists  # noqa: E402
+from tabletheory_py import ConditionFailedError, NotFoundError, TransactUpdate, UpdateAdd, UpdateSetIfNotExists  # noqa: E402
 
 
 class FakeTable:

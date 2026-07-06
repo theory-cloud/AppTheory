@@ -10,16 +10,16 @@ then carries one canonical CDK path through bootstrap, deploy, curl verification
 ## Prerequisites
 
 - Go `1.26.4` (`go.mod`)
-- Node.js `>=24` (`ts/package.json` and `cdk/package.json`)
-- Python `>=3.14` (`py/pyproject.toml`)
+- Node.js `>=20` (`ts/package.json` and `cdk/package.json`)
+- Python `>=3.12` (`py/pyproject.toml`)
 - `make` and `git`
 - AWS credentials plus permission to run `cdk bootstrap`, `cdk deploy`, and `cdk destroy` when you are ready to create
   cloud resources
 
 These floors are compatibility claims, not aspirations. `scripts/verify-runtime-floor-claims.sh` fails closed unless the
-package manifests, lockfiles, pinned TableTheory GitHub Release artifacts, and `.github/workflows/ci.yml` agree. A future
-Python 3.12 or Node.js 20 support claim must first have compatible dependency artifacts and CI rows for both the lower
-floor and the current top line.
+package manifests, lockfiles, pinned TableTheory GitHub Release artifacts, and `.github/workflows/ci.yml` agree.
+The CI floor matrix runs Python 3.12 and 3.14 plus Node.js 20 and 24 so the lower-floor claim remains
+evidence-bounded.
 
 ## Install from repo
 

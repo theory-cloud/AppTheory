@@ -12,7 +12,7 @@ concepts:
       - cross_language_constructs
     requires:
       - aws_cdk_v2
-      - node_24
+      - node_20
 
   mcp_server_agentcore:
     type: construct

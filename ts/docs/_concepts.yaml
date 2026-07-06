@@ -11,7 +11,7 @@ concepts:
       - response_helpers
       - deterministic_test_env
     requires:
-      - node_24
+      - node_20
     use_when:
       - "You need AppTheory semantics in a Node.js Lambda."
       - "You need contract-backed parity with Go/Python."
