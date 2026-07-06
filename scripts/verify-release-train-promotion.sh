@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: enforce the staging to premain to main release-train promotion path.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

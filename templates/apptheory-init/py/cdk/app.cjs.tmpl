@@ -1,0 +1,44 @@
+const { execSync } = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const cdk = require("aws-cdk-lib");
+const lambda = require("aws-cdk-lib/aws-lambda");
+const { AppTheoryFunction, AppTheoryHttpApi } = require("@theory-cloud/apptheory-cdk");
+
+class __APP_CLASS__Stack extends cdk.Stack {
+  constructor(scope, id, props) {
+    super(scope, id, props);
+    const projectRoot = path.resolve(__dirname, "..");
+    const handler = new AppTheoryFunction(this, "Handler", {
+      runtime: lambda.Runtime.PYTHON_3_14,
+      handler: "handler.handler",
+      code: lambda.Code.fromAsset(projectRoot, {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_14.bundlingImage,
+          command: [
+            "bash",
+            "-c",
+            "python -m pip install -r /asset-input/requirements.txt -t /asset-output && cp /asset-input/app.py /asset-input/handler.py /asset-output/",
+          ],
+          local: {
+            tryBundle(outputDir) {
+              fs.rmSync(outputDir, { force: true, recursive: true });
+              fs.mkdirSync(outputDir, { recursive: true });
+              execSync(`python3 -m pip install -r ${path.join(projectRoot, "requirements.txt")} -t ${outputDir}`, { stdio: "inherit" });
+              fs.copyFileSync(path.join(projectRoot, "app.py"), path.join(outputDir, "app.py"));
+              fs.copyFileSync(path.join(projectRoot, "handler.py"), path.join(outputDir, "handler.py"));
+              return true;
+            },
+          },
+        },
+      }),
+      environment: { APPTHEORY_TIER: "p2" },
+    });
+    const api = new AppTheoryHttpApi(this, "Api", { handler: handler.fn, apiName: "__APP_PACKAGE__" });
+    new cdk.CfnOutput(this, "ApiUrl", { value: api.api.apiEndpoint });
+  }
+}
+
+const app = new cdk.App();
+new __APP_CLASS__Stack(app, "__APP_CLASS__Stack");

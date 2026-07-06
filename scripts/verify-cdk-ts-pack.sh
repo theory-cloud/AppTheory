@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify npm packaging for the CDK construct package.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

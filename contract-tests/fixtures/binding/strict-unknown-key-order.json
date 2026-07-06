@@ -1,0 +1,54 @@
+{
+  "id": "p0.binding.strict_unknown_key_order",
+  "tier": "p0",
+  "name": "Strict JSON reports the first unknown body key in deterministic wire order",
+  "setup": {
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/strict-name",
+        "handler": "bind_strict_name"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/strict-name",
+      "query": {},
+      "headers": {
+        "content-type": [
+          "application/json"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"zeta\":true,\"alpha\":true,\"name\":\"Bob\"}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.bad_request",
+          "message": "invalid body binding: zeta",
+          "status_code": 400,
+          "details": {
+            "source": "body",
+            "name": "zeta"
+          }
+        }
+      },
+      "is_base64": false
+    }
+  }
+}

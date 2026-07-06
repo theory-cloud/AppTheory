@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify release artifact builds are deterministic and complete.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

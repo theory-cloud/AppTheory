@@ -38,6 +38,7 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryApp",
 		reflect.TypeOf((*AppTheoryApp)(nil)).Elem(),
 		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "alias", GoGetter: "Alias"},
 			_jsii_.MemberProperty{JsiiProperty: "api", GoGetter: "Api"},
 			_jsii_.MemberProperty{JsiiProperty: "databaseTable", GoGetter: "DatabaseTable"},
 			_jsii_.MemberProperty{JsiiProperty: "domain", GoGetter: "Domain"},
@@ -308,7 +309,10 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryFunction",
 		reflect.TypeOf((*AppTheoryFunction)(nil)).Elem(),
 		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "alias", GoGetter: "Alias"},
+			_jsii_.MemberProperty{JsiiProperty: "deploymentGroup", GoGetter: "DeploymentGroup"},
 			_jsii_.MemberProperty{JsiiProperty: "fn", GoGetter: "Fn"},
+			_jsii_.MemberProperty{JsiiProperty: "logGroup", GoGetter: "LogGroup"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
 			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
@@ -338,6 +342,14 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryFunctionAlarmsProps",
 		reflect.TypeOf((*AppTheoryFunctionAlarmsProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryFunctionAliasOptions",
+		reflect.TypeOf((*AppTheoryFunctionAliasOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryFunctionDeploymentOptions",
+		reflect.TypeOf((*AppTheoryFunctionDeploymentOptions)(nil)).Elem(),
 	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryFunctionProps",
@@ -372,8 +384,11 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryHttpApi",
 		reflect.TypeOf((*AppTheoryHttpApi)(nil)).Elem(),
 		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "accessLogGroup", GoGetter: "AccessLogGroup"},
 			_jsii_.MemberProperty{JsiiProperty: "api", GoGetter: "Api"},
+			_jsii_.MemberProperty{JsiiProperty: "domain", GoGetter: "Domain"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "stage", GoGetter: "Stage"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
 			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
 		},
@@ -384,8 +399,24 @@ func init() {
 		},
 	)
 	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryHttpApiCorsOptions",
+		reflect.TypeOf((*AppTheoryHttpApiCorsOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryHttpApiDomainOptions",
+		reflect.TypeOf((*AppTheoryHttpApiDomainOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryHttpApiProps",
 		reflect.TypeOf((*AppTheoryHttpApiProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryHttpApiStageOptions",
+		reflect.TypeOf((*AppTheoryHttpApiStageOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryHttpApiWafOptions",
+		reflect.TypeOf((*AppTheoryHttpApiWafOptions)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryHttpIngestionEndpoint",
@@ -533,6 +564,15 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryLambdaRoleProps",
 		reflect.TypeOf((*AppTheoryLambdaRoleProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterEnum(
+		"@theory-cloud/apptheory-cdk.AppTheoryLambdaTrafficShiftType",
+		reflect.TypeOf((*AppTheoryLambdaTrafficShiftType)(nil)).Elem(),
+		map[string]interface{}{
+			"ALL_AT_ONCE": AppTheoryLambdaTrafficShiftType_ALL_AT_ONCE,
+			"CANARY":      AppTheoryLambdaTrafficShiftType_CANARY,
+			"LINEAR":      AppTheoryLambdaTrafficShiftType_LINEAR,
+		},
 	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryMcpProtectedResource",
@@ -803,6 +843,30 @@ func init() {
 		reflect.TypeOf((*AppTheoryMicrovmRuntimeHooks)(nil)).Elem(),
 	)
 	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryObservability",
+		reflect.TypeOf((*AppTheoryObservability)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberProperty{JsiiProperty: "dashboard", GoGetter: "Dashboard"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberProperty{JsiiProperty: "requestCount", GoGetter: "RequestCount"},
+			_jsii_.MemberProperty{JsiiProperty: "requestDuration", GoGetter: "RequestDuration"},
+			_jsii_.MemberProperty{JsiiProperty: "requestDurationAlarm", GoGetter: "RequestDurationAlarm"},
+			_jsii_.MemberProperty{JsiiProperty: "requestErrors", GoGetter: "RequestErrors"},
+			_jsii_.MemberProperty{JsiiProperty: "requestErrorsAlarm", GoGetter: "RequestErrorsAlarm"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryObservability{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryObservabilityProps",
+		reflect.TypeOf((*AppTheoryObservabilityProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryPathRoutedFrontend",
 		reflect.TypeOf((*AppTheoryPathRoutedFrontend)(nil)).Elem(),
 		[]_jsii_.Member{
@@ -894,6 +958,10 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryQueueProps",
 		reflect.TypeOf((*AppTheoryQueueProps)(nil)).Elem(),
 	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryRegionalWafOptions",
+		reflect.TypeOf((*AppTheoryRegionalWafOptions)(nil)).Elem(),
+	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServer",
 		reflect.TypeOf((*AppTheoryRemoteMcpServer)(nil)).Elem(),
@@ -918,6 +986,10 @@ func init() {
 		"@theory-cloud/apptheory-cdk.AppTheoryRemoteMcpServerProps",
 		reflect.TypeOf((*AppTheoryRemoteMcpServerProps)(nil)).Elem(),
 	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryRequestMetricDimensions",
+		reflect.TypeOf((*AppTheoryRequestMetricDimensions)(nil)).Elem(),
+	)
 	_jsii_.RegisterClass(
 		"@theory-cloud/apptheory-cdk.AppTheoryRestApi",
 		reflect.TypeOf((*AppTheoryRestApi)(nil)).Elem(),
@@ -926,6 +998,8 @@ func init() {
 			_jsii_.MemberProperty{JsiiProperty: "api", GoGetter: "Api"},
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberProperty{JsiiProperty: "wafAssociation", GoGetter: "WafAssociation"},
+			_jsii_.MemberProperty{JsiiProperty: "webAcl", GoGetter: "WebAcl"},
 			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
 		},
 		func() interface{} {
@@ -956,6 +1030,8 @@ func init() {
 			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
 			_jsii_.MemberProperty{JsiiProperty: "stage", GoGetter: "Stage"},
 			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberProperty{JsiiProperty: "wafAssociation", GoGetter: "WafAssociation"},
+			_jsii_.MemberProperty{JsiiProperty: "webAcl", GoGetter: "WebAcl"},
 			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
 		},
 		func() interface{} {

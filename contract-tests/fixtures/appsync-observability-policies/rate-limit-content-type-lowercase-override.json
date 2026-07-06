@@ -1,0 +1,99 @@
+{
+  "id": "p2.rate_limit.content_type_lowercase_override",
+  "tier": "p2",
+  "name": "Rate limited requests force JSON content-type when policy sets lowercase content-type",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/limited/content-type-lowercase",
+        "handler": "echo_context"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/limited/content-type-lowercase",
+      "query": {},
+      "headers": {
+        "x-force-rate-limit-content-type-lowercase": [
+          "true"
+        ],
+        "x-tenant-id": [
+          "tenant_content_type"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 429,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ],
+        "x-request-id": [
+          "req_test_123"
+        ],
+        "retry-after": [
+          "1"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "error": {
+          "code": "app.rate_limited",
+          "message": "rate limited",
+          "request_id": "req_test_123"
+        }
+      },
+      "is_base64": false
+    },
+    "logs": [
+      {
+        "level": "warn",
+        "event": "request.completed",
+        "request_id": "req_test_123",
+        "tenant_id": "tenant_content_type",
+        "method": "GET",
+        "path": "/limited/content-type-lowercase",
+        "status": 429,
+        "error_code": "app.rate_limited",
+        "duration_ms": 0
+      }
+    ],
+    "metrics": [
+      {
+        "name": "apptheory.request",
+        "value": 1,
+        "tags": {
+          "method": "GET",
+          "path": "/limited/content-type-lowercase",
+          "status": "429",
+          "error_code": "app.rate_limited",
+          "tenant_id": "tenant_content_type"
+        },
+        "duration_ms": 0
+      }
+    ],
+    "spans": [
+      {
+        "name": "http GET /limited/content-type-lowercase",
+        "attributes": {
+          "http.method": "GET",
+          "http.route": "/limited/content-type-lowercase",
+          "http.status_code": "429",
+          "request.id": "req_test_123",
+          "tenant.id": "tenant_content_type",
+          "error.code": "app.rate_limited"
+        }
+      }
+    ]
+  }
+}

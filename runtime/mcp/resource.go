@@ -18,6 +18,15 @@ type ResourceDef struct {
 	Size        int64  `json:"size,omitempty"`
 }
 
+// ResourceTemplateDef defines an MCP resource template's metadata.
+type ResourceTemplateDef struct {
+	URITemplate string `json:"uriTemplate"`
+	Name        string `json:"name"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
+
 // ResourceContent is a single content item returned from resources/read.
 //
 // Exactly one of Text or Blob should be set.
@@ -50,20 +59,27 @@ type registeredResource struct {
 
 // ResourceRegistry manages registered MCP resources.
 type ResourceRegistry struct {
-	mu        sync.RWMutex
-	resources []registeredResource
-	index     map[string]int
+	mu            sync.RWMutex
+	resources     []registeredResource
+	index         map[string]int
+	templates     []ResourceTemplateDef
+	templateIndex map[string]int
 }
 
 // NewResourceRegistry creates an empty resource registry.
 func NewResourceRegistry() *ResourceRegistry {
 	return &ResourceRegistry{
-		index: make(map[string]int),
+		index:         make(map[string]int),
+		templateIndex: make(map[string]int),
 	}
 }
 
 func errDuplicateResource(uri string) error {
 	return fmt.Errorf("resource already registered: %s", uri)
+}
+
+func errDuplicateResourceTemplate(uriTemplate string) error {
+	return fmt.Errorf("resource template already registered: %s", uriTemplate)
 }
 
 // RegisterResource registers a resource by URI.
@@ -94,6 +110,31 @@ func (r *ResourceRegistry) RegisterResource(def ResourceDef, handler ResourceHan
 	return nil
 }
 
+// RegisterResourceTemplate registers a parameterized resource template.
+func (r *ResourceRegistry) RegisterResourceTemplate(def ResourceTemplateDef) error {
+	def.URITemplate = strings.TrimSpace(def.URITemplate)
+	if def.URITemplate == "" {
+		return fmt.Errorf("resource template uriTemplate must not be empty")
+	}
+	if !validResourceURI(def.URITemplate) {
+		return fmt.Errorf("resource template uriTemplate must be absolute: %s", def.URITemplate)
+	}
+	if def.Name == "" {
+		return fmt.Errorf("resource template name must not be empty")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, exists := r.templateIndex[def.URITemplate]; exists {
+		return errDuplicateResourceTemplate(def.URITemplate)
+	}
+
+	r.templateIndex[def.URITemplate] = len(r.templates)
+	r.templates = append(r.templates, def)
+	return nil
+}
+
 // List returns all registered resource definitions in registration order.
 func (r *ResourceRegistry) List() []ResourceDef {
 	r.mu.RLock()
@@ -106,11 +147,27 @@ func (r *ResourceRegistry) List() []ResourceDef {
 	return defs
 }
 
+// ListTemplates returns all registered resource template definitions in registration order.
+func (r *ResourceRegistry) ListTemplates() []ResourceTemplateDef {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	defs := make([]ResourceTemplateDef, len(r.templates))
+	copy(defs, r.templates)
+	return defs
+}
+
 // Len returns the number of registered resources.
 func (r *ResourceRegistry) Len() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return len(r.resources)
+}
+
+func (r *ResourceRegistry) templateLen() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.templates)
 }
 
 func (r *ResourceRegistry) exists(uri string) bool {

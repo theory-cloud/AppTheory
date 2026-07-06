@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: run TypeScript runtime lint and format checks.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

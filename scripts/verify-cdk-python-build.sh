@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify jsii can build the CDK Python package artifact.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

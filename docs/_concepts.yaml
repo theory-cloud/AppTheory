@@ -11,8 +11,8 @@ concepts:
       - "Public API drift gates via api-snapshots/go.txt, api-snapshots/ts.txt, api-snapshots/py.txt"
     requires:
       - "Go 1.26.x toolchain for Go runtime development"
-      - "Node.js 24+ for TypeScript and jsii/CDK workflows"
-      - "Python 3.14+ for Python runtime workflows"
+      - "Node.js 20+ for TypeScript and jsii/CDK workflows"
+      - "Python 3.12+ for Python runtime workflows"
     use_when:
       - "You need equivalent Lambda runtime behavior across Go, TypeScript, and Python."
       - "You want contract tests and API snapshots to prevent cross-language drift."
@@ -103,7 +103,9 @@ concepts:
       - deterministic_kinesis_testkit_builders
       - cdk_stream_destination_and_mapping_constructs
     configuration:
-      - runtime/aws_eventsources.go
+      - runtime/aws_kinesis.go
+      - runtime/aws_batch.go
+      - runtime/aws_event_context.go
       - runtime/kinesis_cloudwatch_logs.go
       - runtime/kinesis_producer.go
       - ts/src/kinesis-cloudwatch-logs.ts
@@ -196,11 +198,11 @@ concepts:
       - cdk_typed_connector_image_controller_constructs
       - evidence_bounded_conformance_harness
     configuration:
-      - contract-tests/fixtures/m15/
-      - contract-tests/fixtures/m16/
+      - contract-tests/fixtures/microvm-foundation/
+      - contract-tests/fixtures/microvm-operations/
       - runtime/microvm/
-      - ts/src/microvm.ts
-      - py/src/apptheory/microvm.py
+      - ts/src/microvm/
+      - py/src/apptheory/microvm/
       - cdk/lib/microvm-network-connector.ts
       - cdk/lib/microvm-image.ts
       - cdk/lib/microvm-controller.ts

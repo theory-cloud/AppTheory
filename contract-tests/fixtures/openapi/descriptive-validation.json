@@ -1,0 +1,245 @@
+{
+  "id": "p0.openapi.descriptive_validation",
+  "tier": "p0",
+  "name": "OpenAPI descriptive spec with validation is deterministic",
+  "setup": {
+    "openapi": {
+      "title": "Inventory API",
+      "version": "2026-07",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/widgets/{widget_id}",
+          "operation_id": "createWidget",
+          "summary": "Create widget",
+          "tags": [
+            "widgets",
+            "inventory"
+          ],
+          "success_status": 201,
+          "request": {
+            "fields": [
+              {
+                "field": "widget_id",
+                "source": "path",
+                "name": "widget_id",
+                "type": "string",
+                "required": true,
+                "validation": [
+                  {
+                    "rule": "pattern",
+                    "value": "^[A-Z0-9-]+$"
+                  }
+                ]
+              },
+              {
+                "field": "limit",
+                "source": "query",
+                "name": "limit",
+                "type": "integer",
+                "validation": [
+                  {
+                    "rule": "min",
+                    "value": 1
+                  },
+                  {
+                    "rule": "max",
+                    "value": 100
+                  }
+                ]
+              },
+              {
+                "field": "mode",
+                "source": "header",
+                "name": "x-mode",
+                "type": "string",
+                "validation": [
+                  {
+                    "rule": "enum",
+                    "value": [
+                      "sync",
+                      "async"
+                    ]
+                  }
+                ]
+              },
+              {
+                "field": "name",
+                "source": "body",
+                "name": "name",
+                "type": "string",
+                "required": true,
+                "validation": [
+                  {
+                    "rule": "required"
+                  },
+                  {
+                    "rule": "min_length",
+                    "value": 3
+                  },
+                  {
+                    "rule": "max_length",
+                    "value": 64
+                  },
+                  {
+                    "rule": "pattern",
+                    "value": "^[A-Za-z][A-Za-z0-9 -]+$"
+                  }
+                ]
+              },
+              {
+                "field": "quantity",
+                "source": "body",
+                "name": "quantity",
+                "type": "integer",
+                "validation": [
+                  {
+                    "rule": "min",
+                    "value": 1
+                  },
+                  {
+                    "rule": "max",
+                    "value": 10
+                  }
+                ]
+              },
+              {
+                "field": "state",
+                "source": "body",
+                "name": "state",
+                "type": "string",
+                "required": true,
+                "validation": [
+                  {
+                    "rule": "required"
+                  },
+                  {
+                    "rule": "enum",
+                    "value": [
+                      "open",
+                      "closed"
+                    ]
+                  }
+                ]
+              },
+              {
+                "field": "tags",
+                "source": "body",
+                "name": "tags",
+                "type": "string",
+                "array": true,
+                "validation": [
+                  {
+                    "rule": "min_length",
+                    "value": 1
+                  },
+                  {
+                    "rule": "max_length",
+                    "value": 3
+                  }
+                ]
+              },
+              {
+                "field": "metadata",
+                "source": "body",
+                "name": "metadata",
+                "type": "object"
+              }
+            ]
+          },
+          "response": {
+            "description": "created",
+            "fields": [
+              {
+                "field": "id",
+                "source": "response",
+                "name": "id",
+                "type": "string",
+                "required": true
+              },
+              {
+                "field": "accepted",
+                "source": "response",
+                "name": "accepted",
+                "type": "boolean",
+                "required": true
+              }
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/widgets/{widget_id}",
+          "operation_id": "getWidget",
+          "summary": "Get widget",
+          "tags": [
+            "widgets",
+            "inventory"
+          ],
+          "success_status": 200,
+          "request": {
+            "fields": [
+              {
+                "field": "widget_id",
+                "source": "path",
+                "name": "widget_id",
+                "type": "string",
+                "required": true,
+                "validation": [
+                  {
+                    "rule": "pattern",
+                    "value": "^[A-Z0-9-]+$"
+                  }
+                ]
+              },
+              {
+                "field": "include_deleted",
+                "source": "query",
+                "name": "include_deleted",
+                "type": "boolean"
+              }
+            ]
+          },
+          "response": {
+            "description": "ok",
+            "fields": [
+              {
+                "field": "id",
+                "source": "response",
+                "name": "id",
+                "type": "string",
+                "required": true
+              },
+              {
+                "field": "name",
+                "source": "response",
+                "name": "name",
+                "type": "string",
+                "required": true
+              },
+              {
+                "field": "state",
+                "source": "response",
+                "name": "state",
+                "type": "string",
+                "required": true,
+                "validation": [
+                  {
+                    "rule": "enum",
+                    "value": [
+                      "open",
+                      "closed"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "output_json": "{\"components\":{\"responses\":{\"AppBadRequest\":{\"content\":{\"application/json\":{\"schema\":{\"$ref\":\"#/components/schemas/AppTheoryError\"}}},\"description\":\"AppTheory bad request error envelope\"},\"AppValidationFailed\":{\"content\":{\"application/json\":{\"schema\":{\"$ref\":\"#/components/schemas/AppTheoryError\"}}},\"description\":\"AppTheory validation failure error envelope\"}},\"schemas\":{\"AppTheoryError\":{\"additionalProperties\":false,\"properties\":{\"error\":{\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"},\"details\":{\"additionalProperties\":true,\"type\":\"object\"},\"message\":{\"type\":\"string\"},\"request_id\":{\"type\":\"string\"}},\"required\":[\"code\",\"message\"],\"type\":\"object\"}},\"required\":[\"error\"],\"type\":\"object\"}}},\"info\":{\"title\":\"Inventory API\",\"version\":\"2026-07\"},\"openapi\":\"3.1.0\",\"paths\":{\"/widgets/{widget_id}\":{\"get\":{\"operationId\":\"getWidget\",\"parameters\":[{\"in\":\"path\",\"name\":\"widget_id\",\"required\":true,\"schema\":{\"pattern\":\"^[A-Z0-9-]+$\",\"type\":\"string\"}},{\"in\":\"query\",\"name\":\"include_deleted\",\"required\":false,\"schema\":{\"type\":\"boolean\"}}],\"responses\":{\"200\":{\"content\":{\"application/json\":{\"schema\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"state\":{\"enum\":[\"open\",\"closed\"],\"type\":\"string\"}},\"required\":[\"id\",\"name\",\"state\"],\"type\":\"object\"}}},\"description\":\"ok\"},\"400\":{\"$ref\":\"#/components/responses/AppBadRequest\"},\"422\":{\"$ref\":\"#/components/responses/AppValidationFailed\"}},\"summary\":\"Get widget\",\"tags\":[\"inventory\",\"widgets\"]},\"post\":{\"operationId\":\"createWidget\",\"parameters\":[{\"in\":\"path\",\"name\":\"widget_id\",\"required\":true,\"schema\":{\"pattern\":\"^[A-Z0-9-]+$\",\"type\":\"string\"}},{\"in\":\"query\",\"name\":\"limit\",\"required\":false,\"schema\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"}},{\"in\":\"header\",\"name\":\"x-mode\",\"required\":false,\"schema\":{\"enum\":[\"sync\",\"async\"],\"type\":\"string\"}}],\"requestBody\":{\"content\":{\"application/json\":{\"schema\":{\"additionalProperties\":false,\"properties\":{\"metadata\":{\"additionalProperties\":true,\"type\":\"object\"},\"name\":{\"maxLength\":64,\"minLength\":3,\"pattern\":\"^[A-Za-z][A-Za-z0-9 -]+$\",\"type\":\"string\"},\"quantity\":{\"maximum\":10,\"minimum\":1,\"type\":\"integer\"},\"state\":{\"enum\":[\"open\",\"closed\"],\"type\":\"string\"},\"tags\":{\"items\":{\"type\":\"string\"},\"maxItems\":3,\"minItems\":1,\"type\":\"array\"}},\"required\":[\"name\",\"state\"],\"type\":\"object\"}}},\"required\":true},\"responses\":{\"201\":{\"content\":{\"application/json\":{\"schema\":{\"additionalProperties\":false,\"properties\":{\"accepted\":{\"type\":\"boolean\"},\"id\":{\"type\":\"string\"}},\"required\":[\"accepted\",\"id\"],\"type\":\"object\"}}},\"description\":\"created\"},\"400\":{\"$ref\":\"#/components/responses/AppBadRequest\"},\"422\":{\"$ref\":\"#/components/responses/AppValidationFailed\"}},\"summary\":\"Create widget\",\"tags\":[\"inventory\",\"widgets\"]}}}}"
+  }
+}

@@ -19,14 +19,20 @@ import (
 )
 
 func runFixtureP0(f Fixture) error {
-	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
+	var app *apptheory.App
+	setupErr := captureSetupError(func() error {
+		app = apptheory.New(
+			apptheory.WithTier(apptheory.TierP0),
+			apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormat(f.Setup.HTTPErrorFormat)),
+		)
+		return registerAppTheoryFixtureRoutes(app, f.Setup.Routes)
+	})
 
-	for _, r := range f.Setup.Routes {
-		handler := builtInAppTheoryHandler(r.Handler)
-		if handler == nil {
-			return fmt.Errorf("unknown handler %q", r.Handler)
-		}
-		app.Handle(r.Method, r.Path, handler)
+	if expectsSetupError(f) {
+		return compareExpectedSetupError(f, setupErr)
+	}
+	if setupErr != nil {
+		return fmt.Errorf("setup app: %w", setupErr)
 	}
 
 	actual, err := serveFixtureP0(app, f)
@@ -91,15 +97,14 @@ func serveFixtureP0AWS(app *apptheory.App, awsEvent *FixtureAWSEvent) (apptheory
 }
 
 func printFailureP0(f Fixture) {
-	app := apptheory.New(apptheory.WithTier(apptheory.TierP0))
-	for _, r := range f.Setup.Routes {
-		handler := builtInAppTheoryHandler(r.Handler)
-		if handler == nil {
-			fmt.Fprintf(os.Stderr, "  got: <unavailable>\n")
-			printExpected(f)
-			return
-		}
-		app.Handle(r.Method, r.Path, handler)
+	app := apptheory.New(
+		apptheory.WithTier(apptheory.TierP0),
+		apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormat(f.Setup.HTTPErrorFormat)),
+	)
+	if err := registerAppTheoryFixtureRoutes(app, f.Setup.Routes); err != nil {
+		fmt.Fprintf(os.Stderr, "  got: <unavailable>\n")
+		printExpected(f)
+		return
 	}
 
 	actual, err := serveFixtureP0(app, f)
@@ -247,6 +252,154 @@ func responseFromALBTargetGroup(resp events.ALBTargetGroupResponse) (apptheory.R
 	}, nil
 }
 
+type bindQueryCountRequest struct {
+	Count int `query:"count"`
+}
+
+type bindAllSourcesRequest struct {
+	Name      string        `json:"name"`
+	Tenant    string        `path:"tenant"`
+	RequestID string        `header:"x-request-id"`
+	Limit     int           `query:"limit"`
+	Enabled   bool          `query:"enabled"`
+	Ratio     float64       `query:"ratio"`
+	Tags      []string      `query:"tag"`
+	TTL       time.Duration `query:"ttl"`
+}
+
+type bindDurationEdgesRequest struct {
+	Half     time.Duration `query:"half"`
+	Micro    time.Duration `query:"micro"`
+	Boundary time.Duration `query:"boundary"`
+	Combined time.Duration `query:"combined"`
+	Negative time.Duration `query:"negative"`
+}
+
+type bindNumericEdgesRequest struct {
+	Count int     `query:"count"`
+	Ratio float64 `query:"ratio"`
+}
+
+type bindStrictQueryOnlyRequest struct {
+	Count int `query:"count"`
+}
+
+type bindStrictNestedRequest struct {
+	Profile string         `json:"profile"`
+	Nested  map[string]any `json:"nested"`
+}
+
+type bindBodyNameRequest struct {
+	Name string `json:"name"`
+}
+
+type validateProfileRequest struct {
+	Name     string `json:"name" validate:"required"`
+	Age      int    `json:"age" validate:"min=18"`
+	Score    int    `json:"score" validate:"max=10"`
+	Nickname string `json:"nickname" validate:"min_length=2"`
+	Bio      string `json:"bio" validate:"max_length=5"`
+	Email    string `json:"email" validate:"pattern=^[^@]+@[^@]+\\.[^@]+$"`
+	Role     string `json:"role" validate:"enum=admin|member"`
+}
+
+type validateProfileQueryRequest struct {
+	Name string `json:"name" validate:"required"`
+	Age  int    `query:"age" validate:"min=18"`
+}
+
+type validateWireNamesRequest struct {
+	AccountID string `path:"account_id" validate:"pattern=^acct_"`
+	PageSize  int    `query:"page-size" validate:"min=10"`
+	Role      string `header:"x-role" validate:"enum=admin|member"`
+	Name      string `json:"name" validate:"required"`
+}
+
+type validateInvalidRulesRequest struct {
+	Email string `json:"email" validate:"pattern=["`
+	Age   int    `json:"age" validate:"min=abc"`
+	Name  string `json:"name" validate:"required=unexpected"`
+	Role  string `json:"role" validate:"typo=1"`
+}
+
+type validateRequiredPresenceRequest struct {
+	Count  int            `json:"count" validate:"required"`
+	Active bool           `json:"active" validate:"required"`
+	Name   string         `json:"name" validate:"required"`
+	Tags   []string       `json:"tags" validate:"required"`
+	Meta   map[string]any `json:"meta" validate:"required"`
+}
+
+func registerAppTheoryFixtureRoutes(app *apptheory.App, routes []FixtureRoute) error {
+	for _, r := range routes {
+		name := strings.TrimSpace(r.Handler)
+		var handler apptheory.Handler
+		if name != "" {
+			handler = builtInAppTheoryHandler(name)
+			if handler == nil {
+				return fmt.Errorf("unknown handler %q", r.Handler)
+			}
+		}
+		var opts []apptheory.RouteOption
+		if r.AuthRequired {
+			opts = append(opts, apptheory.RequireAuth())
+		}
+		app.Handle(r.Method, r.Path, handler, opts...)
+	}
+	return nil
+}
+
+func captureSetupError(setup func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if recoveredErr, ok := r.(error); ok {
+				err = recoveredErr
+				return
+			}
+			err = fmt.Errorf("%v", r)
+		}
+	}()
+	return setup()
+}
+
+func expectsSetupError(f Fixture) bool {
+	return f.Expect.Error != nil && f.Expect.Response == nil && len(f.Expect.Output) == 0 && f.Input.Request == nil && f.Input.AWSEvent == nil
+}
+
+func compareExpectedSetupError(f Fixture, err error) error {
+	if err == nil {
+		return fmt.Errorf("expected setup error, got none")
+	}
+	actual := fixtureErrorFromError(err)
+	expected := f.Expect.Error
+	if strings.TrimSpace(expected.Code) != "" && actual.Code != strings.TrimSpace(expected.Code) {
+		return fmt.Errorf("setup error code: expected %q, got %q", expected.Code, actual.Code)
+	}
+	if expected.StatusCode != 0 && actual.StatusCode != expected.StatusCode {
+		return fmt.Errorf("setup error status_code: expected %d, got %d", expected.StatusCode, actual.StatusCode)
+	}
+	if expected.Message != "" && !strings.Contains(actual.Message, expected.Message) {
+		return fmt.Errorf("setup error message: expected %q, got %q", expected.Message, actual.Message)
+	}
+	return nil
+}
+
+func fixtureErrorFromError(err error) FixtureError {
+	if err == nil {
+		return FixtureError{}
+	}
+	var appTheoryErr *apptheory.AppTheoryError
+	if errors.As(err, &appTheoryErr) {
+		return FixtureError{Code: strings.TrimSpace(appTheoryErr.Code), Message: appTheoryErr.Message, StatusCode: appTheoryErr.StatusCode}
+	}
+	//nolint:staticcheck // Setup comparison preserves legacy AppError compatibility.
+	var appErr *apptheory.AppError
+	if errors.As(err, &appErr) {
+		return FixtureError{Code: strings.TrimSpace(appErr.Code), Message: appErr.Message}
+	}
+	return FixtureError{Message: err.Error()}
+}
+
 var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 	"static_pong": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		return apptheory.Text(200, "pong"), nil
@@ -278,6 +431,153 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		}
 		return apptheory.JSON(200, value)
 	},
+	"json_required_echo": apptheory.JSONHandler(func(_ *apptheory.Context, req map[string]any) (map[string]any, error) { //nolint:staticcheck // Fixture exercises deprecated Lift-compatible JSONHandler codes.
+		return req, nil
+	}),
+	"bind_query_count": apptheory.BindHandler(
+		apptheory.BindConfig[bindQueryCountRequest]{Query: true},
+		func(_ *apptheory.Context, req bindQueryCountRequest) (map[string]any, error) {
+			return map[string]any{"count": req.Count}, nil
+		},
+	),
+	"bind_all_sources": apptheory.BindHandler(
+		apptheory.BindConfig[bindAllSourcesRequest]{Body: true, Query: true, Path: true, Headers: true},
+		func(_ *apptheory.Context, req bindAllSourcesRequest) (map[string]any, error) {
+			return map[string]any{
+				"name":       req.Name,
+				"tenant":     req.Tenant,
+				"request_id": req.RequestID,
+				"limit":      req.Limit,
+				"enabled":    req.Enabled,
+				"ratio":      req.Ratio,
+				"tags":       req.Tags,
+				"ttl":        req.TTL.String(),
+			}, nil
+		},
+	),
+	"bind_all_sources_strict": apptheory.BindHandler(
+		apptheory.BindConfig[bindAllSourcesRequest]{
+			Body:       true,
+			Query:      true,
+			Path:       true,
+			Headers:    true,
+			StrictJSON: true,
+		},
+		func(_ *apptheory.Context, req bindAllSourcesRequest) (map[string]any, error) {
+			return map[string]any{
+				"name":       req.Name,
+				"tenant":     req.Tenant,
+				"request_id": req.RequestID,
+				"limit":      req.Limit,
+			}, nil
+		},
+	),
+	"bind_duration_edges": apptheory.BindHandler(
+		apptheory.BindConfig[bindDurationEdgesRequest]{Query: true},
+		func(_ *apptheory.Context, req bindDurationEdgesRequest) (map[string]any, error) {
+			return map[string]any{
+				"half":     req.Half.String(),
+				"micro":    req.Micro.String(),
+				"boundary": req.Boundary.String(),
+				"combined": req.Combined.String(),
+				"negative": req.Negative.String(),
+			}, nil
+		},
+	),
+	"bind_numeric_edges": apptheory.BindHandler(
+		apptheory.BindConfig[bindNumericEdgesRequest]{Query: true},
+		func(_ *apptheory.Context, req bindNumericEdgesRequest) (map[string]any, error) {
+			return map[string]any{"count": req.Count, "ratio": req.Ratio}, nil
+		},
+	),
+	"bind_strict_query_only": apptheory.BindHandler(
+		apptheory.BindConfig[bindStrictQueryOnlyRequest]{
+			Body:       true,
+			Query:      true,
+			StrictJSON: true,
+		},
+		func(_ *apptheory.Context, req bindStrictQueryOnlyRequest) (map[string]any, error) {
+			return map[string]any{"count": req.Count}, nil
+		},
+	),
+	"bind_strict_nested": apptheory.BindHandler(
+		apptheory.BindConfig[bindStrictNestedRequest]{
+			Body:       true,
+			StrictJSON: true,
+		},
+		func(_ *apptheory.Context, req bindStrictNestedRequest) (map[string]any, error) {
+			return map[string]any{"profile_name": req.Profile}, nil
+		},
+	),
+	"bind_body_name": apptheory.BindHandler(
+		apptheory.BindConfig[bindBodyNameRequest]{Body: true},
+		func(_ *apptheory.Context, req bindBodyNameRequest) (map[string]any, error) {
+			return map[string]any{"name": req.Name}, nil
+		},
+	),
+	"bind_strict_name": apptheory.BindHandler(
+		apptheory.BindConfig[bindBodyNameRequest]{
+			Body:       true,
+			StrictJSON: true,
+		},
+		func(_ *apptheory.Context, req bindBodyNameRequest) (map[string]any, error) {
+			return map[string]any{"name": req.Name}, nil
+		},
+	),
+	"validate_profile": apptheory.BindHandler(
+		apptheory.BindConfig[validateProfileRequest]{Body: true},
+		func(_ *apptheory.Context, req validateProfileRequest) (map[string]any, error) {
+			return map[string]any{
+				"name":     req.Name,
+				"age":      req.Age,
+				"score":    req.Score,
+				"nickname": req.Nickname,
+				"bio":      req.Bio,
+				"email":    req.Email,
+				"role":     req.Role,
+			}, nil
+		},
+	),
+	"validate_profile_query": apptheory.BindHandler(
+		apptheory.BindConfig[validateProfileQueryRequest]{Body: true, Query: true},
+		func(_ *apptheory.Context, req validateProfileQueryRequest) (map[string]any, error) {
+			return map[string]any{"name": req.Name, "age": req.Age}, nil
+		},
+	),
+	"validate_wire_names": apptheory.BindHandler(
+		apptheory.BindConfig[validateWireNamesRequest]{Body: true, Query: true, Path: true, Headers: true},
+		func(_ *apptheory.Context, req validateWireNamesRequest) (map[string]any, error) {
+			return map[string]any{
+				"account_id": req.AccountID,
+				"name":       req.Name,
+				"page_size":  req.PageSize,
+				"role":       req.Role,
+			}, nil
+		},
+	),
+	"validate_invalid_rules": apptheory.BindHandler(
+		apptheory.BindConfig[validateInvalidRulesRequest]{Body: true},
+		func(_ *apptheory.Context, req validateInvalidRulesRequest) (map[string]any, error) {
+			return map[string]any{
+				"age":   req.Age,
+				"email": req.Email,
+				"name":  req.Name,
+				"role":  req.Role,
+			}, nil
+		},
+	),
+	"validate_required_presence": apptheory.BindHandler(
+		apptheory.BindConfig[validateRequiredPresenceRequest]{Body: true},
+		func(_ *apptheory.Context, req validateRequiredPresenceRequest) (map[string]any, error) {
+			return map[string]any{
+				"active": req.Active,
+				"count":  req.Count,
+				"meta":   req.Meta,
+				"name":   req.Name,
+				"tags":   req.Tags,
+			}, nil
+		},
+	),
 	"echo_appsync_context": func(ctx *apptheory.Context) (*apptheory.Response, error) {
 		appsync := ctx.AsAppSync()
 		if appsync == nil {
@@ -340,10 +640,10 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		})
 	},
 	"unauthorized": func(_ *apptheory.Context) (*apptheory.Response, error) {
-		return nil, &apptheory.AppError{Code: "app.unauthorized", Message: "unauthorized"}
+		return nil, apptheory.NewAppTheoryError("app.unauthorized", "unauthorized")
 	},
 	"validation_failed": func(_ *apptheory.Context) (*apptheory.Response, error) {
-		return nil, &apptheory.AppError{Code: "app.validation_failed", Message: "validation failed"}
+		return nil, apptheory.NewAppTheoryError("app.validation_failed", "validation failed")
 	},
 	"portable_error": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		err := apptheory.NewAppTheoryError("app.conflict", "conflict").
@@ -374,6 +674,50 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		events <- apptheory.SSEEvent{ID: "3", Data: ""}
 		close(events)
 		return apptheory.SSEStreamResponse(ctx.Context(), 200, events)
+	},
+	"sse_heartbeat_keepalive": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type":  {"text/event-stream"},
+				"cache-control": {"no-cache"},
+				"connection":    {"keep-alive"},
+			},
+			Body:     []byte(": keep-alive\n\nid: 1\nevent: message\ndata: {\"ok\":true}\n\n"),
+			IsBase64: false,
+		}, nil
+	},
+	"sse_client_disconnect_mid_stream": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		return &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type":  {"text/event-stream"},
+				"cache-control": {"no-cache"},
+				"connection":    {"keep-alive"},
+			},
+			BodyStream: apptheory.StreamBytes([]byte("id: 1\nevent: message\ndata: before-disconnect\n\n")),
+			IsBase64:   false,
+		}, nil
+	},
+	"sse_late_error_after_first_byte": func(_ *apptheory.Context) (*apptheory.Response, error) {
+		resp := &apptheory.Response{
+			Status: 200,
+			Headers: map[string][]string{
+				"content-type":  {"text/event-stream"},
+				"cache-control": {"no-cache"},
+				"connection":    {"keep-alive"},
+			},
+			Body:     nil,
+			IsBase64: false,
+		}
+		ch := make(chan apptheory.StreamChunk, 2)
+		resp.BodyStream = ch
+		go func() {
+			defer close(ch)
+			ch <- apptheory.StreamChunk{Bytes: []byte("data: hello\n\n")}
+			ch <- apptheory.StreamChunk{Err: apptheory.NewAppTheoryError("app.internal", "boom")}
+		}()
+		return resp, nil
 	},
 	"stream_mutate_headers_after_first_chunk": func(_ *apptheory.Context) (*apptheory.Response, error) {
 		resp := &apptheory.Response{
@@ -417,7 +761,7 @@ var builtInAppTheoryHandlers = map[string]apptheory.Handler{
 		go func() {
 			defer close(ch)
 			ch <- apptheory.StreamChunk{Bytes: []byte("hello")}
-			ch <- apptheory.StreamChunk{Err: &apptheory.AppError{Code: "app.internal", Message: "boom"}}
+			ch <- apptheory.StreamChunk{Err: apptheory.NewAppTheoryError("app.internal", "boom")}
 		}()
 		return resp, nil
 	},
@@ -517,7 +861,7 @@ func builtInAppTheoryHandler(name string) apptheory.Handler {
 	return builtInAppTheoryHandlers[key]
 }
 
-func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []FixtureLogRecord, metrics []FixtureMetricRecord, spans []FixtureSpanRecord) error {
+func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []FixtureLogRecord, metrics []FixtureMetricRecord, spans []FixtureSpanRecord, emfLogInputs ...[]string) error {
 	if f.Expect.Response == nil {
 		return fmt.Errorf("fixture missing expect.response")
 	}
@@ -534,7 +878,11 @@ func compareFixtureResponse(f Fixture, actual apptheory.Response, logs []Fixture
 		return err
 	}
 
-	return compareFixtureSideEffects(f.Expect, logs, metrics, spans)
+	emfLogs := []string(nil)
+	if len(emfLogInputs) > 0 {
+		emfLogs = emfLogInputs[0]
+	}
+	return compareFixtureSideEffects(f.Expect, logs, metrics, spans, emfLogs)
 }
 
 func compareFixtureResponseMeta(expected FixtureResponse, actual apptheory.Response, expectedHeaders, actualHeaders map[string][]string) error {
@@ -583,7 +931,7 @@ func compareFixtureResponseBody(expected FixtureResponse, actual apptheory.Respo
 	return nil
 }
 
-func compareFixtureSideEffects(expected FixtureExpect, logs []FixtureLogRecord, metrics []FixtureMetricRecord, spans []FixtureSpanRecord) error {
+func compareFixtureSideEffects(expected FixtureExpect, logs []FixtureLogRecord, metrics []FixtureMetricRecord, spans []FixtureSpanRecord, emfLogInputs ...[]string) error {
 	if !reflect.DeepEqual(expected.Logs, logs) {
 		return fmt.Errorf("logs mismatch")
 	}
@@ -592,6 +940,15 @@ func compareFixtureSideEffects(expected FixtureExpect, logs []FixtureLogRecord, 
 	}
 	if !reflect.DeepEqual(expected.Spans, spans) {
 		return fmt.Errorf("spans mismatch")
+	}
+	if expected.EMFLogs != nil {
+		emfLogs := []string(nil)
+		if len(emfLogInputs) > 0 {
+			emfLogs = emfLogInputs[0]
+		}
+		if !reflect.DeepEqual(expected.EMFLogs, emfLogs) {
+			return fmt.Errorf("emf_logs mismatch")
+		}
 	}
 	return nil
 }

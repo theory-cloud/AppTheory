@@ -1,0 +1,36 @@
+import { type MicroVMLifecycleContract, type MicroVMLifecycleHook, type MicroVMLifecycleHookSpec, type MicroVMLifecycleState, type MicroVMLifecycleTransition, type MicroVMOperationContract, type MicroVMOperationHTTPRouteContract, type MicroVMOperationName, type MicroVMProviderStateMapping, type MicroVMRealLifecycleHook, type MicroVMRealLifecycleState, type MicroVMTenantBindingRule, type MicroVMTokenIssuanceContract } from "./model.js";
+import { type MicroVMTransitionSet } from "./lifecycle.js";
+export declare function defaultMicroVMRealLifecycleContract(): MicroVMLifecycleContract;
+export declare function defaultMicroVMOperationContract(): MicroVMOperationContract;
+export declare function defaultMicroVMProviderStateMappings(): MicroVMProviderStateMapping[];
+export declare function requiredForbiddenMicroVMOperationFields(): string[];
+export declare function validateMicroVMRealLifecycleContract(contract: MicroVMLifecycleContract): void;
+export declare function validateMicroVMOperationContract(contract: MicroVMOperationContract): void;
+export declare function mapMicroVMProviderState(providerState: string): {
+    state: MicroVMRealLifecycleState;
+    terminal: boolean;
+};
+export declare function validateMicroVMRealLifecycleHookSpecs(hooks: MicroVMLifecycleHookSpec[]): Map<MicroVMRealLifecycleHook, MicroVMLifecycleHookSpec>;
+export declare function validateMicroVMRealLifecycleStateLists(contract: MicroVMLifecycleContract): void;
+export declare function validateMicroVMRealLifecycleTransitionSet(hookSpecs: Map<MicroVMRealLifecycleHook, MicroVMLifecycleHookSpec>, transitions: MicroVMTransitionSet): void;
+export declare function requiredMicroVMRealTransitionsForHook(hook: MicroVMRealLifecycleHook, active: MicroVMLifecycleState | string, success: MicroVMLifecycleState | string): MicroVMLifecycleTransition[];
+export declare function validateMicroVMOperationVocabulary(operations: Array<MicroVMOperationName | string>): void;
+export declare function validateMicroVMOperationRoutes(routes: MicroVMOperationHTTPRouteContract[]): void;
+export declare function validateMicroVMProviderStateMappings(mappings: MicroVMProviderStateMapping[]): void;
+export declare function validateMicroVMTokenIssuanceContracts(tokens: MicroVMTokenIssuanceContract[]): void;
+export declare function validateMicroVMTenantBindingRules(rules: MicroVMTenantBindingRule[]): void;
+export declare function validateMicroVMForbiddenFieldCatalog(fields: string[]): void;
+export declare function validateSafeMicroVMResultFields(fields: string[]): void;
+export declare function requiredMicroVMOperations(): MicroVMOperationName[];
+export declare function requiredMicroVMRealLifecycleHooks(): MicroVMRealLifecycleHook[];
+export declare function requiredMicroVMRealLifecycleStates(): MicroVMRealLifecycleState[];
+export declare function validMicroVMRealLifecycleState(state: string): boolean;
+export declare function normalizeMicroVMOperation(operation: MicroVMOperationName | string): MicroVMOperationName | "";
+export declare function normalizeMicroVMRealLifecycleHook(hook: MicroVMLifecycleHook | string): MicroVMRealLifecycleHook | "";
+export declare function normalizeMicroVMRealLifecycleState(state: MicroVMLifecycleState | string): MicroVMRealLifecycleState | "";
+export declare function normalizeMicroVMProviderState(state: string): string;
+export declare function isRequiredMicroVMOperation(operation: string): boolean;
+export declare function requiredMicroVMOperationRoute(operation: MicroVMOperationName): MicroVMOperationHTTPRouteContract;
+export declare function microVMOperationRoute(operation: MicroVMOperationName, method: string, path: string, requestFields: string[], responseFields: string[], recovery: boolean): MicroVMOperationHTTPRouteContract;
+export declare function requiredMicroVMTokenIssuance(operation: MicroVMOperationName): MicroVMTokenIssuanceContract;
+//# sourceMappingURL=operation-contract.d.ts.map

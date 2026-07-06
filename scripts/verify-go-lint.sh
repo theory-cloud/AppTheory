@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: run the pinned Go lint configuration against tracked packages.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

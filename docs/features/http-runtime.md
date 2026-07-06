@@ -5,7 +5,7 @@ description: Tiered middleware, routing, normalization, and the AppTheory error 
 
 # HTTP Runtime (P0–P2)
 
-The HTTP runtime is AppTheory's largest contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the [147 contract fixtures](../reference/contract-fixtures.md).
+The HTTP runtime is AppTheory's largest shared contract surface. It defines route matching, the middleware chain, request/response normalization, and the error envelope — and it is enforced identically in all three runtimes by the shared fixtures. The [216-fixture corpus](../reference/contract-fixtures.md) also includes the SP09 MCP fixture tier, SP12 OAuth fixture tier, and SP13 objectstore tier executed by Go, TypeScript, and Python. <!-- apptheory-fixture-count: 216 -->
 
 The runtime is **tiered.** You opt into a tier when you create the app:
 
@@ -47,7 +47,9 @@ P0 plus:
 
 P1 plus:
 
-- **Observability hooks** — structured request log, span hooks, structured access-log fields. See [Logging Profiles](logging-profiles.md).
+- **Observability hooks** — one request log record, one metric record, and one span-shaped record per completed HTTP
+  request, including `duration_ms` and inbound trace IDs extracted from `traceparent` or `X-Amzn-Trace-Id`. See
+  [Observability Hooks](observability.md) and [Logging Profiles](logging-profiles.md).
 - **Rate-limit / load-shed hooks** — the shared P2 contract pins the portable policy-hook outcome: a rejected request returns `app.rate_limited`, `429`, and `Retry-After` while still flowing through observability. Go additionally exports `RateLimitMiddleware`, which integrates with `pkg/limited` and fingerprints default credential-derived identifiers (`x-api-key`, `Authorization: Bearer`) with HMAC-SHA256 before they reach the limiter. TypeScript and Python expose policy hooks plus limiter primitives, but they do not currently ship a `RateLimitMiddleware` equivalent.
 
 P2 is what production applications use unless they have a reason not to. The default is P2 because most consumers should not be assembling these pieces from scratch.
@@ -68,24 +70,30 @@ Python: `app.get`, `app.post`, `app.put`, `app.patch`, `app.delete`, `app.handle
 
 If two routes are equally specific, the router prefers **earlier registration order**.
 
-### Strict registration
+### Fail-closed registration
 
-Default registration is compatibility-oriented and may silently ignore invalid patterns. In tests and CI, use the strict helpers:
+Default fluent registration fails closed for invalid patterns, duplicate canonical method/pattern pairs, and nil,
+undefined, or `None` handlers. Misconfigured applications that older v1 lines could silently ignore now fail during
+startup or test setup instead of drifting into unexpected runtime 404s. Use the normal registration path in new code:
 
 ```go
-app.GetStrict("/users/{id}", handler)
-app.HandleStrict("GET", "/users/{id}", handler)
+app.Get("/users/{id}", handler)
+app.Handle("GET", "/users/{id}", handler)
 ```
 
 ```ts
-app.handleStrict("GET", "/users/{id}", handler);
+app.get("/users/{id}", handler);
+app.handle("GET", "/users/{id}", handler);
 ```
 
 ```python
-app.handle_strict("GET", "/users/{id}", handler)
+app.get("/users/{id}", handler)
+app.handle("GET", "/users/{id}", handler)
 ```
 
-Strict registration fails immediately on bad patterns instead of silently 404-ing in production.
+The strict helpers remain only as deprecated compatibility wrappers for code that depends on their older
+error-returning or throwing shape. Their failures use the canonical AppTheory error path: Python strict helpers raise
+`AppTheoryError`, and Go strict helpers return canonical `AppTheoryError` messages where applicable.
 
 ## Response helpers
 
@@ -129,7 +137,10 @@ const app = createApp({ httpErrorFormat: HTTP_ERROR_FORMAT_FLAT_LEGACY });
 app = create_app(http_error_format=HTTP_ERROR_FORMAT_FLAT_LEGACY)
 ```
 
-The flat shape applies to **HTTP only.** AppSync and WebSocket error payloads keep their existing shapes regardless of this setting — those surfaces have their own contracts.
+The default nested envelope remaps any error whose code string is `EMPTY_BODY` or `INVALID_JSON` to canonical
+`app.bad_request` fields. The flat legacy HTTP format preserves those Lift-era codes/messages as a migration bridge.
+The flat shape applies to **HTTP only.** AppSync and WebSocket error payloads keep their existing shapes regardless of
+this setting — those surfaces have their own contracts.
 
 ## HTTP entrypoints
 
@@ -155,7 +166,8 @@ You almost never need these directly — use `HandleLambda` / `handleLambda` / `
 ## Next reads
 
 - [Source Provenance](source-provenance.md) — safe HTTP client-IP access
-- [Logging Profiles](logging-profiles.md) — P2 observability output shapes
+- [Observability Hooks](observability.md) — P2 duration, trace extraction, span/log records, and EMF sink boundaries
+- [Logging Profiles](logging-profiles.md) — profile-backed structured JSON log output
 - [Sanitization](sanitization.md) — safe logging helpers
 - [Event Workloads](event-workloads.md) — the non-HTTP side of the runtime
-- [Contract Fixtures](../reference/contract-fixtures.md) — the 128-fixture covenant
+- [Contract Fixtures](../reference/contract-fixtures.md) — the 216-fixture covenant, including MCP, OAuth, and objectstore fixtures across Go/TS/Python <!-- apptheory-fixture-count: 216 -->

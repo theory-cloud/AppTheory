@@ -132,6 +132,9 @@ Important fail-closed rules:
 - The middleware derives the RFC9728 protected-resource metadata challenge URL only from an explicit
   `ResourceMetadataURL` or from the injected `MCP_ENDPOINT`. It no longer falls back to `Host` /
   `X-Forwarded-Proto` request headers.
+- Invalid-audience bearer tokens are intentionally treated as authorization failures: the fixture-pinned response is
+  `403 app.forbidden` without a `WWW-Authenticate` challenge, matching insufficient-scope denial. Missing or expired
+  bearer tokens remain `401` discovery/challenge cases.
 
 When you deploy with `AppTheoryRemoteMcpServer`, the construct injects `MCP_ENDPOINT`. That is the canonical metadata
 source when you do not provide `ResourceMetadataURL` explicitly.

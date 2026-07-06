@@ -52,3 +52,4 @@ export async function* sseEventStream(events) {
         yield Buffer.from(formatSSEEvent(ev), "utf8");
     }
 }
+//# sourceMappingURL=sse.js.map

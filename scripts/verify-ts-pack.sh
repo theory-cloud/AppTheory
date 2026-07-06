@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: build and verify the TypeScript runtime tarball artifact.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -80,6 +81,16 @@ tar -tf "dist/${expected_tgz}" | grep "^package/dist/index.js$" >/dev/null || {
 
 tar -tf "dist/${expected_tgz}" | grep "^package/dist/index.d.ts$" >/dev/null || {
   echo "ts-pack: FAIL (missing dist/index.d.ts in ${expected_tgz})"
+  exit 1
+}
+
+tar -tf "dist/${expected_tgz}" | grep "^package/dist/index.js.map$" >/dev/null || {
+  echo "ts-pack: FAIL (missing dist/index.js.map in ${expected_tgz})"
+  exit 1
+}
+
+tar -tf "dist/${expected_tgz}" | grep "^package/dist/index.d.ts.map$" >/dev/null || {
+  echo "ts-pack: FAIL (missing dist/index.d.ts.map in ${expected_tgz})"
   exit 1
 }
 

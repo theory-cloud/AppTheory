@@ -17,3 +17,4 @@ export declare class ManualIdGenerator implements IdGenerator {
     reset(): void;
     newId(): string;
 }
+//# sourceMappingURL=ids.d.ts.map

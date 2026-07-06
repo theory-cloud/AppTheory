@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: define shared environment defaults for TheoryCloud AppTheory subtree publishing scripts.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

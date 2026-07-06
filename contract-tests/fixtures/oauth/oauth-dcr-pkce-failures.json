@@ -1,0 +1,241 @@
+{
+  "id": "oauth.dcr_pkce.failures",
+  "tier": "oauth",
+  "name": "OAuth DCR and PKCE failures return canonical non-secret envelopes",
+  "setup": {
+    "oauth": {
+      "clock_unix": 1700000000,
+      "resource": "https://mcp.example.com/mcp",
+      "authorization_servers": [
+        "https://auth.example.com"
+      ],
+      "scopes_supported": [
+        "mcp:read",
+        "mcp:write"
+      ],
+      "required_audience": "https://mcp.example.com/mcp",
+      "required_scopes": [
+        "mcp:read"
+      ],
+      "bearer_tokens": [
+        {
+          "token": "valid-token",
+          "subject": "user-1",
+          "audience": "https://mcp.example.com/mcp",
+          "scopes": [
+            "mcp:read",
+            "mcp:write"
+          ],
+          "expires_unix": 1700003600
+        },
+        {
+          "token": "expired-token",
+          "subject": "user-1",
+          "audience": "https://mcp.example.com/mcp",
+          "scopes": [
+            "mcp:read"
+          ],
+          "expires_unix": 1699999999
+        },
+        {
+          "token": "wrong-audience-token",
+          "subject": "user-1",
+          "audience": "https://other.example.com/mcp",
+          "scopes": [
+            "mcp:read"
+          ],
+          "expires_unix": 1700003600
+        },
+        {
+          "token": "missing-scope-token",
+          "subject": "user-1",
+          "audience": "https://mcp.example.com/mcp",
+          "scopes": [
+            "mcp:write"
+          ],
+          "expires_unix": 1700003600
+        }
+      ],
+      "id_sequence": [
+        "client_fixture_1",
+        "code_fixture_1",
+        "access_fixture_1",
+        "refresh_fixture_1",
+        "client_fixture_1",
+        "code_fixture_1",
+        "access_fixture_2",
+        "refresh_fixture_2"
+      ],
+      "dcr_policy": {
+        "allowed_redirect_uris": [
+          "https://claude.ai/api/mcp/auth_callback",
+          "https://claude.com/api/mcp/auth_callback"
+        ],
+        "require_public_client": true,
+        "require_refresh_token": true
+      }
+    }
+  },
+  "input": {
+    "oauth": {
+      "steps": [
+        {
+          "name": "invalid redirect registration",
+          "request": {
+            "method": "POST",
+            "path": "/register",
+            "query": {},
+            "headers": {
+              "content-type": [
+                "application/json"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"client_name\":\"Bad fixture\",\"redirect_uris\":[\"https://evil.example/callback\"],\"token_endpoint_auth_method\":\"none\",\"grant_types\":[\"authorization_code\",\"refresh_token\"],\"response_types\":[\"code\"]}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "register valid client",
+          "request": {
+            "method": "POST",
+            "path": "/register",
+            "query": {},
+            "headers": {
+              "content-type": [
+                "application/json"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"client_name\":\"Claude fixture 2\",\"redirect_uris\":[\"https://claude.ai/api/mcp/auth_callback\"],\"token_endpoint_auth_method\":\"none\",\"grant_types\":[\"authorization_code\",\"refresh_token\"],\"response_types\":[\"code\"],\"scope\":\"mcp:read\"}"
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "authorize valid client",
+          "request": {
+            "method": "GET",
+            "path": "/authorize",
+            "query": {
+              "response_type": [
+                "code"
+              ],
+              "client_id": [
+                "client_fixture_1"
+              ],
+              "redirect_uri": [
+                "https://claude.ai/api/mcp/auth_callback"
+              ],
+              "code_challenge": [
+                "ZtNPunH49FD35FWYhT5Tv8I7vRKQJ8uxMaL0_9eHjNA"
+              ],
+              "code_challenge_method": [
+                "S256"
+              ],
+              "resource": [
+                "https://mcp.example.com/mcp"
+              ],
+              "scope": [
+                "mcp:read"
+              ]
+            },
+            "headers": {},
+            "body": {
+              "encoding": "utf8",
+              "value": ""
+            },
+            "is_base64": false
+          }
+        },
+        {
+          "name": "token wrong verifier",
+          "request": {
+            "method": "POST",
+            "path": "/token",
+            "query": {},
+            "headers": {
+              "content-type": [
+                "application/x-www-form-urlencoded"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "grant_type=authorization_code&client_id=client_fixture_1&code=code_fixture_1&redirect_uri=https%3A%2F%2Fclaude.ai%2Fapi%2Fmcp%2Fauth_callback&code_verifier=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&resource=https%3A%2F%2Fmcp.example.com%2Fmcp"
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "oauth": {
+      "steps": [
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json; charset=utf-8"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "error": {
+              "code": "app.bad_request",
+              "message": "bad request"
+            }
+          }
+        },
+        {
+          "status": 201,
+          "headers": {
+            "content-type": [
+              "application/json; charset=utf-8"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "client_id": "client_fixture_1",
+            "client_id_issued_at": 1700000000
+          }
+        },
+        {
+          "status": 302,
+          "headers": {
+            "location": [
+              "https://claude.ai/api/mcp/auth_callback?code=code_fixture_1"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body": {
+            "encoding": "utf8",
+            "value": ""
+          }
+        },
+        {
+          "status": 400,
+          "headers": {
+            "content-type": [
+              "application/json; charset=utf-8"
+            ]
+          },
+          "cookies": [],
+          "is_base64": false,
+          "body_json": {
+            "error": {
+              "code": "app.bad_request",
+              "message": "bad request"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

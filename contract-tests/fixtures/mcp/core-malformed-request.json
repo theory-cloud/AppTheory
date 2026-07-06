@@ -1,0 +1,66 @@
+{
+  "id": "mcp.core.malformed_request",
+  "tier": "mcp",
+  "name": "MCP malformed JSON-RPC requests return parse error envelopes without opening a session",
+  "setup": {
+    "mcp": {
+      "server": {
+        "name": "ContractMCP",
+        "version": "sp09"
+      }
+    }
+  },
+  "input": {
+    "mcp": {
+      "steps": [
+        {
+          "name": "null_id",
+          "request": {
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {
+              "content-type": [
+                "application/json"
+              ],
+              "accept": [
+                "application/json, text/event-stream"
+              ]
+            },
+            "body": {
+              "encoding": "utf8",
+              "value": "{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"ping\"}"
+            },
+            "is_base64": false
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "mcp": {
+      "steps": [
+        {
+          "status": 200,
+          "headers": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-request-id": [
+              "req_mcp_123"
+            ]
+          },
+          "cookies": [],
+          "body_json": {
+            "jsonrpc": "2.0",
+            "id": null,
+            "error": {
+              "code": -32700,
+              "message": "Parse error: id must not be null"
+            }
+          },
+          "is_base64": false
+        }
+      ]
+    }
+  }
+}

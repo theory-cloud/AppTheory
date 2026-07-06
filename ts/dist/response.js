@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { canonicalizeHeaders, firstHeaderValue, toBuffer, } from "./internal/http.js";
 import { normalizeResponse } from "./internal/response.js";
+/** Creates a UTF-8 text response. */
 export function text(status, body) {
     return normalizeResponse({
         status,
@@ -11,6 +12,7 @@ export function text(status, body) {
         isBase64: false,
     });
 }
+/** Creates a JSON response. */
 export function json(status, value) {
     let serialized;
     try {
@@ -27,6 +29,7 @@ export function json(status, value) {
         isBase64: false,
     });
 }
+/** Creates a binary response with an optional content type. */
 export function binary(status, body, contentType) {
     const headers = {};
     if (contentType) {
@@ -40,6 +43,7 @@ export function binary(status, body, contentType) {
         isBase64: true,
     });
 }
+/** Creates a UTF-8 HTML response. */
 export function html(status, body) {
     return normalizeResponse({
         status,
@@ -60,6 +64,7 @@ async function* normalizeHTMLChunks(chunks) {
         yield toBuffer(chunk);
     }
 }
+/** Creates a streaming HTML response. */
 export function htmlStream(status, chunks) {
     return normalizeResponse({
         status,
@@ -97,6 +102,7 @@ function sortKeysDeep(value) {
     }
     return out;
 }
+/** Serializes JSON for embedding inside HTML script contexts. */
 export function safeJSONForHTML(value) {
     let serialized;
     try {
@@ -112,12 +118,15 @@ export function safeJSONForHTML(value) {
         .replace(/\u2028/g, "\\u2028")
         .replace(/\u2029/g, "\\u2029");
 }
+/** Returns the canonical private no-store cache policy for SSR. */
 export function cacheControlSSR() {
     return "private, no-store";
 }
+/** Returns the canonical long-lived shared cache policy for SSG. */
 export function cacheControlSSG() {
     return "public, max-age=0, s-maxage=31536000";
 }
+/** Returns the canonical shared cache policy for ISR. */
 export function cacheControlISR(revalidateSeconds, staleWhileRevalidateSeconds = 0) {
     let revalidate = Number(revalidateSeconds ?? 0);
     if (!Number.isFinite(revalidate) || revalidate < 0)
@@ -132,6 +141,7 @@ export function cacheControlISR(revalidateSeconds, staleWhileRevalidateSeconds =
         parts.push(`stale-while-revalidate=${swr}`);
     return parts.join(", ");
 }
+/** Returns a strong SHA-256 ETag for response bytes. */
 export function etag(body) {
     const bytes = toBuffer(body);
     const hash = createHash("sha256").update(bytes).digest("hex");
@@ -146,6 +156,7 @@ function splitCommaValues(value) {
         .map((part) => part.trim())
         .filter(Boolean);
 }
+/** Reports whether request validators match the supplied ETag. */
 export function matchesIfNoneMatch(headers, tag) {
     const etagValue = String(tag ?? "").trim();
     if (!etagValue)
@@ -162,6 +173,7 @@ export function matchesIfNoneMatch(headers, tag) {
     }
     return false;
 }
+/** Merges and canonicalizes Vary header tokens. */
 export function vary(existing, ...add) {
     const seen = new Set();
     const out = [];
@@ -229,12 +241,15 @@ function originalURIFromCanonicalizedHeaders(h) {
     return (firstHeaderValue(h, "x-apptheory-original-uri") ||
         firstHeaderValue(h, "x-facetheory-original-uri")).trim();
 }
+/** Returns the original host from forwarding headers. */
 export function originalHost(headers) {
     return originalHostFromCanonicalizedHeaders(canonicalizeHeaders(headers));
 }
+/** Returns the original URI from AppTheory or FaceTheory forwarding headers. */
 export function originalURI(headers) {
     return originalURIFromCanonicalizedHeaders(canonicalizeHeaders(headers));
 }
+/** Returns the original scheme and host as a URL. */
 export function originURL(headers) {
     const h = canonicalizeHeaders(headers);
     const forwarded = parseForwardedHeader(firstHeaderValue(h, "forwarded"));
@@ -272,6 +287,7 @@ function parseCloudFrontViewerAddress(value) {
         return raw;
     return ipPart;
 }
+/** Returns the client IP from CloudFront or forwarding headers. */
 export function clientIP(headers) {
     const h = canonicalizeHeaders(headers);
     const cf = firstHeaderValue(h, "cloudfront-viewer-address");
@@ -288,3 +304,4 @@ export function clientIP(headers) {
     }
     return "";
 }
+//# sourceMappingURL=response.js.map

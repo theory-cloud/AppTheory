@@ -60,3 +60,80 @@
 ## What this package is
 
 AppTheory CDK provides jsii constructs that deploy AppTheory apps with consistent defaults (and keep infra patterns consistent across Go/TypeScript/Python services).
+
+## CDK semantic construct map
+
+The generated jsii coverage index below proves construct-name coverage only; it is not a substitute for
+operator-facing deployment guidance. Keep these human-authored groups current when the CDK surface grows:
+
+- HTTP and routing: `AppTheoryHttpApi`, `AppTheoryRestApi`, `AppTheoryRestApiRouter`, domains, CORS, logging, and WAF
+  guardrails.
+- MCP deployment: `AppTheoryMcpServer`, `AppTheoryRemoteMcpServer`, and `AppTheoryMcpProtectedResource`.
+- Event and ingestion surfaces: `AppTheoryQueue`, `AppTheoryEventBridgeBus`, `AppTheoryKinesisStream`,
+  `AppTheoryCloudWatchLogsDestination`, `AppTheoryS3Ingest`, and `AppTheoryHttpIngestionEndpoint`.
+- Job and data foundations: `AppTheoryJobsTable`, `AppTheoryEventBusTable`, `AppTheoryDynamoTable`, and
+  `AppTheoryLambdaRole`.
+- MicroVM and frontend delivery: `AppTheoryMicrovmController`, `AppTheoryMicrovmImage`,
+  `AppTheoryMicrovmNetworkConnector`, path-routed frontends, media CDN, and `AppTheorySsrSite`.
+
+<!-- apptheory-api-docs:cdk:start -->
+## CDK jsii coverage index
+
+This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `cdk/.jsii`.
+
+<details>
+<summary>133 exported top-level symbols</summary>
+
+```text
+ApiBypassConfig, AppTheoryApiDomain, AppTheoryApiDomainProps, AppTheoryApp, AppTheoryAppProps
+AppTheoryCertificate, AppTheoryCertificateProps, AppTheoryCloudWatchLogsDestination
+AppTheoryCloudWatchLogsDestinationProps, AppTheoryCloudWatchLogsSubscription
+AppTheoryCloudWatchLogsSubscriptionProps, AppTheoryCodeBuildJobRunner
+AppTheoryCodeBuildJobRunnerProps, AppTheoryDynamoDBStreamMapping
+AppTheoryDynamoDBStreamMappingProps, AppTheoryDynamoTable, AppTheoryDynamoTableGsiProps
+AppTheoryDynamoTableProps, AppTheoryEnhancedSecurity, AppTheoryEnhancedSecurityProps
+AppTheoryEventBridgeBus, AppTheoryEventBridgeBusProps, AppTheoryEventBridgeHandler
+AppTheoryEventBridgeHandlerProps, AppTheoryEventBridgeRuleTarget
+AppTheoryEventBridgeRuleTargetProps, AppTheoryEventBusTable
+AppTheoryEventBusTableBindingOptions, AppTheoryEventBusTableProps, AppTheoryFunction
+AppTheoryFunctionAlarms, AppTheoryFunctionAlarmsProps, AppTheoryFunctionAliasOptions
+AppTheoryFunctionDeploymentOptions, AppTheoryFunctionProps, AppTheoryHostedZone
+AppTheoryHostedZoneProps, AppTheoryHttpApi, AppTheoryHttpApiCorsOptions
+AppTheoryHttpApiDomainOptions, AppTheoryHttpApiProps, AppTheoryHttpApiStageOptions
+AppTheoryHttpApiWafOptions, AppTheoryHttpIngestionEndpoint
+AppTheoryHttpIngestionEndpointDomainOptions, AppTheoryHttpIngestionEndpointProps
+AppTheoryHttpIngestionEndpointStageOptions, AppTheoryJobsTable, AppTheoryJobsTableProps
+AppTheoryKinesisStream, AppTheoryKinesisStreamMapping, AppTheoryKinesisStreamMappingProps
+AppTheoryKinesisStreamProps, AppTheoryKmsKey, AppTheoryKmsKeyProps, AppTheoryLambdaRole
+AppTheoryLambdaRoleProps, AppTheoryLambdaTrafficShiftType, AppTheoryMcpProtectedResource
+AppTheoryMcpProtectedResourceProps, AppTheoryMcpServer, AppTheoryMcpServerDomainOptions
+AppTheoryMcpServerProps, AppTheoryMcpServerStageOptions, AppTheoryMediaCdn
+AppTheoryMediaCdnProps, AppTheoryMicrovmController, AppTheoryMicrovmControllerFunctionProps
+AppTheoryMicrovmControllerProps, AppTheoryMicrovmControllerStageOptions
+AppTheoryMicrovmHookMode, AppTheoryMicrovmImage, AppTheoryMicrovmImageBuildHooks
+AppTheoryMicrovmImageCloudWatchLogging, AppTheoryMicrovmImageCodeArtifact
+AppTheoryMicrovmImageCpuArchitecture, AppTheoryMicrovmImageCpuConfiguration
+AppTheoryMicrovmImageEnvironmentVariable, AppTheoryMicrovmImageHooks
+AppTheoryMicrovmImageLogging, AppTheoryMicrovmImageOsCapability, AppTheoryMicrovmImageProps
+AppTheoryMicrovmImageResources, AppTheoryMicrovmManagedNetworkConnector
+AppTheoryMicrovmNetworkConnector, AppTheoryMicrovmNetworkConnectorKind
+AppTheoryMicrovmNetworkConnectorProps, AppTheoryMicrovmNetworkConnectorReference
+AppTheoryMicrovmNetworkConnectorReferenceProps, AppTheoryMicrovmNetworkProtocol
+AppTheoryMicrovmRuntimeHooks, AppTheoryObservability, AppTheoryObservabilityProps
+AppTheoryPathRoutedFrontend, AppTheoryPathRoutedFrontendProps, AppTheoryQueue
+AppTheoryQueueConsumer, AppTheoryQueueConsumerProps, AppTheoryQueueProcessor
+AppTheoryQueueProcessorProps, AppTheoryQueueProps, AppTheoryRegionalWafOptions
+AppTheoryRemoteMcpServer, AppTheoryRemoteMcpServerProps, AppTheoryRequestMetricDimensions
+AppTheoryRestApi, AppTheoryRestApiProps, AppTheoryRestApiRouteOptions, AppTheoryRestApiRouter
+AppTheoryRestApiRouterCorsOptions, AppTheoryRestApiRouterDomainOptions
+AppTheoryRestApiRouterIntegrationOptions, AppTheoryRestApiRouterProps
+AppTheoryRestApiRouterStageOptions, AppTheoryS3Ingest, AppTheoryS3IngestProps
+AppTheorySecretConfig, AppTheorySecurityRule, AppTheorySpaRewriteMode, AppTheorySsrSite
+AppTheorySsrSiteBearerFunctionUrlOrigin, AppTheorySsrSiteMode, AppTheorySsrSiteProps
+AppTheoryVpcEndpointConfig, AppTheoryWafRuleConfig, AppTheoryWebSocketApi
+AppTheoryWebSocketApiProps, IAppTheoryMicrovmImage, IAppTheoryMicrovmNetworkConnector
+MediaCdnDomainConfig, PathRoutedFrontendDomainConfig, PrivateMediaConfig, SpaOriginConfig
+```
+
+</details>
+<!-- apptheory-api-docs:cdk:end -->

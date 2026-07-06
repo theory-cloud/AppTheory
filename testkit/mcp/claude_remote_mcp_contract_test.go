@@ -81,11 +81,16 @@ func TestClaudeRemoteMcp_UnauthorizedChallenge_AndProtectedResourceMetadata(t *t
 		t.Fatalf("expected www-authenticate to include resource_metadata url, got %q", wa)
 	}
 
-	var unauthorizedBody map[string]string
+	var unauthorizedBody struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
 	if err := json.Unmarshal(resp.Body, &unauthorizedBody); err != nil {
 		t.Fatalf("parse unauthorized body: %v", err)
 	}
-	if unauthorizedBody["error"] != "unauthorized" {
+	if unauthorizedBody.Error.Code != "app.unauthorized" || unauthorizedBody.Error.Message != "unauthorized" {
 		t.Fatalf("expected error=unauthorized, got %#v", unauthorizedBody)
 	}
 

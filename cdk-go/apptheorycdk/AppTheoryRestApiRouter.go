@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsroute53"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awswafv2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
@@ -49,6 +50,10 @@ type AppTheoryRestApiRouter interface {
 	Node() constructs.Node
 	// The deployment stage.
 	Stage() awsapigateway.Stage
+	// Regional WAF association for the REST API deployment stage.
+	WafAssociation() awswafv2.CfnWebACLAssociation
+	// AppTheory-managed regional WAF WebACL when enabled without webAclArn.
+	WebAcl() awswafv2.CfnWebACL
 	// Add a Lambda integration for the specified path and HTTP methods.
 	AddLambdaIntegration(path *string, methods *[]*string, handler awslambda.IFunction, options *AppTheoryRestApiRouterIntegrationOptions)
 	// Returns a string representation of this construct.
@@ -144,6 +149,26 @@ func (j *jsiiProxy_AppTheoryRestApiRouter) Stage() awsapigateway.Stage {
 	_jsii_.Get(
 		j,
 		"stage",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryRestApiRouter) WafAssociation() awswafv2.CfnWebACLAssociation {
+	var returns awswafv2.CfnWebACLAssociation
+	_jsii_.Get(
+		j,
+		"wafAssociation",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryRestApiRouter) WebAcl() awswafv2.CfnWebACL {
+	var returns awswafv2.CfnWebACL
+	_jsii_.Get(
+		j,
+		"webAcl",
 		&returns,
 	)
 	return returns

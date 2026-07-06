@@ -34,7 +34,12 @@ func RegisterControllerRoutes(app *apptheory.App, controller *Controller) (*appt
 		{"POST", "/microvms/{session_id}/shell-token", CommandShellAuthToken},
 	}
 	for _, route := range routes {
-		if _, err := app.HandleStrict(route.method, route.path, controllerRouteHandler(controller, route.command), apptheory.RequireAuth()); err != nil {
+		if _, err := app.HandleStrict( //nolint:staticcheck // RegisterControllerRoutes preserves its error-returning API.
+			route.method,
+			route.path,
+			controllerRouteHandler(controller, route.command),
+			apptheory.RequireAuth(),
+		); err != nil {
 			return app, err
 		}
 	}

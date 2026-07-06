@@ -177,3 +177,4 @@ export class FakeWebSocketManagementClient {
         this.connections.delete(id);
     }
 }
+//# sourceMappingURL=websocket-management.js.map

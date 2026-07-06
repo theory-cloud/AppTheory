@@ -1,0 +1,32 @@
+# AppTheory
+
+AppTheory is the contract-first serverless runtime layer in Theory Cloud. It provides one Lambda-native application
+model across Go, TypeScript, and Python, with routing, middleware, error envelopes, event normalization, CDK constructs,
+MCP server runtime, and contract fixtures kept in parity.
+
+## Canonical entry points
+
+- Getting started: docs/getting-started.md
+- CDK getting started: docs/cdk/getting-started.md
+- Deployable hello-world example: examples/cdk/hello-world/README.md
+- Project scaffold generator: cmd/apptheory-init/ and templates/apptheory-init/
+- Dependency automation for release-pinned installs: docs/dependency-automation.md
+- Runtime API reference: docs/api-reference.md
+- CDK API reference: docs/cdk/api-reference.md
+- Contract fixtures: docs/reference/contract-fixtures.md
+- Event shape dispatch: docs/reference/event-shapes.md
+- MCP method surface: docs/integrations/mcp.md
+- LLM FAQ: docs/llm-faq/index.md
+
+## Agent rules
+
+- Treat contract fixtures as the runtime specification. Do not describe a language implementation as the sole source of
+  truth.
+- Use `HandleLambda` / `handleLambda` / `handle_lambda` and the normalized AppTheory request/response path; do not
+  invent raw Lambda-event escape hatches.
+- Use AppTheory CDK constructs for deployment. Grow the construct surface when needed instead of dropping to raw CDK as
+  the documented path.
+- AppTheory release assets are consumed from immutable GitHub Releases. Do not replace them with npm or PyPI registry
+  install instructions.
+- Do not claim AWS deploy proof from local synth or testkit output. Local checks prove the no-AWS deterministic subset;
+  real deploy proof requires explicit deploy receipts.

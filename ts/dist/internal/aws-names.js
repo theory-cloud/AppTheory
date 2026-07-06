@@ -89,3 +89,4 @@ export function webSocketManagementEndpoint(domainName, stage, path) {
         return `https://${host}`;
     return `https://${host}/${basePath}`;
 }
+//# sourceMappingURL=aws-names.js.map

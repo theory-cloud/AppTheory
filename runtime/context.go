@@ -16,6 +16,7 @@ type Context struct {
 	ids     IDGenerator
 
 	RequestID       string
+	TraceID         string
 	TenantID        string
 	AuthIdentity    string
 	AuthPrincipal   *AuthPrincipal
@@ -113,6 +114,17 @@ func (c *Context) SourceProvenance() SourceProvenance {
 // SourceIP returns the provider-derived source IP convenience value.
 func (c *Context) SourceIP() string {
 	return c.SourceProvenance().SourceIP
+}
+
+// TraceContextID returns the inbound trace ID extracted during request normalization.
+//
+// The runtime records inbound trace context only; it does not synthesize a new
+// trace ID when no supported trace header is present.
+func (c *Context) TraceContextID() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.TraceID)
 }
 
 func (c *Context) JSONValue() (any, error) {

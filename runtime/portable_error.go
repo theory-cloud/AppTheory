@@ -6,7 +6,11 @@ import (
 	"time"
 )
 
-// AppTheoryError is a portable, client-safe error with optional metadata for observability and debugging.
+// AppTheoryError is the canonical AppTheory portable, client-safe error.
+//
+// Return AppTheoryError from framework and application code when the runtime
+// should preserve status, details, request, trace, timestamp, stack, or cause
+// metadata in the AppTheory error envelope.
 type AppTheoryError struct {
 	Code       string
 	Message    string

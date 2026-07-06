@@ -147,8 +147,9 @@ export function appSyncPayloadFromResponse(response) {
 function statusForErrorCode(code) {
     switch (String(code ?? "").trim()) {
         case "app.bad_request":
-        case "app.validation_failed":
             return 400;
+        case "app.validation_failed":
+            return 422;
         case "app.unauthorized":
             return 401;
         case "app.forbidden":
@@ -301,3 +302,4 @@ export function appSyncErrorResponse(err, request, requestId) {
         isBase64: false,
     });
 }
+//# sourceMappingURL=aws-appsync.js.map

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: run root-module Go tests and vet checks.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

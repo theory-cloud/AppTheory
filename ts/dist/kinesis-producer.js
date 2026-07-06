@@ -251,3 +251,4 @@ function isPlainRecord(value) {
     const prototype = Object.getPrototypeOf(value);
     return prototype === Object.prototype || prototype === null;
 }
+//# sourceMappingURL=kinesis-producer.js.map

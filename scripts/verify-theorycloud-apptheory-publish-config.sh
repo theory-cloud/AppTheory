@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify AppTheory docs publish configuration for the TheoryCloud subtree.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

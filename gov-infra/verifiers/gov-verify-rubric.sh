@@ -695,13 +695,22 @@ gov_cmd_unit() {
   require_cmd_or_blocked node || return $?
   require_cmd_or_blocked python3 || return $?
 
-  make test-unit
+  # QUA-1 is the unit-test gate. The direct, uninstrumented contract suite runs
+  # once in CON-3; TS/Python coverage may rerun fixtures under instrumentation
+  # for coverage evidence. Keep Go runner meta-tests in QUA-1 without rerunning
+  # the full corpus by skipping only TestAllFixturesPass.
+  local -a go_unit_pkgs=()
+  mapfile -t go_unit_pkgs < <(./scripts/list-go-packages.sh | grep -Ev '^\./contract-tests/runners/go$')
+  if [[ "${#go_unit_pkgs[@]}" -eq 0 ]]; then
+    echo "FAIL: no Go packages selected for unit tests" >&2
+    return 1
+  fi
+  go test "${go_unit_pkgs[@]}"
+  go test ./contract-tests/runners/go -skip '^TestAllFixturesPass$'
 
   ensure_ts_runtime_deps_installed || return $?
-  node --test contract-tests/runners/ts/fixtures.test.cjs
   scripts/verify-ts-tests.sh
   ensure_py_runtime_deps_installed || return $?
-  "${GOV_TOOLS_PY_RUNTIME_BIN}/python" contract-tests/runners/py/run.py
   PYTHONPATH="${REPO_ROOT}/py/src" "${GOV_TOOLS_PY_RUNTIME_BIN}/python" -m unittest discover -s py/tests -p "test_*.py"
 }
 
@@ -807,6 +816,19 @@ function sameStringSet(actual, expected) {
   return actualSorted.every((value, index) => value === expectedSorted[index]);
 }
 
+function allowedDependencyGroupsForLockfile() {
+  // The older linked CDK examples carry aws-cdk-lib as a dev dependency.
+  // The queue/role examples are private deploy examples with aws-cdk-lib in
+  // dependencies; osv-scanner omits dependency_groups for those lockfiles.
+  if (
+    allowed.lockfile === "examples/cdk/sqs-queue/package-lock.json" ||
+    allowed.lockfile === "examples/cdk/lambda-role/package-lock.json"
+  ) {
+    return [];
+  }
+  return ["dev"];
+}
+
 function hasFixedVersion(vuln) {
   for (const affected of vuln.affected ?? []) {
     if (affected?.package?.ecosystem !== "npm" || affected.package.name !== allowed.packageName) {
@@ -857,7 +879,7 @@ function isAllowedAwsCdkBundledBraceExpansion(result, pkg, vuln) {
     packageInfo.ecosystem === "npm" &&
     packageInfo.name === allowed.packageName &&
     packageInfo.version === allowed.packageVersion &&
-    sameStringSet(dependencyGroups, ["dev"]) &&
+    sameStringSet(dependencyGroups, allowedDependencyGroupsForLockfile()) &&
     vuln.id === allowed.advisoryId &&
     aliases.includes(allowed.alias) &&
     hasFixedVersion(vuln) &&
@@ -950,6 +972,8 @@ gov_cmd_vuln() {
     "cdk/package-lock.json"
     "examples/cdk/multilang/package-lock.json"
     "examples/cdk/ssr-site/package-lock.json"
+    "examples/cdk/sqs-queue/package-lock.json"
+    "examples/cdk/lambda-role/package-lock.json"
   )
 
   local lf
@@ -1229,7 +1253,9 @@ ensure_py_coverage_pinned() {
 
 check_ts_coverage() {
   # Enforces TypeScript runtime coverage >= COV_THRESHOLD for the shipped JS under ts/dist/.
-  # Primary driver: contract fixtures (same semantics as CON-3), but measured against ts/dist/**.
+  # Instrumented coverage deliberately reruns the fixture corpus after CON-3 so
+  # the coverage denominator measures shipped ts/dist/** behavior. This is not
+  # a second direct/uninstrumented contract pass.
   require_cmd_or_blocked node || return $?
   ensure_ts_runtime_deps_installed || return $?
 
@@ -1279,7 +1305,9 @@ check_ts_coverage() {
 
 check_py_coverage() {
   # Enforces Python runtime coverage >= COV_THRESHOLD for the shipped package under py/src/apptheory/.
-  # Primary driver: contract fixtures (same semantics as CON-3), but measured against py/src/apptheory/**.
+  # Instrumented coverage deliberately reruns the fixture corpus after CON-3 so
+  # the coverage denominator measures shipped py/src/apptheory/** behavior. This
+  # is not a second direct/uninstrumented contract pass.
   require_cmd_or_blocked python3 || return $?
   ensure_py_coverage_pinned || return $?
   ensure_py_runtime_deps_installed_into "${GOV_TOOLS_PY_COV_BIN}/python" || return $?
@@ -2445,6 +2473,8 @@ check_supply_chain_apptheory() {
     "cdk"
     "examples/cdk/multilang"
     "examples/cdk/ssr-site"
+    "examples/cdk/sqs-queue"
+    "examples/cdk/lambda-role"
   )
 
   require_cmd_or_blocked git || return $?

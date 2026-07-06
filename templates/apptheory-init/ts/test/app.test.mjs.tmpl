@@ -1,0 +1,14 @@
+import assert from "node:assert/strict";
+
+import { createTestEnv, json } from "@theory-cloud/apptheory";
+
+import { buildApp } from "../src/app.mjs";
+
+const env = createTestEnv();
+const app = buildApp({ createApp: (options) => env.app(options), json }, { APPTHEORY_TIER: "p0" });
+
+const resp = await env.invoke(app, { method: "GET", path: "/hello/AppTheory" });
+assert.equal(resp.status, 200);
+const body = JSON.parse(new TextDecoder().decode(resp.body));
+assert.equal(body.message, "hello AppTheory");
+assert.equal(body.runtime, "ts");

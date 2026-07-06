@@ -29,7 +29,7 @@ functionality** (portable subset + documented Go-only extensions) so services do
 
 ## Timeline (fill in when ready)
 
-- **T0:** AppTheory `v0.x` begins (contract + fixtures; migration helpers available).
+- **T0:** AppTheory v1 stable line is available (contract + fixtures; migration helpers available).
 - **T1:** AppTheory reaches “Lift-equivalent for Pay Theory” (documented parity across required features).
 - **T2:** Lift marked “maintenance mode” internally (no new features; fixes only).
 - **T3:** Lift end-of-support date (after all services migrate).

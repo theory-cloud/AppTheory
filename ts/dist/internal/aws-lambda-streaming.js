@@ -146,3 +146,4 @@ export class CapturedHttpResponseStream {
         this.ended = true;
     }
 }
+//# sourceMappingURL=aws-lambda-streaming.js.map

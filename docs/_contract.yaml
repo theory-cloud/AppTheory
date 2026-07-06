@@ -19,7 +19,9 @@ contract:
     - docs/cdk/**
     - docs/features/**
     - docs/integrations/**
+    - docs/guides/**
   out_of_scope:
+    - docs/development/planning/**
     - docs/development/**
     - docs/planning/**
     - docs/internal/**

@@ -1,0 +1,38 @@
+{
+  "id": "p0.validation.required_presence_zero_values",
+  "tier": "p0",
+  "name": "Required validation treats present zero and empty values as present",
+  "setup": {
+    "routes": [
+      { "method": "POST", "path": "/validate-required-presence", "handler": "validate_required_presence" }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/validate-required-presence",
+      "query": {},
+      "headers": { "content-type": ["application/json"] },
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"count\":0,\"active\":false,\"name\":\"\",\"tags\":[],\"meta\":{}}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": { "content-type": ["application/json; charset=utf-8"] },
+      "cookies": [],
+      "body_json": {
+        "active": false,
+        "count": 0,
+        "meta": {},
+        "name": "",
+        "tags": []
+      },
+      "is_base64": false
+    }
+  }
+}

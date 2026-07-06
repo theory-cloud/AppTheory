@@ -2,30 +2,48 @@
 
 Fixtures are shared, machine-readable test vectors used to prevent cross-language runtime drift.
 
-File layout:
+File layout is organized by behavior domain. The historical tier/milestone label remains inside each fixture's
+`tier` metadata and fixture `id`; directory names are not the contract identifier.
 
-- `contract-tests/fixtures/p0/` — runtime core
-- `contract-tests/fixtures/p1/` — context + middleware
-- `contract-tests/fixtures/p2/` — portable production features
-- `contract-tests/fixtures/m1/` — non-HTTP event sources (SQS/EventBridge/DynamoDB Streams)
-- `contract-tests/fixtures/m2/` — API Gateway WebSockets (+ management client fakes)
-- `contract-tests/fixtures/m3/` — API Gateway REST v1 (+ SSE)
-- `contract-tests/fixtures/m12/` — Lift parity completion extensions (middleware/ctx bag/naming/SSE streaming)
-- `contract-tests/fixtures/m14/` — FaceTheory enablement (streaming contract, catch-all routing, SSR helpers)
-- `contract-tests/fixtures/m15/` — Lambda MicroVM contract foundation (validation-only lifecycle/controller/session vocabulary)
-- `contract-tests/fixtures/m16/` — real Lambda MicroVM operation contract (run/get/list/suspend/resume/terminate/token, tenant-bound routes/recovery, provider states, token safety)
+- `contract-tests/fixtures/http-core/` — P0 runtime core: request/response normalization, source provenance, Lambda URL/ALB adapters, and baseline routing
+- `contract-tests/fixtures/binding/` — P0 typed-handler body/query/path/header binding and binding-error envelopes
+- `contract-tests/fixtures/validation/` — P0 declarative validation rules and canonical 422 field-error envelopes
+- `contract-tests/fixtures/errors/` — P0 canonical framework error envelopes, panic recovery, 404/405, and Lift flat-legacy JSON parse compatibility
+- `contract-tests/fixtures/routing/` — P0 fail-closed route registration setup errors for duplicate routes, invalid patterns, and nil/undefined/None handlers
+- `contract-tests/fixtures/openapi/` — P0 descriptive OpenAPI generation with byte-pinned canonical JSON output
+- `contract-tests/fixtures/middleware-guardrails/` — P1 request-id, tenant, auth, CORS, guardrails, and legacy flat-error behavior
+- `contract-tests/fixtures/appsync-observability-policies/` — P2 AppSync, logging profiles, rate-limit, and load-shed behavior
+- `contract-tests/fixtures/observability/` — P2 request duration, CloudWatch EMF, and trace-context propagation behavior
+- `contract-tests/fixtures/event-sources/` — M1 SQS, EventBridge, DynamoDB Streams, Kinesis, SNS, and non-HTTP middleware behavior
+- `contract-tests/fixtures/websockets/` — M2 API Gateway WebSockets and management client fakes
+- `contract-tests/fixtures/api-gateway-rest-sse/` — M3 API Gateway REST v1, Remote MCP path normalization, and SSE
+- `contract-tests/fixtures/middleware-timeout-sse/` — M12 middleware ctx bag, timeout, naming, and SSE streaming extensions
+- `contract-tests/fixtures/edge-streaming-html/` — M14 streaming, catch-all routing, HTML/cache/CloudFront helpers, and Step Functions helpers
+- `contract-tests/fixtures/microvm-foundation/` — M15 Lambda MicroVM validation-only lifecycle/controller/session vocabulary
+- `contract-tests/fixtures/microvm-operations/` — M16 real Lambda MicroVM operation, route, provider-state, tenant, and token-safety contracts
+- `contract-tests/fixtures/mcp/` — SP09 MCP protocol, registry, session, Streamable HTTP, resumable SSE, and task-store contracts
+- `contract-tests/fixtures/oauth/` — SP12 OAuth protected-resource metadata, bearer validation, dynamic client registration, and PKCE contracts
+- `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 
-Each fixture is a single JSON object.
+Each fixture is a single JSON object. The current corpus contains 216 behavior fixtures plus the internal schema file. <!-- apptheory-fixture-count: 216 -->
+
+## Schema gate
+
+`fixture.schema.json` is the internal meta-contract for fixture files. The gate validates every checked-in fixture
+with `./scripts/verify-fixture-schema.sh`, then runs an in-memory negative self-test to prove a malformed fixture
+(missing required envelope fields) is rejected. The schema is strict for the shared fixture envelope and section keys,
+while provider/runtime payload objects remain open so behavior-specific contracts can stay in their fixtures.
+
 
 ## Common shape
 
-- `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*`, `m14.*`, `m15.*`, or `m16.*` prefixes).
-- `tier` (string): `p0` / `p1` / `p2` / `m1` / `m2` / `m3` / `m12` / `m14` / `m15` / `m16`.
+- `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*`, `m14.*`, `m15.*`, `m16.*`, `mcp.*`, `oauth.*`, or `objectstore.*` prefixes).
+- `tier` (string): `p0` / `p1` / `p2` / `m1` / `m2` / `m3` / `m12` / `m14` / `m15` / `m16` / `mcp` / `oauth` / `objectstore`.
 - `name` (string): short human-friendly name.
 - `setup.routes` (array): route table for the fixture runner.
   - `method` (string): HTTP method (e.g. `GET`).
   - `path` (string): route pattern (supports `{param}` segments).
-  - `handler` (string): built-in handler name provided by each language runner.
+  - `handler` (string or null): built-in handler name provided by each language runner. Routing registration fixtures may set this to `null` to pin nil/undefined/None handler fail-closed behavior at setup time.
 - `setup.middlewares` (array, optional): built-in middleware chain names applied in registration order.
   - Timeout fixtures may use cooperative handlers that must observe middleware cancellation before committing
     post-timeout side effects.
@@ -45,6 +63,7 @@ Each fixture is a single JSON object.
   - `chunks` (array, optional): expected streamed response chunks (when using the streaming test harness).
   - `stream_error_code` (string, optional): expected error code when an error occurs after streaming begins.
 - `expect.output_json` (any, optional): expected output value for non-HTTP fixtures (for example: `m1`).
+  - OpenAPI fixtures use a string value containing the exact canonical JSON bytes emitted by the generator.
   - For AppSync fixtures, portable AppTheory/AppError payloads retain their intended messages, while non-portable
     exceptions must surface the generic `internal error` message.
 - `expect.error` (object, optional): expected thrown error (for example: fail-closed `m1` routing).
@@ -57,6 +76,62 @@ Each fixture is a single JSON object.
 - `expect.logging_profile_catalog` (object, optional): expected built-in logging profile catalog.
 - `expect.metrics` (array, optional): expected metric emissions (portable subset).
 - `expect.spans` (array, optional): expected trace span emissions (portable subset).
+
+## SP09 MCP fixtures
+
+MCP fixtures pin the cross-runtime MCP contract for protocol `2025-11-25`. Go, TypeScript, and Python all execute the
+`tier: "mcp"` fixtures; a future runtime skip would have to be explicit in runner output and would not count as
+parity proof.
+
+`setup.mcp` builds a deterministic runner-owned MCP server:
+
+- `server.name` / `server.version`: expected `serverInfo` values in `initialize`.
+- `id_sequence`: deterministic server IDs for sessions and task IDs.
+- `stream_id_sequence`: deterministic stream IDs for resumable SSE stores.
+- `tools`: registered tools. `handler` is a runner-owned deterministic handler such as `echo_text`, `fail_error`,
+  `stream_progress`, or `task_echo`; `task_support` may be `forbidden`, `optional`, or `required`.
+- `resources`: static resources with exact `resources/list` metadata and `resources/read` contents.
+- `resource_templates`: `resources/templates/list` metadata.
+- `prompts`: registered prompt templates; `handler` renders deterministic `prompts/get` messages.
+- `session_store.seed`: deterministic pre-seeded sessions for expiration/rejection checks.
+- `task_runtime`: opt-in deterministic task store settings for task lifecycle fixtures.
+
+`input.mcp.steps` is an ordered exchange against one mounted `/mcp` AppTheory route. Each step carries the canonical
+HTTP request shape (`method`, `path`, `headers`, `body`, `is_base64`) and optional `read_body` for SSE readers. Expected
+steps live in `expect.mcp.steps` and compare status, canonical headers, cookies, body JSON, or parsed `sse_frames`.
+The fixtures intentionally exercise HTTP framing (POST/GET/DELETE), JSON-RPC envelopes, session headers, and replay
+semantics through the runtime handler instead of calling private Go helpers directly.
+
+
+## SP13 objectstore fixtures
+
+Objectstore fixtures pin AppTheory's deliberately narrow object-store contract. They run only against deterministic local fakes and never call AWS, live S3 buckets, credentials, presigning, listing, or multipart APIs. The supported path is exactly Put, bounded Get with a required positive byte cap, and Delete.
+
+`setup.objectstore.backend` is `fake`. `input.objectstore.steps` drives ordered operations:
+
+- `parse_ref`: strict `s3://bucket/key` parsing with no query, fragment, whitespace, or missing key fallback.
+- `put`: writes bytes to a concrete object reference and returns a deterministic versioned reference from the fake. Put refuses a caller-supplied version.
+- `get`: reads one object with `max_bytes`; zero/negative limits fail closed and oversized objects return `objectstore.object_too_large`.
+- `delete`: removes one object reference.
+- `list`, `presign`, and `multipart`: forbidden operations that must return `objectstore.unsupported_operation`; they are not alternate supported capabilities.
+
+Expected objectstore results live in `expect.output_json` so every runtime compares the same canonical step outputs and fake call log.
+
+## SP12 OAuth fixtures
+
+OAuth fixtures pin the local, deterministic security surface used by MCP protected resources. They do not contact live
+OAuth providers, create real clients, or require secrets. `setup.oauth` declares the protected resource, authorization
+server issuers, supported/required scopes, fixed bearer-token records, a fixed clock, deterministic ID sequence, and the
+DCR policy. `input.oauth.steps` drives HTTP-shaped requests through runner-owned OAuth routes backed by each runtime's
+OAuth primitives; `expect.oauth.steps` compares canonical HTTP responses and non-secret-bearing AppTheory error
+envelopes.
+
+The protected-resource and bearer fixtures pin RFC 9728 metadata at
+`/.well-known/oauth-protected-resource/<resource-path>`, the `WWW-Authenticate` discovery challenge, expiry/audience/scope
+failures, and the accepted-token context shape. Missing and expired bearer tokens are challenge cases (`401` with
+`WWW-Authenticate`); invalid-audience and insufficient-scope tokens are authorization failures (`403 app.forbidden`)
+without a challenge. The DCR/PKCE fixtures pin RFC 7591 public-client registration constraints,
+S256 code challenge verification, authorization-code exchange, and canonical failure envelopes.
 
 
 ## HTTP source provenance fixtures
@@ -172,6 +247,17 @@ Non-HTTP observability fixtures use the existing `expect.logs`, `expect.metrics`
 - Spans use trigger-specific names and attributes; raw event details, DynamoDB keys, and image values are not emitted.
 
 The safe-panic fixture pins the posture for non-HTTP handler panics/errors: observability records carry `error_code = "app.internal"`, while the surfaced error is the safe message `apptheory: event workload failed`.
+
+## P2 HTTP observability fixtures
+
+P2 HTTP observability fixtures pin the portable request log, metric, span, and EMF surfaces. Trace propagation is extraction/recording only: runtimes extract an inbound trace ID from HTTP headers and attach it to AppTheory records and nested error envelopes, but they do not install an OpenTelemetry SDK, exporter, or dashboard.
+
+Trace extraction precedence is:
+
+1. A valid W3C `traceparent` header. The recorded trace ID is the 32-character trace-id segment.
+2. A valid AWS X-Ray `X-Amzn-Trace-Id` header with a `Root=` value. The recorded trace ID is the root value (for example, `1-67891233-abcdef012345678912345678`).
+
+Invalid or missing trace headers leave the trace ID empty; runtimes must not synthesize one in this contract pass.
 
 ## P2 logging profile fixtures
 

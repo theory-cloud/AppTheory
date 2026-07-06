@@ -4,12 +4,19 @@ This guide walks you through installing and running a minimal AppTheory app in P
 
 ## Install
 
-AppTheory is distributed via **GitHub Releases** (no PyPI publishing).
-
-Example (install from a downloaded release wheel):
+AppTheory is distributed via **GitHub Releases** (no PyPI publishing). Pin and verify the release wheel before installing it:
 
 ```bash
-python -m pip install ./apptheory-X.Y.Z-py3-none-any.whl
+VERSION=1.14.0
+TAG="v${VERSION}"
+REPO="theory-cloud/AppTheory"
+
+gh release download "${TAG}" --repo "${REPO}" \
+  --pattern "apptheory-${VERSION}-py3-none-any.whl" \
+  --pattern "SHA256SUMS.txt" \
+  --clobber
+grep " apptheory-${VERSION}-py3-none-any.whl$" SHA256SUMS.txt | sha256sum -c -
+python -m pip install "./apptheory-${VERSION}-py3-none-any.whl"
 ```
 
 ## Minimal local invocation (P2 default)
