@@ -69,6 +69,8 @@ Common helper exports:
 HTTP error compatibility:
 
 - Default HTTP error bodies remain nested under `error`.
+- In the default nested envelope, any error whose code string is `EMPTY_BODY` or `INVALID_JSON` is remapped to
+  canonical `app.bad_request` fields; the opt-in flat legacy format preserves those Lift-era codes/messages.
 - Lift-compatible flat HTTP error bodies are opt-in:
   - Go: `apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormatFlatLegacy)` or `apptheory.WithLegacyHTTPErrorShape()`
   - TypeScript: `createApp({ httpErrorFormat: HTTP_ERROR_FORMAT_FLAT_LEGACY })`
@@ -256,15 +258,16 @@ Infrastructure note:
 
 ## Route registration
 
-Invalid route patterns, duplicate method/pattern pairs, and nil/undefined handlers fail closed during registration across
-runtimes. Use the normal fluent registration path for new code:
+Invalid route patterns, duplicate method/pattern pairs, and nil/undefined/None handlers fail closed during registration
+across runtimes. Use the normal fluent registration path for new code:
 
 - Go: `app.Get("/users/{id}", h)` or `app.Handle("GET", "/users/{id}", h)`
 - TypeScript: `app.get("/users/{id}", h)` or `app.handle("GET", "/users/{id}", h)`
 - Python: `app.get("/users/{id}", h)` or `app.handle("GET", "/users/{id}", h)`
 
 Strict helpers remain as deprecated compatibility wrappers for code that already depends on their error-returning or
-throwing shape. See `UPGRADING.md` for per-line deprecation notes.
+throwing shape. Python strict helpers now raise `AppTheoryError` rather than `ValueError`, and Go strict helpers return
+canonical `AppTheoryError` messaging where applicable. See `UPGRADING.md` for per-line deprecation notes.
 
 ## Cross-language feature surfaces
 
@@ -329,7 +332,9 @@ storage SDK and does not expose list, presign, multipart, or raw-client escape h
   or fragment support.
 - Store contract: `Put`, bounded `Get` with required `MaxBytes`, and `Delete` only.
 - S3 implementations: each runtime keeps the cloud client seam inside the framework surface and exposes only bounded
-  `put`/`get`/`delete` operations.
+  `put`/`get`/`delete` operations. TypeScript intentionally carries `@aws-sdk/client-s3` as a hard package dependency
+  because the S3 implementation imports it at module load; Python intentionally keeps `boto3` optional/lazy and fails
+  closed from `create_s3_object_store` if the dependency or required S3 methods are unavailable.
 - Encryption: bucket-default, S3-managed, and KMS modes fail closed on contradictory or missing KMS configuration.
 
 Guide: [Object Store Helper](./features/object-store.md)
@@ -391,11 +396,14 @@ here for operators who need implementation-level details:
 - TypeScript and Python expose matching MCP registries, server/test harnesses, in-memory/Dynamo stores, bearer-token
   validation, protected-resource metadata, DCR, and PKCE helpers through their package API snapshots.
 
-Remote MCP auth hardening note:
+Remote MCP auth hardening notes:
 
 - `oauth.RequireBearerTokenMiddleware(...)` is fail-closed in Go: you must provide a `Validator`, and metadata
   discovery for the `WWW-Authenticate` challenge comes from `ResourceMetadataURL` or `MCP_ENDPOINT`, not request
   headers.
+- Invalid-audience bearer tokens are intentionally fixture-pinned as authorization failures: AppTheory returns
+  `403 app.forbidden` without a `WWW-Authenticate` challenge, matching insufficient-scope denial so a token bound to
+  another resource is not treated as a rediscovery prompt. Missing or expired bearers remain `401` challenge cases.
 
 Related canonical integration guides:
 

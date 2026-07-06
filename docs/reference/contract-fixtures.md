@@ -32,15 +32,18 @@ its `tier` field and stable `id`. Directory names are organizational metadata, n
 
 | Directory | Fixture metadata | Covers |
 | --- | --- | --- |
-| `http-core/` | `p0.*` / `tier = p0` | P0 runtime core: routing, normalization, errors, source provenance, Lambda URL/ALB adapters. |
+| `http-core/` | `p0.*` / `tier = p0` | P0 runtime core: request/response normalization, source provenance, Lambda URL/ALB adapters, and baseline routing. |
 | `binding/` | `p0.binding.*` / `tier = p0` | Canonical typed-handler body/query/path/header binding, conversions, strict JSON, and binding-error envelopes. |
 | `validation/` | `p0.validation.*` / `tier = p0` | Declarative validation vocabulary, canonical 422 field-error envelope, and binding/validation precedence. |
+| `errors/` | `p0.errors.*` / `tier = p0` | Canonical framework error envelopes, panic recovery, 404/405, and Lift flat-legacy JSON parse compatibility. |
+| `routing/` | `p0.routing.*` / `tier = p0` | Fail-closed route registration setup errors for duplicate routes, invalid patterns, and nil/undefined/None handlers. |
 | `openapi/` | `p0.openapi.*` / `tier = p0` | Descriptive OpenAPI generation and byte-pinned canonical JSON output. |
 | `middleware-guardrails/` | `p1.*` / `tier = p1` | P1 request-id, tenant, auth, CORS, guardrails, and legacy flat-error behavior. |
 | `appsync-observability-policies/` | `p2.*` / `tier = p2` | P2 AppSync, observability, logging profiles, rate limiting, and load shedding. |
 | `observability/` | `p2.*` / `tier = p2` | Request-duration observability records and first-party CloudWatch EMF metric JSON lines. |
 | `mcp/` | `mcp.*` / `tier = mcp` | SP09 MCP protocol, registry, session, Streamable HTTP, resumable SSE, and task-store contracts executed by Go, TypeScript, and Python. |
 | `oauth/` | `oauth.*` / `tier = oauth` | SP12 OAuth protected-resource metadata, bearer expiry/audience/scope validation, dynamic client registration, and PKCE contracts executed by Go, TypeScript, and Python. |
+| `objectstore/` | `objectstore.*` / `tier = objectstore` | SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors executed by Go, TypeScript, and Python. |
 | `event-sources/` | `m1.*` / `tier = m1` | SQS, EventBridge, DynamoDB Streams, Kinesis, SNS, and non-HTTP middleware behavior. |
 | `websockets/` | `m2.*` / `tier = m2` | API Gateway WebSockets and management client fakes. |
 | `api-gateway-rest-sse/` | `m3.*` / `tier = m3` | API Gateway REST v1, Remote MCP path normalization, and SSE. |
@@ -55,7 +58,7 @@ The 216 fixtures span these behavior areas (counts approximate; see `contract-te
 
 | Category | Covers |
 | --- | --- |
-| HTTP routing | Method/path matching, parameter extraction, strict vs lenient registration, registration-order tie-breaking. |
+| HTTP routing | Method/path matching, parameter extraction, fail-closed route registration, and registration-order tie-breaking. |
 | HTTP normalization | Header lower-casing, body decoding, query parsing, cookie handling. |
 | HTTP error envelope | Nested vs flat-legacy shape, `error.code` / `error.message` / `error.details`, `request_id` propagation. |
 | Typed handlers | Body/query/path/header binding, typed conversion, strict unknown-field rejection, and binding-error details. |
@@ -75,8 +78,9 @@ The 216 fixtures span these behavior areas (counts approximate; see `contract-te
 | Kinesis | Partial-batch response, stream routing, fail-closed for unregistered streams, CloudWatch Logs subscription envelope decoding. |
 | Remote MCP path dispatch | API Gateway REST proxy path normalization for Remote MCP and protected-resource metadata routes. These HTTP-adapter fixtures are separate from the MCP and OAuth runtime tiers. |
 | MCP JSON-RPC and Streamable HTTP | The `mcp/` fixture tier pins `initialize`, JSON-RPC envelopes, tools/resources/resource-templates/prompts registries, session lifecycle, Streamable HTTP framing, resumable SSE replay, and task-store behavior across Go, TypeScript, and Python. |
-| OAuth protected resources | The `oauth/` fixture tier pins RFC 9728 protected-resource metadata, bearer `WWW-Authenticate` challenges, expiry/audience/scope denial semantics, DCR public-client constraints, and PKCE S256 verification across Go, TypeScript, and Python. |
+| OAuth protected resources | The `oauth/` fixture tier pins RFC 9728 protected-resource metadata, bearer `WWW-Authenticate` challenges, expiry/audience/scope denial semantics, DCR public-client constraints, and PKCE S256 verification across Go, TypeScript, and Python. Missing/expired bearer tokens are `401` challenge cases; invalid audience and insufficient scope are `403 app.forbidden` without a challenge. |
 | Sanitization | Token-like value redaction, JSON/XML safe-logging output. |
+| Object store | The `objectstore/` fixture tier pins strict object refs, Put, bounded Get, Delete, deterministic fake call logs, and forbidden list/presign/multipart operations across Go, TypeScript, and Python. |
 | Lambda MicroVM support | M15 foundation fixtures plus M16 real operations `run/get/list/suspend/resume/terminate/auth-token/shell-auth-token`, provider-state mappings, protected controller routes, deployment execution-role propagation, tenant-bound list/recovery, token no-leak denial, and raw SDK/lifecycle bypass denial. The feature line is evidence-bounded to repo-local runtime/CDK/example/conformance harness proof, not live AWS, EqualToAI/Host, customer workload, or unauthenticated-controller proof. |
 
 ## Running the fixtures

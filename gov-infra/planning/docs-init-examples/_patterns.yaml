@@ -39,14 +39,12 @@ patterns:
           - "Parity regressions"
 
   strict_route_registration:
-    name: "Use strict route registration in tests and CI"
-    problem: "Invalid patterns may be ignored on non-strict registration paths."
-    solution: "Use GetStrict/HandleStrict/handleStrict/handle_strict to fail fast."
+    name: "Use normal fail-closed route registration"
+    problem: "Invalid patterns, duplicate method/path pairs, and nil/undefined/None handlers must fail during setup."
+    solution: "Use normal fluent registration and run startup tests that construct every route."
     correct_example: |
       # CORRECT
-      if _, err := app.GetStrict("/users/{id}", h); err != nil {
-        panic(err)
-      }
+      app.Get("/users/{id}", h)
     anti_patterns:
       - name: "Assuming invalid routes will always error"
         why: "Compatibility behavior can hide invalid route declarations."

@@ -72,8 +72,9 @@ If two routes are equally specific, the router prefers **earlier registration or
 
 ### Fail-closed registration
 
-Default fluent registration fails closed for invalid patterns, duplicate canonical method/pattern pairs, and nil or
-undefined handlers. Use the normal registration path in new code:
+Default fluent registration fails closed for invalid patterns, duplicate canonical method/pattern pairs, and nil,
+undefined, or `None` handlers. Misconfigured applications that older v1 lines could silently ignore now fail during
+startup or test setup instead of drifting into unexpected runtime 404s. Use the normal registration path in new code:
 
 ```go
 app.Get("/users/{id}", handler)
@@ -91,7 +92,8 @@ app.handle("GET", "/users/{id}", handler)
 ```
 
 The strict helpers remain only as deprecated compatibility wrappers for code that depends on their older
-error-returning or throwing shape.
+error-returning or throwing shape. Their failures use the canonical AppTheory error path: Python strict helpers raise
+`AppTheoryError`, and Go strict helpers return canonical `AppTheoryError` messages where applicable.
 
 ## Response helpers
 
@@ -135,7 +137,10 @@ const app = createApp({ httpErrorFormat: HTTP_ERROR_FORMAT_FLAT_LEGACY });
 app = create_app(http_error_format=HTTP_ERROR_FORMAT_FLAT_LEGACY)
 ```
 
-The flat shape applies to **HTTP only.** AppSync and WebSocket error payloads keep their existing shapes regardless of this setting — those surfaces have their own contracts.
+The default nested envelope remaps any error whose code string is `EMPTY_BODY` or `INVALID_JSON` to canonical
+`app.bad_request` fields. The flat legacy HTTP format preserves those Lift-era codes/messages as a migration bridge.
+The flat shape applies to **HTTP only.** AppSync and WebSocket error payloads keep their existing shapes regardless of
+this setting — those surfaces have their own contracts.
 
 ## HTTP entrypoints
 

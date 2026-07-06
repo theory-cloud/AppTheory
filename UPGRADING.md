@@ -30,16 +30,18 @@ code/message compatibility, but it is deprecated as the primary framework error 
 | TypeScript | `AppError` | `AppTheoryError` | Supported for v1.x; earliest removal is v2.0. |
 | Python | `AppError` | `AppTheoryError` | Supported for v1.x; earliest removal is v2.0. |
 
-Default nested HTTP error envelopes remap legacy Lift JSON parse codes such as `EMPTY_BODY` and `INVALID_JSON` to the
-canonical `app.bad_request` code. If you temporarily need the old flat shape during a Lift migration, opt into the
-legacy HTTP error format explicitly:
+Default nested HTTP error envelopes remap any error whose code string is `EMPTY_BODY` or `INVALID_JSON` to the
+canonical `app.bad_request` code and message. The remap is keyed by the error code string so that legacy
+JSONHandler-originated errors and callers that still return those Lift-era codes converge to the same nested envelope.
+If you temporarily need the old flat shape during a Lift migration, opt into the legacy HTTP error format explicitly:
 
 - Go: `apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormatFlatLegacy)` or `apptheory.WithLegacyHTTPErrorShape()`
 - TypeScript: `createApp({ httpErrorFormat: HTTP_ERROR_FORMAT_FLAT_LEGACY })`
 - Python: `create_app(http_error_format=HTTP_ERROR_FORMAT_FLAT_LEGACY)`
 
-Treat that flat legacy format as a migration bridge, not the target state for new applications. The nested AppTheory
-envelope remains the v1 default and the future-major path.
+Treat that flat legacy format as a migration bridge, not the target state for new applications. Flat legacy preserves
+the Lift-era `EMPTY_BODY` / `INVALID_JSON` codes and messages; the nested AppTheory envelope remains the v1 default
+and the future-major path.
 
 ### Legacy JSON helpers
 
@@ -54,8 +56,9 @@ and stream helpers as appropriate).
 ### Fail-closed route registration
 
 The fluent registration path is now fail-closed across runtimes. Invalid route patterns, duplicate canonical
-method/pattern pairs, and nil/undefined handlers fail during registration instead of producing a dead route at runtime.
-This closes the old silent-registration gap.
+method/pattern pairs, and nil/undefined/None handlers fail during registration instead of producing a dead route at
+runtime. This is an intentional behavior change for misconfigured applications that older v1 lines could silently
+ignore; treat it as action-required upgrade guidance before promoting a service that constructs routes dynamically.
 
 Use the normal registration path for new code:
 
@@ -65,7 +68,11 @@ Use the normal registration path for new code:
 | TypeScript | `app.get(...)`, `app.post(...)`, `app.handle(...)`, and other fluent methods |
 | Python | `app.get(...)`, `app.post(...)`, `app.handle(...)`, and other fluent methods |
 
-Strict helpers are deprecated compatibility wrappers for callers that already depend on their error-returning/throwing shape:
+Strict helpers are deprecated compatibility wrappers for callers that already depend on their error-returning/throwing shape.
+Their failure details now share the canonical AppTheory error path: Python `add_strict` / `handle_strict` raise
+`AppTheoryError` instead of `ValueError`, and Go `GetStrict` / `HandleStrict` / related helpers return canonical
+`AppTheoryError` messages where applicable rather than older segment-specific strings. Update tests that asserted the
+legacy exception class or exact message text:
 
 | Runtime | Deprecated compatibility helper | Replacement | Horizon |
 | --- | --- | --- | --- |
@@ -73,9 +80,10 @@ Strict helpers are deprecated compatibility wrappers for callers that already de
 | TypeScript | `handleStrict` | `handle` / `get` / `post` / normal fluent registration | Supported for v1.x; earliest removal is v2.0. |
 | Python | `handle_strict` | `handle` / `get` / `post` / normal fluent registration | Supported for v1.x; earliest removal is v2.0. |
 
-When upgrading, run application startup tests that construct every route. A route typo that was previously ignored may
-now fail fast during app initialization. That is expected fail-closed behavior; fix the route pattern rather than
-wrapping it in a fallback router.
+When upgrading, run application startup tests that construct every route and include duplicate-route, invalid-pattern,
+and nil/undefined/None-handler cases if your service builds route tables programmatically. A route typo that was
+previously ignored may now fail fast during app initialization. That is expected fail-closed behavior; fix the route
+pattern rather than wrapping it in a fallback router.
 
 ## v1.14.x and older v1 lines
 
