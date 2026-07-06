@@ -95,7 +95,16 @@ app.get("/users/{id}", handler)
 ```
 
 Normal fluent registration fails closed on invalid patterns, duplicates, and `None` handlers. `handle_strict` remains as
-a deprecated compatibility wrapper for callers that still need the old helper shape.
+a deprecated compatibility wrapper for callers that still need the old helper shape; it now raises `AppTheoryError`
+rather than `ValueError` for registration failures.
+
+
+## Object-store dependency posture
+
+The Python package intentionally keeps `boto3` optional and lazy for `create_s3_object_store`. Importing `apptheory` or
+using the fake object store does not require boto3; constructing the S3-backed store fails closed with a stable
+`ObjectStoreError` if boto3 or the required S3 methods are unavailable. This differs from TypeScript's hard S3 SDK
+dependency by design and does not widen the object-store contract.
 
 ## HTTP error format
 

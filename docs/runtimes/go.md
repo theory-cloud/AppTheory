@@ -100,7 +100,7 @@ func TestHello(t *testing.T) {
 
 ## Route registration
 
-Fluent route registration fails closed: invalid patterns, duplicate method/pattern pairs, and nil handlers panic during registration instead of silently producing a dead route. The strict helpers remain as deprecated compatibility wrappers when a caller still needs an error-returning shape:
+Fluent route registration fails closed: invalid patterns, duplicate method/pattern pairs, and nil handlers panic during registration instead of silently producing a dead route. Strict helpers remain deprecated compatibility wrappers when a caller still needs an error-returning shape, and their errors now use canonical `AppTheoryError` messages where applicable:
 
 ```go
 if _, err := app.GetStrict("/users/{id}", h); err != nil {
@@ -112,7 +112,7 @@ TypeScript and Python follow the same fail-closed registration contract.
 
 ## HTTP error format
 
-Default HTTP error envelopes are nested under `error`. `AppTheoryError` is the canonical client-safe error type for new code; `AppError` remains supported for code/message compatibility. Legacy `JSONHandler` emits Lift-era `EMPTY_BODY` and `INVALID_JSON` internally, but the default HTTP envelope remaps those to `app.bad_request`. To match Lift's flat shape and preserve those legacy codes:
+Default HTTP error envelopes are nested under `error`. `AppTheoryError` is the canonical client-safe error type for new code; `AppError` remains supported for code/message compatibility. Any HTTP error whose code string is `EMPTY_BODY` or `INVALID_JSON` is remapped by the default nested envelope to `app.bad_request`. To match Lift's flat shape and preserve those legacy codes/messages:
 
 ```go
 app := apptheory.New(apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormatFlatLegacy))

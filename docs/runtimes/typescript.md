@@ -5,7 +5,7 @@ description: The TypeScript implementation of the AppTheory contract — bundled
 
 # TypeScript Runtime
 
-The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes all [216 contract fixtures](../reference/contract-fixtures.md), including the SP09 MCP fixture tier for JSON-RPC, registries, sessions, Streamable HTTP, resumable SSE, task stores, and the SP13 objectstore tier. <!-- apptheory-fixture-count: 216 -->
+The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes all [216 contract fixtures](../reference/contract-fixtures.md), including the SP09 MCP fixture tier for JSON-RPC, registries, sessions, Streamable HTTP, resumable SSE, task stores, the SP12 OAuth tier, and the SP13 objectstore tier. <!-- apptheory-fixture-count: 216 -->
 
 ## Install
 
@@ -106,6 +106,14 @@ const app = createApp({ httpErrorFormat: HTTP_ERROR_FORMAT_FLAT_LEGACY });
 ```
 
 Applies to HTTP error serialization only.
+
+
+## Object-store dependency posture
+
+The TypeScript package intentionally declares `@aws-sdk/client-s3` as a hard dependency because `createS3ObjectStore`
+imports the S3 client at module load. This keeps the packaged S3 helper deterministic for GitHub Release consumers while
+still exposing only the bounded AppTheory `ObjectStore` contract — no raw client, list, presign, or multipart escape
+hatches.
 
 ## Lambda Function URL streaming
 

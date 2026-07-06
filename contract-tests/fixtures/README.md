@@ -5,7 +5,12 @@ Fixtures are shared, machine-readable test vectors used to prevent cross-languag
 File layout is organized by behavior domain. The historical tier/milestone label remains inside each fixture's
 `tier` metadata and fixture `id`; directory names are not the contract identifier.
 
-- `contract-tests/fixtures/http-core/` — P0 runtime core: routing, normalization, errors, source provenance, Lambda URL/ALB adapters
+- `contract-tests/fixtures/http-core/` — P0 runtime core: request/response normalization, source provenance, Lambda URL/ALB adapters, and baseline routing
+- `contract-tests/fixtures/binding/` — P0 typed-handler body/query/path/header binding and binding-error envelopes
+- `contract-tests/fixtures/validation/` — P0 declarative validation rules and canonical 422 field-error envelopes
+- `contract-tests/fixtures/errors/` — P0 canonical framework error envelopes, panic recovery, 404/405, and Lift flat-legacy JSON parse compatibility
+- `contract-tests/fixtures/routing/` — P0 fail-closed route registration setup errors for duplicate routes, invalid patterns, and nil/undefined/None handlers
+- `contract-tests/fixtures/openapi/` — P0 descriptive OpenAPI generation with byte-pinned canonical JSON output
 - `contract-tests/fixtures/middleware-guardrails/` — P1 request-id, tenant, auth, CORS, guardrails, and legacy flat-error behavior
 - `contract-tests/fixtures/appsync-observability-policies/` — P2 AppSync, logging profiles, rate-limit, and load-shed behavior
 - `contract-tests/fixtures/observability/` — P2 request duration, CloudWatch EMF, and trace-context propagation behavior
@@ -16,12 +21,11 @@ File layout is organized by behavior domain. The historical tier/milestone label
 - `contract-tests/fixtures/edge-streaming-html/` — M14 streaming, catch-all routing, HTML/cache/CloudFront helpers, and Step Functions helpers
 - `contract-tests/fixtures/microvm-foundation/` — M15 Lambda MicroVM validation-only lifecycle/controller/session vocabulary
 - `contract-tests/fixtures/microvm-operations/` — M16 real Lambda MicroVM operation, route, provider-state, tenant, and token-safety contracts
-- `contract-tests/fixtures/openapi/` — P0 descriptive OpenAPI generation with byte-pinned canonical JSON output
-- `contract-tests/fixtures/mcp/` — SP09 Go MCP protocol, registry, session, Streamable HTTP, resumable SSE, and task-store contracts
+- `contract-tests/fixtures/mcp/` — SP09 MCP protocol, registry, session, Streamable HTTP, resumable SSE, and task-store contracts
 - `contract-tests/fixtures/oauth/` — SP12 OAuth protected-resource metadata, bearer validation, dynamic client registration, and PKCE contracts
 - `contract-tests/fixtures/objectstore/` — SP13 bounded object-store Put, capped Get, Delete, deterministic fake behavior, and forbidden operation errors
 
-Each fixture is a single JSON object.
+Each fixture is a single JSON object. The current corpus contains 216 behavior fixtures plus the internal schema file. <!-- apptheory-fixture-count: 216 -->
 
 ## Schema gate
 
@@ -33,13 +37,13 @@ while provider/runtime payload objects remain open so behavior-specific contract
 
 ## Common shape
 
-- `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*`, `m14.*`, `m15.*`, `m16.*`, `mcp.*`, or `oauth.*` prefixes).
+- `id` (string): stable identifier (use `p0.*`, `p1.*`, `p2.*`, `m1.*`, `m2.*`, `m3.*`, `m12.*`, `m14.*`, `m15.*`, `m16.*`, `mcp.*`, `oauth.*`, or `objectstore.*` prefixes).
 - `tier` (string): `p0` / `p1` / `p2` / `m1` / `m2` / `m3` / `m12` / `m14` / `m15` / `m16` / `mcp` / `oauth` / `objectstore`.
 - `name` (string): short human-friendly name.
 - `setup.routes` (array): route table for the fixture runner.
   - `method` (string): HTTP method (e.g. `GET`).
   - `path` (string): route pattern (supports `{param}` segments).
-  - `handler` (string): built-in handler name provided by each language runner.
+  - `handler` (string or null): built-in handler name provided by each language runner. Routing registration fixtures may set this to `null` to pin nil/undefined/None handler fail-closed behavior at setup time.
 - `setup.middlewares` (array, optional): built-in middleware chain names applied in registration order.
   - Timeout fixtures may use cooperative handlers that must observe middleware cancellation before committing
     post-timeout side effects.
@@ -75,11 +79,11 @@ while provider/runtime payload objects remain open so behavior-specific contract
 
 ## SP09 MCP fixtures
 
-MCP fixtures pin the Go MCP runtime contract for protocol `2025-11-25`. They are a Go implementation leg for SP09:
-the TypeScript and Python contract runners must load and explicitly skip `tier: "mcp"` fixtures until SP10/SP11 add
-their MCP runtimes. That skip is intentional and reported by those runners; it is not parity proof for TS/Py.
+MCP fixtures pin the cross-runtime MCP contract for protocol `2025-11-25`. Go, TypeScript, and Python all execute the
+`tier: "mcp"` fixtures; a future runtime skip would have to be explicit in runner output and would not count as
+parity proof.
 
-`setup.mcp` builds a deterministic Go `runtime/mcp.Server`:
+`setup.mcp` builds a deterministic runner-owned MCP server:
 
 - `server.name` / `server.version`: expected `serverInfo` values in `initialize`.
 - `id_sequence`: deterministic server IDs for sessions and task IDs.
@@ -124,7 +128,9 @@ envelopes.
 
 The protected-resource and bearer fixtures pin RFC 9728 metadata at
 `/.well-known/oauth-protected-resource/<resource-path>`, the `WWW-Authenticate` discovery challenge, expiry/audience/scope
-failures, and the accepted-token context shape. The DCR/PKCE fixtures pin RFC 7591 public-client registration constraints,
+failures, and the accepted-token context shape. Missing and expired bearer tokens are challenge cases (`401` with
+`WWW-Authenticate`); invalid-audience and insufficient-scope tokens are authorization failures (`403 app.forbidden`)
+without a challenge. The DCR/PKCE fixtures pin RFC 7591 public-client registration constraints,
 S256 code challenge verification, authorization-code exchange, and canonical failure envelopes.
 
 
