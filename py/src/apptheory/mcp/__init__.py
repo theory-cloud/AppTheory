@@ -1471,7 +1471,7 @@ def create_mcp_server(name: str, version: str, options: McpServerOptions | dict[
 
 
 def default_mcp_task_model(table_name: str | None = None) -> Any:
-    from theorydb_py import ModelDefinition
+    from tabletheory_py import ModelDefinition
 
     return ModelDefinition.from_dataclass(
         _McpTaskItem, table_name=table_name or os.environ.get("MCP_TASK_TABLE") or DEFAULT_TASK_TABLE_NAME
@@ -1479,7 +1479,7 @@ def default_mcp_task_model(table_name: str | None = None) -> Any:
 
 
 def default_mcp_stream_model(table_name: str | None = None) -> Any:
-    from theorydb_py import ModelDefinition
+    from tabletheory_py import ModelDefinition
 
     return ModelDefinition.from_dataclass(
         _McpStreamItem, table_name=table_name or os.environ.get("MCP_STREAM_TABLE") or DEFAULT_STREAM_TABLE_NAME
@@ -1487,7 +1487,7 @@ def default_mcp_stream_model(table_name: str | None = None) -> Any:
 
 
 def _new_theorydb_table(model: Any, table_name: str | None = None) -> Any:
-    from theorydb_py import Table
+    from tabletheory_py import Table
 
     return Table(model, table_name=table_name or getattr(model, "table_name", None))
 

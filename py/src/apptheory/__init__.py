@@ -135,7 +135,7 @@ else:
             wrap_error as wrap_job_ledger_error,
         )
     except ModuleNotFoundError as exc:  # pragma: no cover
-        if exc.name != "theorydb_py":
+        if exc.name != "tabletheory_py":
             raise
 
         DEFAULT_JOBS_TABLE_NAME = "apptheory-jobs"
@@ -146,7 +146,7 @@ else:
 
         def _raise_jobs_dependency_error() -> NoReturn:
             raise ModuleNotFoundError(
-                "theorydb_py is required for apptheory.jobs; install `tabletheory-py` (see py/pyproject.toml)."
+                "tabletheory_py is required for apptheory.jobs; install `tabletheory-py` (see py/pyproject.toml)."
             ) from missing_exc
 
         class JobsConfig:  # type: ignore

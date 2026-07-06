@@ -1456,11 +1456,11 @@ def _time_field(value: Any, key: str) -> float:
     if callable(timestamp):
         try:
             return float(cast(Any, timestamp)())
-        except TypeError, ValueError, OSError:
+        except (TypeError, ValueError, OSError):
             return 0.0
     try:
         return float(raw or 0.0)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return 0.0
 
 
@@ -1473,7 +1473,7 @@ def _number_field(value: Any, key: str) -> int:
     raw = value.get(key, 0) if isinstance(value, dict) else getattr(value, key, 0)
     try:
         return int(raw or 0)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return 0
 
 

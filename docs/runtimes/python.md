@@ -24,9 +24,9 @@ grep " apptheory-${VERSION}-py3-none-any.whl$" SHA256SUMS.txt | sha256sum -c -
 python -m pip install "./apptheory-${VERSION}-py3-none-any.whl"
 ```
 
-Python 3.14+ is required. The floor is pinned by `py/pyproject.toml`, Ruff, Pyright, the pinned TableTheory GitHub
-Release wheel metadata, and CI. Do not document a lower Python floor unless `scripts/verify-runtime-floor-claims.sh`
-passes with a CI matrix that includes both the lower floor and Python 3.14.
+Python 3.12+ is required. The floor is pinned by `py/pyproject.toml`, Ruff, Pyright, the pinned TableTheory GitHub
+Release wheel metadata, and CI. Do not document a different Python floor unless `scripts/verify-runtime-floor-claims.sh`
+passes with a CI matrix that includes both the floor and Python 3.14.
 
 ## Module layout
 

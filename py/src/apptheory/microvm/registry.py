@@ -191,7 +191,7 @@ class TableTheoryMicroVMSessionRegistry:
     def __init__(self, table: Any | None = None, *, table_name: str | None = None) -> None:
         if table is None:
             try:
-                from theorydb_py import Table  # type: ignore[import-not-found]
+                from tabletheory_py import Table  # type: ignore[import-not-found]
 
                 table = Table(
                     microvm_session_registry_model_definition(),

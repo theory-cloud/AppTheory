@@ -11,8 +11,8 @@ concepts:
       - "Public API drift gates via api-snapshots/go.txt, api-snapshots/ts.txt, api-snapshots/py.txt"
     requires:
       - "Go 1.26.x toolchain for Go runtime development"
-      - "Node.js 24+ for TypeScript and jsii/CDK workflows"
-      - "Python 3.14+ for Python runtime workflows"
+      - "Node.js 20+ for TypeScript and jsii/CDK workflows"
+      - "Python 3.12+ for Python runtime workflows"
     use_when:
       - "You need equivalent Lambda runtime behavior across Go, TypeScript, and Python."
       - "You want contract tests and API snapshots to prevent cross-language drift."

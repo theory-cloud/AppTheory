@@ -92,6 +92,67 @@ jobs:
       - name: Verify runtime floor claims
         run: bash scripts/verify-runtime-floor-claims.sh
 
+  runtime-floor-matrix:
+    name: Runtime floor matrix (Node ${{ matrix.node-version }}, Python ${{ matrix.python-version }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "24"]
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: "1.26.4"
+          cache: true
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+          cache-dependency-path: ts/package-lock.json
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+          cache-dependency-path: |
+            py/pyproject.toml
+            py/requirements-build.txt
+      - name: Verify lower-floor runtime, package, and fixture proof
+        run: |
+          bash scripts/verify-runtime-floor-claims.sh
+          bash scripts/verify-ts-pack.sh
+          bash scripts/verify-python-build.sh
+          bash scripts/verify-contract-tests.sh
+
+  cdk-floor-matrix:
+    name: CDK floor matrix (Node ${{ matrix.node-version }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "24"]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: "1.26.4"
+          cache: true
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+          cache-dependency-path: cdk/package-lock.json
+      - name: Verify CDK lower-floor generated binding proof
+        run: bash scripts/verify-cdk-go-drift.sh
+
   prerelease-readiness:
     name: Prerelease readiness (staging → premain)
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'premain' && github.event.pull_request.head.ref == 'staging'

@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from theorydb_py import ConditionFailedError, ModelDefinition, NotFoundError, Table, UpdateAdd, UpdateSetIfNotExists
+from tabletheory_py import ConditionFailedError, ModelDefinition, NotFoundError, Table, UpdateAdd, UpdateSetIfNotExists
 
 from apptheory.clock import Clock, RealClock
 from apptheory.sanitization import sanitize_field_value, sanitize_log_string

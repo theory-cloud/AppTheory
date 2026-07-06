@@ -150,32 +150,50 @@ def npm_package_from_artifact(url: str, label: str) -> dict:
     if not clean.endswith(".tgz"):
         fail(f"{label} must be a npm .tgz release asset, found {clean}")
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
-        package_member = next(
-            (
-                member
-                for member in archive.getmembers()
-                if member.isfile() and member.name.endswith("/package.json")
-            ),
-            None,
-        )
+        if "package/package.json" not in archive.getnames():
+            fail(f"{label} tarball missing package/package.json")
+        package_member = archive.getmember("package/package.json")
         if package_member is None:
-            fail(f"{label} tarball missing package.json")
+            fail(f"{label} tarball missing package/package.json")
         extracted = archive.extractfile(package_member)
         if extracted is None:
             fail(f"{label} package.json could not be read")
         return json.loads(extracted.read().decode("utf-8"))
 
 
-def collect_ci_versions(kind: str) -> set[str]:
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+def collect_versions_from_text(text: str, kind: str) -> set[str]:
     versions: set[str] = set()
 
     # Covers scalar values such as `node-version: "24"` and inline matrices
     # such as `node-version: [20, 24]`.
-    for match in re.finditer(rf"{re.escape(kind)}-version:\s*([^\n]+)", workflow):
+    for match in re.finditer(rf"{re.escape(kind)}-version:\s*([^\n]+)", text):
         versions.update(re.findall(r"\b\d+(?:\.\d+){0,2}\b", match.group(1)))
 
     return versions
+
+
+def collect_ci_versions(kind: str) -> set[str]:
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    return collect_versions_from_text(workflow, kind)
+
+
+def workflow_job_body(job: str) -> str:
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    lines = workflow.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if line == f"  {job}:":
+            start = index + 1
+            break
+    if start is None:
+        fail(f".github/workflows/ci.yml must define {job} job")
+
+    body: list[str] = []
+    for line in lines[start:]:
+        if re.fullmatch(r"  [A-Za-z0-9_-]+:", line):
+            break
+        body.append(line)
+    return "\n".join(body)
 
 
 def require_ci_python_version(required: tuple[int, int], present: set[str]) -> None:
@@ -187,6 +205,11 @@ def require_ci_python_version(required: tuple[int, int], present: set[str]) -> N
 def require_ci_node_major(required: int, present: set[str]) -> None:
     if str(required) not in {version.split(".", 1)[0] for version in present}:
         fail(f".github/workflows/ci.yml must include node-version {required}")
+
+
+def require_job_contains(job: str, body: str, needle: str) -> None:
+    if needle not in body:
+        fail(f".github/workflows/ci.yml {job} job must include {needle}")
 
 
 def main() -> None:
@@ -207,6 +230,18 @@ def main() -> None:
             break
     if tabletheory_py_url is None:
         fail("py/pyproject.toml must declare tabletheory-py via a GitHub Release asset")
+
+    requirements_lint = (ROOT / "py/requirements-lint.txt").read_text(encoding="utf-8")
+    requirements_lint_url = None
+    for line in requirements_lint.splitlines():
+        if line.startswith("tabletheory-py @ "):
+            requirements_lint_url = line.split(" @ ", 1)[1].strip()
+            break
+    if requirements_lint_url != tabletheory_py_url:
+        fail(
+            "py/requirements-lint.txt tabletheory-py URL "
+            f"{requirements_lint_url!r} != py/pyproject.toml {tabletheory_py_url!r}"
+        )
 
     tabletheory_py_metadata = python_metadata_from_artifact(tabletheory_py_url, "tabletheory-py")
     tabletheory_py_floor = parse_python_floor(
@@ -229,11 +264,34 @@ def main() -> None:
     tabletheory_ts_url = ts_package.get("dependencies", {}).get("@theory-cloud/tabletheory-ts")
     if not tabletheory_ts_url:
         fail("ts/package.json must depend on @theory-cloud/tabletheory-ts via a GitHub Release asset")
+    ts_lock_tabletheory_url = ts_lock.get("packages", {}).get("", {}).get("dependencies", {}).get(
+        "@theory-cloud/tabletheory-ts"
+    )
+    if ts_lock_tabletheory_url != tabletheory_ts_url:
+        fail(
+            "ts/package-lock.json root @theory-cloud/tabletheory-ts "
+            f"{ts_lock_tabletheory_url!r} != ts/package.json {tabletheory_ts_url!r}"
+        )
+    ts_lock_tabletheory_package = ts_lock.get("packages", {}).get("node_modules/@theory-cloud/tabletheory-ts", {})
+    if ts_lock_tabletheory_package.get("resolved") != tabletheory_ts_url:
+        fail(
+            "ts/package-lock.json node_modules/@theory-cloud/tabletheory-ts resolved "
+            f"{ts_lock_tabletheory_package.get('resolved')!r} != ts/package.json {tabletheory_ts_url!r}"
+        )
     tabletheory_ts_package = npm_package_from_artifact(tabletheory_ts_url, "@theory-cloud/tabletheory-ts")
     tabletheory_ts_floor = parse_node_floor(
         tabletheory_ts_package.get("engines", {}).get("node", ""),
         "@theory-cloud/tabletheory-ts engines.node",
     )
+    ts_lock_tabletheory_floor = parse_node_floor(
+        ts_lock_tabletheory_package.get("engines", {}).get("node", ""),
+        "ts/package-lock.json @theory-cloud/tabletheory-ts engines.node",
+    )
+    if ts_lock_tabletheory_floor != tabletheory_ts_floor:
+        fail(
+            "ts/package-lock.json @theory-cloud/tabletheory-ts engines.node "
+            f">={ts_lock_tabletheory_floor} != release asset >={tabletheory_ts_floor}"
+        )
     if tabletheory_ts_floor > ts_floor:
         fail(
             f"ts/package.json claims Node >={ts_floor} but "
@@ -259,6 +317,27 @@ def main() -> None:
         require_ci_node_major(node_floor, ci_node_versions)
     if min(ts_floor, cdk_floor) < LATEST_PROVEN_NODE_MAJOR:
         require_ci_node_major(LATEST_PROVEN_NODE_MAJOR, ci_node_versions)
+
+    runtime_floor_job = workflow_job_body("runtime-floor-matrix")
+    runtime_floor_python_versions = collect_versions_from_text(runtime_floor_job, "python")
+    runtime_floor_node_versions = collect_versions_from_text(runtime_floor_job, "node")
+    require_ci_python_version(py_floor, runtime_floor_python_versions)
+    if py_floor < LATEST_PROVEN_PYTHON:
+        require_ci_python_version(LATEST_PROVEN_PYTHON, runtime_floor_python_versions)
+    require_ci_node_major(ts_floor, runtime_floor_node_versions)
+    if ts_floor < LATEST_PROVEN_NODE_MAJOR:
+        require_ci_node_major(LATEST_PROVEN_NODE_MAJOR, runtime_floor_node_versions)
+    require_job_contains("runtime-floor-matrix", runtime_floor_job, "bash scripts/verify-runtime-floor-claims.sh")
+    require_job_contains("runtime-floor-matrix", runtime_floor_job, "bash scripts/verify-ts-pack.sh")
+    require_job_contains("runtime-floor-matrix", runtime_floor_job, "bash scripts/verify-python-build.sh")
+    require_job_contains("runtime-floor-matrix", runtime_floor_job, "bash scripts/verify-contract-tests.sh")
+
+    cdk_floor_job = workflow_job_body("cdk-floor-matrix")
+    cdk_floor_node_versions = collect_versions_from_text(cdk_floor_job, "node")
+    require_ci_node_major(cdk_floor, cdk_floor_node_versions)
+    if cdk_floor < LATEST_PROVEN_NODE_MAJOR:
+        require_ci_node_major(LATEST_PROVEN_NODE_MAJOR, cdk_floor_node_versions)
+    require_job_contains("cdk-floor-matrix", cdk_floor_job, "bash scripts/verify-cdk-go-drift.sh")
 
     print(
         "runtime-floor-claims: PASS "
