@@ -160,7 +160,7 @@ Deliver the full strengthening program: make the contract covenant actually cove
    - Paths: `gov-infra/verifiers/gov-verify-rubric.sh`, `scripts/verify-rubric.sh`
    - Runtime scope: none
    - Contract impact: internal-only
-   - Acceptance: one rubric invocation runs each language's contract suite exactly once; `npm ci` count reduced; rubric wall-clock measurably drops.
+   - Acceptance: one rubric invocation runs the direct/uninstrumented contract suite once through CON-3; TS/Python coverage may rerun the fixture corpus under instrumentation to prove runtime coverage, and the Go runner package meta-tests stay in QUA-1 without rerunning `TestAllFixturesPass`. `npm ci` count reduced; rubric wall-clock measurably drops.
    - Validation: `make rubric` (inspect log for single contract pass)
    - Commit subject: `chore(rubric): run contract suites once per rubric invocation`
 2. **Cache dependencies in CI** — [`apptheory`, `contract-change`]
