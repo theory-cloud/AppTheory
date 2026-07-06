@@ -36,6 +36,33 @@ class ValidationError(Exception):
     pass
 
 
+# This validator is intentionally small and fail-closed.  When fixture.schema.json
+# grows, add support here first instead of relying on unsupported JSON Schema
+# keywords being silently ignored.  In particular, composition keywords such as
+# oneOf/allOf/not are not supported until they are implemented and added below.
+SUPPORTED_SCHEMA_KEYWORDS = frozenset(
+    {
+        "$defs",
+        "$id",
+        "$ref",
+        "$schema",
+        "additionalProperties",
+        "anyOf",
+        "const",
+        "description",
+        "enum",
+        "items",
+        "minItems",
+        "minLength",
+        "pattern",
+        "properties",
+        "required",
+        "title",
+        "type",
+    }
+)
+
+
 def json_type(value: Any) -> str:
     if value is None:
         return "null"
@@ -168,6 +195,39 @@ def load_json(path: Path) -> Any:
         raise ValidationError(f"{path}: invalid JSON: {exc}") from exc
 
 
+def assert_supported_schema_keywords(schema: Any, path: str = "$") -> None:
+    if not isinstance(schema, dict):
+        raise ValidationError(f"{path}: schema must be an object")
+
+    for key, value in schema.items():
+        if key not in SUPPORTED_SCHEMA_KEYWORDS:
+            supported = ", ".join(sorted(SUPPORTED_SCHEMA_KEYWORDS))
+            raise ValidationError(f"{path}: unsupported JSON Schema keyword {key!r}; supported keywords: {supported}")
+
+        if key in {"properties", "$defs"}:
+            if not isinstance(value, dict):
+                raise ValidationError(f"{path}.{key}: must be an object of named schema definitions")
+            for name, child in value.items():
+                assert_supported_schema_keywords(child, f"{path}.{key}.{name}")
+            continue
+
+        if key == "items":
+            if not isinstance(value, dict):
+                raise ValidationError(f"{path}.items: tuple/list item schemas are unsupported")
+            assert_supported_schema_keywords(value, f"{path}.items")
+            continue
+
+        if key == "anyOf":
+            if not isinstance(value, list) or not value:
+                raise ValidationError(f"{path}.anyOf: must be a non-empty list")
+            for index, child in enumerate(value):
+                assert_supported_schema_keywords(child, f"{path}.anyOf[{index}]")
+            continue
+
+        if key == "additionalProperties" and isinstance(value, dict):
+            assert_supported_schema_keywords(value, f"{path}.additionalProperties")
+
+
 FIXTURE_DOMAIN_TIERS = {
     "http-core": "p0",
     "middleware-guardrails": "p1",
@@ -214,8 +274,21 @@ def fixture_errors(root: dict[str, Any], fixture: Any, path: Path | None = None)
 schema = load_json(schema_path)
 if not isinstance(schema, dict):
     raise SystemExit("fixture-schema: FAIL (schema root is not an object)")
+try:
+    assert_supported_schema_keywords(schema)
+except ValidationError as exc:
+    raise SystemExit(f"fixture-schema: FAIL ({exc})") from exc
 
 if mode == "self-test":
+    schema_with_unsupported_keyword = dict(schema)
+    schema_with_unsupported_keyword["oneOf"] = [{"type": "object"}]
+    try:
+        assert_supported_schema_keywords(schema_with_unsupported_keyword)
+    except ValidationError:
+        pass
+    else:
+        raise SystemExit("fixture-schema: FAIL (self-test unsupported schema keyword unexpectedly passed)")
+
     malformed = {"tier": "p0", "name": "missing id should fail", "expect": {"response": {}}}
     errors = fixture_errors(schema, malformed)
     if not errors:
