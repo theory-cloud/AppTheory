@@ -284,6 +284,11 @@
         },
         "FunctionName": "apptheory-test",
         "Handler": "index.handler",
+        "LoggingConfig": {
+          "LogGroup": {
+            "Ref": "AppFunctionLogGroupE8C68164"
+          }
+        },
         "MemorySize": 256,
         "Role": {
           "Fn::GetAtt": [
@@ -302,17 +307,7 @@
     "AppFunctionLogGroupE8C68164": {
       "DeletionPolicy": "Retain",
       "Properties": {
-        "LogGroupName": {
-          "Fn::Join": [
-            "",
-            [
-              "/aws/lambda/",
-              {
-                "Ref": "AppFunctionC4660EF9"
-              }
-            ]
-          ]
-        },
+        "LogGroupName": "/aws/lambda/apptheory-test",
         "RetentionInDays": 30
       },
       "Type": "AWS::Logs::LogGroup",

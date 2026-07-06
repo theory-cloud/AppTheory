@@ -245,6 +245,49 @@ test("AppTheoryFunction exposes log retention, VPC, alias, provisioned concurren
   assert.equal(logGroup.Properties?.RetentionInDays, 7);
 });
 
+test("AppTheoryFunction binds explicit-name log groups through the Lambda L2", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    functionName: "apptheory-named",
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    logRetention: logs.RetentionDays.ONE_WEEK,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.entries(template.Resources ?? {});
+  const [logGroupId, logGroup] = resources.find(([, resource]) => resource.Type === "AWS::Logs::LogGroup");
+  const [, fn] = resources.find(([, resource]) => resource.Type === "AWS::Lambda::Function");
+
+  assert.equal(logGroup.Properties?.LogGroupName, "/aws/lambda/apptheory-named");
+  assert.equal(logGroup.Properties?.RetentionInDays, 7);
+  assert.deepEqual(fn.Properties?.LoggingConfig, { LogGroup: { Ref: logGroupId } });
+});
+
+test("AppTheoryFunction uses caller-provided log groups for existing-stack adoption", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const logGroup = logs.LogGroup.fromLogGroupName(stack, "ExistingLogGroup", "/aws/lambda/existing-handler");
+
+  new apptheory.AppTheoryFunction(stack, "Fn", {
+    functionName: "existing-handler",
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+    logGroup,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const resources = Object.values(template.Resources ?? {});
+  const fn = resources.find((resource) => resource.Type === "AWS::Lambda::Function");
+
+  assert.equal(resources.filter((resource) => resource.Type === "AWS::Logs::LogGroup").length, 0);
+  assert.deepEqual(fn.Properties?.LoggingConfig, { LogGroup: "/aws/lambda/existing-handler" });
+});
+
 test("AppTheoryHttpApi synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -2252,12 +2295,15 @@ test("AppTheoryApp exposes production deployment surface without raw CDK escape 
 
   const template = assertions.Template.fromStack(stack).toJSON();
   const resources = Object.values(template.Resources ?? {});
+  const resourceEntries = Object.entries(template.Resources ?? {});
   const fn = resources.find((resource) => resource.Type === "AWS::Lambda::Function");
+  const [logGroupId] = resourceEntries.find(([, resource]) => resource.Type === "AWS::Logs::LogGroup");
   const alias = resources.find((resource) => resource.Type === "AWS::Lambda::Alias");
   const deploymentConfig = resources.find((resource) => resource.Type === "AWS::CodeDeploy::DeploymentConfig");
   const api = resources.find((resource) => resource.Type === "AWS::ApiGatewayV2::Api");
 
   assert.ok(fn.Properties?.VpcConfig, "App function should expose VPC placement");
+  assert.deepEqual(fn.Properties?.LoggingConfig, { LogGroup: { Ref: logGroupId } });
   assert.equal(alias.Properties?.Name, "live");
   assert.deepEqual(alias.Properties?.ProvisionedConcurrencyConfig, { ProvisionedConcurrentExecutions: 1 });
   assert.equal(deploymentConfig.Properties?.TrafficRoutingConfig?.Type, "TimeBasedLinear");
