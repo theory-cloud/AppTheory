@@ -5,18 +5,29 @@ description: The TypeScript implementation of the AppTheory contract — bundled
 
 # TypeScript Runtime
 
-The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. The [147 contract fixtures](../reference/contract-fixtures.md) arbitrate when Go, TS, and Python disagree.
+The TypeScript runtime is an independent implementation of the AppTheory contract — not a port of the Go runtime. It executes all [216 contract fixtures](../reference/contract-fixtures.md), including the SP09 MCP fixture tier for JSON-RPC, registries, sessions, Streamable HTTP, resumable SSE, task stores, the SP12 OAuth tier, and the SP13 objectstore tier. <!-- apptheory-fixture-count: 216 -->
 
 ## Install
 
-Distribution is **GitHub Releases only.** The npm registry is not used; AppTheory does not publish to it. Consumers pin a release-asset tarball downloaded from the [releases page](https://github.com/theory-cloud/AppTheory/releases):
+Distribution is **GitHub Releases only.** The npm registry is not used; AppTheory does not publish to it. Pin the release asset and verify its checksum before installing it:
 
 ```bash
-# After downloading the .tgz asset from the GitHub Release
-npm i ./theory-cloud-apptheory-X.Y.Z.tgz
+VERSION=1.14.0
+TAG="v${VERSION}"
+REPO="theory-cloud/AppTheory"
+
+gh release download "${TAG}" --repo "${REPO}" \
+  --pattern "theory-cloud-apptheory-${VERSION}.tgz" \
+  --pattern "SHA256SUMS.txt" \
+  --clobber
+grep " theory-cloud-apptheory-${VERSION}.tgz$" SHA256SUMS.txt | sha256sum -c -
+npm install "./theory-cloud-apptheory-${VERSION}.tgz"
 ```
 
-The package is ESM and ships TypeScript declarations. Node.js 24+ is required.
+The package is ESM and ships TypeScript declarations. Node.js 20+ is required. The floor is pinned by
+`ts/package.json`, `ts/package-lock.json`, the pinned TableTheory GitHub Release tarball metadata, and CI. Do not
+document a different Node.js runtime floor unless `scripts/verify-runtime-floor-claims.sh` passes with a CI matrix that
+includes both the floor and Node.js 24.
 
 ## Module layout
 
@@ -76,13 +87,15 @@ test("ping", async () => {
 });
 ```
 
-## Strict routes
+## Route registration
 
 ```ts
-app.handleStrict("GET", "/users/{id}", handler);
+app.handle("GET", "/users/{id}", handler);
+app.get("/users/{id}", handler);
 ```
 
-Strict registration throws on invalid patterns at registration time — preferred for CI and unit tests.
+Normal fluent registration fails closed on invalid patterns, duplicates, and undefined handlers. `handleStrict` remains
+as a deprecated compatibility wrapper for callers that still need the old helper shape.
 
 ## HTTP error format
 
@@ -93,6 +106,14 @@ const app = createApp({ httpErrorFormat: HTTP_ERROR_FORMAT_FLAT_LEGACY });
 ```
 
 Applies to HTTP error serialization only.
+
+
+## Object-store dependency posture
+
+The TypeScript package intentionally declares `@aws-sdk/client-s3` as a hard dependency because `createS3ObjectStore`
+imports the S3 client at module load. This keeps the packaged S3 helper deterministic for GitHub Release consumers while
+still exposing only the bounded AppTheory `ObjectStore` contract — no raw client, list, presign, or multipart escape
+hatches.
 
 ## Lambda Function URL streaming
 
@@ -121,11 +142,11 @@ See [CDK Getting Started](../cdk/getting-started.md).
 
 ## What's verified
 
-The TypeScript runtime passes all 147 contract fixtures on every commit, against the same fixture corpus as Go and Python. The `ts/dist/` build output is checked in and gated by `make rubric`.
+The TypeScript runtime passes all 216 contract fixtures on every commit. <!-- apptheory-fixture-count: 216 --> The runner loads and executes the full 216-fixture tree, including the SP09 MCP tier and SP13 objectstore tier; the `ts/dist/` build output is checked in and gated by `make rubric`.
 
 ## Next reads
 
 - [API Reference](../api-reference.md)
 - [HTTP Runtime tiers](../features/http-runtime.md)
-- [MCP Method Surface](../integrations/mcp.md) — Go runtime MCP surface
+- [MCP Method Surface](../integrations/mcp.md) — transport and JSON-RPC method contract
 - [Contract Fixtures](../reference/contract-fixtures.md)

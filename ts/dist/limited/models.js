@@ -55,3 +55,4 @@ export function getFixedWindow(now, durationMs) {
     const end = new Date(startMs + durationMs);
     return { windowType: `CUSTOM_${String(durationMs)}ms`, start, end };
 }
+//# sourceMappingURL=models.js.map

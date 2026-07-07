@@ -1,3 +1,10 @@
+/**
+ * Legacy portable, client-safe error with a stable error code.
+ *
+ * @deprecated Return AppTheoryError from new code so status, request, trace,
+ * timestamp, details, and cause metadata use the canonical AppTheory error
+ * path.
+ */
 export class AppError extends Error {
   code: string;
 
@@ -20,6 +27,13 @@ export type AppTheoryErrorOptions = {
   cause?: unknown;
 };
 
+/**
+ * Canonical AppTheory portable, client-safe error.
+ *
+ * Return AppTheoryError from framework and application code when the runtime
+ * should preserve status, details, request, trace, timestamp, stack, or cause
+ * metadata in the AppTheory error envelope.
+ */
 export class AppTheoryError extends Error {
   code: string;
   statusCode?: number;

@@ -68,3 +68,4 @@ export declare function normalizeEventBridgeWorkloadEnvelope(ctx: EventContext |
 export declare function requireEventBridgeWorkloadEnvelope(ctx: EventContext | null | undefined, event: EventBridgeEvent): EventBridgeWorkloadEnvelope;
 /** Return the canonical scheduled workload summary for an EventBridge scheduled event. */
 export declare function normalizeEventBridgeScheduledWorkload(ctx: EventContext | null | undefined, event: EventBridgeEvent): EventBridgeScheduledWorkloadSummary;
+//# sourceMappingURL=event-workloads.d.ts.map

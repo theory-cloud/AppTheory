@@ -5,10 +5,13 @@ import type * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as route53targets from "aws-cdk-lib/aws-route53-targets";
+import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import { Construct } from "constructs";
 
+import { configureRestApiRegionalWaf } from "./private/rest-api-waf";
 import { markRestApiStageRouteAsStreaming } from "./private/rest-api-streaming";
 import { trimRepeatedChar } from "./private/string-utils";
+import type { AppTheoryRegionalWafOptions } from "./regional-waf";
 
 /**
  * CORS configuration for the REST API router.
@@ -215,6 +218,14 @@ export interface AppTheoryRestApiRouterProps {
     readonly domain?: AppTheoryRestApiRouterDomainOptions;
 
     /**
+     * Regional WAF attachment for the REST API deployment stage. Set to true
+     * for an AppTheory-managed WebACL, or provide options to reuse an existing
+     * regional WebACL.
+     * @default undefined
+     */
+    readonly waf?: boolean | AppTheoryRegionalWafOptions;
+
+    /**
      * Endpoint types for the REST API.
      * @default [REGIONAL]
      */
@@ -316,6 +327,16 @@ export class AppTheoryRestApiRouter extends Construct {
     public readonly basePathMapping?: apigw.BasePathMapping;
 
     /**
+     * AppTheory-managed regional WAF WebACL when enabled without webAclArn.
+     */
+    public readonly webAcl?: wafv2.CfnWebACL;
+
+    /**
+     * Regional WAF association for the REST API deployment stage.
+     */
+    public readonly wafAssociation?: wafv2.CfnWebACLAssociation;
+
+    /**
      * The Route53 A record (if domain and hostedZone are configured).
      */
     public readonly aRecord?: route53.ARecord;
@@ -376,6 +397,18 @@ export class AppTheoryRestApiRouter extends Construct {
         // Set up custom domain if provided
         if (props.domain) {
             this.setupCustomDomain(props.domain);
+        }
+
+        if (props.waf) {
+            const waf = configureRestApiRegionalWaf(
+                this,
+                this.api,
+                this.stage,
+                props.waf,
+                props.apiName ?? "AppTheoryRestApiRouter",
+            );
+            (this as { webAcl?: wafv2.CfnWebACL }).webAcl = waf.webAcl;
+            (this as { wafAssociation?: wafv2.CfnWebACLAssociation }).wafAssociation = waf.wafAssociation;
         }
     }
 

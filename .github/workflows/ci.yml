@@ -83,12 +83,81 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Verify release/security invariants
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           bash scripts/verify-branch-release-supply-chain.sh
+          bash scripts/verify-release-branch-signatures.sh
           bash scripts/verify-release-train-promotion.sh --self-test
           bash scripts/verify-ci-rubric-enforced.sh
           bash scripts/verify-release-workflows.sh
           bash scripts/verify-release-cycle.sh
+      - name: Verify runtime floor claims
+        run: bash scripts/verify-runtime-floor-claims.sh
+
+  runtime-floor-matrix:
+    name: Runtime floor matrix (Node ${{ matrix.node-version }}, Python ${{ matrix.python-version }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "24"]
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: "1.26.4"
+          cache: true
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+          cache-dependency-path: ts/package-lock.json
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+          cache-dependency-path: |
+            py/pyproject.toml
+            py/requirements-build.txt
+      - name: Verify lower-floor runtime, package, and fixture proof
+        run: |
+          bash scripts/verify-runtime-floor-claims.sh
+          bash scripts/verify-ts-pack.sh
+          bash scripts/verify-python-build.sh
+          bash scripts/verify-contract-tests.sh
+
+  cdk-floor-matrix:
+    name: CDK floor matrix (Node ${{ matrix.node-version }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "24"]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: "1.26.4"
+          cache: true
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+          cache-dependency-path: cdk/package-lock.json
+      - name: Verify CDK lower-floor generated binding proof
+        run: bash scripts/verify-cdk-go-drift.sh
 
   prerelease-readiness:
     name: Prerelease readiness (staging → premain)
@@ -143,6 +212,8 @@ jobs:
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.26.4"
+          cache: true
+          cache-dependency-path: go.sum
       - name: Test and vet
         run: scripts/verify-go.sh
 
@@ -155,6 +226,10 @@ jobs:
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version: "24"
+          cache: "npm"
+          cache-dependency-path: ts/package-lock.json
+      - name: Verify checked-in dist drift
+        run: scripts/verify-ts-dist-drift.sh
       - name: Build tarball
         run: scripts/verify-ts-pack.sh
 
@@ -167,6 +242,10 @@ jobs:
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
           python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: |
+            py/pyproject.toml
+            py/requirements-build.txt
       - name: Build wheel + sdist
         run: scripts/verify-python-build.sh
 
@@ -179,16 +258,51 @@ jobs:
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.26.4"
+          cache: true
+          cache-dependency-path: go.sum
       - name: Install golangci-lint (pinned)
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version: "24"
+          cache: "npm"
+          cache-dependency-path: |
+            ts/package-lock.json
+            cdk/package-lock.json
+            examples/cdk/*/package-lock.json
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
           python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: |
+            py/pyproject.toml
+            py/requirements-build.txt
+            py/requirements-lint.txt
+            cdk/requirements-build.txt
       - name: Build twice and compare checksums
         run: scripts/verify-builds.sh
+
+  cdk-go-drift:
+    name: CDK Go binding drift
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false || (github.event.pull_request.head.ref != 'release-please--branches--premain' && github.event.pull_request.head.ref != 'release-please--branches--main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: "1.26.4"
+          cache: true
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: cdk/package-lock.json
+      - name: Verify cdk-go generated binding drift
+        run: scripts/verify-cdk-go-drift.sh
 
   contract-tests:
     name: Contract tests (fixtures)
@@ -199,12 +313,18 @@ jobs:
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.26.4"
+          cache: true
+          cache-dependency-path: go.sum
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version: "24"
+          cache: "npm"
+          cache-dependency-path: ts/package-lock.json
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
           python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: py/pyproject.toml
       - name: Verify API snapshots
         run: scripts/verify-api-snapshots.sh
       - name: Run contract tests
@@ -219,13 +339,26 @@ jobs:
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.26.4"
+          cache: true
+          cache-dependency-path: go.sum
       - name: Install golangci-lint (pinned)
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version: "24"
+          cache: "npm"
+          cache-dependency-path: |
+            ts/package-lock.json
+            cdk/package-lock.json
+            examples/cdk/*/package-lock.json
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
           python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: |
+            py/pyproject.toml
+            py/requirements-build.txt
+            py/requirements-lint.txt
+            cdk/requirements-build.txt
       - name: Run full rubric
         run: make rubric

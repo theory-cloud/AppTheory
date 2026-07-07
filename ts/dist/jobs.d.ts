@@ -202,3 +202,4 @@ export declare class DynamoJobLedger {
     }>;
     completeIdempotencyRecord(input: CompleteIdempotencyRecordInput): Promise<JobRequest>;
 }
+//# sourceMappingURL=jobs.d.ts.map

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify GitHub release workflows preserve the immutable release contract.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -558,6 +559,11 @@ require_contains(
     "CI release/security gates must verify rubric enforcement separately from the full rubric",
 )
 require_contains(
+    ".github/workflows/ci.yml",
+    "bash scripts/verify-runtime-floor-claims.sh",
+    "CI release/security gates must fail closed on unsupported Python/Node floor claims",
+)
+require_contains(
     "scripts/verify-release-gates.sh",
     "bash ./scripts/verify-release-train-promotion.sh --self-test",
     "full release gates must include release train provenance self-tests",
@@ -566,6 +572,11 @@ require_contains(
     "scripts/verify-release-gates.sh",
     "bash ./scripts/verify-release-cycle.sh",
     "full release gates must include deterministic full-cycle release regression",
+)
+require_contains(
+    "scripts/verify-release-gates.sh",
+    "bash ./scripts/verify-runtime-floor-claims.sh",
+    "full release gates must fail closed on unsupported Python/Node floor claims",
 )
 require_contains(
     "scripts/verify-release-cycle.sh",
@@ -661,6 +672,38 @@ require_contains(
     "release PR postcondition verifier self-test must cover annotated RC VERSION values",
 )
 require_contains(
+    "docs/release-process.md",
+    "watch the first generated",
+    "release process runbook must keep an evidence-bounded first-RC watch for release-please extra-files changes",
+)
+require_contains(
+    "docs/release-process.md",
+    "CI is not a signing key holder",
+    "release process runbook must document the no-CI-signing-secrets policy",
+)
+require_contains(
+    "docs/release-process.md",
+    "local_status=N",
+    "release process runbook must distinguish local unresolved SSH verification from GitHub verified-valid evidence",
+)
+for forbidden in (
+    "RELEASE_ARTIFACT_SYNC_" + "GPG",
+    "RELEASE_ARTIFACT_SYNC_" + "GPG_" + "PRIVATE" + "_KEY",
+    "RELEASE_ARTIFACT_SYNC_" + "GPG_KEY_ID",
+    "RELEASE_ARTIFACT_SYNC_" + "GPG_PASSPHRASE",
+):
+    for path in (
+        ".github/workflows/prerelease-pr.yml",
+        ".github/workflows/release-pr.yml",
+        "scripts/sync-release-pr-generated.sh",
+        "docs/release-process.md",
+    ):
+        require_not_contains(
+            path,
+            forbidden,
+            "release artifact sync must not depend on CI-held signing secrets",
+        )
+require_contains(
     "scripts/sync-release-pr-generated.sh",
     "--raw-field run_full_rubric=false",
     "automated release PR CI dispatch must disable the full rubric",
@@ -679,6 +722,135 @@ require_contains(
     "scripts/sync-release-pr-generated.sh",
     'gh pr ready "${pr_number}" --undo',
     "release PR sync must force the release PR back to draft before generated artifact work",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "--local-signed-sync",
+    "release PR sync must retain an explicit offline local signed artifact sync fallback",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    'artifact_sync_commit_message="chore(release): sync generated release artifacts"',
+    "release PR sync must use one stable generated artifact sync commit message",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    'git commit -m "${artifact_sync_commit_message}"',
+    "local signed release PR sync fallback must use normal local git commit signing configuration",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "createCommitOnBranch",
+    "CI release PR sync must create generated artifact commits through GitHub server-side verified automation",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "github-verified-api",
+    "release PR sync self-test must prove CI selects the GitHub-verified API mode",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    '"expectedHeadOid": os.environ["EXPECTED_HEAD_OID"]',
+    "GitHub API generated artifact sync must use optimistic expectedHeadOid concurrency",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "gh api graphql --input",
+    "CI generated artifact sync must send a GraphQL createCommitOnBranch mutation",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "verify_github_synced_head",
+    "CI generated artifact sync must fetch and verify the GitHub-created commit before continuing",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "push_local_signed_release_artifact_sync",
+    "release PR sync must isolate git push to the offline local signed fallback",
+)
+require_order_after(
+    "scripts/sync-release-pr-generated.sh",
+    'case "${sync_mode}" in',
+    "local-signed)",
+    "push_local_signed_release_artifact_sync",
+    "only the local signed fallback may push a generated artifact commit",
+)
+require_order_after(
+    "scripts/sync-release-pr-generated.sh",
+    'case "${sync_mode}" in',
+    "github-verified-api)",
+    "commit_release_artifact_sync_via_github",
+    "CI generated artifact sync must use GitHub API commit creation instead of git push",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    'scripts/verify-release-branch-signatures.sh',
+    "CI generated artifact sync must prove the new release branch commit is accepted by the signature gate",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    '--range "${expected_head}..${new_head}"',
+    "CI generated artifact sync signature proof must scan exactly the created commit range",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
+    'git commit -S -m "chore(release): sync generated release artifacts"',
+    "release PR sync must not force a bespoke CI signing path",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "gpg --import",
+    "release PR sync must not import signing material",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "git config user.signingkey",
+    "release PR sync must not set signing keys",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "git config gpg.program",
+    "release PR sync must not replace the local signing program",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "git config commit.gpgsign true",
+    "release PR sync must not mutate commit-signing configuration",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "git verify-commit HEAD",
+    "release PR sync must verify generated artifact commit signatures before pushing",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "git log -1 --format=%G?",
+    "release PR sync must report and gate the generated commit signature status",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "GitHub Actions must select createCommitOnBranch sync mode",
+    "release PR sync self-test must prove CI uses GitHub-verified product automation instead of a manual stop",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "scripts/verify-release-branch-signatures.sh",
+    "release/security gates must scan branch signatures",
+)
+require_contains(
+    "scripts/verify-release-branch-signatures.sh",
+    "HISTORICAL_UNSIGNED_FIXTURE",
+    "release signature gate must have a historical unsigned negative fixture",
+)
+require_contains(
+    "scripts/verify-release-branch-signatures.sh",
+    "github-verified",
+    "release signature gate must distinguish GitHub-verified signatures from local signatures",
+)
+require_contains(
+    "scripts/verify-release-branch-signatures.sh",
+    "self-test:github-verified-fallback",
+    "release signature gate self-test must prove GitHub verified-valid fallback without unsigned commits",
 )
 require_not_contains(
     "scripts/sync-release-pr-generated.sh",
@@ -702,6 +874,12 @@ for workflow in (".github/workflows/prerelease-pr.yml", ".github/workflows/relea
         "Sync generated CDK artifacts on release PR",
         "release PR workflow must install Python before running the full release PR gate set",
     )
+    require_step_contains(
+        workflow,
+        "Sync generated CDK artifacts on release PR",
+        "GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}",
+        "release PR artifact sync step must authenticate gh without signing secrets",
+    )
     require_order(
         workflow,
         "Draft-lock release PR before artifact setup",
@@ -722,7 +900,7 @@ require_order(
 )
 require_order_after(
     "scripts/sync-release-pr-generated.sh",
-    "git switch --detach FETCH_HEAD",
+    'git switch --detach "${expected_head}"',
     "sync_stable_release_premain_manifest",
     "scripts/update-cdk-generated.sh",
     "stable premain manifest reset must happen before regenerating artifacts",
@@ -732,11 +910,42 @@ require_contains(
     "git add .release-please-manifest.premain.json cdk/.jsii cdk/lib cdk-go/apptheorycdk",
     "stable release PR sync must commit the premain manifest reset with generated release artifacts",
 )
-require_order(
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "bash scripts/verify-cdk-go.sh",
+    "release PR sync must validate generated CDK Go bindings through the nested-module verifier",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "go test ./cdk-go/apptheorycdk",
+    "release PR sync must not test the nested cdk-go package from the root Go module",
+)
+require_contains(
     "scripts/sync-release-pr-generated.sh",
     'synced_head="$(git rev-parse HEAD)"',
+    "local signed release PR sync must capture the local signed generated-artifact head",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    'synced_head="$(commit_release_artifact_sync_via_github "${expected_head}" "${repo}")"',
+    "CI release PR sync must capture the GitHub-created generated-artifact head",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    'synced_head="${expected_head}"',
+    "release PR sync must preserve the fetched release PR head when generated artifacts are already current",
+)
+require_order(
+    "scripts/sync-release-pr-generated.sh",
+    'synced_head="$(commit_release_artifact_sync_via_github "${expected_head}" "${repo}")"',
+    'verify_github_synced_head "${expected_head}" "${synced_head}" "${repo}"',
+    "CI release PR sync must verify the GitHub-created generated-artifact head before waiting for it",
+)
+require_order(
+    "scripts/sync-release-pr-generated.sh",
+    'verify_github_synced_head "${expected_head}" "${synced_head}" "${repo}"',
     'wait_for_pr_head "${synced_head}"',
-    "release PR sync must capture the generated-artifact head before waiting for it",
+    "release PR sync must prove the GitHub-created commit signature before checking independent CI",
 )
 require_order(
     "scripts/sync-release-pr-generated.sh",

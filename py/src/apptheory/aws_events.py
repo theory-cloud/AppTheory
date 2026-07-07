@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from apptheory.util import to_bytes
 
@@ -134,7 +134,9 @@ def build_kinesis_event(stream_arn: str, records: list[dict[str, Any]] | None = 
     for idx, record in enumerate(records or []):
         event_id = str(record.get("eventID") or f"evt-{idx + 1}")
 
-        kinesis = record.get("kinesis") if isinstance(record.get("kinesis"), dict) else {}
+        kinesis: dict[str, Any] = (
+            cast(dict[str, Any], record.get("kinesis")) if isinstance(record.get("kinesis"), dict) else {}
+        )
 
         data_b64 = str(record.get("data_b64") or record.get("dataBase64") or "").strip()
         if not data_b64:
@@ -168,7 +170,7 @@ def build_sns_event(topic_arn: str, records: list[dict[str, Any]] | None = None)
     arn = str(topic_arn or "").strip()
     out_records: list[dict[str, Any]] = []
     for idx, record in enumerate(records or []):
-        sns = record.get("Sns") if isinstance(record.get("Sns"), dict) else {}
+        sns: dict[str, Any] = cast(dict[str, Any], record.get("Sns")) if isinstance(record.get("Sns"), dict) else {}
         subscription_arn = str(record.get("EventSubscriptionArn") or record.get("eventSubscriptionArn") or "")
 
         out_records.append(

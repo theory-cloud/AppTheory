@@ -1,0 +1,27 @@
+{
+  "id": "p0.openapi.success_status_zero_fails_closed",
+  "tier": "p0",
+  "name": "OpenAPI explicit zero success status fails closed",
+  "setup": {
+    "openapi": {
+      "title": "Invalid Status API",
+      "version": "2026-07",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/zero",
+          "operation_id": "zeroStatus",
+          "success_status": 0,
+          "response": {
+            "description": "ok"
+          }
+        }
+      ]
+    }
+  },
+  "expect": {
+    "error": {
+      "message": "apptheory: openapi route GET /zero success_status must be an HTTP status"
+    }
+  }
+}

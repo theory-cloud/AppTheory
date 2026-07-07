@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: dispatch the TheoryCloud docs publishing workflow after subtree sync.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

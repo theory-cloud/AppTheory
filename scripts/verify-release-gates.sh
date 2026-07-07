@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: run release-lane hygiene gates before release publication.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -6,6 +7,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ./scripts/verify-version-alignment.sh
 bash ./scripts/verify-branch-release-supply-chain.sh
 bash ./scripts/verify-branch-version-sync.sh
+bash ./scripts/verify-runtime-floor-claims.sh
 ./scripts/fmt-check.sh
 ./scripts/verify-go-lint.sh
 ./scripts/verify-ts-lint.sh

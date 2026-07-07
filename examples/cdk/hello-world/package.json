@@ -1,0 +1,36 @@
+{
+  "name": "@theory-cloud/apptheory-cdk-hello-world-example",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "synth": "cdk synth",
+    "synth:go": "cdk synth -c lang=go",
+    "synth:ts": "cdk synth -c lang=ts",
+    "synth:py": "cdk synth -c lang=py",
+    "deploy:go": "cdk deploy -c lang=go --all",
+    "deploy:ts": "cdk deploy -c lang=ts --all",
+    "deploy:py": "cdk deploy -c lang=py --all",
+    "destroy:go": "cdk destroy -c lang=go --all",
+    "destroy:ts": "cdk destroy -c lang=ts --all",
+    "destroy:py": "cdk destroy -c lang=py --all"
+  },
+  "devDependencies": {
+    "@aws-cdk/cloud-assembly-schema": "53.23.0",
+    "@theory-cloud/apptheory-cdk": "file:../../../cdk",
+    "@types/node": "25.5.0",
+    "aws-cdk": "2.1113.0",
+    "aws-cdk-lib": "2.257.0",
+    "constructs": "10.6.0",
+    "ts-node": "10.9.2",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "diff": "4.0.4",
+    "aws-cdk-lib": {
+      "minimatch": "10.2.4"
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

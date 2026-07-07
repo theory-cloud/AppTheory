@@ -1,6 +1,6 @@
 # AppTheory Makefile
 
-.PHONY: all build test test-unit lint fmt fmt-check rubric verify-builds \
+.PHONY: all build test test-unit lint fmt fmt-check rubric contract-tests contract-one verify-builds \
 	theorycloud-apptheory-subtree verify-theorycloud-apptheory-subtree \
 	sync-theorycloud-apptheory-subtree trigger-theorycloud-publish \
 	verify-theorycloud-apptheory-publish-config
@@ -12,6 +12,7 @@ all: fmt lint test build
 
 build:
 	@echo "Building release artifacts..."
+	@./scripts/verify-ts-dist-drift.sh
 	@./scripts/verify-ts-pack.sh
 	@./scripts/verify-python-build.sh
 	@./scripts/verify-cdk-ts-pack.sh
@@ -39,6 +40,17 @@ fmt-check:
 
 rubric:
 	@./scripts/verify-rubric.sh
+
+contract-tests:
+	@./scripts/verify-contract-tests.sh
+
+contract-one:
+	@if [ -z "$(ID)" ]; then echo "contract-one: FAIL (set ID=<fixture-id>)" >&2; exit 1; fi
+	@./scripts/verify-fixture-schema.sh
+	@go run ./contract-tests/runners/go --id "$(ID)"
+	@(cd ts && npm ci >/dev/null)
+	@node contract-tests/runners/ts/run.cjs --id "$(ID)"
+	@python3 contract-tests/runners/py/run.py --id "$(ID)"
 
 verify-builds:
 	@./scripts/verify-builds.sh

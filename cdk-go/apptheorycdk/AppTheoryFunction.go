@@ -4,14 +4,19 @@ import (
 	_jsii_ "github.com/aws/jsii-runtime-go/runtime"
 	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/jsii"
 
+	"github.com/aws/aws-cdk-go/awscdk/v2/awscodedeploy"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
+	"github.com/aws/aws-cdk-go/awscdk/v2/interfaces/interfacesawslogs"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
 
 type AppTheoryFunction interface {
 	constructs.Construct
+	Alias() awslambda.Alias
+	DeploymentGroup() awscodedeploy.LambdaDeploymentGroup
 	Fn() awslambda.Function
+	LogGroup() interfacesawslogs.ILogGroupRef
 	// The tree node.
 	Node() constructs.Node
 	// Returns a string representation of this construct.
@@ -32,11 +37,41 @@ type jsiiProxy_AppTheoryFunction struct {
 	internal.Type__constructsConstruct
 }
 
+func (j *jsiiProxy_AppTheoryFunction) Alias() awslambda.Alias {
+	var returns awslambda.Alias
+	_jsii_.Get(
+		j,
+		"alias",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryFunction) DeploymentGroup() awscodedeploy.LambdaDeploymentGroup {
+	var returns awscodedeploy.LambdaDeploymentGroup
+	_jsii_.Get(
+		j,
+		"deploymentGroup",
+		&returns,
+	)
+	return returns
+}
+
 func (j *jsiiProxy_AppTheoryFunction) Fn() awslambda.Function {
 	var returns awslambda.Function
 	_jsii_.Get(
 		j,
 		"fn",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryFunction) LogGroup() interfacesawslogs.ILogGroupRef {
+	var returns interfacesawslogs.ILogGroupRef
+	_jsii_.Get(
+		j,
+		"logGroup",
 		&returns,
 	)
 	return returns

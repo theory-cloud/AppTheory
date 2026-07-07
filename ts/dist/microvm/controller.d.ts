@@ -1,0 +1,71 @@
+import { MicroVMSafeError, type MicroVMAuthContext, type MicroVMClient, type MicroVMCommandName, type MicroVMControllerOptions, type MicroVMControllerRequest, type MicroVMControllerResponse, type MicroVMControllerRouteTarget, type MicroVMLifecycleState, type MicroVMOperationName, type MicroVMProvider, type MicroVMProviderIdlePolicy, type MicroVMProviderPortScope, type MicroVMProviderSession, type MicroVMProviderSessionBinding, type MicroVMProviderToken, type MicroVMSessionQueryInput, type MicroVMSessionRecord, type MicroVMSessionRegistry, type MicroVMSessionSpec, type MicroVMSessionStatus } from "./model.js";
+export declare class MicroVMController {
+    private readonly client;
+    private readonly controllerID;
+    private readonly clock;
+    private readonly ids;
+    constructor(client: MicroVMClient, options?: MicroVMControllerOptions);
+    handle(request: MicroVMControllerRequest): Promise<MicroVMControllerResponse>;
+    private handleCreate;
+    private handleCommand;
+    private handleStatus;
+    private handleSession;
+}
+export declare function createMicroVMController(client: MicroVMClient, options?: MicroVMControllerOptions): MicroVMController;
+export declare class MicroVMRealController implements MicroVMControllerRouteTarget {
+    private readonly provider;
+    private readonly registry;
+    private readonly controllerID;
+    private readonly providerID;
+    private readonly executionRoleArn;
+    private readonly clock;
+    private readonly ids;
+    private readonly ttlMs;
+    constructor(provider: MicroVMProvider, registry: MicroVMSessionRegistry, options?: MicroVMControllerOptions);
+    handle(request: MicroVMControllerRequest): Promise<MicroVMControllerResponse>;
+    private handleRun;
+    private handleSession;
+    private handleList;
+    private handleToken;
+    private putProviderSession;
+    private sessionRecordFromProviderSession;
+    private now;
+}
+export declare function createRealMicroVMController(provider: MicroVMProvider, registry: MicroVMSessionRegistry, options?: MicroVMControllerOptions): MicroVMRealController;
+export declare function validateMicroVMControllerRequest(request: MicroVMControllerRequest): MicroVMSafeError | null;
+export declare function validateMicroVMRealControllerRequest(request: MicroVMControllerRequest): MicroVMSafeError | null;
+export declare function microVMCommandFromOperation(operation: MicroVMOperationName | string): MicroVMCommandName;
+export declare function desiredStateForMicroVMRealCommand(command: MicroVMCommandName | string, fallback: MicroVMLifecycleState | string): MicroVMLifecycleState | string;
+export declare function microVMProviderBindingFromRecord(record: MicroVMSessionRecord): MicroVMProviderSessionBinding;
+export declare function microVMProviderSessionFromRegistryRecord(record: MicroVMSessionRecord): MicroVMProviderSession;
+export declare function responseFromMicroVMProviderSession(request: NormalizedMicroVMControllerRequest, session: MicroVMProviderSession): MicroVMControllerResponse;
+export declare function responseFromMicroVMProviderToken(request: NormalizedMicroVMControllerRequest, token: MicroVMProviderToken): MicroVMControllerResponse;
+export declare function validMicroVMLifecycleState(state: string): boolean;
+export type NormalizedMicroVMControllerRequest = {
+    command: MicroVMCommandName | string;
+    request_id: string;
+    tenant_id: string;
+    namespace: string;
+    auth_context: MicroVMAuthContext;
+    session_id: string;
+    image_ref: string;
+    image_version: string;
+    network_connector_ref: string;
+    ingress_network_connector_refs: string[];
+    egress_network_connector_refs: string[];
+    session_spec: MicroVMSessionSpec;
+    idle_policy?: MicroVMProviderIdlePolicy;
+    maximum_duration_seconds: number;
+    ttl_seconds: number;
+    allowed_port_scope: MicroVMProviderPortScope[];
+    max_results: number;
+};
+export declare function normalizeMicroVMControllerRequest(request: MicroVMControllerRequest): NormalizedMicroVMControllerRequest;
+export declare function normalizeMicroVMAuthContext(auth: Partial<MicroVMAuthContext>): MicroVMAuthContext;
+export declare function cloneMicroVMSessionSpec(spec: MicroVMSessionSpec): MicroVMSessionSpec;
+export declare function controllerQueryInput(request: NormalizedMicroVMControllerRequest): MicroVMSessionQueryInput;
+export declare function responseFromMicroVMSession(request: NormalizedMicroVMControllerRequest, record: MicroVMSessionRecord): MicroVMControllerResponse;
+export declare function responseFromMicroVMStatus(request: NormalizedMicroVMControllerRequest, status: MicroVMSessionStatus): MicroVMControllerResponse;
+export declare function controllerErrorResponse(request: MicroVMControllerRequest, err: MicroVMSafeError): MicroVMControllerResponse;
+export declare function asMicroVMSafeError(err: unknown, requestID: string): MicroVMSafeError;
+//# sourceMappingURL=controller.d.ts.map

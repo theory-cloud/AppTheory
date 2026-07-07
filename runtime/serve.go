@@ -21,10 +21,16 @@ func (a *App) Handle(method, pattern string, handler Handler, opts ...RouteOptio
 		}
 		opt(&routeOpts)
 	}
-	a.router.add(method, pattern, handler, routeOpts)
+	if err := a.router.add(method, pattern, handler, routeOpts); err != nil {
+		panic(err)
+	}
 	return a
 }
 
+// HandleStrict registers a route and returns registration errors instead of panicking.
+//
+// Deprecated: Handle now fails closed on invalid registrations. Use Handle for
+// normal application registration and recover during tests only when required.
 func (a *App) HandleStrict(method, pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	if a == nil {
 		return nil, errors.New("apptheory: app is nil")
@@ -50,6 +56,8 @@ func (a *App) Get(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("GET", pattern, handler, opts...)
 }
 
+// Deprecated: the fluent registration helpers now fail closed; use Get unless
+// you specifically need an error-returning compatibility wrapper.
 func (a *App) GetStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("GET", pattern, handler, opts...)
 }
@@ -58,6 +66,8 @@ func (a *App) Post(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("POST", pattern, handler, opts...)
 }
 
+// Deprecated: the fluent registration helpers now fail closed; use Post unless
+// you specifically need an error-returning compatibility wrapper.
 func (a *App) PostStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("POST", pattern, handler, opts...)
 }
@@ -66,6 +76,8 @@ func (a *App) Put(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("PUT", pattern, handler, opts...)
 }
 
+// Deprecated: the fluent registration helpers now fail closed; use Put unless
+// you specifically need an error-returning compatibility wrapper.
 func (a *App) PutStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("PUT", pattern, handler, opts...)
 }
@@ -74,6 +86,8 @@ func (a *App) Patch(pattern string, handler Handler, opts ...RouteOption) *App {
 	return a.Handle("PATCH", pattern, handler, opts...)
 }
 
+// Deprecated: the fluent registration helpers now fail closed; use Patch unless
+// you specifically need an error-returning compatibility wrapper.
 func (a *App) PatchStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("PATCH", pattern, handler, opts...)
 }
@@ -82,6 +96,8 @@ func (a *App) Options(pattern string, handler Handler, opts ...RouteOption) *App
 	return a.Handle("OPTIONS", pattern, handler, opts...)
 }
 
+// Deprecated: the fluent registration helpers now fail closed; use Options unless
+// you specifically need an error-returning compatibility wrapper.
 func (a *App) OptionsStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("OPTIONS", pattern, handler, opts...)
 }
@@ -90,6 +106,8 @@ func (a *App) Delete(pattern string, handler Handler, opts ...RouteOption) *App 
 	return a.Handle("DELETE", pattern, handler, opts...)
 }
 
+// Deprecated: the fluent registration helpers now fail closed; use Delete unless
+// you specifically need an error-returning compatibility wrapper.
 func (a *App) DeleteStrict(pattern string, handler Handler, opts ...RouteOption) (*App, error) {
 	return a.HandleStrict("DELETE", pattern, handler, opts...)
 }
@@ -109,20 +127,21 @@ func (a *App) httpErrorResponse(code, message string, headers map[string][]strin
 	return errorResponseWithFormat(a.httpErrorFormatValue(), code, message, headers)
 }
 
-func (a *App) httpErrorResponseWithRequestID(
+func (a *App) httpErrorResponseWithRequestIDTraceID(
 	code, message string,
 	headers map[string][]string,
 	requestID string,
+	traceID string,
 ) Response {
-	return errorResponseWithRequestIDAndFormat(a.httpErrorFormatValue(), code, message, headers, requestID)
+	return errorResponseWithRequestIDTraceIDAndFormat(a.httpErrorFormatValue(), code, message, headers, requestID, traceID)
 }
 
 func (a *App) responseForHTTPError(err error) Response {
 	return responseForErrorWithFormat(a.httpErrorFormatValue(), err)
 }
 
-func (a *App) responseForHTTPErrorWithRequestID(err error, requestID string) Response {
-	return responseForErrorWithRequestIDAndFormat(a.httpErrorFormatValue(), err, requestID)
+func (a *App) responseForHTTPErrorWithRequestIDTraceID(err error, requestID string, traceID string) Response {
+	return responseForErrorWithRequestIDTraceIDAndFormat(a.httpErrorFormatValue(), err, requestID, traceID)
 }
 
 type requestContextConfigurer func(*Context)
@@ -155,12 +174,16 @@ func (a *App) serveWithOptions(ctx context.Context, req Request, opts serveOptio
 	}
 }
 
-func (a *App) respondToServeError(opts serveOptions, err error, req Request, requestID string) Response {
+func (a *App) respondToServeError(opts serveOptions, err error, req Request, requestID string, traceIDs ...string) Response {
 	if opts.errorResponder != nil {
 		return opts.errorResponder(err, req, requestID)
 	}
+	traceID := strings.TrimSpace(req.TraceID)
+	if len(traceIDs) > 0 && strings.TrimSpace(traceIDs[0]) != "" {
+		traceID = strings.TrimSpace(traceIDs[0])
+	}
 	if requestID != "" {
-		return a.responseForHTTPErrorWithRequestID(err, requestID)
+		return a.responseForHTTPErrorWithRequestIDTraceID(err, requestID, traceID)
 	}
 	return a.responseForHTTPError(err)
 }
@@ -194,6 +217,7 @@ func (a *App) serveP0(ctx context.Context, req Request, opts serveOptions) (resp
 		Params:  match.Params,
 		clock:   a.clock,
 		ids:     a.ids,
+		TraceID: normalized.TraceID,
 	}
 	if opts.configure != nil {
 		opts.configure(requestCtx)
@@ -217,50 +241,53 @@ func (a *App) serveP0(ctx context.Context, req Request, opts serveOptions) (resp
 }
 
 func (a *App) serveP1(ctx context.Context, req Request, opts serveOptions) (resp Response) {
-	return a.servePortable(ctx, req, false, opts)
+	return a.servePortable(ctx, req, TierP1, opts)
 }
 
 func (a *App) serveP2(ctx context.Context, req Request, opts serveOptions) (resp Response) {
-	return a.servePortable(ctx, req, true, opts)
+	return a.servePortable(ctx, req, TierP2, opts)
 }
 
 type portableServeState struct {
 	method    string
 	path      string
 	requestID string
+	traceID   string
 	origin    string
 	tenantID  string
 	errorCode string
 }
 
-func (a *App) servePortable(ctx context.Context, req Request, enableP2 bool, opts serveOptions) (resp Response) {
+func (a *App) servePortable(ctx context.Context, req Request, tier Tier, opts serveOptions) (resp Response) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	startedAt := clockNow(a.clock)
 
 	state := portableServeState{}
 	defer func() {
 		if r := recover(); r != nil {
 			state.errorCode = errorCodeInternal
-			resp = a.respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, req, state.requestID)
+			resp = a.respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, req, state.requestID, state.traceID)
 		}
 		resp = finalizeP1Response(resp, state.requestID, state.origin, a.cors)
-		if enableP2 {
-			a.recordObservability(state.method, state.path, state.requestID, state.tenantID, resp.Status, state.errorCode)
+		if tier == TierP2 {
+			a.recordObservability(state.method, state.path, state.requestID, state.traceID, state.tenantID, resp.Status, state.errorCode, durationMS(startedAt, clockNow(a.clock)))
 		}
 	}()
 
-	resp = a.servePortableCore(ctx, req, enableP2, &state, opts)
+	resp = a.servePortableCore(ctx, req, tier, &state, opts)
 	return resp
 }
 
-func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool, state *portableServeState, opts serveOptions) Response {
+func (a *App) servePortableCore(ctx context.Context, req Request, tier Tier, state *portableServeState, opts serveOptions) Response {
 	headers := canonicalizeHeaders(req.Headers)
 	query := cloneQuery(req.Query)
 
 	state.method = strings.ToUpper(strings.TrimSpace(req.Method))
 	state.path = normalizePath(req.Path)
 	state.requestID = a.resolvePortableRequestID(headers, opts)
+	state.traceID = extractTraceIDFromHeaders(headers)
 
 	state.origin = firstHeaderValue(headers, "origin")
 	state.tenantID = extractTenantID(headers, query)
@@ -275,11 +302,12 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 	normalized, err := normalizeRequestWithMaxBytes(req, a.limits.MaxRequestBytes)
 	if err != nil {
 		state.errorCode = errorCodeForError(err)
-		return a.respondToServeError(opts, err, requestForNormalizeError(req, normalized, state.errorCode), state.requestID)
+		return a.respondToServeError(opts, err, requestForNormalizeError(req, normalized, state.errorCode), state.requestID, state.traceID)
 	}
 
 	state.method = normalized.Method
 	state.path = normalized.Path
+	state.traceID = normalized.TraceID
 	state.tenantID = extractTenantID(normalized.Headers, normalized.Query)
 
 	requestCtx := &Context{
@@ -288,6 +316,7 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 		clock:           a.clock,
 		ids:             a.ids,
 		RequestID:       state.requestID,
+		TraceID:         state.traceID,
 		TenantID:        state.tenantID,
 		RemainingMS:     remainingMS,
 		MiddlewareTrace: trace,
@@ -298,7 +327,7 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 
 	if maxBytes := a.limits.MaxRequestBytes; maxBytes > 0 && len(normalized.Body) > maxBytes {
 		state.errorCode = errorCodeTooLarge
-		return a.respondToServeError(opts, &AppError{Code: errorCodeTooLarge, Message: errorMessageRequestTooLarge}, normalized, state.requestID)
+		return a.respondToServeError(opts, &AppError{Code: errorCodeTooLarge, Message: errorMessageRequestTooLarge}, normalized, state.requestID, state.traceID)
 	}
 
 	match, allowed := a.router.match(state.method, state.path)
@@ -306,18 +335,18 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 		if opts.errorResponder != nil {
 			if len(allowed) > 0 {
 				state.errorCode = errorCodeMethodNotAllowed
-				return a.respondToServeError(opts, &AppError{Code: errorCodeMethodNotAllowed, Message: errorMessageMethodNotAllowed}, normalized, state.requestID)
+				return a.respondToServeError(opts, &AppError{Code: errorCodeMethodNotAllowed, Message: errorMessageMethodNotAllowed}, normalized, state.requestID, state.traceID)
 			}
 			state.errorCode = errorCodeNotFound
-			return a.respondToServeError(opts, &AppError{Code: errorCodeNotFound, Message: errorMessageNotFound}, normalized, state.requestID)
+			return a.respondToServeError(opts, &AppError{Code: errorCodeNotFound, Message: errorMessageNotFound}, normalized, state.requestID, state.traceID)
 		}
-		resp, errorCode := a.routeNotFoundResponse(allowed, state.requestID)
+		resp, errorCode := a.routeNotFoundResponse(allowed, state.requestID, state.traceID)
 		state.errorCode = errorCode
 		return resp
 	}
 	requestCtx.Params = match.Params
 
-	if resp, errorCode, ok := a.applyPolicy(enableP2, requestCtx, state.requestID, opts.errorResponder); ok {
+	if resp, errorCode, ok := a.applyPolicy(tier, requestCtx, state.requestID, opts.errorResponder); ok {
 		state.errorCode = errorCode
 		return resp
 	}
@@ -333,22 +362,40 @@ func (a *App) servePortableCore(ctx context.Context, req Request, enableP2 bool,
 	out, handlerErr := handler(requestCtx)
 	if handlerErr != nil {
 		state.errorCode = errorCodeForError(handlerErr)
-		return a.respondToServeError(opts, handlerErr, normalized, state.requestID)
+		return a.respondToServeError(opts, handlerErr, normalized, state.requestID, state.traceID)
 	}
 
 	if out == nil {
 		state.errorCode = errorCodeInternal
-		return a.respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, normalized, state.requestID)
+		return a.respondToServeError(opts, &AppError{Code: errorCodeInternal, Message: errorMessageInternal}, normalized, state.requestID, state.traceID)
 	}
 
 	resp := normalizeResponse(out)
 	if maxBytes := a.limits.MaxResponseBytes; maxBytes > 0 && len(resp.Body) > maxBytes {
 		state.errorCode = errorCodeTooLarge
-		return a.respondToServeError(opts, &AppError{Code: errorCodeTooLarge, Message: errorMessageResponseTooLarge}, normalized, state.requestID)
+		return a.respondToServeError(opts, &AppError{Code: errorCodeTooLarge, Message: errorMessageResponseTooLarge}, normalized, state.requestID, state.traceID)
 	}
 	resp = limitStreamedResponse(resp, a.limits.MaxResponseBytes)
 
 	return resp
+}
+
+func clockNow(clock Clock) time.Time {
+	if clock == nil {
+		return time.Now()
+	}
+	return clock.Now()
+}
+
+func durationMS(startedAt time.Time, finishedAt time.Time) int {
+	if startedAt.IsZero() || finishedAt.IsZero() {
+		return 0
+	}
+	duration := finishedAt.Sub(startedAt).Milliseconds()
+	if duration < 0 {
+		return 0
+	}
+	return int(duration)
 }
 
 func requestForNormalizeError(fallback Request, normalized Request, errorCode string) Request {
@@ -390,34 +437,34 @@ func errorCodeForError(err error) string {
 	var portableErr *AppTheoryError
 	if errors.As(err, &portableErr) {
 		if strings.TrimSpace(portableErr.Code) != "" {
-			return portableErr.Code
+			return canonicalRuntimeErrorCode(portableErr.Code)
 		}
 		return errorCodeInternal
 	}
 	var appErr *AppError
 	if errors.As(err, &appErr) {
-		return appErr.Code
+		return canonicalRuntimeErrorCode(appErr.Code)
 	}
 	return errorCodeInternal
 }
 
-func (a *App) routeNotFoundResponse(allowed []string, requestID string) (Response, string) {
+func (a *App) routeNotFoundResponse(allowed []string, requestID string, traceID string) (Response, string) {
 	if len(allowed) > 0 {
 		headers := map[string][]string{
 			"allow": {formatAllowHeader(allowed)},
 		}
-		return a.httpErrorResponseWithRequestID(errorCodeMethodNotAllowed, errorMessageMethodNotAllowed, headers, requestID), errorCodeMethodNotAllowed
+		return a.httpErrorResponseWithRequestIDTraceID(errorCodeMethodNotAllowed, errorMessageMethodNotAllowed, headers, requestID, traceID), errorCodeMethodNotAllowed
 	}
-	return a.httpErrorResponseWithRequestID(errorCodeNotFound, errorMessageNotFound, nil, requestID), errorCodeNotFound
+	return a.httpErrorResponseWithRequestIDTraceID(errorCodeNotFound, errorMessageNotFound, nil, requestID, traceID), errorCodeNotFound
 }
 
 func (a *App) applyPolicy(
-	enableP2 bool,
+	tier Tier,
 	requestCtx *Context,
 	requestID string,
 	errorResponder requestErrorResponder,
 ) (Response, string, bool) {
-	if !enableP2 || a.policy == nil {
+	if tier != TierP2 || a.policy == nil {
 		return Response{}, "", false
 	}
 
@@ -426,7 +473,7 @@ func (a *App) applyPolicy(
 		if errorResponder != nil {
 			return errorResponder(err, requestCtx.Request, requestID), errorCodeForError(err), true
 		}
-		return a.httpErrorResponseWithRequestID(errorCodeInternal, errorMessageInternal, nil, requestID), errorCodeInternal, true
+		return a.httpErrorResponseWithRequestIDTraceID(errorCodeInternal, errorMessageInternal, nil, requestID, requestCtx.TraceID), errorCodeInternal, true
 	}
 	if decision == nil {
 		return Response{}, "", false
@@ -445,7 +492,7 @@ func (a *App) applyPolicy(
 	if errorResponder != nil {
 		return errorResponder(&AppError{Code: code, Message: message}, requestCtx.Request, requestID), code, true
 	}
-	return a.httpErrorResponseWithRequestID(code, message, decision.Headers, requestID), code, true
+	return a.httpErrorResponseWithRequestIDTraceID(code, message, decision.Headers, requestID, requestCtx.TraceID), code, true
 }
 
 func routeRequiresAuth(route route) bool {
@@ -466,7 +513,7 @@ func (a *App) authorizeDenied(
 	if errorResponder != nil {
 		return errorResponder(&AppError{Code: code, Message: message}, request, requestID), code, true
 	}
-	return a.httpErrorResponseWithRequestID(code, message, nil, requestID), code, true
+	return a.httpErrorResponseWithRequestIDTraceID(code, message, nil, requestID, request.TraceID), code, true
 }
 
 func (a *App) authorize(
@@ -486,7 +533,7 @@ func (a *App) authorize(
 		if errorResponder != nil {
 			return errorResponder(err, requestCtx.Request, requestID), errorCodeForError(err), true
 		}
-		return a.responseForHTTPErrorWithRequestID(err, requestID), errorCodeForError(err), true
+		return a.responseForHTTPErrorWithRequestIDTraceID(err, requestID, requestCtx.TraceID), errorCodeForError(err), true
 	}
 
 	if principal == nil {

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: verify branch/version manifest state is synchronized across release lanes.
 set -euo pipefail
 
 # Ensures `premain` stays aligned with the latest stable version on `main`.

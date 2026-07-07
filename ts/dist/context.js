@@ -5,6 +5,7 @@ import { RandomIdGenerator } from "./ids.js";
 import { toBuffer } from "./internal/http.js";
 import { hasJSONContentType } from "./internal/response.js";
 import { normalizeSourceProvenance } from "./internal/source-provenance.js";
+/** AppSync resolver metadata exposed to AppTheory route handlers. */
 export class AppSyncContext {
     fieldName;
     parentTypeName;
@@ -79,11 +80,13 @@ export class AppSyncContext {
         };
     }
 }
+/** Request-scoped context passed to HTTP, AppSync, and WebSocket handlers. */
 export class Context {
     ctx;
     request;
     params;
     requestId;
+    traceId;
     tenantId;
     authIdentity;
     remainingMs;
@@ -100,6 +103,7 @@ export class Context {
         this._clock = options.clock ?? new RealClock();
         this._ids = options.ids ?? new RandomIdGenerator();
         this.requestId = options.requestId ?? "";
+        this.traceId = options.traceId ?? this.request.traceId ?? "";
         this.tenantId = options.tenantId ?? "";
         this.authIdentity = options.authIdentity ?? "";
         this.remainingMs = Number(options.remainingMs ?? 0);
@@ -110,33 +114,45 @@ export class Context {
         this._appSync = options.appSync ?? null;
         this._values = new Map();
     }
+    /** Returns the request clock time using the configured clock. */
     now() {
         return this._clock.now();
     }
+    /** Returns a deterministic or production ID from the configured generator. */
     newId() {
         return this._ids.newId();
     }
+    /** Returns a route parameter by name, or an empty string when absent. */
     param(name) {
         return this.params[String(name)] ?? "";
     }
+    /** Stores request-scoped middleware state by key. */
     set(key, value) {
         const k = String(key ?? "").trim();
         if (!k)
             return;
         this._values.set(k, value);
     }
+    /** Returns request-scoped middleware state by key. */
     get(key) {
         const k = String(key ?? "").trim();
         if (!k)
             return undefined;
         return this._values.get(k);
     }
+    /** Returns normalized source-provenance metadata for the request. */
     sourceProvenance() {
         return normalizeSourceProvenance(this.request.sourceProvenance);
     }
+    /** Returns the canonical source IP when the provider supplied one. */
     sourceIP() {
         return this.sourceProvenance().sourceIP;
     }
+    /** Returns the extracted trace ID for correlation, if present. */
+    traceContextId() {
+        return String(this.traceId ?? "").trim();
+    }
+    /** Decodes the request body as JSON after validating the content type. */
     jsonValue() {
         if (!hasJSONContentType(this.request.headers)) {
             throw new AppError("app.bad_request", "invalid json");
@@ -151,13 +167,16 @@ export class Context {
             throw new AppError("app.bad_request", "invalid json");
         }
     }
+    /** Returns WebSocket trigger metadata for WebSocket routes. */
     asWebSocket() {
         return this._webSocket;
     }
+    /** Returns AppSync resolver metadata for AppSync routes. */
     asAppSync() {
         return this._appSync;
     }
 }
+/** Context passed to non-HTTP event workload handlers. */
 export class EventContext {
     ctx;
     requestId;
@@ -173,18 +192,22 @@ export class EventContext {
         this.remainingMs = Number(options.remainingMs ?? 0);
         this._values = new Map();
     }
+    /** Returns the event clock time using the configured clock. */
     now() {
         return this._clock.now();
     }
+    /** Returns a deterministic or production ID from the configured generator. */
     newId() {
         return this._ids.newId();
     }
+    /** Stores event-scoped middleware state by key. */
     set(key, value) {
         const k = String(key ?? "").trim();
         if (!k)
             return;
         this._values.set(k, value);
     }
+    /** Returns event-scoped middleware state by key. */
     get(key) {
         const k = String(key ?? "").trim();
         if (!k)
@@ -192,6 +215,7 @@ export class EventContext {
         return this._values.get(k);
     }
 }
+/** WebSocket trigger metadata and connection-management helpers. */
 export class WebSocketContext {
     ctx;
     requestId;
@@ -228,9 +252,11 @@ export class WebSocketContext {
         this._client = null;
         this._clientError = null;
     }
+    /** Returns the WebSocket request clock time using the configured clock. */
     now() {
         return this._clock.now();
     }
+    /** Returns a deterministic or production ID from the configured generator. */
     newId() {
         return this._ids.newId();
     }
@@ -252,6 +278,7 @@ export class WebSocketContext {
         this._client = client;
         return client;
     }
+    /** Sends bytes to the active WebSocket connection. */
     async sendMessage(data) {
         const id = String(this.connectionId ?? "").trim();
         if (!id)
@@ -262,7 +289,9 @@ export class WebSocketContext {
         }
         await client.postToConnection(id, toBuffer(data));
     }
+    /** Serializes a value as JSON and sends it to the connection. */
     async sendJSONMessage(value) {
         await this.sendMessage(Buffer.from(JSON.stringify(value), "utf8"));
     }
 }
+//# sourceMappingURL=context.js.map

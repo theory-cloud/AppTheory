@@ -49,3 +49,4 @@ export function resourceName(appName, resource, stage, tenant = "") {
     const stg = normalizeStage(stage);
     return ten ? `${app}-${ten}-${res}-${stg}` : `${app}-${res}-${stg}`;
 }
+//# sourceMappingURL=naming.js.map

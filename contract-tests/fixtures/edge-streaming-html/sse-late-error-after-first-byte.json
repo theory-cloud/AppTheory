@@ -1,0 +1,55 @@
+{
+  "id": "m14.sse.late_error_after_first_byte",
+  "tier": "m14",
+  "name": "SSE: late errors after the first byte are surfaced as stream error codes",
+  "setup": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/sse-late-error",
+        "handler": "sse_late_error_after_first_byte"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "GET",
+      "path": "/sse-late-error",
+      "query": {},
+      "headers": {},
+      "body": {
+        "encoding": "utf8",
+        "value": ""
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": [
+          "text/event-stream"
+        ],
+        "cache-control": [
+          "no-cache"
+        ],
+        "connection": [
+          "keep-alive"
+        ],
+        "x-request-id": [
+          "req_test_123"
+        ]
+      },
+      "cookies": [],
+      "chunks": [
+        {
+          "encoding": "utf8",
+          "value": "data: hello\n\n"
+        }
+      ],
+      "stream_error_code": "app.internal",
+      "is_base64": false
+    }
+  }
+}

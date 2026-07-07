@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
+from apptheory.errors import AppTheoryError
 from apptheory.util import normalize_path
 
 
 @dataclass(slots=True)
 class Match:
-    handler: object
+    """Resolved route match including the handler, path params, and auth flag."""
+
+    handler: Any
     params: dict[str, str]
     auth_required: bool
 
@@ -17,7 +21,7 @@ class _Route:
     method: str
     pattern: str
     segments: list[tuple[str, str]]
-    handler: object
+    handler: Any
     auth_required: bool
     static_count: int
     param_count: int
@@ -26,22 +30,26 @@ class _Route:
 
 
 class Router:
+    """Fail-closed HTTP route matcher used by the AppTheory runtime."""
+
     def __init__(self) -> None:
         self._routes: list[_Route] = []
 
-    def add(self, method: str, pattern: str, handler: object, *, auth_required: bool = False) -> None:
-        try:
-            self.add_strict(method, pattern, handler, auth_required=auth_required)
-        except ValueError:
-            return
+    def add(self, method: str, pattern: str, handler: Any, *, auth_required: bool = False) -> None:
+        """Register a route using the fail-closed route-registration path."""
+        self.add_strict(method, pattern, handler, auth_required=auth_required)
 
-    def add_strict(self, method: str, pattern: str, handler: object, *, auth_required: bool = False) -> None:
+    def add_strict(self, method: str, pattern: str, handler: Any, *, auth_required: bool = False) -> None:
+        """Register a route through the deprecated strict compatibility path."""
         if handler is None:
-            raise ValueError("apptheory: route handler is nil")
+            raise _route_registration_error("route handler is nil")
 
         method_value = str(method or "").strip().upper()
         segments, canonical_segments, static_count, param_count, has_proxy = _parse_route_segments(_split_path(pattern))
         pattern_value = "/" + "/".join(canonical_segments) if canonical_segments else "/"
+        for route in self._routes:
+            if route.method == method_value and route.pattern == pattern_value:
+                raise _route_registration_error("duplicate route")
         self._routes.append(
             _Route(
                 method=method_value,
@@ -57,6 +65,7 @@ class Router:
         )
 
     def match(self, method: str, path: str) -> tuple[Match | None, list[str]]:
+        """Match an HTTP method and path against registered routes."""
         method_value = str(method or "").strip().upper()
         path_segments = _split_path(normalize_path(path))
 
@@ -78,8 +87,13 @@ class Router:
 
     @staticmethod
     def format_allow_header(methods: list[str]) -> str:
+        """Format unique HTTP methods for an Allow response header."""
         unique = {str(m or "").strip().upper() for m in methods if str(m or "").strip()}
         return ", ".join(sorted(unique))
+
+
+def _route_registration_error(message: str) -> AppTheoryError:
+    return AppTheoryError("app.bad_request", message, status_code=400)
 
 
 def _split_path(path: str) -> list[str]:
@@ -101,7 +115,7 @@ def _parse_route_segments(
     for idx, raw in enumerate(raw_segments):
         value = str(raw or "").strip()
         if not value:
-            raise ValueError("apptheory: invalid route segment: empty")
+            raise _route_registration_error("invalid route pattern")
 
         if value.startswith(":") and len(value) > 1:
             value = "{" + value[1:] + "}"
@@ -111,20 +125,23 @@ def _parse_route_segments(
             if inner.endswith("+"):
                 name = inner[:-1].strip()
                 if not name:
-                    raise ValueError("apptheory: invalid route segment: proxy name is empty")
+                    raise _route_registration_error("invalid route pattern")
                 if idx != len(raw_segments) - 1:
-                    raise ValueError("apptheory: invalid route pattern: proxy segment must be last")
+                    raise _route_registration_error("invalid route pattern")
                 segments.append(("proxy", name))
                 canonical.append("{" + name + "+}")
                 has_proxy = True
                 continue
 
             if not inner:
-                raise ValueError("apptheory: invalid route segment: param name is empty")
+                raise _route_registration_error("invalid route pattern")
             segments.append(("param", inner))
             canonical.append("{" + inner + "}")
             param_count += 1
             continue
+
+        if "{" in value or "}" in value:
+            raise _route_registration_error("invalid route pattern")
 
         segments.append(("static", value))
         canonical.append(value)

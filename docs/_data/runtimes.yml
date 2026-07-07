@@ -7,7 +7,7 @@
 - id: go
   label: Go
   icon: go-mark
-  install: "go get github.com/theory-cloud/apptheory@vX.Y.Z"
+  install: "go get github.com/theory-cloud/apptheory@v1.14.0"
   lang: go
   snippet: |
     package main
@@ -37,7 +37,7 @@
 - id: ts
   label: TypeScript
   icon: ts-mark
-  install: "npm i ./theory-cloud-apptheory-X.Y.Z.tgz   # from a GitHub Release asset"
+  install: "gh release download v1.14.0 --repo theory-cloud/AppTheory --pattern theory-cloud-apptheory-1.14.0.tgz --pattern SHA256SUMS.txt --clobber && grep ' theory-cloud-apptheory-1.14.0.tgz$' SHA256SUMS.txt | sha256sum -c - && npm install ./theory-cloud-apptheory-1.14.0.tgz"
   lang: typescript
   snippet: |
     import { createApp, text } from "@theory-cloud/apptheory";
@@ -54,7 +54,7 @@
 - id: python
   label: Python
   icon: py-mark
-  install: "python -m pip install ./apptheory-X.Y.Z-py3-none-any.whl   # from a GitHub Release asset"
+  install: "gh release download v1.14.0 --repo theory-cloud/AppTheory --pattern apptheory-1.14.0-py3-none-any.whl --pattern SHA256SUMS.txt --clobber && grep ' apptheory-1.14.0-py3-none-any.whl$' SHA256SUMS.txt | sha256sum -c - && python -m pip install ./apptheory-1.14.0-py3-none-any.whl"
   lang: python
   snippet: |
     from apptheory import create_app, text

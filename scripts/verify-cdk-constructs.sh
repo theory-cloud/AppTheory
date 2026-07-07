@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Purpose: run CDK construct tests and synthesis checks.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

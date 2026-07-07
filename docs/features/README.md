@@ -13,6 +13,7 @@ contract.
 ## Current feature guides
 
 - [Sanitization](./sanitization.md)
+- [Observability Hooks](./observability.md)
 - [Logging Profiles](./logging-profiles.md)
 - [Jobs Ledger](./jobs-ledger.md)
 - [Event Workload Contracts](./event-workloads.md)

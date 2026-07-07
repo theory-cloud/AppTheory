@@ -479,3 +479,4 @@ export function buildStepFunctionsTaskTokenEvent(taskToken, payload = {}) {
     out["taskToken"] = String(taskToken ?? "").trim();
     return out;
 }
+//# sourceMappingURL=testkit.js.map

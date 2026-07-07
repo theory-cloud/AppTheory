@@ -20,6 +20,12 @@ type Request struct {
 	// SourceProvenance is provider-derived HTTP source metadata.
 	// Forwarding headers are ordinary headers and are not used to populate this field.
 	SourceProvenance SourceProvenance
+	// TraceID is extracted from inbound trace context headers.
+	//
+	// AppTheory records an inbound W3C traceparent trace-id when present and valid,
+	// otherwise it records the AWS X-Ray Root value from X-Amzn-Trace-Id. The
+	// runtime does not synthesize trace IDs or install an OpenTelemetry SDK.
+	TraceID string
 }
 
 func normalizeRequest(in Request) (Request, error) {
@@ -34,6 +40,7 @@ func normalizeRequestWithMaxBytes(in Request, maxRequestBytes int) (Request, err
 	out.SourceProvenance = normalizeSourceProvenance(in.SourceProvenance)
 
 	out.Headers = canonicalizeHeaders(in.Headers)
+	out.TraceID = extractTraceIDFromHeaders(out.Headers)
 
 	if in.IsBase64 {
 		decodedLen, err := decodedBase64Len(in.Body)

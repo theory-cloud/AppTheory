@@ -21,6 +21,13 @@ func (s *Server) handleResourcesList(req *Request) *Response {
 	})
 }
 
+func (s *Server) handleResourcesTemplatesList(req *Request) *Response {
+	templates := s.resourceRegistry.ListTemplates()
+	return NewResultResponse(req.ID, map[string]any{
+		"resourceTemplates": templates,
+	})
+}
+
 func (s *Server) handleResourcesRead(ctx context.Context, req *Request) *Response {
 	var params resourcesReadParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {

@@ -5,12 +5,14 @@ import (
 	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/jsii"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
 
 type AppTheoryApp interface {
 	constructs.Construct
+	Alias() awslambda.Alias
 	Api() AppTheoryHttpApi
 	DatabaseTable() awsdynamodb.ITable
 	Domain() AppTheoryApiDomain
@@ -34,6 +36,16 @@ type AppTheoryApp interface {
 // The jsii proxy struct for AppTheoryApp
 type jsiiProxy_AppTheoryApp struct {
 	internal.Type__constructsConstruct
+}
+
+func (j *jsiiProxy_AppTheoryApp) Alias() awslambda.Alias {
+	var returns awslambda.Alias
+	_jsii_.Get(
+		j,
+		"alias",
+		&returns,
+	)
+	return returns
 }
 
 func (j *jsiiProxy_AppTheoryApp) Api() AppTheoryHttpApi {

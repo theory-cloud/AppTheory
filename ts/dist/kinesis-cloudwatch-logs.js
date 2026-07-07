@@ -170,3 +170,4 @@ function isMaxOutputLengthError(error) {
     const message = String(error.message ?? "");
     return message.includes("maxOutputLength") || message.includes("larger than");
 }
+//# sourceMappingURL=kinesis-cloudwatch-logs.js.map

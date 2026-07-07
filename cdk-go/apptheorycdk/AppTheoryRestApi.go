@@ -5,6 +5,7 @@ import (
 	_init_ "github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/jsii"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigateway"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awswafv2"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/theory-cloud/apptheory/cdk-go/apptheorycdk/internal"
 )
@@ -14,6 +15,8 @@ type AppTheoryRestApi interface {
 	Api() awsapigateway.RestApi
 	// The tree node.
 	Node() constructs.Node
+	WafAssociation() awswafv2.CfnWebACLAssociation
+	WebAcl() awswafv2.CfnWebACL
 	AddRoute(path *string, methods *[]*string, options *AppTheoryRestApiRouteOptions)
 	// Returns a string representation of this construct.
 	ToString() *string
@@ -48,6 +51,26 @@ func (j *jsiiProxy_AppTheoryRestApi) Node() constructs.Node {
 	_jsii_.Get(
 		j,
 		"node",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryRestApi) WafAssociation() awswafv2.CfnWebACLAssociation {
+	var returns awswafv2.CfnWebACLAssociation
+	_jsii_.Get(
+		j,
+		"wafAssociation",
+		&returns,
+	)
+	return returns
+}
+
+func (j *jsiiProxy_AppTheoryRestApi) WebAcl() awswafv2.CfnWebACL {
+	var returns awswafv2.CfnWebACL
+	_jsii_.Get(
+		j,
+		"webAcl",
 		&returns,
 	)
 	return returns

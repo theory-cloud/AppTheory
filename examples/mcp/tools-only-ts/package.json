@@ -1,0 +1,9 @@
+{
+  "name": "apptheory-mcp-tools-only-ts-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node --check server.mjs && node --check server.test.mjs",
+    "test": "node server.test.mjs"
+  }
+}

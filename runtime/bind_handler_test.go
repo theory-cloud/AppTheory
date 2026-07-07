@@ -160,6 +160,233 @@ func TestBindRequest_StrictJSONRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestBindRequest_StrictJSONRejectsNonBodySourceFields(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Name  string `json:"name"`
+		Limit int    `query:"limit"`
+	}
+
+	_, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"name":"bob","limit":3}`),
+		},
+	}, BindConfig[requestModel]{
+		Body:       true,
+		Query:      true,
+		StrictJSON: true,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 {
+		t.Fatalf("unexpected error payload: %#v", appErr)
+	}
+	if appErr.Message != "invalid body binding: limit" {
+		t.Fatalf("unexpected error message: %q", appErr.Message)
+	}
+	if appErr.Details["source"] != bindSourceBody || appErr.Details["name"] != "limit" {
+		t.Fatalf("unexpected error details: %#v", appErr.Details)
+	}
+	if appErr.Cause == nil {
+		t.Fatal("expected strict json failure to preserve cause")
+	}
+}
+
+func TestBindRequest_StrictJSONUsesCaseSensitiveBodyFieldNames(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Name string `json:"name"`
+	}
+
+	_, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"Name":"bob"}`),
+		},
+	}, BindConfig[requestModel]{
+		Body:       true,
+		StrictJSON: true,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 {
+		t.Fatalf("unexpected error payload: %#v", appErr)
+	}
+	if appErr.Message != "invalid body binding: Name" {
+		t.Fatalf("unexpected error message: %q", appErr.Message)
+	}
+	if appErr.Details["source"] != bindSourceBody || appErr.Details["name"] != "Name" {
+		t.Fatalf("unexpected error details: %#v", appErr.Details)
+	}
+}
+
+func TestBindRequest_StrictJSONBindsBodyAndRequestSources(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Name  string `json:"name"`
+		Limit int    `query:"limit"`
+	}
+
+	out, err := BindRequest(&Context{
+		Request: Request{
+			Body:  []byte(`{"name":"bob"}`),
+			Query: map[string][]string{"limit": {"7"}},
+		},
+	}, BindConfig[requestModel]{
+		Body:       true,
+		Query:      true,
+		StrictJSON: true,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if out.Name != "bob" || out.Limit != 7 {
+		t.Fatalf("unexpected binding: %#v", out)
+	}
+}
+
+func TestBindRequest_StrictJSONRejectsUnknownWithNoBodyFields(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Count int `query:"count"`
+	}
+
+	_, err := BindRequest(&Context{
+		Request: Request{
+			Body:  []byte(`{"extra":true}`),
+			Query: map[string][]string{"count": {"7"}},
+		},
+	}, BindConfig[requestModel]{
+		Body:       true,
+		Query:      true,
+		StrictJSON: true,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Message != "invalid body binding: extra" || appErr.Details["name"] != "extra" {
+		t.Fatalf("unexpected strict zero-body-field error: %#v", appErr)
+	}
+}
+
+func TestBindRequest_StrictJSONSupportsEmbeddedBodyFields(t *testing.T) {
+	t.Parallel()
+
+	type embeddedModel struct {
+		Name string `json:"name"`
+	}
+	type requestModel struct {
+		embeddedModel
+		Limit int `query:"limit"`
+	}
+
+	out, err := BindRequest(&Context{
+		Request: Request{
+			Body:  []byte(`{"name":"bob"}`),
+			Query: map[string][]string{"limit": {"7"}},
+		},
+	}, BindConfig[requestModel]{
+		Body:       true,
+		Query:      true,
+		StrictJSON: true,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if out.Name != "bob" || out.Limit != 7 {
+		t.Fatalf("unexpected embedded binding: %#v", out)
+	}
+}
+
+func TestBindRequest_StrictJSONSupportsDefaultFieldNames(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Name string
+	}
+
+	out, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"Name":"bob"}`),
+		},
+	}, BindConfig[requestModel]{
+		Body:       true,
+		StrictJSON: true,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if out.Name != "bob" {
+		t.Fatalf("unexpected default-name binding: %#v", out)
+	}
+}
+
+func TestBindRequest_StrictJSONRejectsInvalidBodyFieldValue(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Limit int `json:"limit"`
+	}
+
+	_, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"limit":"bad"}`),
+		},
+	}, BindConfig[requestModel]{
+		Body:       true,
+		StrictJSON: true,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 || appErr.Message != errorMessageInvalidJSON {
+		t.Fatalf("unexpected error payload: %#v", appErr)
+	}
+}
+
+func TestBindRequest_StrictJSONFallsBackForNonStructTargets(t *testing.T) {
+	t.Parallel()
+
+	out, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"name":"bob"}`),
+		},
+	}, BindConfig[map[string]string]{
+		Body:       true,
+		StrictJSON: true,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if out["name"] != "bob" {
+		t.Fatalf("unexpected map binding: %#v", out)
+	}
+}
+
 func TestBindRequest_StrictJSONRejectsTrailingValues(t *testing.T) {
 	t.Parallel()
 
@@ -185,6 +412,32 @@ func TestBindRequest_StrictJSONRejectsTrailingValues(t *testing.T) {
 	}
 	if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 {
 		t.Fatalf("unexpected error payload: %#v", appErr)
+	}
+}
+
+func TestBindRequest_NonStrictBodyRejectsNullTopLevel(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Name string `json:"name"`
+	}
+
+	_, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`null`),
+		},
+	}, BindConfig[requestModel]{
+		Body: true,
+	})
+	if err == nil {
+		t.Fatal("expected null top-level body to fail")
+	}
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 || appErr.Message != errorMessageInvalidJSON {
+		t.Fatalf("unexpected null body error: %#v", appErr)
 	}
 }
 
@@ -217,6 +470,72 @@ func TestBindRequest_InvalidQueryBindingReturnsBadRequest(t *testing.T) {
 	}
 }
 
+func TestBindRequest_NumericBindingRejectsUnsafeAndPartialValues(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Count int     `query:"count"`
+		Ratio float64 `query:"ratio"`
+	}
+
+	for name, query := range map[string]map[string][]string{
+		"unsafe int":       {"count": {"9007199254740992"}, "ratio": {"1.5"}},
+		"trailing float":   {"count": {"7"}, "ratio": {"1.5oops"}},
+		"non-finite float": {"count": {"7"}, "ratio": {"NaN"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := BindRequest(&Context{
+				Request: Request{Query: query},
+			}, BindConfig[requestModel]{
+				Query: true,
+			})
+			if err == nil {
+				t.Fatal("expected binding error")
+			}
+			appErr, ok := err.(*AppTheoryError)
+			if !ok {
+				t.Fatalf("expected AppTheoryError, got %T", err)
+			}
+			if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 {
+				t.Fatalf("unexpected numeric binding error: %#v", appErr)
+			}
+		})
+	}
+}
+
+func TestBindRequest_DurationBindingRejectsNonPortableEdges(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		TTL time.Duration `query:"ttl"`
+	}
+
+	for name, raw := range map[string]string{
+		"internal sign":         "1s-500ms",
+		"sub-microsecond value": "1ns",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := BindRequest(&Context{
+				Request: Request{Query: map[string][]string{"ttl": {raw}}},
+			}, BindConfig[requestModel]{
+				Query: true,
+			})
+			if err == nil {
+				t.Fatal("expected duration binding error")
+			}
+			appErr, ok := err.(*AppTheoryError)
+			if !ok {
+				t.Fatalf("expected AppTheoryError, got %T", err)
+			}
+			if appErr.Code != errorCodeBadRequest || appErr.StatusCode != 400 {
+				t.Fatalf("unexpected duration binding error: %#v", appErr)
+			}
+		})
+	}
+}
+
 func TestBindRequest_ValidateMapsToValidationFailed(t *testing.T) {
 	t.Parallel()
 
@@ -242,11 +561,109 @@ func TestBindRequest_ValidateMapsToValidationFailed(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected AppTheoryError, got %T", err)
 	}
-	if appErr.Code != errorCodeValidationFailed || appErr.StatusCode != 400 {
+	if appErr.Code != errorCodeValidationFailed || appErr.StatusCode != 422 {
 		t.Fatalf("unexpected validation payload: %#v", appErr)
 	}
 	if appErr.Cause == nil {
 		t.Fatal("expected validation failure to preserve cause")
+	}
+}
+
+func TestBindRequest_DeclarativeValidationReturnsCanonicalFieldErrors(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Name string `json:"name" validate:"required"`
+		Age  int    `json:"age" validate:"min=18"`
+	}
+
+	_, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"age":17}`),
+		},
+	}, BindConfig[requestModel]{
+		Body: true,
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	if appErr.Code != errorCodeValidationFailed || appErr.StatusCode != 422 {
+		t.Fatalf("unexpected validation payload: %#v", appErr)
+	}
+	errorsValue, ok := appErr.Details["errors"].([]ValidationFieldError)
+	if !ok {
+		t.Fatalf("expected validation field errors, got %#v", appErr.Details["errors"])
+	}
+	if len(errorsValue) != 2 {
+		t.Fatalf("expected 2 field errors, got %#v", errorsValue)
+	}
+	if errorsValue[0] != (ValidationFieldError{Field: "name", Rule: ValidationRuleRequired, Message: "name is required"}) {
+		t.Fatalf("unexpected required field error: %#v", errorsValue[0])
+	}
+	if errorsValue[1] != (ValidationFieldError{Field: "age", Rule: ValidationRuleMin, Message: "age must be >= 18"}) {
+		t.Fatalf("unexpected min field error: %#v", errorsValue[1])
+	}
+}
+
+func TestBindRequest_RequiredValidationUsesPresence(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Count  int            `json:"count" validate:"required"`
+		Active bool           `json:"active" validate:"required"`
+		Name   string         `json:"name" validate:"required"`
+		Tags   []string       `json:"tags" validate:"required"`
+		Meta   map[string]any `json:"meta" validate:"required"`
+	}
+
+	req, err := BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"count":0,"active":false,"name":"","tags":[],"meta":{}}`),
+		},
+	}, BindConfig[requestModel]{
+		Body: true,
+	})
+	if err != nil {
+		t.Fatalf("expected present zero values to satisfy required, got %v", err)
+	}
+	if req.Count != 0 || req.Active || req.Name != "" || len(req.Tags) != 0 || len(req.Meta) != 0 {
+		t.Fatalf("unexpected bound request: %#v", req)
+	}
+
+	_, err = BindRequest(&Context{
+		Request: Request{
+			Body: []byte(`{"count":null,"active":false,"name":"","tags":[]}`),
+		},
+	}, BindConfig[requestModel]{
+		Body: true,
+	})
+	if err == nil {
+		t.Fatal("expected null and missing required fields to fail")
+	}
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	errorsValue, ok := appErr.Details["errors"].([]ValidationFieldError)
+	if !ok {
+		t.Fatalf("expected validation field errors, got %#v", appErr.Details["errors"])
+	}
+	want := []ValidationFieldError{
+		{Field: "count", Rule: ValidationRuleRequired, Message: "count is required"},
+		{Field: "meta", Rule: ValidationRuleRequired, Message: "meta is required"},
+	}
+	if len(errorsValue) != len(want) {
+		t.Fatalf("expected %d field errors, got %#v", len(want), errorsValue)
+	}
+	for i := range want {
+		if errorsValue[i] != want[i] {
+			t.Fatalf("error %d: expected %#v, got %#v", i, want[i], errorsValue[i])
+		}
 	}
 }
 
@@ -351,5 +768,140 @@ func TestBindRequest_ValidationPreservesAppTheoryAndAppErrors(t *testing.T) {
 	}
 	if appErr.Code != errorCodeConflict || appErr.StatusCode != 409 {
 		t.Fatalf("unexpected mapped AppError: %#v", appErr)
+	}
+}
+
+func TestValidateBoundRequest_RuleVocabularyAggregates(t *testing.T) {
+	t.Parallel()
+
+	type embeddedModel struct {
+		Code string `json:"code" validate:"pattern=^[A-Z]+$"`
+	}
+	type requestModel struct {
+		embeddedModel
+		Title    string            `json:"title" validate:"min_length=3,max_length=5"`
+		Quantity int               `json:"quantity" validate:"max=10"`
+		Level    int               `json:"level" validate:"enum=1|2"`
+		State    string            `json:"state" validate:"enum=open|closed"`
+		Tags     []string          `json:"tags" validate:"min_length=2"`
+		Labels   map[string]string `json:"labels" validate:"max_length=1"`
+		Ptr      *int              `json:"ptr" validate:"required"`
+	}
+
+	err := validateBoundRequest(requestModel{
+		embeddedModel: embeddedModel{Code: "abc"},
+		Title:         "xx",
+		Quantity:      11,
+		Level:         3,
+		State:         "pending",
+		Tags:          []string{"one"},
+		Labels:        map[string]string{"a": "1", "b": "2"},
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	got, ok := appErr.Details["errors"].([]ValidationFieldError)
+	if !ok {
+		t.Fatalf("expected validation field errors, got %#v", appErr.Details["errors"])
+	}
+	want := []ValidationFieldError{
+		{Field: "code", Rule: ValidationRulePattern, Message: "code must match pattern"},
+		{Field: "title", Rule: ValidationRuleMinLength, Message: "title length must be >= 3"},
+		{Field: "quantity", Rule: ValidationRuleMax, Message: "quantity must be <= 10"},
+		{Field: "level", Rule: ValidationRuleEnum, Message: "level must be one of 1, 2"},
+		{Field: "state", Rule: ValidationRuleEnum, Message: "state must be one of open, closed"},
+		{Field: "tags", Rule: ValidationRuleMinLength, Message: "tags length must be >= 2"},
+		{Field: "labels", Rule: ValidationRuleMaxLength, Message: "labels length must be <= 1"},
+		{Field: "ptr", Rule: ValidationRuleRequired, Message: "ptr is required"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d errors, got %#v", len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("error %d: expected %#v, got %#v", i, want[i], got[i])
+		}
+	}
+}
+
+func TestValidateBoundRequest_PassesValidRuleVocabulary(t *testing.T) {
+	t.Parallel()
+
+	value := 3
+	type requestModel struct {
+		Name   string  `json:"name" validate:"required,min_length=2,max_length=5"`
+		Count  uint    `query:"count" validate:"min=2,max=4"`
+		Ratio  float64 `path:"ratio" validate:"min=1.5"`
+		State  string  `header:"x-state" validate:"enum=open|closed"`
+		Labels []int   `json:"labels" validate:"min_length=1,max_length=2"`
+		Value  *int    `json:"value" validate:"required"`
+	}
+
+	err := validateBoundRequest(requestModel{
+		Name:   "bob",
+		Count:  3,
+		Ratio:  1.5,
+		State:  "closed",
+		Labels: []int{1, 2},
+		Value:  &value,
+	})
+	if err != nil {
+		t.Fatalf("expected valid model to pass, got %v", err)
+	}
+	if err := validateBoundRequest("not a struct"); err != nil {
+		t.Fatalf("expected non-struct validation to no-op, got %v", err)
+	}
+	if err := validateBoundRequest(nil); err != nil {
+		t.Fatalf("expected nil validation to no-op, got %v", err)
+	}
+}
+
+func TestValidateBoundRequest_InvalidRuleConfigFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	type requestModel struct {
+		Email string `json:"email" validate:"pattern=["`
+		Age   int    `json:"age" validate:"min=abc"`
+		Name  string `json:"name" validate:"required=unexpected"`
+		Role  string `json:"role" validate:"typo=1"`
+		Empty string `json:"empty" validate:"enum="`
+	}
+
+	err := validateBoundRequest(requestModel{
+		Email: "alice@example.com",
+		Age:   30,
+		Name:  "Alice",
+		Role:  "admin",
+	})
+	if err == nil {
+		t.Fatal("expected invalid config to fail closed")
+	}
+	appErr, ok := err.(*AppTheoryError)
+	if !ok {
+		t.Fatalf("expected AppTheoryError, got %T", err)
+	}
+	got, ok := appErr.Details["errors"].([]ValidationFieldError)
+	if !ok {
+		t.Fatalf("expected validation field errors, got %#v", appErr.Details["errors"])
+	}
+	want := []ValidationFieldError{
+		{Field: "email", Rule: ValidationRulePattern, Message: "email has invalid validation rule pattern"},
+		{Field: "age", Rule: ValidationRuleMin, Message: "age has invalid validation rule min"},
+		{Field: "name", Rule: ValidationRuleRequired, Message: "name has invalid validation rule required"},
+		{Field: "role", Rule: "typo", Message: "role has invalid validation rule typo"},
+		{Field: "empty", Rule: ValidationRuleEnum, Message: "empty has invalid validation rule enum"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d errors, got %#v", len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("error %d: expected %#v, got %#v", i, want[i], got[i])
+		}
 	}
 }

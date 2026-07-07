@@ -4,7 +4,7 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Any
 
-from theorydb_py import (
+from tabletheory_py import (
     ConditionFailedError,
     ModelDefinition,
     NotFoundError,

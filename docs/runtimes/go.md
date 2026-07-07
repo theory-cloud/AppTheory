@@ -5,14 +5,14 @@ description: The Go implementation of the AppTheory contract — routing, middle
 
 # Go Runtime
 
-The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — the [147 contract fixtures](../reference/contract-fixtures.md) arbitrate when the three runtimes disagree.
+The Go runtime is the most complete implementation of the AppTheory contract and ships with the broadest middleware and CDK surface. It is **a reference implementation, not the source of truth** — the [216 contract fixtures](../reference/contract-fixtures.md) arbitrate when the three runtimes disagree. <!-- apptheory-fixture-count -->
 
 ## Install
 
 The Go toolchain resolves modules from the immutable git tag — no registry is involved beyond Go's standard proxy.
 
 ```bash
-go get github.com/theory-cloud/apptheory@vX.Y.Z
+go get github.com/theory-cloud/apptheory@v1.14.0
 ```
 
 Pin a specific release tag from the [releases page](https://github.com/theory-cloud/AppTheory/releases). AppTheory does not publish to the npm or PyPI registries; the Go module is the only language artifact that ships through Go's normal toolchain path.
@@ -98,9 +98,9 @@ func TestHello(t *testing.T) {
 
 `env.IDs.Queue(...)` pre-fills the ID generator so any `ctx.NewID()` call returns the queued value in order — handler tests stay deterministic across rerolls.
 
-## Strict routes
+## Route registration
 
-Default route registration is compatibility-oriented and may silently ignore invalid patterns. In tests and CI, prefer the strict variants:
+Fluent route registration fails closed: invalid patterns, duplicate method/pattern pairs, and nil handlers panic during registration instead of silently producing a dead route. Strict helpers remain deprecated compatibility wrappers when a caller still needs an error-returning shape, and their errors now use canonical `AppTheoryError` messages where applicable:
 
 ```go
 if _, err := app.GetStrict("/users/{id}", h); err != nil {
@@ -108,11 +108,11 @@ if _, err := app.GetStrict("/users/{id}", h); err != nil {
 }
 ```
 
-Go strict helpers return `(*App, error)` on invalid patterns at registration time so a bad route fails the build instead of silently 404-ing in production. TypeScript strict helpers throw and Python strict helpers raise.
+TypeScript and Python follow the same fail-closed registration contract.
 
 ## HTTP error format
 
-Default HTTP error envelopes are nested under `error`. To match Lift's flat shape:
+Default HTTP error envelopes are nested under `error`. `AppTheoryError` is the canonical client-safe error type for new code; `AppError` remains supported for code/message compatibility. Any HTTP error whose code string is `EMPTY_BODY` or `INVALID_JSON` is remapped by the default nested envelope to `app.bad_request`. To match Lift's flat shape and preserve those legacy codes/messages:
 
 ```go
 app := apptheory.New(apptheory.WithHTTPErrorFormat(apptheory.HTTPErrorFormatFlatLegacy))
@@ -161,11 +161,11 @@ See the [MCP Method Surface](../integrations/mcp.md) for the full Streamable HTT
 
 ## What's verified
 
-The Go runtime passes all 147 contract fixtures on every commit. Any behavioral divergence between Go, TypeScript, and Python is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds in all three runtimes.
+The Go runtime passes all 216 contract fixtures on every commit. <!-- apptheory-fixture-count --> Any behavioral divergence between Go, TypeScript, and Python is treated as a contract bug — fix the implementation, or update the fixture and prove the change holds in all three runtimes.
 
 ## Next reads
 
 - [API Reference](../api-reference.md) — full surface table
 - [HTTP Runtime tiers](../features/http-runtime.md) — P0 / P1 / P2
 - [Event Shape Dispatch](../reference/event-shapes.md) — when `HandleLambda` calls what
-- [Contract Fixtures](../reference/contract-fixtures.md) — the 128-fixture covenant
+- [Contract Fixtures](../reference/contract-fixtures.md) — the 216-fixture covenant <!-- apptheory-fixture-count -->

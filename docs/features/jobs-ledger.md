@@ -70,7 +70,7 @@ Module: `ts/src/jobs.ts` (exported via `ts/src/index.ts`, shipped in `ts/dist/`)
 Module: `py/src/apptheory/jobs.py` (exported from `py/src/apptheory/__init__.py`)
 
 - `DynamoJobLedger` class and canonical item dataclasses (`JobMeta`, `JobRecord`, `JobLock`, `JobRequest`).
-- Uses `tabletheory-py` (`theorydb_py`) conditional expressions to implement version guards, lease semantics, and
+- Uses `tabletheory-py` (`tabletheory_py`) conditional expressions to implement version guards, lease semantics, and
   idempotency.
 
 ## Leases (“LOCK” item)

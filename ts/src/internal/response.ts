@@ -66,8 +66,9 @@ export function hasJSONContentType(headers: Headers): boolean {
 function statusForErrorCode(code: string): number {
   switch (code) {
     case "app.bad_request":
-    case "app.validation_failed":
       return 400;
+    case "app.validation_failed":
+      return 422;
     case "app.unauthorized":
       return 401;
     case "app.forbidden":
@@ -93,15 +94,49 @@ function statusForErrorCode(code: string): number {
   }
 }
 
+function canonicalHTTPErrorFields(
+  format: HTTPErrorFormat,
+  code: string,
+  message: string,
+): { code: string; message: string } {
+  if (normalizeHTTPErrorFormat(format) === HTTP_ERROR_FORMAT_FLAT_LEGACY) {
+    return { code, message };
+  }
+  switch (code) {
+    case "EMPTY_BODY":
+      return { code: "app.bad_request", message: "request body is empty" };
+    case "INVALID_JSON":
+      return { code: "app.bad_request", message: "invalid json" };
+    default:
+      return { code, message };
+  }
+}
+
+function canonicalRuntimeErrorCode(code: string): string {
+  switch (code) {
+    case "EMPTY_BODY":
+    case "INVALID_JSON":
+      return "app.bad_request";
+    default:
+      return code;
+  }
+}
+
 function errorBodyFromAppTheoryError(
   format: HTTPErrorFormat,
   err: AppTheoryError,
   requestId: string,
+  traceId: string = "",
 ): Record<string, unknown> {
   const code = String(err.code ?? "").trim() || "app.internal";
-  const error: Record<string, unknown> = {
+  const canonical = canonicalHTTPErrorFields(
+    format,
     code,
-    message: String(err.message ?? ""),
+    String(err.message ?? ""),
+  );
+  const error: Record<string, unknown> = {
+    code: canonical.code,
+    message: canonical.message,
   };
 
   if (
@@ -121,8 +156,10 @@ function errorBodyFromAppTheoryError(
     if (resolvedRequestId) {
       error["request_id"] = resolvedRequestId;
     }
-    if (String(err.traceId ?? "").trim()) {
-      error["trace_id"] = String(err.traceId);
+    const resolvedTraceId =
+      String(err.traceId ?? "").trim() || String(traceId ?? "").trim();
+    if (resolvedTraceId) {
+      error["trace_id"] = resolvedTraceId;
     }
     if (String(err.timestamp ?? "").trim()) {
       error["timestamp"] = String(err.timestamp);
@@ -150,15 +187,17 @@ function errorResponseFromAppTheoryErrorWithFormat(
   err: AppTheoryError,
   headers: Headers = {},
   requestId: string = "",
+  traceId: string = "",
 ): NormalizedResponse {
   const outHeaders = { ...canonicalizeHeaders(headers) };
   outHeaders["content-type"] = ["application/json; charset=utf-8"];
 
   const code = String(err.code ?? "").trim() || "app.internal";
+  const canonical = canonicalHTTPErrorFields(format, code, err.message);
   const status =
     typeof err.statusCode === "number" && err.statusCode > 0
       ? err.statusCode
-      : statusForErrorCode(code);
+      : statusForErrorCode(canonical.code);
 
   return normalizeResponse({
     status,
@@ -166,7 +205,7 @@ function errorResponseFromAppTheoryErrorWithFormat(
     cookies: [],
     body: serializeHTTPErrorBody(
       format,
-      errorBodyFromAppTheoryError(format, err, requestId),
+      errorBodyFromAppTheoryError(format, err, requestId, traceId),
     ),
     isBase64: false,
   });
@@ -195,10 +234,13 @@ export function errorResponseWithFormat(
   outHeaders["content-type"] = ["application/json; charset=utf-8"];
 
   return normalizeResponse({
-    status: statusForErrorCode(code),
+    status: statusForErrorCode(canonicalRuntimeErrorCode(code)),
     headers: outHeaders,
     cookies: [],
-    body: serializeHTTPErrorBody(format, { code, message }),
+    body: serializeHTTPErrorBody(
+      format,
+      canonicalHTTPErrorFields(format, code, message),
+    ),
     isBase64: false,
   });
 }
@@ -225,19 +267,45 @@ export function errorResponseWithRequestIdAndFormat(
   headers: Headers = {},
   requestId: string = "",
 ): NormalizedResponse {
+  return errorResponseWithRequestIdTraceIdAndFormat(
+    format,
+    code,
+    message,
+    headers,
+    requestId,
+    "",
+  );
+}
+
+export function errorResponseWithRequestIdTraceIdAndFormat(
+  format: HTTPErrorFormat,
+  code: string,
+  message: string,
+  headers: Headers = {},
+  requestId: string = "",
+  traceId: string = "",
+): NormalizedResponse {
   const outHeaders = { ...canonicalizeHeaders(headers) };
   outHeaders["content-type"] = ["application/json; charset=utf-8"];
 
-  const error: Record<string, string> = { code, message };
+  const canonical = canonicalHTTPErrorFields(format, code, message);
+  const error: Record<string, string> = {
+    code: canonical.code,
+    message: canonical.message,
+  };
   if (
     normalizeHTTPErrorFormat(format) !== HTTP_ERROR_FORMAT_FLAT_LEGACY &&
     requestId
   ) {
     error["request_id"] = String(requestId);
   }
+  if (normalizeHTTPErrorFormat(format) !== HTTP_ERROR_FORMAT_FLAT_LEGACY) {
+    const resolvedTraceId = String(traceId ?? "").trim();
+    if (resolvedTraceId) error["trace_id"] = resolvedTraceId;
+  }
 
   return normalizeResponse({
-    status: statusForErrorCode(code),
+    status: statusForErrorCode(canonicalRuntimeErrorCode(code)),
     headers: outHeaders,
     cookies: [],
     body: serializeHTTPErrorBody(format, error),
@@ -278,28 +346,45 @@ export function responseForErrorWithRequestIdAndFormat(
   err: unknown,
   requestId: string,
 ): NormalizedResponse {
+  return responseForErrorWithRequestIdTraceIdAndFormat(
+    format,
+    err,
+    requestId,
+    "",
+  );
+}
+
+export function responseForErrorWithRequestIdTraceIdAndFormat(
+  format: HTTPErrorFormat,
+  err: unknown,
+  requestId: string,
+  traceId: string,
+): NormalizedResponse {
   if (err instanceof AppTheoryError) {
     return errorResponseFromAppTheoryErrorWithFormat(
       format,
       err,
       {},
       requestId,
+      traceId,
     );
   }
   if (err instanceof AppError) {
-    return errorResponseWithRequestIdAndFormat(
+    return errorResponseWithRequestIdTraceIdAndFormat(
       format,
       err.code,
       err.message,
       {},
       requestId,
+      traceId,
     );
   }
-  return errorResponseWithRequestIdAndFormat(
+  return errorResponseWithRequestIdTraceIdAndFormat(
     format,
     "app.internal",
     "internal error",
     {},
     requestId,
+    traceId,
   );
 }

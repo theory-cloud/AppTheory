@@ -16,7 +16,7 @@ func runFixtureM12(f Fixture) error {
 	for _, name := range f.Setup.Middlewares {
 		mw := builtInM12Middleware(name)
 		if mw == nil {
-			return &apptheory.AppError{Code: "app.internal", Message: "internal error"}
+			return apptheory.NewAppTheoryError("app.internal", "internal error")
 		}
 		app.Use(mw)
 	}
@@ -24,7 +24,7 @@ func runFixtureM12(f Fixture) error {
 	for _, r := range f.Setup.Routes {
 		handler := builtInM12Handler(r.Handler, &metrics)
 		if handler == nil {
-			return &apptheory.AppError{Code: "app.internal", Message: "internal error"}
+			return apptheory.NewAppTheoryError("app.internal", "internal error")
 		}
 		var opts []apptheory.RouteOption
 		if r.AuthRequired {
@@ -34,7 +34,7 @@ func runFixtureM12(f Fixture) error {
 	}
 
 	if f.Input.Request == nil {
-		return &apptheory.AppError{Code: "app.internal", Message: "internal error"}
+		return apptheory.NewAppTheoryError("app.internal", "internal error")
 	}
 
 	bodyBytes, err := decodeFixtureBody(f.Input.Request.Body)

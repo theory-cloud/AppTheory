@@ -1,0 +1,46 @@
+{
+  "id": "p0.binding.strict_nested_object_allows_nested_unknown",
+  "tier": "p0",
+  "name": "Strict JSON rejects only top-level unknown keys and leaves nested semantics to the model",
+  "setup": {
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/strict-nested",
+        "handler": "bind_strict_nested"
+      }
+    ]
+  },
+  "input": {
+    "request": {
+      "method": "POST",
+      "path": "/strict-nested",
+      "query": {},
+      "headers": {
+        "content-type": [
+          "application/json"
+        ]
+      },
+      "body": {
+        "encoding": "utf8",
+        "value": "{\"profile\":\"Bob\",\"nested\":{\"extra\":true}}"
+      },
+      "is_base64": false
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": [
+          "application/json; charset=utf-8"
+        ]
+      },
+      "cookies": [],
+      "body_json": {
+        "profile_name": "Bob"
+      },
+      "is_base64": false
+    }
+  }
+}
