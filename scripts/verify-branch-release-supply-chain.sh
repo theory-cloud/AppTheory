@@ -25,6 +25,7 @@ required_files=(
   "scripts/verify-ci-rubric-enforced.sh"
   "scripts/verify-release-pr-postcondition.sh"
   "scripts/verify-release-publish-postcondition.sh"
+  "scripts/verify-release-branch-signatures.sh"
   "scripts/publish-release-assets.sh"
 )
 
@@ -55,6 +56,14 @@ if [[ -f ".github/workflows/ci.yml" ]]; then
   }
   grep -Fq "github.event.pull_request.base.ref == 'staging'" ".github/workflows/ci.yml" || {
     echo "branch-release: full rubric must be scoped to PRs targeting staging"
+    failures=$((failures + 1))
+  }
+  grep -Fq "scripts/verify-release-branch-signatures.sh" ".github/workflows/ci.yml" || {
+    echo "branch-release: release/security gates must scan protected and release-please branch signatures"
+    failures=$((failures + 1))
+  }
+  grep -Fq "PR_HEAD_SHA" ".github/workflows/ci.yml" || {
+    echo "branch-release: release signature gate must receive the pull request head SHA"
     failures=$((failures + 1))
   }
 fi
