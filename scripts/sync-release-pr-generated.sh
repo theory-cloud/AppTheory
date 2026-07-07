@@ -1120,7 +1120,7 @@ if [[ "${print_plan_requested}" == "true" ]]; then
   exit 0
 fi
 
-go test ./cdk-go/apptheorycdk
+bash scripts/verify-cdk-go.sh
 
 if [[ "${changed}" == "true" ]]; then
   case "${sync_mode}" in
