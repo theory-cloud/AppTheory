@@ -213,7 +213,4 @@ jobs:
         if: steps.release_pr.outputs.exists == 'true'
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY }}
-          RELEASE_ARTIFACT_SYNC_GPG_KEY_ID: ${{ secrets.RELEASE_ARTIFACT_SYNC_GPG_KEY_ID }}
-          RELEASE_ARTIFACT_SYNC_GPG_PASSPHRASE: ${{ secrets.RELEASE_ARTIFACT_SYNC_GPG_PASSPHRASE }}
         run: scripts/sync-release-pr-generated.sh release-please--branches--main
