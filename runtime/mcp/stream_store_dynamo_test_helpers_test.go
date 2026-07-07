@@ -13,8 +13,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/pkg/errors"
+	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/v2/pkg/errors"
 )
 
 type fakeDynamoStreamSpillStore struct {
@@ -126,13 +126,6 @@ func (db *fakeMCPTableDB) Model(model any) tablecore.Query {
 		db:    db,
 		model: model,
 	}
-}
-
-func (db *fakeMCPTableDB) Transaction(fn func(*tablecore.Tx) error) error {
-	if fn == nil {
-		return nil
-	}
-	return fn(nil)
 }
 
 func (db *fakeMCPTableDB) TransactWrite(ctx context.Context, fn func(tablecore.TransactionBuilder) error) error {

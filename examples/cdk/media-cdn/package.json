@@ -9,11 +9,11 @@
   },
   "dependencies": {
     "@theory-cloud/apptheory-cdk": "file:../../../cdk",
-    "aws-cdk-lib": "2.257.0",
+    "aws-cdk-lib": "2.261.0",
     "constructs": "10.6.0"
   },
   "devDependencies": {
     "typescript": "^5.8.3",
-    "aws-cdk": "^2.177.0"
+    "aws-cdk": "2.1129.0"
   }
 }

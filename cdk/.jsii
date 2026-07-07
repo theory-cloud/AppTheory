@@ -6,7 +6,7 @@
     ]
   },
   "dependencies": {
-    "aws-cdk-lib": "2.257.0",
+    "aws-cdk-lib": "2.261.0",
     "constructs": "10.6.0"
   },
   "dependencyClosure": {
@@ -3286,6 +3286,19 @@
             }
           }
         },
+        "aws-cdk-lib.aws_resiliencehubv2": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.AWS.ResilienceHubV2"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.services.resiliencehubv2"
+            },
+            "python": {
+              "module": "aws_cdk.aws_resiliencehubv2"
+            }
+          }
+        },
         "aws-cdk-lib.aws_resourceexplorer2": {
           "targets": {
             "dotnet": {
@@ -4790,6 +4803,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_batch"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_bcm": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.BCM"
+            },
+            "go": {
+              "packageName": "interfacesawsbcm"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.bcm"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_bcm"
             }
           }
         },
@@ -7846,6 +7875,22 @@
             },
             "python": {
               "module": "aws_cdk.interfaces.aws_resiliencehub"
+            }
+          }
+        },
+        "aws-cdk-lib.interfaces.aws_resiliencehubv2": {
+          "targets": {
+            "dotnet": {
+              "namespace": "Amazon.CDK.Interfaces.ResilienceHubV2"
+            },
+            "go": {
+              "packageName": "interfacesawsresiliencehubv2"
+            },
+            "java": {
+              "package": "software.amazon.awscdk.interfaces.resiliencehubv2"
+            },
+            "python": {
+              "module": "aws_cdk.interfaces.aws_resiliencehubv2"
             }
           }
         },
@@ -26251,5 +26296,5 @@
     }
   },
   "version": "1.16.0",
-  "fingerprint": "HX6jTAbDOVttr039v6F7o37Idn8zsbdWTWhpe44DhoU="
+  "fingerprint": "L1ABpwUUCIoPlcZ9mQ/+VAcThlUrAJb2umedcQYZy1Q="
 }
