@@ -7,11 +7,11 @@
     "deploy": "cdk deploy --all"
   },
   "devDependencies": {
-    "@aws-cdk/cloud-assembly-schema": "53.23.0",
+    "@aws-cdk/cloud-assembly-schema": "54.8.0",
     "@theory-cloud/apptheory-cdk": "file:../../../cdk",
     "@types/node": "25.5.0",
-    "aws-cdk": "2.1113.0",
-    "aws-cdk-lib": "2.257.0",
+    "aws-cdk": "2.1129.0",
+    "aws-cdk-lib": "2.261.0",
     "constructs": "10.6.0",
     "ts-node": "10.9.2",
     "typescript": "5.9.3"
