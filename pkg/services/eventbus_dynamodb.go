@@ -8,8 +8,8 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
-	tableerrors "github.com/theory-cloud/tabletheory/pkg/errors"
+	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
+	tableerrors "github.com/theory-cloud/tabletheory/v2/pkg/errors"
 )
 
 // minInt returns the smaller of two integers.
