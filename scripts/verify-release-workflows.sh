@@ -678,9 +678,26 @@ require_contains(
 )
 require_contains(
     "docs/release-process.md",
-    "Generated release-artifact sync commits must be cryptographically signed",
-    "release process runbook must document generated artifact sync signing requirements",
+    "CI is not a signing key holder",
+    "release process runbook must document the no-CI-signing-secrets policy",
 )
+for forbidden in (
+    "RELEASE_ARTIFACT_SYNC_" + "GPG",
+    "RELEASE_ARTIFACT_SYNC_" + "GPG_PRIVATE_KEY",
+    "RELEASE_ARTIFACT_SYNC_" + "GPG_KEY_ID",
+    "RELEASE_ARTIFACT_SYNC_" + "GPG_PASSPHRASE",
+):
+    for path in (
+        ".github/workflows/prerelease-pr.yml",
+        ".github/workflows/release-pr.yml",
+        "scripts/sync-release-pr-generated.sh",
+        "docs/release-process.md",
+    ):
+        require_not_contains(
+            path,
+            forbidden,
+            "release artifact sync must not depend on CI-held signing secrets",
+        )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
     "--raw-field run_full_rubric=false",
@@ -703,18 +720,63 @@ require_contains(
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
-    "RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY",
-    "release PR sync must require a configured signing key before creating generated artifact commits",
+    "--local-signed-sync",
+    "release PR sync must provide an explicit local signed artifact sync path",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
+    'git commit -m "chore(release): sync generated release artifacts"',
+    "release PR sync must use normal local git commit signing configuration",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
     'git commit -S -m "chore(release): sync generated release artifacts"',
-    "release PR sync must cryptographically sign generated artifact commits",
+    "release PR sync must not force a bespoke CI signing path",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "git config user.signingkey",
+    "release PR sync must not set signing keys",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "git config gpg.program",
+    "release PR sync must not replace the local signing program",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "git config commit.gpgsign true",
+    "release PR sync must not mutate commit-signing configuration",
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
     "git verify-commit HEAD",
     "release PR sync must verify generated artifact commit signatures before pushing",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "git log -1 --format=%G?",
+    "release PR sync must report and gate the generated commit signature status",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "GitHub Actions must never create sync commits",
+    "release PR sync self-test must prove CI cannot create generated sync commits",
+)
+require_contains(
+    ".github/workflows/ci.yml",
+    "scripts/verify-release-branch-signatures.sh",
+    "release/security gates must scan branch signatures",
+)
+require_contains(
+    "scripts/verify-release-branch-signatures.sh",
+    "HISTORICAL_UNSIGNED_FIXTURE",
+    "release signature gate must have a historical unsigned negative fixture",
+)
+require_contains(
+    "scripts/verify-release-branch-signatures.sh",
+    "github-verified",
+    "release signature gate must distinguish GitHub-verified signatures from local signatures",
 )
 require_not_contains(
     "scripts/sync-release-pr-generated.sh",
@@ -741,20 +803,8 @@ for workflow in (".github/workflows/prerelease-pr.yml", ".github/workflows/relea
     require_step_contains(
         workflow,
         "Sync generated CDK artifacts on release PR",
-        "RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY }}",
-        "release PR artifact sync step must receive the configured signing key",
-    )
-    require_step_contains(
-        workflow,
-        "Sync generated CDK artifacts on release PR",
-        "RELEASE_ARTIFACT_SYNC_GPG_PASSPHRASE: ${{ secrets.RELEASE_ARTIFACT_SYNC_GPG_PASSPHRASE }}",
-        "release PR artifact sync step must receive the configured signing passphrase",
-    )
-    require_step_contains(
-        workflow,
-        "Sync generated CDK artifacts on release PR",
-        "RELEASE_ARTIFACT_SYNC_GPG_KEY_ID: ${{ secrets.RELEASE_ARTIFACT_SYNC_GPG_KEY_ID }}",
-        "release PR artifact sync step must receive the configured signing key id when set",
+        "GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}",
+        "release PR artifact sync step must authenticate gh without signing secrets",
     )
     require_order(
         workflow,

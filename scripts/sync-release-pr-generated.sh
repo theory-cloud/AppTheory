@@ -203,14 +203,85 @@ JSON
   echo "sync-release-pr-generated self-test: PASS"
 }
 
+is_ci_environment() {
+  [[ "${GITHUB_ACTIONS:-}" == "true" || "${CI:-}" == "true" ]]
+}
+
+release_artifact_sync_can_commit_locally() {
+  [[ "${local_signed_sync_requested:-false}" == "true" ]] && ! is_ci_environment
+}
+
+render_local_signed_sync_instructions() {
+  local branch="$1"
+  cat <<EOF
+sync-release-pr-generated: generated release artifacts changed, but CI is not a signing key holder.
+sync-release-pr-generated: leave the release PR draft and run the local signed sync path from a clean checkout:
+sync-release-pr-generated:   git fetch origin
+sync-release-pr-generated:   bash scripts/sync-release-pr-generated.sh --local-signed-sync ${branch}
+sync-release-pr-generated: The local path uses normal existing git commit signing configuration only.
+sync-release-pr-generated: It does not import signing keys, set signing config, or use CI-held signing secrets.
+EOF
+}
+
+run_signed_sync_mode_self_test() {
+  local local_signed_sync_requested=false
+  local old_github_actions="${GITHUB_ACTIONS-}"
+  local old_ci="${CI-}"
+  unset GITHUB_ACTIONS CI
+
+  if release_artifact_sync_can_commit_locally; then
+    echo "sync-release-pr-generated self-test: FAIL (default mode must not create local sync commits)" >&2
+    exit 1
+  fi
+
+  local_signed_sync_requested=true
+  if ! release_artifact_sync_can_commit_locally; then
+    echo "sync-release-pr-generated self-test: FAIL (explicit local mode should allow local sync commits outside CI)" >&2
+    exit 1
+  fi
+
+  GITHUB_ACTIONS=true
+  if release_artifact_sync_can_commit_locally; then
+    echo "sync-release-pr-generated self-test: FAIL (GitHub Actions must never create sync commits)" >&2
+    exit 1
+  fi
+  unset GITHUB_ACTIONS
+  if [[ -n "${old_github_actions}" ]]; then
+    GITHUB_ACTIONS="${old_github_actions}"
+  fi
+  if [[ -n "${old_ci}" ]]; then
+    CI="${old_ci}"
+  fi
+
+  local instructions
+  instructions="$(render_local_signed_sync_instructions "release-please--branches--premain")"
+  if [[ "${instructions}" != *"--local-signed-sync release-please--branches--premain"* ]]; then
+    echo "sync-release-pr-generated self-test: FAIL (pending-sync instructions must name local signed sync command)" >&2
+    exit 1
+  fi
+  if [[ "${instructions}" == *"PRIVATE_KEY"* ]]; then
+    echo "sync-release-pr-generated self-test: FAIL (pending-sync instructions must not mention private signing secrets)" >&2
+    exit 1
+  fi
+
+  echo "sync-release-pr-generated self-test: PASS signed-sync-mode"
+}
+
 if [[ "${1:-}" == "--self-test" ]]; then
   run_required_check_classifier_self_test
+  run_signed_sync_mode_self_test
   exit 0
+fi
+
+local_signed_sync_requested=false
+if [[ "${1:-}" == "--local-signed-sync" ]]; then
+  local_signed_sync_requested=true
+  shift
 fi
 
 release_branch="${1:-}"
 if [[ -z "${release_branch}" ]]; then
-  echo "sync-release-pr-generated: FAIL (usage: $0 <release-branch>|--self-test)" >&2
+  echo "sync-release-pr-generated: FAIL (usage: $0 [--local-signed-sync] <release-branch>|--self-test)" >&2
   exit 1
 fi
 
@@ -618,74 +689,97 @@ path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 PY
 }
 
-configure_release_artifact_sync_signing() {
-  if ! command -v gpg >/dev/null 2>&1; then
-    echo "sync-release-pr-generated: FAIL (gpg not found; generated release-artifact sync commits must be signed)"
+require_clean_worktree() {
+  local status
+  status="$(git status --porcelain=v1 --untracked-files=all)"
+  if [[ -n "${status}" ]]; then
+    echo "sync-release-pr-generated: FAIL (working tree must be clean before release PR artifact sync)" >&2
+    echo "${status}" >&2
+    exit 1
+  fi
+}
+
+require_only_release_artifact_changes() {
+  python3 - <<'PY'
+import subprocess
+import sys
+
+allowed_exact = {".release-please-manifest.premain.json", "cdk/.jsii"}
+allowed_prefixes = ("cdk/lib/", "cdk-go/apptheorycdk/")
+
+raw = subprocess.check_output(
+    ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+)
+records = [record for record in raw.decode("utf-8", "surrogateescape").split("\0") if record]
+unexpected: list[str] = []
+for record in records:
+    if len(record) < 4:
+        continue
+    path = record[3:]
+    if " -> " in path:
+        path = path.split(" -> ", 1)[1]
+    if path in allowed_exact or path.startswith(allowed_prefixes):
+        continue
+    unexpected.append(path)
+
+if unexpected:
+    print("sync-release-pr-generated: FAIL (artifact sync produced changes outside the release artifact allowlist)", file=sys.stderr)
+    for path in unexpected:
+        print(f"  {path}", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+require_existing_local_signing_config() {
+  local commit_gpgsign
+  commit_gpgsign="$(git config --bool --get commit.gpgsign || true)"
+  if [[ "${commit_gpgsign}" != "true" ]]; then
+    echo "sync-release-pr-generated: FAIL (local signed sync requires existing git commit signing config; commit.gpgsign is not true)" >&2
+    echo "sync-release-pr-generated: refusing to create a generated release-artifact sync commit that may be unsigned" >&2
+    exit 1
+  fi
+}
+
+verify_head_locally_signed() {
+  local context="$1"
+
+  if ! git verify-commit HEAD; then
+    echo "sync-release-pr-generated: FAIL (${context} commit signature did not verify locally)" >&2
+    echo "sync-release-pr-generated: do not push this commit; fix local signing configuration and recreate the sync commit" >&2
     exit 1
   fi
 
-  if [[ -z "${RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY:-}" ]]; then
-    echo "sync-release-pr-generated: FAIL (RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY is required to sign generated release-artifact sync commits)"
+  local signature_status
+  local signature_signer
+  local signature_key
+  signature_status="$(git log -1 --format=%G? HEAD)"
+  signature_signer="$(git log -1 --format=%GS HEAD)"
+  signature_key="$(git log -1 --format=%GK HEAD)"
+
+  echo "sync-release-pr-generated: ${context} signature status=${signature_status} signer=${signature_signer:-unknown} key=${signature_key:-unknown}"
+
+  if [[ "${signature_status}" != "G" ]]; then
+    echo "sync-release-pr-generated: FAIL (${context} commit signature is not locally trusted-good; status=${signature_status})" >&2
+    echo "sync-release-pr-generated: do not push this commit; fix local signing configuration and recreate the sync commit" >&2
     exit 1
   fi
+}
 
-  local gpg_home
-  gpg_home="$(mktemp -d)"
-  chmod 700 "${gpg_home}"
-  export GNUPGHOME="${gpg_home}"
-  trap 'rm -rf "${GNUPGHOME:-}"' EXIT
-
-  local key_file
-  key_file="$(mktemp)"
-  if grep -Fq "BEGIN PGP PRIVATE KEY BLOCK" <<<"${RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY}"; then
-    printf '%s\n' "${RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY}" >"${key_file}"
-  elif ! printf '%s' "${RELEASE_ARTIFACT_SYNC_GPG_PRIVATE_KEY}" | base64 --decode >"${key_file}" 2>/dev/null; then
-    rm -f "${key_file}"
-    echo "sync-release-pr-generated: FAIL (release-artifact signing key must be armored or base64-encoded GPG private key)"
+commit_release_artifact_sync_locally() {
+  require_existing_local_signing_config
+  git add .release-please-manifest.premain.json cdk/.jsii cdk/lib cdk-go/apptheorycdk
+  if ! git commit -m "chore(release): sync generated release artifacts"; then
+    echo "sync-release-pr-generated: FAIL (normal local git commit failed; no CI signing fallback exists)" >&2
     exit 1
   fi
-
-  if ! gpg --batch --import "${key_file}" >/dev/null 2>&1; then
-    rm -f "${key_file}"
-    echo "sync-release-pr-generated: FAIL (could not import release-artifact signing key)"
-    exit 1
-  fi
-  rm -f "${key_file}"
-
-  local key_id
-  key_id="${RELEASE_ARTIFACT_SYNC_GPG_KEY_ID:-}"
-  if [[ -z "${key_id}" ]]; then
-    key_id="$(
-      gpg --batch --list-secret-keys --with-colons --fingerprint \
-        | awk -F: '$1 == "fpr" { print $10; exit }'
-    )"
-  fi
-  if [[ -z "${key_id}" ]]; then
-    echo "sync-release-pr-generated: FAIL (could not determine release-artifact signing key id)"
-    exit 1
-  fi
-
-  if [[ -n "${RELEASE_ARTIFACT_SYNC_GPG_PASSPHRASE:-}" ]]; then
-    local gpg_wrapper
-    gpg_wrapper="${gpg_home}/gpg-wrapper"
-    cat >"${gpg_wrapper}" <<'EOF'
-#!/usr/bin/env bash
-exec gpg --batch --yes --pinentry-mode loopback --passphrase "${RELEASE_ARTIFACT_SYNC_GPG_PASSPHRASE}" "$@"
-EOF
-    chmod 700 "${gpg_wrapper}"
-    git config gpg.program "${gpg_wrapper}"
-  else
-    git config gpg.program gpg
-  fi
-
-  git config commit.gpgsign true
-  git config user.signingkey "${key_id}"
+  verify_head_locally_signed "generated release-artifact sync"
 }
 
 # The release PR must not be mergeable while generated artifacts are still being
 # rewritten. This is the release-lane invariant: release-please version files and
 # generated CDK/jsii artifacts land in the same release PR before it becomes
 # ready for review.
+require_clean_worktree
 ensure_release_pr_is_draft "before generated artifacts are synced"
 
 git fetch origin "${release_branch}"
@@ -695,15 +789,17 @@ sync_stable_release_premain_manifest
 scripts/update-cdk-generated.sh >/dev/null
 
 changed=false
-if ! git diff --quiet -- .release-please-manifest.premain.json cdk/.jsii cdk/lib cdk-go/apptheorycdk; then
+artifact_status="$(git status --porcelain=v1 --untracked-files=all -- .release-please-manifest.premain.json cdk/.jsii cdk/lib cdk-go/apptheorycdk)"
+if [[ -n "${artifact_status}" ]]; then
   changed=true
+  require_only_release_artifact_changes
 
-  git config user.name "github-actions[bot]"
-  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-  configure_release_artifact_sync_signing
-  git add .release-please-manifest.premain.json cdk/.jsii cdk/lib cdk-go/apptheorycdk
-  git commit -S -m "chore(release): sync generated release artifacts"
-  git verify-commit HEAD
+  if ! release_artifact_sync_can_commit_locally; then
+    render_local_signed_sync_instructions "${release_branch}" >&2
+    exit 1
+  fi
+
+  commit_release_artifact_sync_locally
 fi
 
 go test ./cdk-go/apptheorycdk

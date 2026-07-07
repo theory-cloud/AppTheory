@@ -83,8 +83,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Verify release/security invariants
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           bash scripts/verify-branch-release-supply-chain.sh
+          bash scripts/verify-release-branch-signatures.sh
           bash scripts/verify-release-train-promotion.sh --self-test
           bash scripts/verify-ci-rubric-enforced.sh
           bash scripts/verify-release-workflows.sh
