@@ -912,6 +912,16 @@ require_contains(
 )
 require_contains(
     "scripts/sync-release-pr-generated.sh",
+    "bash scripts/verify-cdk-go.sh",
+    "release PR sync must validate generated CDK Go bindings through the nested-module verifier",
+)
+require_not_contains(
+    "scripts/sync-release-pr-generated.sh",
+    "go test ./cdk-go/apptheorycdk",
+    "release PR sync must not test the nested cdk-go package from the root Go module",
+)
+require_contains(
+    "scripts/sync-release-pr-generated.sh",
     'synced_head="$(git rev-parse HEAD)"',
     "local signed release PR sync must capture the local signed generated-artifact head",
 )
