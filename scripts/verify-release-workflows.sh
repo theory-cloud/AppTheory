@@ -681,6 +681,11 @@ require_contains(
     "CI is not a signing key holder",
     "release process runbook must document the no-CI-signing-secrets policy",
 )
+require_contains(
+    "docs/release-process.md",
+    "local_status=N",
+    "release process runbook must distinguish local unresolved SSH verification from GitHub verified-valid evidence",
+)
 for forbidden in (
     "RELEASE_ARTIFACT_SYNC_" + "GPG",
     "RELEASE_ARTIFACT_SYNC_" + "GPG_PRIVATE_KEY",
@@ -777,6 +782,11 @@ require_contains(
     "scripts/verify-release-branch-signatures.sh",
     "github-verified",
     "release signature gate must distinguish GitHub-verified signatures from local signatures",
+)
+require_contains(
+    "scripts/verify-release-branch-signatures.sh",
+    "self-test:github-verified-fallback",
+    "release signature gate self-test must prove GitHub verified-valid fallback without unsigned commits",
 )
 require_not_contains(
     "scripts/sync-release-pr-generated.sh",

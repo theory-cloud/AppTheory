@@ -50,11 +50,11 @@ verify_commit_signature_status() {
       fi
       return 0
       ;;
-    N)
-      echo "release-signatures: FAIL ${label} ${sha} unsigned (%G?=N) subject=${subject}" >&2
+    B)
+      echo "release-signatures: FAIL ${label} ${sha} bad local signature local_status=${status} subject=${subject}" >&2
       return 1
       ;;
-    E|U)
+    *)
       local verification
       if verification="$(github_commit_verification "${sha}")"; then
         local verified reason gh_signer gh_key
@@ -67,10 +67,6 @@ verify_commit_signature_status() {
         return 1
       fi
       echo "release-signatures: FAIL ${label} ${sha} local_status=${status}; GitHub verification evidence unavailable subject=${subject}" >&2
-      return 1
-      ;;
-    *)
-      echo "release-signatures: FAIL ${label} ${sha} unacceptable signature status=${status:-unknown} subject=${subject}" >&2
       return 1
       ;;
   esac
@@ -215,7 +211,7 @@ run_self_test() {
 
   fetch_release_refs_if_possible
 
-  for ref in origin/main origin/premain origin/staging; do
+  for ref in origin/main origin/premain origin/staging origin/release-please--branches--main origin/release-please--branches--premain; do
     if ! git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
       echo "release-signatures self-test: FAIL (${ref} unavailable)" >&2
       failures=$((failures + 1))
@@ -237,7 +233,7 @@ run_self_test() {
       echo "release-signatures self-test: FAIL (historical unsigned fixture unexpectedly passed)" >&2
       echo "${fixture_output}" >&2
       failures=$((failures + 1))
-    elif [[ "${fixture_output}" != *"%G?=N"* ]]; then
+    elif [[ "${fixture_output}" != *"local_status=N"* && "${fixture_output}" != *"%G?=N"* ]]; then
       echo "release-signatures self-test: FAIL (historical unsigned fixture failed for the wrong reason)" >&2
       echo "${fixture_output}" >&2
       failures=$((failures + 1))
@@ -245,6 +241,38 @@ run_self_test() {
       echo "release-signatures self-test: PASS historical unsigned fixture failed closed"
       echo "${fixture_output}"
     fi
+  fi
+
+  local github_fallback_output
+  local github_fallback_status=0
+  github_fallback_output="$(
+    github_commit_verification() {
+      local requested_sha="$1"
+      if [[ "${requested_sha}" == "${SIGNED_HISTORY_BASE}" ]]; then
+        printf 'true\tvalid\tgithub-self-test\tself-test-key\n'
+        return 0
+      fi
+      return 1
+    }
+    verify_commit_signature_status \
+      "${SIGNED_HISTORY_BASE}" \
+      "N" \
+      "" \
+      "" \
+      "self-test simulated GitHub verified commit" \
+      "self-test:github-verified-fallback"
+  )" || github_fallback_status=$?
+  if [[ "${github_fallback_status}" -ne 0 ]]; then
+    echo "release-signatures self-test: FAIL (GitHub verified-valid fallback rejected)" >&2
+    echo "${github_fallback_output}" >&2
+    failures=$((failures + 1))
+  elif [[ "${github_fallback_output}" != *"github-verified"* || "${github_fallback_output}" != *"local_status=N"* ]]; then
+    echo "release-signatures self-test: FAIL (GitHub fallback did not report github-verified with local_status=N)" >&2
+    echo "${github_fallback_output}" >&2
+    failures=$((failures + 1))
+  else
+    echo "release-signatures self-test: PASS GitHub verified-valid fallback for local_status=N"
+    echo "${github_fallback_output}"
   fi
 
   if (( failures > 0 )); then
