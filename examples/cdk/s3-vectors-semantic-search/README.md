@@ -39,6 +39,14 @@ AWS_PROFILE=TheoryCloud AWS_REGION=us-east-1 \
   npx cdk deploy AppTheoryS3VectorsSemanticSearch --require-approval never
 ```
 
+For isolated live-validation retries, pass a CloudFormation-safe stack name and deploy that stack:
+
+```bash
+AWS_PROFILE=TheoryCloud AWS_REGION=us-east-1 \
+  npx cdk deploy -c stackName=AppTheoryS3VectorsSemanticSearchLive2 \
+  AppTheoryS3VectorsSemanticSearchLive2 --require-approval never
+```
+
 The deployment prints `ApiUrl`, `SeedCommand`, and `SearchCommand` outputs.
 
 ## Seed and query
