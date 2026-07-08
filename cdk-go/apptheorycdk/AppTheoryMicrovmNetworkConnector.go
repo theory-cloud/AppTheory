@@ -231,6 +231,25 @@ func AppTheoryMicrovmNetworkConnector_FromNetworkConnectorArn(scope constructs.C
 	return returns
 }
 
+// Reference the AWS-managed HTTP_INGRESS connector.
+func AppTheoryMicrovmNetworkConnector_HttpIngress(scope constructs.Construct, id *string) IAppTheoryMicrovmNetworkConnector {
+	_init_.Initialize()
+
+	if err := validateAppTheoryMicrovmNetworkConnector_HttpIngressParameters(scope, id); err != nil {
+		panic(err)
+	}
+	var returns IAppTheoryMicrovmNetworkConnector
+
+	_jsii_.StaticInvoke(
+		"@theory-cloud/apptheory-cdk.AppTheoryMicrovmNetworkConnector",
+		"httpIngress",
+		[]interface{}{scope, id},
+		&returns,
+	)
+
+	return returns
+}
+
 // Reference the AWS-managed INTERNET_EGRESS connector.
 func AppTheoryMicrovmNetworkConnector_InternetEgress(scope constructs.Construct, id *string) IAppTheoryMicrovmNetworkConnector {
 	_init_.Initialize()
