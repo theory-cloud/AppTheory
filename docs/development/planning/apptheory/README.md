@@ -21,6 +21,7 @@ Primary goals:
 - `docs/development/planning/apptheory/apptheory-full-alignment-roadmap.md` (union-of-capabilities parity plan + acceptance criteria)
 - `docs/development/planning/apptheory/apptheory-facetheory-support-roadmap.md` (FaceTheory enablement: Lambda URL + streaming SSR)
 - `docs/development/planning/apptheory/apptheory-import-pipeline-support-pack-roadmap.md` (import pipelines: CDK primitives + job ledger)
+- `docs/development/planning/apptheory/s3-vectors/ROADMAP.md` (S3 Vectors + Bedrock embedding helpers)
 - `docs/development/planning/apptheory/ssr-site-mixed-auth-coorigins.md` (AppTheorySsrSite mixed-auth Lambda Function URL co-origins)
 - `docs/development/planning/apptheory/ssr-site-ssr-data-sidecar.md` (AppTheorySsrSite SSR data sidecar routing for FaceTheory)
 - `docs/development/planning/apptheory/apptheory-gap-analysis.md` (current gaps + remediation roadmap)
