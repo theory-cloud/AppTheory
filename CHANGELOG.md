@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.16.1](https://github.com/theory-cloud/AppTheory/compare/v1.16.0...v1.16.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **deps:** update TableTheory to v2.0.2 ([082f2f2](https://github.com/theory-cloud/AppTheory/commit/082f2f205244dd4c3f6e89d8e6019ff5d9b58750))
+* **deps:** update vulnerable dependency pins ([78f7333](https://github.com/theory-cloud/AppTheory/commit/78f7333893174db069403e89f7b65dcbee63ada5))
+* **deps:** update vulnerable dependency pins ([37fa858](https://github.com/theory-cloud/AppTheory/commit/37fa8584c68ac3e7ee8de8194ebe45e4dd9842cf))
+
 ## [1.16.1-rc](https://github.com/theory-cloud/AppTheory/compare/v1.16.0...v1.16.1-rc) (2026-07-08)
 
 
