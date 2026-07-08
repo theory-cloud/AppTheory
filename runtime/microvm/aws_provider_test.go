@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -90,6 +91,150 @@ func TestAWSLambdaMicroVMProviderMapsOfficialSDKOperations(t *testing.T) {
 		"CreateMicrovmAuthToken",
 		"CreateMicrovmShellAuthToken",
 	})
+}
+
+func TestAWSLambdaMicroVMProviderInvokeMintsInternalTokenAndSanitizes(t *testing.T) {
+	now := time.Unix(550, 0).UTC()
+	api := newRecordingLambdaMicroVMAPI(now)
+	provider := &AWSLambdaMicroVMProvider{api: api, clock: providerClock{now: now}}
+	oldClient := http.DefaultClient
+	defer func() { http.DefaultClient = oldClient }()
+
+	var captured *http.Request
+	http.DefaultClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		captured = req
+		return &http.Response{
+			StatusCode: 201,
+			Header: http.Header{
+				"Content-Type":     {"application/octet-stream"},
+				"X-Aws-Proxy-Auth": {"must-not-return"},
+				"Connection":       {"close"},
+			},
+			Body: http.NoBody,
+		}, nil
+	})}
+
+	output, err := provider.Invoke(context.Background(), ProviderInvokeInput{
+		RequestID:   "req-invoke",
+		TenantID:    "tenant-1",
+		Namespace:   "namespace-1",
+		AuthContext: validProviderAuth(),
+		Binding:     ProviderSessionBinding{TenantID: "tenant-1", Namespace: "namespace-1", SessionID: "session-1", ProviderMicroVMID: "provider-1"},
+		Endpoint:    "microvm.example.test",
+		Method:      "post",
+		Path:        "hello",
+		Query:       map[string][]string{"b": {"2"}, "a": {"1"}},
+		Headers: map[string][]string{
+			"Authorization":            {"Bearer caller"},
+			"X-Aws-Proxy-Auth":         {"caller-token"},
+			"X-Workload-Request":       {" yes "},
+			"X-AppTheory-Tenant":       {"ignored-but-not-forbidden"},
+			"X-AppTheory-MicroVM-Port": {"9090"},
+		},
+		Body:       []byte("payload"),
+		Port:       9090,
+		TTLSeconds: 120,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 201, output.Status)
+	require.True(t, output.IsBase64)
+	require.Equal(t, []string{"application/octet-stream"}, output.Headers["content-type"])
+	require.NotContains(t, output.Headers, "x-aws-proxy-auth")
+	require.NotNil(t, captured)
+	require.Equal(t, "POST", captured.Method)
+	require.Equal(t, "https://microvm.example.test/hello?a=1&b=2", captured.URL.String())
+	require.Equal(t, recordingRawToken(), captured.Header.Get("X-aws-proxy-auth"))
+	require.Equal(t, "9090", captured.Header.Get("X-aws-proxy-port"))
+	require.Equal(t, "yes", captured.Header.Get("x-workload-request"))
+	require.Empty(t, captured.Header.Get("Authorization"))
+	require.Equal(t, "provider-1", aws.ToString(api.authTokenInput.MicrovmIdentifier))
+	require.Equal(t, int32(2), aws.ToInt32(api.authTokenInput.ExpirationInMinutes))
+	require.Len(t, api.authTokenInput.AllowedPorts, 1)
+}
+
+func TestAWSLambdaMicroVMProviderInvokeFailureBranches(t *testing.T) {
+	var nilProvider *AWSLambdaMicroVMProvider
+	_, err := nilProvider.Invoke(context.Background(), validProviderInvokeInput())
+	requireSafeError(t, err, ErrorCodeProviderOperationFailed)
+
+	api := newRecordingLambdaMicroVMAPI(time.Unix(560, 0).UTC())
+	api.emptyTokens = true
+	provider := &AWSLambdaMicroVMProvider{api: api, clock: providerClock{now: time.Unix(560, 0).UTC()}}
+	_, err = provider.Invoke(context.Background(), validProviderInvokeInput())
+	requireSafeError(t, err, ErrorCodeTokenSafetyViolation)
+
+	oldClient := http.DefaultClient
+	defer func() { http.DefaultClient = oldClient }()
+	http.DefaultClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("raw bearer_token transport failure")
+	})}
+	api = newRecordingLambdaMicroVMAPI(time.Unix(570, 0).UTC())
+	provider = &AWSLambdaMicroVMProvider{api: api, clock: providerClock{now: time.Unix(570, 0).UTC()}}
+	_, err = provider.Invoke(context.Background(), validProviderInvokeInput())
+	requireSafeError(t, err, ErrorCodeProviderOperationFailed)
+	require.NotContains(t, err.Error(), "bearer_token")
+}
+
+func TestProviderInvokeValidationAndHelpers(t *testing.T) {
+	input := validProviderInvokeInput()
+	input.Method = " get "
+	input.Path = " hello "
+	spacedQueryKey := " z "
+	spacedAuthKey := " Authorization "
+	input.Query = map[string][]string{spacedQueryKey: {" last "}, "": {"ignored"}}
+	input.Headers = map[string][]string{
+		spacedAuthKey:                   {"Bearer caller"},
+		"X-Aws-Proxy-Auth":              {"provider-token"},
+		"X-Tenant-Id":                   {"tenant-1"},
+		"X-Workload":                    {" ok ", "bearer_token"},
+		"X-Blank":                       {" "},
+		"Content-Type":                  {" application/json "},
+		"X-AppTheory-MicroVM-Token-TTL": {"60"},
+	}
+	input.Port = 0
+	input.TTLSeconds = 0
+
+	normalized, err := validateProviderInvokeInput(input)
+	require.NoError(t, err)
+	require.Equal(t, "GET", normalized.Method)
+	require.Equal(t, "/hello", normalized.Path)
+	require.Equal(t, defaultProviderInvokePort, normalized.Port)
+	require.Equal(t, defaultProviderInvokeTTLSeconds, normalized.TTLSeconds)
+	require.Equal(t, map[string][]string{
+		"content-type": {"application/json"},
+		"x-workload":   {"ok"},
+	}, normalized.Headers)
+	require.Equal(t, map[string][]string{"z": {"last"}}, normalized.Query)
+
+	target, err := providerInvokeURL("http://microvm.example.test/base", "hello", map[string][]string{"b": {"2"}, "a": {"1"}})
+	require.NoError(t, err)
+	require.Equal(t, "https://microvm.example.test/hello?a=1&b=2", target)
+	require.Equal(t, "8080", providerInvokePortHeader(0))
+	require.False(t, providerInvokeResponseIsBase64(map[string][]string{"Content-Type": {"application/json"}}))
+	require.True(t, providerInvokeResponseIsBase64(map[string][]string{"content-type": {"application/octet-stream"}}))
+	require.Equal(t, 0, providerInvokeBodyReader(nil).Len())
+
+	cases := []struct {
+		name string
+		edit func(*ProviderInvokeInput)
+		code string
+	}{
+		{"unsupported method", func(input *ProviderInvokeInput) { input.Method = "TRACE" }, ErrorCodeProviderRequestInvalid},
+		{"invalid endpoint", func(input *ProviderInvokeInput) { input.Endpoint = "http://" }, ErrorCodeProviderRequestInvalid},
+		{"forbidden endpoint", func(input *ProviderInvokeInput) { input.Endpoint = "bearer_token" }, ErrorCodeProviderRequestInvalid},
+		{"invalid path", func(input *ProviderInvokeInput) { input.Path = "bad\x00path" }, ErrorCodeProviderRequestInvalid},
+		{"invalid port", func(input *ProviderInvokeInput) { input.Port = 70000 }, ErrorCodeTokenSafetyViolation},
+		{"invalid ttl", func(input *ProviderInvokeInput) { input.TTLSeconds = 901 }, ErrorCodeTokenSafetyViolation},
+		{"binding mismatch", func(input *ProviderInvokeInput) { input.Binding.TenantID = "tenant-2" }, ErrorCodeTenantBindingViolation},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := validProviderInvokeInput()
+			tc.edit(&bad)
+			err := ValidateProviderInvokeInput(bad)
+			requireSafeError(t, err, tc.code)
+		})
+	}
 }
 
 func TestAWSLambdaMicroVMProviderFailsClosedAndSanitizes(t *testing.T) {
@@ -340,6 +485,12 @@ func TestAWSLambdaMicroVMProviderErrorBranchesAndHelpers(t *testing.T) {
 	requireSafeError(t, err, ErrorCodeTokenSafetyViolation)
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
 type providerClock struct{ now time.Time }
 
 func (c providerClock) Now() time.Time { return c.now }
@@ -525,6 +676,22 @@ func validProviderTokenInput(requestID string, binding ProviderSessionBinding) P
 		AllowedPortScope: []ProviderPortScope{
 			{Port: 443},
 		},
+	}
+}
+
+func validProviderInvokeInput() ProviderInvokeInput {
+	binding := ProviderSessionBinding{TenantID: "tenant-1", Namespace: "namespace-1", SessionID: "session-1", ProviderMicroVMID: "provider-1"}
+	return ProviderInvokeInput{
+		RequestID:   "req-invoke",
+		TenantID:    "tenant-1",
+		Namespace:   "namespace-1",
+		AuthContext: validProviderAuth(),
+		Binding:     binding,
+		Endpoint:    "microvm.example.test",
+		Method:      "GET",
+		Path:        "/",
+		Port:        defaultProviderInvokePort,
+		TTLSeconds:  defaultProviderInvokeTTLSeconds,
 	}
 }
 
