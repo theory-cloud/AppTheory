@@ -1551,6 +1551,7 @@ def compare_microvm_controller_route_fixture(
         registry,
         id_generator=lambda: setup["session_id"],
         clock=lambda: 1_700_000_000.0,
+        deployment_defaults=setup["deployment_defaults"],
     )
     if setup["seed_session"]:
         seeded = controller.handle(microvm_controller_route_run_request(runtime, setup))
@@ -1738,7 +1739,29 @@ def normalize_microvm_controller_route_setup(setup: dict[str, Any]) -> dict[str,
         "tenant_id": tenant_id,
         "namespace": namespace,
         "session_id": session_id,
+        "deployment_defaults": normalize_microvm_deployment_defaults(
+            setup.get("deployment_defaults") or {}
+        ),
     }
+
+
+def normalize_microvm_deployment_defaults(setup: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "image_ref": str(setup.get("image_ref") or "").strip(),
+        "network_connector_ref": str(setup.get("network_connector_ref") or "").strip(),
+        "ingress_network_connector_refs": _string_list(
+            setup.get("ingress_network_connector_refs") or []
+        ),
+        "egress_network_connector_refs": _string_list(
+            setup.get("egress_network_connector_refs") or []
+        ),
+    }
+
+
+def _string_list(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    return [trimmed for value in values if (trimmed := str(value or "").strip())]
 
 
 def microvm_controller_route_run_request(
@@ -1771,6 +1794,13 @@ def compare_microvm_controller_route_expected(
             {},
         )
     text = actual.body.decode("utf-8")
+    for required in expected.get("body_contains") or []:
+        if required and str(required) not in text:
+            return (
+                False,
+                f"microvm_controller_route body missing substring {required!r}",
+                {},
+            )
     for forbidden in expected.get("forbidden_body_substrings") or []:
         if forbidden and str(forbidden) in text:
             return (
@@ -3033,6 +3063,263 @@ def _objectstore_metadata(raw: Any) -> dict[str, str] | None:
     return {str(key): str(raw[key]) for key in sorted(raw)}
 
 
+class _FakeBedrockRuntime:
+    def __init__(self, embedding: list[float]) -> None:
+        self.embedding = list(embedding)
+        self.requests: list[dict[str, Any]] = []
+
+    def invoke_model(self, **kwargs: Any) -> dict[str, Any]:
+        body = json.loads(bytes(kwargs.get("body") or b"{}").decode("utf-8"))
+        body["model_id"] = kwargs.get("modelId")
+        body["content_type"] = kwargs.get("contentType")
+        body["accept"] = kwargs.get("accept")
+        self.requests.append(body)
+        return {"body": json.dumps({"embedding": self.embedding}).encode("utf-8")}
+
+
+def run_fixture_vectorstore(
+    fixture: dict[str, Any],
+) -> tuple[bool, str, Any, Any, _DummyEffectsApp]:
+    runtime = _load_apptheory_runtime()
+    setup = (fixture.get("setup") or {}).get("vectorstore") or {}
+    backend = str(setup.get("backend") or "fake").strip()
+    if backend != "fake":
+        return (
+            False,
+            f"vectorstore fixture backend {backend!r} is unsupported",
+            None,
+            None,
+            _DummyEffectsApp(),
+        )
+    steps = ((fixture.get("input") or {}).get("vectorstore") or {}).get("steps") or []
+    if not steps:
+        return (
+            False,
+            "vectorstore fixture missing input.vectorstore.steps",
+            None,
+            None,
+            _DummyEffectsApp(),
+        )
+    dimension = int(setup.get("dimension") or 3)
+    store = runtime.create_fake_vector_store(dimension)
+    store.required_metadata_keys = list(setup.get("required_metadata_keys") or [])
+    embedder = runtime.FakeEmbedder(setup.get("embeddings") or {})
+    if setup.get("default_embedding") is not None:
+        embedder.default_embedding = list(setup.get("default_embedding") or [])
+    actual_steps = [
+        _run_vectorstore_step(runtime, store, embedder, setup, dimension, step)
+        for step in steps
+    ]
+    actual_output = {
+        "steps": actual_steps,
+        "calls": _vectorstore_calls_json(store.calls()),
+        "embedder_calls": list(embedder.calls),
+    }
+    expected_output = (fixture.get("expect") or {}).get("output_json")
+    if stable_json(actual_output) != stable_json(expected_output):
+        return (
+            False,
+            "output_json mismatch",
+            actual_output,
+            expected_output,
+            _DummyEffectsApp(),
+        )
+    return True, "", actual_output, expected_output, _DummyEffectsApp()
+
+
+def _run_vectorstore_step(
+    runtime: Any,
+    store: Any,
+    embedder: Any,
+    setup: dict[str, Any],
+    dimension: int,
+    step: dict[str, Any],
+) -> dict[str, Any]:
+    operation = str(step.get("operation") or "").strip().lower()
+    result: dict[str, Any] = {"name": step.get("name"), "operation": operation}
+    try:
+        if operation == "put":
+            store.put_vectors(
+                runtime.PutVectorsInput(
+                    records=_vector_records(runtime, step.get("records") or [])
+                )
+            )
+        elif operation == "get":
+            records = store.get_vectors(
+                runtime.GetVectorsInput(
+                    keys=list(step.get("keys") or []),
+                    return_metadata=bool(step.get("return_metadata")),
+                )
+            )
+            result["records"] = _vector_records_json(records, True)
+        elif operation == "delete":
+            store.delete_vectors(
+                runtime.DeleteVectorsInput(keys=list(step.get("keys") or []))
+            )
+        elif operation == "query":
+            hits = store.query_vectors(
+                runtime.QueryVectorsInput(
+                    vector=list(step.get("vector") or []),
+                    top_k=int(step.get("top_k") or 0),
+                    filter=step.get("filter"),
+                    return_metadata=bool(step.get("return_metadata")),
+                )
+            )
+            result["hits"] = _vector_hits_json(hits)
+        elif operation == "semantic_put":
+            index = runtime.SemanticIndex(
+                runtime.SemanticIndexConfig(
+                    store=store,
+                    embedder=embedder,
+                    dimension=dimension,
+                    required_metadata_keys=list(
+                        setup.get("required_metadata_keys") or []
+                    ),
+                )
+            )
+            index.put_text(_semantic_records(runtime, step.get("records") or []))
+        elif operation == "semantic_query":
+            index = runtime.SemanticIndex(
+                runtime.SemanticIndexConfig(
+                    store=store,
+                    embedder=embedder,
+                    dimension=dimension,
+                    required_metadata_keys=list(
+                        setup.get("required_metadata_keys") or []
+                    ),
+                )
+            )
+            hits = index.query_text(
+                str(step.get("text") or ""),
+                top_k=int(step.get("top_k") or 0),
+                filter=step.get("filter"),
+                return_metadata=bool(step.get("return_metadata")),
+            )
+            result["hits"] = _vector_hits_json(hits)
+        elif operation == "titan_embed":
+            embedding = (
+                (setup.get("titan") or {}).get("embedding")
+                or setup.get("default_embedding")
+                or []
+            )
+            fake = _FakeBedrockRuntime([float(value) for value in embedding])
+            embedder_ = runtime.TitanEmbedder(
+                runtime.TitanEmbedderConfig(
+                    client=fake,
+                    model_id=str(step.get("model_id") or ""),
+                    dimensions=int(step.get("dimensions") or dimension),
+                    normalize=bool(step.get("normalize", True)),
+                )
+            )
+            result["vector"] = [
+                _json_number(value)
+                for value in embedder_.embed(str(step.get("text") or ""))
+            ]
+            result["requests"] = fake.requests
+        else:
+            raise runtime.VectorStoreError(
+                runtime.VECTORSTORE_ERROR_UNSUPPORTED_OPERATION,
+                f"vectorstore: unsupported operation: {operation}",
+            )
+        result["ok"] = True
+    except Exception as exc:  # noqa: BLE001
+        result["ok"] = False
+        result["error"] = _vectorstore_error_json(runtime, exc)
+    return result
+
+
+def _vector_records(runtime: Any, raw: list[dict[str, Any]]) -> list[Any]:
+    return [
+        runtime.VectorRecord(
+            key=str(record.get("key") or ""),
+            data=[float(value) for value in record.get("data") or []],
+            metadata=_clone_json(record.get("metadata")),
+        )
+        for record in raw
+    ]
+
+
+def _semantic_records(runtime: Any, raw: list[dict[str, Any]]) -> list[Any]:
+    return [
+        runtime.SemanticRecord(
+            key=str(record.get("key") or ""),
+            text=str(record.get("text") or ""),
+            metadata=_clone_json(record.get("metadata")),
+        )
+        for record in raw
+    ]
+
+
+def _vector_records_json(
+    records: list[Any], include_metadata: bool
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for record in records:
+        item: dict[str, Any] = {
+            "key": record.key,
+            "data": [_json_number(value) for value in record.data],
+        }
+        if include_metadata and record.metadata:
+            item["metadata"] = _sorted_dict(record.metadata)
+        out.append(item)
+    return out
+
+
+def _vector_hits_json(hits: list[Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for hit in hits:
+        item: dict[str, Any] = {"key": hit.key, "distance": _json_number(hit.distance)}
+        if hit.metadata:
+            item["metadata"] = _sorted_dict(hit.metadata)
+        out.append(item)
+    return out
+
+
+def _vectorstore_calls_json(calls: list[Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for call in calls:
+        item: dict[str, Any] = {"operation": call.operation}
+        if call.keys:
+            item["keys"] = list(call.keys)
+        if call.records:
+            item["records"] = _vector_records_json(call.records, True)
+        if call.vector:
+            item["vector"] = list(call.vector)
+        if call.top_k:
+            item["top_k"] = call.top_k
+        if call.filter:
+            item["filter"] = _sorted_dict(call.filter)
+        if call.return_metadata:
+            item["return_metadata"] = call.return_metadata
+        out.append(item)
+    return out
+
+
+def _vectorstore_error_json(runtime: Any, error: Exception) -> dict[str, str]:
+    message = str(error)
+    code = str(getattr(error, "code", "") or "vectorstore.error")
+    if message.startswith("vectorstore: unsupported operation"):
+        code = runtime.VECTORSTORE_ERROR_UNSUPPORTED_OPERATION
+    return {"code": code, "message": message}
+
+
+def _json_number(value: Any) -> int | float:
+    number = float(value)
+    if number.is_integer():
+        return int(number)
+    return number
+
+
+def _clone_json(value: Any) -> Any:
+    if value is None:
+        return None
+    return json.loads(json.dumps(value))
+
+
+def _sorted_dict(raw: dict[str, Any]) -> dict[str, Any]:
+    return {str(key): raw[key] for key in sorted(raw)}
+
+
 def _empty_response() -> CanonicalResponse:
     return CanonicalResponse(
         status=0, headers={}, cookies=[], body=b"", is_base64=False
@@ -3052,6 +3339,8 @@ def run_fixture(
         return run_fixture_oauth(fixture)
     if tier == "objectstore":
         return run_fixture_objectstore(fixture)
+    if tier == "vectorstore":
+        return run_fixture_vectorstore(fixture)
     if tier == "p0":
         return run_fixture_p0(fixture)
     if tier == "p1":
@@ -3438,7 +3727,9 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
             Nested: dict[str, Any] = runtime.body("nested")
 
         return runtime.bind_handler(
-            runtime.BindConfig(model=BindStrictNestedRequest, body=True, strict_json=True),
+            runtime.BindConfig(
+                model=BindStrictNestedRequest, body=True, strict_json=True
+            ),
             lambda _ctx, req: {"profile_name": req.Profile},
         )
 
@@ -3460,7 +3751,9 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
             Name: str = runtime.body("name")
 
         return runtime.bind_handler(
-            runtime.BindConfig(model=BindStrictNameRequest, body=True, strict_json=True),
+            runtime.BindConfig(
+                model=BindStrictNameRequest, body=True, strict_json=True
+            ),
             lambda _ctx, req: {"name": req.Name},
         )
 
@@ -3581,7 +3874,9 @@ def _built_in_apptheory_handler(runtime: Any, name: str, effects: Any | None = N
             count: Any = runtime.body("count", validate=[runtime.required()])
             active: Any = runtime.body("active", validate=[runtime.required()])
             name: Any = runtime.body("name", validate=[runtime.required()])
-            tags: list[Any] = runtime.body("tags", validate=[runtime.required()], array=True)
+            tags: list[Any] = runtime.body(
+                "tags", validate=[runtime.required()], array=True
+            )
             meta: Any = runtime.body("meta", validate=[runtime.required()])
 
         return runtime.bind_handler(
@@ -5985,7 +6280,9 @@ def main() -> int:
                 if "error" in reason:
                     print(f"  got.error: {redacted_diagnostic()}", file=sys.stderr)
                 else:
-                    print(f"  got.output_json: {redacted_diagnostic()}", file=sys.stderr)
+                    print(
+                        f"  got.output_json: {redacted_diagnostic()}", file=sys.stderr
+                    )
         elif (
             "logging_profile_catalog" in expect_obj
             or "profile_validation_errors" in expect_obj
@@ -6033,7 +6330,8 @@ def main() -> int:
                 file=sys.stderr,
             )
             print(
-                f"  got.microvm_execution_role: {redacted_diagnostic()}", file=sys.stderr
+                f"  got.microvm_execution_role: {redacted_diagnostic()}",
+                file=sys.stderr,
             )
         elif "mcp" in expect_obj:
             print(f"  expected.mcp.step: {redacted_diagnostic()}", file=sys.stderr)

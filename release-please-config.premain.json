@@ -95,6 +95,11 @@
         },
         {
           "type": "json",
+          "path": "examples/cdk/s3-vectors-semantic-search/package-lock.json",
+          "jsonpath": "$.packages['../../../cdk'].version"
+        },
+        {
+          "type": "json",
           "path": "examples/cdk/sqs-queue/package-lock.json",
           "jsonpath": "$.packages['../../../cdk'].version"
         },

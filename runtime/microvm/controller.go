@@ -19,6 +19,14 @@ const (
 const (
 	// EnvExecutionRoleArn names the optional IAM role ARN passed to AWS Lambda MicroVMs during execution.
 	EnvExecutionRoleArn = "APPTHEORY_MICROVM_EXECUTION_ROLE_ARN"
+	// EnvImageRef names the deployment-pinned MicroVM image reference used when a run request omits image_ref.
+	EnvImageRef = "APPTHEORY_MICROVM_IMAGE_REF"
+	// EnvNetworkConnectorRefs names the legacy deployment-pinned MicroVM egress connector references.
+	EnvNetworkConnectorRefs = "APPTHEORY_MICROVM_NETWORK_CONNECTOR_REFS"
+	// EnvIngressNetworkConnectorRefs names the deployment-pinned MicroVM ingress connector references.
+	EnvIngressNetworkConnectorRefs = "APPTHEORY_MICROVM_INGRESS_NETWORK_CONNECTOR_REFS"
+	// EnvEgressNetworkConnectorRefs names the deployment-pinned MicroVM egress connector references.
+	EnvEgressNetworkConnectorRefs = "APPTHEORY_MICROVM_EGRESS_NETWORK_CONNECTOR_REFS"
 )
 
 // Command names a constrained MicroVM controller command.
@@ -37,6 +45,7 @@ const (
 	CommandSuspend        Command = "suspend"
 	CommandResume         Command = "resume"
 	CommandTerminate      Command = "terminate"
+	CommandInvoke         Command = "invoke"
 	CommandAuthToken      Command = "auth-token"
 	CommandShellAuthToken Command = "shell-auth-token" //nolint:gosec // Contract command name, not a credential.
 	// CommandShellToken is a compatibility alias for the canonical shell-auth-token command.
@@ -90,6 +99,30 @@ type ControllerRequest struct {
 	MaxResults                  int32               `json:"max_results,omitempty"`
 }
 
+// ControllerDeploymentDefaults pins the image and connector references wired by deployment.
+type ControllerDeploymentDefaults struct {
+	ImageRef                    string   `json:"image_ref,omitempty"`
+	NetworkConnectorRef         string   `json:"network_connector_ref,omitempty"`
+	IngressNetworkConnectorRefs []string `json:"ingress_network_connector_refs,omitempty"`
+	EgressNetworkConnectorRefs  []string `json:"egress_network_connector_refs,omitempty"`
+}
+
+// ControllerInvokeRequest is the tenant-bound HTTP invocation envelope for a running MicroVM.
+type ControllerInvokeRequest struct {
+	RequestID   string              `json:"request_id"`
+	TenantID    string              `json:"tenant_id"`
+	Namespace   string              `json:"namespace"`
+	AuthContext AuthContext         `json:"auth_context"`
+	SessionID   string              `json:"session_id"`
+	Method      string              `json:"method"`
+	Path        string              `json:"path"`
+	Query       map[string][]string `json:"query,omitempty"`
+	Headers     map[string][]string `json:"headers,omitempty"`
+	Body        []byte              `json:"body,omitempty"`
+	Port        int32               `json:"port,omitempty"`
+	TTLSeconds  int32               `json:"ttl_seconds,omitempty"`
+}
+
 // ControllerResponse is the safe controller response envelope.
 type ControllerResponse struct {
 	Command           Command           `json:"command"`
@@ -133,6 +166,7 @@ type Controller struct {
 	controllerID     string
 	providerID       string
 	executionRoleArn string
+	deployment       ControllerDeploymentDefaults
 	clock            Clock
 	ids              IDGenerator
 	ttl              time.Duration
@@ -199,6 +233,13 @@ func WithControllerExecutionRoleArn(executionRoleArn string) ControllerOption {
 	}
 }
 
+// WithControllerDeploymentDefaults sets deployment-pinned MicroVM image and connector references.
+func WithControllerDeploymentDefaults(defaults ControllerDeploymentDefaults) ControllerOption {
+	return func(controller *Controller) {
+		controller.deployment = normalizeControllerDeploymentDefaults(defaults)
+	}
+}
+
 // NewController creates a fail-closed MicroVM controller.
 func NewController(client Client, opts ...ControllerOption) (*Controller, error) {
 	if client == nil {
@@ -234,6 +275,7 @@ func NewRealController(provider Provider, registry SessionRegistry, opts ...Cont
 		controllerID:     "apptheory-microvm-controller",
 		providerID:       AWSLambdaMicroVMProviderID,
 		executionRoleArn: strings.TrimSpace(os.Getenv(EnvExecutionRoleArn)),
+		deployment:       environmentControllerDeploymentDefaults(),
 		clock:            realClock{},
 		ids:              randomIDGenerator{},
 		ttl:              defaultSessionRegistryTTL,
@@ -262,7 +304,7 @@ func (c *Controller) Handle(ctx context.Context, request ControllerRequest) (Con
 	}
 	request = normalizeControllerRequest(request)
 	if c.provider != nil || c.registry != nil {
-		return c.handleReal(ctx, request)
+		return c.handleProviderBacked(ctx, request)
 	}
 	if err := validateControllerRequest(request); err != nil {
 		safe := asSafeError(err, request.RequestID)
@@ -284,6 +326,63 @@ func (c *Controller) Handle(ctx context.Context, request ControllerRequest) (Con
 		err := safeError(ErrorCodeInvalidControllerRequest, "apptheory: microvm controller command is unsupported", request.RequestID)
 		return controllerErrorResponse(request, err), err
 	}
+}
+
+// Invoke executes one tenant-bound HTTP request against a running MicroVM endpoint without exposing provider tokens.
+func (c *Controller) Invoke(ctx context.Context, request ControllerInvokeRequest) (ProviderInvokeOutput, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if c == nil || c.provider == nil || c.registry == nil {
+		return ProviderInvokeOutput{}, safeError(ErrorCodeControllerIncomplete, "apptheory: microvm controller requires a provider adapter and session registry", request.RequestID)
+	}
+	request = normalizeControllerInvokeRequest(request)
+	envelope := ControllerRequest{
+		Command:     CommandInvoke,
+		RequestID:   request.RequestID,
+		TenantID:    request.TenantID,
+		Namespace:   request.Namespace,
+		AuthContext: request.AuthContext,
+		SessionID:   request.SessionID,
+	}
+	if err := validateRealControllerRequest(envelope); err != nil {
+		return ProviderInvokeOutput{}, err
+	}
+	record, err := c.registry.Get(ctx, SessionKey{TenantID: request.TenantID, Namespace: request.Namespace, SessionID: request.SessionID})
+	if err != nil {
+		return ProviderInvokeOutput{}, err
+	}
+	if validationErr := ValidateSessionRecord(record); validationErr != nil {
+		return ProviderInvokeOutput{}, validationErr
+	}
+	if strings.TrimSpace(record.Endpoint) == "" {
+		return ProviderInvokeOutput{}, safeError(ErrorCodeInvalidControllerRequest, "apptheory: microvm invoke requires a session endpoint", request.RequestID)
+	}
+	return c.provider.Invoke(ctx, ProviderInvokeInput{
+		RequestID:   request.RequestID,
+		TenantID:    request.TenantID,
+		Namespace:   request.Namespace,
+		AuthContext: request.AuthContext,
+		Binding:     providerBindingFromRecord(record),
+		Endpoint:    record.Endpoint,
+		Method:      request.Method,
+		Path:        request.Path,
+		Query:       cloneQueryValues(request.Query),
+		Headers:     sanitizeProviderInvokeHeaders(request.Headers),
+		Body:        append([]byte(nil), request.Body...),
+		Port:        request.Port,
+		TTLSeconds:  request.TTLSeconds,
+	})
+}
+
+func (c *Controller) handleProviderBacked(ctx context.Context, request ControllerRequest) (ControllerResponse, error) {
+	var defaultsErr error
+	request, defaultsErr = c.applyRealDeploymentDefaults(request)
+	if defaultsErr != nil {
+		safe := asSafeError(defaultsErr, request.RequestID)
+		return controllerErrorResponse(request, safe), safe
+	}
+	return c.handleReal(ctx, request)
 }
 
 func (c *Controller) handleCreate(ctx context.Context, request ControllerRequest) (ControllerResponse, error) {
@@ -443,6 +542,59 @@ func (c *Controller) handleRealRun(ctx context.Context, request ControllerReques
 		return controllerErrorResponse(request, safe), safe
 	}
 	return responseFromProviderSession(request, providerSessionFromRecord(record)), nil
+}
+
+func (c *Controller) applyRealDeploymentDefaults(request ControllerRequest) (ControllerRequest, error) {
+	defaults := normalizeControllerDeploymentDefaults(c.deployment)
+	if err := rejectControllerDeploymentOverride(request, defaults); err != nil {
+		return request, err
+	}
+	if request.ImageRef == "" {
+		request.ImageRef = defaults.ImageRef
+	}
+	if len(request.IngressNetworkConnectorRefs) == 0 {
+		request.IngressNetworkConnectorRefs = append([]string(nil), defaults.IngressNetworkConnectorRefs...)
+	}
+	if len(request.EgressNetworkConnectorRefs) == 0 {
+		request.EgressNetworkConnectorRefs = append([]string(nil), defaults.EgressNetworkConnectorRefs...)
+	}
+	if request.NetworkConnectorRef == "" {
+		request.NetworkConnectorRef = defaults.NetworkConnectorRef
+	}
+	if request.NetworkConnectorRef == "" && len(request.EgressNetworkConnectorRefs) > 0 {
+		request.NetworkConnectorRef = request.EgressNetworkConnectorRefs[0]
+	}
+	return normalizeControllerRequest(request), nil
+}
+
+func rejectControllerDeploymentOverride(request ControllerRequest, defaults ControllerDeploymentDefaults) error {
+	if defaults.ImageRef != "" && request.ImageRef != "" && request.ImageRef != defaults.ImageRef {
+		return safeError(ErrorCodeInvalidControllerRequest, "apptheory: microvm deployment-pinned image_ref mismatch", request.RequestID)
+	}
+	if defaults.NetworkConnectorRef != "" && request.NetworkConnectorRef != "" && request.NetworkConnectorRef != defaults.NetworkConnectorRef {
+		return safeError(ErrorCodeInvalidControllerRequest, "apptheory: microvm deployment-pinned network_connector_ref mismatch", request.RequestID)
+	}
+	if len(defaults.IngressNetworkConnectorRefs) > 0 && len(request.IngressNetworkConnectorRefs) > 0 &&
+		!equalStringSlices(request.IngressNetworkConnectorRefs, defaults.IngressNetworkConnectorRefs) {
+		return safeError(ErrorCodeInvalidControllerRequest, "apptheory: microvm deployment-pinned ingress_network_connector_refs mismatch", request.RequestID)
+	}
+	if len(defaults.EgressNetworkConnectorRefs) > 0 && len(request.EgressNetworkConnectorRefs) > 0 &&
+		!equalStringSlices(request.EgressNetworkConnectorRefs, defaults.EgressNetworkConnectorRefs) {
+		return safeError(ErrorCodeInvalidControllerRequest, "apptheory: microvm deployment-pinned egress_network_connector_refs mismatch", request.RequestID)
+	}
+	return nil
+}
+
+func equalStringSlices(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Controller) handleRealSession(
@@ -644,7 +796,7 @@ func validateRealControllerRequest(request ControllerRequest) error {
 		}
 	case CommandList:
 		return nil
-	case CommandGet, CommandSuspend, CommandResume, CommandTerminate, CommandAuthToken, CommandShellAuthToken:
+	case CommandGet, CommandSuspend, CommandResume, CommandTerminate, CommandInvoke, CommandAuthToken, CommandShellAuthToken:
 		if request.SessionID == "" {
 			return safeError(ErrorCodeInvalidControllerRequest, "apptheory: microvm controller session_id is required", request.RequestID)
 		}
@@ -714,6 +866,47 @@ func validateSessionCommandFields(request ControllerRequest) error {
 	return nil
 }
 
+func environmentControllerDeploymentDefaults() ControllerDeploymentDefaults {
+	egress := splitControllerDeploymentRefs(os.Getenv(EnvEgressNetworkConnectorRefs))
+	legacy := splitControllerDeploymentRefs(os.Getenv(EnvNetworkConnectorRefs))
+	if len(egress) == 0 {
+		egress = legacy
+	}
+	defaults := ControllerDeploymentDefaults{
+		ImageRef:                    os.Getenv(EnvImageRef),
+		NetworkConnectorRef:         firstString(legacy),
+		IngressNetworkConnectorRefs: splitControllerDeploymentRefs(os.Getenv(EnvIngressNetworkConnectorRefs)),
+		EgressNetworkConnectorRefs:  egress,
+	}
+	return normalizeControllerDeploymentDefaults(defaults)
+}
+
+func normalizeControllerDeploymentDefaults(defaults ControllerDeploymentDefaults) ControllerDeploymentDefaults {
+	defaults.ImageRef = strings.TrimSpace(defaults.ImageRef)
+	defaults.NetworkConnectorRef = strings.TrimSpace(defaults.NetworkConnectorRef)
+	defaults.IngressNetworkConnectorRefs = normalizeStringSlice(defaults.IngressNetworkConnectorRefs)
+	defaults.EgressNetworkConnectorRefs = normalizeStringSlice(defaults.EgressNetworkConnectorRefs)
+	if defaults.NetworkConnectorRef == "" && len(defaults.EgressNetworkConnectorRefs) > 0 {
+		defaults.NetworkConnectorRef = defaults.EgressNetworkConnectorRefs[0]
+	}
+	return defaults
+}
+
+func splitControllerDeploymentRefs(value string) []string {
+	parts := strings.Split(value, ",")
+	if len(parts) == 1 && strings.TrimSpace(parts[0]) == "" {
+		return nil
+	}
+	return normalizeStringSlice(parts)
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
 func normalizeControllerRequest(request ControllerRequest) ControllerRequest {
 	request.Command = normalizeCommand(request.Command)
 	request.RequestID = strings.TrimSpace(request.RequestID)
@@ -727,6 +920,26 @@ func normalizeControllerRequest(request ControllerRequest) ControllerRequest {
 	request.EgressNetworkConnectorRefs = normalizeStringSlice(request.EgressNetworkConnectorRefs)
 	request.AuthContext = normalizeAuthContext(request.AuthContext)
 	request.SessionSpec = cloneSessionSpec(request.SessionSpec)
+	return request
+}
+
+func normalizeControllerInvokeRequest(request ControllerInvokeRequest) ControllerInvokeRequest {
+	request.RequestID = strings.TrimSpace(request.RequestID)
+	request.TenantID = strings.TrimSpace(request.TenantID)
+	request.Namespace = strings.TrimSpace(request.Namespace)
+	request.SessionID = strings.TrimSpace(request.SessionID)
+	request.AuthContext = normalizeAuthContext(request.AuthContext)
+	request.Method = strings.ToUpper(strings.TrimSpace(request.Method))
+	request.Path = normalizeProviderInvokePath(request.Path)
+	request.Query = cloneQueryValues(request.Query)
+	request.Headers = sanitizeProviderInvokeHeaders(request.Headers)
+	request.Body = append([]byte(nil), request.Body...)
+	if request.Port == 0 {
+		request.Port = defaultProviderInvokePort
+	}
+	if request.TTLSeconds == 0 {
+		request.TTLSeconds = defaultProviderInvokeTTLSeconds
+	}
 	return request
 }
 
@@ -814,6 +1027,8 @@ func commandFromOperation(operation Operation) Command {
 		return CommandResume
 	case OperationTerminate:
 		return CommandTerminate
+	case OperationInvoke:
+		return CommandInvoke
 	case OperationAuthToken:
 		return CommandAuthToken
 	case OperationShellAuthToken:
@@ -859,6 +1074,7 @@ func (c *Controller) sessionRecordFromProviderSession(request ControllerRequest,
 	record.ProviderMicroVMID = session.ProviderMicroVMID
 	record.ProviderState = session.ProviderState
 	record.AWSLifecycleState = session.ProviderState
+	record.Endpoint = defaultString(session.Endpoint, record.Endpoint)
 	record.ImageRef = defaultString(session.ImageRef, defaultString(request.ImageRef, record.ImageRef))
 	record.ImageVersion = defaultString(session.ImageVersion, defaultString(request.ImageVersion, record.ImageVersion))
 	record.NetworkConnectorRef = defaultString(request.NetworkConnectorRef, record.NetworkConnectorRef)
@@ -932,6 +1148,7 @@ func providerSessionFromRecord(record SessionRecord) ProviderSession {
 		ProviderMicroVMID: record.ProviderMicroVMID,
 		State:             state,
 		ProviderState:     record.ProviderState,
+		Endpoint:          record.Endpoint,
 		ImageRef:          record.ImageRef,
 		ImageVersion:      record.ImageVersion,
 		StartedAt:         record.ProviderStartedAt,
@@ -951,6 +1168,7 @@ func responseFromProviderSession(request ControllerRequest, session ProviderSess
 		State:             session.State,
 		DesiredState:      desiredStateForCommand(request.Command, session.State),
 		LifecycleState:    session.State,
+		Endpoint:          session.Endpoint,
 		ProviderMicroVMID: session.ProviderMicroVMID,
 		ProviderState:     session.ProviderState,
 		LastAction:        request.Command,

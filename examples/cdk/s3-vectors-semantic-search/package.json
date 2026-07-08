@@ -1,0 +1,31 @@
+{
+  "name": "@theory-cloud/apptheory-cdk-s3-vectors-semantic-search-example",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy AppTheoryS3VectorsSemanticSearch",
+    "destroy": "cdk destroy AppTheoryS3VectorsSemanticSearch",
+    "test:handler": "go test ./handler"
+  },
+  "devDependencies": {
+    "@aws-cdk/cloud-assembly-schema": "54.8.0",
+    "@theory-cloud/apptheory-cdk": "file:../../../cdk",
+    "@types/node": "25.5.0",
+    "aws-cdk": "2.1129.0",
+    "aws-cdk-lib": "2.261.0",
+    "constructs": "10.6.0",
+    "ts-node": "10.9.2",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "diff": "4.0.4",
+    "aws-cdk-lib": {
+      "minimatch": "10.2.4"
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -33,6 +33,7 @@ const (
 	OperationSuspend   Operation = "suspend"
 	OperationResume    Operation = "resume"
 	OperationTerminate Operation = "terminate"
+	OperationInvoke    Operation = "invoke"
 	OperationAuthToken Operation = "auth-token"
 	// OperationShellAuthToken is the canonical shell token issuance operation.
 	OperationShellAuthToken Operation = "shell-auth-token" //nolint:gosec // Contract operation name, not a credential.
@@ -182,6 +183,7 @@ func DefaultOperationContract() OperationContract {
 			requiredOperationRoute(OperationSuspend),
 			requiredOperationRoute(OperationResume),
 			requiredOperationRoute(OperationTerminate),
+			requiredOperationRoute(OperationInvoke),
 			requiredOperationRoute(OperationAuthToken),
 			requiredOperationRoute(OperationShellToken),
 		},
@@ -208,6 +210,7 @@ func RequiredOperations() []Operation {
 		OperationSuspend,
 		OperationResume,
 		OperationTerminate,
+		OperationInvoke,
 		OperationAuthToken,
 		OperationShellAuthToken,
 	}
@@ -602,6 +605,8 @@ func requiredOperationRoute(operation Operation) OperationHTTPRouteContract {
 		return operationRoute(operation, "POST", "/microvms/{session_id}/resume", []string{"tenant_id", "namespace", "session_id"}, []string{"session_id", "state", "provider_state", "registry_version"}, false)
 	case OperationTerminate:
 		return operationRoute(operation, "DELETE", "/microvms/{session_id}", []string{"tenant_id", "namespace", "session_id"}, []string{"session_id", "state", "provider_state", "registry_version"}, false)
+	case OperationInvoke:
+		return operationRoute(operation, "ANY", "/microvms/{session_id}/invoke/{proxy+}", []string{"tenant_id", "namespace", "session_id", "method", "path", "port"}, []string{"status", "headers", "body"}, false)
 	case OperationAuthToken:
 		return operationRoute(operation, "POST", "/microvms/{session_id}/auth-token", []string{"tenant_id", "namespace", "session_id"}, []string{"token_id", "token_type", "expires_at", "scope"}, false)
 	case OperationShellAuthToken:

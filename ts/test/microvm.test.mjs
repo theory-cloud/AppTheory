@@ -31,7 +31,10 @@ import {
   AWSLambdaMicroVMProvider,
   MICROVM_AWS_LAMBDA_PROVIDER_ID,
   MICROVM_DEFAULT_SESSION_PROVIDER_ID,
+  MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS,
   MICROVM_ENV_EXECUTION_ROLE_ARN,
+  MICROVM_ENV_IMAGE_REF,
+  MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS,
   MICROVM_SESSION_REGISTRY_TABLE_ENV,
   createReconstructingMicroVMSessionRegistry,
   createAWSLambdaMicroVMClient,
@@ -1376,6 +1379,85 @@ test("microvm real controller carries execution role from environment", async ()
   }
 });
 
+test("microvm real controller applies deployment-pinned defaults", async () => {
+  const previous = {
+    image: process.env[MICROVM_ENV_IMAGE_REF],
+    ingress: process.env[MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS],
+    egress: process.env[MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS],
+  };
+  process.env[MICROVM_ENV_IMAGE_REF] = "env-image-ref";
+  process.env[MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS] =
+    "ingress-ref,shell-ingress-ref";
+  process.env[MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS] = "egress-ref";
+  try {
+    const baseProvider = createFakeMicroVMProvider(new Date(0));
+    let recordedRun;
+    const provider = {
+      run: async (input) => {
+        recordedRun = input;
+        return await baseProvider.run(input);
+      },
+      get: (input) => baseProvider.get(input),
+      list: (input) => baseProvider.list(input),
+      suspend: (input) => baseProvider.suspend(input),
+      resume: (input) => baseProvider.resume(input),
+      terminate: (input) => baseProvider.terminate(input),
+      createAuthToken: (input) => baseProvider.createAuthToken(input),
+      createShellToken: (input) => baseProvider.createShellToken(input),
+    };
+    const controller = createRealMicroVMController(
+      provider,
+      createMemoryMicroVMSessionRegistry(),
+      {
+        ids: { newID: () => "session-defaults" },
+        clock: { now: () => new Date(1000) },
+      },
+    );
+    const run = await controller.handle(
+      controllerRequest({
+        session_id: "",
+        image_ref: "",
+        network_connector_ref: "",
+        ingress_network_connector_refs: [],
+        egress_network_connector_refs: [],
+      }),
+    );
+    assert.equal(run.error, undefined);
+    assert.equal(recordedRun.image_ref, "env-image-ref");
+    assert.equal(recordedRun.network_connector_ref, "egress-ref");
+    assert.deepEqual(recordedRun.ingress_network_connector_refs, [
+      "ingress-ref",
+      "shell-ingress-ref",
+    ]);
+    assert.deepEqual(recordedRun.egress_network_connector_refs, ["egress-ref"]);
+
+    const override = await controller.handle(
+      controllerRequest({
+        request_id: "req-defaults-override",
+        session_id: "",
+        image_ref: "other-image-ref",
+        network_connector_ref: "egress-ref",
+      }),
+    );
+    assert.equal(
+      override.error?.code,
+      MICROVM_ERROR_INVALID_CONTROLLER_REQUEST,
+    );
+  } finally {
+    for (const [key, value] of [
+      [MICROVM_ENV_IMAGE_REF, previous.image],
+      [MICROVM_ENV_INGRESS_NETWORK_CONNECTOR_REFS, previous.ingress],
+      [MICROVM_ENV_EGRESS_NETWORK_CONNECTOR_REFS, previous.egress],
+    ]) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+});
+
 test("microvm controller route adapter enforces auth and tenant binding", async () => {
   const provider = createFakeMicroVMProvider(new Date(0));
   const registry = createMemoryMicroVMSessionRegistry();
@@ -1556,6 +1638,11 @@ test("microvm AWS provider uses official command classes and sanitizes tokens", 
   );
   assert.equal(sent[0].input.imageIdentifier, "image-ref");
   assert.equal(
+    Object.hasOwn(sent[0].input, "runHookPayload"),
+    false,
+    "endpoint-dispatched MicroVM images must not receive AWS run-hook payloads",
+  );
+  assert.equal(
     sent[0].input.executionRoleArn,
     "arn:aws:iam::123456789012:role/HostMicrovmExecutionRole",
   );
@@ -1596,6 +1683,7 @@ test("microvm real M16 operation contract validates route, token, and tenant saf
     MicroVMOperation.Suspend,
     MicroVMOperation.Resume,
     MicroVMOperation.Terminate,
+    MicroVMOperation.Invoke,
     MicroVMOperation.AuthToken,
     MicroVMOperation.ShellToken,
   ]);

@@ -22,6 +22,7 @@ examples=(
   "examples/cdk/kinesis-cloudwatch-logs|AppTheoryKinesisCloudWatchLogsDemo|"
   "examples/cdk/multilang|AppTheoryMultilangDemo|"
   "examples/cdk/microvm-controller|AppTheoryMicrovmControllerDemo|"
+  "examples/cdk/s3-vectors-semantic-search|AppTheoryS3VectorsSemanticSearch|"
   "examples/cdk/ssr-site|AppTheorySsrSiteDemo|"
   "examples/cdk/ssr-only-provided-assets-site|AppTheorySsrOnlyProvidedAssetsSiteDemo|"
   "examples/cdk/lesser-parity|LesserParityExample|"

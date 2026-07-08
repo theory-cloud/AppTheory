@@ -188,12 +188,14 @@ concepts:
 
   lambda_microvm_support:
     type: component
-    purpose: "Corrective M16 fixture-backed AWS Lambda MicroVM lifecycle, provider, controller, durable session registry, CDK deployment, and consumer conformance surface."
+    purpose: "Corrective M16 fixture-backed AWS Lambda MicroVM lifecycle, token-hidden workload invoke, provider, controller, durable session registry, CDK deployment, and consumer conformance surface."
     provides:
       - sanitized_microvm_lifecycle_hooks
       - constrained_real_microvm_provider
       - protected_controller_routes
-      - canonical_operations_run_get_list_suspend_resume_terminate_auth_token_shell_auth_token
+      - token_hidden_workload_invoke
+      - endpoint_dispatched_no_hook_example_images
+      - canonical_operations_run_get_list_suspend_resume_terminate_invoke_auth_token_shell_auth_token
       - tenant_bound_session_registry
       - cdk_typed_connector_image_controller_constructs
       - evidence_bounded_conformance_harness
@@ -215,6 +217,7 @@ concepts:
     failure_modes:
       - "Treating the v1.14.0/M15 foundation as complete live MicroVM proof overclaims the release boundary."
       - "Raw AWS SDK escape hatches bypass the constrained controller/provider contract."
+      - "Direct X-aws-proxy-auth or provider-token exposure bypasses the AppTheory invoke route."
       - "Raw lifecycle hook payloads bypass sanitized MicroVMLifecycleEvent handling."
       - "Unauthenticated controller routes violate the fail-closed auth posture."
       - "Ad-hoc session storage drifts from the TableTheory/DynamoDB pk/sk/ttl registry shape."

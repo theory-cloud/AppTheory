@@ -4,6 +4,7 @@ import hashlib
 import json as jsonlib
 import os
 import time
+import urllib.parse
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
@@ -16,6 +17,30 @@ from .model import _MicroVMSessionRegistryKeyInput
 _DEFAULT_PROVIDER_TOKEN_TTL_SECONDS = 900
 _MIN_PROVIDER_TOKEN_TTL_SECONDS = 1
 _MAX_PROVIDER_TOKEN_TTL_SECONDS = 900
+_DEFAULT_PROVIDER_INVOKE_PORT = 8080
+_DEFAULT_PROVIDER_INVOKE_TOKEN_TTL_SECONDS = 60
+_MAX_PROVIDER_INVOKE_BODY_BYTES = 6 * 1024 * 1024
+_PROVIDER_INVOKE_METHODS = {"DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"}
+_PROVIDER_INVOKE_FORBIDDEN_HEADERS = {
+    "authorization",
+    "connection",
+    "content-length",
+    "host",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    "x-amz-security-token",
+    "x-apptheory-microvm-port",
+    "x-apptheory-microvm-token-ttl",
+    "x-aws-proxy-auth",
+    "x-aws-proxy-port",
+    "x-namespace-id",
+    "x-tenant-id",
+}
 
 
 def microvm_session_key(record: MicroVMSessionRecord) -> tuple[str, str, str]:
@@ -59,6 +84,7 @@ def validate_microvm_provider_session(session: MicroVMProviderSession | dict[str
         )
     if (
         _forbidden_field_name(normalized.provider_microvm_id)
+        or _forbidden_field_name(normalized.endpoint)
         or _forbidden_field_name(normalized.image_ref)
         or _forbidden_field_name(normalized.image_version)
     ):
@@ -85,6 +111,10 @@ def validate_microvm_provider_list_input(input_: MicroVMProviderListInput | dict
 
 def validate_microvm_provider_token_input(operation: str, input_: MicroVMProviderTokenInput | dict[str, Any]) -> None:
     _validate_provider_token_input(operation, input_)
+
+
+def validate_microvm_provider_invoke_input(input_: MicroVMProviderInvokeInput | dict[str, Any]) -> None:
+    _validate_provider_invoke_input(input_)
 
 
 def validate_microvm_provider_token(token: MicroVMProviderToken | dict[str, Any]) -> None:
@@ -200,6 +230,7 @@ def _real_controller_commands() -> list[str]:
         COMMAND_SUSPEND,
         COMMAND_RESUME,
         COMMAND_TERMINATE,
+        COMMAND_INVOKE,
         COMMAND_AUTH_TOKEN,
         COMMAND_SHELL_AUTH_TOKEN,
     ]
@@ -911,6 +942,65 @@ def _validate_provider_token_input(
     return normalized
 
 
+def _validate_provider_invoke_input(input_: MicroVMProviderInvokeInput | dict[str, Any]) -> MicroVMProviderInvokeInput:
+    normalized = _normalize_provider_invoke_input(input_)
+    _validate_provider_operation(OPERATION_INVOKE, normalized.request_id)
+    if not normalized.request_id:
+        raise _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm provider request_id is required",
+            "",
+        )
+    _validate_provider_access(
+        normalized.request_id, normalized.tenant_id, normalized.namespace, normalized.auth_context
+    )
+    normalized.binding = _validate_provider_binding(
+        normalized.request_id, normalized.tenant_id, normalized.namespace, normalized.binding
+    )
+    if normalized.method not in _PROVIDER_INVOKE_METHODS:
+        raise _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm invoke method is unsupported",
+            normalized.request_id,
+        )
+    if not normalized.endpoint or _forbidden_field_name(normalized.endpoint):
+        raise _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm invoke endpoint is invalid",
+            normalized.request_id,
+        )
+    try:
+        _provider_invoke_url(normalized.endpoint, normalized.path, normalized.query)
+    except MicroVMSafeError as exc:
+        raise _safe_error(exc.code, exc.message, normalized.request_id) from None
+    if not normalized.path or "\x00" in normalized.path:
+        raise _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm invoke path is invalid",
+            normalized.request_id,
+        )
+    if normalized.port <= 0 or normalized.port > 65535:
+        raise _safe_error(
+            MICROVM_ERROR_TOKEN_SAFETY_VIOLATION,
+            "apptheory: microvm invoke port is invalid",
+            normalized.request_id,
+        )
+    if not _MIN_PROVIDER_TOKEN_TTL_SECONDS <= normalized.ttl_seconds <= _MAX_PROVIDER_TOKEN_TTL_SECONDS:
+        raise _safe_error(
+            MICROVM_ERROR_TOKEN_SAFETY_VIOLATION,
+            "apptheory: microvm invoke token ttl exceeds contract bounds",
+            normalized.request_id,
+        )
+    if len(normalized.body) > _MAX_PROVIDER_INVOKE_BODY_BYTES:
+        raise _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm invoke body is too large",
+            normalized.request_id,
+        )
+    normalized.headers = _sanitize_provider_invoke_headers(normalized.headers)
+    return normalized
+
+
 def _validate_provider_operation(operation: str, request_id: str) -> None:
     if _normalize_operation(operation) not in set(_required_operations()):
         raise _safe_error(
@@ -1139,6 +1229,161 @@ def _normalize_provider_token_input(value: MicroVMProviderTokenInput | dict[str,
     )
 
 
+def _normalize_provider_invoke_input(value: MicroVMProviderInvokeInput | dict[str, Any]) -> MicroVMProviderInvokeInput:
+    if isinstance(value, MicroVMProviderInvokeInput):
+        out = MicroVMProviderInvokeInput(
+            request_id=str(value.request_id or "").strip(),
+            tenant_id=str(value.tenant_id or "").strip(),
+            namespace=str(value.namespace or "").strip(),
+            auth_context=_normalize_auth_context(value.auth_context),
+            binding=_normalize_provider_binding(value.binding),
+            endpoint=str(value.endpoint or "").strip(),
+            method=str(value.method or "").strip().upper(),
+            path=_normalize_provider_invoke_path(value.path),
+            query=_clone_query_values(value.query),
+            headers=_sanitize_provider_invoke_headers(value.headers),
+            body=_coerce_body_bytes(value.body),
+            port=int(value.port or 0),
+            ttl_seconds=int(value.ttl_seconds or 0),
+        )
+    else:
+        raw = cast(dict[str, Any], value) if isinstance(value, dict) else {}
+        out = MicroVMProviderInvokeInput(
+            request_id=str(raw.get("request_id", "") or "").strip(),
+            tenant_id=str(raw.get("tenant_id", "") or "").strip(),
+            namespace=str(raw.get("namespace", "") or "").strip(),
+            auth_context=_normalize_auth_context(raw.get("auth_context") or {}),
+            binding=_normalize_provider_binding(raw.get("binding") or {}),
+            endpoint=str(raw.get("endpoint", "") or "").strip(),
+            method=str(raw.get("method", "") or "").strip().upper(),
+            path=_normalize_provider_invoke_path(str(raw.get("path", "") or "")),
+            query=_clone_query_values(raw.get("query") if isinstance(raw.get("query"), dict) else {}),
+            headers=_sanitize_provider_invoke_headers(
+                cast(dict[str, Any], raw.get("headers")) if isinstance(raw.get("headers"), dict) else {}
+            ),
+            body=_coerce_body_bytes(raw.get("body", b"")),
+            port=int(raw.get("port", 0) or 0),
+            ttl_seconds=int(raw.get("ttl_seconds", 0) or 0),
+        )
+    if out.port == 0:
+        out.port = _DEFAULT_PROVIDER_INVOKE_PORT
+    if out.ttl_seconds == 0:
+        out.ttl_seconds = _DEFAULT_PROVIDER_INVOKE_TOKEN_TTL_SECONDS
+    return out
+
+
+def _normalize_provider_invoke_path(path: str) -> str:
+    normalized = str(path or "").strip()
+    if not normalized:
+        return "/"
+    if not normalized.startswith("/"):
+        normalized = "/" + normalized
+    return normalized
+
+
+def _sanitize_provider_invoke_headers(headers: dict[str, Any]) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for raw_name, raw_values in dict(headers or {}).items():
+        name = str(raw_name or "").strip().lower()
+        if not name or name in _PROVIDER_INVOKE_FORBIDDEN_HEADERS:
+            continue
+        values = _header_values(raw_values)
+        clean = [
+            value
+            for value in (str(item or "").strip() for item in values)
+            if value and not _forbidden_field_name(value)
+        ]
+        if clean:
+            out[name] = clean
+    return out
+
+
+def _provider_invoke_url(endpoint: str, path: str, query: dict[str, list[str]]) -> str:
+    raw_endpoint = str(endpoint or "").strip()
+    if not raw_endpoint:
+        raise _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm invoke endpoint is invalid",
+            "",
+        )
+    if not raw_endpoint.startswith(("http://", "https://")):
+        raw_endpoint = f"https://{raw_endpoint}"
+    parsed = urllib.parse.urlparse(raw_endpoint)
+    if not parsed.netloc:
+        raise _safe_error(
+            MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+            "apptheory: microvm invoke endpoint is invalid",
+            "",
+        )
+    normalized_query = _clone_query_values(query)
+    pairs: list[tuple[str, str]] = []
+    for key in sorted(normalized_query):
+        pairs.extend((key, value) for value in normalized_query.get(key, []))
+    return urllib.parse.urlunparse(
+        parsed._replace(
+            scheme="https",
+            params="",
+            path=_normalize_provider_invoke_path(path),
+            query=urllib.parse.urlencode(pairs, doseq=True),
+            fragment="",
+        )
+    )
+
+
+def _provider_invoke_port_header(port: int) -> str:
+    value = int(port or 0) or _DEFAULT_PROVIDER_INVOKE_PORT
+    return str(value)
+
+
+def _provider_invoke_response_is_base64(headers: dict[str, list[str]]) -> bool:
+    content_type = ""
+    for name, values in dict(headers or {}).items():
+        if str(name or "").strip().lower() == "content-type" and values:
+            content_type = str(values[0] or "").strip().lower()
+            break
+    if not content_type:
+        return False
+    textual_prefixes = (
+        "text/",
+        "application/json",
+        "application/xml",
+        "application/javascript",
+        "application/problem+json",
+    )
+    return not any(content_type.startswith(prefix) for prefix in textual_prefixes)
+
+
+def _clone_query_values(query: Any) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    raw = query if isinstance(query, dict) else {}
+    for raw_key, raw_values in raw.items():
+        key = str(raw_key or "").strip()
+        if not key:
+            continue
+        out[key] = [str(value or "").strip() for value in _header_values(raw_values)]
+    return {key: values for key, values in out.items() if key}
+
+
+def _coerce_body_bytes(value: Any) -> bytes:
+    if value is None:
+        return b""
+    if isinstance(value, bytes):
+        return bytes(value)
+    if isinstance(value, bytearray | memoryview):
+        return bytes(value)
+    if isinstance(value, str):
+        return value.encode("utf-8")
+    return bytes(str(value), "utf-8")
+
+
+def _header_values(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item or "") for item in value]
+    if isinstance(value, tuple):
+        return [str(item or "") for item in value]
+    return [str(value or "")]
+
+
 def _normalize_provider_binding(value: MicroVMProviderSessionBinding | dict[str, Any]) -> MicroVMProviderSessionBinding:
     if isinstance(value, MicroVMProviderSessionBinding):
         return MicroVMProviderSessionBinding(
@@ -1185,6 +1430,7 @@ def _normalize_provider_session(value: MicroVMProviderSession | dict[str, Any]) 
             state=_normalize_real_state(value.state),
             provider_state=_normalize_provider_state(value.provider_state),
             terminal=value.terminal,
+            endpoint=str(value.endpoint or "").strip(),
             image_ref=str(value.image_ref or "").strip(),
             image_version=str(value.image_version or "").strip(),
             started_at=float(value.started_at or 0.0),
@@ -1200,6 +1446,7 @@ def _normalize_provider_session(value: MicroVMProviderSession | dict[str, Any]) 
         state=_normalize_real_state(str(raw.get("state", "") or "")),
         provider_state=_normalize_provider_state(str(raw.get("provider_state", "") or "")),
         terminal=raw.get("terminal") is True,
+        endpoint=str(raw.get("endpoint", "") or "").strip(),
         image_ref=str(raw.get("image_ref", "") or "").strip(),
         image_version=str(raw.get("image_version", "") or "").strip(),
         started_at=float(raw.get("started_at", 0.0) or 0.0),
@@ -1252,7 +1499,8 @@ def _provider_key(tenant_id: str, namespace: str, session_id: str) -> tuple[str,
 
 
 def _provider_egress_connectors(input_: MicroVMProviderRunInput) -> list[str]:
-    return _normalize_string_list([*input_.egress_network_connector_refs, input_.network_connector_ref])
+    values = _normalize_string_list([*input_.egress_network_connector_refs, input_.network_connector_ref])
+    return list(dict.fromkeys(values))
 
 
 def _safe_run_hook_payload(input_: MicroVMProviderRunInput) -> str:
@@ -1279,6 +1527,7 @@ def _provider_session_from_run_output(input_: MicroVMProviderRunInput, output: A
     return _provider_session_from_state(
         binding,
         _string_field(output, "state"),
+        _string_field(output, "endpoint"),
         _string_field(output, "imageArn") or input_.image_ref,
         _string_field(output, "imageVersion") or input_.image_version,
         _time_field(output, "startedAt"),
@@ -1299,6 +1548,7 @@ def _provider_session_from_get_output(
     return _provider_session_from_state(
         binding,
         _string_field(output, "state"),
+        _string_field(output, "endpoint"),
         _string_field(output, "imageArn"),
         _string_field(output, "imageVersion"),
         _time_field(output, "startedAt"),
@@ -1320,6 +1570,7 @@ def _provider_list_output_from_sdk(input_: MicroVMProviderListInput, output: Any
             _provider_session_from_state(
                 binding,
                 _string_field(item, "state"),
+                "",
                 _string_field(item, "imageArn"),
                 _string_field(item, "imageVersion"),
                 _time_field(item, "startedAt"),
@@ -1332,6 +1583,7 @@ def _provider_list_output_from_sdk(input_: MicroVMProviderListInput, output: Any
 def _provider_session_from_state(
     binding: MicroVMProviderSessionBinding,
     provider_state: str,
+    endpoint: str,
     image_ref: str,
     image_version: str,
     started_at: float,
@@ -1346,6 +1598,7 @@ def _provider_session_from_state(
         state=state,
         provider_state=_normalize_provider_state(provider_state),
         terminal=terminal,
+        endpoint=str(endpoint or "").strip(),
         image_ref=str(image_ref or "").strip(),
         image_version=str(image_version or "").strip(),
         started_at=float(started_at or 0.0),
@@ -1478,15 +1731,22 @@ def _number_field(value: Any, key: str) -> int:
 
 
 __all__ = [
+    "_DEFAULT_PROVIDER_INVOKE_PORT",
+    "_DEFAULT_PROVIDER_INVOKE_TOKEN_TTL_SECONDS",
+    "_MAX_PROVIDER_INVOKE_BODY_BYTES",
+    "_PROVIDER_INVOKE_FORBIDDEN_HEADERS",
+    "_PROVIDER_INVOKE_METHODS",
     "_as_provider_safe_error",
     "_as_safe_error",
     "_aws_port_scopes",
     "_clone_provider_session",
     "_clone_provider_token",
+    "_clone_query_values",
     "_clone_session_record",
     "_clone_session_registry_record",
     "_clone_session_spec",
     "_clone_session_token_metadata_list",
+    "_coerce_body_bytes",
     "_coerce_controller_command",
     "_coerce_controller_contract",
     "_coerce_session_registry_contract",
@@ -1495,12 +1755,15 @@ __all__ = [
     "_controller_query_input",
     "_ensure_provider_token_result",
     "_fake_provider_error",
+    "_header_values",
     "_load_aws_lambda_microvm_provider_client",
     "_normalize_auth_context",
     "_normalize_command",
     "_normalize_controller_request",
     "_normalize_provider_binding",
     "_normalize_provider_idle_policy",
+    "_normalize_provider_invoke_input",
+    "_normalize_provider_invoke_path",
     "_normalize_provider_list_input",
     "_normalize_provider_port_scope",
     "_normalize_provider_run_input",
@@ -1520,6 +1783,9 @@ __all__ = [
     "_number_field",
     "_provider_egress_connectors",
     "_provider_expiration_minutes",
+    "_provider_invoke_port_header",
+    "_provider_invoke_response_is_base64",
+    "_provider_invoke_url",
     "_provider_key",
     "_provider_list_output_from_sdk",
     "_provider_session_from_get_output",
@@ -1537,6 +1803,7 @@ __all__ = [
     "_response_from_status",
     "_safe_provider_token_id",
     "_safe_run_hook_payload",
+    "_sanitize_provider_invoke_headers",
     "_session_record_from_registry_no_validate",
     "_session_record_is_stale",
     "_session_registry_operation_error",
@@ -1546,6 +1813,7 @@ __all__ = [
     "_valid_microvm_command",
     "_validate_provider_access",
     "_validate_provider_binding",
+    "_validate_provider_invoke_input",
     "_validate_provider_list_input",
     "_validate_provider_operation",
     "_validate_provider_port_scope",
@@ -1553,6 +1821,7 @@ __all__ = [
     "_validate_provider_session_input",
     "_validate_provider_token_input",
     "_validate_safe_connector_refs",
+    "validate_microvm_provider_invoke_input",
     "validate_microvm_provider_list_input",
     "validate_microvm_provider_run_input",
     "validate_microvm_provider_session",

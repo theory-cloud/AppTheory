@@ -1672,6 +1672,7 @@ async function compareMicroVMControllerRouteFixture(fixture) {
   const controller = runtime.createRealMicroVMController(provider, registry, {
     ids: { newID: () => setup.session_id },
     clock: { now: () => new Date(now.valueOf()) },
+    deployment_defaults: setup.deployment_defaults,
   });
   if (setup.seed_session) {
     const seeded = await controller.handle(
@@ -1876,7 +1877,29 @@ function normalizeMicroVMControllerRouteSetup(setup) {
     namespace: String(setup.namespace ?? "namespace-1").trim() || "namespace-1",
     session_id:
       String(setup.session_id ?? "fixture-session").trim() || "fixture-session",
+    deployment_defaults: normalizeMicroVMDeploymentDefaults(
+      setup.deployment_defaults ?? {},
+    ),
   };
+}
+
+function normalizeMicroVMDeploymentDefaults(defaults) {
+  return {
+    image_ref: String(defaults.image_ref ?? "").trim(),
+    network_connector_ref: String(defaults.network_connector_ref ?? "").trim(),
+    ingress_network_connector_refs: stringList(
+      defaults.ingress_network_connector_refs ?? [],
+    ),
+    egress_network_connector_refs: stringList(
+      defaults.egress_network_connector_refs ?? [],
+    ),
+  };
+}
+
+function stringList(values) {
+  return Array.isArray(values)
+    ? values.map((value) => String(value ?? "").trim()).filter(Boolean)
+    : [];
 }
 
 function microVMControllerRouteRunRequest(runtime, setup) {
@@ -1905,6 +1928,14 @@ function compareMicroVMControllerRouteExpected(expected, actual, body) {
     };
   }
   const bodyText = Buffer.from(actual.body ?? Buffer.alloc(0)).toString("utf8");
+  for (const required of expected.body_contains ?? []) {
+    if (required && !bodyText.includes(String(required))) {
+      return {
+        ok: false,
+        reason: `microvm_controller_route body missing substring ${JSON.stringify(required)}`,
+      };
+    }
+  }
   for (const forbidden of expected.forbidden_body_substrings ?? []) {
     if (forbidden && bodyText.includes(String(forbidden))) {
       return {
@@ -2848,6 +2879,9 @@ async function runFixture(fixture) {
   }
   if (tier === "objectstore") {
     return await runFixtureObjectStore(fixture);
+  }
+  if (tier === "vectorstore") {
+    return await runFixtureVectorStore(fixture);
   }
 
   if (tier === "p0") {
@@ -6082,6 +6116,161 @@ function debugActualForExpected(actual, expected) {
     debug.body = { encoding: "base64", value: actual.body.toString("base64") };
   }
   return debug;
+}
+
+
+async function runFixtureVectorStore(fixture) {
+  const runtime = await loadAppTheoryRuntime();
+  const backend = String(fixture.setup?.vectorstore?.backend ?? "fake").trim();
+  if (backend !== "fake") {
+    return { ok: false, reason: `vectorstore fixture backend ${JSON.stringify(backend)} is unsupported` };
+  }
+  const steps = fixture.input?.vectorstore?.steps ?? [];
+  if (!Array.isArray(steps) || steps.length === 0) {
+    return { ok: false, reason: "vectorstore fixture missing input.vectorstore.steps" };
+  }
+  const dimension = Number(fixture.setup?.vectorstore?.dimension ?? 3);
+  const store = runtime.createFakeVectorStore(dimension);
+  store.requiredMetadataKeys = Array.from(fixture.setup?.vectorstore?.required_metadata_keys ?? []);
+  const embedder = new runtime.FakeEmbedder(fixture.setup?.vectorstore?.embeddings ?? {});
+  if (fixture.setup?.vectorstore?.default_embedding) {
+    embedder.defaultEmbedding = Array.from(fixture.setup.vectorstore.default_embedding);
+  }
+  const actualSteps = [];
+  for (const step of steps) {
+    actualSteps.push(await runVectorStoreStep(runtime, store, embedder, fixture.setup?.vectorstore ?? {}, dimension, step));
+  }
+  const actual = {
+    steps: actualSteps,
+    calls: vectorStoreCallsJson(store.calls()),
+    embedder_calls: Array.from(embedder.calls),
+  };
+  return compareFixtureOutputJson(fixture, actual);
+}
+
+async function runVectorStoreStep(runtime, store, embedder, setup, dimension, step) {
+  const operation = String(step.operation ?? "").trim().toLowerCase();
+  const result = { name: step.name, operation };
+  try {
+    switch (operation) {
+      case "put": {
+        await store.putVectors({ records: vectorRecords(step.records ?? []) });
+        break;
+      }
+      case "get": {
+        const records = await store.getVectors({ keys: step.keys ?? [], returnMetadata: Boolean(step.return_metadata) });
+        result.records = vectorRecordsJson(records, true);
+        break;
+      }
+      case "delete": {
+        await store.deleteVectors({ keys: step.keys ?? [] });
+        break;
+      }
+      case "query": {
+        const hits = await store.queryVectors({ vector: step.vector ?? [], topK: step.top_k ?? 0, filter: step.filter, returnMetadata: Boolean(step.return_metadata) });
+        result.hits = vectorHitsJson(hits);
+        break;
+      }
+      case "semantic_put": {
+        const index = new runtime.SemanticIndex({ store, embedder, dimension, requiredMetadataKeys: setup.required_metadata_keys ?? [] });
+        await index.putText(semanticRecords(step.records ?? []));
+        break;
+      }
+      case "semantic_query": {
+        const index = new runtime.SemanticIndex({ store, embedder, dimension, requiredMetadataKeys: setup.required_metadata_keys ?? [] });
+        const hits = await index.queryText(step.text ?? "", { topK: step.top_k ?? 0, filter: step.filter, returnMetadata: Boolean(step.return_metadata) });
+        result.hits = vectorHitsJson(hits);
+        break;
+      }
+      case "titan_embed": {
+        const embedding = setup?.titan?.embedding ?? setup?.default_embedding ?? [];
+        const fake = new FakeBedrockRuntime(embedding);
+        const emb = new runtime.TitanEmbedder({ client: fake, modelId: step.model_id, dimensions: step.dimensions || dimension, normalize: step.normalize ?? true });
+        result.vector = await emb.embed(step.text ?? "");
+        result.requests = fake.requests;
+        break;
+      }
+      default: {
+        throw new runtime.VectorStoreError(runtime.VECTORSTORE_ERROR_UNSUPPORTED_OPERATION, `vectorstore: unsupported operation: ${operation}`);
+      }
+    }
+    result.ok = true;
+  } catch (error) {
+    result.ok = false;
+    result.error = vectorStoreErrorJson(runtime, error);
+  }
+  return result;
+}
+
+class FakeBedrockRuntime {
+  constructor(embedding) {
+    this.embedding = Array.from(embedding ?? []);
+    this.requests = [];
+  }
+
+  async send(command) {
+    const input = command.input ?? {};
+    const body = JSON.parse(new TextDecoder().decode(input.body));
+    body.model_id = input.modelId;
+    body.content_type = input.contentType;
+    body.accept = input.accept;
+    this.requests.push(body);
+    return { body: new TextEncoder().encode(JSON.stringify({ embedding: this.embedding })) };
+  }
+}
+
+function vectorRecords(records) {
+  return records.map((record) => ({ key: record.key, data: Array.from(record.data ?? []), ...(record.metadata ? { metadata: cloneJson(record.metadata) } : {}) }));
+}
+
+function semanticRecords(records) {
+  return records.map((record) => ({ key: record.key, text: record.text ?? "", ...(record.metadata ? { metadata: cloneJson(record.metadata) } : {}) }));
+}
+
+function vectorRecordsJson(records, includeMetadata) {
+  return records.map((record) => {
+    const item = { key: record.key, data: Array.from(record.data ?? []) };
+    if (includeMetadata && record.metadata && Object.keys(record.metadata).length > 0) item.metadata = sortObject(record.metadata);
+    return item;
+  });
+}
+
+function vectorHitsJson(hits) {
+  return hits.map((hit) => {
+    const item = { key: hit.key, distance: hit.distance };
+    if (hit.metadata && Object.keys(hit.metadata).length > 0) item.metadata = sortObject(hit.metadata);
+    return item;
+  });
+}
+
+function vectorStoreCallsJson(calls) {
+  return calls.map((call) => {
+    const item = { operation: call.operation };
+    if (call.keys?.length) item.keys = Array.from(call.keys);
+    if (call.records?.length) item.records = vectorRecordsJson(call.records, true);
+    if (call.vector?.length) item.vector = Array.from(call.vector);
+    if (call.topK !== undefined && call.topK !== 0) item.top_k = call.topK;
+    if (call.filter && Object.keys(call.filter).length > 0) item.filter = sortObject(call.filter);
+    if (call.returnMetadata) item.return_metadata = call.returnMetadata;
+    return item;
+  });
+}
+
+function vectorStoreErrorJson(runtime, error) {
+  const message = error?.message ?? String(error);
+  let code = error?.code ?? "vectorstore.error";
+  if (message.startsWith("vectorstore: unsupported operation")) code = runtime.VECTORSTORE_ERROR_UNSUPPORTED_OPERATION;
+  return { code, message };
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function sortObject(raw) {
+  const out = {};
+  for (const key of Object.keys(raw).sort()) out[key] = raw[key];
+  return out;
 }
 
 async function main() {

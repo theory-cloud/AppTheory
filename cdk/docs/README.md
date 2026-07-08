@@ -33,6 +33,7 @@
 - [EventBus Table](./eventbus-table.md) — durable EventBus DynamoDB table with binding guidance for publish and replay flows.
 - [HTTP Ingestion Endpoint](./http-ingestion-endpoint.md) — authenticated server-to-server ingestion endpoint with Lambda request authorizer.
 - [S3 Ingest Front Door](./s3-ingest.md) — secure bucket + optional EventBridge/SQS notifications for import workloads.
+- [S3 Vector Index](./vector-index.md) — S3 Vectors bucket/index plus Bedrock embedding env/grants.
 - [CodeBuild Job Runner (Import Pipeline)](./codebuild-job-runner.md) — batch job runner for transforms/decrypt/backfills.
 - [Jobs Table (Import Pipeline)](./jobs-table.md) — opinionated DynamoDB table for job ledgers (schema + GSIs + TTL).
 - [Lambda Role Helper](./lambda-role.md) — Lambda execution roles (baseline + X-Ray + KMS + custom statements).
@@ -70,69 +71,50 @@ operator-facing deployment guidance. Keep these human-authored groups current wh
   guardrails.
 - MCP deployment: `AppTheoryMcpServer`, `AppTheoryRemoteMcpServer`, and `AppTheoryMcpProtectedResource`.
 - Event and ingestion surfaces: `AppTheoryQueue`, `AppTheoryEventBridgeBus`, `AppTheoryKinesisStream`,
-  `AppTheoryCloudWatchLogsDestination`, `AppTheoryS3Ingest`, and `AppTheoryHttpIngestionEndpoint`.
+  `AppTheoryCloudWatchLogsDestination`, `AppTheoryS3Ingest`, `AppTheoryVectorIndex`,
+  `AppTheoryVectorIndexProps`, `AppTheoryVectorIndexBindOptions`, and `AppTheoryHttpIngestionEndpoint`.
 - Job and data foundations: `AppTheoryJobsTable`, `AppTheoryEventBusTable`, `AppTheoryDynamoTable`, and
   `AppTheoryLambdaRole`.
 - MicroVM and frontend delivery: `AppTheoryMicrovmController`, `AppTheoryMicrovmImage`,
   `AppTheoryMicrovmNetworkConnector`, path-routed frontends, media CDN, and `AppTheorySsrSite`.
 
 <!-- apptheory-api-docs:cdk:start -->
-## CDK jsii coverage index
+## CDK snapshot coverage index
 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `cdk/.jsii`.
 
 <details>
-<summary>133 exported top-level symbols</summary>
+<summary>136 exported top-level symbols</summary>
 
 ```text
 ApiBypassConfig, AppTheoryApiDomain, AppTheoryApiDomainProps, AppTheoryApp, AppTheoryAppProps
-AppTheoryCertificate, AppTheoryCertificateProps, AppTheoryCloudWatchLogsDestination
-AppTheoryCloudWatchLogsDestinationProps, AppTheoryCloudWatchLogsSubscription
-AppTheoryCloudWatchLogsSubscriptionProps, AppTheoryCodeBuildJobRunner
-AppTheoryCodeBuildJobRunnerProps, AppTheoryDynamoDBStreamMapping
-AppTheoryDynamoDBStreamMappingProps, AppTheoryDynamoTable, AppTheoryDynamoTableGsiProps
-AppTheoryDynamoTableProps, AppTheoryEnhancedSecurity, AppTheoryEnhancedSecurityProps
-AppTheoryEventBridgeBus, AppTheoryEventBridgeBusProps, AppTheoryEventBridgeHandler
-AppTheoryEventBridgeHandlerProps, AppTheoryEventBridgeRuleTarget
-AppTheoryEventBridgeRuleTargetProps, AppTheoryEventBusTable
-AppTheoryEventBusTableBindingOptions, AppTheoryEventBusTableProps, AppTheoryFunction
-AppTheoryFunctionAlarms, AppTheoryFunctionAlarmsProps, AppTheoryFunctionAliasOptions
-AppTheoryFunctionDeploymentOptions, AppTheoryFunctionProps, AppTheoryHostedZone
-AppTheoryHostedZoneProps, AppTheoryHttpApi, AppTheoryHttpApiCorsOptions
-AppTheoryHttpApiDomainOptions, AppTheoryHttpApiProps, AppTheoryHttpApiStageOptions
-AppTheoryHttpApiWafOptions, AppTheoryHttpIngestionEndpoint
-AppTheoryHttpIngestionEndpointDomainOptions, AppTheoryHttpIngestionEndpointProps
-AppTheoryHttpIngestionEndpointStageOptions, AppTheoryJobsTable, AppTheoryJobsTableProps
-AppTheoryKinesisStream, AppTheoryKinesisStreamMapping, AppTheoryKinesisStreamMappingProps
-AppTheoryKinesisStreamProps, AppTheoryKmsKey, AppTheoryKmsKeyProps, AppTheoryLambdaRole
-AppTheoryLambdaRoleProps, AppTheoryLambdaTrafficShiftType, AppTheoryMcpProtectedResource
-AppTheoryMcpProtectedResourceProps, AppTheoryMcpServer, AppTheoryMcpServerDomainOptions
-AppTheoryMcpServerProps, AppTheoryMcpServerStageOptions, AppTheoryMediaCdn
-AppTheoryMediaCdnProps, AppTheoryMicrovmController, AppTheoryMicrovmControllerFunctionProps
-AppTheoryMicrovmControllerProps, AppTheoryMicrovmControllerStageOptions
-AppTheoryMicrovmHookMode, AppTheoryMicrovmImage, AppTheoryMicrovmImageBuildHooks
-AppTheoryMicrovmImageCloudWatchLogging, AppTheoryMicrovmImageCodeArtifact
-AppTheoryMicrovmImageCpuArchitecture, AppTheoryMicrovmImageCpuConfiguration
-AppTheoryMicrovmImageEnvironmentVariable, AppTheoryMicrovmImageHooks
-AppTheoryMicrovmImageLogging, AppTheoryMicrovmImageOsCapability, AppTheoryMicrovmImageProps
-AppTheoryMicrovmImageResources, AppTheoryMicrovmManagedNetworkConnector
-AppTheoryMicrovmNetworkConnector, AppTheoryMicrovmNetworkConnectorKind
-AppTheoryMicrovmNetworkConnectorProps, AppTheoryMicrovmNetworkConnectorReference
-AppTheoryMicrovmNetworkConnectorReferenceProps, AppTheoryMicrovmNetworkProtocol
-AppTheoryMicrovmRuntimeHooks, AppTheoryObservability, AppTheoryObservabilityProps
-AppTheoryPathRoutedFrontend, AppTheoryPathRoutedFrontendProps, AppTheoryQueue
-AppTheoryQueueConsumer, AppTheoryQueueConsumerProps, AppTheoryQueueProcessor
-AppTheoryQueueProcessorProps, AppTheoryQueueProps, AppTheoryRegionalWafOptions
-AppTheoryRemoteMcpServer, AppTheoryRemoteMcpServerProps, AppTheoryRequestMetricDimensions
-AppTheoryRestApi, AppTheoryRestApiProps, AppTheoryRestApiRouteOptions, AppTheoryRestApiRouter
-AppTheoryRestApiRouterCorsOptions, AppTheoryRestApiRouterDomainOptions
-AppTheoryRestApiRouterIntegrationOptions, AppTheoryRestApiRouterProps
-AppTheoryRestApiRouterStageOptions, AppTheoryS3Ingest, AppTheoryS3IngestProps
-AppTheorySecretConfig, AppTheorySecurityRule, AppTheorySpaRewriteMode, AppTheorySsrSite
-AppTheorySsrSiteBearerFunctionUrlOrigin, AppTheorySsrSiteMode, AppTheorySsrSiteProps
-AppTheoryVpcEndpointConfig, AppTheoryWafRuleConfig, AppTheoryWebSocketApi
-AppTheoryWebSocketApiProps, IAppTheoryMicrovmImage, IAppTheoryMicrovmNetworkConnector
-MediaCdnDomainConfig, PathRoutedFrontendDomainConfig, PrivateMediaConfig, SpaOriginConfig
+AppTheoryCertificate, AppTheoryCertificateProps, AppTheoryCloudWatchLogsDestination, AppTheoryCloudWatchLogsDestinationProps, AppTheoryCloudWatchLogsSubscription
+AppTheoryCloudWatchLogsSubscriptionProps, AppTheoryCodeBuildJobRunner, AppTheoryCodeBuildJobRunnerProps, AppTheoryDynamoDBStreamMapping, AppTheoryDynamoDBStreamMappingProps
+AppTheoryDynamoTable, AppTheoryDynamoTableGsiProps, AppTheoryDynamoTableProps, AppTheoryEnhancedSecurity, AppTheoryEnhancedSecurityProps
+AppTheoryEventBridgeBus, AppTheoryEventBridgeBusProps, AppTheoryEventBridgeHandler, AppTheoryEventBridgeHandlerProps, AppTheoryEventBridgeRuleTarget
+AppTheoryEventBridgeRuleTargetProps, AppTheoryEventBusTable, AppTheoryEventBusTableBindingOptions, AppTheoryEventBusTableProps, AppTheoryFunction
+AppTheoryFunctionAlarms, AppTheoryFunctionAlarmsProps, AppTheoryFunctionAliasOptions, AppTheoryFunctionDeploymentOptions, AppTheoryFunctionProps
+AppTheoryHostedZone, AppTheoryHostedZoneProps, AppTheoryHttpApi, AppTheoryHttpApiCorsOptions, AppTheoryHttpApiDomainOptions
+AppTheoryHttpApiProps, AppTheoryHttpApiStageOptions, AppTheoryHttpApiWafOptions, AppTheoryHttpIngestionEndpoint, AppTheoryHttpIngestionEndpointDomainOptions
+AppTheoryHttpIngestionEndpointProps, AppTheoryHttpIngestionEndpointStageOptions, AppTheoryJobsTable, AppTheoryJobsTableProps, AppTheoryKinesisStream
+AppTheoryKinesisStreamMapping, AppTheoryKinesisStreamMappingProps, AppTheoryKinesisStreamProps, AppTheoryKmsKey, AppTheoryKmsKeyProps
+AppTheoryLambdaRole, AppTheoryLambdaRoleProps, AppTheoryLambdaTrafficShiftType, AppTheoryMcpProtectedResource, AppTheoryMcpProtectedResourceProps
+AppTheoryMcpServer, AppTheoryMcpServerDomainOptions, AppTheoryMcpServerProps, AppTheoryMcpServerStageOptions, AppTheoryMediaCdn
+AppTheoryMediaCdnProps, AppTheoryMicrovmController, AppTheoryMicrovmControllerFunctionProps, AppTheoryMicrovmControllerProps, AppTheoryMicrovmControllerStageOptions
+AppTheoryMicrovmHookMode, AppTheoryMicrovmImage, AppTheoryMicrovmImageBuildHooks, AppTheoryMicrovmImageCloudWatchLogging, AppTheoryMicrovmImageCodeArtifact
+AppTheoryMicrovmImageCpuArchitecture, AppTheoryMicrovmImageCpuConfiguration, AppTheoryMicrovmImageEnvironmentVariable, AppTheoryMicrovmImageHooks, AppTheoryMicrovmImageLogging
+AppTheoryMicrovmImageOsCapability, AppTheoryMicrovmImageProps, AppTheoryMicrovmImageResources, AppTheoryMicrovmManagedNetworkConnector, AppTheoryMicrovmNetworkConnector
+AppTheoryMicrovmNetworkConnectorKind, AppTheoryMicrovmNetworkConnectorProps, AppTheoryMicrovmNetworkConnectorReference, AppTheoryMicrovmNetworkConnectorReferenceProps, AppTheoryMicrovmNetworkProtocol
+AppTheoryMicrovmRuntimeHooks, AppTheoryObservability, AppTheoryObservabilityProps, AppTheoryPathRoutedFrontend, AppTheoryPathRoutedFrontendProps
+AppTheoryQueue, AppTheoryQueueConsumer, AppTheoryQueueConsumerProps, AppTheoryQueueProcessor, AppTheoryQueueProcessorProps
+AppTheoryQueueProps, AppTheoryRegionalWafOptions, AppTheoryRemoteMcpServer, AppTheoryRemoteMcpServerProps, AppTheoryRequestMetricDimensions
+AppTheoryRestApi, AppTheoryRestApiProps, AppTheoryRestApiRouteOptions, AppTheoryRestApiRouter, AppTheoryRestApiRouterCorsOptions
+AppTheoryRestApiRouterDomainOptions, AppTheoryRestApiRouterIntegrationOptions, AppTheoryRestApiRouterProps, AppTheoryRestApiRouterStageOptions, AppTheoryS3Ingest
+AppTheoryS3IngestProps, AppTheorySecretConfig, AppTheorySecurityRule, AppTheorySpaRewriteMode, AppTheorySsrSite
+AppTheorySsrSiteBearerFunctionUrlOrigin, AppTheorySsrSiteMode, AppTheorySsrSiteProps, AppTheoryVectorIndex, AppTheoryVectorIndexBindOptions
+AppTheoryVectorIndexProps, AppTheoryVpcEndpointConfig, AppTheoryWafRuleConfig, AppTheoryWebSocketApi, AppTheoryWebSocketApiProps
+IAppTheoryMicrovmImage, IAppTheoryMicrovmNetworkConnector, MediaCdnDomainConfig, PathRoutedFrontendDomainConfig, PrivateMediaConfig
+SpaOriginConfig
 ```
 
 </details>

@@ -1,0 +1,64 @@
+{
+  "id": "vectorstore.fail-closed-validation",
+  "tier": "vectorstore",
+  "name": "Vector store validation fails closed for dimensions and required metadata",
+  "setup": {
+    "vectorstore": {
+      "backend": "fake",
+      "dimension": 3,
+      "required_metadata_keys": ["tenant", "namespace"]
+    }
+  },
+  "input": {
+    "vectorstore": {
+      "steps": [
+        {
+          "name": "bad dimension",
+          "operation": "put",
+          "records": [
+            { "key": "bad#0001", "data": [1, 2], "metadata": { "tenant": "t1", "namespace": "docs" } }
+          ]
+        },
+        {
+          "name": "missing tenant",
+          "operation": "put",
+          "records": [
+            { "key": "bad#0002", "data": [1, 2, 3], "metadata": { "namespace": "docs" } }
+          ]
+        },
+        {
+          "name": "empty query vector",
+          "operation": "query",
+          "vector": [],
+          "top_k": 1
+        }
+      ]
+    }
+  },
+  "expect": {
+    "output_json": {
+      "steps": [
+        {
+          "name": "bad dimension",
+          "operation": "put",
+          "ok": false,
+          "error": { "code": "vectorstore.dimension_mismatch", "message": "vectorstore: vector dimension mismatch: got 2 want 3" }
+        },
+        {
+          "name": "missing tenant",
+          "operation": "put",
+          "ok": false,
+          "error": { "code": "vectorstore.invalid_input", "message": "vectorstore: required metadata missing: tenant" }
+        },
+        {
+          "name": "empty query vector",
+          "operation": "query",
+          "ok": false,
+          "error": { "code": "vectorstore.invalid_vector", "message": "vectorstore: vector is required" }
+        }
+      ],
+      "calls": [],
+      "embedder_calls": []
+    }
+  }
+}

@@ -769,6 +769,7 @@ func init() {
 		map[string]interface{}{
 			"ALL_INGRESS":     AppTheoryMicrovmManagedNetworkConnector_ALL_INGRESS,
 			"NO_INGRESS":      AppTheoryMicrovmManagedNetworkConnector_NO_INGRESS,
+			"HTTP_INGRESS":    AppTheoryMicrovmManagedNetworkConnector_HTTP_INGRESS,
 			"INTERNET_EGRESS": AppTheoryMicrovmManagedNetworkConnector_INTERNET_EGRESS,
 			"SHELL_INGRESS":   AppTheoryMicrovmManagedNetworkConnector_SHELL_INGRESS,
 		},
@@ -1138,6 +1139,42 @@ func init() {
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheorySsrSiteProps",
 		reflect.TypeOf((*AppTheorySsrSiteProps)(nil)).Elem(),
+	)
+	_jsii_.RegisterClass(
+		"@theory-cloud/apptheory-cdk.AppTheoryVectorIndex",
+		reflect.TypeOf((*AppTheoryVectorIndex)(nil)).Elem(),
+		[]_jsii_.Member{
+			_jsii_.MemberMethod{JsiiMethod: "bindEnvironment", GoMethod: "BindEnvironment"},
+			_jsii_.MemberMethod{JsiiMethod: "bindTitanEmbeddingEnvironment", GoMethod: "BindTitanEmbeddingEnvironment"},
+			_jsii_.MemberProperty{JsiiProperty: "dimension", GoGetter: "Dimension"},
+			_jsii_.MemberMethod{JsiiMethod: "grantBedrockInvokeModel", GoMethod: "GrantBedrockInvokeModel"},
+			_jsii_.MemberMethod{JsiiMethod: "grantManage", GoMethod: "GrantManage"},
+			_jsii_.MemberMethod{JsiiMethod: "grantQuery", GoMethod: "GrantQuery"},
+			_jsii_.MemberMethod{JsiiMethod: "grantReadVectors", GoMethod: "GrantReadVectors"},
+			_jsii_.MemberMethod{JsiiMethod: "grantWriteVectors", GoMethod: "GrantWriteVectors"},
+			_jsii_.MemberProperty{JsiiProperty: "index", GoGetter: "Index"},
+			_jsii_.MemberProperty{JsiiProperty: "indexArn", GoGetter: "IndexArn"},
+			_jsii_.MemberProperty{JsiiProperty: "indexName", GoGetter: "IndexName"},
+			_jsii_.MemberProperty{JsiiProperty: "node", GoGetter: "Node"},
+			_jsii_.MemberMethod{JsiiMethod: "toString", GoMethod: "ToString"},
+			_jsii_.MemberProperty{JsiiProperty: "vectorBucket", GoGetter: "VectorBucket"},
+			_jsii_.MemberProperty{JsiiProperty: "vectorBucketArn", GoGetter: "VectorBucketArn"},
+			_jsii_.MemberProperty{JsiiProperty: "vectorBucketName", GoGetter: "VectorBucketName"},
+			_jsii_.MemberMethod{JsiiMethod: "with", GoMethod: "With"},
+		},
+		func() interface{} {
+			j := jsiiProxy_AppTheoryVectorIndex{}
+			_jsii_.InitJsiiProxy(&j.Type__constructsConstruct)
+			return &j
+		},
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryVectorIndexBindOptions",
+		reflect.TypeOf((*AppTheoryVectorIndexBindOptions)(nil)).Elem(),
+	)
+	_jsii_.RegisterStruct(
+		"@theory-cloud/apptheory-cdk.AppTheoryVectorIndexProps",
+		reflect.TypeOf((*AppTheoryVectorIndexProps)(nil)).Elem(),
 	)
 	_jsii_.RegisterStruct(
 		"@theory-cloud/apptheory-cdk.AppTheoryVpcEndpointConfig",

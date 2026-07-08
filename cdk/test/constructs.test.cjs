@@ -1096,6 +1096,98 @@ test("AppTheoryS3Ingest (SQS notifications + filters) synthesizes expected templ
   }
 });
 
+
+test("AppTheoryVectorIndex (bucket/index/env/grants) synthesizes expected template", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  const fn = new lambda.Function(stack, "Fn", {
+    runtime: lambda.Runtime.NODEJS_24_X,
+    handler: "index.handler",
+    code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: 'ok' });"),
+  });
+
+  const vectorIndex = new apptheory.AppTheoryVectorIndex(stack, "VectorIndex", {
+    vectorBucketName: "apptheory-vectors",
+    indexName: "semantic",
+    dimension: 3,
+    nonFilterableMetadataKeys: ["content", "content", "  "],
+  });
+
+  vectorIndex.bindEnvironment(fn, { includeEmbedding: true });
+  vectorIndex.grantQuery(fn);
+  vectorIndex.grantWriteVectors(fn);
+  vectorIndex.grantBedrockInvokeModel(fn);
+
+  assert.equal(vectorIndex.vectorBucketName, "apptheory-vectors");
+  assert.equal(vectorIndex.indexName, "semantic");
+  assert.equal(vectorIndex.dimension, 3);
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  if (process.env.UPDATE_SNAPSHOTS === "1") {
+    writeSnapshot("vector-index-basic", template);
+  } else {
+    expectSnapshot("vector-index-basic", template);
+  }
+});
+
+test("AppTheoryVectorIndex generated bucket names are usable by indexes", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  new apptheory.AppTheoryVectorIndex(stack, "VectorIndex", {
+    indexName: "semantic",
+    dimension: 3,
+  });
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const bucket = Object.values(template.Resources ?? {}).find(
+    (resource) => resource.Type === "AWS::S3Vectors::VectorBucket",
+  );
+  const index = Object.values(template.Resources ?? {}).find(
+    (resource) => resource.Type === "AWS::S3Vectors::Index",
+  );
+  assert.ok(bucket, "expected vector bucket resource");
+  assert.ok(index, "expected vector index resource");
+  const bucketName = bucket.Properties?.VectorBucketName;
+  assert.equal(typeof bucketName, "string");
+  assert.ok(bucketName.length >= 3 && bucketName.length <= 63, `invalid bucket name length: ${bucketName}`);
+  assert.match(bucketName, /^[a-z0-9][a-z0-9-]*[a-z0-9]$/);
+  assert.equal(index.Properties?.VectorBucketName, bucketName);
+});
+
+test("AppTheoryVectorIndex fails closed for invalid bucket/index props", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryVectorIndex(stack, "MissingIndex", {
+        dimension: 3,
+      }),
+    /requires indexName/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryVectorIndex(stack, "BadDimension", {
+        indexName: "semantic",
+        dimension: 0,
+      }),
+    /requires positive integer dimension/,
+  );
+
+  assert.throws(
+    () =>
+      new apptheory.AppTheoryVectorIndex(stack, "MissingExisting", {
+        createVectorBucket: false,
+        indexName: "semantic",
+        dimension: 3,
+      }),
+    /requires existingVectorBucketName/,
+  );
+});
+
 test("AppTheoryKinesisStream (on-demand) synthesizes expected template", () => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "TestStack");
@@ -4692,6 +4784,7 @@ test("AppTheoryMicrovmNetworkConnector exposes managed ingress, egress, and shel
     "NoIngress",
     apptheory.AppTheoryMicrovmManagedNetworkConnector.NO_INGRESS,
   );
+  const httpIngress = apptheory.AppTheoryMicrovmNetworkConnector.httpIngress(stack, "HttpIngress");
   const internetEgress = apptheory.AppTheoryMicrovmNetworkConnector.internetEgress(stack, "InternetEgress");
   const shellIngress = apptheory.AppTheoryMicrovmNetworkConnector.shellIngress(stack, "ShellIngress");
   const importedIngress = apptheory.AppTheoryMicrovmNetworkConnector.fromNetworkConnectorArn(
@@ -4712,6 +4805,11 @@ test("AppTheoryMicrovmNetworkConnector exposes managed ingress, egress, and shel
     ),
   );
   assert.ok(
+    renderedString(httpIngress.networkConnectorArn).includes(
+      ":lambda:us-east-1:aws:network-connector:aws-network-connector:HTTP_INGRESS",
+    ),
+  );
+  assert.ok(
     renderedString(internetEgress.networkConnectorArn).includes(
       ":lambda:us-east-1:aws:network-connector:aws-network-connector:INTERNET_EGRESS",
     ),
@@ -4723,6 +4821,7 @@ test("AppTheoryMicrovmNetworkConnector exposes managed ingress, egress, and shel
   );
   assert.equal(allIngress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.INGRESS);
   assert.equal(noIngress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.INGRESS);
+  assert.equal(httpIngress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.INGRESS);
   assert.equal(internetEgress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.EGRESS);
   assert.equal(shellIngress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.SHELL_INGRESS);
   assert.equal(importedIngress.networkConnectorKind, apptheory.AppTheoryMicrovmNetworkConnectorKind.INGRESS);
@@ -5015,9 +5114,7 @@ test("AppTheoryMicrovmImage supports disabled logging", () => {
     microvmImageProps(connector, {
       logging: { disabled: true },
       environmentVariables: undefined,
-      hooks: {
-        microvmImageHooks: { validate: apptheory.AppTheoryMicrovmHookMode.ENABLED },
-      },
+      hooks: {},
     }),
   );
 
@@ -5026,6 +5123,29 @@ test("AppTheoryMicrovmImage supports disabled logging", () => {
   assert.equal(images.length, 1, "Should synthesize one Lambda MicroVM image");
   assert.deepEqual(images[0].Properties.Logging, { Disabled: true });
   assert.deepEqual(images[0].Properties.EnvironmentVariables, []);
+});
+
+test("AppTheoryMicrovmImage supports endpoint-dispatched no-hook images", () => {
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app, "TestStack");
+  const connector = importedMicrovmConnector(stack);
+
+  new apptheory.AppTheoryMicrovmImage(
+    stack,
+    "Image",
+    microvmImageProps(connector, {
+      hooks: {},
+    }),
+  );
+
+  const template = assertions.Template.fromStack(stack).toJSON();
+  const images = resourcesOfType(template, "AWS::Lambda::MicrovmImage");
+  assert.equal(images.length, 1, "Should synthesize one Lambda MicroVM image");
+  assert.deepEqual(
+    images[0].Properties.Hooks,
+    {},
+    "Endpoint-dispatched AppTheory images must synthesize an explicit empty Hooks object",
+  );
 });
 
 test("AppTheoryMicrovmImage fails closed on invalid props", () => {
@@ -5109,6 +5229,38 @@ test("AppTheoryMicrovmImage fails closed on invalid props", () => {
           }),
         ),
       /hooks.microvmImageHooks.ready must be ENABLED or DISABLED/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "HookGroupWithoutPortStack");
+    const connector = importedMicrovmConnector(stack);
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmImage(
+          stack,
+          "Image",
+          microvmImageProps(connector, {
+            hooks: { microvmImageHooks: { validate: apptheory.AppTheoryMicrovmHookMode.ENABLED } },
+          }),
+        ),
+      /hooks\.port is required/,
+    );
+  }
+
+  {
+    const stack = new cdk.Stack(app, "PortWithoutHookGroupStack");
+    const connector = importedMicrovmConnector(stack);
+    assert.throws(
+      () =>
+        new apptheory.AppTheoryMicrovmImage(
+          stack,
+          "Image",
+          microvmImageProps(connector, {
+            hooks: { port: 8080 },
+          }),
+        ),
+      /hooks\.port requires props\.hooks\.microvmHooks or props\.hooks\.microvmImageHooks/,
     );
   }
 
@@ -5202,6 +5354,8 @@ test("AppTheoryMicrovmController synthesizes protected controller deployment", (
       "DELETE /microvms/{session_id}",
       "GET /microvms",
       "GET /microvms/{session_id}",
+      "ANY /microvms/{session_id}/invoke",
+      "ANY /microvms/{session_id}/invoke/{proxy+}",
       "POST /microvms",
       "POST /microvms/{session_id}/auth-token",
       "POST /microvms/{session_id}/resume",
@@ -5234,9 +5388,10 @@ test("AppTheoryMicrovmController synthesizes protected controller deployment", (
   assert.equal(env.APPTHEORY_MICROVM_CONTRACT_VERSION, "m16.microvm/v1");
   assert.equal(
     env.APPTHEORY_MICROVM_CONTROLLER_OPERATIONS,
-    "run,get,list,suspend,resume,terminate,auth-token,shell-auth-token",
+    "run,get,list,suspend,resume,terminate,invoke,auth-token,shell-auth-token",
   );
   assert.ok(env.APPTHEORY_MICROVM_CONTROLLER_ROUTES.includes("DELETE /microvms/{session_id}"));
+  assert.ok(env.APPTHEORY_MICROVM_CONTROLLER_ROUTES.includes("ANY /microvms/{session_id}/invoke/{proxy+}"));
   assert.ok(!env.APPTHEORY_MICROVM_CONTROLLER_ROUTES.includes("/start"));
   assert.ok(!env.APPTHEORY_MICROVM_CONTROLLER_ROUTES.includes("/stop"));
   assert.ok(!env.APPTHEORY_MICROVM_CONTROLLER_ROUTES.includes("/status"));
@@ -5278,14 +5433,10 @@ test("AppTheoryMicrovmController synthesizes protected controller deployment", (
       "lambda:TerminateMicrovm",
     ].sort(),
   );
-  const microvmControlPlaneResource = renderedString(microvmControlPlaneStatements[0].Resource);
-  assert.ok(
-    microvmControlPlaneResource.includes(":lambda:") && microvmControlPlaneResource.includes(":microvm:*"),
-    `MicroVM instance/token actions must be scoped to the MicroVM instance ARN family: ${microvmControlPlaneResource}`,
-  );
-  assert.ok(
-    !microvmControlPlaneResource.includes("ImageArn") && !microvmControlPlaneResource.includes("microvm-image"),
-    `MicroVM instance/token actions must not be scoped to the configured image ARN: ${microvmControlPlaneResource}`,
+  assert.equal(
+    microvmControlPlaneStatements[0].Resource,
+    "*",
+    "Current Lambda MicroVM control-plane actions are permission-only and must synthesize wildcard resources",
   );
 
   const passConnectorStatements = resourcesOfType(template, "AWS::IAM::Policy")
@@ -5293,6 +5444,12 @@ test("AppTheoryMicrovmController synthesizes protected controller deployment", (
     .filter((statement) => renderedString(statement.Action).includes("lambda:PassNetworkConnector"));
   assert.equal(passConnectorStatements.length, 1, "Should synthesize one PassNetworkConnector statement");
   assert.equal(passConnectorStatements[0].Resource, "*");
+
+  const passRoleStatements = resourcesOfType(template, "AWS::IAM::Policy")
+    .flatMap((resource) => resource.Properties?.PolicyDocument?.Statement ?? [])
+    .filter((statement) => renderedString(statement.Action).includes("iam:PassRole"));
+  assert.equal(passRoleStatements.length, 1, "Should scope iam:PassRole to the configured execution role");
+  assert.ok(renderedString(passRoleStatements[0].Resource).includes("MicrovmExecutionRole"));
 
   if (process.env.UPDATE_SNAPSHOTS === "1") {
     writeSnapshot("microvm-controller", template);

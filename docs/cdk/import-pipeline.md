@@ -9,6 +9,7 @@ This guide collects the canonical AppTheory CDK constructs used by the import-pi
 ## Core constructs
 
 - `AppTheoryS3Ingest`: secure S3 ingest bucket with optional EventBridge or SQS notifications
+- `AppTheoryVectorIndex`: optional S3 Vectors semantic recall plane for already-chunked import outputs
 - `AppTheoryJobsTable`: DynamoDB jobs ledger table with `status-created-index` and `tenant-created-index`
 - `AppTheoryCodeBuildJobRunner`: CodeBuild wrapper for batch transforms, decrypts, or backfills
 - `AppTheoryEventBridgeRuleTarget`: EventBridge schedule or pattern to Lambda wiring

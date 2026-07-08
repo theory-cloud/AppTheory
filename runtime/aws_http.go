@@ -26,12 +26,17 @@ func (a *App) ServeLambdaFunctionURL(ctx context.Context, event events.LambdaFun
 }
 
 func requestFromAPIGatewayV2(event events.APIGatewayV2HTTPRequest) (Request, error) {
+	path := normalizeAPIGatewayV2StagePath(
+		event.RawPath,
+		event.RequestContext.HTTP.Path,
+		event.RequestContext.Stage,
+	)
 	req, err := requestFromHTTPEvent(
 		event.RawQueryString,
 		event.QueryStringParameters,
 		event.Headers,
 		event.Cookies,
-		event.RawPath,
+		path,
 		event.RequestContext.HTTP.Method,
 		event.RequestContext.HTTP.Path,
 		event.Body,
@@ -45,6 +50,25 @@ func requestFromAPIGatewayV2(event events.APIGatewayV2HTTPRequest) (Request, err
 		event.RequestContext.HTTP.SourceIP,
 	)
 	return req, nil
+}
+
+func normalizeAPIGatewayV2StagePath(rawPath, requestContextHTTPPath, stage string) string {
+	path := rawPath
+	if path == "" {
+		path = requestContextHTTPPath
+	}
+	stage = strings.Trim(strings.TrimSpace(stage), "/")
+	if stage == "" || stage == "$default" {
+		return path
+	}
+	prefix := "/" + stage
+	if path == prefix {
+		return "/"
+	}
+	if strings.HasPrefix(path, prefix+"/") {
+		return strings.TrimPrefix(path, prefix)
+	}
+	return path
 }
 
 func requestFromLambdaFunctionURL(event events.LambdaFunctionURLRequest) (Request, error) {

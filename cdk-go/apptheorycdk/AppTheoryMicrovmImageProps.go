@@ -18,6 +18,12 @@ type AppTheoryMicrovmImageProps struct {
 	// At least one connector reference is required and no more than 10 may be supplied.
 	EgressNetworkConnectors *[]IAppTheoryMicrovmNetworkConnector `field:"required" json:"egressNetworkConnectors" yaml:"egressNetworkConnectors"`
 	// Lifecycle hook configuration for MicroVMs and MicroVM images.
+	//
+	// Pass an empty object (`{}`) for AppTheory endpoint-dispatched MicroVM images.
+	// AppTheory then synthesizes `Hooks: {}` so Lambda builds the image without
+	// AWS-invoked lifecycle hooks and runtime traffic is delivered through the
+	// MicroVM endpoint on the default port 8080. If any hook is configured, `port`
+	// is required by AWS and AppTheory validates it fail-closed.
 	Hooks *AppTheoryMicrovmImageHooks `field:"required" json:"hooks" yaml:"hooks"`
 	// Configuration for MicroVM logging output.
 	//

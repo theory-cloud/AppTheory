@@ -259,6 +259,12 @@ export interface AppTheoryMicrovmImageProps {
 
   /**
    * Lifecycle hook configuration for MicroVMs and MicroVM images.
+   *
+   * Pass an empty object (`{}`) for AppTheory endpoint-dispatched MicroVM images.
+   * AppTheory then synthesizes `Hooks: {}` so Lambda builds the image without
+   * AWS-invoked lifecycle hooks and runtime traffic is delivered through the
+   * MicroVM endpoint on the default port 8080. If any hook is configured, `port`
+   * is required by AWS and AppTheory validates it fail-closed.
    */
   readonly hooks: AppTheoryMicrovmImageHooks;
 
@@ -569,11 +575,19 @@ function renderHooks(hooks: AppTheoryMicrovmImageHooks | undefined): Record<stri
   if (microvmImageHooks) {
     rendered.MicrovmImageHooks = microvmImageHooks;
   }
-  if (hooks.port !== undefined) {
-    rendered.Port = normalizeIntegerInRange(hooks.port, "hooks.port", 1, 65535);
+  const hasHookGroup = Boolean(rendered.MicrovmHooks || rendered.MicrovmImageHooks);
+  if (hasHookGroup && hooks.port === undefined) {
+    throw new Error(
+      "AppTheoryMicrovmImage: hooks.port is required when props.hooks.microvmHooks or props.hooks.microvmImageHooks is configured",
+    );
   }
-  if (!rendered.MicrovmHooks && !rendered.MicrovmImageHooks) {
-    throw new Error("AppTheoryMicrovmImage requires props.hooks.microvmHooks or props.hooks.microvmImageHooks");
+  if (hooks.port !== undefined) {
+    if (!hasHookGroup) {
+      throw new Error(
+        "AppTheoryMicrovmImage: hooks.port requires props.hooks.microvmHooks or props.hooks.microvmImageHooks",
+      );
+    }
+    rendered.Port = normalizeIntegerInRange(hooks.port, "hooks.port", 1, 65535);
   }
   return rendered;
 }

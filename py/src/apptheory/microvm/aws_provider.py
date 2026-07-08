@@ -4,6 +4,8 @@ import hashlib
 import json as jsonlib
 import os
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
@@ -25,7 +27,6 @@ class AWSLambdaMicroVMProvider:
             payload: dict[str, Any] = {
                 "imageIdentifier": normalized.image_ref,
                 "clientToken": normalized.request_id,
-                "runHookPayload": _safe_run_hook_payload(normalized),
             }
             egress = _provider_egress_connectors(normalized)
             if egress:
@@ -106,6 +107,57 @@ class AWSLambdaMicroVMProvider:
         except Exception as exc:  # noqa: BLE001
             raise _as_provider_safe_error(exc, normalized.request_id) from None
 
+    def invoke(self, input_: MicroVMProviderInvokeInput | dict[str, Any]) -> MicroVMProviderInvokeOutput:
+        normalized = _validate_provider_invoke_input(input_)
+        try:
+            token_output = self._client.create_microvm_auth_token(
+                microvmIdentifier=normalized.binding.provider_microvm_id,
+                expirationInMinutes=_provider_expiration_minutes(normalized.ttl_seconds),
+                allowedPorts=_aws_port_scopes([MicroVMProviderPortScope(port=normalized.port)]),
+            )
+            auth_header = _microvm_proxy_auth_header(token_output)
+            if not auth_header:
+                raise _safe_error(
+                    MICROVM_ERROR_TOKEN_SAFETY_VIOLATION,
+                    "apptheory: microvm provider returned incomplete token metadata",
+                    normalized.request_id,
+                )
+            target_url = _provider_invoke_url(normalized.endpoint, normalized.path, normalized.query)
+            request = urllib.request.Request(  # noqa: S310 - _provider_invoke_url forces HTTPS MicroVM endpoints.
+                target_url,
+                data=None if normalized.method in {"GET", "HEAD"} else bytes(normalized.body),
+                method=normalized.method,
+            )
+            for name, values in normalized.headers.items():
+                for value in values:
+                    request.add_header(name, value)
+            request.add_header("X-aws-proxy-auth", auth_header)
+            request.add_header("X-aws-proxy-port", _provider_invoke_port_header(normalized.port))
+            try:
+                with urllib.request.urlopen(request) as response:  # noqa: S310
+                    body = response.read(_MAX_PROVIDER_INVOKE_BODY_BYTES + 1)
+                    status = int(getattr(response, "status", 0) or response.getcode() or 0)
+                    headers = _response_headers(response)
+            except urllib.error.HTTPError as exc:
+                body = exc.read(_MAX_PROVIDER_INVOKE_BODY_BYTES + 1)
+                status = int(exc.code or 0)
+                headers = _response_headers(exc)
+            if len(body) > _MAX_PROVIDER_INVOKE_BODY_BYTES:
+                raise _safe_error(
+                    MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+                    "apptheory: microvm invoke response is too large",
+                    normalized.request_id,
+                )
+            sanitized_headers = _sanitize_provider_invoke_headers(headers)
+            return MicroVMProviderInvokeOutput(
+                status=status,
+                headers=sanitized_headers,
+                body=bytes(body),
+                is_base64=_provider_invoke_response_is_base64(sanitized_headers),
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise _as_provider_safe_error(exc, normalized.request_id) from None
+
     def _state_changing_operation(
         self,
         operation: str,
@@ -145,9 +197,27 @@ def create_aws_lambda_microvm_client(*, region_name: str | None = None) -> AWSLa
     return AWSLambdaMicroVMClient(region_name=region_name)
 
 
+def _microvm_proxy_auth_header(output: Any) -> str:
+    token = output.get("authToken") if isinstance(output, dict) else getattr(output, "authToken", None)
+    if not isinstance(token, dict):
+        return ""
+    return str(token.get("X-aws-proxy-auth") or token.get("x-aws-proxy-auth") or "").strip()
+
+
+def _response_headers(response: Any) -> dict[str, list[str]]:
+    headers = getattr(response, "headers", {}) or {}
+    out: dict[str, list[str]] = {}
+    items = headers.items() if callable(getattr(headers, "items", None)) else []
+    for name, value in items:
+        out.setdefault(str(name or ""), []).append(str(value or ""))
+    return out
+
+
 __all__ = [
     "AWSLambdaMicroVMClient",
     "AWSLambdaMicroVMProvider",
+    "_microvm_proxy_auth_header",
+    "_response_headers",
     "create_aws_lambda_microvm_client",
     "create_aws_lambda_microvm_provider",
 ]

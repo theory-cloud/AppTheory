@@ -16,6 +16,7 @@ import {
 
 import {
   MICROVM_ERROR_CONTROLLER_INCOMPLETE,
+  MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
   MICROVM_ERROR_TOKEN_SAFETY_VIOLATION,
   MICROVM_ERROR_TENANT_BINDING_VIOLATION,
   MicroVMOperation,
@@ -27,6 +28,8 @@ import {
   type MicroVMProvider,
   type MicroVMProviderListInput,
   type MicroVMProviderListOutput,
+  type MicroVMProviderInvokeInput,
+  type MicroVMProviderInvokeOutput,
   type MicroVMProviderPortScope,
   type MicroVMProviderRunInput,
   type MicroVMProviderSession,
@@ -44,9 +47,14 @@ import {
   asMicroVMProviderSafeError,
   defaultProviderTokenTTLSeconds,
   microVMProviderTokenMetadata,
+  maxProviderInvokeBodyBytes,
   providerEgressConnectorRefs,
-  safeMicroVMRunHookPayload,
+  providerInvokePortHeader,
+  providerInvokeResponseIsBase64,
+  providerInvokeURL,
+  sanitizeMicroVMProviderInvokeHeaders,
   validateMicroVMProviderListInputInternal,
+  validateMicroVMProviderInvokeInputInternal,
   validateMicroVMProviderRunInputInternal,
   validateMicroVMProviderSessionInputInternal,
   validateMicroVMProviderTokenInputInternal,
@@ -80,7 +88,6 @@ export class AWSLambdaMicroVMProvider implements MicroVMProvider {
       const commandInput: RunMicrovmCommandInput = {
         clientToken: normalized.request_id,
         imageIdentifier: normalized.image_ref,
-        runHookPayload: safeMicroVMRunHookPayload(normalized),
       };
       const egress = providerEgressConnectorRefs(normalized);
       if (egress.length > 0) commandInput.egressNetworkConnectors = egress;
@@ -204,6 +211,81 @@ export class AWSLambdaMicroVMProvider implements MicroVMProvider {
     );
   }
 
+  async invoke(
+    input: MicroVMProviderInvokeInput,
+  ): Promise<MicroVMProviderInvokeOutput> {
+    const normalized = validateMicroVMProviderInvokeInputInternal(input);
+    try {
+      const invokePort = normalized.port ?? 8080;
+      const tokenOutput = await this.client.send(
+        new CreateMicrovmAuthTokenCommand({
+          allowedPorts: awsMicroVMPortScopes([{ port: invokePort }]),
+          expirationInMinutes: providerExpirationMinutes(
+            normalized.ttl_seconds ?? defaultProviderTokenTTLSeconds,
+          ),
+          microvmIdentifier: normalized.binding.provider_microvm_id,
+        }),
+      );
+      const authToken = microVMAuthHeaderValue(tokenOutput);
+      if (!authToken) {
+        throw safeError(
+          MICROVM_ERROR_TOKEN_SAFETY_VIOLATION,
+          "apptheory: microvm provider returned incomplete token metadata",
+          normalized.request_id,
+        );
+      }
+      const target = providerInvokeURL(
+        normalized.endpoint,
+        normalized.path,
+        normalized.query,
+      );
+      if (!target) {
+        throw safeError(
+          MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+          "apptheory: microvm invoke endpoint is invalid",
+          normalized.request_id,
+        );
+      }
+      const headers = new Headers();
+      for (const [name, values] of Object.entries(
+        sanitizeMicroVMProviderInvokeHeaders(normalized.headers ?? {}),
+      )) {
+        for (const value of values) headers.append(name, value);
+      }
+      headers.set("X-aws-proxy-auth", authToken);
+      headers.set("X-aws-proxy-port", providerInvokePortHeader(invokePort));
+      const init: RequestInit = {
+        method: normalized.method,
+        headers,
+      };
+      if (normalized.method !== "GET" && normalized.method !== "HEAD") {
+        init.body = normalized.body ?? new Uint8Array();
+      }
+      const response = await fetch(target, init);
+      const body = new Uint8Array(await response.arrayBuffer());
+      if (body.byteLength > maxProviderInvokeBodyBytes) {
+        throw safeError(
+          MICROVM_ERROR_PROVIDER_REQUEST_INVALID,
+          "apptheory: microvm invoke response is too large",
+          normalized.request_id,
+        );
+      }
+      const responseHeaders: Record<string, string[]> = {};
+      response.headers.forEach((value, name) => {
+        responseHeaders[name] = [...(responseHeaders[name] ?? []), value];
+      });
+      const sanitized = sanitizeMicroVMProviderInvokeHeaders(responseHeaders);
+      return {
+        status: response.status,
+        headers: sanitized,
+        body,
+        is_base64: providerInvokeResponseIsBase64(sanitized),
+      };
+    } catch (err) {
+      throw asMicroVMProviderSafeError(err, normalized.request_id);
+    }
+  }
+
   async createAuthToken(
     input: MicroVMProviderTokenInput,
   ): Promise<MicroVMProviderToken> {
@@ -312,6 +394,7 @@ export function microVMProviderSessionFromRunOutput(
   return microVMProviderSessionFromProviderState(
     binding,
     stringField(output, "state"),
+    stringField(output, "endpoint"),
     stringField(output, "imageArn") || input.image_ref,
     stringField(output, "imageVersion") || input.image_version || "",
     dateField(output, "startedAt"),
@@ -335,6 +418,7 @@ export function microVMProviderSessionFromGetOutput(
   return microVMProviderSessionFromProviderState(
     binding,
     stringField(output, "state"),
+    stringField(output, "endpoint"),
     stringField(output, "imageArn"),
     stringField(output, "imageVersion"),
     dateField(output, "startedAt"),
@@ -359,6 +443,7 @@ export function microVMProviderListOutputFromSDK(
       microVMProviderSessionFromProviderState(
         binding,
         stringField(item, "state"),
+        "",
         stringField(item, "imageArn"),
         stringField(item, "imageVersion"),
         dateField(item, "startedAt"),
@@ -372,6 +457,7 @@ export function microVMProviderListOutputFromSDK(
 export function microVMProviderSessionFromProviderState(
   binding: MicroVMProviderSessionBinding,
   providerState: string,
+  endpoint: string,
   imageRef: string,
   imageVersion: string,
   startedAt: Date | null,
@@ -387,6 +473,8 @@ export function microVMProviderSessionFromProviderState(
     provider_state: normalizeMicroVMProviderState(providerState),
     terminal: mapped.terminal,
   };
+  const cleanEndpoint = String(endpoint ?? "").trim();
+  if (cleanEndpoint) session.endpoint = cleanEndpoint;
   const cleanImageRef = String(imageRef ?? "").trim();
   if (cleanImageRef) session.image_ref = cleanImageRef;
   const cleanImageVersion = String(imageVersion ?? "").trim();
@@ -435,6 +523,17 @@ export function ensureMicroVMProviderTokenResult(
       requestID,
     );
   }
+}
+
+function microVMAuthHeaderValue(output: unknown): string {
+  const authToken = asRecord(output)["authToken"];
+  if (!authToken || typeof authToken !== "object" || Array.isArray(authToken)) {
+    return "";
+  }
+  const record = authToken as Record<string, unknown>;
+  return String(
+    record["X-aws-proxy-auth"] ?? record["x-aws-proxy-auth"] ?? "",
+  ).trim();
 }
 
 export function providerExpirationMinutes(ttlSeconds: number): number {

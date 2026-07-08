@@ -20,7 +20,7 @@ The checked-in tests use the AppTheory testkit only; they do not call AWS.
 
 - Node.js `>=24` and `npm`
 - AWS CDK CLI through the local `npx cdk` dependency
-- Go `1.26.4` for the Go variant
+- Go `1.26.5` for the Go variant
 - Python `3.14` for the Python variant
 - AWS credentials and a selected AWS account/region for `cdk bootstrap`, `cdk deploy`, and `cdk destroy`
 

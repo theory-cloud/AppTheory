@@ -9,7 +9,7 @@
   "properties": {
     "id": {
       "type": "string",
-      "pattern": "^(p0|p1|p2|m1|m2|m3|m12|m14|m15|m16|mcp|oauth|objectstore)(\\.|_)[A-Za-z0-9_.-]+$"
+      "pattern": "^(p0|p1|p2|m1|m2|m3|m12|m14|m15|m16|mcp|oauth|objectstore|vectorstore)(\\.|_)[A-Za-z0-9_.-]+$"
     },
     "tier": { "$ref": "#/$defs/tier" },
     "name": { "type": "string", "minLength": 1 },
@@ -20,7 +20,7 @@
   "$defs": {
     "tier": {
       "type": "string",
-      "enum": ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15", "m16", "mcp", "oauth", "objectstore"]
+      "enum": ["p0", "p1", "p2", "m1", "m2", "m3", "m12", "m14", "m15", "m16", "mcp", "oauth", "objectstore", "vectorstore"]
     },
     "stringArray": {
       "type": "array",
@@ -91,7 +91,8 @@
         "microvm_execution_role": { "type": "object", "additionalProperties": true },
         "mcp": { "$ref": "#/$defs/mcpSetup" },
         "oauth": { "$ref": "#/$defs/oauthSetup" },
-        "objectstore": { "$ref": "#/$defs/objectstoreSetup" }
+        "objectstore": { "$ref": "#/$defs/objectstoreSetup" },
+        "vectorstore": { "$ref": "#/$defs/vectorstoreSetup" }
       }
     },
     "objectstoreSetup": {
@@ -149,6 +150,72 @@
         "bucket": { "type": "string" },
         "key": { "type": "string" },
         "prefix": { "type": "string" }
+      }
+    },
+    "vectorstoreSetup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "backend": { "type": "string", "enum": ["fake"] },
+        "dimension": { "type": "integer" },
+        "required_metadata_keys": { "$ref": "#/$defs/stringArray" },
+        "embeddings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "number" }
+          }
+        },
+        "default_embedding": { "type": "array", "items": { "type": "number" } },
+        "titan": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "embedding": { "type": "array", "items": { "type": "number" } }
+          }
+        }
+      }
+    },
+    "vectorstoreMetadata": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "vectorstoreRecord": {
+      "type": "object",
+      "required": ["key"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string" },
+        "data": { "type": "array", "items": { "type": "number" } },
+        "text": { "type": "string" },
+        "metadata": { "$ref": "#/$defs/vectorstoreMetadata" }
+      }
+    },
+    "vectorstoreInput": {
+      "type": "object",
+      "required": ["steps"],
+      "additionalProperties": false,
+      "properties": {
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/vectorstoreStep" } }
+      }
+    },
+    "vectorstoreStep": {
+      "type": "object",
+      "required": ["name", "operation"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "operation": { "type": "string", "enum": ["put", "get", "delete", "query", "semantic_put", "semantic_query", "titan_embed"] },
+        "records": { "type": "array", "items": { "$ref": "#/$defs/vectorstoreRecord" } },
+        "keys": { "$ref": "#/$defs/stringArray" },
+        "vector": { "type": "array", "items": { "type": "number" } },
+        "top_k": { "type": "integer" },
+        "filter": { "$ref": "#/$defs/vectorstoreMetadata" },
+        "return_metadata": { "type": "boolean" },
+        "text": { "type": "string" },
+        "model_id": { "type": "string" },
+        "dimensions": { "type": "integer" },
+        "normalize": { "type": "boolean" }
       }
     },
     "mcpSetup": {
@@ -397,7 +464,8 @@
         "logging_profile_catalog": { "type": "boolean" },
         "mcp": { "$ref": "#/$defs/mcpInput" },
         "oauth": { "$ref": "#/$defs/oauthInput" },
-        "objectstore": { "$ref": "#/$defs/objectstoreInput" }
+        "objectstore": { "$ref": "#/$defs/objectstoreInput" },
+        "vectorstore": { "$ref": "#/$defs/vectorstoreInput" }
       }
     },
     "mcpInput": {
