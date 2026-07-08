@@ -1,6 +1,6 @@
 {
   "name": "@theory-cloud/apptheory-cdk",
-  "version": "1.16.0",
+  "version": "1.16.1-rc",
   "description": "AppTheory CDK constructs (TS-first jsii)",
   "author": "Theory Cloud",
   "repository": {
