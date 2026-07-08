@@ -255,9 +255,7 @@ function normalizeAPIGatewayV2StagePath(
   stageValue: unknown,
 ): string {
   const path = String(rawPath ?? requestContextHTTPPath ?? "/");
-  const stage = String(stageValue ?? "")
-    .trim()
-    .replace(/^\/+|\/+$/g, "");
+  const stage = trimStageSlashes(String(stageValue ?? ""));
   if (!stage || stage === "$default") {
     return path;
   }
@@ -269,6 +267,19 @@ function normalizeAPIGatewayV2StagePath(
     return path.slice(prefix.length);
   }
   return path;
+}
+
+function trimStageSlashes(value: string): string {
+  const trimmed = value.trim();
+  let start = 0;
+  let end = trimmed.length;
+  while (start < end && trimmed.charCodeAt(start) === 47) {
+    start += 1;
+  }
+  while (end > start && trimmed.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return trimmed.slice(start, end);
 }
 
 export function requestFromLambdaFunctionURL(

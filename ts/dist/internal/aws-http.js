@@ -168,9 +168,7 @@ export function requestFromAPIGatewayV2(event) {
 }
 function normalizeAPIGatewayV2StagePath(rawPath, requestContextHTTPPath, stageValue) {
     const path = String(rawPath ?? requestContextHTTPPath ?? "/");
-    const stage = String(stageValue ?? "")
-        .trim()
-        .replace(/^\/+|\/+$/g, "");
+    const stage = trimStageSlashes(String(stageValue ?? ""));
     if (!stage || stage === "$default") {
         return path;
     }
@@ -182,6 +180,18 @@ function normalizeAPIGatewayV2StagePath(rawPath, requestContextHTTPPath, stageVa
         return path.slice(prefix.length);
     }
     return path;
+}
+function trimStageSlashes(value) {
+    const trimmed = value.trim();
+    let start = 0;
+    let end = trimmed.length;
+    while (start < end && trimmed.charCodeAt(start) === 47) {
+        start += 1;
+    }
+    while (end > start && trimmed.charCodeAt(end - 1) === 47) {
+        end -= 1;
+    }
+    return trimmed.slice(start, end);
 }
 export function requestFromLambdaFunctionURL(event) {
     const cookies = Array.isArray(event.cookies)
