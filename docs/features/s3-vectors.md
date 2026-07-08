@@ -42,6 +42,7 @@ The helper fails closed for empty input, missing embeddings, non-finite vector v
 
 ## Go sketch
 
+{% raw %}
 ```go
 embedder, err := vectorstore.NewTitanEmbedder(ctx)
 if err != nil {
@@ -59,6 +60,7 @@ err = semantic.PutText(ctx, []vectorstore.SemanticRecord{{
     Metadata: map[string]any{"tenant": "t1", "namespace": "docs", "generation": "v1"},
 }})
 ```
+{% endraw %}
 
 ## Boundary
 

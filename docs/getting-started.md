@@ -9,7 +9,7 @@ then carries one canonical CDK path through bootstrap, deploy, curl verification
 
 ## Prerequisites
 
-- Go `1.26.4` (`go.mod`)
+- Go `1.26.5` (`go.mod`)
 - Node.js `>=20` (`ts/package.json` and `cdk/package.json`)
 - Python `>=3.12` (`py/pyproject.toml`)
 - `make` and `git`
