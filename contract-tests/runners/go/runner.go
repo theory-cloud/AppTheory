@@ -24,37 +24,57 @@ func runFixture(f Fixture) error {
 	if isOpenAPIContractFixture(f) {
 		return runFixtureOpenAPI(f)
 	}
-	switch strings.ToLower(strings.TrimSpace(f.Tier)) {
+	tier := strings.ToLower(strings.TrimSpace(f.Tier))
+	if runner := milestoneFixtureRunner(tier); runner != nil {
+		return runner(f)
+	}
+	if runner := domainFixtureRunner(tier); runner != nil {
+		return runner(f)
+	}
+	return runFixtureLegacy(f)
+}
+
+type fixtureRunner func(Fixture) error
+
+func milestoneFixtureRunner(tier string) fixtureRunner {
+	switch tier {
 	case "p0":
-		return runFixtureP0(f)
+		return runFixtureP0
 	case "p1":
-		return runFixtureP1(f)
+		return runFixtureP1
 	case "p2":
-		return runFixtureP2(f)
+		return runFixtureP2
 	case "m1":
-		return runFixtureM1(f)
+		return runFixtureM1
 	case "m2":
-		return runFixtureM2(f)
+		return runFixtureM2
 	case "m3":
-		return runFixtureM3(f)
+		return runFixtureM3
 	case "m12":
-		return runFixtureM12(f)
+		return runFixtureM12
 	case "m14":
-		return runFixtureM14(f)
+		return runFixtureM14
 	case "m15":
-		return runFixtureM15(f)
+		return runFixtureM15
 	case "m16":
-		return runFixtureM16(f)
-	case "mcp":
-		return runFixtureMCP(f)
-	case "oauth":
-		return runFixtureOAuth(f)
-	case "objectstore":
-		return runFixtureObjectStore(f)
-	case "vectorstore":
-		return runFixtureVectorStore(f)
+		return runFixtureM16
 	default:
-		return runFixtureLegacy(f)
+		return nil
+	}
+}
+
+func domainFixtureRunner(tier string) fixtureRunner {
+	switch tier {
+	case "mcp":
+		return runFixtureMCP
+	case "oauth":
+		return runFixtureOAuth
+	case "objectstore":
+		return runFixtureObjectStore
+	case "vectorstore":
+		return runFixtureVectorStore
+	default:
+		return nil
 	}
 }
 

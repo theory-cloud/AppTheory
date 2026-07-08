@@ -2,7 +2,7 @@ package vectorstore
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -87,7 +87,9 @@ func (s *S3VectorStore) QueryVectors(ctx context.Context, input QueryInput) ([]Q
 		return nil, err
 	}
 	topK := NormalizeTopK(input.TopK)
-	params := &s3vectors.QueryVectorsInput{VectorBucketName: aws.String(s.VectorBucketName), IndexName: aws.String(s.IndexName), QueryVector: &s3types.VectorDataMemberFloat32{Value: input.Vector}, TopK: aws.Int32(int32(topK)), ReturnDistance: true, ReturnMetadata: input.ReturnMetadata}
+	// #nosec G115 -- NormalizeTopK clamps TopK to MaxQueryTopK (10000), which fits int32.
+	topK32 := int32(topK)
+	params := &s3vectors.QueryVectorsInput{VectorBucketName: aws.String(s.VectorBucketName), IndexName: aws.String(s.IndexName), QueryVector: &s3types.VectorDataMemberFloat32{Value: input.Vector}, TopK: aws.Int32(topK32), ReturnDistance: true, ReturnMetadata: input.ReturnMetadata}
 	if len(input.Filter) > 0 {
 		params.Filter = s3document.NewLazyDocument(input.Filter)
 	}
@@ -97,16 +99,7 @@ func (s *S3VectorStore) QueryVectors(ctx context.Context, input QueryInput) ([]Q
 	}
 	hits := make([]QueryHit, 0, len(out.Vectors))
 	for _, vector := range out.Vectors {
-		metadata := map[string]any(nil)
-		if vector.Metadata != nil {
-			var raw any
-			if err := vector.Metadata.UnmarshalSmithyDocument(&raw); err == nil {
-				if decoded, ok := raw.(map[string]any); ok {
-					metadata = decoded
-				}
-			}
-		}
-		hits = append(hits, QueryHit{Key: aws.ToString(vector.Key), Distance: aws.ToFloat32(vector.Distance), Metadata: metadata})
+		hits = append(hits, QueryHit{Key: aws.ToString(vector.Key), Distance: aws.ToFloat32(vector.Distance), Metadata: decodeS3Metadata(vector.Metadata)})
 	}
 	return hits, nil
 }
@@ -118,6 +111,11 @@ func (s *S3VectorStore) GetVectors(ctx context.Context, input GetInput) ([]Vecto
 	if len(input.Keys) == 0 {
 		return nil, NewError(ErrorCodeInvalidInput, "vectorstore: at least one key is required", nil)
 	}
+	for _, key := range input.Keys {
+		if err := ValidateKey(key); err != nil {
+			return nil, err
+		}
+	}
 	out, err := s.Client.GetVectors(ctx, &s3vectors.GetVectorsInput{VectorBucketName: aws.String(s.VectorBucketName), IndexName: aws.String(s.IndexName), Keys: input.Keys, ReturnData: true, ReturnMetadata: input.ReturnMetadata})
 	if err != nil {
 		return nil, NewError(ErrorCodeInvalidInput, "vectorstore: get vectors failed", err)
@@ -128,14 +126,7 @@ func (s *S3VectorStore) GetVectors(ctx context.Context, input GetInput) ([]Vecto
 		if data, ok := vector.Data.(*s3types.VectorDataMemberFloat32); ok {
 			record.Data = CloneVector(data.Value)
 		}
-		if vector.Metadata != nil {
-			var raw any
-			if err := vector.Metadata.UnmarshalSmithyDocument(&raw); err == nil {
-				if decoded, ok := raw.(map[string]any); ok {
-					record.Metadata = decoded
-				}
-			}
-		}
+		record.Metadata = decodeS3Metadata(vector.Metadata)
 		records = append(records, record)
 	}
 	return records, nil
@@ -148,6 +139,11 @@ func (s *S3VectorStore) DeleteVectors(ctx context.Context, input DeleteInput) er
 	if len(input.Keys) == 0 {
 		return NewError(ErrorCodeInvalidInput, "vectorstore: at least one key is required", nil)
 	}
+	for _, key := range input.Keys {
+		if err := ValidateKey(key); err != nil {
+			return err
+		}
+	}
 	batchSize := s.MaxBatchSize
 	if batchSize <= 0 || batchSize > MaxPutDeleteBatchSize {
 		batchSize = MaxPutDeleteBatchSize
@@ -158,8 +154,27 @@ func (s *S3VectorStore) DeleteVectors(ctx context.Context, input DeleteInput) er
 			end = len(input.Keys)
 		}
 		if _, err := s.Client.DeleteVectors(ctx, &s3vectors.DeleteVectorsInput{VectorBucketName: aws.String(s.VectorBucketName), IndexName: aws.String(s.IndexName), Keys: input.Keys[start:end]}); err != nil {
-			return NewError(ErrorCodeInvalidInput, fmt.Sprintf("vectorstore: delete vectors failed"), err)
+			return NewError(ErrorCodeInvalidInput, "vectorstore: delete vectors failed", err)
 		}
 	}
 	return nil
+}
+
+func decodeS3Metadata(metadata s3document.Interface) map[string]any {
+	if metadata == nil {
+		return nil
+	}
+	decoded := map[string]any{}
+	if err := metadata.UnmarshalSmithyDocument(&decoded); err == nil && len(decoded) > 0 {
+		return decoded
+	}
+	raw, err := metadata.MarshalSmithyDocument()
+	if err != nil {
+		return nil
+	}
+	decoded = map[string]any{}
+	if err := json.Unmarshal(raw, &decoded); err != nil || len(decoded) == 0 {
+		return nil
+	}
+	return decoded
 }

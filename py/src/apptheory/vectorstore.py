@@ -277,6 +277,8 @@ class S3VectorStore:
         self.client = config.client or _load_s3vectors_client(config.region_name)
 
     def put_vectors(self, input_: PutVectorsInput) -> None:
+        if not input_.records:
+            raise VectorStoreError(VECTORSTORE_ERROR_INVALID_INPUT, "vectorstore: at least one vector is required")
         for start in range(0, len(input_.records), self.max_batch_size):
             records = input_.records[start : start + self.max_batch_size]
             vectors = []
@@ -294,6 +296,10 @@ class S3VectorStore:
             )
 
     def get_vectors(self, input_: GetVectorsInput) -> list[VectorRecord]:
+        if not input_.keys:
+            raise VectorStoreError(VECTORSTORE_ERROR_INVALID_INPUT, "vectorstore: at least one key is required")
+        for key in input_.keys:
+            _validate_key(key)
         out = self.client.get_vectors(
             vectorBucketName=self.vector_bucket_name,
             indexName=self.index_name,
@@ -304,6 +310,10 @@ class S3VectorStore:
         return [_record_from_s3_vector(item) for item in out.get("vectors", [])]
 
     def delete_vectors(self, input_: DeleteVectorsInput) -> None:
+        if not input_.keys:
+            raise VectorStoreError(VECTORSTORE_ERROR_INVALID_INPUT, "vectorstore: at least one key is required")
+        for key in input_.keys:
+            _validate_key(key)
         for start in range(0, len(input_.keys), self.max_batch_size):
             self.client.delete_vectors(
                 vectorBucketName=self.vector_bucket_name,

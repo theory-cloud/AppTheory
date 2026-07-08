@@ -55,8 +55,11 @@ operator-facing API guidance. Keep these human-authored groups current when the 
   `FakeVectorStore`, `create_fake_vector_store`, `FakeEmbedder`, `S3VectorStore`, `create_s3_vector_store`,
   `S3VectorStoreConfig`, `TitanEmbedder`, `TitanEmbedderConfig`, `VectorStoreCall`, `VectorStoreError`,
   `DefaultTitanEmbedTextModelId`, `DefaultEmbeddingDimensions`, `DefaultQueryTopK`, `MaxQueryTopK`,
-  `MaxPutDeleteBatchSize`, `EnvVectorBucketName`, `EnvVectorIndexName`, `EnvVectorIndexArn`, `EnvVectorDimension`,
-  `EnvEmbeddingProvider`, `EnvEmbeddingModelId`, `EnvEmbeddingDimensions`, `EnvEmbeddingNormalize`,
+  `MaxPutDeleteBatchSize`, `VECTORSTORE_ERROR_INVALID_CONFIG`, `VECTORSTORE_ERROR_INVALID_INPUT`,
+  `VECTORSTORE_ERROR_INVALID_VECTOR`, `VECTORSTORE_ERROR_DIMENSION_MISMATCH`, `VECTORSTORE_ERROR_EMBEDDING_FAILED`,
+  `VECTORSTORE_ERROR_NOT_FOUND`, `VECTORSTORE_ERROR_UNSUPPORTED_OPERATION`, `EnvVectorBucketName`,
+  `EnvVectorIndexName`, `EnvVectorIndexArn`, `EnvVectorDimension`, `EnvEmbeddingProvider`, `EnvEmbeddingModelId`,
+  `EnvEmbeddingDimensions`, `EnvEmbeddingNormalize`,
   `PutVectorsInput`, `GetVectorsInput`, `DeleteVectorsInput`, `QueryVectorsInput`, `SemanticIndexConfig`,
   `normalize_top_k`, `validate_dimension`, `validate_vector`, and `validate_required_metadata`.
 - MicroVM and generated contract helpers: `MicroVMController`, provider/session validators, and `generate_openapi`.
@@ -67,7 +70,7 @@ operator-facing API guidance. Keep these human-authored groups current when the 
 This index is maintained with `scripts/verify-api-docs.sh` so handwritten docs cannot drift from `api-snapshots/py.txt`.
 
 <details>
-<summary>604 exported top-level symbols</summary>
+<summary>611 exported top-level symbols</summary>
 
 ```text
 App, AppError, AppSyncContext, AppSyncResolverEvent, AppSyncResolverInfo, AppSyncResolverRequest
@@ -101,7 +104,7 @@ get_day_window, get_fixed_window, get_hour_window, get_logger, get_minute_window
 header, HOOK_FAILURE, HOOK_PREPARE_IMAGE, HOOK_READINESS, HOOK_READY, HOOK_RESUME
 HOOK_RUN, HOOK_START, HOOK_STOP, HOOK_SUSPEND, HOOK_TEARDOWN, HOOK_TERMINATE
 HOOK_VALIDATE, hooks_from_emf_metric_sink, hooks_from_logger, hooks_from_profile_logger, html, html_stream
-HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED, IDGenerator, IdGenerator, is_microvm_terminal_state, is_supported_profile_output_field
+HTTP_ERROR_FORMAT_FLAT_LEGACY, HTTP_ERROR_FORMAT_NESTED, IdGenerator, IDGenerator, is_microvm_terminal_state, is_supported_profile_output_field
 job_lock_sort_key, job_meta_sort_key, job_partition_key, job_record_sort_key, job_request_sort_key, JobLedgerError
 jobs_table_name, JobsConfig, json, kinesis_cloudwatch_logs_subscription_record, KinesisJsonRecord, KinesisJsonRecordSummary
 KinesisPutRecordsFailure, KinesisPutRecordsFailureReport, KinesisPutRecordsFailureReportSummary, KinesisPutRecordsResultRecord, Limit, LimitDecision
@@ -127,8 +130,8 @@ MICROVM_ERROR_CONTROLLER_COMMAND_FAILED, MICROVM_ERROR_CONTROLLER_INCOMPLETE, MI
 MICROVM_ERROR_LIFECYCLE_BYPASS, MICROVM_ERROR_LIFECYCLE_HOOK_FAILED, MICROVM_ERROR_LIFECYCLE_INCOMPLETE, MICROVM_ERROR_OPERATION_CONTRACT_INCOMPLETE, MICROVM_ERROR_PROVIDER_OPERATION_FAILED, MICROVM_ERROR_PROVIDER_OPERATION_UNSUPPORTED
 MICROVM_ERROR_PROVIDER_REQUEST_INVALID, MICROVM_ERROR_PROVIDER_STATE_MAPPING_INCOMPLETE, MICROVM_ERROR_RAW_SDK_ESCAPE_HATCH, MICROVM_ERROR_REAL_LIFECYCLE_INCOMPLETE, MICROVM_ERROR_ROUTE_CONTRACT_INCOMPLETE, MICROVM_ERROR_SESSION_REGISTRY_INCOMPLETE
 MICROVM_ERROR_TENANT_BINDING_VIOLATION, MICROVM_ERROR_TOKEN_SAFETY_VIOLATION, MICROVM_ERROR_UNAUTHENTICATED_CONTROLLER, microvm_session_from_registry_record, microvm_session_key, microvm_session_record_to_registry_record
-microvm_session_registry_model_definition, MICROVM_SESSION_REGISTRY_MODEL_NAME, microvm_session_registry_partition_key, microvm_session_registry_sort_key, MICROVM_SESSION_REGISTRY_TABLE_ENV, microvm_session_registry_table_name
-MICROVM_SESSION_REGISTRY_TABLE_NAME, microvm_session_token_metadata_from_provider_token, MicroVMAuthContext, MicroVMClientCall, MicroVMCommand, MicroVMController
+microvm_session_registry_model_definition, MICROVM_SESSION_REGISTRY_MODEL_NAME, microvm_session_registry_partition_key, microvm_session_registry_sort_key, MICROVM_SESSION_REGISTRY_TABLE_ENV, MICROVM_SESSION_REGISTRY_TABLE_NAME
+microvm_session_registry_table_name, microvm_session_token_metadata_from_provider_token, MicroVMAuthContext, MicroVMClientCall, MicroVMCommand, MicroVMController
 MicroVMControllerAuthContract, MicroVMControllerCommandContract, MicroVMControllerContract, MicroVMControllerDeploymentDefaults, MicroVMControllerEnvelopeContract, MicroVMControllerInvokeRequest
 MicroVMControllerRequest, MicroVMControllerResponse, MicroVMCreateSessionInput, MicroVMEscapeHatches, MicroVMLifecycleAdapter, MicroVMLifecycleContract
 MicroVMLifecycleEvent, MicroVMLifecycleHandler, MicroVMLifecycleHook, MicroVMLifecycleHookSpec, MicroVMLifecycleResult, MicroVMLifecycleState
@@ -169,8 +172,9 @@ validate_microvm_provider_token_input, validate_microvm_real_lifecycle_contract,
 validate_microvm_session_token_metadata, validate_object_ref, validate_or_raise, validate_pkce_code_verifier, validate_required_metadata, validate_value
 validate_vector, validation_error, VALIDATION_RULE_ENUM, VALIDATION_RULE_MAX, VALIDATION_RULE_MAX_LENGTH, VALIDATION_RULE_MIN
 VALIDATION_RULE_MIN_LENGTH, VALIDATION_RULE_PATTERN, VALIDATION_RULE_REQUIRED, ValidationFieldError, ValidationRule, vary
-VectorRecord, VectorStore, VectorStoreCall, VectorStoreError, WebSocketCall, WebSocketContext
-WindowConfig, WindowLimit, wrap_error, wrap_job_ledger_error
+VectorRecord, VectorStore, VECTORSTORE_ERROR_DIMENSION_MISMATCH, VECTORSTORE_ERROR_EMBEDDING_FAILED, VECTORSTORE_ERROR_INVALID_CONFIG, VECTORSTORE_ERROR_INVALID_INPUT
+VECTORSTORE_ERROR_INVALID_VECTOR, VECTORSTORE_ERROR_NOT_FOUND, VECTORSTORE_ERROR_UNSUPPORTED_OPERATION, VectorStoreCall, VectorStoreError, WebSocketCall
+WebSocketContext, WindowConfig, WindowLimit, wrap_error, wrap_job_ledger_error
 ```
 
 </details>

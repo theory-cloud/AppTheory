@@ -62,11 +62,3 @@ func NewError(code, message string, cause error) *Error {
 	}
 	return &Error{Code: code, Message: message, Cause: cause}
 }
-
-func errorCode(err error) string {
-	var e *Error
-	if errors.As(err, &e) && e.Code != "" {
-		return e.Code
-	}
-	return "vectorstore.error"
-}

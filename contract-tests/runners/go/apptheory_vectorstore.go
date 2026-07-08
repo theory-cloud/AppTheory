@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+
 	vstore "github.com/theory-cloud/apptheory/pkg/vectorstore"
 )
 
@@ -76,9 +77,9 @@ func (f *fakeBedrockRuntime) InvokeModel(_ context.Context, params *bedrockrunti
 func runFixtureVectorStore(f Fixture) error {
 	backend := strings.TrimSpace(f.Setup.VectorStore.Backend)
 	if backend == "" {
-		backend = "fake"
+		backend = fixtureBackendFake
 	}
-	if backend != "fake" {
+	if backend != fixtureBackendFake {
 		return fmt.Errorf("vectorstore fixture backend %q is unsupported", backend)
 	}
 	if len(f.Input.VectorStore.Steps) == 0 {
@@ -103,58 +104,7 @@ func runFixtureVectorStore(f Fixture) error {
 func runVectorStoreStep(store *vstore.FakeStore, embedder *vstore.FakeEmbedder, setup FixtureVectorStoreSetup, dimension int, step FixtureVectorStoreStep) map[string]any {
 	operation := strings.TrimSpace(strings.ToLower(step.Operation))
 	result := map[string]any{"name": step.Name, "operation": operation}
-	var err error
-	switch operation {
-	case "put":
-		err = store.PutVectors(context.Background(), vstore.PutInput{Records: vectorRecords(step.Records)})
-	case "get":
-		var records []vstore.VectorRecord
-		records, err = store.GetVectors(context.Background(), vstore.GetInput{Keys: step.Keys, ReturnMetadata: step.ReturnMetadata})
-		if err == nil {
-			result["records"] = vectorRecordsJSON(records, true)
-		}
-	case "delete":
-		err = store.DeleteVectors(context.Background(), vstore.DeleteInput{Keys: step.Keys})
-	case "query":
-		var hits []vstore.QueryHit
-		hits, err = store.QueryVectors(context.Background(), vstore.QueryInput{Vector: step.Vector, TopK: step.TopK, Filter: step.Filter, ReturnMetadata: step.ReturnMetadata})
-		if err == nil {
-			result["hits"] = vectorHitsJSON(hits)
-		}
-	case "semantic_put":
-		idx := &vstore.SemanticIndex{Store: store, Embedder: embedder, Dimension: dimension, RequiredMetadataKeys: setup.RequiredMetadataKeys}
-		err = idx.PutText(context.Background(), semanticRecords(step.Records))
-	case "semantic_query":
-		idx := &vstore.SemanticIndex{Store: store, Embedder: embedder, Dimension: dimension, RequiredMetadataKeys: setup.RequiredMetadataKeys}
-		var hits []vstore.QueryHit
-		hits, err = idx.QueryText(context.Background(), step.Text, vstore.QueryInput{TopK: step.TopK, Filter: step.Filter, ReturnMetadata: step.ReturnMetadata})
-		if err == nil {
-			result["hits"] = vectorHitsJSON(hits)
-		}
-	case "titan_embed":
-		embedding := setup.Titan.Embedding
-		if embedding == nil {
-			embedding = setup.DefaultEmbedding
-		}
-		fake := &fakeBedrockRuntime{embedding: embedding}
-		normalize := true
-		if step.Normalize != nil {
-			normalize = *step.Normalize
-		}
-		dimensions := step.Dimensions
-		if dimensions == 0 {
-			dimensions = dimension
-		}
-		emb := &vstore.TitanEmbedder{Runtime: fake, ModelID: step.ModelID, Dimensions: dimensions, Normalize: normalize}
-		var vector []float32
-		vector, err = emb.Embed(context.Background(), step.Text)
-		if err == nil {
-			result["vector"] = vector
-			result["requests"] = fake.requests
-		}
-	default:
-		err = fmt.Errorf("vectorstore: unsupported operation: %s", operation)
-	}
+	err := applyVectorStoreStep(result, store, embedder, setup, dimension, step, operation)
 	if err != nil {
 		result["ok"] = false
 		result["error"] = vectorStoreErrorJSON(err)
@@ -162,6 +112,79 @@ func runVectorStoreStep(store *vstore.FakeStore, embedder *vstore.FakeEmbedder, 
 	}
 	result["ok"] = true
 	return result
+}
+
+func applyVectorStoreStep(result map[string]any, store *vstore.FakeStore, embedder *vstore.FakeEmbedder, setup FixtureVectorStoreSetup, dimension int, step FixtureVectorStoreStep, operation string) error {
+	switch operation {
+	case "put":
+		return store.PutVectors(context.Background(), vstore.PutInput{Records: vectorRecords(step.Records)})
+	case "get":
+		return runVectorStoreGet(result, store, step)
+	case "delete":
+		return store.DeleteVectors(context.Background(), vstore.DeleteInput{Keys: step.Keys})
+	case "query":
+		return runVectorStoreQuery(result, store, step)
+	case "semantic_put":
+		idx := &vstore.SemanticIndex{Store: store, Embedder: embedder, Dimension: dimension, RequiredMetadataKeys: setup.RequiredMetadataKeys}
+		return idx.PutText(context.Background(), semanticRecords(step.Records))
+	case "semantic_query":
+		return runVectorStoreSemanticQuery(result, store, embedder, setup, dimension, step)
+	case "titan_embed":
+		return runVectorStoreTitanEmbed(result, setup, dimension, step)
+	default:
+		return fmt.Errorf("vectorstore: unsupported operation: %s", operation)
+	}
+}
+
+func runVectorStoreGet(result map[string]any, store *vstore.FakeStore, step FixtureVectorStoreStep) error {
+	records, err := store.GetVectors(context.Background(), vstore.GetInput{Keys: step.Keys, ReturnMetadata: step.ReturnMetadata})
+	if err == nil {
+		result["records"] = vectorRecordsJSON(records, true)
+	}
+	return err
+}
+
+func runVectorStoreQuery(result map[string]any, store *vstore.FakeStore, step FixtureVectorStoreStep) error {
+	hits, err := store.QueryVectors(context.Background(), vstore.QueryInput{Vector: step.Vector, TopK: step.TopK, Filter: step.Filter, ReturnMetadata: step.ReturnMetadata})
+	if err == nil {
+		result["hits"] = vectorHitsJSON(hits)
+	}
+	return err
+}
+
+func runVectorStoreSemanticQuery(result map[string]any, store *vstore.FakeStore, embedder *vstore.FakeEmbedder, setup FixtureVectorStoreSetup, dimension int, step FixtureVectorStoreStep) error {
+	idx := &vstore.SemanticIndex{Store: store, Embedder: embedder, Dimension: dimension, RequiredMetadataKeys: setup.RequiredMetadataKeys}
+	hits, err := idx.QueryText(context.Background(), step.Text, vstore.QueryInput{TopK: step.TopK, Filter: step.Filter, ReturnMetadata: step.ReturnMetadata})
+	if err == nil {
+		result["hits"] = vectorHitsJSON(hits)
+	}
+	return err
+}
+
+func runVectorStoreTitanEmbed(result map[string]any, setup FixtureVectorStoreSetup, dimension int, step FixtureVectorStoreStep) error {
+	embedding := setup.Titan.Embedding
+	if embedding == nil {
+		embedding = setup.DefaultEmbedding
+	}
+	fake := &fakeBedrockRuntime{embedding: embedding}
+	dimensions := step.Dimensions
+	if dimensions == 0 {
+		dimensions = dimension
+	}
+	emb := &vstore.TitanEmbedder{Runtime: fake, ModelID: step.ModelID, Dimensions: dimensions, Normalize: vectorStoreStepNormalize(step)}
+	vector, err := emb.Embed(context.Background(), step.Text)
+	if err == nil {
+		result["vector"] = vector
+		result["requests"] = fake.requests
+	}
+	return err
+}
+
+func vectorStoreStepNormalize(step FixtureVectorStoreStep) bool {
+	if step.Normalize == nil {
+		return true
+	}
+	return *step.Normalize
 }
 
 func vectorRecords(in []FixtureVectorRecord) []vstore.VectorRecord {

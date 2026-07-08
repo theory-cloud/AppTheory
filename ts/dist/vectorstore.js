@@ -223,6 +223,11 @@ export class S3VectorStore {
         }
     }
     async getVectors(input) {
+        if (!input.keys?.length) {
+            throw new VectorStoreError(VECTORSTORE_ERROR_INVALID_INPUT, "vectorstore: at least one key is required");
+        }
+        for (const key of input.keys)
+            validateKey(key);
         const output = (await this.client.send(new GetVectorsCommand({
             vectorBucketName: this.vectorBucketName,
             indexName: this.indexName,
@@ -233,6 +238,11 @@ export class S3VectorStore {
         return (output.vectors ?? []).map(s3VectorToRecord);
     }
     async deleteVectors(input) {
+        if (!input.keys?.length) {
+            throw new VectorStoreError(VECTORSTORE_ERROR_INVALID_INPUT, "vectorstore: at least one key is required");
+        }
+        for (const key of input.keys)
+            validateKey(key);
         for (let start = 0; start < input.keys.length; start += this.maxBatchSize) {
             await this.client.send(new DeleteVectorsCommand({
                 vectorBucketName: this.vectorBucketName,
