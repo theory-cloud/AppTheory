@@ -1549,6 +1549,240 @@ func (*client) GetConnection(context.Context, string) (Connection, error)
 
 func (*client) PostToConnection(context.Context, string, []byte) error
 
+## github.com/theory-cloud/apptheory/pkg/vectorstore
+
+const DefaultEmbeddingDimensions = 1024
+
+const DefaultQueryTopK = 12
+
+const DefaultTitanEmbedTextModelID = "amazon.titan-embed-text-v2:0"
+
+const EnvEmbeddingDimensions = "APPTHEORY_EMBEDDING_DIMENSIONS"
+
+const EnvEmbeddingModelID = "APPTHEORY_EMBEDDING_MODEL_ID"
+
+const EnvEmbeddingNormalize = "APPTHEORY_EMBEDDING_NORMALIZE"
+
+const EnvEmbeddingProvider = "APPTHEORY_EMBEDDING_PROVIDER"
+
+const EnvVectorBucketName = "APPTHEORY_VECTOR_BUCKET_NAME"
+
+const EnvVectorDimension = "APPTHEORY_VECTOR_DIMENSION"
+
+const EnvVectorIndexARN = "APPTHEORY_VECTOR_INDEX_ARN"
+
+const EnvVectorIndexName = "APPTHEORY_VECTOR_INDEX_NAME"
+
+const ErrorCodeDimensionMismatch = "vectorstore.dimension_mismatch"
+
+const ErrorCodeEmbeddingFailed = "vectorstore.embedding_failed"
+
+const ErrorCodeInvalidConfig = "vectorstore.invalid_config"
+
+const ErrorCodeInvalidInput = "vectorstore.invalid_input"
+
+const ErrorCodeInvalidVector = "vectorstore.invalid_vector"
+
+const ErrorCodeNotFound = "vectorstore.not_found"
+
+const ErrorCodeUnsupportedOperation = "vectorstore.unsupported_operation"
+
+const MaxPutDeleteBatchSize = 500
+
+const MaxQueryTopK = 10000
+
+var ErrDimensionMismatch = &Error{Code: ErrorCodeDimensionMismatch, Message: "vectorstore: vector dimension mismatch"}
+
+var ErrEmbeddingFailed = &Error{Code: ErrorCodeEmbeddingFailed, Message: "vectorstore: embedding failed"}
+
+var ErrInvalidConfig = &Error{Code: ErrorCodeInvalidConfig, Message: "vectorstore: invalid config"}
+
+var ErrInvalidInput = &Error{Code: ErrorCodeInvalidInput, Message: "vectorstore: invalid input"}
+
+var ErrInvalidVector = &Error{Code: ErrorCodeInvalidVector, Message: "vectorstore: invalid vector"}
+
+var ErrNotFound = &Error{Code: ErrorCodeNotFound, Message: "vectorstore: vector not found"}
+
+var ErrUnsupportedOperation = &Error{Code: ErrorCodeUnsupportedOperation, Message: "vectorstore: unsupported operation"}
+
+type BedrockRuntimeAPI interface {
+	InvokeModel(context.Context, *bedrockruntime.InvokeModelInput, ...func(*bedrockruntime.Options)) (*bedrockruntime.InvokeModelOutput, error)
+}
+
+type Call struct {
+	Operation      string
+	Keys           []string
+	Records        []VectorRecord
+	Vector         []float32
+	TopK           int
+	Filter         map[string]any
+	ReturnMetadata bool
+}
+
+type DeleteInput struct {
+	Keys []string
+}
+
+type Embedder interface {
+	Embed(context.Context, string) ([]float32, error)
+	EmbedBatch(context.Context, []string) ([][]float32, error)
+}
+
+type Error struct {
+	Code    string
+	Message string
+	Cause   error
+}
+
+type FakeEmbedder struct {
+	Embeddings map[string][]float32
+	Default    []float32
+	Calls      []string
+}
+
+type FakeStore struct {
+	Dimension            int
+	RequiredMetadataKeys []string
+	records              map[string]VectorRecord
+	calls                []Call
+	failures             map[string]error
+}
+
+type GetInput struct {
+	Keys           []string
+	ReturnMetadata bool
+}
+
+type PutInput struct {
+	Records []VectorRecord
+}
+
+type QueryHit struct {
+	Key      string         `json:"key"`
+	Distance float32        `json:"distance"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+type QueryInput struct {
+	Vector         []float32
+	TopK           int
+	Filter         map[string]any
+	ReturnMetadata bool
+}
+
+type S3VectorStore struct {
+	Client           S3VectorsAPI
+	VectorBucketName string
+	IndexName        string
+	Dimension        int
+	MaxBatchSize     int
+}
+
+type S3VectorsAPI interface {
+	PutVectors(context.Context, *s3vectors.PutVectorsInput, ...func(*s3vectors.Options)) (*s3vectors.PutVectorsOutput, error)
+	QueryVectors(context.Context, *s3vectors.QueryVectorsInput, ...func(*s3vectors.Options)) (*s3vectors.QueryVectorsOutput, error)
+	GetVectors(context.Context, *s3vectors.GetVectorsInput, ...func(*s3vectors.Options)) (*s3vectors.GetVectorsOutput, error)
+	DeleteVectors(context.Context, *s3vectors.DeleteVectorsInput, ...func(*s3vectors.Options)) (*s3vectors.DeleteVectorsOutput, error)
+}
+
+type SemanticIndex struct {
+	Store                Store
+	Embedder             Embedder
+	Dimension            int
+	RequiredMetadataKeys []string
+}
+
+type SemanticRecord struct {
+	Key      string
+	Text     string
+	Metadata map[string]any
+}
+
+type Store interface {
+	PutVectors(context.Context, PutInput) error
+	GetVectors(context.Context, GetInput) ([]VectorRecord, error)
+	DeleteVectors(context.Context, DeleteInput) error
+	QueryVectors(context.Context, QueryInput) ([]QueryHit, error)
+}
+
+type TitanEmbedder struct {
+	Runtime          BedrockRuntimeAPI
+	ModelID          string
+	Dimensions       int
+	Normalize        bool
+	BatchConcurrency int
+}
+
+type VectorRecord struct {
+	Key      string         `json:"key"`
+	Data     []float32      `json:"data"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+func CloneMetadata(map[string]any) map[string]any
+
+func CloneVector([]float32) []float32
+
+func EmbeddingErrorCode(error) string
+
+func NewError(string, string, error) *Error
+
+func NewFakeEmbedder(map[string][]float32) *FakeEmbedder
+
+func NewFakeStore(int) *FakeStore
+
+func NewS3VectorStore(context.Context, string, string, int) (*S3VectorStore, error)
+
+func NewTitanEmbedder(context.Context) (*TitanEmbedder, error)
+
+func NormalizeTopK(int) int
+
+func ValidateDimension(int) error
+
+func ValidateKey(string) error
+
+func ValidateRequiredMetadata(map[string]any, []string) error
+
+func ValidateVector([]float32, int) error
+
+func (*Error) Error() string
+
+func (*Error) Is(error) bool
+
+func (*Error) Unwrap() error
+
+func (*FakeEmbedder) Embed(context.Context, string) ([]float32, error)
+
+func (*FakeEmbedder) EmbedBatch(context.Context, []string) ([][]float32, error)
+
+func (*FakeStore) Calls() []Call
+
+func (*FakeStore) DeleteVectors(context.Context, DeleteInput) error
+
+func (*FakeStore) GetVectors(context.Context, GetInput) ([]VectorRecord, error)
+
+func (*FakeStore) PutVectors(context.Context, PutInput) error
+
+func (*FakeStore) QueryVectors(context.Context, QueryInput) ([]QueryHit, error)
+
+func (*FakeStore) SetError(string, error)
+
+func (*S3VectorStore) DeleteVectors(context.Context, DeleteInput) error
+
+func (*S3VectorStore) GetVectors(context.Context, GetInput) ([]VectorRecord, error)
+
+func (*S3VectorStore) PutVectors(context.Context, PutInput) error
+
+func (*S3VectorStore) QueryVectors(context.Context, QueryInput) ([]QueryHit, error)
+
+func (*SemanticIndex) PutText(context.Context, []SemanticRecord) error
+
+func (*SemanticIndex) QueryText(context.Context, string, QueryInput) ([]QueryHit, error)
+
+func (*TitanEmbedder) Embed(context.Context, string) ([]float32, error)
+
+func (*TitanEmbedder) EmbedBatch(context.Context, []string) ([][]float32, error)
+
 ## github.com/theory-cloud/apptheory/runtime
 
 const HTTPErrorFormatFlatLegacy HTTPErrorFormat = "flat_legacy"

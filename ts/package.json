@@ -22,8 +22,10 @@
   },
   "dependencies": {
     "@aws-sdk/client-apigatewaymanagementapi": "^3.1015.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1081.0",
     "@aws-sdk/client-lambda-microvms": "^3.1075.0",
     "@aws-sdk/client-s3": "^3.1015.0",
+    "@aws-sdk/client-s3vectors": "^3.1081.0",
     "@theory-cloud/tabletheory-ts": "https://github.com/theory-cloud/TableTheory/releases/download/v2.0.2/theory-cloud-tabletheory-ts-2.0.2.tgz#sha512-zEg5YDhZa66ahf7uX6lXTPCd8MTVZ6ixzi6TIfLacb1E9EuoLlwzM+xA5F/i5hTxBKcRSMTIYwT02k6KdCXIAw=="
   },
   "files": [

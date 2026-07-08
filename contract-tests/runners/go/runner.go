@@ -51,6 +51,8 @@ func runFixture(f Fixture) error {
 		return runFixtureOAuth(f)
 	case "objectstore":
 		return runFixtureObjectStore(f)
+	case "vectorstore":
+		return runFixtureVectorStore(f)
 	default:
 		return runFixtureLegacy(f)
 	}
