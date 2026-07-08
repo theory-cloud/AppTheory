@@ -183,9 +183,9 @@ For persistent session storage, use the DynamoDB-backed store:
 import (
   "os"
 
-  "github.com/theory-cloud/tabletheory"
-  "github.com/theory-cloud/tabletheory/pkg/session"
   "github.com/theory-cloud/apptheory/runtime/mcp"
+  "github.com/theory-cloud/tabletheory/v2"
+  "github.com/theory-cloud/tabletheory/v2/pkg/session"
 )
 
 func buildMcpServerWithDynamoSessions() (*mcp.Server, error) {

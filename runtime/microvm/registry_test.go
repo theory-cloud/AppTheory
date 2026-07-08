@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	tablemocks "github.com/theory-cloud/tabletheory/pkg/mocks"
+	tablemocks "github.com/theory-cloud/tabletheory/v2/pkg/mocks"
 )
 
 func TestSessionRegistryRecordConversionAndValidation(t *testing.T) {

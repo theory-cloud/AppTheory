@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	tablecore "github.com/theory-cloud/tabletheory/pkg/core"
-	tablemocks "github.com/theory-cloud/tabletheory/pkg/mocks"
+	tablecore "github.com/theory-cloud/tabletheory/v2/pkg/core"
+	tablemocks "github.com/theory-cloud/tabletheory/v2/pkg/mocks"
 )
 
 func TestMemoryEventBus_Subscribe_ValidationAndHandlerError(t *testing.T) {
