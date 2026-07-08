@@ -1,6 +1,6 @@
 module github.com/theory-cloud/apptheory
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/aws/aws-lambda-go v1.54.0
@@ -14,7 +14,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.24
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/stretchr/testify v1.11.1
-	github.com/theory-cloud/tabletheory/v2 v2.0.2
+	github.com/theory-cloud/tabletheory/v2 v2.0.3
 	go.uber.org/zap v1.27.1
 	gopkg.in/yaml.v3 v3.0.1
 	pgregory.net/rapid v1.2.0

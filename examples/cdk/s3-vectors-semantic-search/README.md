@@ -14,7 +14,7 @@ metadata in S3 Vectors.
 ## Prerequisites
 
 - Node.js `>=24` and `npm`
-- Go `1.26.4`
+- Go `1.26.5`
 - AWS CDK CLI through the local `npx cdk` dependency
 - AWS credentials in a region where S3 Vectors and Bedrock Titan Text Embeddings V2 are available
 - Bedrock model access for `amazon.titan-embed-text-v2:0`
